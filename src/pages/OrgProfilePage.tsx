@@ -42,7 +42,7 @@ import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedB
 import { DriveConnectorCard } from '@/components/integrations/DriveConnectorCard';
 import { DocusignConnectorCard } from '@/components/integrations/DocusignConnectorCard';
 import { MemberDocusignConnectorCard } from '@/components/integrations/MemberDocusignConnectorCard';
-import { AdobeSignConnectorCard } from '@/components/integrations/AdobeSignConnectorCard';
+import { AdobeSignConnectorCard, adobeSignErrorCopy } from '@/components/integrations/AdobeSignConnectorCard';
 import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
 
@@ -291,6 +291,8 @@ export function OrgProfilePage() {
     const driveError = searchParams.get('drive_error');
     const docusignResult = searchParams.get('docusign');
     const docusignError = searchParams.get('docusign_error');
+    const adobeSignResult = searchParams.get('adobe_sign');
+    const adobeSignError = searchParams.get('adobe_sign_error');
 
     if (driveResult === 'connected') {
       toast.success('Google Drive connected.');
@@ -304,12 +306,26 @@ export function OrgProfilePage() {
       toast.error(`${CONNECTIONS_LABELS.TOAST_ERROR_PREFIX}${docusignError}`);
     }
 
-    if (driveResult || driveError || docusignResult || docusignError) {
+    // SCRUM-1148 follow-up. Unlike Drive/DocuSign above, the Adobe error is not
+    // a raw code echoed at the user: `webhook_registration_failed` means the
+    // Adobe account plan does not grant `webhook_write`, and
+    // `webhook_already_claimed` means another org holds this webhook id. Both
+    // need copy that says what to actually do, so the code -> copy mapping goes
+    // through `adobeSignErrorCopy()` (exported by the card, single source).
+    if (adobeSignResult === 'connected') {
+      toast.success(CONNECTIONS_LABELS.ADOBE_SIGN_TOAST_CONNECTED);
+    } else if (adobeSignError) {
+      toast.error(adobeSignErrorCopy(adobeSignError));
+    }
+
+    if (driveResult || driveError || docusignResult || docusignError || adobeSignResult || adobeSignError) {
       const next = new URLSearchParams(searchParams);
       next.delete('drive');
       next.delete('drive_error');
       next.delete('docusign');
       next.delete('docusign_error');
+      next.delete('adobe_sign');
+      next.delete('adobe_sign_error');
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);

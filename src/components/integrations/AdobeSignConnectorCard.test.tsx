@@ -228,7 +228,14 @@ describe('AdobeSignConnectorCard', () => {
     });
   });
 
-  it('surfaces a callback error from the return-trip query string', async () => {
+  it('does NOT read the OAuth return-trip query string itself', async () => {
+    // Regression guard. An earlier draft read `?adobe_sign_error=` in a
+    // card-local effect and set component state; that loses the message under
+    // React StrictMode's double mount (first mount strips the params, its
+    // state is discarded, second mount sees an empty query string). The result
+    // is handled by OrgProfilePage's `useSearchParams` effect instead — the
+    // same place Drive and DocuSign handle theirs. If this test starts failing
+    // because the card renders the copy, the StrictMode bug is back.
     Object.defineProperty(window, 'location', {
       configurable: true,
       value: {
@@ -241,29 +248,11 @@ describe('AdobeSignConnectorCard', () => {
     });
 
     render(<AdobeSignConnectorCard orgId={ORG_ID} />);
-    await waitFor(() => {
-      expect(screen.getByText(CONNECTIONS_LABELS.ADOBE_SIGN_WEBHOOK_FAILED)).toBeInTheDocument();
-    });
-    // The result param is stripped so a refresh doesn't replay it.
-    expect(replaceStateSpy).toHaveBeenCalled();
-  });
+    await waitFor(() => expect(screen.getByRole('button', { name: /connect/i })).toBeInTheDocument());
 
-  it('toasts on a successful callback return', async () => {
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: {
-        ...originalLocation,
-        assign: assignSpy,
-        href: 'https://app.test/organizations/x?tab=settings&adobe_sign=connected',
-        search: '?tab=settings&adobe_sign=connected',
-        pathname: '/organizations/x',
-      },
-    });
-
-    render(<AdobeSignConnectorCard orgId={ORG_ID} />);
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith(CONNECTIONS_LABELS.ADOBE_SIGN_TOAST_CONNECTED);
-    });
+    expect(screen.queryByText(CONNECTIONS_LABELS.ADOBE_SIGN_WEBHOOK_FAILED)).not.toBeInTheDocument();
+    // ...and it must not rewrite history behind the page's back either.
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 });
 

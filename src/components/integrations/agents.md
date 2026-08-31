@@ -15,10 +15,16 @@ the Adobe backend genuinely behaves differently — not for styling:
 2. **`webhook_registration_failed` must not say "try again".** It means the Adobe account plan does
    not grant `webhook_write`; retrying cannot fix a plan. `adobeSignErrorCopy()` maps it to
    contact-support copy, and a test asserts the string does not match `/try again/i`.
-3. **It reads the OAuth return-trip query string.** The callback redirects back to this page with
-   `?adobe_sign=connected` or `?adobe_sign_error=<code>`; without that effect the admin would see a
-   silently unchanged card after a failed connect. The params are stripped via `replaceState` so a
-   refresh cannot replay the toast/error.
+3. **It does NOT read the OAuth return-trip query string** — and that is a correction, not an
+   omission. The first draft read `?adobe_sign_error=` in a card-local effect and set component
+   state. That silently loses the message under React StrictMode's double mount: the first mount
+   strips the params and its state is discarded, so the second mount reads an empty query string
+   and renders nothing. **Unit tests did not catch it** (they mount once); the E2E spec did. The
+   result is now consumed by `OrgProfilePage`'s existing `useSearchParams` effect alongside Drive
+   and DocuSign, which toasts imperatively — no component state to lose. `adobeSignErrorCopy()` is
+   exported from the card so the code -> copy mapping still lives in one place, and a unit test
+   asserts the card does not render the copy or call `replaceState`, so the bug cannot come back
+   unnoticed. If you add a fourth connector, put its result handling in the page, not the card.
 
 **Carrying forward the GH #1836 lesson below:** the browser-side `org_integrations` select is
 column-pinned to `id, account_label, account_id, connected_at, scope` and a test asserts

@@ -16,6 +16,20 @@
  *     in a way DocuSign's cannot — `webhook_registration_failed` means the
  *     account plan does not grant webhook access — and telling the admin
  *     "try again" for that would be wrong: retrying cannot fix a plan.
+ *
+ * The OAuth return-trip result (`?adobe_sign=connected` / `?adobe_sign_error=`)
+ * is deliberately NOT read here. `OrgProfilePage`'s existing `useSearchParams`
+ * effect consumes it alongside Drive and DocuSign, toasts, and strips the
+ * params. An earlier draft of this card read the query string in a card-local
+ * effect and set component state instead; that silently loses the message under
+ * React StrictMode's double mount — the first mount strips the params and its
+ * state is discarded, so the second mount reads an empty query string and
+ * renders nothing. E2E caught it; unit tests did not, because they mount once.
+ * A toast fired imperatively from the page has no such failure mode, which is
+ * presumably why the existing connectors already do it there.
+ *
+ * `adobeSignErrorCopy()` is exported for that page-level handler, so the
+ * code -> copy mapping lives in exactly one place.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -118,30 +132,6 @@ export function AdobeSignConnectorCard({ orgId }: AdobeSignConnectorCardProps) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async Supabase refresh settles after the effect returns
     void refreshConnection();
-  }, [refreshConnection]);
-
-  // Surface the callback's ?adobe_sign / ?adobe_sign_error result. The OAuth
-  // round-trip lands back on this page, so without this the admin sees a
-  // silently unchanged card after a failed connect.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const failure = params.get('adobe_sign_error');
-    const success = params.get('adobe_sign');
-    if (!failure && !success) return;
-
-    if (failure) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot read of the OAuth return-trip query string on mount; the URL is the external system being synchronized from, and the params are stripped below so this cannot re-fire
-      setError(adobeSignErrorCopy(failure));
-    } else if (success === 'connected') {
-      toast.success(CONNECTIONS_LABELS.ADOBE_SIGN_TOAST_CONNECTED);
-      void refreshConnection();
-    }
-
-    // Clear the result params so a refresh doesn't replay the toast/error.
-    params.delete('adobe_sign_error');
-    params.delete('adobe_sign');
-    const query = params.toString();
-    window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
   }, [refreshConnection]);
 
   const handleConnect = useCallback(async () => {
