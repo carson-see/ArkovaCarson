@@ -1,5 +1,38 @@
 # scripts/ci/agents.md
 
+_Last updated: 2026-08-23 (webhook event registration drift: `check-webhook-event-registration-drift.ts`)._
+
+## 2026-08-23 — `check-webhook-event-registration-drift.ts` (new): the webhook event set has ONE source of truth
+
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in `services/worker/src/webhooks/payload-schemas.ts` decides the
+outbound webhook event set: `VALID_WEBHOOK_EVENTS` is `Object.keys()` of it, so registering a schema
+makes the event subscribable through the CRUD API and validated at dispatch **in the same commit**.
+Six other lists mirror it by hand — the dashboard picker (`AVAILABLE_EVENTS`), the event catalog
+(`CATALOG_DATA`), `src/lib/copy.ts` descriptions, `packages/sdk/src/types.ts` `WebhookEventType`,
+`integrations/zapier/src/constants.ts` `VALID_EVENTS`, and the `docs/api/webhooks.md` tables. That
+mirror has now drifted three times (SCRUM-1794, BUG-002, DI-775), and every fix added another
+**hardcoded pin** to the surface that drifted.
+
+A hardcoded pin only fires when someone edits that surface and forgets its own pin. It cannot fire
+when the worker map GROWS and the mirror stands still — the direction all three incidents travelled.
+Measured before writing this check: with an extra key in the map, `WebhookSettings.test.tsx` +
+`WebhookEventCatalog.test.tsx` (40 tests), the Zapier suite (23) and the SDK suite (62, `tsc
+--noEmit` exit 0) were all green. Worse, two of those suites never run on a PR at all —
+`publish-sdk.yml` triggers on an `sdk-v*` tag and nothing runs the Zapier tests.
+
+This check parses the map's keys and compares all six mirrors against them (order-sensitive for the
+code lists, whose own pins use `toEqual` on an array; set-wise for the markdown tables, which group
+by event family). It fails **closed**: an unresolvable declaration or a region that parses to zero
+ids is a violation, not a skip. Comments are stripped before extraction — every one of these
+surfaces explains in prose WHY an event is listed, naming other events while doing so, and counting
+a mention as a listing would pass a surface that offers nothing. The markdown side reads only the
+first cell of a table row for the same reason.
+
+**No workflow wiring.** The companion `.test.ts` calls the collector against the real repo, and the
+root vitest `include` already globs `scripts/**/*.test.ts`, so it runs inside the required `Tests`
+job. Running the script directly (`npx tsx scripts/ci/check-webhook-event-registration-drift.ts`)
+prints a per-surface diff and exits 1 — useful locally, not a second gate to keep in sync.
+
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus `TIER_SPECS.T1` aligned to §1.12: 2h soak with required `Soak start:`/`Soak end:`)._
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
 _Last updated: 2026-08-30 (orphan-row blast radius scoped to migration-surface PRs) — previously 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
