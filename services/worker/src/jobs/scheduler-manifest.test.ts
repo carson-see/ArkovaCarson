@@ -141,4 +141,52 @@ describe('scheduler manifest (SCRUM-2900 config-as-code)', () => {
       expect(enabledScheduledJobs().map((j) => j.id)).toContain('drive-subscription-renewal');
     });
   });
+
+  // R4: detect-reorgs is the control that protects SECURED integrity — it
+  // reverts SECURED→SUBMITTED when a reorg displaces an anchor's block
+  // (jobs/chain-maintenance.ts::detectReorgs, CRIT-2). It is declared in
+  // scripts/gcp-setup/cloud-scheduler.sh and routed at POST /jobs/detect-reorgs,
+  // but was ABSENT from this manifest, so nothing watched it for silence. The
+  // reorg-handling work originally shipped with NO detector running in prod at
+  // all (in-process node-cron is dormant under Cloud Run CPU throttling — see
+  // routes/scheduled.ts), which is the same untracked-stop failure mode this
+  // manifest exists to close, one layer up.
+  describe('detect-reorgs (R4 — SECURED-integrity control)', () => {
+    it('is registered, enabled, and on the 10-minute chain-maintenance cadence', () => {
+      const job = getScheduledJob('detect-reorgs');
+      expect(job).toBeDefined();
+      expect(job?.enabled).toBe(true);
+      expect(job?.schedule).toBe('*/10 * * * *');
+      expect(job?.targetPath).toBe('/jobs/detect-reorgs');
+      expect(job?.method).toBe('POST');
+    });
+
+    it('is categorised on the anchor pipeline, not as a feeder', () => {
+      // It mutates anchor lifecycle state (SECURED → SUBMITTED), so it escalates
+      // to lane-1 like the rest of the pipeline, not to the feeder owner.
+      const job = getScheduledJob('detect-reorgs');
+      expect(job?.category).toBe('anchor-pipeline');
+      expect(job?.owner).toBe('lane-1');
+    });
+
+    it('carries a maxSilenceMs budget the dead-man can evaluate', () => {
+      expect(getScheduledJob('detect-reorgs')?.maxSilenceMs).toBeGreaterThan(0);
+    });
+
+    it('budgets silence at 1h — absorbs several missed 10-minute runs, still inside 6-block finality', () => {
+      const job = getScheduledJob('detect-reorgs');
+      // 6 scheduled ticks per hour: a deploy or a transient chain-tip fetch
+      // failure (which returns early WITHOUT advancing a successful run) must
+      // not page, but ~1h of silence is already ~6 blocks — the depth the proof
+      // path treats as final — so beyond that the detector being dark matters.
+      expect(job?.maxSilenceMs).toBe(60 * 60 * 1000);
+      // Same budget as the other sub-hourly anchor-pipeline jobs.
+      expect(job?.maxSilenceMs).toBe(getScheduledJob('batch-anchors')?.maxSilenceMs);
+      expect(job?.maxSilenceMs).toBe(getScheduledJob('check-confirmations')?.maxSilenceMs);
+    });
+
+    it('is included in enabledScheduledJobs()', () => {
+      expect(enabledScheduledJobs().map((j) => j.id)).toContain('detect-reorgs');
+    });
+  });
 });

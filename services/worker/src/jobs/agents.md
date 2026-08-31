@@ -1367,3 +1367,40 @@ Three changes, each with tests that fail without it:
 **Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
+
+## 2026-08-30 — R4: `detect-reorgs` registered in `SCHEDULER_MANIFEST`
+
+`detectReorgs()` (`chain-maintenance.ts:351`) is the control that protects SECURED integrity — it reverts
+SECURED → SUBMITTED when a reorg displaces an anchor's block. It was declared in
+`scripts/gcp-setup/cloud-scheduler.sh:193` (`detect-reorgs|*/10 * * * *|/jobs/detect-reorgs|NO_RETRY`) and
+routed at `routes/cron.ts:1284`, but was **absent from `scheduler-manifest.ts`** — so a silent stop of the
+integrity control was monitored by nothing. Added as `category: 'anchor-pipeline'`, `schedule: '*/10 * * * *'`,
+`targetPath: '/jobs/detect-reorgs'`, `method: 'POST'`, `owner: 'lane-1'`, `enabled: true`,
+`maxSilenceMs: 1 * HOURS`.
+
+**`maxSilenceMs` = 1h, chosen against the other entries, not by default.** 1h is 6 scheduled ticks: enough to
+absorb a deploy or a chain-tip fetch failure (`detectReorgs` returns early *without* doing work when the tip
+probe fails) without paging. It is the same budget the other sub-hourly anchor-pipeline jobs use
+(`batch-anchors`, `check-confirmations`, `recover-broadcasts` — all `1 * HOURS`), which is the right peer
+group: this job mutates anchor lifecycle state, it is not a feeder. It is deliberately **tighter** than
+`anchor-public-records`' `3 * HOURS` despite the identical `*/10` cadence — that width exists for long feeder
+runs this short job does not have, and 3h would leave the SECURED-integrity control dark for ~18 blocks, well
+past the ~6-block depth the proof path treats as final.
+
+**What the two manifest consumers actually read (grep-verified at this head — re-check, do not inherit):**
+
+| Consumer | Reads | Does `detect-reorgs` supply it? |
+|---|---|---|
+| `scheduler-deadman.ts:75` `evaluateSchedulerDeadman` | `JobRunSignal[] = {id, lastRunAt}` — "last SUCCESSFUL run" (`:35-39`), an **injected parameter** (`:77`) | **No — and neither does any other job.** `JobRunSignal` is constructed only in `scheduler-deadman.test.ts`; no table stores a per-scheduler-job last-successful-run timestamp (the `last_run_*` columns in `database.types.ts` belong to `bq_export_watermarks` and `organization_queue_run_state`). |
+| `scheduler-pause-attribution.ts:505` `runSchedulerPauseAudit` | the **live Cloud Scheduler `jobs.list` API** (`:354-394`) + the Cloud Logging `PauseJob` audit log (`:410-472`) | **Needs no worker-side emission** — its per-job signal is the Scheduler job's own existence/state, and `detect-reorgs` is declared in `cloud-scheduler.sh`. |
+
+Both consumers still have **zero non-test callers**, so this registration does not create a permanently-firing
+false alert: the silence signal has no producer for *any* of the eleven entries, and when one lands it must be
+built for the whole manifest at once. This is the same COVERED-BY-CONSTRUCTION posture recorded for
+`drive-subscription-renewal` above. Wiring the audit (run-telemetry storage + an audit route + its own
+Scheduler binding) remains a separate story.
+
+Parity with `cloud-scheduler.sh` is enforced, not assumed: `scripts/gcp-setup/cloud-scheduler.test.ts`
+`describe('cloud-scheduler.sh ↔ scheduler-manifest.ts parity (SCRUM-2900)')` fails on any schedule/path/pause
+mismatch — verified load-bearing by perturbing the schedule to `*/5` and watching it fail.
+Tests: `scheduler-manifest.test.ts` `describe('detect-reorgs (R4 — SECURED-integrity control)')`.

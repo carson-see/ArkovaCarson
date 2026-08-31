@@ -125,6 +125,46 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
     enabled: true,
     maxSilenceMs: 3 * HOURS,
   },
+  // R4: reorg detection — the control that protects SECURED integrity. It
+  // reverts SECURED → SUBMITTED when a reorg displaces an anchor's block
+  // (chain-maintenance.ts::detectReorgs, CRIT-2 / BUG-A). It is declared in
+  // cloud-scheduler.sh (`detect-reorgs|*/10 * * * *|/jobs/detect-reorgs|
+  // NO_RETRY`) and routed at cron.ts `cronRouter.post('/detect-reorgs')`, but
+  // was ABSENT here — so a silent stop of the integrity control was watched by
+  // nothing. The reorg-handling work originally shipped with NO detector
+  // running in prod at all, because in-process node-cron is dormant under Cloud
+  // Run CPU throttling (routes/scheduled.ts); this is that same untracked-stop
+  // failure mode one layer up.
+  //
+  // maxSilenceMs 1h = 6 scheduled ticks. A deploy, or a chain-tip fetch failure
+  // (detectReorgs returns early WITHOUT doing work when the tip probe fails),
+  // must not page. But ~1h of silence is already ~6 blocks — the depth the
+  // proof path treats as final — so past that, a dark detector is a real
+  // integrity gap. Same budget as the other sub-hourly anchor-pipeline jobs,
+  // and deliberately TIGHTER than anchor-public-records' 3h (also */10), whose
+  // width covers long feeder runs this short job does not have.
+  //
+  // HONESTY NOTE (grep-verified at this head — do not assume it stays true):
+  // registering here makes detect-reorgs COVERED BY CONSTRUCTION the moment a
+  // dead-man audit runs, but neither consumer of this manifest has a live
+  // trigger today. `evaluateSchedulerDeadman` and `runSchedulerPauseAudit` have
+  // ZERO non-test callers, and the silence signal `JobRunSignal.lastRunAt` has
+  // NO producer anywhere in the repo — no job writes a last-successful-run
+  // record, detect-reorgs included. That gap is pre-existing and repo-wide (it
+  // affects all eleven entries identically), so this entry does NOT create a
+  // permanently-firing false alert: when the signal producer lands it has to be
+  // built for the whole manifest at once. Wiring it (run-telemetry storage +
+  // an audit route + its own Scheduler binding) is a separate story.
+  {
+    id: 'detect-reorgs',
+    category: 'anchor-pipeline',
+    schedule: '*/10 * * * *',
+    targetPath: '/jobs/detect-reorgs',
+    method: 'POST',
+    owner: 'lane-1',
+    enabled: true,
+    maxSilenceMs: 1 * HOURS,
+  },
   // ── Money / integrity maintenance (enabled, critical) ─────────────────────
   {
     id: 'anchor-expiry-sweep',
