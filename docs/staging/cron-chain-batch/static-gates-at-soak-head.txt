@@ -1,0 +1,16 @@
+### static gates at soak head c6874e0108a516f3741718cf25a98ad4a10422f6  2026-08-30T22:38:02Z
+--- check-error-swallow (new in #2495) ---
+npm warn Unknown user config "min-release-age". This will stop working in the next major version of npm.
+npm warn Unknown user config "minimum-release-age". This will stop working in the next major version of npm.
+[error-swallow] 126 job file(s) scanned, 0 swallow(s) found, 0 baselined, 0 new.
+rc=0
+--- check-job-queue-parity (new in #2429) ---
+npm warn Unknown user config "min-release-age". This will stop working in the next major version of npm.
+npm warn Unknown user config "minimum-release-age". This will stop working in the next major version of npm.
+✅ job_queue parity OK — 5 enqueued type(s), all with a consumer; 7 enqueue site(s), 5 drain site(s); no unmanaged job_queue writes.
+rc=0
+--- check-hot-table-ddl-lock-timeout (0425 is CONCURRENTLY) ---
+npm warn Unknown user config "min-release-age". This will stop working in the next major version of npm.
+npm warn Unknown user config "minimum-release-age". This will stop working in the next major version of npm.
+[hot-table-ddl-lock-timeout] OK — 119 migrations scanned, 251 grandfathered violation(s) in 23 baselined file(s), 0 new.
+rc=0
