@@ -1326,6 +1326,49 @@ describe('POST /webhooks/docusign — inbound classification (docusign-bilateral
     // own dedicated test coverage for the anchor-insert assertion).
   });
 
+  // F1-heal (SCRUM-3818 go-live gate): "outbound-then-inbound ordering ->
+  // inbound does not downgrade a verified row." The real outbound job
+  // (docusign-envelope-completed.ts) already won the `(org_id, source,
+  // external_ref, revision)` slot for this envelope with its real,
+  // server-measured fingerprint BEFORE this (forged or otherwise
+  // non-owning) inbound delivery arrives. `enqueue_connector_artifact`'s
+  // `ON CONFLICT DO NOTHING` means the RPC call below returns the EXISTING
+  // (real) row's id, unchanged — and this handler does nothing further with
+  // that id (see enqueueInboundDeclaredHashArtifact's call site: the
+  // returned value is awaited and discarded, never read back or written).
+  // This test pins that structurally, not just by inspection: the same
+  // `dbFromMock` call count as the "wins the race" test above (5 — no 6th
+  // call attempting to read back or update `connector_artifact`) proves this
+  // path CANNOT rewrite/downgrade whatever row already exists at that key.
+  it('outbound-then-inbound ordering: when enqueue_connector_artifact returns a PRE-EXISTING (real, outbound-owned) row id via ON CONFLICT DO NOTHING, this handler makes no further write and cannot downgrade it', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }])); // org_integrations (own)
+    dbFromMock.mockReturnValueOnce(integrationLookup(null)); // member_integrations (own)
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    // ON CONFLICT DO NOTHING: the RPC returns the id of the row that ACTUALLY
+    // won the INSERT — the real outbound job's prior write — not a new row
+    // for this (later, non-owning) inbound delivery.
+    rpcMock.mockResolvedValueOnce({ data: 'existing-outbound-artifact', error: null });
+
+    const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN', envelopeId: 'env-already-outbound-1' });
+    const res = await postSignedBody(body);
+
+    // Structurally unaware it lost the race — the handler's own success
+    // response is identical either way, which is exactly the point: it never
+    // branches on "did my write actually win," so it has no path to act on a
+    // returned id that isn't its own.
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true, inbound: true });
+    // Exactly the same 5 calls as the "wins the race" test above — no read-
+    // back, no update, no 6th connector_artifact call of any kind.
+    expect(dbFromMock).toHaveBeenCalledTimes(5);
+    expect(calledWithTable(dbFromMock, 'connector_artifact')).toBe(false);
+  });
+
   it('ambiguous/unresolvable (own-account lookup DB error) classifies inbound (fail-safe) — and orphan-drops with a DISTINCT signal, not a crash, when it also cannot resolve a usable declared hash', async () => {
     mockConfig.enableDocusignInbound = true;
     dbFromMock.mockReturnValueOnce(
