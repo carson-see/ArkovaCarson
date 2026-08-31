@@ -32,6 +32,7 @@
  * §-credit: the charge is `debitAndEnqueueAnchor` AT SECURING and nowhere else.
  */
 import { z } from 'zod';
+import { dbUuid } from '../utils/db-row-validation.js';
 import { db as defaultDb } from '../utils/db.js';
 import { logger as defaultLogger } from '../utils/logger.js';
 import { processBatchAnchors, type BatchAnchorResult } from './batch-anchor.js';
@@ -72,8 +73,8 @@ export const AnchorInsertPayload = z
   .object({
     fingerprint: z.string().regex(/^[0-9a-f]{64}$/, 'fingerprint must be 64-hex sha256'),
     status: z.literal('PENDING'),
-    org_id: z.string().uuid(),
-    user_id: z.string().uuid(),
+    org_id: dbUuid('org_id'),
+    user_id: dbUuid('user_id'),
     filename: z.string().min(1).max(255),
     credential_type: z.literal('CONTRACT_POSTSIGNING'),
     metadata: z.record(z.string(), z.unknown()),

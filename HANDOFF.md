@@ -14,6 +14,16 @@
 
 ## Now
 
+### Soaks — DocuSign bilateral T3 (RUNNING, started 2026-08-30)
+
+- **Rig:** isolated Supabase `aqikotdkmhxmznonwmwk` (`arkova-soak-docusign-bilateral`, us-east-2), ledger head **0424**. Cloud Run `arkova-worker-docusign-bilateral-staging` rev **00003-kt9**, image `sha256:642487e3…`, source head `2a676981cfcc337f87f42169b2d2085fdb886c87` (branch `rc/docusign-bilateral-2026-08-30`).
+- **Covers:** PRs #2472 (guard mig 0423), #2474 (signer capture), #2473 (frontend links), #2476 (inbound + mig 0424), harness #2479.
+- **Clock = Cloud Run uptime**, revision ready **2026-08-30T16:23:20Z**, T3 closes **2026-09-01T16:23:20Z**. Driver `~/arkova-soak/docusign-bilateral/supervisor.sh` (detached, PPID 1), 15-min cycles.
+- **Staging-only:** `ENABLE_DOCUSIGN_INBOUND=true` on the rig. **Prod keeps inbound OFF** pending the SCRUM-3818 go-live gate.
+- **Evidence:** `docs/staging/docusign-bilateral-2026-08/evidence/` — E1/E2 guard behavior, E3 live adversarial matrix, E4 inbound envelopes anchored end-to-end (ARK-DOC-JFQ9QR, ARK-DOC-DGHFW2, `fingerprint_source=issuer_record_attestation`), zero PII leakage.
+- **Do not touch** this rig or the concurrent `credits-2442` / `cleanup-2335` soaks.
+
+
 **State as of 2026-08-27T21:00Z, verified live this session.** This block is the only current-state
 claim in this file; everything under `## History` is the dated record and is not re-asserted here.
 Everything dated 2026-08-27 below was read directly this session — `gcloud run services describe
@@ -556,8 +566,31 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
-**★ NO SOAK WINDOW IS OPEN as of 2026-08-27T21:00Z.** Every window described in the dated entries
-below has closed. This bullet — not any `## History` entry, and not the presence of a Cloud Run
+> ### ⚠️ A SOAK WINDOW IS OPEN — PR #2461, until 2026-08-31T09:52:56Z
+>
+> **Do not tear down `arkova-soak-pii2461b` / `evkcynsqcmctugoscgeh`.** T2 soak for
+> [#2461](https://github.com/carson-see/ArkovaCarson/pull/2461) (server-side `EMAIL_PATTERN` ReDoS
+> fix), window **2026-08-30T21:52:56Z → 2026-08-31T09:52:56Z**, driven every 5 min.
+>
+> | | |
+> |---|---|
+> | Supabase project | `evkcynsqcmctugoscgeh` (`arkova-soak-pii2461b`) |
+> | Cloud Run | `arkova-worker-pii2461b-staging`, revision `…-00001-b7d` |
+> | Preflight | `environment_type=clean_mirror`, 7/7, captured before the clock started |
+> | Head under soak | `f584dfe99b145502ce9a8b0527b95487247d8d0e` (`/health` `git_sha` matches) |
+> | Image digest | `sha256:c2ed527b8a5bf30f6cba9a6aa40ca14e2eb76d32868a8e9de8aca31d27749b37` |
+>
+> **This entry exists because the FIRST rig for this PR was swept mid-setup.** Rig `pii2461`
+> (`wqamcbwogupiuruhkllt`) was torn down by `teardown-isolated-rig.sh` before its clock started —
+> the damage matched that script exactly (project removed, both `*-pii2461-staging` secrets deleted,
+> service deleted, `supabase-db-password-<ref>` left alone). Its provision had aborted at
+> `blocked_after_project_create`, so no admission artifact was ever persisted and the project
+> carried no lease marker. Combined with the "no soak open" bullet below, it read as abandoned.
+> If you are running a cost sweep, this block is the lease.
+
+**★ ONE SOAK WINDOW IS OPEN (PR #2461, above). The 2026-08-27 statement below is superseded.**
+Every window described in the dated entries Every window described in the dated entries
+below has closed. This block — not any `## History` entry, and not the presence of a Cloud Run
 service — is the authoritative answer to "is a soak running" (CLAUDE.md §0.1). Three soaks closed
 and were SEALED; their evidence is in the PR bodies, read this session with `gh pr view --json body`:
 
@@ -1760,4 +1793,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-27 by Claude Opus 5 (docs-sync session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-08-30 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._

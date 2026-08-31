@@ -1,5 +1,35 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-29 — merge-queue skips require the mergify[bot] PR author, not just the branch name (SCRUM-3812)
+
+Both `ci.yml` (`evidence-identity`) and `staging-evidence.yml` skip their enforcement steps for
+Mergify's speculative merge-queue PRs — necessarily, since those PRs carry Mergify's own body, not
+the original PR's evidence block, and a fail-closed gate that checks them deadlocks every queued
+merge. But the skip predicate was `startsWith(github.head_ref, 'mergify/merge-queue/')` ALONE, and
+`github.head_ref` is fully author-controlled: a PR opened from a branch literally named
+`mergify/merge-queue/<anything>` skipped every step, and a job whose steps all skip still posts
+SUCCESS — greening `check-success = Evidence-identity gate` AND
+`check-success = Staging Soak Evidence Gate` in every `.mergify.yml` queue without either checker
+running. The same PR that activated the evidence-identity gate randomized its `$GITHUB_OUTPUT`
+heredoc delimiter so an author cannot forge the identity the gate protects, while the branch name
+skipped the gate outright.
+
+Every merge-queue `if:` in both files now requires
+`&& github.event.pull_request.user.login == 'mergify[bot]'` alongside the branch prefix. The PR
+author is assigned by GitHub and immutable, so only genuine Mergify speculative PRs skip (verified
+against live queue PRs #2464–#2468: all authored by `mergify[bot]`). Deliberately NOT
+`github.actor`: a human re-running a genuine queue PR's checks becomes the actor, which would
+un-skip the gate mid-queue and deadlock it. The skip remains PER-STEP (not job-level `if:`) on
+purpose — a job-level skip would leave the check unreported, and an unreported check never
+satisfies `check-success`, deadlocking the queue from the other direction.
+
+Pinned by `scripts/ci/soak-integrity-gates-failclosed.test.ts` (ci.yml side) and
+`scripts/ci/staging-evidence-workflow-contract.test.ts` (staging-evidence side): every `if:` line
+consulting `github.head_ref` or the queue-branch prefix must be one of exactly two canonical
+shapes — the compound skip or its exact negation — so a branch-only or `||`-weakened variant fails
+the contract. Both suites share the same `MERGE_QUEUE_SKIP_EXPRESSION` constant text; keep them in
+lockstep.
+
 ## 2026-08-23 — `staging-evidence.yml` also resolves the PR AUTHOR live (SCRUM-3481)
 
 The `Resolve live PR state` step now emits an `author_login` output alongside the SHAs, and

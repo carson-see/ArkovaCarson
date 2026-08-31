@@ -51,6 +51,16 @@ const EVIDENCE_IDENTITY_CHECK = 'check-success = Evidence-identity gate';
 const ANTI_HOLLOW_SOAK_CHECK = 'check-success = Anti-hollow-soak guards';
 
 /**
+ * SCRUM-3812 — the only condition under which the evidence-identity job may
+ * skip: the merge-queue branch prefix AND the Mergify bot as PR author. The
+ * branch name alone is author-controlled and used to green the gate with zero
+ * steps run. Keep in lockstep with the same constant in
+ * staging-evidence-workflow-contract.test.ts (same class, same fix).
+ */
+const MERGE_QUEUE_SKIP_EXPRESSION =
+  "startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]'";
+
+/**
  * Extract one top-level job block from ci.yml: from `  <jobId>:` up to (but not
  * including) the next job — either its key or the comment header that
  * introduces it, both at 2-space indent (a job's OWN keys and comments sit at
@@ -161,6 +171,49 @@ describe('ci.yml — evidence-identity gate is wired fail-closed', () => {
     expect(block, 'must recognise the mergify/merge-queue/* head ref').toContain(
       'mergify/merge-queue/',
     );
+  });
+
+  it('only skips merge-queue PRs that Mergify itself authored (SCRUM-3812)', () => {
+    // `github.head_ref` is fully author-controlled: anyone can open a PR from
+    // a branch literally named `mergify/merge-queue/<anything>`. While the
+    // skip keyed on the branch name ALONE, every enforcement step no-opped and
+    // the job still posted SUCCESS (a job whose steps all skip reports
+    // success), satisfying `check-success = Evidence-identity gate` in every
+    // .mergify.yml queue — the gate that exists to make evidence identity
+    // unforgeable was skippable by naming a branch. The PR author
+    // (`github.event.pull_request.user.login`) is assigned by GitHub and is
+    // not something an author can forge, so the skip must require BOTH. Every
+    // step-level `if` that consults the head ref must be one of exactly two
+    // canonical shapes: the compound skip, or its exact negation. NOT
+    // `github.actor` — a human re-running a genuine queue PR's checks becomes
+    // the actor, which would un-skip the gate mid-queue and deadlock it.
+    const block = jobBlock('evidence-identity');
+    const values = block
+      .split('\n')
+      .filter((line) => /^\s*if:/u.test(line))
+      .filter(
+        (line) => line.includes('github.head_ref') || line.includes('mergify/merge-queue/'),
+      )
+      .map((line) => {
+        const raw = line.replace(/^\s*if:\s*/u, '').trim();
+        const quoted = /^"(.*)"$/u.exec(raw) ?? /^'(.*)'$/u.exec(raw);
+        return quoted ? quoted[1] : raw;
+      });
+
+    expect(
+      values,
+      'the merge-queue skip must still exist — removing it deadlocks every queued merge',
+    ).toContain(MERGE_QUEUE_SKIP_EXPRESSION);
+    expect(
+      values,
+      'enforcement steps must carry the exact negation of the compound skip',
+    ).toContain(`!(${MERGE_QUEUE_SKIP_EXPRESSION})`);
+    for (const value of values) {
+      expect(
+        [MERGE_QUEUE_SKIP_EXPRESSION, `!(${MERGE_QUEUE_SKIP_EXPRESSION})`],
+        `every merge-queue \`if\` must require the mergify[bot] PR author — the branch name alone is author-controlled (got: \`${value}\`)`,
+      ).toContain(value);
+    }
   });
 
   it('resolves LIVE PR state instead of the frozen event payload', () => {
