@@ -4,7 +4,10 @@
 # One-command provision of a CLEAN, ISOLATED soak rig for a parallel T3 soak:
 #   1. Create a standalone Supabase project (region us-east-2, PG 17.x) — NOT a
 #      preview branch off prod (the lettered-suffix builder bug; see
-#      docs/reference/STAGING_RIG.md "Why a standalone project").
+#      docs/reference/STAGING_RIG.md "Why a standalone project"), then WAIT for
+#      it to report ACTIVE_HEALTHY before linking: a COMING_UP project stores
+#      the legacy IPv6 direct-db config and the push dies on
+#      LegacyDbConfigIpv6Error before the pooler tenant exists.
 #   2. Replay the repo schema onto it via `npx supabase db push --linked`.
 #   3. Deploy a wired `arkova-worker-<name>-staging` Cloud Run service on the
 #      prod-pinned image with a PROFILE-SELECTED env/secret overlay:
@@ -16,8 +19,12 @@
 #        * gemini (REAL model): GEMINI_TUNED_MODEL + GEMINI_V6_PROMPT + GEMINI_API_KEY
 #                 — for classifier / proof-backcatalog census soaks. Chain stays mocked.
 #      EVERY profile also wires the boot-critical secrets (Stripe / API-key HMAC /
-#      cron / FRONTEND_URL) so config.ts's Zod superRefine does not crash-loop the
-#      worker (a rig missing these never boots → the soak is a no-op).
+#      cron / IP_HASH_PEPPER / FRONTEND_URL) so config.ts's Zod superRefine does
+#      not crash-loop the worker (a rig missing these never boots → the soak is a
+#      no-op). The pepper is a per-rig secret this script CREATES (like the
+#      Supabase pair in Step 2b) and never rotates.
+#      A rig whose RPC secrets point at a private (10.x) Bitcoin node also needs
+#      --vpc-connector/--vpc-egress, or the worker cannot reach the node at all.
 #      Non-mock profiles ALSO create Cloud Scheduler jobs POSTing to the worker's
 #      /jobs/* endpoints, because node-cron does NOT fire on a throttled
 #      (min-instances=0) Cloud Run service — without Scheduler the "behavioral"
@@ -95,6 +102,21 @@ PROFILE="${STAGING_RIG_PROFILE:-mock}"
 GETBLOCK_RPC_URL_SECRET="${STAGING_GETBLOCK_RPC_URL_SECRET:-bitcoin-rpc-url-staging}"
 GETBLOCK_RPC_AUTH_SECRET="${STAGING_GETBLOCK_RPC_AUTH_SECRET:-bitcoin-rpc-auth-staging}"
 TREASURY_WIF_SECRET="${STAGING_TREASURY_WIF_SECRET:-bitcoin-treasury-wif-staging}"
+# The chain defaults above are the *shared staging* names. They do NOT exist in
+# arkova1 (2026-08-30 stand-up finding 3) — the only live signet RPC secrets are
+# the arkova-s33-rig-b1-* set below, which point at a PRIVATE 10.x Bitcoin Core
+# node. They stay non-default deliberately: they are signet credentials, and
+# silently defaulting a mainnet-capable chain profile onto a signet node/WIF
+# would be a worse failure than a missing-secret abort. require_gcloud_secret's
+# remediation names them, and CHAIN_SECRET_REMEDIATION below is that message.
+PRIVATE_NODE_RPC_URL_NAME="arkova-s33-rig-b1-bitcoin-core-signet-rpc-url"
+PRIVATE_NODE_RPC_AUTH_NAME="arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth"
+PRIVATE_NODE_TREASURY_WIF_NAME="arkova-s33-rig-b1-treasury-wif-signet"
+PRIVATE_NODE_RPC_SECRETS=(
+  "$PRIVATE_NODE_RPC_URL_NAME"
+  "$PRIVATE_NODE_RPC_AUTH_NAME"
+)
+PRIVATE_NODE_VPC_CONNECTOR="fullsoak-btc-rpc"
 STRIPE_SECRET_KEY_SECRET="${STAGING_STRIPE_SECRET_KEY_SECRET:-stripe-secret-key-staging}"
 STRIPE_WEBHOOK_SECRET_SECRET="${STAGING_STRIPE_WEBHOOK_SECRET_SECRET:-stripe-webhook-secret-staging}"
 API_KEY_HMAC_SECRET_SECRET="${STAGING_API_KEY_HMAC_SECRET_SECRET:-api-key-hmac-secret-staging}"
@@ -110,6 +132,22 @@ GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-<required-in-gemini-appl
 GEMINI_V6_PROMPT_VALUE="${STAGING_GEMINI_V6_PROMPT:-true}"
 FRONTEND_URL_VALUE="${STAGING_FRONTEND_URL:-https://app.arkova.ai}"
 CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-$RUNTIME_SA}"
+
+# Serverless VPC Access. Empty (the default) deploys with no connector, exactly
+# as before. Set both when the rig's RPC/UTXO endpoint lives on a private range
+# — Cloud Run cannot otherwise route to a 10.x node, so `anchoring` health and
+# every broadcast fail while every other check looks green.
+VPC_CONNECTOR="${STAGING_VPC_CONNECTOR:-}"
+VPC_EGRESS="${STAGING_VPC_EGRESS:-}"
+
+# Post-create readiness poll + link/push retries. `projects create` returns as
+# soon as the row exists; linking a COMING_UP project persists the legacy IPv6
+# direct-db config and `db push` then dies on LegacyDbConfigIpv6Error, while the
+# pooler tenant can still 'not be found' for a short window after ACTIVE_HEALTHY.
+PROJECT_READY_MAX_ATTEMPTS="${STAGING_PROJECT_READY_MAX_ATTEMPTS:-60}"
+PROJECT_READY_POLL_SECONDS="${STAGING_PROJECT_READY_POLL_SECONDS:-10}"
+LINK_MAX_ATTEMPTS="${STAGING_LINK_MAX_ATTEMPTS:-6}"
+LINK_RETRY_SECONDS="${STAGING_LINK_RETRY_SECONDS:-10}"
 
 NAME=""
 APPLY=0
@@ -135,7 +173,9 @@ SOURCE_HEAD_IMAGE_REF="<verified-full-sha-image-tag-in-apply>"
 SOURCE_HEAD_IMAGE_DIGEST="<verified-full-sha-image-digest-in-apply>"
 
 usage() {
-  sed -n '2,38p' "$0"
+  # Header block: purpose through the end of the SAFETY MODEL section, i.e.
+  # everything above the `# Usage:` comment this function then restates.
+  sed -n '2,50p' "$0"
   echo
   echo "Usage: $0 --name <rig-name> [--profile mock|chain|gemini] [--apply]"
   echo "          [--region us-east-2] [--gcp-region us-central1]"
@@ -143,11 +183,16 @@ usage() {
   echo "          [--soak-id <exclusive-soak-id>] [--rig-id <rig-id>] [--lease-id <lease-id>]"
   echo "          [--required-uptime-min <minutes>] [--required-wall-min <minutes>]"
   echo "          [--org <supabase-org>] [--gcp-project arkova1]"
+  echo "          [--vpc-connector <name>] [--vpc-egress private-ranges-only|all-traffic]"
   echo "          [--artifact-dir docs/staging/<pr-or-rig>]"
   echo
   echo "  --profile mock   (default) safe: USE_MOCKS=true, anchoring off, no Scheduler."
   echo "  --profile chain  real anchoring: GetBlock RPC + WIF signer + KMS, Scheduler-driven."
   echo "  --profile gemini real tuned model + prompt; chain mocked, Scheduler-driven."
+  echo
+  echo "  --vpc-connector  Serverless VPC Access connector for the worker. REQUIRED when the"
+  echo "                   chain RPC secrets point at a private (10.x) Bitcoin node, e.g."
+  echo "                   --vpc-connector $PRIVATE_NODE_VPC_CONNECTOR --vpc-egress private-ranges-only."
   echo
   echo "Live run also requires: CONFIRM_PROVISION=<rig-name> matching --name."
   echo "Live run of a NON-MOCK profile ALSO requires: CONFIRM_REAL_CONFIG=<profile>."
@@ -169,6 +214,8 @@ while [[ $# -gt 0 ]]; do
     --required-wall-min) REQUIRED_WALL_MIN="${2:?}"; shift 2 ;;
     --org) SUPABASE_ORG="${2:?}"; shift 2 ;;
     --gcp-project) GCP_PROJECT="${2:?}"; shift 2 ;;
+    --vpc-connector) VPC_CONNECTOR="${2:?}"; shift 2 ;;
+    --vpc-egress) VPC_EGRESS="${2:?}"; shift 2 ;;
     --pg-major) SUPABASE_PG_MAJOR="${2:?}"; shift 2 ;;
     --artifact-dir) STAGING_ADMISSION_DIR="${2:?}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -353,6 +400,59 @@ if [[ $APPLY -eq 1 ]]; then
   fi
   if [[ ! -f "$DRIVER_PATH" ]]; then
     echo "ERROR: live provision requires STAGING_DRIVER_PATH to exist; got '$DRIVER_PATH'." >&2
+    exit 2
+  fi
+  # Serverless VPC Access. Validated before any paid mutation: a rig that cannot
+  # reach its own Bitcoin node deploys "healthy" and soaks nothing.
+  if [[ -n "$VPC_CONNECTOR" ]]; then
+    if [[ ! "$VPC_CONNECTOR" =~ ^[a-z][a-z0-9-]{0,23}[a-z0-9]$ \
+      && ! "$VPC_CONNECTOR" =~ ^projects/[a-z0-9-]+/locations/[a-z0-9-]+/connectors/[a-z][a-z0-9-]{0,23}[a-z0-9]$ ]]; then
+      echo "ERROR: --vpc-connector must be a connector name or a full projects/…/connectors/… resource; got '$VPC_CONNECTOR'." >&2
+      exit 2
+    fi
+    case "$VPC_EGRESS" in
+      private-ranges-only|all-traffic) ;;
+      "")
+        # Default to the least-privilege mode rather than letting gcloud pick.
+        VPC_EGRESS="private-ranges-only"
+        ;;
+      *)
+        echo "ERROR: --vpc-egress must be 'private-ranges-only' or 'all-traffic'; got '$VPC_EGRESS'." >&2
+        exit 2
+        ;;
+    esac
+  elif [[ -n "$VPC_EGRESS" ]]; then
+    echo "ERROR: --vpc-egress requires --vpc-connector; egress alone routes nothing." >&2
+    exit 2
+  fi
+  # A private-node RPC secret without a connector is the exact 2026-08-30 repair:
+  # the deploy succeeds, /health reports anchoring failures, and no broadcast can
+  # ever leave the rig. Refuse it rather than provision an unreachable soak.
+  if [[ "$PROFILE" == "chain" && -z "$VPC_CONNECTOR" ]]; then
+    for private_rpc_secret in "${PRIVATE_NODE_RPC_SECRETS[@]}"; do
+      if [[ "$GETBLOCK_RPC_URL_SECRET" == "$private_rpc_secret" \
+        || "$GETBLOCK_RPC_AUTH_SECRET" == "$private_rpc_secret" ]]; then
+        echo "ERROR: RPC secret '$private_rpc_secret' points at a PRIVATE Bitcoin Core node (10.x)," >&2
+        echo "       which Cloud Run cannot reach without Serverless VPC Access. Re-run with:" >&2
+        echo "         --vpc-connector $PRIVATE_NODE_VPC_CONNECTOR --vpc-egress private-ranges-only" >&2
+        exit 2
+      fi
+    done
+  fi
+  for bounded_pair in \
+    "STAGING_PROJECT_READY_MAX_ATTEMPTS:$PROJECT_READY_MAX_ATTEMPTS" \
+    "STAGING_PROJECT_READY_POLL_SECONDS:$PROJECT_READY_POLL_SECONDS" \
+    "STAGING_LINK_MAX_ATTEMPTS:$LINK_MAX_ATTEMPTS" \
+    "STAGING_LINK_RETRY_SECONDS:$LINK_RETRY_SECONDS"; do
+    bounded_name="${bounded_pair%%:*}"
+    bounded_value="${bounded_pair#*:}"
+    if [[ ! "$bounded_value" =~ ^[0-9]{1,6}$ ]]; then
+      echo "ERROR: $bounded_name must be a small non-negative integer; got '$bounded_value'." >&2
+      exit 2
+    fi
+  done
+  if (( 10#$PROJECT_READY_MAX_ATTEMPTS < 1 || 10#$LINK_MAX_ATTEMPTS < 1 )); then
+    echo "ERROR: readiness and link attempt budgets must both be >= 1." >&2
     exit 2
   fi
   # Admission foundations fail before any cloud/database mutation. A tag is a
@@ -552,8 +652,15 @@ BASE_ENV_VARS=(
 )
 
 # Base secrets every rig gets: the NEW project's own Supabase creds PLUS the
-# boot-critical Stripe / HMAC / cron secrets (config.ts fails closed without them
-# in production, regardless of USE_MOCKS).
+# boot-critical Stripe / HMAC / cron / IP-pepper secrets (config.ts fails closed
+# without them in production, regardless of USE_MOCKS).
+#
+# IP_HASH_PEPPER is per-rig and created by this script (Step 2b), exactly like
+# the Supabase pair: config.ts's production superRefine has required it since
+# 2026-08-11 ("Production requires IP_HASH_PEPPER — audit-log IP pseudonymisation
+# would be unavailable and the DPA 'hashed IP addresses' warranty unbacked"), so
+# a rig deployed without it crash-loops at boot and the soak is a no-op. Every
+# 2026-08 rig carried this as a hand-made repair; it belongs in the overlay.
 BASE_SECRETS=(
   "SUPABASE_URL=supabase-url-${NAME}-staging:latest"
   "SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key-${NAME}-staging:latest"
@@ -561,6 +668,7 @@ BASE_SECRETS=(
   "STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET_SECRET}:latest"
   "API_KEY_HMAC_SECRET=${API_KEY_HMAC_SECRET_SECRET}:latest"
   "CRON_SECRET=${CRON_SECRET_SECRET}:latest"
+  "IP_HASH_PEPPER=ip-hash-pepper-${NAME}-staging:latest"
 )
 
 ENV_VARS=("${BASE_ENV_VARS[@]}")
@@ -661,6 +769,7 @@ if [[ $APPLY -eq 1 ]]; then
 fi
 SUPABASE_URL_SECRET_NAME="supabase-url-${NAME}-staging"
 SUPABASE_SERVICE_ROLE_SECRET_NAME="supabase-service-role-key-${NAME}-staging"
+IP_HASH_PEPPER_SECRET_NAME="ip-hash-pepper-${NAME}-staging"
 STAGING_ADMISSION_DIR="${STAGING_ADMISSION_DIR:-docs/staging/${NAME}}"
 PROVISION_STATE_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-provision-${NAME}.json"
 ADMISSION_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-admission-${NAME}.json"
@@ -698,10 +807,17 @@ SCHEDULER_FAILURE_CONTAINMENT_ARMED=0
 # one empty sentinel for mock admission JSON, filtered out by the encoder.
 SCHEDULER_JOB_SPECS=("")
 SCHEDULER_CONFIGURED_SCHEDULE="*/5 * * * *"
-# create-http has no atomic --paused flag. Create against a syntactically valid
-# non-firing hold schedule, pause + verify, then restore the pre-existing cadence
-# while still paused after clean_mirror. This changes no job/matrix semantics.
-SCHEDULER_HOLD_SCHEDULE="0 0 31 2 *"
+# create-http has no atomic --paused flag. Create against a valid non-firing hold
+# schedule, pause + verify, then restore the pre-existing cadence while still
+# paused after clean_mirror. This changes no job/matrix semantics.
+#
+# It must be a schedule the API ACCEPTS, not merely one that never fires: Cloud
+# Scheduler calendar-validates day-of-month, so the previous hold schedule (day
+# 31 of month 2 — a date that does not exist) was rejected INVALID_ARGUMENT and
+# Step 4 could not execute at all (2026-08-30 stand-up finding 2). February 29th
+# is a real date that validates, and its next occurrence is years away — never
+# inside the seconds between create and the immediate pause below.
+SCHEDULER_HOLD_SCHEDULE="0 0 29 2 *"
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   SCHEDULER_APPLICABLE_JSON=true
   SCHEDULER_STATE="planned_paused_until_clean_mirror_then_resume"
@@ -811,13 +927,101 @@ run_cmd_cron_redacted() {
   fi
 }
 
+# Like run_cmd, but tolerates a bounded number of transient failures. Used only
+# for the two post-create Supabase calls that race the pooler tenant becoming
+# resolvable; every attempt is printed, and exhausting the budget still exits
+# non-zero (fail-closed — a rig that never linked must not reach a deploy).
+run_cmd_with_retry() {
+  local label="$1"
+  local max_attempts="$2"
+  local retry_seconds="$3"
+  shift 3
+  print_cmd "$@"
+  if [[ $APPLY -ne 1 ]]; then
+    return 0
+  fi
+  local attempt=1
+  while (( attempt <= max_attempts )); do
+    echo "executing (attempt ${attempt}/${max_attempts}): $*" >&2
+    if "$@"; then
+      return 0
+    fi
+    echo "# ${label} attempt ${attempt}/${max_attempts} failed — a fresh project can still be" >&2
+    echo "#   settling (pooler tenant not yet resolvable); retrying." >&2
+    attempt=$((attempt + 1))
+    if (( attempt <= max_attempts )); then
+      sleep "$retry_seconds"
+    fi
+  done
+  echo "ERROR: ${label} did not succeed after ${max_attempts} attempts." >&2
+  exit 1
+}
+
+supabase_project_status() {
+  local project_ref="$1"
+  npx supabase projects list --output json 2>/dev/null | jq -r --arg ref "$project_ref" '
+    if type == "array" then
+      (.[] | select(((.id // .ref // "") | tostring) == $ref) | ((.status // "") | tostring))
+    else empty end
+  ' | head -n 1
+}
+
+# Step 1 returns as soon as the project row exists. Linking before the project
+# is ACTIVE_HEALTHY persists the legacy IPv6 direct-db config, and the push then
+# dies on LegacyDbConfigIpv6Error before the pooler tenant exists (2026-08-30
+# stand-up finding 4). Poll first; never link a COMING_UP project.
+wait_for_supabase_project_active() {
+  local project_ref="$1"
+  local attempt=1
+  local observed_status=""
+  while (( attempt <= PROJECT_READY_MAX_ATTEMPTS )); do
+    observed_status="$(supabase_project_status "$project_ref" || true)"
+    if [[ "$observed_status" == "ACTIVE_HEALTHY" ]]; then
+      echo "# project $project_ref is ACTIVE_HEALTHY (poll ${attempt}/${PROJECT_READY_MAX_ATTEMPTS}) — safe to link" >&2
+      return 0
+    fi
+    echo "# waiting for $project_ref to reach ACTIVE_HEALTHY (poll ${attempt}/${PROJECT_READY_MAX_ATTEMPTS}, observed='${observed_status:-<unreadable>}')" >&2
+    attempt=$((attempt + 1))
+    if (( attempt <= PROJECT_READY_MAX_ATTEMPTS )); then
+      sleep "$PROJECT_READY_POLL_SECONDS"
+    fi
+  done
+  echo "ERROR: Supabase project '$project_ref' never reported ACTIVE_HEALTHY after ${PROJECT_READY_MAX_ATTEMPTS} polls" >&2
+  echo "       (last observed: '${observed_status:-<unreadable>}'). Refusing to link a project that is still" >&2
+  echo "       coming up — the link would store the legacy IPv6 direct-db config and the push would fail." >&2
+  echo "       The project EXISTS and is billable: resume with the same rig name once it is healthy, or run" >&2
+  echo "       scripts/staging/teardown-isolated-rig.sh against the recorded ref." >&2
+  exit 1
+}
+
 require_gcloud_secret() {
   local secret_name="$1"
+  local remediation="${2:-}"
   if ! gcloud secrets describe "$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
     echo "ERROR: required Secret Manager secret '$secret_name' is missing in project '$GCP_PROJECT'." >&2
+    if [[ -n "$remediation" ]]; then
+      printf '%s\n' "$remediation" >&2
+    fi
     exit 1
   fi
 }
+
+# The chain profile's default secret names are the shared-staging ones and do
+# NOT exist in arkova1 — every 2026-08 chain rig had to be told this by hand.
+# Naming the live alternatives (and the connector they require) turns a dead-end
+# abort into an actionable one. Secret NAMES only; no values are ever printed.
+# (The names are interpolated from the constants above rather than written
+# inline as `<VAR>=<name>` pairs: that shape trips the secret scanner's
+# generic-api-key heuristic, and these are Secret Manager resource names —
+# identifiers of where a credential lives, never a credential.)
+CHAIN_SECRET_REMEDIATION="       The chain profile's default names are the shared-staging ones and do not exist in ${GCP_PROJECT}.
+       The live signet set is (set each env var to the named secret):
+         STAGING_GETBLOCK_RPC_URL_SECRET   ->  ${PRIVATE_NODE_RPC_URL_NAME}
+         STAGING_GETBLOCK_RPC_AUTH_SECRET  ->  ${PRIVATE_NODE_RPC_AUTH_NAME}
+         STAGING_TREASURY_WIF_SECRET       ->  ${PRIVATE_NODE_TREASURY_WIF_NAME}
+       Those RPC secrets address a PRIVATE Bitcoin Core node (10.x), so a rig using them MUST also pass
+         --vpc-connector ${PRIVATE_NODE_VPC_CONNECTOR} --vpc-egress private-ranges-only
+       and declare STAGING_BITCOIN_NETWORK=signet — they are signet credentials, not mainnet ones."
 
 if [[ $APPLY -eq 1 ]]; then
   # Fail closed before creating infra if any pre-existing Secret Manager
@@ -829,9 +1033,9 @@ if [[ $APPLY -eq 1 ]]; then
   require_gcloud_secret "$CRON_SECRET_SECRET"
   case "$PROFILE" in
     chain)
-      require_gcloud_secret "$GETBLOCK_RPC_URL_SECRET"
-      require_gcloud_secret "$GETBLOCK_RPC_AUTH_SECRET"
-      require_gcloud_secret "$TREASURY_WIF_SECRET"
+      require_gcloud_secret "$GETBLOCK_RPC_URL_SECRET" "$CHAIN_SECRET_REMEDIATION"
+      require_gcloud_secret "$GETBLOCK_RPC_AUTH_SECRET" "$CHAIN_SECRET_REMEDIATION"
+      require_gcloud_secret "$TREASURY_WIF_SECRET" "$CHAIN_SECRET_REMEDIATION"
       ;;
     gemini)
       require_gcloud_secret "$GEMINI_API_KEY_SECRET"
@@ -859,6 +1063,7 @@ write_provision_state() {
     --arg supabase_project_ref "${CREATED_PROJECT_REF:-$NEW_PROJECT_REF}" \
     --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
     --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    --arg ip_hash_pepper_secret "$IP_HASH_PEPPER_SECRET_NAME" \
     --arg image "$PINNED_IMAGE" \
     --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
     --arg source_head_image_ref "$SOURCE_HEAD_IMAGE_REF" \
@@ -893,7 +1098,8 @@ write_provision_state() {
       supabase_project_ref: $supabase_project_ref,
       secrets: {
         supabase_url: $supabase_url_secret,
-        supabase_service_role_key: $supabase_service_role_secret
+        supabase_service_role_key: $supabase_service_role_secret,
+        ip_hash_pepper: $ip_hash_pepper_secret
       },
       image: $image,
       declared_source_head: $declared_source_head,
@@ -1040,6 +1246,45 @@ ensure_secret_with_value() {
   gcloud secrets versions access latest --secret="$secret_name" --project="$GCP_PROJECT" >/dev/null
 }
 
+generate_ip_hash_pepper() {
+  # 256 bits of hex. Printed to stdout ONLY inside a command substitution whose
+  # result is piped straight into Secret Manager — never echoed, never argv.
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32 2>/dev/null && return 0
+  fi
+  LC_ALL=C od -An -N32 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'
+}
+
+create_ip_hash_pepper_secret() {
+  # CREATE-ONCE, never rotate. Adding a new version on a resumed provision would
+  # silently orphan every audit-log IP hash the rig had already written, so an
+  # existing secret is kept and only proven readable.
+  if gcloud secrets describe "$IP_HASH_PEPPER_SECRET_NAME" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+    echo "# per-rig IP_HASH_PEPPER secret already exists — keeping its current version (never rotated)"
+    gcloud secrets versions access latest \
+      --secret="$IP_HASH_PEPPER_SECRET_NAME" \
+      --project="$GCP_PROJECT" >/dev/null
+    return 0
+  fi
+
+  local pepper_value
+  pepper_value="$(generate_ip_hash_pepper || true)"
+  # The generator runs in a subshell, so its own failure cannot abort the script:
+  # validate here, where the exit is authoritative.
+  if [[ ! "$pepper_value" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: could not generate a 256-bit IP_HASH_PEPPER for '$IP_HASH_PEPPER_SECRET_NAME'." >&2
+    echo "       No Cloud Run deploy was attempted; install openssl or provide /dev/urandom, then resume." >&2
+    exit 1
+  fi
+  printf '%s' "$pepper_value" | gcloud secrets create "$IP_HASH_PEPPER_SECRET_NAME" \
+    --project="$GCP_PROJECT" \
+    --replication-policy=automatic \
+    --data-file=-
+  gcloud secrets versions access latest \
+    --secret="$IP_HASH_PEPPER_SECRET_NAME" \
+    --project="$GCP_PROJECT" >/dev/null
+}
+
 extract_service_role_key() {
   local api_keys_json="$1"
   jq -r '
@@ -1074,8 +1319,10 @@ create_supabase_runtime_secrets() {
   echo "# creating/verifying per-rig Secret Manager secrets before Cloud Run deploy"
   print_cmd gcloud secrets create "$SUPABASE_URL_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
   print_cmd gcloud secrets create "$SUPABASE_SERVICE_ROLE_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+  print_cmd gcloud secrets create "$IP_HASH_PEPPER_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
   ensure_secret_with_value "$SUPABASE_URL_SECRET_NAME" "$supabase_url"
   ensure_secret_with_value "$SUPABASE_SERVICE_ROLE_SECRET_NAME" "$service_role_key"
+  create_ip_hash_pepper_secret
   CREATED_SUPABASE_SECRETS=1
   write_provision_state "supabase_secrets_recorded" ""
 }
@@ -1480,6 +1727,7 @@ echo "Supabase org:      $SUPABASE_ORG"
 echo "Cloud Run service: $CLOUD_RUN_SERVICE"
 echo "Cloud Run region:  $CLOUD_RUN_REGION"
 echo "GCP project:       $GCP_PROJECT"
+echo "VPC connector:     ${VPC_CONNECTOR:-<none>}${VPC_CONNECTOR:+ (egress ${VPC_EGRESS:-private-ranges-only})}"
 echo "Pinned image:      $PINNED_IMAGE"
 echo "Declared source:   $DECLARED_SOURCE_HEAD"
 echo "Soak id:           $SOAK_ID"
@@ -1551,11 +1799,23 @@ echo
 # preview-branch builder). Bootstrap extensions + enum pre-adds per
 # docs/reference/STAGING_RIG.md "How to populate".
 # ---------------------------------------------------------------------------
-echo "# Step 2/6 — link to the captured ref + replay repo schema (CLI parser, lettered-suffix safe)"
-run_cmd npx supabase link --project-ref "$NEW_PROJECT_REF"
+echo "# Step 2/6 — wait for ACTIVE_HEALTHY, then link to the captured ref + replay repo schema"
+echo "#   (CLI parser, lettered-suffix safe)"
+print_cmd npx supabase projects list --output json
+if [[ $APPLY -eq 1 ]]; then
+  echo "executing: npx supabase projects list --output json (poll until ACTIVE_HEALTHY)" >&2
+  wait_for_supabase_project_active "$NEW_PROJECT_REF"
+else
+  echo "#   -> (apply mode polls this until the new ref reports ACTIVE_HEALTHY, up to"
+  echo "#       $PROJECT_READY_MAX_ATTEMPTS times every ${PROJECT_READY_POLL_SECONDS}s. Linking a COMING_UP project stores the"
+  echo "#       legacy IPv6 direct-db config and the push dies on LegacyDbConfigIpv6Error.)"
+fi
+run_cmd_with_retry "supabase link" "$LINK_MAX_ATTEMPTS" "$LINK_RETRY_SECONDS" \
+  npx supabase link --project-ref "$NEW_PROJECT_REF"
 echo "#   bootstrap extensions + enum pre-adds (see STAGING_RIG.md) via MCP execute_sql / Mgmt API"
 echo "#   db push --linked now targets the just-linked $NEW_PROJECT_REF (validated above)."
-run_cmd npx supabase db push --linked
+run_cmd_with_retry "supabase db push" "$LINK_MAX_ATTEMPTS" "$LINK_RETRY_SECONDS" \
+  npx supabase db push --linked
 echo
 
 echo "# Step 2b/6 — create/record per-rig Supabase Secret Manager secrets"
@@ -1565,9 +1825,12 @@ else
   print_cmd npx supabase projects api-keys --project-ref "$NEW_PROJECT_REF" --output json
   print_cmd gcloud secrets create "$SUPABASE_URL_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
   print_cmd gcloud secrets create "$SUPABASE_SERVICE_ROLE_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+  print_cmd gcloud secrets create "$IP_HASH_PEPPER_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
   echo "#   apply mode derives https://<captured-ref>.supabase.co, fetches the service-role key,"
-  echo "#   writes both per-rig secrets, verifies latest versions are readable, and records"
-  echo "#   the secret names in $PROVISION_STATE_PATH before Cloud Run deploy."
+  echo "#   writes both per-rig Supabase secrets, generates a 256-bit IP_HASH_PEPPER (create-once,"
+  echo "#   never rotated — a new version would orphan every audit-log IP hash the rig wrote),"
+  echo "#   verifies latest versions are readable, and records the secret names in"
+  echo "#   $PROVISION_STATE_PATH before Cloud Run deploy."
 fi
 echo
 
@@ -1583,6 +1846,27 @@ echo
 # ---------------------------------------------------------------------------
 echo "# Step 3/6 — deploy isolated worker '$CLOUD_RUN_SERVICE' on pinned image (profile=$PROFILE)"
 echo "#   env-vars: $WORKER_ENV_VARS"
+# Serverless VPC Access is opt-in: absent, the deploy is byte-identical to
+# before. Present, it is what lets the worker reach a private (10.x) Bitcoin
+# node — the repair every private-RPC rig needed by hand.
+DEPLOY_NETWORK_ARGS=()
+if [[ -n "$VPC_CONNECTOR" ]]; then
+  DEPLOY_NETWORK_ARGS=("--vpc-connector=$VPC_CONNECTOR" "--vpc-egress=${VPC_EGRESS:-private-ranges-only}")
+  echo "#   private-range egress: ${DEPLOY_NETWORK_ARGS[*]}"
+elif [[ "$PROFILE" == "chain" ]]; then
+  # Apply mode refuses this outright (before any paid mutation). Dry-run exists
+  # to be read before applying, so say it here rather than printing a plan that
+  # would deploy a worker unable to reach its own node.
+  for private_rpc_secret in "${PRIVATE_NODE_RPC_SECRETS[@]}"; do
+    if [[ "$GETBLOCK_RPC_URL_SECRET" == "$private_rpc_secret" \
+      || "$GETBLOCK_RPC_AUTH_SECRET" == "$private_rpc_secret" ]]; then
+      echo "#   WARNING: '$private_rpc_secret' addresses a PRIVATE Bitcoin node (10.x) that Cloud Run"
+      echo "#            cannot reach without --vpc-connector ${PRIVATE_NODE_VPC_CONNECTOR} --vpc-egress private-ranges-only."
+      echo "#            --apply will REFUSE this configuration."
+      break
+    fi
+  done
+fi
 run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
   --project="$GCP_PROJECT" \
   --region="$CLOUD_RUN_REGION" \
@@ -1596,7 +1880,8 @@ run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
   --cpu=1 \
   --timeout=300 \
   --set-env-vars="$WORKER_ENV_VARS" \
-  --set-secrets="$WORKER_SECRETS"
+  --set-secrets="$WORKER_SECRETS" \
+  ${DEPLOY_NETWORK_ARGS[@]+"${DEPLOY_NETWORK_ARGS[@]}"}
 if [[ $APPLY -eq 1 ]]; then
   CREATED_CLOUD_RUN_SERVICE=1
   verify_deployed_revision_provenance
