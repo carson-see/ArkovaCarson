@@ -2,6 +2,32 @@
 
 _Last updated: 2026-08-23 (newest dated entry in this file)._
 
+## 2026-08-23 — verify-ratelimit-contract.spec.ts is no longer a RED artifact
+
+This spec shipped 2026-07-07 as a deliberately-failing repro whose header said the fix was
+"WITHHELD this window" and told readers not to edit `services/worker/src/index.ts`. Both statements
+are stale, and one was stale the day after it landed:
+
+- The **checkout-limiter mechanism it describes was fixed on 2026-07-08** by `7ed0f687f`
+  (`routes/admin-paths.ts`): `adminRouter`'s first middleware now `next('router')`s out for any path
+  outside its own prefixes, so `rateLimiters.checkout` never sees `/api/v1/*`. The spec was never
+  updated, so it kept documenting a defect that main no longer had, and kept naming file:line
+  locations that had moved.
+- The **residual** §1.10 gap was a different limiter — the 60/min `apiIpShadowGuard`, which shared one
+  bare-per-IP bucket with `apiV1Router`'s 100/min `anonRateLimiter` and so capped anonymous verify at
+  ~30/min. That is now fixed too (`middleware/apiIpShadowGuard.ts` + `utils/rateLimit.ts` scoping).
+
+The header is rewritten as a contract spec: what §1.10 requires, what used to break it and where each
+mechanism was fixed. The assertions are unchanged in substance — they were always written against
+the fixed behaviour.
+
+**Lesson for the next RED artifact:** a spec whose docstring asserts the state of production code
+goes stale silently the moment someone fixes it elsewhere. If you land one, put the defect's
+mechanism behind a named helper the spec can assert against, or expect to be re-reading a fossil.
+
+Running it still needs a Carson-provisioned throwaway rig (`E2E_SUPABASE_PROJECT_REF` +
+`E2E_WORKER_URL`); without one the suite skips rather than touching a protected ref.
+
 ## 2026-08-23 — api-keys.spec.ts revoke-flip de-flaked (locator + shared 429 bucket)
 
 The #2220 revoke block flaked on every post-#2220 tree (main run 32623769492: ✘✘✓ on
