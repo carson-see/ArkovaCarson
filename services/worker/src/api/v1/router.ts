@@ -18,6 +18,10 @@ import { verificationApiGate } from '../../middleware/featureGate.js';
 import { apiKeyAuth, requireScope } from '../../middleware/apiKeyAuth.js';
 import { requireScopeAnyAuth } from '../../middleware/requireScopeAnyAuth.js';
 import { usageTracking } from '../../middleware/usageTracking.js';
+import {
+  parkedAttestationVerify,
+  PARKED_ATTESTATION_ROUTE,
+} from '../../middleware/parkedAttestationVerify.js';
 import { verifyRouter } from './verify.js';
 import { verifyProofRouter } from './verify-proof.js';
 import { batchRouter } from './batch.js';
@@ -184,6 +188,15 @@ router.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// ─── PARKED: legally binding attestation verification (SCRUM-1873) ───
+// Mounted ABOVE apiKeyAuth/usageTracking deliberately: the feature has no
+// writer, so charging a caller's monthly quota (and three DB round-trips) for
+// a response that can never succeed is pure waste. Scoped to the one GET route
+// so every other method and path keeps its existing fall-through to the
+// sibling /verify mounts below. See middleware/parkedAttestationVerify.ts for
+// the prod evidence, why it is a 404 and not a 501, and the unpark checklist.
+router.get(PARKED_ATTESTATION_ROUTE, parkedAttestationVerify);
+
 // ─── API key auth (optional — attaches req.apiKey if present) ───
 // AUTH-02: Fail fast if HMAC secret is unset — empty string would make all key hashes reproducible
 const hmacSecret = config.apiKeyHmacSecret;
@@ -278,7 +291,11 @@ const anchorBulkSelfServiceRateLimiter = rateLimit({
 // Agentic verification search — MUST be before /verify to avoid route shadowing (P8-S19)
 router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 
-// SCRUM-1873: Legally binding attestation verification — public, anonymous GET
+// SCRUM-1873: Legally binding attestation verification.
+// PARKED — `GET /verify/attestation/:attestationId` is answered upstream by
+// parkedAttestationVerify (above), so this mount currently serves nothing. It
+// is retained so the handler and its status-disclosure gate stay wired and
+// tested for the unpark path, and so other methods/paths keep falling through.
 // MUST be before /verify to avoid route shadowing (same pattern as search/batch)
 router.use('/verify/attestation', attestationVerifyRouter);
 

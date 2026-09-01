@@ -38,7 +38,6 @@ vi.mock('../../../config.js', () => ({
 
 import {
   attestationVerifyRouter,
-  handleAttestationVerify,
   buildAttestationVerificationResult,
   defaultLookup,
   isPubliclyDisclosable,
@@ -307,16 +306,8 @@ interface RouteResponse {
 }
 
 /**
- * Mount the verification handler behind an ephemeral HTTP server and issue a
- * real request, so status codes and JSON bodies are exercised end-to-end.
- *
- * This mounts `handleAttestationVerify` DIRECTLY rather than
- * `attestationVerifyRouter`, because the router carries the parked-feature
- * gate that 501s every request (see the module header). The disclosure rules
- * proven below are what the endpoint must do the moment rows exist, so the
- * proof is kept running against the handler instead of being deleted for the
- * duration of the park. The gate itself is proven separately, over the real
- * router, in the parked-gate suite at the end of this file.
+ * Mount the real router behind an ephemeral HTTP server and issue a real
+ * request, so status codes and JSON bodies are exercised end-to-end.
  *
  * `supertest` is a worker-only devDependency and does not resolve from a git
  * worktree (no per-worktree node_modules), so this uses `express` + node's
@@ -328,7 +319,7 @@ async function callRoute(lookup: AttestationLookup, path: string): Promise<Route
     (req as unknown as { _testLookup?: AttestationLookup })._testLookup = lookup;
     next();
   });
-  app.get('/api/v1/verify/attestation/:attestationId', handleAttestationVerify);
+  app.use('/api/v1/verify/attestation', attestationVerifyRouter);
 
   const server = createServer(app);
   await new Promise<void>((resolve) => {
@@ -583,72 +574,6 @@ describe('defaultLookup', () => {
     mockFrom.mockReturnValue(chain as never);
 
     await expect(defaultLookup.lookupByPublicId('ARK-ATT-ABC123')).resolves.toBeNull();
-  });
-});
-
-// ── Parked-feature gate (2026-08-31) ────────────────────────────────
-//
-// `legally_binding_attestations` has no INSERT path anywhere in the tree, so
-// before this gate the endpoint could only ever answer 404 "Attestation not
-// found" — a lie of implicature, since 404 asserts a populated corpus. Verified
-// against prod `vzwyaatejekddvltxyye` on 2026-08-31: 0 table rows, and 0
-// `docusign.notarization_completed` jobs ever enqueued against 25 real
-// `docusign.envelope_completed` jobs.
-//
-// These run over the REAL `attestationVerifyRouter`, i.e. the shape prod
-// serves. The suite above proves what the handler behind this gate does.
-
-async function callRouter(path: string): Promise<RouteResponse> {
-  const app = express();
-  app.use('/api/v1/verify/attestation', attestationVerifyRouter);
-
-  const server = createServer(app);
-  await new Promise<void>((resolve) => {
-    server.listen(0, '127.0.0.1', resolve);
-  });
-
-  try {
-    const { port } = server.address() as AddressInfo;
-    const res = await fetch(`http://127.0.0.1:${port}${path}`);
-    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    return { status: res.status, body };
-  } finally {
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-  }
-}
-
-describe('parked-feature gate', () => {
-  beforeEach(() => {
-    mockFrom.mockClear();
-  });
-
-  it('501s a well-formed attestation id', async () => {
-    const res = await callRouter('/api/v1/verify/attestation/ARK-ATT-ABC123');
-
-    expect(res.status).toBe(501);
-    expect(res.body.verified).toBe(false);
-    expect(res.body.error).toBe('not_implemented');
-  });
-
-  it('501s a malformed id too, so no lookup is implied', async () => {
-    const res = await callRouter('/api/v1/verify/attestation/not-a-valid-id');
-
-    expect(res.status).toBe(501);
-    expect(res.body.error).toBe('not_implemented');
-  });
-
-  it('never claims the attestation was "not found"', async () => {
-    const res = await callRouter('/api/v1/verify/attestation/ARK-ATT-ABC123');
-
-    expect(JSON.stringify(res.body).toLowerCase()).not.toContain('not found');
-  });
-
-  it('touches no table — not even the audit log', async () => {
-    await callRouter('/api/v1/verify/attestation/ARK-ATT-ABC123');
-
-    expect(mockFrom).not.toHaveBeenCalled();
   });
 });
 

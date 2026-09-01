@@ -1,6 +1,33 @@
 # agents.md — pages
 _Last updated: 2026-08-30_
 
+## 2026-08-31 — `AttestationsPage.tsx`: phantom notarization columns unwired, load errors no longer silent
+
+Two defects in one page, same root cause — the page reads `attestations` through
+`const dbAny = supabase as any` and casts the result to a hand-written interface, so the
+compiler cannot see a column that does not exist.
+
+1. **`<NotarizationBadge>` was fed four columns `attestations` does not have.** Three
+   (`notary_name`, `notary_commission_state`, `docusign_envelope_id`) live on
+   `legally_binding_attestations` (migration 0314); the fourth, `notarized_at`, exists on
+   **no table in this schema** — the real column there is `notarization_completed_at`.
+   Every prop arrived `undefined`, so the badge rendered nothing on every row since it
+   shipped. The render is removed and the component is parked.
+2. **`if (!error && data)` collapsed a failed load into the empty state.** A statement
+   timeout, an RLS denial or a schema-cache miss showed the user "No attestations yet"
+   with no console signal — the shape described in
+   `memory/project_hollow_200_statement_timeout_swallow.md`. The fetch now branches on
+   `error` first and renders a distinct, retryable error state.
+
+**The guard is now the compiler, not a test.** `interface Attestation` is asserted against
+`Database['public']['Tables']['attestations']['Row']`, so declaring a phantom column is a
+`typecheck` failure naming the column — the DI-398 ruling in
+`services/worker/src/api/v1/agents.md` applied to this page. An earlier draft used a
+regex test that scraped both source files; it was replaced because it parsed on exact
+indentation and passed vacuously when the parse missed. Residual, stated plainly: this
+pins the declared interface, not every read — a `(row as any).x` access still bypasses it,
+and ~30 other `src/` files use the same cast.
+
 ## 2026-08-30 SCRUM-3524 — `OrgProfilePage.tsx` `handleInvite` propagates the invite result
 
 `useInviteMember.inviteMember` never rethrows (SCRUM-1979 toast-safety) — it

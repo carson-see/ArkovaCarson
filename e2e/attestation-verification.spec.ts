@@ -34,8 +34,11 @@ function buildMockAttestation(overrides: Partial<{
   issued_at: string;
   expires_at: string | null;
   created_at: string;
-  notarized_at: string | null;
-  notary_name: string | null;
+  // NOTE: no notarized_at / notary_name. Those columns do not exist on the
+  // `attestations` table in ANY environment — verified against prod
+  // vzwyaatejekddvltxyye on 2026-08-31. They live on
+  // `legally_binding_attestations` (migration 0314). Mocking them here let two
+  // tests "prove" a notarization UI that could never render against real data.
 }> = {}) {
   return {
     id: overrides.id ?? 'att-e2e-001',
@@ -55,8 +58,6 @@ function buildMockAttestation(overrides: Partial<{
     issued_at: overrides.issued_at ?? '2026-05-20T00:00:00Z',
     expires_at: overrides.expires_at ?? null,
     created_at: overrides.created_at ?? '2026-05-20T00:00:00Z',
-    notarized_at: overrides.notarized_at ?? null,
-    notary_name: overrides.notary_name ?? null,
   };
 }
 
@@ -175,14 +176,24 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       await expect(orgAdminPage.getByText('Expired', { exact: true }).first()).toBeVisible();
     });
 
-    test('attestation detail shows notarization badge when notarized', async ({ orgAdminPage }) => {
-      const notarizedAttestation = buildMockAttestation({
-        id: 'att-notarized',
-        public_id: 'pub-notarized',
-        status: 'ACTIVE',
+    // PARKED 2026-08-31. This previously asserted the notarization badge RENDERS,
+    // by mocking `notarized_at` + `notary_name` into an `attestations` row. That
+    // table has neither column in any environment, so the test proved only that
+    // the component works against a fabricated schema — never that the feature
+    // worked. The badge is unwired; the invariant now is that no notarization UI
+    // appears here even when a payload carries those fields.
+    test('attestation detail shows no notarization badge even when the payload carries notary fields', async ({ orgAdminPage }) => {
+      const notarizedAttestation = {
+        ...buildMockAttestation({
+          id: 'att-notarized',
+          public_id: 'pub-notarized',
+          status: 'ACTIVE',
+        }),
+        // Deliberately fabricated, exactly as the old mock did — the page must
+        // ignore them rather than render un-backed notarization claims.
         notarized_at: '2026-05-25T14:00:00Z',
         notary_name: 'Jane Notary, Esq.',
-      });
+      };
 
       // Mock Supabase legal_attestations single-row fetch
       await orgAdminPage.route('**/rest/v1/attestations*', async (route) => {
@@ -209,9 +220,11 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       // Click the attestation row to open the detail panel
       await orgAdminPage.getByText('pub-notarized').first().click();
 
-      // Notarization badge should be visible in the detail panel
-      await expect(orgAdminPage.getByTestId('notarization-badge').first()).toBeVisible({ timeout: 10000 });
-      await expect(orgAdminPage.getByText(/Notarized/i).first()).toBeVisible();
+      // Anchor on a DETAIL-PANEL-ONLY control first, so the negative assertion
+      // below cannot pass vacuously against a panel that never opened.
+      // (`attester_name` would be the wrong anchor — the list row renders it too.)
+      await expect(orgAdminPage.getByText('View Verification').first()).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByTestId('notarization-badge')).not.toBeVisible();
     });
 
     test('attestation detail does NOT show notarization badge when not notarized', async ({ orgAdminPage }) => {
@@ -219,8 +232,6 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
         id: 'att-plain',
         public_id: 'pub-plain',
         status: 'ACTIVE',
-        notarized_at: null,
-        notary_name: null,
       });
 
       await orgAdminPage.route('**/rest/v1/attestations*', async (route) => {
@@ -238,7 +249,9 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       // Click the attestation row to open the detail panel
       await orgAdminPage.getByText('pub-plain').first().click();
 
-      // Notarization badge should NOT be present in the detail panel
+      // Panel-open anchor first: without it this negative assertion passes even
+      // when the click never opened the panel.
+      await expect(orgAdminPage.getByText('View Verification').first()).toBeVisible({ timeout: 10000 });
       await expect(orgAdminPage.getByTestId('notarization-badge')).not.toBeVisible();
     });
 
@@ -247,13 +260,17 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       const stages = [
         buildMockAttestation({ id: 'att-transition', public_id: 'pub-transition', status: 'PENDING' }),
         buildMockAttestation({ id: 'att-transition', public_id: 'pub-transition', status: 'ACTIVE' }),
-        buildMockAttestation({
-          id: 'att-transition',
-          public_id: 'pub-transition',
-          status: 'ACTIVE',
+        {
+          ...buildMockAttestation({
+            id: 'att-transition',
+            public_id: 'pub-transition',
+            status: 'ACTIVE',
+          }),
+          // Fabricated columns (see buildMockAttestation) — present to prove the
+          // page ignores them.
           notarized_at: '2026-05-27T10:00:00Z',
           notary_name: 'Transition Notary',
-        }),
+        },
       ];
 
       let stageIndex = 0;
@@ -284,9 +301,11 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       await orgAdminPage.reload();
       await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
       await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
-      // Click into detail to see notarization badge
+      // Click into detail: status stays "Active", and the fabricated notary
+      // fields produce no notarization badge (parked — see the test above).
       await orgAdminPage.getByText('pub-transition').first().click();
-      await expect(orgAdminPage.getByText(/Notarized/i).first()).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByText('View Verification').first()).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByTestId('notarization-badge')).not.toBeVisible();
     });
 
     test('public verification API returns correct result for active attestation', async ({ page }) => {

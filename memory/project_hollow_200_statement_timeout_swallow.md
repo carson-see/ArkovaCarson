@@ -47,4 +47,4 @@ surfaces as 5xx, one proving a genuinely absent row is 404. A single test that
 only checks the 404 will pass against the broken form.
 
 Applies to every read that fronts a public or audited surface. Related:
-[[feedback_read_the_emitting_code]], [[feedback_bounded_body_reads]].
+`memory/feedback_read_the_emitting_code.md`, `memory/feedback_bounded_body_reads.md`.

@@ -61,6 +61,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/lib/supabase';
+import type { Database } from '@/types/database.types';
 import { EmploymentVerificationForm } from '@/components/attestation/EmploymentVerificationForm';
 import { EducationVerificationForm } from '@/components/attestation/EducationVerificationForm';
 import { EvidenceUpload } from '@/components/attestation/EvidenceUpload';
@@ -121,12 +122,40 @@ interface Attestation {
   issued_at: string;
   expires_at: string | null;
   created_at: string;
-  // No notarization fields here. Notary/e-signature columns live on
-  // `legally_binding_attestations` (migration 0314), NOT on `attestations`.
-  // Because this page reads through `supabase as any`, declaring them here
-  // compiles fine and yields `undefined` forever — see
-  // src/tests/attestations-page-column-fidelity.test.ts.
 }
+
+/**
+ * Compile-time column fidelity for the interface above.
+ *
+ * This page reads `attestations` through `supabase as any` (see `dbAny`), so
+ * TypeScript cannot otherwise tell it that a declared field is not a real
+ * column — the value is simply `undefined` at runtime, forever, silently.
+ * That is how the SCRUM-1874 notarization UI shipped dead: the interface
+ * declared `notary_name`, `notary_commission_state`, `docusign_envelope_id`
+ * (which live on `legally_binding_attestations`, migration 0314) and
+ * `notarized_at` (which exists on NO table in this schema at all — the real
+ * column there is `notarization_completed_at`), and `<NotarizationBadge>` was
+ * fed all four. It rendered nothing on every row since it shipped.
+ *
+ * Adding a phantom field now fails `typecheck` instead. This is the same
+ * mechanism `ComplianceDashboardPage.tsx` gets for free by deriving its row
+ * type from `Database`, and the one `services/worker/src/api/v1/agents.md`
+ * (DI-398) settled on: "a phantom column is a `typecheck` failure, not a
+ * silent production outage."
+ *
+ * NOTE the residual: this pins the declared interface, not every read. A
+ * `(row as any).whatever` access still bypasses it. Closing that class across
+ * the ~30 other `supabase as any` sites needs a `scripts/ci/feedback-rules/`
+ * detector, which is not in scope here.
+ */
+// `T extends never` is a CONSTRAINT, so a non-empty union fails to satisfy it
+// and `typecheck` errors naming the offending column. A bare conditional type
+// would merely evaluate to something and never error — verified by injecting a
+// phantom `notarized_at` and confirming tsc goes red.
+type AssertNoPhantomColumns<T extends never> = T;
+type _AttestationColumnsExist = AssertNoPhantomColumns<
+  Exclude<keyof Attestation, keyof Database['public']['Tables']['attestations']['Row']>
+>;
 
 interface ClaimInput {
   claim: string;
@@ -194,6 +223,9 @@ export function AttestationsPage() {
   const [revokeConfirm, setRevokeConfirm] = useState('');
   const [revoking, setRevoking] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
+  // A failed load must not be indistinguishable from an empty org — see
+  // memory/project_hollow_200_statement_timeout_swallow.md.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const profileOrgId = profile?.org_id;
   const userId = user?.id;
 
@@ -218,11 +250,19 @@ export function AttestationsPage() {
         .order('created_at', { ascending: false })
         .limit(100);
 
-      if (!error && data) {
-        setAttestations(data as Attestation[]);
+      // Branch on `error` before `data`. Collapsing the two hides a statement
+      // timeout, an RLS denial and a schema-cache miss behind the same empty
+      // state the user sees when they genuinely have no attestations.
+      if (error) {
+        setLoadError(ATTESTATION_LABELS.LOAD_FAILED);
+        setAttestations([]);
+      } else {
+        setLoadError(null);
+        setAttestations((data ?? []) as Attestation[]);
       }
     } catch {
-      // Fetch failed
+      setLoadError(ATTESTATION_LABELS.LOAD_FAILED);
+      setAttestations([]);
     } finally {
       setLoading(false);
     }
@@ -886,6 +926,14 @@ export function AttestationsPage() {
             {loading ? (
               <div className="space-y-2">
                 {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+              </div>
+            ) : loadError ? (
+              <div className="text-center py-12" role="alert">
+                <AlertTriangle className="mx-auto h-10 w-10 text-destructive mb-3" />
+                <p className="text-sm text-destructive">{loadError}</p>
+                <Button variant="outline" className="mt-4" onClick={() => void fetchAttestations()}>
+                  {ATTESTATION_LABELS.RETRY}
+                </Button>
               </div>
             ) : attestations.length === 0 ? (
               <div className="text-center py-12">
