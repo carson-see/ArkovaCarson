@@ -169,6 +169,17 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         data: { fingerprint_sha256: string; metadata: Record<string, unknown> | null } | null;
         error: unknown;
       };
+      // F1-heal (SCRUM-3818 go-live gate): override the atomic conditional
+      // UPDATE (`... WHERE id = :id AND anchor_id IS NULL`) this call now
+      // attempts when a provenance conflict is detected. Defaults to
+      // "matched" (healed) — the common case. Set `data: null` to simulate
+      // the declared row having already materialized a live anchor (or
+      // having lost the supersede race) — the WHERE clause then matches zero
+      // rows and the refusal branch fires instead.
+      supersedeResult?: { data: { id: string } | null; error: unknown };
+      // F1-heal: override the audit_events insert performed for EVERY
+      // provenance-conflict outcome (healed or refused).
+      provenanceAuditResult?: { data: { id: string } | null; error: unknown };
     }
 
     function makeDb(opts: MakeDbOpts = {}) {
@@ -177,8 +188,16 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         insertedDetails?: Record<string, unknown>;
         insertedRow?: Record<string, unknown>;
         insertCalled: boolean;
+        supersedeCalled: boolean;
+        supersedePayload?: Record<string, unknown>;
+        provenanceAuditInsertCalled: boolean;
+        provenanceAuditInsertedRow?: Record<string, unknown>;
+        connectorArtifactFromCallCount: number;
       } = {
         insertCalled: false,
+        supersedeCalled: false,
+        provenanceAuditInsertCalled: false,
+        connectorArtifactFromCallCount: 0,
       };
       const db = {
         rpc: vi.fn((fn: string, args: Record<string, unknown>) => {
@@ -187,23 +206,66 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         }),
         from: vi.fn((table: string) => {
           if (table === 'connector_artifact') {
-            const provenanceResult = opts.provenanceResult ?? {
-              data: { fingerprint_sha256: EXPECTED_SHA256, metadata: null },
-              error: null,
-            };
-            const provenanceQuery = {
-              select: vi.fn(() => provenanceQuery),
-              eq: vi.fn(() => provenanceQuery),
-              is: vi.fn(() => provenanceQuery),
-              maybeSingle: vi.fn().mockResolvedValue(provenanceResult),
-              // Never called on this branch — present only so this object's
-              // inferred shape is a superset of BOTH DbClient.from() overload
-              // return types (this one and the integration_events one below),
-              // which a single non-overloaded vi.fn() callback needs to
-              // satisfy structurally.
+            state.connectorArtifactFromCallCount += 1;
+            if (state.connectorArtifactFromCallCount === 1) {
+              // FIRST call: the post-enqueue provenance read-back.
+              const provenanceResult = opts.provenanceResult ?? {
+                data: { fingerprint_sha256: EXPECTED_SHA256, metadata: null },
+                error: null,
+              };
+              const provenanceQuery = {
+                select: vi.fn(() => provenanceQuery),
+                eq: vi.fn(() => provenanceQuery),
+                is: vi.fn(() => provenanceQuery),
+                maybeSingle: vi.fn().mockResolvedValue(provenanceResult),
+                // Never called on this branch — present only so this
+                // object's inferred shape is a superset of every
+                // DbClient.from() overload return type, which a single
+                // non-overloaded vi.fn() callback needs to satisfy
+                // structurally.
+                update: vi.fn(() => provenanceQuery),
+                insert: vi.fn(),
+              };
+              return provenanceQuery;
+            }
+            // SECOND+ call: the F1-heal atomic conditional UPDATE, only ever
+            // reached when a conflict was detected on the first call.
+            const supersedeResult = opts.supersedeResult ?? { data: { id: 'artifact-1' }, error: null };
+            const supersedeQuery = {
+              update: vi.fn((value: Record<string, unknown>) => {
+                state.supersedeCalled = true;
+                state.supersedePayload = value;
+                return supersedeQuery;
+              }),
+              eq: vi.fn(() => supersedeQuery),
+              is: vi.fn(() => supersedeQuery),
+              select: vi.fn(() => supersedeQuery),
+              maybeSingle: vi.fn().mockResolvedValue(supersedeResult),
               insert: vi.fn(),
             };
-            return provenanceQuery;
+            return supersedeQuery;
+          }
+          if (table === 'audit_events') {
+            const query = {
+              select: vi.fn(() => query),
+              eq: vi.fn(() => query),
+              is: vi.fn(() => query),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              insert: vi.fn((value: Record<string, unknown>) => {
+                state.provenanceAuditInsertCalled = true;
+                state.provenanceAuditInsertedRow = value;
+                return {
+                  select: vi.fn(() => ({
+                    single: vi
+                      .fn()
+                      .mockResolvedValue(
+                        opts.provenanceAuditResult ?? { data: { id: 'audit-event-1' }, error: null },
+                      ),
+                  })),
+                };
+              }),
+            };
+            return query;
           }
           expect(table).toBe('integration_events');
           const query = {
@@ -294,12 +356,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     // detection: never silently accept a returned artifact id without
     // verifying it is the row THIS call's real, measured fingerprint produced.
     describe('F1 — connector_artifact provenance conflict detection', () => {
-      it('detects a pre-existing INBOUND-marked row for the same envelope and raises the distinct alert instead of silently succeeding', async () => {
-        // Simulates the race: an inbound-classified enqueue for this exact
-        // (org, envelope) already won the INSERT before this outbound call's
-        // real, server-fetched hash could land. The RPC (ON CONFLICT DO
-        // NOTHING) returns that existing row's id; the read-back proves it is
-        // NOT this call's own write.
+      it('detects a pre-existing INBOUND-marked row for the same envelope and raises the distinct alert', async () => {
         const { db } = makeDb({
           artifactResult: { data: 'forged-inbound-artifact', error: null },
           provenanceResult: {
@@ -314,9 +371,9 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         });
         const deps = makeDocusignEnvelopeJobDeps({ db });
 
-        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
-          'docusign_connector_artifact_provenance_conflict',
-        );
+        // F1-heal below now supersedes this row rather than throwing, so the
+        // call succeeds — but the DETECTION signal still fires unconditionally.
+        await deps.enqueueSignedDocument({ ...SINK_INPUT });
 
         // DISTINCT signal — a dedicated marker key, not a reuse of any
         // existing log line — and it never falls through to logger.info
@@ -342,12 +399,14 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         });
         const deps = makeDocusignEnvelopeJobDeps({ db });
 
-        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
-          'docusign_connector_artifact_provenance_conflict',
-        );
+        // No _direction marker at all — still detected on the hash mismatch
+        // alone, and still healed (anchor_id is NULL by default in this test).
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).resolves.toEqual({
+          queuedId: 'artifact-1',
+        });
       });
 
-      it('does NOT raise a conflict when the persisted row matches this call\'s own real, measured fingerprint (legitimate idempotent redelivery)', async () => {
+      it('does NOT raise a conflict when the persisted row matches this call\'s own real, measured fingerprint (legitimate idempotent redelivery) — no supersession attempted', async () => {
         // logger.error is a module-level mock shared (and not reset) across
         // this whole test file — clear it locally so this test's negative
         // assertion below reads only what THIS test's own call produced, not
@@ -372,6 +431,12 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
           expect.objectContaining({ docusign_connector_artifact_provenance_conflict: true }),
           expect.any(String),
         );
+        // No conflict at all => the F1-heal supersede UPDATE is never
+        // attempted, and no provenance audit_events row is written — there
+        // is nothing to heal or audit when this call's own write already won.
+        expect(state.supersedeCalled).toBe(false);
+        expect(state.provenanceAuditInsertCalled).toBe(false);
+        expect(state.connectorArtifactFromCallCount).toBe(1);
       });
 
       it('fails closed when the provenance read-back itself errors (never treats an unverifiable id as success)', async () => {
@@ -384,6 +449,160 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
           'docusign_connector_artifact_readback_failed',
         );
         expect(state.insertCalled).toBe(false); // no audit breadcrumb for an unverified write
+        expect(state.supersedeCalled).toBe(false); // never even attempts a heal on an unverified read
+      });
+    });
+
+    // F1-heal (SCRUM-3818 go-live gate; CTO precedence ruling: a fingerprint
+    // Arkova MEASURED from fetched document bytes ALWAYS supersedes one
+    // merely DECLARED by a notification, never the reverse). PR #2476 shipped
+    // detection only; these tests pin the auto-heal follow-up.
+    describe('F1-heal — auto-heal supersedes a declared/forged fingerprint with the verified one', () => {
+      const FORGED_HASH = 'f'.repeat(64);
+
+      it('forged-inbound-then-real-outbound: the verified hash WINS, the declared markers are stripped, and the supersession is audited', async () => {
+        const { db, state } = makeDb({
+          artifactResult: { data: 'forged-inbound-artifact', error: null },
+          provenanceResult: {
+            data: {
+              fingerprint_sha256: FORGED_HASH,
+              metadata: { _direction: 'inbound', _sending_account_id: 'acct-FOREIGN', queue_scope: 'org' },
+            },
+            error: null,
+          },
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+        // The job succeeds — the verified fingerprint now durably stands.
+        expect(result).toEqual({ queuedId: 'forged-inbound-artifact' });
+
+        // The atomic conditional UPDATE carried the verified fingerprint,
+        // stripped the declared-inbound classification markers, and recorded
+        // supersession provenance — but preserved unrelated metadata
+        // (`queue_scope`) untouched.
+        expect(state.supersedeCalled).toBe(true);
+        expect(state.supersedePayload).toMatchObject({
+          fingerprint_sha256: EXPECTED_SHA256,
+        });
+        const healedMetadata = state.supersedePayload?.metadata as Record<string, unknown>;
+        expect(healedMetadata).not.toHaveProperty('_direction');
+        expect(healedMetadata).not.toHaveProperty('_sending_account_id');
+        expect(healedMetadata.queue_scope).toBe('org');
+        expect(healedMetadata._superseded_declared_fingerprint).toBe(FORGED_HASH);
+        expect(healedMetadata._superseded_reason).toBe(
+          'declared_inbound_row_superseded_by_verified_outbound_fetch',
+        );
+        expect(typeof healedMetadata._superseded_at).toBe('string');
+
+        // Audited: org, envelope, both fingerprints, which won, why.
+        expect(state.provenanceAuditInsertCalled).toBe(true);
+        expect(state.provenanceAuditInsertedRow).toMatchObject({
+          event_type: 'docusign_connector_artifact_provenance_superseded',
+          event_category: 'ANCHOR',
+          target_type: 'connector_artifact',
+          target_id: 'forged-inbound-artifact',
+          org_id: ORG_ID,
+        });
+        const auditDetails = JSON.parse(state.provenanceAuditInsertedRow?.details as string) as Record<
+          string,
+          unknown
+        >;
+        expect(auditDetails).toMatchObject({
+          envelope_id: 'envelope-1',
+          integration_id: 'integration-1',
+          verified_fingerprint_sha256: EXPECTED_SHA256,
+          declared_fingerprint_sha256: FORGED_HASH,
+          winner: 'verified_document_bytes',
+        });
+
+        // Loud, distinct heal signal.
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            docusign_connector_artifact_provenance_superseded: true,
+            artifactId: 'forged-inbound-artifact',
+          }),
+          expect.any(String),
+        );
+
+        // Fell through to the normal audit breadcrumb — this call's write
+        // now durably stands, exactly as if the RPC's own INSERT had won.
+        expect(state.insertCalled).toBe(true);
+      });
+
+      it('already-materialized declared row: does NOT silently rewrite a live anchor — refuses, logs loud, and audits the unresolved conflict', async () => {
+        const { db, state } = makeDb({
+          artifactResult: { data: 'materialized-artifact', error: null },
+          provenanceResult: {
+            data: {
+              fingerprint_sha256: FORGED_HASH,
+              metadata: { _direction: 'inbound', _sending_account_id: 'acct-FOREIGN' },
+            },
+            error: null,
+          },
+          // The atomic UPDATE's WHERE anchor_id IS NULL matches ZERO rows —
+          // the drain already materialized a live anchor from this row
+          // between the read-back and this call's supersede attempt (or
+          // beforehand). This is the authoritative, race-free "already
+          // materialized" signal — never a separate read of anchor_id.
+          supersedeResult: { data: null, error: null },
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+          'docusign_connector_artifact_provenance_conflict_unresolved',
+        );
+
+        // The UPDATE was attempted (that's how we learned it was refused) but
+        // did not durably change anything a caller can observe on the row —
+        // the mock's zero-row-match already models "nothing was rewritten".
+        expect(state.supersedeCalled).toBe(true);
+
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            docusign_connector_artifact_provenance_conflict_unresolved: true,
+            artifactId: 'materialized-artifact',
+          }),
+          expect.any(String),
+        );
+
+        expect(state.provenanceAuditInsertCalled).toBe(true);
+        expect(state.provenanceAuditInsertedRow).toMatchObject({
+          event_type: 'docusign_connector_artifact_provenance_conflict_unresolved',
+          event_category: 'ANCHOR',
+          target_id: 'materialized-artifact',
+          org_id: ORG_ID,
+        });
+        const auditDetails = JSON.parse(state.provenanceAuditInsertedRow?.details as string) as Record<
+          string,
+          unknown
+        >;
+        expect(auditDetails.winner).toBe('unresolved_declared_row');
+
+        // Refused before the normal success breadcrumb — no partial state.
+        expect(state.insertCalled).toBe(false);
+      });
+
+      it('a failed provenance audit_events insert does not block a successful heal (awaited-but-non-fatal, mirrors the audit_events convention elsewhere)', async () => {
+        const { db, state } = makeDb({
+          artifactResult: { data: 'forged-inbound-artifact', error: null },
+          provenanceResult: {
+            data: { fingerprint_sha256: FORGED_HASH, metadata: { _direction: 'inbound' } },
+            error: null,
+          },
+          provenanceAuditResult: { data: null, error: { message: 'audit_events insert failed' } },
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+        expect(result).toEqual({ queuedId: 'forged-inbound-artifact' });
+        expect(state.supersedeCalled).toBe(true);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ integrationId: 'integration-1', artifactId: 'forged-inbound-artifact', healed: true }),
+          'DocuSign connector-artifact provenance audit_events insert failed — audit trail incomplete',
+        );
       });
     });
 
