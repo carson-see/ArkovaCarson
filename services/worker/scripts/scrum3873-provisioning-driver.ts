@@ -83,12 +83,30 @@ interface CycleResult {
   ok: boolean;
 }
 
+/**
+ * The whole /admin router shares rateLimiters.checkout: 10 requests per
+ * minute. A cycle makes 11 calls, so an unpaced driver trips a 429 on its last
+ * assertion every time and reports a failing soak for a limit it is itself
+ * breaching. Pacing is correct client behaviour, not a workaround — but note
+ * that 10/min is shared with the console's own list endpoints, so a real admin
+ * onboarding two partners in a sitting will hit this too.
+ */
+const CALL_SPACING_MS = 7000;
+let lastCallAt = 0;
+
+async function pace(): Promise<void> {
+  const wait = CALL_SPACING_MS - (Date.now() - lastCallAt);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastCallAt = Date.now();
+}
+
 async function call(
   targetUrl: string,
   path: string,
   token: string,
   body: unknown,
 ): Promise<{ status: number; json: Record<string, unknown> }> {
+  await pace();
   const res = await fetch(`${targetUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -175,6 +193,11 @@ export async function runCycle(args: Required<Pick<DriverArgs, 'targetUrl' | 'be
   checks.platform_admin_not_grantable =
     escalate.status === 201 && !('is_platform_admin' in escAccount) ? 'pass' : `FAIL ${escalate.status}`;
 
+  // A 429 is the driver outrunning the shared admin rate limit, not the
+  // feature misbehaving. Surface it distinctly so it can never be read as a
+  // behavioural regression — or quietly counted as a pass.
+  const rateLimited = Object.values(checks).some((v) => v.includes('429'));
+  if (rateLimited) checks.rate_limited = 'FAIL driver exceeded the 10/min admin limit; row is not behavioural evidence';
   const ok = Object.values(checks).every((v) => v === 'pass');
   counts.checks_total = Object.keys(checks).length;
   counts.checks_passed = Object.values(checks).filter((v) => v === 'pass').length;
