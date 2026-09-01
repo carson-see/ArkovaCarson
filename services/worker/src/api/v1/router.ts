@@ -193,15 +193,22 @@ if (!hmacSecret) {
 router.use(apiKeyAuth(hmacSecret ?? ''));
 
 // ─── Rate limiting (Constitution 1.10) ───
-// Anonymous: 100 req/min per IP, API key holders: 1,000 req/min per key
+// Anonymous: 100 req/min per IP, API key holders: 1,000 req/min per key.
+// Both carry an explicit `scope` so each tier owns its own bucket. Without one
+// they shared a bare per-IP Map entry with every other unscoped limiter in the
+// worker — including the 60/min `apiIpShadowGuard` and the 10/min checkout
+// limiter — and the anon tier could never enforce its own 100/min contract
+// (SCRUM-3418).
 const anonRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 100,
+  scope: 'v1-anon',
 });
 
 const keyedRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 1000,
+  scope: 'v1-keyed',
   keyGenerator: (req) => req.apiKey?.keyId ?? req.ip ?? 'unknown',
 });
 
@@ -242,8 +249,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
 // ─── Batch rate limiter (Constitution 1.10: 10 req/min) ───
 // `scope: 'batch'` keeps this bucket separate from anonRateLimiter and
 // keyedRateLimiter so a hot batch caller doesn't eat into their general
-// 1000/min budget (and vice versa). Without `scope`, all three would
-// share the same per-IP bucket after the F5 fix below.
+// 1000/min budget (and vice versa).
 const batchRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
@@ -313,7 +319,8 @@ import { creditsRouter } from './credits.js';
 const creditsRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `credits:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'credits',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter);
 
@@ -321,13 +328,15 @@ router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter);
 const aiRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 30,
-  keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ai',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 const credentialSourceImportRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `credential-source-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'credential-source-import',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // SCRUM-2913: the CTDL import consumer does a live outbound CE Registry fetch,
@@ -335,7 +344,8 @@ const credentialSourceImportRateLimiter = rateLimit({
 const ctdlImportRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `ctdl-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ctdl-import',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // L3-A6: the registry-anchor route ALSO does a live outbound CE Registry
@@ -344,7 +354,8 @@ const ctdlImportRateLimiter = rateLimit({
 const ctdlRegistryAnchorRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 5,
-  keyGenerator: (req) => `ctdl-registry-anchor:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ctdl-registry-anchor',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)

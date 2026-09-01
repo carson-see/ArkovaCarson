@@ -1,7 +1,12 @@
-# Arkova Memory Files — `feedback_*.md` rule index
+# Arkova Memory Files — rule index
 
 > Rule index only. This directory records durable engineering preferences and
 > enforcement mechanisms; it is not project status, backlog, or release truth.
+>
+> Most files are `feedback_*.md` — a preference or policy, with an enforcement
+> mechanism. A `project_*.md` file records a durable **failure class** that
+> existing gates exist to prevent: the mechanism, the blast radius, and which
+> gates hold it shut. Neither kind carries status, dates, or backlog.
 
 These files capture engineering preferences and policy decisions that
 should outlast individual sessions. Each rule is enforced one of three ways:
@@ -29,10 +34,18 @@ should outlast individual sessions. Each rule is enforced one of three ways:
 ## Current rules
 
 Every row below points at a file that exists in this directory — and
-`scripts/ci/check-doc-pointers.ts` now fails CI if CLAUDE.md, AGENTS.md, a
-skill, or a hook cites a `memory/` path that does not resolve. Before that
-check existed, 17 cited rule files were missing, including one named inside a
-hook's own deny message.
+`scripts/ci/check-doc-pointers.ts` fails CI if a `memory/` path cited by the
+required-reading set does not resolve. Before that check existed, 17 cited rule
+files were missing, including one named inside a hook's own deny message.
+
+The scan set was widened on 2026-08-31 to the **nested `agents.md`** files and
+the **comment lines** of `.github/workflows/*.yml`. Both cite this corpus and
+neither was covered, so `memory/project_deploy_typecheck_blackout.md` sat dead
+across six sites — including two CI gate sources — until someone found it by
+hand. That widening surfaced five more dead `memory/` pointers, each of which
+named a rule that lived only in one session's private memory. **A rule that
+exists only in a session's local memory does not exist** (CLAUDE.md §0.1): if
+you cite `memory/x.md`, the file has to be in this directory.
 
 | Memory file | Enforcement | Status |
 |---|---|---|
@@ -59,6 +72,12 @@ hook's own deny message.
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
 | `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
 | `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |
+
+## Failure-class notes
+
+| Memory file | Enforcement | Status |
+|---|---|---|
+| `project_deploy_typecheck_blackout.md` | CI lint ×3 — `check-deploy-lint-parity.ts` (R0-4 / SCRUM-1250), `check-deploy-build-parity.ts`, `check-deploy-typecheck-parity.ts` (SCRUM-1811). All three are pure file readers in the required `typecheck-lint` job. Override `ci-config-change` at the workflow level. | ✅ live |
 
 ## Override pattern
 

@@ -1,6 +1,38 @@
 # agents.md — e2e/
 
-_Last updated: 2026-08-23 (newest dated entry in this file)._
+_Last updated: 2026-08-29 (DocuSign record deep links spec added to record-detail.spec.ts)._
+
+## 2026-08-29 — DocuSign Record case added to `record-detail.spec.ts` (bilateral rollout, frontend-targeted T2)
+
+New `DocuSign Record (bilateral rollout, frontend-targeted T2)` describe block: creates a SECURED anchor via `createTestAnchor` then sets DocuSign-shaped `metadata` (`connector_source: 'docusign'`, `account_id`, `envelope_id`, `_signers`) via a **direct `serviceClient.from('anchors').update({ metadata })`** call, not `createTestAnchor`'s `AnchorUpdateSchema` — that schema is `.strict()` and shared by every spec that creates a non-PENDING test anchor, so it deliberately was NOT widened with a `metadata` field for one spec's fixture data. Asserts the real page renders `data-testid="docusign-account-link"` / `"docusign-envelope-link"` with the exact expected hrefs (`target="_blank" rel="noopener noreferrer"`) and at least one `data-testid="docusign-signer-row"` with a working `docusign-signer-link-0`. Component-level validation/injection-matrix coverage lives in `src/lib/docusignLinks.test.ts` + `AssetDetailView.test.tsx` (`src/components/anchor/agents.md`) — this spec proves only the end-to-end wire-up against a real page load.
+
+**Not executed against a live stack this session** — this worktree has no `.env.test` and the Docker daemon was not running (`npx supabase status` failed with "Cannot connect to the Docker daemon"), so no local Supabase/worker stack was reachable. Standing up one was deliberately not attempted here: per `project_local_supabase_shared_project_id`, ALL worktrees share the same `arkova` Supabase containers/volumes, so starting or stopping that stack from an agent session risks trampling a concurrent worktree's repro. Verified instead via `E2E_SUPABASE_SERVICE_KEY=dummy E2E_SEED_PASSWORD=dummy npx playwright test --list e2e/record-detail.spec.ts` (no network calls, no test execution) — the new case parses and is correctly enumerated across all 5 browser projects, confirming no import/syntax defect. Run for real against a live rig before merge-grade soak evidence is claimed.
+
+## 2026-08-23 — verify-ratelimit-contract.spec.ts is no longer a RED artifact
+
+This spec shipped 2026-07-07 as a deliberately-failing repro whose header said the fix was
+"WITHHELD this window" and told readers not to edit `services/worker/src/index.ts`. Both statements
+are stale, and one was stale the day after it landed:
+
+- The **checkout-limiter mechanism it describes was fixed on 2026-07-08** by `7ed0f687f`
+  (`routes/admin-paths.ts`): `adminRouter`'s first middleware now `next('router')`s out for any path
+  outside its own prefixes, so `rateLimiters.checkout` never sees `/api/v1/*`. The spec was never
+  updated, so it kept documenting a defect that main no longer had, and kept naming file:line
+  locations that had moved.
+- The **residual** §1.10 gap was a different limiter — the 60/min `apiIpShadowGuard`, which shared one
+  bare-per-IP bucket with `apiV1Router`'s 100/min `anonRateLimiter` and so capped anonymous verify at
+  ~30/min. That is now fixed too (`middleware/apiIpShadowGuard.ts` + `utils/rateLimit.ts` scoping).
+
+The header is rewritten as a contract spec: what §1.10 requires, what used to break it and where each
+mechanism was fixed. The assertions are unchanged in substance — they were always written against
+the fixed behaviour.
+
+**Lesson for the next RED artifact:** a spec whose docstring asserts the state of production code
+goes stale silently the moment someone fixes it elsewhere. If you land one, put the defect's
+mechanism behind a named helper the spec can assert against, or expect to be re-reading a fossil.
+
+Running it still needs a Carson-provisioned throwaway rig (`E2E_SUPABASE_PROJECT_REF` +
+`E2E_WORKER_URL`); without one the suite skips rather than touching a protected ref.
 
 ## 2026-08-23 — api-keys.spec.ts revoke-flip de-flaked (locator + shared 429 bucket)
 
@@ -168,7 +200,7 @@ Tests that need unauthenticated state (e.g., `auth.spec.ts`, `route-guards.spec.
 | `extraction-csp-fail-closed.spec.ts` | **§1.6 fail-closed exit proof (WEBEXT-02/03/04 / SCRUM-2504/2505/2506).** Serves a probe page under the EXACT deployed CSP (parsed from `vercel.json`) and proves: the CSP blocks the off-origin Tesseract/NER CDNs (jsdelivr, huggingface.co), `'self'` /vendor is reachable, and a model-load failure sends ZERO document-metadata egress (no `/api/v1/ai/extract` request). Unauthenticated (empty storageState); no backend fixtures. _(Restored 2026-07-28, lost by the union-merge-driver incident; see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`.)_ | 3 | `@playwright/test` (direct), `node:fs` (reads `vercel.json`) |
 | `dashboard.spec.ts` | Dashboard: welcome, stats, My Records, Secure Document button, privacy toggle, org admin view, navigation | 7 | `test`, `expect`, `individualPage`, `orgAdminPage` |
 | `anchor-creation.spec.ts` | Secure Document dialog: upload → fingerprint → confirm step → cancel, **+ Remove-file click-interception regression** (2026-07-28) | 6 | `test`, `expect`, `getServiceClient`, `individualPage` |
-| `record-detail.spec.ts` | Record detail: SECURED sections, fingerprint, QR code, proof downloads, lifecycle, PENDING state, 404 error | 8 | `test`, `expect`, `getServiceClient`, `createTestAnchor`, `deleteTestAnchor`, `SEED_USERS`, `individualPage` |
+| `record-detail.spec.ts` | Record detail: SECURED sections, fingerprint, QR code, proof downloads, lifecycle, PENDING state, 404 error, DocuSign metadata deep links + signer row | 9 | `test`, `expect`, `getServiceClient`, `createTestAnchor`, `deleteTestAnchor`, `SEED_USERS`, `individualPage` |
 | `revocation.spec.ts` | Revoke dialog: confirmation fields, enable on typing, cancel, reason field, REVOKED status | 5 | `test`, `expect`, `getServiceClient`, `createTestAnchor`, `deleteTestAnchor`, `SEED_USERS`, `orgAdminPage` |
 | `csv-upload.spec.ts` | Bulk upload wizard: CSV upload, column mapping, validation errors, processing | 5 | `test`, `expect`, `orgAdminPage` |
 | `org-admin.spec.ts` | Org admin: members table, org registry, issue credential form, status filter, export CSV | 5 | `test`, `expect`, `getServiceClient`, `createTestAnchor`, `deleteTestAnchor`, `SEED_USERS`, `orgAdminPage` |

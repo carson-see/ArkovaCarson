@@ -1,0 +1,33 @@
+### 0425 ROLLBACK + REAPPLY REHEARSAL  2026-08-30T22:31:30Z
+--- [1] index present: pg_indexes ---
+idx_anchors_reorg_scan
+--- [2] EXPLAIN with index ---
+Limit  (cost=0.14..2.36 rows=1 width=396)
+  ->  Index Scan using idx_anchors_user_fingerprint_unique on anchors  (cost=0.14..2.36 rows=1 width=396)
+        Filter: ((NOT legal_hold) AND (chain_tx_id IS NOT NULL) AND (chain_block_height >= 320000) AND (status = 'SECURED'::anchor_status))
+--- [3] ROLLBACK: DROP INDEX CONCURRENTLY (the migration's own -- ROLLBACK: line) ---
+DROP INDEX
+--- [4] index absent? ---
+0
+--- [5] EXPLAIN without index ---
+Limit  (cost=0.14..2.36 rows=1 width=396)
+  ->  Index Scan using idx_anchors_user_fingerprint_unique on anchors  (cost=0.14..2.36 rows=1 width=396)
+        Filter: ((NOT legal_hold) AND (chain_tx_id IS NOT NULL) AND (chain_block_height >= 320000) AND (status = 'SECURED'::anchor_status))
+--- [6] worker /health while rolled back ---
+{"status":"healthy","version":"0.1.0","git_sha":"c6874e0108a516f3741718cf25a98ad4a10422f6","uptime":1258,"network":"signet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}
+--- [7] detect-reorgs while rolled back ---
+{"checked":8,"reorgsDetected":0,"reverted":0,"completed":true}  HTTP=200
+--- [8] REAPPLY: CREATE INDEX CONCURRENTLY (0425 body) ---
+CREATE INDEX
+--- [9] index present again + EXPLAIN ---
+idx_anchors_reorg_scan|CREATE INDEX idx_anchors_reorg_scan ON public.anchors USING btree (chain_block_height DESC) WHERE ((status = 'SECURED'::anchor_status) AND (deleted_at IS NULL) AND (chain_tx_id IS NOT NULL))
+Limit  (cost=0.13..2.35 rows=1 width=396)
+  ->  Index Scan using idx_anchors_reorg_scan on anchors  (cost=0.13..2.35 rows=1 width=396)
+        Index Cond: (chain_block_height >= 320000)
+        Filter: (NOT legal_hold)
+--- [10] worker /health + detect-reorgs after reapply ---
+{"status":"healthy","version":"0.1.0","git_sha":"c6874e0108a516f3741718cf25a98ad4a10422f6","uptime":1260,"network":"signet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}
+{"checked":8,"reorgsDetected":0,"reverted":0,"completed":true}  HTTP=200
+--- [11] ledger row for 0425 untouched (no repair) ---
+0425|anchors_reorg_scan_index
+### END  2026-08-30T22:31:36Z

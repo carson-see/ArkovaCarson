@@ -28,6 +28,18 @@ itself to OrgRegistryTable/ReportsList):
   `ComplianceDashboardPage.rulesError.test.tsx` (3 cases, red-first). Known remaining gap,
   on the record: the page still does not consume `useComplianceScore().error` (score/gap
   fetch failures render as "No data") — out of SCRUM-3670's scope, untracked.
+## 2026-08-30 SCRUM-3524 — `OrgProfilePage.tsx` `handleInvite` propagates the invite result
+
+`useInviteMember.inviteMember` never rethrows (SCRUM-1979 toast-safety) — it
+toasts and resolves `false` — so a `handleInvite` that discarded the boolean
+left `InviteMemberModal` closing and resetting on FAILURE, with its inline
+error Alert unreachable. `handleInvite` now returns the boolean (modal prop
+`onInvite` is `Promise<boolean>`) and calls `refreshInvitations()` only on
+success, mirroring the `handleConfirmRevoke` pattern above it.
+`OrgProfilePage.test.tsx` probes the wired `onInvite` for both outcomes.
+Deliberately NOT touched: `handleResendInvitation` (same discarded boolean, but
+it isn't modal-driven — the hook's toast is its feedback, and a no-op refresh
+is harmless) and the SCRUM-3012 backend invite-flow defects (separate story).
 
 ## 2026-08-23 CLE-R1 — `RecordDetailPage.tsx` now feeds `cleMetadata` (SCRUM-1869 was Done with no user-visible outcome)
 
