@@ -53,23 +53,31 @@ function buildApp(userId?: string) {
 }
 
 /**
- * `getUserOrgInfo` issues
- * `from('org_members').select(...).eq('user_id', id).limit(1).maybeSingle()`
- * when no explicit org is requested. Mirror that chain exactly.
+ * Two shapes are exercised:
+ *   - no `?orgId=`  → `select(...).eq('user_id', id)` awaited directly, returning
+ *     every membership, so the route can refuse an ambiguous caller.
+ *   - with `?orgId=` → `getUserOrgInfo`'s `.eq().eq().limit(1).maybeSingle()`.
+ * The chain below is thenable so both resolve.
  */
-function mockMembership(role: 'owner' | 'admin' | 'member') {
+function mockMemberships(rows: { org_id: string; role: string }[]) {
   (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
     if (table === 'org_members') {
-      const resolved = Promise.resolve({ data: { org_id: PARENT, role }, error: null });
+      const all = { data: rows, error: null };
       const chain = {
         eq: () => chain,
         limit: () => chain,
-        maybeSingle: () => resolved,
+        maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
+        then: (resolve: (v: typeof all) => unknown) => Promise.resolve(all).then(resolve),
       };
       return { select: () => chain };
     }
     throw new Error(`unexpected table ${table}`);
   });
+}
+
+/** Single-org caller — the unambiguous case. */
+function mockMembership(role: 'owner' | 'admin' | 'member') {
+  mockMemberships([{ org_id: PARENT, role }]);
 }
 
 const rpc = () => db.rpc as ReturnType<typeof vi.fn>;
@@ -175,6 +183,63 @@ describe('POST /api/v1/org/sub-orgs/credits (SCRUM-3865)', () => {
 
     expect(res.status).toBe(status);
     expect(res.body.error).toBe(rpcError);
+  });
+
+  /**
+   * The affiliate flow writes the parent admin into every child's org_members
+   * as `owner`, so a partner admin belongs to the parent AND to each client
+   * org. Guessing which one is "the parent" would decide which balance a
+   * transfer debits, so an ambiguous caller must be refused, not resolved.
+   */
+  it('400s an admin of several orgs when no orgId is given', async () => {
+    mockMemberships([
+      { org_id: PARENT, role: 'owner' },
+      { org_id: CHILD, role: 'owner' },
+    ]);
+
+    const res = await request(buildApp(ADMIN))
+      .post('/api/v1/org/sub-orgs/credits')
+      .send({ childOrgId: CHILD, amount: 10 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('org_id_required');
+    expect(rpc()).not.toHaveBeenCalled();
+  });
+
+  it('uses the explicit orgId when the caller administers several orgs', async () => {
+    mockMemberships([
+      { org_id: PARENT, role: 'owner' },
+      { org_id: CHILD, role: 'owner' },
+    ]);
+    rpc().mockResolvedValueOnce({
+      data: { success: true, parent_balance: 1, child_balance: 2 },
+      error: null,
+    });
+
+    const res = await request(buildApp(ADMIN))
+      .post(`/api/v1/org/sub-orgs/credits?orgId=${PARENT}`)
+      .send({ childOrgId: CHILD, amount: 10 });
+
+    expect(res.status).toBe(200);
+    expect(rpc()).toHaveBeenCalledWith(
+      'allocate_credits_to_sub_org',
+      expect.objectContaining({ p_parent_org_id: PARENT }),
+    );
+  });
+
+  it('503s when the membership lookup itself fails', async () => {
+    (db.from as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      select: () => ({
+        eq: () => Promise.resolve({ data: null, error: { message: 'boom' } }),
+      }),
+    }));
+
+    const res = await request(buildApp(ADMIN))
+      .post('/api/v1/org/sub-orgs/credits')
+      .send({ childOrgId: CHILD, amount: 10 });
+
+    expect(res.status).toBe(503);
+    expect(rpc()).not.toHaveBeenCalled();
   });
 
   it('503s when the RPC transport fails', async () => {

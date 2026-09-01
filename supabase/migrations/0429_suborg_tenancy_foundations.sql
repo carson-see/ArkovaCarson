@@ -419,14 +419,18 @@ BEGIN
       o.id, o.public_id, o.parent_org_id, o.parent_approval_status,
       o.display_name, o.domain, o.description, o.logo_url, o.banner_url,
       o.org_type, o.website_url, o.verification_status,
-      o.verified_badge_granted_at, 1 AS depth
+      o.verified_badge_granted_at,
+      o.sub_org_listing_parent_optin, o.sub_org_listing_child_optin,
+      1 AS depth
     FROM organizations o WHERE o.id = p_root_id
     UNION ALL
     SELECT
       o.id, o.public_id, o.parent_org_id, o.parent_approval_status,
       o.display_name, o.domain, o.description, o.logo_url, o.banner_url,
       o.org_type, o.website_url, o.verification_status,
-      o.verified_badge_granted_at, t.depth + 1
+      o.verified_badge_granted_at,
+      o.sub_org_listing_parent_optin, o.sub_org_listing_child_optin,
+      t.depth + 1
     FROM organizations o JOIN tree t ON t.id = o.parent_org_id
     WHERE t.depth < effective_depth
       AND coalesce(o.parent_approval_status, 'APPROVED') = 'APPROVED'
@@ -440,7 +444,15 @@ BEGIN
     'max_depth', effective_depth,
     'nodes', coalesce(jsonb_agg(jsonb_build_object(
       'org_id', t.id, 'public_id', t.public_id,
-      'parent_org_id', t.parent_org_id,
+      -- 0429: the ROOT node is returned unconditionally (you already named it),
+      -- 0429: so emitting its parent_org_id would disclose the very affiliation
+      -- 0429: the consents protect -- readable by anyone holding the child's id,
+      -- 0429: which get_public_org_profiles hands out. Gate the edge on the
+      -- 0429: node's OWN consents; descendants are already filtered, so theirs
+      -- 0429: are true by construction.
+      'parent_org_id', CASE
+        WHEN t.sub_org_listing_parent_optin AND t.sub_org_listing_child_optin
+        THEN t.parent_org_id ELSE NULL END,
       'display_name', t.display_name, 'domain', t.domain,
       'description', t.description, 'logo_url', t.logo_url,
       'banner_url', t.banner_url, 'org_type', t.org_type,

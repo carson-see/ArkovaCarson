@@ -988,7 +988,18 @@ const CREDIT_RPC_STATUS: Record<string, number> = {
   insufficient_child_balance: 409,
 };
 
-/** Resolves the caller's org and rejects non-admins. */
+/**
+ * Resolves the acting parent org and rejects non-admins.
+ *
+ * `getUserOrgInfo` without an explicit org does `.limit(1).maybeSingle()` with
+ * no ORDER BY, so it returns an ARBITRARY one of the caller's memberships. That
+ * is tolerable for a list endpoint and NOT tolerable here: the affiliate flow
+ * writes the parent admin into every child's `org_members` as `owner`, so a
+ * HakiChain admin belongs to HakiChain *and* to each client org, and the org
+ * this resolved to would decide which balance a transfer debits. When the
+ * caller is ambiguous we make them say which org, rather than guessing on a
+ * money-moving path.
+ */
 async function requireParentAdmin(
   req: Request,
   res: Response,
@@ -1000,9 +1011,40 @@ async function requireParentAdmin(
   }
 
   const requestedOrgId = typeof req.query.orgId === 'string' ? req.query.orgId : undefined;
+
+  if (!requestedOrgId) {
+    const { data: memberships, error } = await db
+      .from('org_members')
+      .select('org_id, role')
+      .eq('user_id', userId);
+
+    if (error) {
+      logger.error({ err: error.message }, 'suborg_credit_membership_lookup_failed');
+      res.status(503).json({ error: 'membership_lookup_unavailable' });
+      return null;
+    }
+
+    const adminOrgs = (memberships ?? []).filter(
+      (m: { role: string | null }) => isOrgAdmin(m.role),
+    );
+
+    if (adminOrgs.length === 0) {
+      res.status(403).json({ error: 'Admin permissions required' });
+      return null;
+    }
+    if (adminOrgs.length > 1) {
+      res.status(400).json({
+        error: 'org_id_required',
+        message: 'You administer more than one organization. Specify which one with ?orgId=.',
+      });
+      return null;
+    }
+    return { userId, orgId: adminOrgs[0].org_id };
+  }
+
   const { orgId, role } = await getUserOrgInfo(userId, requestedOrgId);
   if (!orgId) {
-    res.status(400).json({ error: 'You must belong to an organization' });
+    res.status(403).json({ error: 'You are not a member of the selected organization' });
     return null;
   }
   if (!isOrgAdmin(role)) {

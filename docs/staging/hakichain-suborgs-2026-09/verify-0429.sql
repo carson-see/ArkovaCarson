@@ -147,6 +147,13 @@ SELECT _record('re-parented child is not published under new parent', '0',
 
 RESET request.jwt.claim.role;
 
+-- ── Root-edge disclosure: naming a child must not reveal its parent ──────────
+-- Found by code review on this PR: the consent filter sat only on the RECURSIVE
+-- term, so an anonymous caller holding a sub-org's id (get_public_org_profiles
+-- hands those out) could read its parent_org_id straight off the root node.
+SELECT _record('child root node hides its parent while confidential', '',
+  coalesce((get_org_subtree('22222222-2222-2222-2222-222222222222'))->'nodes'->0->>'parent_org_id', ''));
+
 \o
 -- ── Report ───────────────────────────────────────────────────────────────────
 SELECT id, check_name, expected, actual, CASE WHEN pass THEN 'PASS' ELSE 'FAIL' END AS result
