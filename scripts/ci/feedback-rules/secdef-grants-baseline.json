@@ -25,11 +25,12 @@
     "replay - so deleting 0418 turns them straight back into fresh violations. Their",
     "0335 keys stay grandfathered on purpose: the next re-definition of those",
     "functions would re-run ALTER DEFAULT PRIVILEGES and reopen what 0418 closed, so",
-    "whoever writes it still owes an inline revoke."
+    "whoever writes it still owes an inline revoke.",
+    "SCRUM-3864: get_public_org_profile and get_org_subtree moved OUT of this list into DELIBERATELY_PUBLIC. Migration 0429 re-creates both (to add sub-org listing consent), which mints a new key this file cannot cover, and their anon grant is a live product decision rather than debt to burn down."
   ],
   "_generated": "2026-08-23",
   "_counts": {
-    "total": 109,
+    "total": 107,
     "in_squashed_baseline": 59,
     "in_numbered_migrations": 50,
     "burned_down_by_replay_parity": 4
@@ -53,11 +54,9 @@
     "00000000000000_baseline_at_main_HEAD.sql::public.get_my_credentials",
     "00000000000000_baseline_at_main_HEAD.sql::public.get_org_anchor_stats",
     "00000000000000_baseline_at_main_HEAD.sql::public.get_org_members_public",
-    "00000000000000_baseline_at_main_HEAD.sql::public.get_org_subtree",
     "00000000000000_baseline_at_main_HEAD.sql::public.get_payment_ledger",
     "00000000000000_baseline_at_main_HEAD.sql::public.get_public_issuer_registry",
     "00000000000000_baseline_at_main_HEAD.sql::public.get_public_member_profile",
-    "00000000000000_baseline_at_main_HEAD.sql::public.get_public_org_profile",
     "00000000000000_baseline_at_main_HEAD.sql::public.get_public_org_profiles",
     "00000000000000_baseline_at_main_HEAD.sql::public.get_public_records_stats",
     "00000000000000_baseline_at_main_HEAD.sql::public.get_public_template",
