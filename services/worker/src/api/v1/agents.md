@@ -1065,3 +1065,12 @@ guard and a scope guard). The structural ratchet above covers these four mounts 
 - `requireParentAdmin()` is a fast local pre-check only. The RPC independently re-verifies parent adminship and that the child is genuinely a sub-org of that parent, so authorization does not depend on the route layer being right. Note the worker's `isOrgAdmin` accepts `owner`/`admin` while the RPC also accepts the legacy `ORG_ADMIN`; the RPC is the wider, authoritative gate.
 - RPC error mapping lives in `CREDIT_RPC_STATUS`. Balance failures are **409**, not 402: the request conflicts with current balance state and, unlike the anchor path, nothing is purchasable in the moment.
 - `GET /credits` returns balances only. Per decision D2 a parent sees what its sub-orgs spend, never what they secured — no record contents cross the tenancy boundary.
+
+## Sub-org offboarding (SCRUM-3868)
+
+- `POST /offboard` is the real end-of-relationship action. `Revoke` only flips `parent_approval_status`, which is enforced in exactly one place (`queue-resolution.ts`) — it severs the affiliation, not the tenancy, so an ex-client kept its records, credits, members and integrations and carried on anchoring against a budget the parent funded (pre-mortem F6).
+- **Order is the design: reclaim, then suspend.** If the suspend fails after a successful reclaim the credits are safely back with the parent and the sub-org is merely still active, so a retry finishes the job. Suspending first would strand the parent's credits inside an org nobody can act in. On a reclaim failure the endpoint stops and does NOT suspend.
+- A partial result is reported as such — `{ error, reclaimed, suspended: false }` — because an operator told only "it failed" will retry blind against a half-done state.
+- The balance is read BEFORE anything moves: a balance we cannot read is a reclaim we cannot size, so that path 503s without touching credits.
+- **Anchored records are never touched.** They are the customer's evidence and must stay verifiable after the relationship ends; the 0431 proof asserts this explicitly.
+- Uses migration 0431's identity-carrying `suspend_suborg` overload — the 3-arg form resolves the caller via `auth.uid()` and is NULL under the worker's service_role client.

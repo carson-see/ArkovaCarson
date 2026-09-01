@@ -993,6 +993,13 @@ orgSubOrgsRouter.post('/max', async (req: Request, res: Response) => {
 // child really is a sub-org of that parent, so authorization does not depend on
 // this layer being correct.
 
+/** suspend_suborg error code -> HTTP status. Anything unlisted is a 500. */
+const SUSPEND_RPC_STATUS: Record<string, number> = {
+  unauthenticated: 401,
+  parent_admin_required: 403,
+  not_a_child_of_parent: 404,
+};
+
 /** Credits are whole units; the bound is a sanity rail, not a business limit. */
 const MAX_CREDIT_TRANSFER = 100_000_000;
 
@@ -1207,6 +1214,133 @@ orgSubOrgsRouter.get('/credits', async (req: Request, res: Response) => {
     });
   } catch (error) {
     logger.error({ error }, 'Failed to load sub-org credit rollup');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Sub-org offboarding (SCRUM-3868) ────────────────────────────────────────
+//
+// Pre-mortem F6: "Revoke" flipped `parent_approval_status` and nothing else —
+// the ex-client kept its records, its remaining credits, its members and its
+// integrations, and carried on anchoring against a budget the parent funded.
+// `parent_approval_status = 'REVOKED'` is enforced in exactly one place
+// (cross-org queue resolution), so revocation severs the affiliation, not the
+// tenancy. This endpoint is the real lever.
+//
+// ORDER IS THE DESIGN: reclaim, then suspend. If the suspend fails after a
+// successful reclaim the credits are safely back with the parent and the
+// sub-org is merely still active, so a retry finishes the job. Suspending first
+// would strand the parent's credits inside an org nobody can act in.
+//
+// The sub-org's ANCHORED RECORDS ARE NOT TOUCHED. They are the customer's
+// evidence, not ours, and they must stay verifiable on the public surface after
+// the relationship ends.
+
+const OffboardSchema = z.object({
+  childOrgId: z.string().uuid(),
+  reason: z.string().trim().max(500).optional(),
+});
+
+interface SuspendRpcResult {
+  success?: boolean;
+  already_suspended?: boolean;
+  error?: string;
+}
+
+orgSubOrgsRouter.post('/offboard', async (req: Request, res: Response) => {
+  try {
+    const ctx = await requireParentAdmin(req, res);
+    if (!ctx) return;
+
+    const parsed = OffboardSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({
+        error: 'invalid_request',
+        details: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+      return;
+    }
+    const { childOrgId, reason } = parsed.data;
+
+    // What is left to return? Read before moving anything: a balance we cannot
+    // read is a reclaim we cannot size, and guessing would either strand
+    // credits or attempt an over-reclaim the RPC would refuse anyway.
+    const { data: credits, error: creditsError } = await db
+      .from('org_credits')
+      .select('balance')
+      .eq('org_id', childOrgId)
+      .maybeSingle();
+
+    if (creditsError) {
+      logger.error({ err: creditsError.message, childOrgId }, 'suborg_offboard_balance_read_failed');
+      res.status(503).json({ error: 'balance_lookup_unavailable' });
+      return;
+    }
+
+    const balance: number = credits?.balance ?? 0;
+    let reclaimed = 0;
+
+    if (balance > 0) {
+      const { data: reclaimData, error: reclaimError } = await callRpc<AllocateCreditsRpcResult>(
+        db,
+        'allocate_credits_to_sub_org',
+        {
+          p_parent_org_id: ctx.orgId,
+          p_child_org_id: childOrgId,
+          p_amount: -balance,
+          p_note: reason ? `offboarding: ${reason}` : 'offboarding',
+          p_caller_user_id: ctx.userId,
+        },
+      );
+
+      if (reclaimError) {
+        logger.error({ err: reclaimError.message, childOrgId }, 'suborg_offboard_reclaim_rpc_failure');
+        res.status(503).json({ error: 'credit_allocation_unavailable' });
+        return;
+      }
+      if (!reclaimData || reclaimData.error) {
+        // Stop here. Suspending an org whose credits we failed to reclaim
+        // strands them somewhere nobody can spend or recover them.
+        const code = reclaimData?.error ?? 'unknown_error';
+        res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code, reclaimed: 0, suspended: false });
+        return;
+      }
+      reclaimed = balance;
+    }
+
+    const { data: suspendData, error: suspendError } = await callRpc<SuspendRpcResult>(
+      db,
+      'suspend_suborg',
+      {
+        p_parent_org_id: ctx.orgId,
+        p_sub_org_id: childOrgId,
+        p_reason: reason ?? null,
+        p_caller_user_id: ctx.userId,
+      },
+    );
+
+    if (suspendError) {
+      logger.error({ err: suspendError.message, childOrgId, reclaimed }, 'suborg_offboard_suspend_rpc_failure');
+      res.status(503).json({ error: 'suspend_unavailable', reclaimed, suspended: false });
+      return;
+    }
+    if (!suspendData || suspendData.success !== true) {
+      // The reclaim already happened. Say so — a retry is safe, but only if the
+      // caller knows not to expect the credits to move a second time.
+      const code = suspendData?.error ?? 'unknown_error';
+      logger.warn({ childOrgId, reclaimed, code }, 'suborg_offboard_partial');
+      res.status(SUSPEND_RPC_STATUS[code] ?? 500).json({ error: code, reclaimed, suspended: false });
+      return;
+    }
+
+    logger.info({ orgId: ctx.orgId, childOrgId, reclaimed }, 'suborg_offboarded');
+    res.json({
+      reclaimed,
+      suspended: true,
+      alreadySuspended: suspendData.already_suspended === true,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to offboard sub-org');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

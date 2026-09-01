@@ -3013,6 +3013,18 @@ export const SUB_ORG_LABELS = {
   DOCUSIGN_PARENT_NOT_CONNECTED: 'Connect your own DocuSign account first, then you can share it.',
   DOCUSIGN_ALREADY_CONNECTED: 'That organization already has its own DocuSign connection.',
   DOCUSIGN_SHARE_FAILED: 'Could not change the DocuSign connection.',
+  // SCRUM-3868 — ending a client relationship. Records are deliberately NOT
+  // mentioned as being removed, because they are not: they stay verifiable.
+  OFFBOARD: 'Offboard',
+  OFFBOARD_TITLE: 'Offboard this organization?',
+  OFFBOARD_BODY:
+    'Unspent credits return to your organization and the affiliated organization is suspended, so it can no longer secure new documents. Documents it has already secured stay verifiable and are not removed.',
+  OFFBOARD_CONFIRM: 'Offboard Organization',
+  OFFBOARD_CANCEL: 'Keep Active',
+  OFFBOARD_DONE: 'That organization has been offboarded.',
+  OFFBOARD_PARTIAL:
+    'Credits were returned, but the organization could not be suspended. Try again.',
+  OFFBOARD_FAILED: 'Could not offboard that organization.',
   PENDING_APPROVAL: 'Pending approval from',
   REVOKED_BY: 'Affiliation revoked by',
   APPROVE_SUCCESS: 'Organization approved as affiliate.',

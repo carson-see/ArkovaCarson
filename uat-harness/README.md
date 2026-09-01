@@ -24,3 +24,16 @@ Screenshots captured from this harness for the PR:
 `docs/staging/hakichain-suborgs-2026-09/uat-1280.png` and `uat-375.png`.
 
 Not part of the app build — nothing in `src/` imports it.
+
+## Known limitation: the confirmation dialog does not open here
+
+The harness resolves React through the worktree's symlinked `node_modules`, so
+Radix's `AlertDialog` primitives see a second React copy — "Invalid hook call",
+and the offboarding dialog never opens. Aliasing and `dedupe` did not collapse
+it. The row controls (credits, DocuSign sharing, Offboard trigger) all render
+and work, and those are what the screenshots capture.
+
+The dialog itself is covered by tests instead, not by screenshot:
+`ManageSubOrgsOffboard.test.tsx` exercises open, the "documents stay verifiable"
+copy, confirm, cancel, and the partial-offboard message. This is a harness
+artifact, not a product defect — the app resolves one React.

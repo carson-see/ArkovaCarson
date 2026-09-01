@@ -16,6 +16,10 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 import { SUB_ORG_LABELS } from '@/lib/copy';
@@ -84,6 +88,9 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   const [creditAmounts, setCreditAmounts] = useState<Record<string, string>>({});
   const [creditBusy, setCreditBusy] = useState<{ id: string; dir: 1 | -1 } | null>(null);
   const [connectorBusy, setConnectorBusy] = useState<string | null>(null);
+  // SCRUM-3868 — the sub-org awaiting an offboard confirmation, if any.
+  const [offboarding, setOffboarding] = useState<SubOrg | null>(null);
+  const [offboardBusy, setOffboardBusy] = useState(false);
 
   // `isInitialLoad` gates the full-panel error state to the mount fetch and the
   // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
@@ -156,6 +163,44 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
     async function run() { await Promise.all([fetchSubOrgs(), fetchCredits()]); }
     void run();
   }, [fetchSubOrgs, fetchCredits]);
+
+  /**
+   * SCRUM-3868 — end a client relationship: return the unspent credits, then
+   * suspend. The worker does it in that order so a failure leaves the credits
+   * with the parent rather than stranded. Anchored records are untouched.
+   */
+  const handleOffboard = useCallback(async (child: SubOrg) => {
+    setOffboardBusy(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(
+        `${WORKER_URL}/api/v1/org/sub-orgs/offboard?orgId=${encodeURIComponent(orgId)}`,
+        { method: 'POST', headers, body: JSON.stringify({ childOrgId: child.id }) },
+      );
+      const data = await response.json().catch(() => ({})) as {
+        reclaimed?: number; suspended?: boolean;
+      };
+
+      if (!response.ok) {
+        // A partial offboard is its own message: the credits DID move, so the
+        // operator must not assume nothing happened and start over blind.
+        toast.error(
+          data.reclaimed && data.suspended === false
+            ? SUB_ORG_LABELS.OFFBOARD_PARTIAL
+            : SUB_ORG_LABELS.OFFBOARD_FAILED,
+        );
+        return;
+      }
+
+      setOffboarding(null);
+      await Promise.all([fetchSubOrgs(false), fetchCredits()]);
+      toast.success(SUB_ORG_LABELS.OFFBOARD_DONE);
+    } catch {
+      toast.error(SUB_ORG_LABELS.OFFBOARD_FAILED);
+    } finally {
+      setOffboardBusy(false);
+    }
+  }, [orgId, fetchSubOrgs, fetchCredits]);
 
   /**
    * SCRUM-3867 — lend this org's DocuSign connection to a sub-org, or take it
@@ -537,6 +582,21 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                         </Button>
                       </>
                     )}
+                    {/*
+                      SCRUM-3868 — Offboard is the real end-of-relationship
+                      action: it returns unspent credits and suspends. Revoke,
+                      beside it, only severs the affiliation edge.
+                    */}
+                    {sub.parent_approval_status === 'APPROVED' && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-red-400 border-red-500/20 hover:bg-red-500/10"
+                        onClick={() => setOffboarding(sub)}
+                      >
+                        {SUB_ORG_LABELS.OFFBOARD}
+                      </Button>
+                    )}
                     {sub.parent_approval_status === 'APPROVED' && (
                       <Button
                         size="sm"
@@ -634,6 +694,37 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
           </div>
         )}
       </CardContent>
+
+      {/*
+        SCRUM-3868 — offboarding moves money and suspends an organization, so it
+        confirms. The copy states what is NOT done as well as what is: the
+        sub-org's already-secured documents stay verifiable, which is the thing
+        an operator most needs to be sure of before clicking.
+      */}
+      <AlertDialog open={offboarding !== null} onOpenChange={(open) => { if (!open) setOffboarding(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{SUB_ORG_LABELS.OFFBOARD_TITLE}</AlertDialogTitle>
+            <AlertDialogDescription>{SUB_ORG_LABELS.OFFBOARD_BODY}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={offboardBusy}>
+              {SUB_ORG_LABELS.OFFBOARD_CANCEL}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={offboardBusy}
+              onClick={(e) => {
+                e.preventDefault();
+                if (offboarding) void handleOffboard(offboarding);
+              }}
+            >
+              {offboardBusy
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : SUB_ORG_LABELS.OFFBOARD_CONFIRM}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
