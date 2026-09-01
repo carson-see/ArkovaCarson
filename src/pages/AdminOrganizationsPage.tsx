@@ -21,6 +21,7 @@ import {
   FileText,
   SlidersHorizontal,
   Coins,
+  Plus,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -45,7 +46,8 @@ import {
 import { workerFetch } from '@/lib/workerClient';
 import { ROUTES, orgProfilePath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
-import { ADMIN_CREDIT_ADJUST_LABELS as CREDIT } from '@/lib/copy';
+import { ADMIN_CREDIT_ADJUST_LABELS as CREDIT, ADMIN_PROVISION_ORG_LABELS as PROVISION } from '@/lib/copy';
+import { CreateOrganizationDialog } from '@/components/admin/CreateOrganizationDialog';
 
 interface AdminOrganization {
   id: string;
@@ -457,6 +459,7 @@ export function AdminOrganizationsPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { items, total, page, limit, loading, error, fetchList } = useAdminList<AdminOrganization>('/api/admin/organizations');
+  const [createOpen, setCreateOpen] = useState(false);
 
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
 
@@ -636,7 +639,17 @@ export function AdminOrganizationsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">All Organizations</h1>
           <p className="text-muted-foreground text-sm">{total.toLocaleString()} total organizations</p>
         </div>
+        <Button className="ml-auto" onClick={() => setCreateOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          {PROVISION.BUTTON_LABEL}
+        </Button>
       </div>
+
+      <CreateOrganizationDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => { void fetchList({ page: 1 }); }}
+      />
 
       {/* Search */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">

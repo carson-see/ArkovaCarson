@@ -14,10 +14,14 @@ import {
   ChevronRight,
   AlertTriangle,
   ArrowLeft,
+  Plus,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAdminList } from '@/hooks/useAdminList';
+import { CreateUserDialog, type OrgOption } from '@/components/admin/CreateUserDialog';
+import { ADMIN_PROVISION_USER_LABELS as PROVISION } from '@/lib/copy';
+import { workerFetch } from '@/lib/workerClient';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,6 +55,20 @@ export function AdminUsersPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { items, total, page, limit, loading, error, fetchList } = useAdminList<AdminUser>('/api/admin/users');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [orgOptions, setOrgOptions] = useState<OrgOption[]>([]);
+
+  // Org list backs the create-account dialog's organization picker. Fetched
+  // once the admin opens the dialog rather than on every page load.
+  const loadOrgOptions = useCallback(async () => {
+    try {
+      const res = await workerFetch('/api/admin/organizations?limit=100');
+      const data = await res.json();
+      setOrgOptions((data.organizations ?? []).map((o: OrgOption) => ({ id: o.id, display_name: o.display_name })));
+    } catch {
+      setOrgOptions([]);
+    }
+  }, []);
 
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
   const [roleFilter, setRoleFilter] = useState(searchParams.get('role') || 'ALL');
@@ -110,7 +128,21 @@ export function AdminUsersPage() {
           <h1 className="text-2xl font-semibold tracking-tight">All Users</h1>
           <p className="text-muted-foreground text-sm">{total.toLocaleString()} total users</p>
         </div>
+        <Button
+          className="ml-auto"
+          onClick={() => { void loadOrgOptions(); setCreateOpen(true); }}
+        >
+          <Plus className="h-4 w-4 mr-2" />
+          {PROVISION.BUTTON_LABEL}
+        </Button>
       </div>
+
+      <CreateUserDialog
+        open={createOpen}
+        organizations={orgOptions}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => { void fetchList({ page: 1 }); }}
+      />
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">

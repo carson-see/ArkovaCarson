@@ -20,7 +20,7 @@ import { handleSystemHealth } from '../api/admin-health.js';
 import { handleOpsSloStats } from '../api/admin-ops-slo.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
-import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota, handleAdjustOrgCredit } from '../api/admin-actions.js';
+import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota, handleAdjustOrgCredit, handleCreateOrganization, handleCreateUserAccount } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleConnectorHealth } from '../api/connector-health.js';
@@ -222,6 +222,31 @@ adminRouter.get('/admin/subscriptions', async (req, res) => {
 });
 
 // ─── Admin Actions (POST) ───
+
+// ─── SCRUM-3061: provision a net-new org / account (platform admin only) ───
+// NOTE: these are collection-level POSTs; they do not collide with the
+// '/admin/users/:id/...' item-level actions below.
+adminRouter.post('/admin/organizations', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleCreateOrganization(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Create organization request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/admin/users', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleCreateUserAccount(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Create user account request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 adminRouter.post('/admin/users/:id/promote-admin', async (req, res) => {
   const userId = await extractAuthUserId(req);

@@ -4439,3 +4439,67 @@ export const PLATFORM_METRICS = {
  * implying the whole block was re-measured.
  */
 export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
+
+// =============================================================================
+// PLATFORM-ADMIN PROVISIONING (SCRUM-3061)
+// =============================================================================
+//
+// Copy for creating a net-new organization and a net-new account from the
+// admin console. Terminology note (§1.3): these surfaces say "anchor
+// allowance" and "credits" — never wallet/transaction/blockchain wording.
+export const ADMIN_PROVISION_ORG_LABELS = {
+  BUTTON_LABEL: 'Create organization',
+  DIALOG_TITLE: 'Create organization',
+  DIALOG_DESCRIPTION: 'Set up a new organization and its starting allowances.',
+  NAME_LABEL: 'Organization name',
+  NAME_PLACEHOLDER: 'Acme Credentialing',
+  LEGAL_NAME_LABEL: 'Legal name (optional)',
+  LEGAL_NAME_HINT: 'Defaults to the organization name.',
+  CAP_TOGGLE_LABEL: 'Limit free test anchors',
+  CAP_TOGGLE_HINT: 'Off means this organization has no anchor allowance cap.',
+  QUOTA_LABEL: 'Anchor allowance',
+  CREDITS_LABEL: 'Starting credits',
+  NAME_REQUIRED_ERROR: 'Enter an organization name.',
+  QUOTA_INVALID_ERROR: 'Enter a whole number of anchors, or turn the cap off.',
+  CREDITS_INVALID_ERROR: 'Enter a whole number of credits, zero or more.',
+  DUPLICATE_TITLE: 'An organization with this name already exists',
+  DUPLICATE_CONFIRM: 'Create it anyway',
+  SUBMIT_BUTTON: 'Create organization',
+  SUBMITTING_BUTTON: 'Creating…',
+  CANCEL_BUTTON: 'Cancel',
+  SUCCESS: (name: string) => `Created ${name}.`,
+  ERROR_GENERIC: 'Failed to create the organization.',
+} as const;
+
+export const ADMIN_PROVISION_USER_LABELS = {
+  BUTTON_LABEL: 'Create account',
+  DIALOG_TITLE: 'Create account',
+  DIALOG_DESCRIPTION: 'Create an account and choose how the person gets access.',
+  EMAIL_LABEL: 'Email address',
+  EMAIL_PLACEHOLDER: 'person@example.com',
+  FULL_NAME_LABEL: 'Full name (optional)',
+  ROLE_LABEL: 'Role',
+  ROLE_INDIVIDUAL: 'Individual (no organization)',
+  ROLE_ORG_ADMIN: 'Organization admin',
+  ROLE_ORG_MEMBER: 'Organization member',
+  ORG_LABEL: 'Organization',
+  ORG_PLACEHOLDER: 'Select an organization',
+  SEND_EMAIL_LABEL: 'Email them a sign-in link',
+  SEND_EMAIL_HINT: 'Recommended. They choose their own password.',
+  NO_EMAIL_WARNING:
+    'No email will be sent. You must deliver the sign-in link yourself, or the account cannot be used.',
+  EMAIL_REQUIRED_ERROR: 'Enter a valid email address.',
+  ORG_REQUIRED_ERROR: 'Select an organization for this role.',
+  SUBMIT_BUTTON: 'Create account',
+  SUBMITTING_BUTTON: 'Creating…',
+  CANCEL_BUTTON: 'Cancel',
+  SUCCESS_EMAILED: (email: string) => `Created ${email} and sent a sign-in link.`,
+  SUCCESS_NO_EMAIL: (email: string) => `Created ${email}. Copy the sign-in link below — it is shown once.`,
+  LINK_LABEL: 'Sign-in link',
+  LINK_COPY: 'Copy link',
+  LINK_COPIED: 'Link copied.',
+  ERROR_ACCOUNT_EXISTS: 'An account with this email address already exists.',
+  ERROR_ROLE_CONFLICT:
+    'This email domain is claimed by another organization, which already assigned a role that cannot be changed.',
+  ERROR_GENERIC: 'Failed to create the account.',
+} as const;
