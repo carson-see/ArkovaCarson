@@ -50,7 +50,6 @@ if (!REF || !MGMT) {
 
 const TARGET = '0428a11d-0000-4000-8000-000000000002';
 const INDIV = '0428a11d-0000-4000-8000-000000000003';
-const FRESH = '0428a11d-0000-4000-8000-000000000004';
 const ORG = '0428a11d-0000-4000-8000-0000000000ff';
 
 /** Read-only-ish SQL over the Supabase Management API. */
@@ -103,15 +102,54 @@ async function scalar(query: string): Promise<string> {
   return String(Object.values(row)[0]);
 }
 
-/** Reset the fixture to a known state at the top of every cycle. */
+/**
+ * Reset the fixture to a known state at the top of every cycle.
+ *
+ * Deliberately does NOT reset roles with a direct UPDATE: `role` is immutable
+ * once set, so a direct reset is (correctly) rejected by the very trigger under
+ * test. The reset therefore goes through the authorized RPC, which is also a
+ * free extra exercise of the changed path. INDIV is never mutated — C4's UPDATE
+ * raises and rolls its own transaction back — so it needs no reset.
+ */
 async function resetFixture() {
   await expectOk(
-    'fixture reset',
-    `DELETE FROM public.org_members WHERE user_id IN ('${TARGET}','${INDIV}','${FRESH}');
-     UPDATE public.profiles SET role='INDIVIDUAL', org_id=NULL, is_platform_admin=false, role_set_at=now()
-       WHERE id IN ('${TARGET}','${INDIV}');
-     UPDATE public.profiles SET role=NULL, org_id=NULL, role_set_at=NULL WHERE id='${FRESH}';`,
+    'fixture reset (org/member/flag)',
+    asServiceRole(
+      `SELECT admin_set_user_org('${TARGET}', NULL);
+       SELECT admin_set_platform_admin('${TARGET}', false);`,
+    ),
   );
+  await expectOk('fixture reset (role via RPC)', asServiceRole(`SELECT admin_change_user_role('${TARGET}','INDIVIDUAL');`));
+}
+
+/**
+ * The `role IS NULL` backfill case needs a profile whose role has never been
+ * set, and nothing may legitimately reset a role back to NULL. So each cycle
+ * mints its own throwaway user and drops it again.
+ */
+async function withFreshProfile<T>(n: number, fn: (id: string) => Promise<T>): Promise<T> {
+  const id = `0428f00d-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const email = `soak-0428-fresh-${n}@arkova-soak.invalid`;
+  await expectOk(
+    'fresh profile create',
+    `INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+     VALUES ('${id}','00000000-0000-0000-0000-000000000000','authenticated','authenticated','${email}',
+             crypt('soak-0428-not-a-real-login', gen_salt('bf')), now(), now(), now(),
+             '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb)
+     ON CONFLICT (id) DO NOTHING;
+     INSERT INTO public.profiles (id, email, role, org_id, is_platform_admin, role_set_at)
+     VALUES ('${id}','${email}',NULL,NULL,false,NULL)
+     ON CONFLICT (id) DO UPDATE SET org_id=NULL;`,
+  );
+  try {
+    return await fn(id);
+  } finally {
+    await sql(
+      `DELETE FROM public.org_members WHERE user_id='${id}';
+       DELETE FROM public.profiles WHERE id='${id}';
+       DELETE FROM auth.users WHERE id='${id}';`,
+    );
+  }
 }
 
 async function cycle(n: number): Promise<Record<string, unknown>> {
@@ -152,12 +190,14 @@ async function cycle(n: number): Promise<Record<string, unknown>> {
   rec.c4_backfill_still_blocked = true;
 
   // C5 — the same shape where role IS NULL must still work, and still stamp.
-  await expectOk(
-    'C5 worker backfill on fresh profile',
-    asServiceRole(`UPDATE public.profiles SET org_id='${ORG}', role='ORG_MEMBER' WHERE id='${FRESH}' AND org_id IS NULL;`),
-  );
-  const stamped = await scalar(`SELECT (role_set_at IS NOT NULL)::text FROM public.profiles WHERE id='${FRESH}'`);
-  if (stamped !== 'true') throw new Error('C5: role_set_at was not stamped');
+  await withFreshProfile(n, async (freshId) => {
+    await expectOk(
+      'C5 worker backfill on fresh profile',
+      asServiceRole(`UPDATE public.profiles SET org_id='${ORG}', role='ORG_MEMBER' WHERE id='${freshId}' AND org_id IS NULL;`),
+    );
+    const stamped = await scalar(`SELECT (role_set_at IS NOT NULL)::text FROM public.profiles WHERE id='${freshId}'`);
+    if (stamped !== 'true') throw new Error('C5: role_set_at was not stamped');
+  });
   rec.c5_fresh_backfill_ok = true;
 
   // C6 — FLAG-LEAK PROBE. A separate request issued right after the RPC must
