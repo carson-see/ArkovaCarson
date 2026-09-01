@@ -84,18 +84,32 @@ at all. Only `check_role_immutability()` needed a bypass.
 
 ## The change (migration 0428)
 
-1. **`check_role_immutability()`** gains the service_role exemption that
-   `protect_privileged_profile_fields()` already had — **scoped to the RAISE
-   only**. The `role_set_at` stamping stays on the same path for every caller.
-   A blanket `IF get_caller_role() = 'service_role' THEN RETURN NEW` at the top
-   would have silently dropped that stamping for the worker's own
-   profile-creation paths; this shape cannot.
+1. **`check_role_immutability()`** gains an exemption **scoped to the RAISE
+   only** (so `role_set_at` stamping stays on the same path for every caller),
+   keyed on a **transaction-local flag** that `admin_change_user_role` sets
+   immediately around its own `UPDATE`, **and** a service_role caller. Both
+   conditions must hold; an unset flag reads NULL and fails **closed**.
 
-   *Not a privilege widening:* `user_role` has exactly three values
-   (`INDIVIDUAL`, `ORG_ADMIN`, `ORG_MEMBER` — confirmed against prod), the same
-   set `admin_change_user_role` already validates, and any holder of the
-   service_role key could already reach all three through that RPC. A NULL
-   `get_caller_role()` fails **closed** (`IS DISTINCT FROM`).
+   **This is the narrowest correct signal, and the first design was wrong.** A
+   review pass caught that keying the exemption on
+   `get_caller_role() = 'service_role'` alone is far too broad: the worker makes
+   *direct* service_role writes to `profiles.role` in
+   `services/worker/src/api/invitations.ts` and `admin-org-members.ts`, which
+   backfill `{ org_id, role }` guarded only by `.is('org_id', null)`. `org_id IS
+   NULL` does **not** imply `role IS NULL` — prod holds **16** such profiles.
+   Those writes raise here today and their callers log a non-fatal warning; a
+   role-wide exemption would have silently begun rewriting those users' roles on
+   invite acceptance, with no audit row and no code change asking for it.
+   `current_user = 'postgres'` is no narrower either:
+   `auto_associate_profile_to_org_by_email_domain`, `join_org_by_domain`,
+   `set_onboarding_plan` and `update_profile_onboarding` are all postgres-owned
+   SECURITY DEFINER functions that update `profiles` too.
+
+   `set_config(..., is_local => true)` is rolled back at end of transaction, and
+   PostgREST runs each request in its own transaction, so the flag cannot outlive
+   the call even if the RPC raises. `admin_change_user_role` uses `GET DIAGNOSTICS
+   ... ROW_COUNT` rather than `FOUND`, because the trailing `set_config` PERFORM
+   would clobber `FOUND`.
 
 2. **`protect_platform_admin_flag()`** additionally accepts
    `get_caller_role() = 'service_role'`, removing the RPC's dependence on the
@@ -103,10 +117,13 @@ at all. Only `check_role_immutability()` needed a bypass.
    deliberately unchanged — it fires on every `profiles` UPDATE, and promoting
    the revert to a RAISE would fail unrelated write paths.
 
-3. **`admin_set_platform_admin`** re-reads the row and raises if the flag did not
-   take. That trigger reverts *silently*, so without this the only failure mode
-   of removing its DDL would be a false success: HTTP 200, `{"success":true}`,
-   nothing written.
+3. **`admin_set_platform_admin`** captures the stored value via
+   `UPDATE ... RETURNING` and raises if the flag did not take. That trigger
+   reverts *silently*, so without this the only failure mode of removing its DDL
+   would be a false success: HTTP 200, `{"success":true}`, nothing written.
+   `RETURNING` reflects the row as actually stored — after the BEFORE-UPDATE
+   triggers have had their say — so it catches the revert without a second index
+   scan on a hot table.
 
 4. Authorization guards, validation, ordering, and `User not found` behaviour are
    byte-identical. (`FOUND` was verified to survive the removed `ALTER TABLE`
@@ -152,6 +169,11 @@ a soak rig, never the shared local Supabase stack.
 * Forward → rollback → forward, plus a double forward apply (idempotent).
 * Rollback block extracted from the file header and executed; confirmed it
   restores pre-0428 semantics (role change blocked again without the DDL).
+* Regression guard measured explicitly: a worker-shaped direct backfill of an
+  INDIVIDUAL with no org is **still blocked**, exactly as today; the same write
+  where `role IS NULL` still succeeds and still stamps `role_set_at`; the flag
+  does not leak to a later statement in the same transaction; and an
+  `authenticated` caller that sets the flag itself is still rejected.
 * 14-case behavioural matrix, all green: service_role writes land for all three
   RPCs; authenticated / anon / no-claims direct writes still blocked;
   `is_platform_admin` escalation still reverted; `org_id` write still blocked;

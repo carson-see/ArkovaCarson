@@ -210,10 +210,28 @@ BEGIN
     NEW.role IS NULL OR
     NEW.role != OLD.role
   ) THEN
-    -- The trusted admin RPC (admin_change_user_role) reaches this trigger as
-    -- service_role and has already authorized the change. Everyone else --
-    -- including a caller with no JWT claims at all -- still fails closed.
-    IF get_caller_role() IS DISTINCT FROM 'service_role' THEN
+    -- Exempt ONLY the one RPC authorized to change a role, identified by a
+    -- transaction-local flag it sets immediately around its own UPDATE, AND
+    -- only on a service_role request. Both conditions must hold.
+    --
+    -- Keying this on `get_caller_role() = 'service_role'` alone would be far too
+    -- broad: the worker makes DIRECT service_role table writes that set `role`
+    -- (services/worker/src/api/invitations.ts and admin-org-members.ts backfill
+    -- `{ org_id, role }` guarded only by `.is('org_id', null)`), and `org_id IS
+    -- NULL` does not imply `role IS NULL` -- prod holds 16 such profiles. Those
+    -- writes RAISE here today and their callers log a non-fatal warning; a
+    -- role-wide exemption would silently start rewriting those users' roles.
+    -- `current_user = 'postgres'` is no narrower: auto_associate_profile_to_org_
+    -- by_email_domain, join_org_by_domain, set_onboarding_plan and
+    -- update_profile_onboarding are all postgres-owned SECURITY DEFINER
+    -- functions that update `profiles` too.
+    --
+    -- set_config(..., is_local => true) is rolled back at end of transaction, and
+    -- PostgREST runs each request in its own transaction, so the flag cannot
+    -- outlive the call even if the RPC raises. Unset/absent reads as NULL, which
+    -- IS DISTINCT FROM 'on' -- fails CLOSED.
+    IF current_setting('arkova.allow_role_change', true) IS DISTINCT FROM 'on'
+       OR get_caller_role() IS DISTINCT FROM 'service_role' THEN
       RAISE EXCEPTION 'Role cannot be changed once set. Current role: %', OLD.role
         USING ERRCODE = 'check_violation';
     END IF;
@@ -230,7 +248,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.check_role_immutability() IS
-  'Role is immutable once set. service_role is exempt from the immutability RAISE (0428) so admin_change_user_role no longer has to disable this trigger at runtime -- that DDL took ShareRowExclusiveLock on the hot profiles table and formed a FIFO barrier in front of every subsequent profile write. role_set_at stamping is outside the exemption and applies to all callers.';
+  'Role is immutable once set. 0428 exempts ONLY admin_change_user_role, via the transaction-local flag `arkova.allow_role_change` combined with a service_role caller so admin_change_user_role no longer has to disable this trigger at runtime -- that DDL took ShareRowExclusiveLock on the hot profiles table and formed a FIFO barrier in front of every subsequent profile write. role_set_at stamping is outside the exemption and applies to all callers.';
 
 -- 2. Platform-admin flag: accept the JWT-claims signal as well as the role GUC.
 CREATE OR REPLACE FUNCTION public.protect_platform_admin_flag()
@@ -279,6 +297,8 @@ CREATE OR REPLACE FUNCTION public.admin_change_user_role(p_user_id uuid, p_new_r
   SECURITY DEFINER
   SET search_path TO 'public'
 AS $$
+DECLARE
+  v_rows integer;
 BEGIN
   IF get_caller_role() IS DISTINCT FROM 'service_role' THEN
     RAISE EXCEPTION 'Access denied: service_role required';
@@ -288,9 +308,14 @@ BEGIN
     RAISE EXCEPTION 'Invalid role: %. Must be INDIVIDUAL, ORG_ADMIN, or ORG_MEMBER', p_new_role;
   END IF;
 
+  -- Narrowly scope the immutability exemption to this one statement.
+  PERFORM set_config('arkova.allow_role_change', 'on', true);
   UPDATE profiles SET role = p_new_role::user_role, updated_at = now() WHERE id = p_user_id;
+  -- ROW_COUNT, not FOUND: the set_config PERFORM below would clobber FOUND.
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  PERFORM set_config('arkova.allow_role_change', 'off', true);
 
-  IF NOT FOUND THEN
+  IF v_rows = 0 THEN
     RAISE EXCEPTION 'User not found: %', p_user_id;
   END IF;
 END;
@@ -317,7 +342,12 @@ BEGIN
     RAISE EXCEPTION 'Access denied: service_role required';
   END IF;
 
-  UPDATE profiles SET is_platform_admin = p_is_admin, updated_at = now() WHERE id = p_user_id;
+  -- RETURNING reflects the row as actually stored, i.e. AFTER the BEFORE-UPDATE
+  -- triggers have had their say, so it captures a silent revert without a
+  -- second index scan on a hot table.
+  UPDATE profiles SET is_platform_admin = p_is_admin, updated_at = now()
+   WHERE id = p_user_id
+   RETURNING is_platform_admin INTO v_actual;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'User not found: %', p_user_id;
@@ -325,7 +355,6 @@ BEGIN
 
   -- protect_platform_admin_flag reverts rather than raising, so a rejected
   -- write would otherwise return success having changed nothing. Fail loudly.
-  SELECT is_platform_admin INTO v_actual FROM profiles WHERE id = p_user_id;
   IF v_actual IS DISTINCT FROM p_is_admin THEN
     RAISE EXCEPTION 'Platform admin flag was not applied for % (protective trigger reverted the write)', p_user_id
       USING ERRCODE = 'insufficient_privilege';

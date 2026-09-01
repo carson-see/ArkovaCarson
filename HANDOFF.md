@@ -40,12 +40,26 @@ inherited from 0395: inside a SECURITY DEFINER function owned by `postgres`, `cu
 `postgres` but **both** `current_setting('role')` and `get_caller_role()` still report the caller's
 role.
 
-Fix: migration `0428_admin_profile_rpcs_remove_hot_table_trigger_ddl.sql` — `check_role_immutability()`
-gains the service_role exemption scoped to the RAISE only (so `role_set_at` stamping still applies to
-every caller, and a NULL caller role still fails closed); `protect_platform_admin_flag()` also accepts
-`get_caller_role()`; `admin_set_platform_admin` re-reads the row and raises if the flag did not take,
-because that trigger reverts *silently* and would otherwise return a false success. All three RPCs
-lose their DDL entirely.
+Fix: migration `0428_admin_profile_rpcs_remove_hot_table_trigger_ddl.sql`. All three RPCs lose their
+DDL entirely. `check_role_immutability()` gains an exemption scoped to the RAISE only (so `role_set_at`
+stamping still applies to every caller), keyed on a **transaction-local flag** `arkova.allow_role_change`
+that `admin_change_user_role` sets around its own UPDATE **and** a service_role caller — both must hold,
+unset reads NULL and fails closed. `protect_platform_admin_flag()` also accepts `get_caller_role()`;
+`admin_set_platform_admin` captures the stored value via `UPDATE ... RETURNING` and raises if the flag
+did not take, because that trigger reverts *silently* and would otherwise return a false success.
+
+**A review pass this session caught that the first cut of the exemption was too broad and would have
+silently mutated real user data.** Keying it on `get_caller_role() = 'service_role'` alone also unblocks
+the worker's DIRECT service_role writes to `profiles.role` in `services/worker/src/api/invitations.ts`
+and `admin-org-members.ts`, which backfill `{ org_id, role }` guarded only by `.is('org_id', null)`.
+`org_id IS NULL` does not imply `role IS NULL` — **prod `vzwyaatejekddvltxyye` currently holds 16
+profiles with `org_id IS NULL AND role IS NOT NULL`** (verified this session via Supabase MCP
+`execute_sql`). Those writes raise today and their callers log a non-fatal warning; the broad exemption
+would have started silently rewriting those users' roles on invite acceptance, with no audit row.
+`current_user = 'postgres'` is no narrower — `auto_associate_profile_to_org_by_email_domain`,
+`join_org_by_domain`, `set_onboarding_plan` and `update_profile_onboarding` are all postgres-owned
+SECDEF functions that update `profiles` (same query). The flag is the narrowest correct signal, and the
+regression guard is pinned in the test file and measured on the rig rehearsal.
 
 **Verified against prod `vzwyaatejekddvltxyye` 2026-09-01 (Supabase Management API,
 `POST /v1/projects/{ref}/database/query`, read-only):** `pg_get_functiondef` for all five routines
@@ -58,7 +72,9 @@ revokes, burning one `secdef-grants-baseline.json` entry (109 → 108).
 
 **Migration is file-only — NOT applied to prod or any rig, NOT soaked.** Rehearsed 2026-09-01 on an
 isolated throwaway Postgres 17 cluster (never prod, never a rig, never the shared local stack):
-forward → rollback → forward, 14-case behavioural matrix green. Migrations are always T3
+forward → rollback → forward, 14-case behavioural matrix green, plus an explicit regression guard that
+the worker-shaped direct backfill of an INDIVIDUAL is still blocked exactly as today. TLA PreCheck
+re-run on all four machines — all green; none model `profiles`/`role`, so it is N/A to this change. Migrations are always T3
 (CLAUDE.md §1.12), so this needs its own 48 h isolated-rig soak before it can go Ready. Opened as a
 **draft** PR.
 
