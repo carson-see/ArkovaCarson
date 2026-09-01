@@ -87,3 +87,49 @@ describe('CreateUserDialog', () => {
     expect(await screen.findByText(/claimed by another organization/i)).toBeInTheDocument();
   });
 });
+
+describe('CreateUserDialog — send-failure handling (code review finding)', () => {
+  it('does NOT claim an email was sent when the worker reports the send failed', async () => {
+    vi.mocked(workerFetch).mockResolvedValue(
+      ok({
+        success: true,
+        account: { invite_email_sent: false, activation_link: 'https://app.arkova.test/set-password' },
+      }),
+    );
+    const { onClose } = renderDialog();
+
+    await userEvent.type(screen.getByLabelText(/email address/i), 'new@example.com');
+    // Admin ASKED for an email (toggle left on) but the send failed.
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('https://app.arkova.test/set-password')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/email could not be sent/i)).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('reports plainly when the account is created but undeliverable by any route', async () => {
+    vi.mocked(workerFetch).mockResolvedValue(
+      ok({ success: true, account: { invite_email_sent: false, activation_link: null } }),
+    );
+    renderDialog();
+
+    await userEvent.type(screen.getByLabelText(/email address/i), 'new@example.com');
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    expect(await screen.findByText(/could not be sent and no sign-in link/i)).toBeInTheDocument();
+  });
+
+  it('closes on a genuine successful send', async () => {
+    vi.mocked(workerFetch).mockResolvedValue(
+      ok({ success: true, account: { invite_email_sent: true, activation_link: null } }),
+    );
+    const { onClose } = renderDialog();
+
+    await userEvent.type(screen.getByLabelText(/email address/i), 'new@example.com');
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+});

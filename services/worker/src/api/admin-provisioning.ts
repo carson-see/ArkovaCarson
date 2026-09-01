@@ -76,6 +76,28 @@ export const PROVISIONING_ERROR_STATUS: Record<ProvisioningErrorCode, number> = 
   internal_error: 500,
 };
 
+/**
+ * Postgres surfaces the offending value in `details` — a unique violation on
+ * `profiles.email` reads `Key (email)=(person@example.com) already exists`.
+ * Handing the raw error to pino would put that address in Cloud Run logs and
+ * Sentry, against §1.4. Keep the code and message; drop everything else.
+ */
+function sanitizeError(err: unknown): { code?: string; message?: string } | undefined {
+  if (err === null || err === undefined) return undefined;
+  const e = err as { code?: unknown; message?: unknown };
+  return {
+    code: typeof e.code === 'string' ? e.code : undefined,
+    message: typeof e.message === 'string' ? e.message.slice(0, 200) : undefined,
+  };
+}
+
+/** Supabase reports an already-registered address without a stable code. */
+function isDuplicateAuthUserError(err: unknown): boolean {
+  const message = (err as { message?: unknown } | null)?.message;
+  if (typeof message !== 'string') return false;
+  return /already (been )?registered|already exists/i.test(message);
+}
+
 const PROFILE_ROLES = ['INDIVIDUAL', 'ORG_ADMIN', 'ORG_MEMBER'] as const;
 const ORG_MEMBER_ROLES = ['owner', 'admin', 'member'] as const;
 export type ProfileRole = (typeof PROFILE_ROLES)[number];
@@ -229,20 +251,25 @@ export async function createOrganization(
   // constraint would be wrong — two unrelated legal entities can share a name.
   // So this is an explicit, overridable guard against the double-submit case.
   if (!input.allow_duplicate_name) {
-    const { data: existing, error: lookupError } = await db
+    // limit(1), NOT maybeSingle(): once an admin has used
+    // allow_duplicate_name, two rows share the name and maybeSingle() would
+    // raise PGRST116 — turning the intended 409 into a 500 that the override
+    // cannot get past.
+    const { data: existingRows, error: lookupError } = await db
       .from('organizations')
       .select('id')
       .eq('display_name', input.display_name)
-      .maybeSingle();
+      .limit(1);
     if (lookupError) {
-      logger.error({ error: lookupError }, 'Admin provisioning: duplicate-org lookup failed');
+      logger.error({ error: sanitizeError(lookupError) }, 'Admin provisioning: duplicate-org lookup failed');
       throw new ProvisioningError('Failed to create the organization.', 'internal_error');
     }
+    const existing = (existingRows as Array<{ id: string }> | null)?.[0];
     if (existing) {
       throw new ProvisioningError(
         'An organization with this name already exists. Re-submit with allow_duplicate_name to create it anyway.',
         'org_exists',
-        (existing as { id: string }).id,
+        existing.id,
       );
     }
   }
@@ -260,7 +287,7 @@ export async function createOrganization(
 
   const orgRow = created as { id: string; public_id: string | null; org_prefix: string | null } | null;
   if (insertError || !orgRow) {
-    logger.error({ error: insertError }, 'Admin provisioning: organization insert failed');
+    logger.error({ error: sanitizeError(insertError) }, 'Admin provisioning: organization insert failed');
     throw new ProvisioningError('Failed to create the organization.', 'internal_error');
   }
 
@@ -340,7 +367,7 @@ export async function createUserAccount(
     .eq('email', input.email)
     .maybeSingle();
   if (existingError) {
-    logger.error({ error: existingError }, 'Admin provisioning: existing-account lookup failed');
+    logger.error({ error: sanitizeError(existingError) }, 'Admin provisioning: existing-account lookup failed');
     throw new ProvisioningError('Failed to create the account.', 'internal_error');
   }
   if (existingProfile) {
@@ -360,7 +387,18 @@ export async function createUserAccount(
 
   const newUser = (createdUser as { user?: { id: string } } | null)?.user;
   if (createError || !newUser) {
-    logger.error({ error: createError }, 'Admin provisioning: auth user creation failed');
+    // An auth user can exist with no profile row — the F4 orphan left behind
+    // when a previous rollback's deleteUser also failed. The profiles lookup
+    // above cannot see it, so map the duplicate here rather than reporting a
+    // generic failure the operator cannot act on.
+    if (isDuplicateAuthUserError(createError)) {
+      throw new ProvisioningError(
+        'An account with this email address already exists in the auth system but has no profile. '
+          + 'It is orphaned from a failed provisioning attempt and needs manual cleanup.',
+        'account_exists',
+      );
+    }
+    logger.error({ error: sanitizeError(createError) }, 'Admin provisioning: auth user creation failed');
     throw new ProvisioningError('Failed to create the account.', 'internal_error');
   }
   const userId = newUser.id;
@@ -442,21 +480,28 @@ export async function createUserAccount(
         orgId: input.org_id,
         link,
       });
-    } else {
-      // F6: nobody is being told, so make the account immediately usable and
-      // hand the link back for out-of-band delivery. Confirming AFTER role and
-      // org are written makes the auto-association profile update a no-op.
+    }
+
+    // F6, both branches: if no email actually went out — because the admin
+    // opted out OR because the send failed — nobody has been told this account
+    // exists. Hand the link back for out-of-band delivery and make the account
+    // immediately usable. Reporting a send that did not happen is the silent
+    // failure this whole flow exists to avoid, so this is keyed on the ACTUAL
+    // send result, never on the caller's intent.
+    if (!inviteEmailSent) {
       activationLink = link;
+      // Confirming AFTER role and org are written makes the auto-association
+      // profile update a no-op.
       const { error: confirmError } = await db.auth.admin.updateUserById(userId, {
         email_confirm: true,
       });
       if (confirmError) {
-        logger.warn({ error: confirmError, userId }, 'Admin provisioning: email auto-confirm failed');
+        logger.warn({ error: sanitizeError(confirmError), userId }, 'Admin provisioning: email auto-confirm failed');
       }
     }
   } catch (err) {
     logger.error(
-      { error: err instanceof ProvisioningError ? err.code : err, userId },
+      { error: err instanceof ProvisioningError ? err.code : sanitizeError(err), userId },
       'Admin provisioning: provisioning failed after account creation — rolling back the auth user',
     );
     const { error: deleteError } = await db.auth.admin.deleteUser(userId);
@@ -505,7 +550,7 @@ async function generateSetPasswordLink(
     });
     const link = (data as { properties?: { action_link?: string } } | null)?.properties?.action_link;
     if (error || !link) {
-      logger.error({ error }, 'Admin provisioning: set-password link generation failed');
+      logger.error({ error: sanitizeError(error) }, 'Admin provisioning: set-password link generation failed');
       return null;
     }
     return link;

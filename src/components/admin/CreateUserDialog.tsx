@@ -58,12 +58,14 @@ export function CreateUserDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activationLink, setActivationLink] = useState<string | null>(null);
+  /** True when the admin ASKED for an email and the send failed anyway. */
+  const [emailSendFailed, setEmailSendFailed] = useState(false);
 
   const orgRequired = role !== 'INDIVIDUAL';
 
   function reset() {
     setEmail(''); setFullName(''); setRole('INDIVIDUAL'); setOrgId('');
-    setSendEmail(true); setError(null); setActivationLink(null);
+    setSendEmail(true); setError(null); setActivationLink(null); setEmailSendFailed(false);
   }
 
   function handleClose() { reset(); onClose(); }
@@ -91,15 +93,27 @@ export function CreateUserDialog({
       if (!res.ok) { setError(messageForCode(data.code, data.error ?? L.ERROR_GENERIC)); return; }
 
       onCreated();
-      if (data.account?.activation_link) {
-        // Hold the dialog open: this link is shown once and nothing else
-        // delivers it.
-        setActivationLink(data.account.activation_link);
-        toast.success(L.SUCCESS_NO_EMAIL(email.trim()));
-      } else {
+
+      // Branch on whether an email ACTUALLY went out. Branching on the
+      // presence of a link (or on the caller's send_invite_email intent) would
+      // report a failed send as a successful one — the silent failure this
+      // flow exists to prevent.
+      if (data.account?.invite_email_sent) {
         toast.success(L.SUCCESS_EMAILED(email.trim()));
         handleClose();
+        return;
       }
+
+      const link: string | null = data.account?.activation_link ?? null;
+      if (!link) {
+        // Created, but undeliverable by any route. Keep the dialog open and
+        // say so plainly rather than implying the person has access.
+        setError(L.ERROR_NO_DELIVERY);
+        return;
+      }
+      setEmailSendFailed(sendEmail);
+      setActivationLink(link);
+      toast.success(L.SUCCESS_NO_EMAIL(email.trim()));
     } catch {
       setError(L.ERROR_GENERIC);
     } finally {
@@ -125,7 +139,9 @@ export function CreateUserDialog({
           <div className="space-y-3">
             <Alert>
               <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>{L.NO_EMAIL_WARNING}</AlertDescription>
+              <AlertDescription>
+                {emailSendFailed ? L.EMAIL_FAILED_WARNING : L.NO_EMAIL_WARNING}
+              </AlertDescription>
             </Alert>
             <div className="space-y-2">
               <Label htmlFor="activation-link">{L.LINK_LABEL}</Label>

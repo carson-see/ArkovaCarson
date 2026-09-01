@@ -162,7 +162,7 @@ describe('createOrganization', () => {
   it('creates the org and explicitly writes the resolved credit state (F8)', async () => {
     const creditsChain = chain({ data: null, error: null });
     const deps = makeDeps({
-      organizations: [chain({ data: null, error: null }), chain({ data: ORG_ROW, error: null })],
+      organizations: [chain({ data: [], error: null }), chain({ data: ORG_ROW, error: null })],
       org_credits: [creditsChain],
       audit_events: [chain({ data: null, error: null })],
     });
@@ -180,8 +180,9 @@ describe('createOrganization', () => {
   });
 
   it('F3: rejects a duplicate display_name with org_exists and surfaces the existing id', async () => {
+    // .limit(1) resolves to an ARRAY (see the maybeSingle finding below).
     const deps = makeDeps({
-      organizations: [chain({ data: { id: 'org-existing' }, error: null })],
+      organizations: [chain({ data: [{ id: 'org-existing' }], error: null })],
     });
 
     await expect(
@@ -192,7 +193,7 @@ describe('createOrganization', () => {
   it('F8: an uncapped org writes anchor_quota null and is_test false, overriding the seed trigger', async () => {
     const creditsChain = chain({ data: null, error: null });
     const deps = makeDeps({
-      organizations: [chain({ data: null, error: null }), chain({ data: ORG_ROW, error: null })],
+      organizations: [chain({ data: [], error: null }), chain({ data: ORG_ROW, error: null })],
       org_credits: [creditsChain],
       audit_events: [chain({ data: null, error: null })],
     });
@@ -207,7 +208,7 @@ describe('createOrganization', () => {
   it('writes an audit event naming the actor', async () => {
     const audit = chain({ data: null, error: null });
     const deps = makeDeps({
-      organizations: [chain({ data: null, error: null }), chain({ data: ORG_ROW, error: null })],
+      organizations: [chain({ data: [], error: null }), chain({ data: ORG_ROW, error: null })],
       org_credits: [chain({ data: null, error: null })],
       audit_events: [audit],
     });
@@ -391,5 +392,91 @@ describe('createUserAccount', () => {
     }));
 
     expect(members.insert).not.toHaveBeenCalled();
+  });
+});
+
+// ── Code-review findings (2026-09-01) ──────────────────────────────────────
+
+describe('createUserAccount — send-failure and orphan handling', () => {
+  function baseQueues(): TableQueues {
+    return {
+      profiles: [
+        chain({ data: null, error: null }),
+        chain({ data: null, error: null }),
+        chain({ data: { id: 'new-user-id', role: null }, error: null }),
+        chain({ data: null, error: null }),
+      ],
+      org_members: [chain({ data: null, error: null })],
+      audit_events: [chain({ data: null, error: null })],
+      organizations: [chain({ data: { display_name: 'PlanBook' }, error: null })],
+    };
+  }
+
+  it('falls back to the manual-delivery path when the invite email fails to send', async () => {
+    mockSendEmail.mockResolvedValue({ success: false });
+    const deps = makeDeps(baseQueues());
+
+    const r = await createUserAccount(deps, ACTOR, userInput({ send_invite_email: true }));
+
+    // Asked for an email, send failed -> report it honestly AND surface the link.
+    expect(r.invite_email_sent).toBe(false);
+    expect(r.activation_link).toBe('https://app.arkova.test/set-password');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((deps.db as any).auth.admin.updateUserById).toHaveBeenCalledWith(
+      'new-user-id', expect.objectContaining({ email_confirm: true }),
+    );
+  });
+
+  it('maps an orphaned auth user to account_exists rather than a generic failure', async () => {
+    const deps = makeDeps(
+      { profiles: [chain({ data: null, error: null })] },
+      {
+        createUser: vi.fn(async () => ({
+          data: null,
+          error: { message: 'A user with this email address has already been registered' },
+        })),
+      },
+    );
+
+    await expect(
+      createUserAccount(deps, ACTOR, userInput({ email: 'orphan@example.com' })),
+    ).rejects.toMatchObject({ code: 'account_exists' });
+  });
+
+  it('never passes a raw driver error (which can carry the email) to the logger', async () => {
+    const deps = makeDeps({
+      profiles: [
+        chain({ data: null, error: null }),
+        chain({
+          data: null,
+          error: {
+            code: '23505',
+            message: 'duplicate key value violates unique constraint',
+            details: 'Key (email)=(secret@example.com) already exists.',
+          },
+        }),
+      ],
+    });
+
+    await expect(
+      createUserAccount(deps, ACTOR, userInput({ email: 'secret@example.com' })),
+    ).rejects.toBeInstanceOf(ProvisioningError);
+
+    const logged = JSON.stringify((deps.logger.error as ReturnType<typeof vi.fn>).mock.calls);
+    expect(logged).not.toContain('secret@example.com');
+    expect(logged).not.toContain('Key (email)');
+  });
+});
+
+describe('createOrganization — duplicate lookup', () => {
+  it('returns org_exists (not a 500) when two orgs already share the name', async () => {
+    // limit(1) returns an array; maybeSingle() would have raised PGRST116 here.
+    const deps = makeDeps({
+      organizations: [chain({ data: [{ id: 'org-a' }], error: null })],
+    });
+
+    await expect(
+      createOrganization(deps, ACTOR, orgInput({ display_name: 'Acme Corp' })),
+    ).rejects.toMatchObject({ code: 'org_exists', existingOrgId: 'org-a' });
   });
 });

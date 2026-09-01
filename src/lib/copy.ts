@@ -4502,4 +4502,9 @@ export const ADMIN_PROVISION_USER_LABELS = {
   ERROR_ROLE_CONFLICT:
     'This email domain is claimed by another organization, which already assigned a role that cannot be changed.',
   ERROR_GENERIC: 'Failed to create the account.',
+  ERROR_NO_DELIVERY:
+    'The account was created, but the email could not be sent and no sign-in link could be generated. '
+    + 'Use the password-reset flow to give this person access.',
+  EMAIL_FAILED_WARNING:
+    'The email could not be sent. Copy the sign-in link below and deliver it yourself — it is shown once.',
 } as const;
