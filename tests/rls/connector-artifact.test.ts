@@ -89,8 +89,8 @@ describe('SCRUM-2348 — connector_artifact RLS + enqueue idempotency', () => {
       .delete()
       .like('external_ref', `${REF_PREFIX}%`);
 
-    await arkovaAdminClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
+    await arkovaAdminClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
   });
 
   describe('service_role writes', () => {

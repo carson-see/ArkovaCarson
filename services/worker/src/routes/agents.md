@@ -2,6 +2,29 @@
 
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
+## 2026-08-23 — the "unscoped limiters share one IP bucket" mechanism is GONE (SCRUM-3418)
+
+Two long notes in this file — the 2026-08-10 `anchor.ts` activation entry and the SCRUM-3012
+invitation entry — explain that `rateLimit()` keys unscoped buckets on the client IP alone, so a
+route's own limiter shared a counter with `index.ts`'s `apiIpShadowGuard` and each request burned
+two of the cap. **That mechanism no longer exists.** Buckets are now always keyed
+`${bucketScope}:${key}`, and a limiter that passes no `scope` gets a private per-instance namespace
+instead of the shared bare-IP entry (`utils/agents.md` has the full writeup).
+
+What that changes for this folder:
+
+- `scope: 'invitations'` (30/min) and `scope: 'activation'` (10/min) in `anchor.ts` are still
+  correct and should stay — but the reason is now "a named bucket is a readable, stable log key",
+  not "otherwise it collides with the shadow guard".
+- The standing advice is unchanged in practice: **give any new unauthenticated burst-prone route an
+  explicit `scope`.** It is just no longer load-bearing for correctness.
+- `cron.ts`'s `cronJobsLimiter` gained `scope: 'cron-jobs'` with `keyGenerator: () => 'global'`. It
+  was never at risk (its keyGenerator returned a constant string, not an IP), so this is naming
+  only; the single global 30/min bucket is unchanged.
+- `anchor-invitation-ratelimit.test.ts` still runs the REAL limiters behind a stand-in shadow guard
+  and still earns its keep — it pins the budget an invitee actually gets, independent of the keying
+  rule underneath. Its header now records the old mechanism as history rather than as current fact.
+
 ## Files
 - `cron.ts` — HTTP-triggered cron endpoints. Cloud Scheduler hits these. Includes `POST /jobs/anchor-expiry-sweep` (SCRUM-1736), `POST /jobs/check-stuck-anchors` (SCRUM-2234), and `POST /jobs/populate-confirmation-proofs` (PROOF-03 / SCRUM-2336 — see below).
 - **GH #1835 (2026-08-03):** `POST /jobs/drive-subscription-renewal` — renews Google Drive `changes.watch` push channels before their ~7-day expiry (nothing did this before; every Drive connection went silent within a week). Calls `runDriveSubscriptionRenewal()` (`jobs/drive-subscription-renewal-deps.ts`) with no args — that function wires the pure `renewDriveSubscriptions()` orchestrator (`integrations/connectors/drive-subscription-renewal.ts`) to real deps AND wraps the whole call in the cross-instance `withRunLease` primitive. **`scheduled.ts` also has an hourly in-process backup calling the SAME `runDriveSubscriptionRenewal()`** (see below) — an earlier round of PR #1944's review had this route be Cloud-Scheduler-only and explicitly removed the backup to avoid a double-fire race; that was reversed once it became clear Cloud Scheduler is not yet applied to prod (`scripts/gcp-setup/cloud-scheduler.sh` — review PR #1944 for current status), which would have made the job never run automatically at all. The lease (`DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`, `jobs/run-lease.ts`) is what makes running both safe: whichever trigger fires first wins the lease and runs the body, the other observes the lease held and no-ops (`{skipped: true}`) rather than racing a second sweep against the same due connections. See `services/worker/src/jobs/agents.md`'s GH #1835 entry for the full lease + restoration writeup.

@@ -87,9 +87,36 @@ if printf '%s' "$cmd" | /usr/bin/grep -qE 'gh[[:space:]]+pr[[:space:]]+merge\b' 
 fi
 
 # 1. gh pr merge / raw-API PUT|POST to /merge
-if printf '%s' "$cmd" | /usr/bin/grep -qE '(^|[[:space:];&|`])gh[[:space:]]+pr[[:space:]]+merge\b'; then
-  printf 'BLOCKED by .claude/hooks/block-pr-merge.sh: `gh pr merge` is human-only per CLAUDE.md §0 rule 8 + §1.13 (Claude never merges to main). Mergify auto-merges once CI is green and the Staging Soak Evidence Gate passes; Carson can admin-merge directly.\n' >&2
-  exit 2
+#
+# The separator class includes `(` because a subshell wrapper is the same
+# command: `(gh pr merge 123 --squash)` returned exit 0 against the pre-fix
+# anchor (probed 2026-08-30, SCRUM-3656).
+#
+# Help carve-out (SCRUM-3656): `--help`/`-h` IMMEDIATELY after `merge` is the
+# read-only usage form -- gh shows help and never runs the merge -- and
+# blocking it broke ordinary doc work. The carve-out is deliberately narrow,
+# matched token-exact in the next-token position only:
+#   - later on the line the token can be a flag VALUE (`--body --help` is a
+#     REAL merge whose body is "--help"), so only the first token after
+#     `merge` counts and `gh pr merge 123 --help` stays blocked (over-block,
+#     the safe direction);
+#   - `--help=false` DISABLES help and the merge runs, so the comparison is
+#     exact string equality, never a prefix;
+#   - the gap before the token is [[:blank:]] (space/tab), never a newline --
+#     a newline is a command SEPARATOR, so $'gh pr merge\n--help' is a real
+#     merge of the current branch's PR followed by a stray word;
+#   - EVERY merge occurrence on the line must be the help form, so a compound
+#     `gh pr merge --help && gh pr merge 123` still blocks. The extraction is
+#     deliberately UNanchored: judging strictly more occurrences than the
+#     anchored trigger saw can only over-block, never exempt.
+# All of the above are pinned in scripts/agent/block-pr-merge.test.sh.
+if printf '%s' "$cmd" | /usr/bin/grep -qE '(^|[[:space:];&|`(])gh[[:space:]]+pr[[:space:]]+merge\b'; then
+  if ! printf '%s' "$cmd" \
+      | /usr/bin/grep -oE 'gh[[:space:]]+pr[[:space:]]+merge([[:blank:]]+[^[:space:];&|`()]+)?' \
+      | /usr/bin/awk '$4 != "--help" && $4 != "-h" { exit 1 }'; then
+    printf 'BLOCKED by .claude/hooks/block-pr-merge.sh: `gh pr merge` is human-only per CLAUDE.md §0 rule 8 + §1.13 (Claude never merges to main). Mergify auto-merges once CI is green and the Staging Soak Evidence Gate passes; Carson can admin-merge directly. (Only the read-only `gh pr merge --help`/`-h` form is exempt.)\n' >&2
+    exit 2
+  fi
 fi
 if printf '%s' "$cmd" | /usr/bin/grep -qE 'gh[[:space:]]+api.*-X[[:space:]]+PUT.*/pulls/[0-9]+/merge'; then
   printf 'BLOCKED: raw GH API PR-merge call. Same rule as above (CLAUDE.md §0 rule 8 / §1.13).\n' >&2
@@ -224,6 +251,31 @@ fi
 # Matches on "$norm" — see rule 2.
 if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+(push|commit).*--no-verify\b'; then
   printf 'BLOCKED: --no-verify skips hooks. CLAUDE.md forbids unless Carson explicitly OKs.\n' >&2
+  exit 2
+fi
+
+# 4. Transient alias defined through an environment indirection (SCRUM-3702).
+#
+# `git --config-env=alias.p=EV p --force origin main` defines alias `p` whose
+# expansion lives in an environment variable, then runs it. The normalizer
+# resolves `-c alias.X=<value>` definitions into the command so the rules
+# above can see them (see normalize-git-command.py), but an env-indirect
+# value is unreadable by construction -- so this fails CLOSED on the
+# construction itself rather than trusting whatever EV holds.
+#
+# Matches on "$cmd", not "$norm": the normalizer strips global options from
+# "$norm", so the definition is only visible in the raw command. `[^;&|]*`
+# holds the match inside ONE shell command, as in rules 2c/2d. Both the
+# separated and the `=`-attached spellings block, quoted or not, and the
+# section name matches CASE-INSENSITIVELY -- git config keys are
+# case-insensitive, so `--config-env=Alias.p=EV` defines the same alias
+# (probed against git 2.50, 2026-08-30; mirrors ALIAS_DEF_RE's IGNORECASE in
+# normalize-git-command.py). A command that merely QUOTES this construction
+# blocks too -- the same accepted over-block class as quoting any other
+# guarded literal (see scripts/agent/agents.md, 2026-08-23), pinned in
+# block-pr-merge.test.sh.
+if printf '%s' "$cmd" | /usr/bin/grep -qE "git[[:space:]][^;&|]*--config-env([[:space:]]+|=)[\"']?[Aa][Ll][Ii][Aa][Ss]\."; then
+  printf 'BLOCKED: `--config-env=alias.*` defines a git alias whose expansion is hidden in an environment variable, which this guard cannot resolve. Spell the git subcommand directly.\n' >&2
   exit 2
 fi
 

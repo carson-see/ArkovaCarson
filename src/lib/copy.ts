@@ -658,6 +658,7 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'anchor.secured': 'A document record was secured and its Anchor Receipt details are available.',
   'anchor.revoked': 'A secured document record was revoked by its issuer.',
   'anchor.expired': 'A secured document record passed its expiration date.',
+  'anchor.superseded': 'A secured document record was replaced by a newer version.',
   'anchor.batch_secured': 'A group of document records was secured together in one Network Receipt.',
   'credential.issued': 'A credential was issued by a verified organization.',
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
@@ -3801,6 +3802,25 @@ export const SOURCE_PROVENANCE_LABELS = {
 export const CTDL_DATA_LINK_LABELS = {
   SECTION_LABEL: 'Structured data',
   LINK_TEXT: 'CTDL data (JSON-LD)',
+} as const;
+
+// ─── DocuSign Record Deep Links (bilateral rollout, frontend-targeted T2) ────
+// Authenticated record-detail metadata section ONLY — the public
+// verification page is explicitly out of scope for this rollout and is not
+// touched by the consuming components. Account/envelope id metadata values
+// and dedicated signer rows link into DocuSign's own console — built by
+// accountUrl/envelopeUrl/signerUrl (src/lib/docusignLinks.ts), which
+// validate a candidate value as a strict UUID BEFORE composing any URL and
+// return null otherwise (falls back to the pre-existing plain-text render,
+// so a non-UUID value or a non-DocuSign anchor is completely unaffected).
+// Signer rows read ONLY `recipient_id_guid` for display and for the link —
+// never `user_id`, even when present on an entry — per the data-minimization
+// ruling (R6) this PR was scoped against.
+export const DOCUSIGN_RECORD_LINKS_LABELS = {
+  SIGNERS_SECTION_LABEL: 'Signers',
+  SIGNER_PREFIX: 'Signer',
+  VERIFIED_VIA_DOCUSIGN: 'Verified via DocuSign',
+  MORE_SIGNED_SUFFIX: 'more signed via DocuSign',
 } as const;
 
 // ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────

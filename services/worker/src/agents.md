@@ -11,6 +11,33 @@ Second network-blind singleton in this file, same shape as the 2026-08-11 fee-es
 
 `read()` is **synchronous and never touches the network** — it returns a 60s TTL-cached snapshot and schedules refreshes in the background. That is load-bearing: `/health` is polled by the Cloudflare LB monitor (30s) and the GCP uptime check (60s), so an inline call would put a third-party provider on the critical path of the endpoint Cloud Run and every monitor depend on. Keep it synchronous; do not `await` the probe here. Full rationale and the state taxonomy: `routes/agents.md` (same date) and the header of `routes/anchoring-rpc-probe.ts`.
 
+## 2026-08-23 — `index.ts` mount order: the public verify limiter, and where the IP guard went
+
+Two changes to this file's wiring (SCRUM-2603 / SCRUM-3418):
+
+- **`apiIpShadowGuard` moved out of `index.ts`** into `middleware/apiIpShadowGuard.ts`. It was
+  declared inline here, which made its skip predicate untestable without booting the server. Same
+  instance, same two mounts (`app.use('/api', apiIpShadowGuard, badgeRouter)` and the prefix-less
+  `app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter)`). Both are load-bearing and a request is
+  charged once across them (`utils/rateLimit.ts`, COUNTED_LIMITERS) — do not delete a mount and do
+  not add a third.
+- **`app.use('/api/v1/verify', publicVerifyAnonLimiter)` is new, and its POSITION is load-bearing.**
+  The guard now skips `/api/v1/verify` entirely, so this line is the only thing capping anonymous
+  verify traffic before `apiV1Router`. It must stay ABOVE `app.use('/api/v1', apiV1Router)`, because
+  apiV1Router runs `verificationApiGate()` before its own `anonRateLimiter` — with
+  `ENABLE_VERIFICATION_API` off, a verify request 503s without ever being counted. Move or delete
+  this line and anonymous verify silently loses its cap on the dark-API path.
+
+That second coupling spans two files and no unit test could see it, so
+`middleware/apiIpShadowGuard.test.ts` ends with a source-scanning **mount guard** that reads
+`index.ts` and fails if the mount disappears or sinks below `apiV1Router` — same technique as
+`middleware/paymentTierRouter.mount-guard.test.ts`. If you reorganize the mounts in this file, expect
+that test to be the thing that stops you, and read its docstring before "fixing" it.
+
+**Deleted: `rateLimitShadowGuard.test.ts`.** It re-declared `hasApiKeyCredential` and the F-2 skip
+predicate as local copies and asserted against stand-in caps (3/8) — so it stayed green no matter
+what the production predicate did. `middleware/apiIpShadowGuard.test.ts` now covers all three of its
+behaviours against the real exported predicate and the real 60/min instance.
 
 ## 2026-08-18 — `config.ts` gains `enablePlatformHealthDigest` (`feat/platform-admin-daily-health-digest`, draft, T2)
 

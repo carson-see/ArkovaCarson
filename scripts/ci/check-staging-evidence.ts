@@ -4,8 +4,8 @@
  *
  * Every prod-affecting PR declares a risk tier (T1 / T2 / T3) in its
  * body. T0 docs/tests/CI/tooling-only PRs run CI only. The tier dictates
- * required evidence fields and, for T2/T3, required soak length. CI fails
- * the PR if:
+ * required evidence fields and required soak length (2h / 12h / 48h per
+ * CLAUDE.md §1.12). CI fails the PR if:
  *
  *   1. The declared tier is missing.
  *   2. The declared tier is below what the touched files require
@@ -59,12 +59,19 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T1: {
     tier: 'T1',
-    soakHours: 0,
+    // CLAUDE.md §1.12: the T1 row is "2 h soak" with "soak start/end" in its
+    // required evidence. This spec carried 0h with no window fields, so a green
+    // T1 gate proved no soak at all (merged #2241/#2264 finding; the approver
+    // half of that gap was closed by validateHumanApproverField). The gate
+    // matches the constitution — not the other way around.
+    soakHours: 2,
     requiredFields: [
       'Tier:',
       'PR head SHA:',
       'Staging tag URL or N/A explanation:',
       'Health/smoke result:',
+      'Soak start:',
+      'Soak end:',
       'CI/E2E green:',
       'Rollback plan:',
       'Risk rationale:',
@@ -2139,8 +2146,9 @@ export function approverIndependenceErrors(body: string, prAuthor?: string): str
  * `validateNonEmptyEvidenceField` rejects only the empty string, so
  * `Human approver: NONE` — and the `NONE. <explanation>` spelling PR #2264
  * merged with — satisfied the only approval evidence T1 carries
- * (`TIER_SPECS.T1.soakHours` is 0; this field is what a green T1 gate is
- * supposed to prove).
+ * (`TIER_SPECS.T1.soakHours` was 0 at the time; the soak half of that gap is
+ * now closed too — T1 requires a 2h `Soak start:`/`Soak end:` window per
+ * CLAUDE.md §1.12).
  *
  * This is the VALUE half only. Cross-checking this field against the PR
  * author is a policy call deliberately NOT taken (see the PR's "Known scope
@@ -2926,6 +2934,18 @@ const STAGING_TOOLING_ALLOW = [
   // read by scripts/*.test.ts only (never imported, typechecked, or bundled).
   /^scripts\/check-copy-terms(\.test)?\.ts$/,
   /^scripts\/fixtures\//,
+  // SCRUM-3618: the RLS test-helper subtree — the exact path CLAUDE.md §1.7
+  // names for `withUser()` / `withAuth()` (plus `cleanupClient()` and the
+  // pinned DEMO_CREDENTIALS/ORG_IDS seed constants). It is imported ONLY by
+  // `*.test.ts` files (verified: no src/ runtime importer), so like the
+  // CODEOWNERS / gitleaks entries above there is no surface a soak could
+  // exercise. It bit the same way: the tests-only SCRUM-3618 parallel-safety
+  // fix (tests/rls/** sweep + the shared sign-out helper) classified T1 via
+  // the frontend default and would have demanded a 2 h soak of a file prod
+  // never reads. Sibling `*.test.ts`/`agents.md` files under src/tests/ are
+  // already T0 via the early TEST_FILE_RE / agents.md return; this entry
+  // covers only the non-test helper modules in the RLS subtree.
+  /^src\/tests\/rls\//,
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,
@@ -2938,6 +2958,14 @@ const STAGING_TOOLING_ALLOW = [
   // over src/), runs only in CI; never ships to prod runtime → T0 tooling,
   // same class as the other scripts/ci/check-*.ts gates above.
   /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
+  // Governance doc-pointer resolution gate. Reads markdown + workflow YAML and
+  // asserts every cited repo path exists; nothing under src/ or
+  // services/worker/src/ imports it (verified by grep across src/, services/,
+  // packages/, integrations/, e2e/), and it runs only in the ci.yml
+  // `doc-pointers` job → no prod runtime to soak, same class as the other
+  // scripts/ci/check-*.ts gates above. Its exemptions file already rides the
+  // scripts/ci/snapshots/ entry.
+  /^scripts\/ci\/check-doc-pointers(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   // SCRUM-1253 (R0-7): memory feedback-rules CI gates. Per-rule scripts under
   // scripts/ci/feedback-rules/ + the check-feedback-rules.ts orchestrator run
@@ -3020,7 +3048,7 @@ const STAGING_TOOLING_ALLOW = [
   // PI-0 S2 (SCRUM-2341 / verifier track): @arkova/verifier + @arkova/verifier-cli
   // are new MIT-licensed STANDALONE library/CLI packages. They are NOT imported by
   // the deployed Cloud Run worker (services/worker) or the frontend (src/) — verified
-  // no `@arkova/verifier` import exists under services/** or src/**. No migration, no
+  // no `arkova-verifier` import exists under services/** or src/**. No migration, no
   // API/contract surface, no prod runtime: they run only in their own clean-room CI
   // job and as a developer/auditor CLI. Zero prod-runtime impact → T0 tooling. (The
   // packages/*/package.json + package-lock.json + eslint.config.js + agents.md within

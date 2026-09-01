@@ -1,7 +1,7 @@
 /**
  * Test helpers — an offline, fixture-backed `IndependentNode` so the whole
  * suite runs with NO network reachable (clean-room assertion). The fetch is an
- * `@arkova/verifier` `IndependentNodeFetch` driven entirely by the fixture's
+ * `arkova-verifier` `IndependentNodeFetch` driven entirely by the fixture's
  * canned Esplora REST responses; an unknown path returns 404 (never falls
  * through to a real fetch).
  */
