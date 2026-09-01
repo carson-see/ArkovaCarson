@@ -28,6 +28,8 @@ interface SubOrg {
   parent_approval_status: string;
   created_at: string;
   logo_url: string | null;
+  /** SCRUM-3867 — is this sub-org running on OUR DocuSign connection? */
+  docusignInherited?: boolean;
 }
 
 /**
@@ -81,6 +83,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   const [childBalances, setChildBalances] = useState<Record<string, number>>({});
   const [creditAmounts, setCreditAmounts] = useState<Record<string, string>>({});
   const [creditBusy, setCreditBusy] = useState<{ id: string; dir: 1 | -1 } | null>(null);
+  const [connectorBusy, setConnectorBusy] = useState<string | null>(null);
 
   // `isInitialLoad` gates the full-panel error state to the mount fetch and the
   // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
@@ -153,6 +156,44 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
     async function run() { await Promise.all([fetchSubOrgs(), fetchCredits()]); }
     void run();
   }, [fetchSubOrgs, fetchCredits]);
+
+  /**
+   * SCRUM-3867 — lend this org's DocuSign connection to a sub-org, or take it
+   * back. The parent is the party lending credentials, which is why the control
+   * lives here rather than on the sub-org's own connector card.
+   */
+  const handleToggleInheritance = useCallback(async (childOrgId: string, inherited: boolean) => {
+    setConnectorBusy(childOrgId);
+    try {
+      const headers = await getAuthHeaders();
+      const path = inherited ? 'docusign/inherit/stop' : 'docusign/inherit';
+      const response = await fetch(`${WORKER_URL}/api/v1/integrations/${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ org_id: childOrgId }),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+
+      if (!response.ok) {
+        const message =
+          data.error === 'parent_not_connected' ? SUB_ORG_LABELS.DOCUSIGN_PARENT_NOT_CONNECTED
+          : data.error === 'already_connected' ? SUB_ORG_LABELS.DOCUSIGN_ALREADY_CONNECTED
+          : SUB_ORG_LABELS.DOCUSIGN_SHARE_FAILED;
+        toast.error(message);
+        return;
+      }
+
+      setSubOrgs((prev) => prev.map((s) =>
+        s.id === childOrgId ? { ...s, docusignInherited: !inherited } : s));
+      toast.success(
+        inherited ? SUB_ORG_LABELS.DOCUSIGN_SHARING_STOPPED : SUB_ORG_LABELS.DOCUSIGN_SHARED,
+      );
+    } catch {
+      toast.error(SUB_ORG_LABELS.DOCUSIGN_SHARE_FAILED);
+    } finally {
+      setConnectorBusy(null);
+    }
+  }, []);
 
   /**
    * Move credits between the parent and one sub-org. `direction` is the sign:
@@ -568,6 +609,19 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                         </Button>
                       );
                     })}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9"
+                      onClick={() => { void handleToggleInheritance(sub.id, sub.docusignInherited === true); }}
+                      disabled={connectorBusy === sub.id}
+                    >
+                      {connectorBusy === sub.id
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : sub.docusignInherited
+                          ? SUB_ORG_LABELS.DOCUSIGN_STOP_SHARING
+                          : SUB_ORG_LABELS.DOCUSIGN_SHARE}
+                    </Button>
                     {typeof childBalances[sub.id] === 'number' && (
                       <span className="text-xs text-muted-foreground ml-auto self-center">
                         {childBalances[sub.id]} {SUB_ORG_LABELS.CREDITS_BALANCE_SUFFIX}

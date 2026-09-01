@@ -56,6 +56,7 @@ export interface Builder {
   delete: ReturnType<typeof vi.fn>;
   eq: ReturnType<typeof vi.fn>;
   in: ReturnType<typeof vi.fn>;
+  is: ReturnType<typeof vi.fn>;
   gte: ReturnType<typeof vi.fn>;
   or: ReturnType<typeof vi.fn>;
   order: ReturnType<typeof vi.fn>;
@@ -124,7 +125,12 @@ export function makeBuilder(state: BuilderState = {}): Builder {
   builder.update = vi.fn(chain);
   builder.delete = vi.fn(chain);
   builder.eq = vi.fn(chain);
-  builder.in = vi.fn(chain);
+  // `.in()` is a hybrid too (SCRUM-3867): the sub-orgs list terminates its
+  // DocuSign-marker lookup on `.in('org_id', childIds)`. Adding the payload
+  // keeps every existing chain-only use working — a hybrid is still chainable.
+  builder.in = vi.fn(listPayload);
+  // `.is('revoked_at', null)` is standard PostgREST and was simply missing.
+  builder.is = vi.fn(chain);
   builder.gte = vi.fn(chain);
   builder.or = vi.fn(chain);
   builder.order = vi.fn(listPayload);

@@ -42,6 +42,7 @@ import { orgKybRouter } from './api/v1/org-kyb.js';
 import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
 import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { docusignMemberOAuthRouter } from './api/v1/integrations/docusign-member-oauth.js';
+import { docusignInheritanceRouter } from './api/v1/integrations/docusign-inheritance.js';
 // SCRUM-2082 CSI-04D — Issuer Partners admin API.
 import { createIssuerPartnershipsRouter } from './api/v1/integrations/issuer-partnerships.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
@@ -534,6 +535,16 @@ app.use(
   pathScopedMiddleware('/docusign', rateLimiters.api),
   pathScopedMiddleware('/docusign', integrationsAuthGate),
   pathScopedMiddleware('/docusign', docusignMemberOAuthRouter),
+);
+// SCRUM-3867: sub-org DocuSign inheritance. Same kill switch, limiter and auth
+// gate as the two routers above — a marker is a connection, so it lives behind
+// exactly the same door.
+app.use(
+  '/api/v1/integrations',
+  pathScopedKillSwitch('/docusign', 'ENABLE_DOCUSIGN_OAUTH'),
+  pathScopedMiddleware('/docusign', rateLimiters.api),
+  pathScopedMiddleware('/docusign', integrationsAuthGate),
+  pathScopedMiddleware('/docusign', docusignInheritanceRouter),
 );
 // SCRUM-2082 CSI-04D — Issuer Partners admin API. Auth-gated; all handlers
 // additionally verify org_admin / owner role before reads / mutations.

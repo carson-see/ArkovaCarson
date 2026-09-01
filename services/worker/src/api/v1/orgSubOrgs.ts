@@ -581,8 +581,38 @@ orgSubOrgsRouter.get('/', async (req: Request, res: Response) => {
       .eq('id', orgId)
       .single();
 
+    // SCRUM-3867 — which sub-orgs currently run on THIS org's DocuSign
+    // connection. One query for the whole list rather than a per-row endpoint,
+    // and an additive field (§1.8) so existing consumers are untouched. A
+    // failure here degrades to "no sub-org is inheriting" rather than taking
+    // out the list: the toggle is additive to a panel that already worked.
+    const childIds = (subOrgs ?? []).map((s: { id: string }) => s.id);
+    let inheritingIds = new Set<string>();
+    if (childIds.length > 0) {
+      // Doubly tenant-scoped: `inherited_from_org_id = orgId` restricts to
+      // markers pointing at THIS org, and `in('org_id', childIds)` restricts to
+      // its own children. The isolation rule matches only a literal
+      // `.eq('org_id', ...)`, so the disable sits on the chain it flags.
+      // eslint-disable-next-line arkova/missing-org-filter -- see the note above
+      const { data: markers, error: markerError } = await db
+        .from('org_integrations')
+        .select('org_id')
+        .eq('provider', 'docusign')
+        .eq('inherited_from_org_id', orgId)
+        .is('revoked_at', null)
+        .in('org_id', childIds);
+      if (markerError) {
+        logger.error({ err: markerError.message, orgId }, 'suborg_docusign_marker_lookup_failed');
+      } else {
+        inheritingIds = new Set((markers ?? []).map((m: { org_id: string }) => m.org_id));
+      }
+    }
+
     res.json({
-      subOrgs: subOrgs ?? [],
+      subOrgs: (subOrgs ?? []).map((s: { id: string }) => ({
+        ...s,
+        docusignInherited: inheritingIds.has(s.id),
+      })),
       maxSubOrgs: parentOrg?.max_sub_orgs ?? null,
       count: subOrgs?.length ?? 0,
     });

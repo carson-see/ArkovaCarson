@@ -3003,6 +3003,16 @@ export const SUB_ORG_LABELS = {
   CREDITS_INSUFFICIENT_PARENT: 'Your organization does not have that many credits to give.',
   CREDITS_INSUFFICIENT_CHILD: 'That affiliated organization does not have that many credits left to return.',
   CREDITS_INVALID_AMOUNT: 'Enter a whole number of credits greater than zero.',
+  // SCRUM-3867 — a sub-org may run on the parent's signing connection when it
+  // cannot hold one of its own.
+  DOCUSIGN_SHARE: 'Share Our DocuSign',
+  DOCUSIGN_STOP_SHARING: 'Stop Sharing',
+  DOCUSIGN_SHARED_BADGE: 'Uses our DocuSign',
+  DOCUSIGN_SHARED: 'That organization now uses your DocuSign connection.',
+  DOCUSIGN_SHARING_STOPPED: 'That organization no longer uses your DocuSign connection.',
+  DOCUSIGN_PARENT_NOT_CONNECTED: 'Connect your own DocuSign account first, then you can share it.',
+  DOCUSIGN_ALREADY_CONNECTED: 'That organization already has its own DocuSign connection.',
+  DOCUSIGN_SHARE_FAILED: 'Could not change the DocuSign connection.',
   PENDING_APPROVAL: 'Pending approval from',
   REVOKED_BY: 'Affiliation revoked by',
   APPROVE_SUCCESS: 'Organization approved as affiliate.',
