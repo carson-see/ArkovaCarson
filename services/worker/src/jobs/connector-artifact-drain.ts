@@ -594,8 +594,14 @@ async function defaultDebitAndEnqueueAnchor(
  * racing it. Never expands to an unguarded delete.
  *
  * §1.6A: ids only. No fingerprint, no bytes, no metadata.
+ *
+ * EXPORTED solely so its WHERE clause can be pinned by a direct unit test —
+ * same reason `defaultMaterializeAnchor` is exported for the SCRUM-2486 AC-4
+ * guard test. This is the ONE place this module can retire an `anchors` row;
+ * the safety property lives entirely in the filters, so a test asserts the
+ * exact filter set rather than trusting a reader to notice one going missing.
  */
-async function defaultNeutralizeOrphanAnchor(
+export async function defaultNeutralizeOrphanAnchor(
   args: { orgId: string; anchorId: string },
   deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
 ): Promise<boolean> {
