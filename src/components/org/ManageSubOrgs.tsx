@@ -67,6 +67,11 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   const [retrying, setRetrying] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // SCRUM-3865 — credit provisioning state.
+  const [parentBalance, setParentBalance] = useState<number | null>(null);
+  const [childBalances, setChildBalances] = useState<Record<string, number>>({});
+  const [creditAmounts, setCreditAmounts] = useState<Record<string, string>>({});
+  const [creditLoading, setCreditLoading] = useState<string | null>(null);
 
   // `isInitialLoad` gates the full-panel error state to the mount fetch and the
   // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
@@ -102,16 +107,97 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
     }
   }, [orgId]);
 
+  /**
+   * SCRUM-3865 — parent + per-sub-org credit balances.
+   *
+   * Deliberately independent of `fetchSubOrgs`: credit provisioning is additive
+   * to a panel that already worked, so a rollup outage must degrade to "no
+   * balances shown" rather than taking out approve/revoke with it. Failures are
+   * swallowed here for exactly that reason.
+   */
+  const fetchCredits = useCallback(async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const url = `${WORKER_URL}/api/v1/org/sub-orgs/credits?orgId=${encodeURIComponent(orgId)}`;
+      const response = await fetch(url, { headers });
+      if (!response.ok) return;
+      const data = await response.json() as {
+        parentBalance: number;
+        children: { childOrgId: string; balance: number }[];
+      };
+      setParentBalance(data.parentBalance);
+      setChildBalances(
+        Object.fromEntries((data.children ?? []).map((c) => [c.childOrgId, c.balance])),
+      );
+    } catch {
+      // Balances stay hidden; the rest of the panel is unaffected.
+    }
+  }, [orgId]);
+
   const handleRetry = useCallback(async () => {
     setRetrying(true);
-    await fetchSubOrgs();
+    await Promise.all([fetchSubOrgs(), fetchCredits()]);
     setRetrying(false);
-  }, [fetchSubOrgs]);
+  }, [fetchSubOrgs, fetchCredits]);
 
   useEffect(() => {
-    async function run() { await fetchSubOrgs(); }
+    async function run() { await Promise.all([fetchSubOrgs(), fetchCredits()]); }
     void run();
-  }, [fetchSubOrgs]);
+  }, [fetchSubOrgs, fetchCredits]);
+
+  /**
+   * Move credits between the parent and one sub-org. `direction` is the sign:
+   * the worker treats a negative amount as a reclaim, which is also the
+   * offboarding lever, so both buttons drive one endpoint.
+   */
+  const handleMoveCredits = useCallback(async (childOrgId: string, direction: 1 | -1) => {
+    const raw = (creditAmounts[childOrgId] ?? '').trim();
+    const parsed = Number(raw);
+    if (!raw || !Number.isInteger(parsed) || parsed <= 0) {
+      toast.error(SUB_ORG_LABELS.CREDITS_INVALID_AMOUNT);
+      return;
+    }
+
+    setCreditLoading(childOrgId);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(
+        `${WORKER_URL}/api/v1/org/sub-orgs/credits?orgId=${encodeURIComponent(orgId)}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ childOrgId, amount: parsed * direction }),
+        },
+      );
+      const data = await response.json() as {
+        parentBalance?: number;
+        childBalance?: number;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        const message =
+          data.error === 'insufficient_parent_balance' ? SUB_ORG_LABELS.CREDITS_INSUFFICIENT_PARENT
+          : data.error === 'insufficient_child_balance' ? SUB_ORG_LABELS.CREDITS_INSUFFICIENT_CHILD
+          : SUB_ORG_LABELS.CREDITS_FAILED;
+        toast.error(message);
+        return;
+      }
+
+      if (typeof data.parentBalance === 'number') setParentBalance(data.parentBalance);
+      if (typeof data.childBalance === 'number') {
+        setChildBalances((prev) => ({ ...prev, [childOrgId]: data.childBalance as number }));
+      }
+      setCreditAmounts((prev) => ({ ...prev, [childOrgId]: '' }));
+      toast.success(
+        direction > 0 ? SUB_ORG_LABELS.CREDITS_ADDED : SUB_ORG_LABELS.CREDITS_RECLAIMED,
+      );
+    } catch {
+      toast.error(SUB_ORG_LABELS.CREDITS_FAILED);
+    } finally {
+      setCreditLoading(null);
+    }
+  }, [creditAmounts, orgId]);
 
   const handleCreateAffiliate = useCallback(async () => {
     const displayName = affiliateName.trim();
@@ -236,12 +322,24 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
 
       <CardContent className="space-y-6">
         {/* Count display */}
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Link2 className="h-4 w-4" />
-          <span>
-            <strong className="text-foreground">{approvedCount}</strong>
-            {' '}{SUB_ORG_LABELS.COUNT_LABEL}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+          <span className="flex items-center gap-2">
+            <Link2 className="h-4 w-4" />
+            <span>
+              <strong className="text-foreground">{approvedCount}</strong>
+              {' '}{SUB_ORG_LABELS.COUNT_LABEL}
+            </span>
           </span>
+          {/* SCRUM-3865: the pool every allocation below draws from. */}
+          {parentBalance !== null && (
+            <span className="flex items-center gap-2">
+              <Users2 className="h-4 w-4" />
+              <span>
+                <strong className="text-foreground">{parentBalance}</strong>
+                {' '}{SUB_ORG_LABELS.CREDITS_AVAILABLE}
+              </span>
+            </span>
+          )}
         </div>
 
         {/* Affiliate create form */}
@@ -331,8 +429,14 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
             {subOrgs.map((sub) => (
               <div
                 key={sub.id}
-                className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
+                data-testid="sub-org-row"
+                className="p-3 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
               >
+              {/*
+                Wraps at narrow widths: with the actions pinned on the same
+                line the name truncated to a single character at 375px.
+              */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
                     {sub.logo_url ? (
@@ -402,6 +506,63 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                     </Button>
                   )}
                 </div>
+              </div>
+
+              {/*
+                SCRUM-3865 — credit provisioning. Offered only for an APPROVED
+                affiliation: funding an org whose affiliation is pending or
+                revoked would move credits across a boundary the parent has not
+                (or no longer) accepted. Reclaim is the same endpoint with a
+                negative amount, which is also the offboarding lever.
+              */}
+              {sub.parent_approval_status === 'APPROVED' && (
+                <div className="mt-3 pt-3 border-t border-border/40 flex flex-wrap items-end gap-2">
+                  <div className="w-28 shrink-0">
+                    <Label
+                      htmlFor={`credits-${sub.id}`}
+                      className="text-xs text-muted-foreground"
+                    >
+                      {SUB_ORG_LABELS.CREDITS_AMOUNT_LABEL}
+                    </Label>
+                    <Input
+                      id={`credits-${sub.id}`}
+                      type="number"
+                      min={1}
+                      step={1}
+                      inputMode="numeric"
+                      className="h-9"
+                      value={creditAmounts[sub.id] ?? ''}
+                      onChange={(e) =>
+                        setCreditAmounts((prev) => ({ ...prev, [sub.id]: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    className="h-9"
+                    onClick={() => { void handleMoveCredits(sub.id, 1); }}
+                    disabled={creditLoading === sub.id}
+                  >
+                    {creditLoading === sub.id
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : SUB_ORG_LABELS.CREDITS_ADD}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-9"
+                    onClick={() => { void handleMoveCredits(sub.id, -1); }}
+                    disabled={creditLoading === sub.id}
+                  >
+                    {SUB_ORG_LABELS.CREDITS_RECLAIM}
+                  </Button>
+                  {typeof childBalances[sub.id] === 'number' && (
+                    <span className="text-xs text-muted-foreground ml-auto self-center">
+                      {childBalances[sub.id]} {SUB_ORG_LABELS.CREDITS_BALANCE_SUFFIX}
+                    </span>
+                  )}
+                </div>
+              )}
               </div>
             ))}
           </div>

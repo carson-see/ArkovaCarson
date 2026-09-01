@@ -2989,6 +2989,20 @@ export const SUB_ORG_LABELS = {
   SEARCH_PLACEHOLDER: 'Search verified organizations...',
   AFFILIATED_WITH: 'Affiliated with',
   PARENT_ORGANIZATION: 'parent organization',
+  // SCRUM-3865 — sub-org credit provisioning. Credits are the unit an
+  // organization spends to secure a document; there is no second "anchor"
+  // budget (pre-mortem D5), so this is the only allowance shown here.
+  CREDITS_AVAILABLE: 'credits available',
+  CREDITS_BALANCE_SUFFIX: 'credits',
+  CREDITS_AMOUNT_LABEL: 'Credits to move',
+  CREDITS_ADD: 'Add Credits',
+  CREDITS_RECLAIM: 'Reclaim',
+  CREDITS_ADDED: 'Credits added to the affiliated organization.',
+  CREDITS_RECLAIMED: 'Credits returned to your organization.',
+  CREDITS_FAILED: 'Could not move those credits.',
+  CREDITS_INSUFFICIENT_PARENT: 'Your organization does not have that many credits to give.',
+  CREDITS_INSUFFICIENT_CHILD: 'That affiliated organization does not have that many credits left to return.',
+  CREDITS_INVALID_AMOUNT: 'Enter a whole number of credits greater than zero.',
   PENDING_APPROVAL: 'Pending approval from',
   REVOKED_BY: 'Affiliation revoked by',
   APPROVE_SUCCESS: 'Organization approved as affiliate.',
