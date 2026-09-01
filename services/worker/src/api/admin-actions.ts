@@ -8,7 +8,13 @@
  * POST /api/admin/organizations/:id/credits/adjust  — Add/remove org credits (L2-A5)
  *
  * All endpoints gated behind platform admin check.
- * Uses service_role to bypass protective triggers.
+ *
+ * The profile RPCs (change-role / promote-admin / set-org) run as service_role.
+ * The protective BEFORE UPDATE triggers on `profiles` recognise service_role and
+ * step aside, so these are plain UPDATEs. They used to wrap the write in
+ * `ALTER TABLE profiles DISABLE/ENABLE TRIGGER`, which took ShareRowExclusiveLock
+ * on a table in the auth hot path and barriered every subsequent profile write
+ * behind it; migration 0428 removed that DDL.
  */
 
 /** Loose UUID-shape check — the RPC also validates via its `uuid` column type, but a
@@ -50,8 +56,11 @@ export async function handlePromoteAdmin(
   }
 
   try {
-    // Must disable triggers to update protected fields
-    // Use raw SQL via RPC since Supabase client can't disable triggers
+    // RPC rather than a direct table write: `is_platform_admin` is protected by
+    // trg_protect_platform_admin, which reverts the change for any caller that is
+    // not service_role. Since 0428 the RPC also re-reads the row and raises if the
+    // flag did not take, so a reverted write surfaces here as an error rather than
+    // a false success.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any).rpc('admin_set_platform_admin', {
       p_user_id: targetUserId,
