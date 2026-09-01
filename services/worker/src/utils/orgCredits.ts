@@ -9,13 +9,25 @@
  * helper short-circuits to `{ allowed: true, reason: 'feature_disabled' }`
  * so existing callers without org-credit setup are unaffected.
  *
- * Gated by `config.enableOrgCreditEnforcement`. Tenant-scoped flip is
- * intentionally NOT here — the design wants the carve-out to happen at the
- * route layer (the route reads the per-tenant Confluence allowlist before
- * calling this) so this helper has a single, simple contract.
+ * SCRUM-3866 — enforcement scope is now per-org, not only global.
+ *
+ * The previous note here said the tenant-scoped flip belonged at the route
+ * layer, "the route reads the per-tenant Confluence allowlist before calling
+ * this". No route ever did, and a Confluence page is not an authorization
+ * source. Meanwhile the global flag was the ONLY lever, which made enabling
+ * enforcement for one partner an all-tenants change: 7 of 13 production orgs
+ * sat at a zero balance, including the Login Defense partner org and the UAT
+ * demo org, so flipping it to give one partner a real budget would have
+ * started 402-ing all of them (pre-mortem F2).
+ *
+ * Enforcement now applies when the global flag is on OR the org's own
+ * `credit_enforcement_enabled` column (migration 0429) is true. That column is
+ * writable only by service_role or a platform admin — an org cannot switch off
+ * the gate that bills it.
  */
 
 import { config } from '../config.js';
+import { logger } from './logger.js';
 import type { db } from './db.js';
 
 export interface DeductionResult {
@@ -46,6 +58,41 @@ interface DeductOrgCreditRpcRow {
 type DbLike = typeof db;
 
 /**
+ * Is anchor-credit enforcement in force for this org?
+ *
+ * True when the global flag is on (which short-circuits before any query, so
+ * the enforced-everywhere case costs no extra round trip) or when the org is
+ * individually enrolled via `organizations.credit_enforcement_enabled`.
+ *
+ * FAILS OPEN. A read error or a missing row returns `false` — not enforced —
+ * which preserves the behaviour pinned by `orgCreditEnforcementFlag.test.ts`:
+ * "a missing / false flag NEVER hard-blocks the anchor path for non-credit
+ * orgs". Failing closed here would convert a transient read error into a 503
+ * for every org on the platform in order to protect a budget that applies to
+ * one partner. The residual risk is that an enrolled org gets an unbilled
+ * anchor during a database incident; it is logged at error level so those can
+ * be reconciled, and the enrolled path still fails closed on the deduction RPC
+ * itself (503 `credit_check_unavailable`).
+ */
+async function isEnforcedForOrg(database: DbLike, orgId: string): Promise<boolean> {
+  if (config.enableOrgCreditEnforcement) return true;
+
+  const { data, error } = await (database
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .from as any)('organizations')
+    .select('credit_enforcement_enabled')
+    .eq('id', orgId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error({ orgId, err: error.message }, 'org_credit_enforcement_lookup_failed');
+    return false;
+  }
+
+  return data?.credit_enforcement_enabled === true;
+}
+
+/**
  * Deduct `amount` credits from `orgId`. The org must be initialized in
  * `org_credits` (lazy-init happens via allocation, not here).
  *
@@ -63,7 +110,7 @@ export async function deductOrgCredit(
   reason: string,
   referenceId?: string,
 ): Promise<DeductionResult> {
-  if (!config.enableOrgCreditEnforcement) {
+  if (!(await isEnforcedForOrg(database, orgId))) {
     return { allowed: true, reason: 'feature_disabled' };
   }
 
