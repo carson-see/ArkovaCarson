@@ -115,6 +115,35 @@ describe('toVerificationView (SCRUM-1152)', () => {
     ]);
   });
 
+  // docusign-bilateral-2026-08 (SCRUM-3818 go-live blocker): `toVerificationView`
+  // dropped `fingerprint_rederivability` / `_note` entirely — the mapping
+  // layer's `ProofPacketAnchorReceipt` type had no fields to carry them, so
+  // even after proof-packet.ts's fix started emitting the honest
+  // DECLARED_UNVERIFIED pair, this view (the Phase 1.5 verification-API-
+  // parity shape) silently discarded it. Additive/nullable per §1.8 — same
+  // pattern as `jurisdiction` above, present only when the source packet has it.
+  it('threads fingerprint_rederivability + note through when the source packet carries them', () => {
+    const packet = {
+      ...SAMPLE_PACKET,
+      anchor_receipt: {
+        ...SAMPLE_PACKET.anchor_receipt,
+        fingerprint_rederivability: 'declared_unverified',
+        fingerprint_rederivability_note: 'Measured: nothing — Arkova did NOT retrieve or hash this document.',
+      },
+    };
+    const view = toVerificationView(packet);
+    expect(view.fingerprint_rederivability).toBe('declared_unverified');
+    expect(view.fingerprint_rederivability_note).toBe(
+      'Measured: nothing — Arkova did NOT retrieve or hash this document.',
+    );
+  });
+
+  it('omits fingerprint_rederivability + note when the source packet does not carry them (frozen schema §6 — never null)', () => {
+    const view = toVerificationView(SAMPLE_PACKET);
+    expect('fingerprint_rederivability' in view).toBe(false);
+    expect('fingerprint_rederivability_note' in view).toBe(false);
+  });
+
   it('CIBA_EXTENSION_FIELDS documents the extra fields proof packets carry beyond the verification schema', () => {
     expect(CIBA_EXTENSION_FIELDS).toEqual(
       expect.arrayContaining(['execution_id', 'rule_id', 'rule_name', 'action_outcome']),

@@ -306,6 +306,49 @@ describe('buildProofResponse — the /proof response carries the pair; the signe
     );
   });
 
+  // A DocuSign OUTBOUND (or Drive/M365) connector-sourced anchor with no
+  // `fingerprint_source` measured behaves EXACTLY as above — this is the
+  // regression guard that this fix must not change /proof's rendering for
+  // today's connector-sourced anchors.
+  it('a connector-sourced anchor with fingerprint_source=document_bytes still gets FETCH_TIME_SNAPSHOT (regression: outbound renders byte-identically)', () => {
+    const resp = buildProofResponse(
+      { ...baseAnchor, metadata: { connector_source: 'docusign' }, fingerprint_source: 'document_bytes' },
+      storedProof,
+      3,
+    ) as MerkleProofResponse;
+    expect(resp.fingerprint_rederivability).toBe(FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT);
+    expect(resp.fingerprint_rederivability_note).toBe(
+      FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT],
+    );
+  });
+
+  // docusign-bilateral-2026-08 (SCRUM-3818 go-live blocker): PRIOR to this
+  // fix, buildProofResponse called connectorFingerprintRederivabilityFields()
+  // with NO argument, so an INBOUND declared-hash anchor (connector_source=
+  // 'docusign' + fingerprint_source='issuer_record_attestation' — set only by
+  // the connector-artifact drain's inbound branch) rendered the STRONGER
+  // FETCH_TIME_SNAPSHOT claim ("Arkova computed its fingerprint from the
+  // document bytes retrieved...") even though Arkova never fetched or hashed
+  // anything for this record. /proof must render the honest DECLARED_UNVERIFIED
+  // class instead — same downgrade rule as buildVerificationResult above.
+  it('emits DECLARED_UNVERIFIED (not FETCH_TIME_SNAPSHOT) for an inbound declared-hash anchor', () => {
+    const resp = buildProofResponse(
+      {
+        ...baseAnchor,
+        metadata: { connector_source: 'docusign' },
+        fingerprint_source: 'issuer_record_attestation',
+      },
+      storedProof,
+      3,
+    ) as MerkleProofResponse;
+    expect(resp.fingerprint_rederivability).toBe(FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED);
+    expect(resp.fingerprint_rederivability_note).toBe(
+      FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED],
+    );
+    // Must never claim Arkova computed/fetched anything for this class.
+    expect(resp.fingerprint_rederivability_note).not.toContain('Arkova computed its');
+  });
+
   it('never places the pair inside the signed proof_bundle', () => {
     const resp = buildProofResponse(
       { ...baseAnchor, metadata: { connector_source: 'docusign' } },

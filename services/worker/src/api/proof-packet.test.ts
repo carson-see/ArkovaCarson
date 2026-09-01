@@ -286,6 +286,82 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
     expect('fingerprint_rederivability_note' in packet.anchor_receipt).toBe(false);
   });
 
+  // docusign-bilateral-2026-08 (SCRUM-3818 go-live blocker): PRIOR to this,
+  // the anchor_receipt caveat was ALWAYS FETCH_TIME_SNAPSHOT regardless of
+  // `anchors.fingerprint_source` — every packet anchor is connector-execution
+  // -scoped by construction, but an INBOUND declared-hash anchor
+  // (fingerprint_source='issuer_record_attestation', set only by the
+  // connector-artifact drain's inbound branch) was never fetched or hashed by
+  // Arkova at all, so FETCH_TIME_SNAPSHOT overclaimed. The auditor challenge
+  // this packet answers must state the weaker, honest class instead.
+  it('states the DECLARED_UNVERIFIED caveat for an inbound declared-hash anchor (fingerprint_source=issuer_record_attestation)', async () => {
+    anchorMaybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'aid_main',
+        public_id: 'pid_acmemsa1',
+        status: 'SECURED',
+        fingerprint: 'sha256:abc',
+        bitcoin_tx_id: 'txid_abc',
+        block_height: 800001,
+        revoked_at: null,
+        revocation_reason: null,
+        parent_anchor_id: null,
+        version_number: 1,
+        fingerprint_source: 'issuer_record_attestation',
+      },
+      error: null,
+    });
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    expect(ctx.status).toHaveBeenCalledWith(200);
+    const packet = ctx.body as {
+      anchor_receipt: {
+        fingerprint_rederivability?: string;
+        fingerprint_rederivability_note?: string;
+      };
+    };
+    expect(packet.anchor_receipt.fingerprint_rederivability).toBe(
+      FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED,
+    );
+    expect(packet.anchor_receipt.fingerprint_rederivability_note).toBe(
+      FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED],
+    );
+    // Must never claim Arkova computed/fetched anything for this class.
+    expect(packet.anchor_receipt.fingerprint_rederivability_note).not.toContain('Arkova computed its');
+  });
+
+  // Regression guard: an anchor with NO fingerprint_source measured (the
+  // default beforeEach fixture — today's real-world shape for every
+  // pre-existing packet anchor) must render BYTE-IDENTICALLY to before this
+  // fix. Covered by the FETCH_TIME_SNAPSHOT assertion two tests above; this
+  // one pins it explicitly against a fixture with fingerprint_source present
+  // and set to 'document_bytes' (the OUTBOUND connector-fetch case), so both
+  // "absent" and "explicitly document_bytes" are proven non-downgrading.
+  it('a fingerprint_source=document_bytes anchor still gets FETCH_TIME_SNAPSHOT (regression: outbound renders byte-identically)', async () => {
+    anchorMaybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'aid_main',
+        public_id: 'pid_acmemsa1',
+        status: 'SECURED',
+        fingerprint: 'sha256:abc',
+        bitcoin_tx_id: 'txid_abc',
+        block_height: 800001,
+        revoked_at: null,
+        revocation_reason: null,
+        parent_anchor_id: null,
+        version_number: 1,
+        fingerprint_source: 'document_bytes',
+      },
+      error: null,
+    });
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    const packet = ctx.body as { anchor_receipt: { fingerprint_rederivability?: string } };
+    expect(packet.anchor_receipt.fingerprint_rederivability).toBe(
+      FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT,
+    );
+  });
+
   it('writes a PROOF_PACKET_EXPORTED audit row scoped to caller org', async () => {
     const ctx = buildRes();
     await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);

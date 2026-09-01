@@ -205,6 +205,11 @@ export function RecordDetailPage() {
           publicId: anchor.public_id ?? undefined,
           filename: anchor.filename,
           fingerprint: anchor.fingerprint,
+          // SCRUM-3818 (docusign-bilateral-2026-08): R19 evidence class
+          // (`fingerprint_source`, migration 0376) — selected by useAnchor's
+          // `select('*')`. Gates the connector re-verify caveat's
+          // DECLARED_UNVERIFIED variant in AssetDetailView.
+          fingerprintSource: anchor.fingerprint_source ?? undefined,
           status: anchor.status,
           createdAt: anchor.created_at,
           securedAt: anchor.chain_timestamp ?? undefined,

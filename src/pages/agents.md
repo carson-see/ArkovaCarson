@@ -473,3 +473,7 @@ presence so this change cannot be misread as having quietly resolved R-2. Do not
 `scripts/ci/config-drift/flag-inventory.json` also still carries the two `ENABLE_SEMANTIC_SEARCH`
 `claimedBy` entries pointing at this file (lines 65 and 240); `flagInventory.test.ts` asserts that
 finding still fires, so deleting them turns that test red.
+
+## 2026-08-30 SCRUM-3818 — `RecordDetailPage.tsx` threads `fingerprintSource` to `AssetDetailView`
+
+One-line addition to the `<AssetDetailView anchor={{...}}>` object literal: `fingerprintSource: anchor.fingerprint_source ?? undefined`. No new query — `useAnchor`'s `select('*')` already selects the column (migration 0376). Enables `AssetDetailView.tsx`'s DECLARED_UNVERIFIED re-verify caveat — see `src/components/anchor/agents.md` for the full writeup.

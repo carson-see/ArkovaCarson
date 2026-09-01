@@ -366,3 +366,12 @@ student-ID stripper does not cover them: `STUDENT_ID_KEYWORD` joins its words wi
 `\s+`, so `Student ID: 88213` redacts but the snake_case CSV header form
 `student_id: 88213` does not. That gap is in `piiStripper.ts`, predates this PR,
 and is not fixed here.
+
+## 2026-08-30 SCRUM-3818 — `copy.ts` `FINGERPRINT_SOURCE_*` / `CONNECTOR_FINGERPRINT_LABELS` disclosure fixes (go-live blocker for `ENABLE_DOCUSIGN_INBOUND`)
+
+Two related honesty-copy fixes, both keyed on the DocuSign Recipient-Connect INBOUND declared-hash path reusing `fingerprint_source: 'issuer_record_attestation'` (an evidence class that previously meant ONLY CSV bulk-import issuer attestation):
+
+- `FINGERPRINT_SOURCE_DESCRIPTIONS.issuer_record_attestation` / `FINGERPRINT_SOURCE_TRIAD.issuer_record_attestation` — the prior text asserted "This record was never in document form" and attributed the assertion exclusively to "the issuing organization". Both are false for a DocuSign-inbound record. Rewritten scoped to what Arkova measured (nothing, for this tier), true for both origins without naming either — see `src/components/verification/agents.md` for the full writeup (consumed only by `FingerprintSourceDisplay.tsx` → `PublicVerification.tsx`).
+- `CONNECTOR_FINGERPRINT_LABELS` gained `DECLARED_UNVERIFIED_REVERIFY_NOTE` / `DECLARED_UNVERIFIED_REVERIFY_MISMATCH_HINT` — shown by `AssetDetailView.tsx` instead of `REVERIFY_NOTE`/`REVERIFY_MISMATCH_HINT` when a connector-sourced anchor's `fingerprintSource` is `'issuer_record_attestation'`, since the original notes falsely claim Arkova retrieved and hashed the document. See `src/components/anchor/agents.md`.
+
+Both new/edited strings pass `lint:copy` — note the first draft of `DECLARED_UNVERIFIED_REVERIFY_NOTE` used the banned term "hash" ("did not retrieve or hash this document") and had to be reworded to "did not retrieve this document or fingerprint it" — a live example of why `npm run lint:copy` must be re-run after editing prose in this file, not just after adding a new key.
