@@ -668,3 +668,10 @@ Consequences that are now true of the running system, and were not before:
 - `rateLimiters.auth` (5/min) is still **not mounted on any route** — referenced only by tests and
   comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
   own tier, not a cleanup.
+
+## Per-org credit enforcement (SCRUM-3866)
+
+- `orgCredits.ts` `deductOrgCredit` no longer keys solely off the global `ENABLE_ORG_CREDIT_ENFORCEMENT` flag. Enforcement applies when the global flag is on **OR** the org's own `organizations.credit_enforcement_enabled` (migration 0429) is true. The global flag was the only lever, and it is all-tenants: 7 of 13 prod orgs sat at a zero balance, including the Login Defense partner org and the UAT demo org, so flipping it to give one partner a real budget would have started 402-ing all of them (pre-mortem F2).
+- The old docstring claiming the tenant carve-out happens "at the route layer (the route reads the per-tenant Confluence allowlist)" is gone. No route ever did that, and a Confluence page is not an authorization source.
+- The per-org lookup **fails open**: a read error or missing row means "not enforced". This preserves the contract `orgCreditEnforcementFlag.test.ts` already pins — a missing/false flag must never hard-block the anchor path for non-credit orgs. Failing closed would turn a transient read error into a 503 for every org on the platform to protect a budget that applies to one partner. Residual risk (an unbilled anchor for an enrolled org during a DB incident) is logged as `org_credit_enforcement_lookup_failed` at error level for reconciliation.
+- Global-flag-on short-circuits before any query, so the enforced-everywhere case costs no extra round trip.

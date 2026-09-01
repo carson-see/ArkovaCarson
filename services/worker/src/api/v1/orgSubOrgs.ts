@@ -942,3 +942,165 @@ orgSubOrgsRouter.post('/max', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// ─── Sub-org credit provisioning (SCRUM-3865) ────────────────────────────────
+//
+// Pre-mortem F3: `allocate_credits_to_sub_org` existed, was correct, and had
+// ZERO callers anywhere in the repository — `org_credit_allocations` had never
+// had a row in production. These two endpoints are the missing path, and they
+// are the only way a parent admin can fund or defund a sub-org.
+//
+// Both call migration 0430's identity-carrying overload, because `auth.uid()`
+// is NULL under the worker's service_role client and the pre-0430 overloads
+// therefore returned `authentication_required` on every worker call.
+//
+// The caller id sent to the RPC is ALWAYS the verified session user. It is
+// never read from the request body: a client that could choose it could move
+// another organization's credits. The org-admin check below is a fast local
+// pre-check — the RPC independently re-verifies parent adminship and that the
+// child really is a sub-org of that parent, so authorization does not depend on
+// this layer being correct.
+
+/** Credits are whole units; the bound is a sanity rail, not a business limit. */
+const MAX_CREDIT_TRANSFER = 100_000_000;
+
+const AllocateCreditsSchema = z.object({
+  childOrgId: z.string().uuid(),
+  // Negative = reclaim from the sub-org back to the parent (offboarding).
+  amount: z
+    .number()
+    .int()
+    .refine((n) => n !== 0, { message: 'amount must be non-zero' })
+    .refine((n) => Math.abs(n) <= MAX_CREDIT_TRANSFER, {
+      message: `amount must be within +/-${MAX_CREDIT_TRANSFER}`,
+    }),
+  note: z.string().trim().max(500).optional(),
+});
+
+/** RPC error code -> HTTP status. Anything unlisted is a 500. */
+const CREDIT_RPC_STATUS: Record<string, number> = {
+  authentication_required: 401,
+  parent_admin_required: 403,
+  not_a_sub_org: 404,
+  // 409 rather than 402: the request conflicts with the current balance, and
+  // unlike the anchor path nothing here is purchasable in the moment.
+  insufficient_parent_balance: 409,
+  insufficient_child_balance: 409,
+};
+
+/** Resolves the caller's org and rejects non-admins. */
+async function requireParentAdmin(
+  req: Request,
+  res: Response,
+): Promise<{ userId: string; orgId: string } | null> {
+  const userId = getUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return null;
+  }
+
+  const requestedOrgId = typeof req.query.orgId === 'string' ? req.query.orgId : undefined;
+  const { orgId, role } = await getUserOrgInfo(userId, requestedOrgId);
+  if (!orgId) {
+    res.status(400).json({ error: 'You must belong to an organization' });
+    return null;
+  }
+  if (!isOrgAdmin(role)) {
+    res.status(403).json({ error: 'Admin permissions required' });
+    return null;
+  }
+
+  return { userId, orgId };
+}
+
+orgSubOrgsRouter.post('/credits', async (req: Request, res: Response) => {
+  try {
+    const ctx = await requireParentAdmin(req, res);
+    if (!ctx) return;
+
+    const parsed = AllocateCreditsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({
+        error: 'invalid_request',
+        details: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+      return;
+    }
+
+    const { childOrgId, amount, note } = parsed.data;
+
+    const { data, error } = await db.rpc('allocate_credits_to_sub_org', {
+      p_parent_org_id: ctx.orgId,
+      p_child_org_id: childOrgId,
+      p_amount: amount,
+      p_note: note ?? null,
+      p_caller_user_id: ctx.userId,
+    });
+
+    if (error) {
+      logger.error({ err: error.message, orgId: ctx.orgId }, 'suborg_credit_allocation_rpc_failure');
+      res.status(503).json({ error: 'credit_allocation_unavailable' });
+      return;
+    }
+
+    if (!data || data.error) {
+      const code = data?.error ?? 'unknown_error';
+      res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code });
+      return;
+    }
+
+    logger.info(
+      { orgId: ctx.orgId, childOrgId, amount },
+      amount > 0 ? 'suborg_credits_allocated' : 'suborg_credits_reclaimed',
+    );
+
+    res.json({
+      parentBalance: data.parent_balance,
+      childBalance: data.child_balance,
+      amount,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to allocate sub-org credits');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+orgSubOrgsRouter.get('/credits', async (req: Request, res: Response) => {
+  try {
+    const ctx = await requireParentAdmin(req, res);
+    if (!ctx) return;
+
+    const { data, error } = await db.rpc('get_parent_credit_rollup', {
+      p_parent_org_id: ctx.orgId,
+      p_caller_user_id: ctx.userId,
+    });
+
+    if (error) {
+      logger.error({ err: error.message, orgId: ctx.orgId }, 'suborg_credit_rollup_rpc_failure');
+      res.status(503).json({ error: 'credit_rollup_unavailable' });
+      return;
+    }
+
+    if (!data || data.error) {
+      const code = data?.error ?? 'unknown_error';
+      res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code });
+      return;
+    }
+
+    // Balances only. Per decision D2 a parent sees what its sub-orgs SPEND,
+    // never what they secured — no record contents cross the boundary.
+    res.json({
+      parentBalance: data.parent_balance,
+      children: (data.children ?? []).map(
+        (c: { child_org_id: string; balance: number; monthly_allocation: number }) => ({
+          childOrgId: c.child_org_id,
+          balance: c.balance,
+          monthlyAllocation: c.monthly_allocation,
+        }),
+      ),
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to load sub-org credit rollup');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});

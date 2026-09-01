@@ -1056,3 +1056,12 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
+
+## Sub-org credit provisioning (SCRUM-3865)
+
+- `orgSubOrgs.ts` gained `POST /credits` (allocate; negative amount = reclaim) and `GET /credits` (parent rollup). Before these, `allocate_credits_to_sub_org` had **zero callers anywhere in the repo** and `org_credit_allocations` had never had a row in prod — the sub-org panel could list children and toggle approval but could not move a single credit (pre-mortem F3).
+- Both call **migration 0430's identity-carrying overloads**. Do NOT call the original 4-arg/1-arg forms from the worker: they resolve the caller with `auth.uid()`, which is NULL under the service_role client, so they return `authentication_required` on every worker call. That is the SCRUM-2213 class 0367 already fixed elsewhere.
+- `p_caller_user_id` is ALWAYS the verified session user (`getUserId(req)`), never a request-body field. A client that could choose it could move another org's credits. `orgSubOrgsCredits.test.ts` pins this with a body that supplies an attacker-chosen `callerUserId` and asserts it is ignored.
+- `requireParentAdmin()` is a fast local pre-check only. The RPC independently re-verifies parent adminship and that the child is genuinely a sub-org of that parent, so authorization does not depend on the route layer being right. Note the worker's `isOrgAdmin` accepts `owner`/`admin` while the RPC also accepts the legacy `ORG_ADMIN`; the RPC is the wider, authoritative gate.
+- RPC error mapping lives in `CREDIT_RPC_STATUS`. Balance failures are **409**, not 402: the request conflicts with current balance state and, unlike the anchor path, nothing is purchasable in the moment.
+- `GET /credits` returns balances only. Per decision D2 a parent sees what its sub-orgs spend, never what they secured — no record contents cross the tenancy boundary.
