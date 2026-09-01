@@ -3,6 +3,14 @@ _Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-s
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-08-30 SCRUM-3374 — `index.ts` gains the anchoring RPC credential monitor
+
+Second network-blind singleton in this file, same shape as the 2026-08-11 fee-estimator finding below: `/health` asserted anchoring health without ever making an anchoring call. Prod verified 2026-08-30 — a REVOKED GetBlock token (`HTTP 401 "Unknown token"`) while `/health` served `"anchoring":"ok"`.
+
+`anchoringRpcMonitor = createAnchoringRpcMonitor({ probe: () => probeAnchoringRpcOnce({ rpcUrl: config.bitcoinRpcUrl, rpcAuth: config.bitcoinRpcAuth }) })` sits beside `feeEstimatorInstance` and is exposed to `buildHealthResponse` as `getAnchoringRpcStatus: () => anchoringRpcMonitor.read()`.
+
+`read()` is **synchronous and never touches the network** — it returns a 60s TTL-cached snapshot and schedules refreshes in the background. That is load-bearing: `/health` is polled by the Cloudflare LB monitor (30s) and the GCP uptime check (60s), so an inline call would put a third-party provider on the critical path of the endpoint Cloud Run and every monitor depend on. Keep it synchronous; do not `await` the probe here. Full rationale and the state taxonomy: `routes/agents.md` (same date) and the header of `routes/anchoring-rpc-probe.ts`.
+
 ## 2026-08-23 — `index.ts` mount order: the public verify limiter, and where the IP guard went
 
 Two changes to this file's wiring (SCRUM-2603 / SCRUM-3418):
