@@ -1,5 +1,5 @@
 /**
- * Create-organization dialog (SCRUM-3061).
+ * Create-organization dialog (SCRUM-3873).
  *
  * Closes the platform-admin gap found while provisioning PlanBook by hand: the
  * console could set an existing org's allowance and credits but could not

@@ -1,5 +1,5 @@
 /**
- * Platform-admin provisioning (SCRUM-3061).
+ * Platform-admin provisioning (SCRUM-3873).
  *
  * Creates a net-new organization and a net-new user account. The admin console
  * could already SET an existing org's quota (`handleSetOrgQuota`) and credits

@@ -4441,7 +4441,7 @@ export const PLATFORM_METRICS = {
 export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
 
 // =============================================================================
-// PLATFORM-ADMIN PROVISIONING (SCRUM-3061)
+// PLATFORM-ADMIN PROVISIONING (SCRUM-3873)
 // =============================================================================
 //
 // Copy for creating a net-new organization and a net-new account from the

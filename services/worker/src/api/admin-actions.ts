@@ -380,7 +380,7 @@ export async function handleAdjustOrgCredit(
   }
 }
 
-// ─── SCRUM-3061: provisioning (create org / create account) ───────────────
+// ─── SCRUM-3873: provisioning (create org / create account) ───────────────
 // Business logic lives in admin-provisioning.ts (dependency-injected, unit
 // tested). These handlers own only the platform-admin gate, body validation,
 // and the error-code -> HTTP mapping.

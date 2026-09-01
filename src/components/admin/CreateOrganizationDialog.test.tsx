@@ -1,5 +1,5 @@
 /**
- * Tests for CreateOrganizationDialog (SCRUM-3061).
+ * Tests for CreateOrganizationDialog (SCRUM-3873).
  *
  * Focus is the pre-mortem's F3 (duplicate orgs from a double-submit) and F8
  * (the seed trigger silently capping every new org at 10 anchors).

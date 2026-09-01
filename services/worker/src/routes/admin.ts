@@ -223,7 +223,7 @@ adminRouter.get('/admin/subscriptions', async (req, res) => {
 
 // ─── Admin Actions (POST) ───
 
-// ─── SCRUM-3061: provision a net-new org / account (platform admin only) ───
+// ─── SCRUM-3873: provision a net-new org / account (platform admin only) ───
 // NOTE: these are collection-level POSTs; they do not collide with the
 // '/admin/users/:id/...' item-level actions below.
 adminRouter.post('/admin/organizations', async (req, res) => {

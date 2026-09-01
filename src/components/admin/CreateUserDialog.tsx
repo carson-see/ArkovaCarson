@@ -1,5 +1,5 @@
 /**
- * Create-account dialog (SCRUM-3061).
+ * Create-account dialog (SCRUM-3873).
  *
  * The email decision is the important one here. Defaulting to "send the link"
  * avoids the silent failure the pre-mortem flagged (F6): an account created

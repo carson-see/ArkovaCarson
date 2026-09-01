@@ -1,5 +1,5 @@
 /**
- * Tests for CreateUserDialog (SCRUM-3061).
+ * Tests for CreateUserDialog (SCRUM-3873).
  *
  * Focus is the pre-mortem's F6: an account created with nobody notified is the
  * most likely SILENT failure, so the opt-out path must hold the one-time

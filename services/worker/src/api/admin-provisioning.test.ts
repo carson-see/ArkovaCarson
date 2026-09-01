@@ -1,5 +1,5 @@
 /**
- * Platform-admin provisioning tests (SCRUM-3061).
+ * Platform-admin provisioning tests (SCRUM-3873).
  *
  * TDD for the gap found while provisioning PlanBook by hand: the admin console
  * can set quota/credits on an EXISTING org but cannot create a net-new
