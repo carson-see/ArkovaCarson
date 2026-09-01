@@ -853,6 +853,34 @@ mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local c
 
 **2026-08-03 addendum (PR #1944, GH #1835):** a 4th spec, `DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`, was added to `run-lease.ts` — see the `GH #1835` entry near the top of this file for the full writeup. It deliberately follows every convention above (per-job lease id/type, `withRunLease` wrapping, dedicated test suite) EXCEPT it is not in the `RUN_LEASE_SPECS` array: this job's only real cadence is hourly on both trigger paths, which equals the `CLOUD_RUN_REQUEST_TIMEOUT_MS` ceiling this section derives every other TTL against, so the array's own `ttlMs > slowestRecordedCadenceMs` test would be unsatisfiable for it. Not a gap in this job's protection — `withRunLease` still guards it identically — just a reason it can't share the cross-cutting array test the other three do.
 
+## 2026-09-01 — connector-artifact drain: the claim-to-mint TOCTOU gate (`connector-artifact-drain.ts`)
+
+Second and final half of the stale-snapshot fix. The first half made `claimRow`'s CAS `UPDATE ... RETURNING` the only source of row CONTENT (the batch SELECT is id-only), closing the batch-order-dependent window worth up to `DRAIN_LIMIT_MAX`=200 earlier rows of awaited work. That was necessary, not sufficient: `claimRow`'s capture and the `anchors` INSERT are still two statements separated by two awaited round trips (`resolveOrgActorUserId`, `findExistingEnvelopeAnchor`), and `docusign-envelope-completed.ts`'s F1-heal guards its supersede UPDATE **only** on `anchor_id IS NULL` — it has no notion of "this row was already claimed into `processing`". So the heal could still land inside that residual window and the drain would mint an anchor from the fingerprint it had already ruled forged.
+
+**The gate.** The freshness assertion is fused into the CAS that sets `anchor_id` — the very column the heal reads — rather than being a separate re-read (which would just be one more read-then-act):
+
+```sql
+UPDATE connector_artifact
+   SET status='materialized', anchor_id=:anchorId, updated_at=now()
+ WHERE id=:id AND org_id=:org AND status='processing'
+   AND fingerprint_sha256 = :fingerprintCapturedAtClaimTime
+RETURNING id
+```
+
+Postgres evaluates the predicate atomically under the row lock, and re-evaluates it against the post-commit row (EvalPlanQual) if it queues behind the heal's concurrent UPDATE. One statement, both directions: a heal in the window → zero rows → nothing linked/debited/anchored and the row is requeued to re-drain against the healed value (the heal WINS, per the CTO precedence ruling); the link first → `anchor_id` non-null → the heal's own pre-existing guard locks it out and it takes its documented "already materialized" branch. **No migration, no new `status` value** (0343's CHECK constraint is a closed set), **and no change to `docusign-envelope-completed.ts`.**
+
+**Discriminating the two zero-row causes without a read.** Zero rows means either the fingerprint moved or the lease was lost, and they need opposite handling (requeue vs. leave-alone). Rather than re-read, the discrimination is itself a guarded CAS: attempt `processing → queued`. It matches only while we still hold the lease, so a match proves *superseded* and a miss proves *lost lease*.
+
+**The orphan, and why it exists.** `connector_artifact.anchor_id` is a NOT-DEFERRABLE FK to `anchors(id)` (0343), so the anchor id **cannot** be reserved before the `anchors` row exists — the INSERT must precede the gate. A rejected gate therefore leaves a PENDING, unlinked anchor, and `claim_pending_anchors` claims `status='PENDING' AND deleted_at IS NULL`: left alone it would be batch-anchored and broadcast to Bitcoin carrying the superseded fingerprint. That is the whole bug merely relocated. `abortSupersededMint` neutralizes it with a **guarded soft-delete** (`deleted_at` — the filter BOTH `claim_pending_anchors` and `findExistingEnvelopeAnchor` already apply, so the orphan becomes invisible to the broadcaster and to the drain's own reuse guard, while the row survives for forensics; a hard DELETE would destroy the evidence of an attempted forgery). The WHERE clause `status='PENDING' AND chain_tx_id IS NULL AND deleted_at IS NULL` is the safety property — if a concurrent batch-anchor already claimed it, this matches zero rows and we alert `orphan_anchor_neutralize_failed` rather than race the broadcaster.
+
+**Two things you can get wrong here:**
+- `MaterializedAnchor.created` gates the neutralization. Only an anchor THIS pass **inserted** may be soft-deleted; one merely REUSED (the envelope guard, or the 23505 duplicate-resolve) belongs to another writer and may be live. Absence of the flag means "not ours" — fail-safe (leave a visible orphan), never fail-destructive.
+- The `lost_lease` outcome deliberately does **not** neutralize. It does not prove the anchor is unlinked (the new owner may have linked it; the CAS may have errored after committing server-side), and soft-deleting a live anchor is worse than leaving an orphan an operator can see.
+
+New counter `supersededRequeued` on both `ConnectorArtifactDrainResult` and the cron result — counted separately from `failed` because nothing failed: the gate did its job, no charge landed, and the row is drainable again.
+
+**Formally verified**, not just tested: `machines/docusignInboundDedup.machine.ts`, invariant `anchorNeverMintedFromSupersededFingerprint`. That invariant shipped RED against the pre-gate code and passes now **without being weakened** — deleting the guard from `mintAnchorFromCapture` reproduces the counterexample verbatim. `npm run verify:machines`: PASSED 5/5. The orphan lifecycle is **out of the model's scope** (an unlinked anchor is not `anchorMaterialized`) and is pinned by unit tests instead — do not cite the machine as proof that path is correct.
+
 ## 2026-08-01 — Queues lane (PR #1813): the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
 
 Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-01, the live

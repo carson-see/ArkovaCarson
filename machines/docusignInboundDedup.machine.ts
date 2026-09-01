@@ -176,36 +176,86 @@ const anchorFingerprintClass = variable("anchorFingerprintClass");
  * `row` object was captured ONCE, then handed unchanged through
  * `resolveOrgActorUserId`/`findExistingEnvelopeAnchor` (real awaited DB
  * round trips) into the `anchors` INSERT — a snapshot-then-act shape this
- * machine had no variables to express. The code fix (this same PR) makes
- * the CLAIM itself the point of truth (`claimRow`'s `UPDATE ... RETURNING`
- * replaces the batch-read snapshot), which closes the LARGEST instance of
- * this window (up to `DRAIN_LIMIT_MAX`=200 earlier rows' worth of awaited
- * work in the same batch). It does NOT make materialization atomic end to
- * end: `claimRow`'s capture and the eventual `anchors` INSERT are still two
- * separate statements, separated by `resolveOrgActorUserId` and
- * `findExistingEnvelopeAnchor`, and the heal's own guard
- * (`WHERE anchor_id IS NULL`) has no notion of "this row was already
- * claimed/captured" — only of whether an anchor exists yet.
+ * machine had no variables to express. The first code fix (PR #2566) made
+ * the CLAIM the point of truth (`claimRow`'s `UPDATE ... RETURNING` replaced
+ * the batch-read snapshot), closing the LARGEST instance of the window (up
+ * to `DRAIN_LIMIT_MAX`=200 earlier rows' worth of awaited work in the same
+ * batch) — but NOT the whole thing, because `claimRow`'s capture and the
+ * `anchors` INSERT remained two separate statements, and the heal's own
+ * guard (`WHERE anchor_id IS NULL`) has no notion of "this row was already
+ * claimed/captured", only of whether an anchor exists yet.
  *
- * This extension makes that two-step shape modelable: `captureArtifactFingerprint`
+ * This extension made that two-step shape modelable: `captureArtifactFingerprint`
  * (models `claimRow`'s `RETURNING`) and `mintAnchorFromCapture` (models the
- * `anchors` INSERT, using the CAPTURED value) REPLACE the single
- * `materializeAnchorFromArtifact` action. `outboundHealsForgery` /
+ * link that publishes the anchor, using the CAPTURED value) REPLACE the
+ * single `materializeAnchorFromArtifact` action. `outboundHealsForgery` /
  * `outboundLosesRaceUnhealed` are UNCHANGED — still gated only on
  * `anchorMaterialized[e]`, exactly matching the real `anchor_id IS NULL`
  * guard — so both remain independently schedulable in the gap between
- * capture and mint. New invariant `anchorNeverMintedFromSupersededFingerprint`
- * asserts what actually matters: no anchor is ever minted holding a FORGED
- * fingerprint class.
+ * capture and mint. Invariant `anchorNeverMintedFromSupersededFingerprint`
+ * asserts what actually matters: the class baked into a minted anchor must
+ * still equal the artifact's CURRENT class.
  *
- * RESULT — see VERIFICATION STATUS below. If the check fails, that
- * counterexample is a real, disclosed residual finding, not a defect to
- * paper over: it says the code fix in this PR closes the batch-order-
- * dependent window (the one the attack this PR fixes actually depends on)
- * but a SMALLER window — bounded by `resolveOrgActorUserId` +
- * `findExistingEnvelopeAnchor` alone, with no batch-of-up-to-200-rows
- * multiplier — remains open as a distinct, smaller-magnitude follow-up. The
- * invariant is NOT weakened to force a pass either way.
+ * As first written (with an UNGATED `mintAnchorFromCapture`) that invariant
+ * FAILED, on purpose, and was left failing as a disclosed finding: TLC's
+ * counterexample was `forgeInbound(e2)` → `captureArtifactFingerprint(e2)`
+ * (captures FORGED) → `outboundHealsForgery(e2)` (live class becomes REAL;
+ * the drain's in-memory capture is untouched) → `mintAnchorFromCapture(e2)`
+ * (anchor minted holding FORGED while the artifact says REAL).
+ *
+ * TOCTOU FIX (this change — the residual window is now CLOSED, and the
+ * invariant passes without being weakened): the drain's link step is now a
+ * FRESHNESS-GATED compare-and-set, `linkMaterializedAnchor` in
+ * `jobs/connector-artifact-drain.ts`:
+ *
+ *     UPDATE connector_artifact
+ *        SET status='materialized', anchor_id=:anchorId, updated_at=now()
+ *      WHERE id=:id AND org_id=:org
+ *        AND status='processing'
+ *        AND fingerprint_sha256 = :fingerprintCapturedAtClaimTime
+ *     RETURNING id
+ *
+ * The freshness assertion is FUSED into the statement that sets `anchor_id`
+ * — the very column the heal's own guard reads — rather than being a
+ * separate re-read (which would merely be one more read-then-act). Postgres
+ * evaluates the predicate atomically under the row lock, and re-evaluates it
+ * against the post-commit row (EvalPlanQual) if the statement queues behind
+ * the heal's concurrent UPDATE. So ONE statement closes the window from both
+ * directions, with no migration and no change to
+ * `docusign-envelope-completed.ts`:
+ *
+ *   - a heal landing ANYWHERE between the claim and the link makes the
+ *     predicate false → zero rows → NO anchor is linked, NO credit debited,
+ *     nothing anchored; the artifact is requeued (`abortSupersededMint`) to
+ *     re-drain against the healed value. The heal WINS, as the CTO
+ *     precedence ruling requires.
+ *   - the link landing first sets `anchor_id` non-null, so the heal's
+ *     pre-existing `anchor_id IS NULL` guard permanently locks it out and it
+ *     takes its documented "already materialized" branch — the loud,
+ *     operator-reconciled integrity event, never a silent rewrite.
+ *
+ * Modeled as: `mintAnchorFromCapture` gains the guard
+ * `capturedFingerprintClass[e] = fingerprintClass[e]`, and a new
+ * `abortSupersededMint` action covers the zero-row outcome by resetting
+ * `capturedFingerprintClass[e]` to NONE (which re-enables
+ * `captureArtifactFingerprint` — that IS the requeue). The equality is a
+ * GUARD rather than a check-then-act pair because in the real code it is a
+ * WHERE-clause predicate on the SAME atomic UPDATE; a two-action model would
+ * be a FALSE positive, not a stricter proof. Neither invariant was touched.
+ *
+ * NOT modeled, deliberately: the ORPHAN `anchors` row the abort leaves
+ * behind. `connector_artifact.anchor_id` is a NOT-DEFERRABLE FK to
+ * `anchors(id)` (migration 0343), so the anchor id cannot be reserved before
+ * the `anchors` row exists — the INSERT must precede the gate, and a
+ * rejected gate therefore leaves an inserted-but-unlinked anchor. That row
+ * is never LINKED, which is what `anchorMaterialized` models, so it is
+ * outside this machine's state. The real code neutralizes it with a guarded
+ * soft-delete (`deleted_at` — the filter BOTH `claim_pending_anchors` and
+ * `findExistingEnvelopeAnchor` already apply, so it is invisible to the
+ * broadcaster and to the drain's own reuse guard) and alerts loudly when
+ * that guard matches zero rows. See `abortSupersededMint`'s comment; the
+ * behaviour is pinned by unit tests in `connector-artifact-drain.test.ts`,
+ * not by TLC.
  *
  * Adapter status: documentation-only — no runtimeAdapter. connector_artifact
  * rows are created via the migration-0343 RPC (ON CONFLICT DO NOTHING) and
@@ -216,66 +266,33 @@ const anchorFingerprintClass = variable("anchorFingerprintClass");
  * invariant is caught even though no adapter generates from it — same
  * posture as partnerProvisioning.machine.ts and calibrationWorkflow.machine.ts.
  *
- * VERIFICATION STATUS (2026-09-01, TOCTOU extension) — FAILS, and this is a
- * disclosed, real finding, NOT weakened away. `npx tla-precheck check
- * docusignInboundDedup.machine.ts`, run from inside `machines/` (see
- * agents.md's "how to invoke check" entry — repo-root invocation fails on
- * TS5096/TS5103 for unrelated cwd-resolution reasons, not a defect in this
- * file):
+ * VERIFICATION STATUS (2026-09-01, TOCTOU FIX) — PASSES. Run from inside
+ * `machines/` (see agents.md's "how to invoke check" entry — repo-root
+ * invocation with a path prefix fails on TS5096/TS5103 for unrelated
+ * cwd-resolution reasons, not a defect in this file):
+ *
+ *   ../node_modules/.bin/tla-precheck check docusignInboundDedup.machine.ts
  *
  *   certificateVersion: 2; machine: DocusignInboundDedup; tier: pr;
- *   proofPassed: FALSE; invariantsChecked: [atMostOneArtifactOwner,
+ *   proofPassed: TRUE; invariantsChecked: [atMostOneArtifactOwner,
  *   outboundNeverSilentlyAcceptsForgery,
  *   anchorNeverMintedFromSupersededFingerprint]; deadlockChecked: true;
- *   graphEquivalenceAttempted: false (pr tier now budgets against the raw
+ *   graphEquivalenceAttempted: false (pr tier budgets against the raw
  *   product — see proof.tiers.pr comment); machineSha256
- *   e4b22f11a4d55979d3ad977964738d78b80b06c8d6c167513eeff7846cd9ff47.
- *   TLC halts on the FIRST violation it finds (not full exploration): 506
- *   states generated, 200 distinct states found, 55 left on queue, search
- *   depth 8, "Finished in 00s".
+ *   927a4177973a5a6f8aca4c05c9d70910d1f8b54b9ae3265233abd99987068f9e.
+ *   TLC: "Model checking completed. No error has been found." — 865 states
+ *   generated, 256 distinct states found, 0 left on queue, complete-graph
+ *   search depth 9.
  *
- *   Error: Invariant anchorNeverMintedFromSupersededFingerprint is violated.
- *   Counterexample trace (envelope e2; e1 is an uncontested envelope present
- *   only to confirm the violation is NOT a cross-envelope leak):
- *     1. materializeOutbound(e1)      — unrelated envelope, real fingerprint.
- *     2. forgeInbound(e2)             — attacker wins the race: artifactOwner
- *                                        =INBOUND, fingerprintClass=FORGED.
- *     3. captureArtifactFingerprint(e2) — the drain's claim captures the
- *                                        CURRENTLY-forged value:
- *                                        capturedFingerprintClass=FORGED.
- *     4. outboundHealsForgery(e2)     — the outbound job's heal fires
- *                                        (anchorMaterialized[e2] is still
- *                                        false, so its guard is satisfied):
- *                                        fingerprintClass:=REAL,
- *                                        artifactOwner:=OUTBOUND. The
- *                                        CAPTURED value is untouched by this
- *                                        — it is a snapshot in the drain's
- *                                        memory, not a live read.
- *     5. mintAnchorFromCapture(e2)    — the drain mints the anchor from the
- *                                        STALE capture: anchorMaterialized
- *                                        :=true, anchorFingerprintClass:=
- *                                        FORGED. Now fingerprintClass[e2]=
- *                                        REAL but anchorFingerprintClass[e2]
- *                                        =FORGED — VIOLATION.
+ *   `--tier nightly` (4 envelopes) also passes: 442,369 generated / 65,536
+ *   distinct, 0 left on queue, depth 17. `npm run verify:machines` from the
+ *   repo root reports PASSED 5/5.
  *
- *   This is the SAME bug class the code review found in
- *   `jobs/connector-artifact-drain.ts`, formally reproduced with the
- *   BATCH-ORDER-DEPENDENT portion of the window removed by this PR's
- *   `claimRow` fix (step 3 above models `claimRow`'s `RETURNING`, already
- *   the fresh-at-claim-time read) — the counterexample only needs the
- *   SMALLER residual window between capture (claim) and mint (the `anchors`
- *   INSERT), bounded by `resolveOrgActorUserId` + `findExistingEnvelopeAnchor`
- *   in the real code, with no batch-of-up-to-200-rows multiplier. TLC proves
- *   that residual window is still sufficient in principle: if
- *   `outboundHealsForgery` (real code: the F1-heal `UPDATE ...  WHERE
- *   anchor_id IS NULL`) executes strictly between `claimRow`'s `RETURNING`
- *   and the `anchors` INSERT for the SAME row, the minted anchor still
- *   carries the pre-heal (forged) value. Disclosed, unresolved, tracked as a
- *   follow-up — NOT fixed by this PR, whose scope was closing the
- *   batch-read-snapshot window per the code review's explicit "FIX
- *   (primary)". A full fix needs either a freshness re-check immediately
- *   before the `anchors` INSERT or folding claim+materialize+mark into one
- *   atomic DB operation (a genuinely bigger, separate change).
+ *   The three invariants are UNCHANGED from the failing revision — in
+ *   particular `anchorNeverMintedFromSupersededFingerprint` was not
+ *   weakened, narrowed, or gated to force this pass. The counterexample
+ *   above is now unreachable because the code changed, which is the only
+ *   legitimate way to turn a red proof green.
  */
 export const docusignInboundDedupMachine = defineMachine({
   version: 2,
@@ -345,12 +362,16 @@ export const docusignInboundDedupMachine = defineMachine({
     // materialized anchor — copied from `capturedFingerprintClass` at mint
     // time, NOT re-read from the (possibly since-healed) live
     // `fingerprintClass`. This is the variable that makes the bug
-    // observable: `fingerprintClass[e]` can move on after capture (the heal
-    // can still fire — its guard is `anchor_id IS NULL`, i.e.
-    // `not(anchorMaterialized[e])`, which says nothing about whether this
-    // envelope's row content has already been captured into someone's
-    // memory), while `anchorFingerprintClass[e]` is frozen at whatever was
-    // true at capture time.
+    // observable, and it is still modeled that way AFTER the fix: the real
+    // `anchors` INSERT genuinely uses the row object captured at claim time,
+    // and `fingerprintClass[e]` can still move on after capture (the heal's
+    // guard is `anchor_id IS NULL`, i.e. `not(anchorMaterialized[e])`, which
+    // says nothing about whether this envelope's row content has already
+    // been captured into someone's memory). What the fix changes is not this
+    // copy but WHEN it is allowed to happen — `mintAnchorFromCapture` now
+    // requires captured = live at the instant of the link. Keeping the copy
+    // faithful (rather than re-reading here) is what keeps the proof honest:
+    // if the gate were ever removed, the counterexample returns.
     anchorFingerprintClass: mapVar(
       "Envelopes",
       enumType("NONE", "REAL", "FORGED"),
@@ -429,28 +450,46 @@ export const docusignInboundDedupMachine = defineMachine({
       ],
     },
 
-    // TOCTOU EXTENSION: the connector-artifact drain (jobs/connector-
-    // artifact-drain.ts) mints the anchor from the CAPTURED value — never a
-    // fresh re-read of `fingerprintClass[e]` — mirroring
-    // `defaultMaterializeAnchor`'s real signature: it receives the row
-    // object `drainOneClaimedRow` handed it (frozen at claim time) and never
-    // queries `connector_artifact` again before the `anchors` INSERT.
-    // Real wall-clock time separates capture from mint
-    // (`resolveOrgActorUserId`, `findExistingEnvelopeAnchor` — both awaited
-    // DB round trips), during which `outboundHealsForgery` /
-    // `outboundLosesRaceUnhealed` remain independently enabled (their guard
-    // is `not(anchorMaterialized[e])`, i.e. the heal's real `anchor_id IS
-    // NULL` WHERE clause — it has no notion of "someone already captured a
-    // snapshot"). THIS is the modelling gap the original single atomic
-    // `materializeAnchorFromArtifact` action (removed by this extension)
-    // could not express: reading current state and minting were ONE
-    // indivisible step, so no interleaving — and therefore no staleness —
-    // was ever reachable.
+    // TOCTOU EXTENSION + FIX: the connector-artifact drain's LINK step —
+    // `linkMaterializedAnchor`'s freshness-gated CAS
+    // (`UPDATE connector_artifact SET status='materialized', anchor_id=:id
+    //   WHERE id=:id AND status='processing'
+    //     AND fingerprint_sha256 = <value captured at claim time>`).
+    //
+    // The mint still bakes in the CAPTURED value, never a fresh read — the
+    // `anchors` INSERT genuinely uses the row object `drainOneClaimedRow`
+    // was handed at claim time, and real wall-clock time (an awaited
+    // `resolveOrgActorUserId`, `findExistingEnvelopeAnchor`, and the INSERT
+    // itself) separates capture from this point, during which
+    // `outboundHealsForgery` remains independently enabled (its guard is
+    // `not(anchorMaterialized[e])`, i.e. the heal's real `anchor_id IS NULL`
+    // WHERE clause, which has no notion of "someone already captured a
+    // snapshot"). What CHANGED is the guard: the link only lands when the
+    // captured class STILL EQUALS the live one.
+    //
+    // Modeling that equality as a GUARD — rather than as a separate
+    // check-then-act pair — is exact, not a convenience: in the real code the
+    // comparison is a WHERE-clause predicate on the SAME UPDATE that sets
+    // `anchor_id`, evaluated atomically by Postgres under the row lock (and
+    // re-evaluated post-commit via EvalPlanQual if it queues behind the
+    // heal's own UPDATE). There is no observable state in which the code has
+    // decided the fingerprint is fresh but not yet linked the anchor. A
+    // two-action model here would be the FALSE positive, not the fix.
+    //
+    // And once this fires, `anchorMaterialized[e]` is true, which is exactly
+    // the condition that disables `outboundHealsForgery` — so the value can
+    // never move again. The window is closed from both sides by one
+    // statement.
     mintAnchorFromCapture: {
       params: { e: "Envelopes" },
       guard: and(
         not(eq(index(capturedFingerprintClass, param("e")), lit("NONE"))),
         not(index(anchorMaterialized, param("e"))),
+        // THE GATE (`AND fingerprint_sha256 = :capturedAtClaimTime`).
+        eq(
+          index(capturedFingerprintClass, param("e")),
+          index(fingerprintClass, param("e")),
+        ),
       ),
       updates: [
         setMap("anchorMaterialized", param("e"), lit(true)),
@@ -459,6 +498,47 @@ export const docusignInboundDedupMachine = defineMachine({
           param("e"),
           index(capturedFingerprintClass, param("e")),
         ),
+      ],
+    },
+
+    // TOCTOU FIX: the OTHER outcome of the same freshness-gated CAS — the
+    // captured class no longer matches the live one, because a heal landed in
+    // the claim-to-mint window. The UPDATE matches ZERO rows, so NO anchor is
+    // linked, NO credit is debited, and nothing is anchored;
+    // `abortSupersededMint` requeues the artifact (`processing → queued`) so a
+    // later drain pass re-claims it and captures the HEALED value.
+    //
+    // Resetting `capturedFingerprintClass[e]` to NONE is precisely that
+    // requeue: it re-enables `captureArtifactFingerprint` (whose guard is
+    // `= NONE`), which will then capture whatever is live at that later time.
+    // `fingerprintClass`/`artifactOwner`/`conflictDetected` are deliberately
+    // untouched — the drain aborting its own mint is not an outbound-side
+    // event and must not fabricate one.
+    //
+    // NOT modeled, and deliberately so: the ORPHAN `anchors` row this abort
+    // leaves behind in the real code (the INSERT already happened —
+    // `connector_artifact.anchor_id` is a non-deferrable FK, so the id cannot
+    // be reserved before the row exists). That anchor is never LINKED, which
+    // is what `anchorMaterialized` models, so it is outside this machine's
+    // state. The real code neutralizes it with a guarded soft-delete
+    // (`deleted_at`, the filter both `claim_pending_anchors` and
+    // `findExistingEnvelopeAnchor` already apply) and alerts loudly when that
+    // guard matches zero rows; that behaviour is pinned by unit tests in
+    // `connector-artifact-drain.test.ts`, not by TLC. Adding an
+    // orphan-lifecycle variable here would multiply the state space to prove
+    // a property the type system and a test already carry.
+    abortSupersededMint: {
+      params: { e: "Envelopes" },
+      guard: and(
+        not(eq(index(capturedFingerprintClass, param("e")), lit("NONE"))),
+        not(index(anchorMaterialized, param("e"))),
+        not(eq(
+          index(capturedFingerprintClass, param("e")),
+          index(fingerprintClass, param("e")),
+        )),
+      ),
+      updates: [
+        setMap("capturedFingerprintClass", param("e"), lit("NONE")),
       ],
     },
 
@@ -601,7 +681,14 @@ export const docusignInboundDedupMachine = defineMachine({
     // stable for the rest of the run once it holds; a violation ONLY becomes
     // reachable when a heal lands strictly between `captureArtifactFingerprint`
     // and `mintAnchorFromCapture` for the SAME envelope, i.e. exactly the
-    // TOCTOU window this extension exists to make modelable.
+    // TOCTOU window this extension exists to make modelable. That window is
+    // now CLOSED by `mintAnchorFromCapture`'s freshness guard (the real
+    // code's `AND fingerprint_sha256 = :capturedAtClaimTime` on the same
+    // atomic UPDATE that sets `anchor_id`), with the heal landing there
+    // instead routed to `abortSupersededMint`. This formula is UNCHANGED
+    // from the revision on which it deliberately FAILED — deleting the guard
+    // from `mintAnchorFromCapture` reproduces the counterexample in the
+    // header verbatim, which is the regression test for the fix.
     anchorNeverMintedFromSupersededFingerprint: {
       description:
         "Once an anchor is materialized for an envelope, its baked-in fingerprint class must equal the artifact's CURRENT fingerprint class — a heal that lands between capture and mint must never leave the anchor holding a value the artifact itself has since moved past",

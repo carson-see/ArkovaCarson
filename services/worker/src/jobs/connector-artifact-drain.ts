@@ -36,6 +36,19 @@
  *   (`docusign-envelope-completed.ts`) can land inside of, minting an anchor
  *   from a fingerprint already superseded as forged. See `claimRow`'s header.
  *
+ *   CLAIM-TO-MINT gate (code-review follow-up, same day): reading content at
+ *   claim time was necessary but NOT sufficient — the capture and the anchor
+ *   INSERT are still two statements separated by two awaited round trips, and
+ *   the heal's `WHERE anchor_id IS NULL` guard has no notion of "already
+ *   claimed". So the `processing → materialized` CAS that SETS `anchor_id`
+ *   additionally asserts `fingerprint_sha256 = <value captured at claim
+ *   time>`: one atomic statement that both refuses a mint whose input went
+ *   stale AND (on success) locks the heal out for good via its own existing
+ *   guard. See `linkMaterializedAnchor`. Formally verified in
+ *   `machines/docusignInboundDedup.machine.ts` (invariant
+ *   `anchorNeverMintedFromSupersededFingerprint`, which FAILS if the gate is
+ *   removed).
+ *
  * §1.6A: this module handles ONLY the server-computed fingerprint + bounded,
  * PII-scrubbed metadata that already live on the row. It never reads, fetches,
  * logs, or alerts raw document bytes. Alerts carry ids + a bounded reason only.
@@ -124,6 +137,20 @@ export interface ConnectorArtifactRow {
 export interface MaterializedAnchor {
   anchorId: string;
   anchorPublicId: string | null;
+  /**
+   * Whether THIS call INSERTED the anchor row, as opposed to reusing a
+   * pre-existing one (the `findExistingEnvelopeAnchor` envelope guard, or the
+   * 23505 duplicate-resolve path). Load-bearing on the superseded-mint abort
+   * path ONLY: an anchor this pass created and then failed to link is an
+   * orphan we must neutralize; an anchor we merely REUSED belongs to another
+   * writer and may be live, so soft-deleting it would be data loss.
+   *
+   * Optional, and absence means `false`: an injected/legacy materializer that
+   * does not report provenance must never have its anchor soft-deleted on our
+   * behalf. Fail-safe (leave an orphan, which the operator can see) rather
+   * than fail-destructive (delete someone else's live anchor).
+   */
+  created?: boolean;
 }
 
 export interface DebitResult {
@@ -159,6 +186,13 @@ export interface ConnectorArtifactDrainDeps {
   materializeAnchor: (row: ConnectorArtifactRow) => Promise<MaterializedAnchor>;
   /** Charge AT SECURING via debit_and_enqueue_anchor (mig 0341). */
   debitAndEnqueueAnchor: (args: { orgId: string; anchorId: string }) => Promise<DebitResult>;
+  /**
+   * Neutralize an anchor THIS pass inserted but could NOT link, because the
+   * artifact's fingerprint was superseded in the claim-to-mint window (see
+   * `linkMaterializedAnchor`). Guarded soft-delete; returns whether a row
+   * matched. `false` is a real integrity event, never swallowed.
+   */
+  neutralizeOrphanAnchor: (args: { orgId: string; anchorId: string }) => Promise<boolean>;
   /**
    * Design-C (mig 0353): reset this org's drain-charged-but-never-batch-claimed
    * connector anchors (BROADCASTING, null tx) back to PENDING so `batchAnchor`
@@ -252,6 +286,15 @@ export interface ConnectorArtifactDrainResult {
    * gone) and were re-queued by the confirmation step to re-drive the debit.
    */
   reconfirmRequeued: number;
+  /**
+   * Rows whose mint was ABORTED because the artifact's `fingerprint_sha256`
+   * changed under us between the claim and the link (a
+   * `docusign-envelope-completed.ts` provenance heal landed in the window).
+   * The anchor was never linked, never charged, never anchored; the row was
+   * requeued to re-drain against the healed value. Counted separately from
+   * `failed` — this is the freshness gate WORKING, not a row failure.
+   */
+  supersededRequeued: number;
 }
 
 /**
@@ -405,9 +448,12 @@ export async function defaultMaterializeAnchor(
     envelopeId: row.external_ref,
   });
   if (existingEnvelopeAnchor) {
+    // REUSED, not created — never a neutralization candidate (§ see
+    // MaterializedAnchor.created).
     return {
       anchorId: existingEnvelopeAnchor.id,
       anchorPublicId: existingEnvelopeAnchor.publicId,
+      created: false,
     };
   }
 
@@ -478,12 +524,22 @@ export async function defaultMaterializeAnchor(
           `materialize duplicate-resolve failed: ${(lookupError as { message?: string })?.message ?? 'no row'}`,
         );
       }
-      return { anchorId: existing.id as string, anchorPublicId: (existing.public_id as string) ?? null };
+      // RESOLVED an anchor an earlier pass (or another writer) created — our
+      // own INSERT was rejected, so we created nothing.
+      return {
+        anchorId: existing.id as string,
+        anchorPublicId: (existing.public_id as string) ?? null,
+        created: false,
+      };
     }
     throw new Error(`materialize anchor failed: ${(error as { message?: string }).message ?? 'unknown'}`);
   }
 
-  return { anchorId: data.id as string, anchorPublicId: (data.public_id as string) ?? null };
+  return {
+    anchorId: data.id as string,
+    anchorPublicId: (data.public_id as string) ?? null,
+    created: true,
+  };
 }
 
 /**
@@ -512,6 +568,49 @@ async function defaultDebitAndEnqueueAnchor(
   const result = data as { success?: boolean; error?: string } | null;
   if (!result?.success) return { success: false, error: result?.error ?? 'debit failed' };
   return { success: true };
+}
+
+/**
+ * Neutralize an ORPHAN anchor: one THIS pass inserted and then could NOT link,
+ * because the artifact's fingerprint was superseded in the claim-to-mint window
+ * (`linkMaterializedAnchor` returned 'superseded'). Without this the row sits
+ * in `anchors` as PENDING and UNLINKED — and `claim_pending_anchors` claims
+ * `status='PENDING' AND deleted_at IS NULL`, so it would be batch-anchored and
+ * broadcast to Bitcoin carrying the very fingerprint the heal just superseded.
+ * That is the whole bug, merely relocated from the artifact to the anchor.
+ *
+ * SOFT-delete, not a hard DELETE: `deleted_at IS NULL` is the filter BOTH
+ * `claim_pending_anchors` (broadcast eligibility) and `findExistingEnvelopeAnchor`
+ * (the drain's own envelope-reuse guard) already apply, so setting it is
+ * sufficient to make the orphan invisible to both — while leaving the row
+ * itself for forensics. A hard delete would also destroy the evidence of an
+ * attempted forgery.
+ *
+ * The WHERE clause is the safety property: `status='PENDING' AND chain_tx_id IS
+ * NULL AND deleted_at IS NULL` means we can only ever neutralize an anchor that
+ * has NOT been claimed, charged, broadcast, or already retired. If a concurrent
+ * `batch-anchor` claimed it in the microsecond between our INSERT and here, this
+ * matches ZERO rows and returns false — the caller alerts loudly rather than
+ * racing it. Never expands to an unguarded delete.
+ *
+ * §1.6A: ids only. No fingerprint, no bytes, no metadata.
+ */
+async function defaultNeutralizeOrphanAnchor(
+  args: { orgId: string; anchorId: string },
+  deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
+): Promise<boolean> {
+  const { data, error } = await deps.db
+    .from('anchors')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', args.anchorId)
+    .eq('org_id', args.orgId)
+    .eq('status', 'PENDING')
+    .is('chain_tx_id', null)
+    .is('deleted_at', null)
+    .select('id')
+    .maybeSingle();
+  if (error) return false;
+  return data != null;
 }
 
 /**
@@ -592,6 +691,8 @@ function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifa
     logger: injected.logger ?? (defaultLogger as unknown as DrainLogger),
     materializeAnchor: injected.materializeAnchor ?? ((row) => defaultMaterializeAnchor(row, { db })),
     debitAndEnqueueAnchor: injected.debitAndEnqueueAnchor ?? ((args) => defaultDebitAndEnqueueAnchor(args, { db })),
+    neutralizeOrphanAnchor:
+      injected.neutralizeOrphanAnchor ?? ((args) => defaultNeutralizeOrphanAnchor(args, { db })),
     resetUnclaimedConnectorBroadcasts:
       injected.resetUnclaimedConnectorBroadcasts ?? ((args) => defaultResetUnclaimedConnectorBroadcasts(args, { db })),
     batchAnchor: injected.batchAnchor ?? ((opts) => processBatchAnchors(opts)),
@@ -763,6 +864,7 @@ export async function drainConnectorArtifactsForOrg(
     failed: 0,
     confirmed: 0,
     reconfirmRequeued: 0,
+    supersededRequeued: 0,
   };
 
   // CONFIRMATION PRE-STEP: promote/reconcile prior-pass `materialized` rows
@@ -836,11 +938,23 @@ async function drainOneClaimedRow(
 
   try {
     // 1) Materialize a PENDING anchor (fingerprint-only, §1.6A).
-    const { anchorId } = await deps.materializeAnchor(row);
-    // STATUS-GUARDED processing → materialized. A zero-row match = LOST LEASE
-    // (the reaper re-queued the row, or another worker reclaimed it). STOP the
-    // row before debiting/anchoring on a stale lease — and DON'T count it.
-    if (!(await markStatus(deps, orgId, row.id, 'processing', 'materialized', { anchor_id: anchorId }))) {
+    const materialized = await deps.materializeAnchor(row);
+    const anchorId = materialized.anchorId;
+
+    // 1b) FRESHNESS-GATED LINK (processing → materialized + anchor_id). This is
+    // the claim-to-mint TOCTOU gate — see `linkMaterializedAnchor`'s header.
+    const link = await linkMaterializedAnchor(deps, orgId, row, anchorId);
+    if (link === 'superseded') {
+      await abortSupersededMint(deps, orgId, row, materialized, result);
+      return;
+    }
+    if (link === 'lost_lease') {
+      // The reaper re-queued the row, or another worker reclaimed it. STOP
+      // before debiting/anchoring on a stale lease — and DON'T count it.
+      // Deliberately NO orphan neutralization here: this outcome does not
+      // prove the anchor is unlinked (the new owner may have linked it, or the
+      // gate CAS may have errored after committing), and soft-deleting a live
+      // anchor is worse than leaving an orphan an operator can see.
       deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease before debit — stopping row');
       return;
     }
@@ -857,6 +971,177 @@ async function drainOneClaimedRow(
   } catch (err) {
     await handleRowDrainError(deps, orgId, row, err, debitSucceeded, result);
   }
+}
+
+/**
+ * The claim-to-mint freshness gate — outcome of the `processing → materialized`
+ * transition that also sets `anchor_id`.
+ *
+ *   'linked'      — the artifact's fingerprint is STILL what `claimRow`
+ *                   captured, and this UPDATE atomically linked the anchor.
+ *   'superseded'  — the fingerprint CHANGED under us (a provenance heal landed
+ *                   in the claim-to-mint window). Nothing was linked; the row
+ *                   has been requeued to re-drain against the healed value.
+ *   'lost_lease'  — this worker no longer holds the row (reaper requeued it, or
+ *                   another worker reclaimed it), or the DB errored. Fail-closed.
+ */
+type LinkOutcome = 'linked' | 'superseded' | 'lost_lease';
+
+/**
+ * THE claim-to-mint TOCTOU gate (code-review follow-up, 2026-09-01).
+ *
+ * BACKGROUND. `claimRow`'s CAS `RETURNING` made the CLAIM the point of truth
+ * for row content, which closed the batch-order-dependent window (up to
+ * `DRAIN_LIMIT_MAX`=200 earlier rows' worth of awaited work). It did NOT make
+ * materialization atomic end to end: `claimRow`'s capture and the `anchors`
+ * INSERT inside `defaultMaterializeAnchor` are still two separate statements,
+ * separated by two real awaited round trips (`resolveOrgActorUserId`,
+ * `findExistingEnvelopeAnchor`). `docusign-envelope-completed.ts`'s F1-heal
+ * guards its supersede UPDATE ONLY on `anchor_id IS NULL` — it has no notion of
+ * "this row was already claimed into 'processing'" — so it can still land
+ * strictly inside that window and correctly overwrite `fingerprint_sha256`
+ * while this drain holds a now-stale copy in memory. The drain would then mint
+ * an anchor from a fingerprint the system has already ruled forged. Formally
+ * reproduced in `machines/docusignInboundDedup.machine.ts`'s TOCTOU extension.
+ *
+ * THE FIX, AND WHY IT IS A GATE AND NOT ANOTHER READ. A re-READ of
+ * `connector_artifact` before the INSERT would be one more read-then-act: the
+ * heal could land between the re-read and the INSERT and nothing would notice.
+ * So the freshness assertion is FUSED into the CAS UPDATE that was already
+ * happening — the one that sets `anchor_id`:
+ *
+ *   UPDATE connector_artifact
+ *      SET status='materialized', anchor_id=:anchorId, updated_at=now()
+ *    WHERE id=:id AND org_id=:org
+ *      AND status='processing'
+ *      AND fingerprint_sha256 = :fingerprintCapturedAtClaimTime   -- THE GATE
+ *   RETURNING id
+ *
+ * Postgres evaluates that predicate atomically under the row lock, and if this
+ * statement must wait behind the heal's own concurrent UPDATE it re-evaluates
+ * the WHERE clause against the post-commit row (EvalPlanQual) before applying
+ * — the same reasoning the heal's header already relies on for the reverse
+ * direction. So the window is closed from BOTH sides by ONE statement, with no
+ * migration and no change to `docusign-envelope-completed.ts`:
+ *
+ *   - heal lands ANYWHERE between the claim and this UPDATE → the fingerprint
+ *     differs → zero rows → nothing is linked, charged, or anchored, and the
+ *     row is requeued to re-drain against the healed value (the heal WINS, as
+ *     the CTO precedence ruling requires: measured supersedes declared).
+ *   - this UPDATE lands first → `anchor_id` is now non-null, so the heal's OWN
+ *     pre-existing `anchor_id IS NULL` guard permanently locks it out and it
+ *     takes its documented "already materialized" branch — the loud, operator-
+ *     reconciled integrity event, not a silent rewrite.
+ *
+ * WHY `anchor_id` CANNOT SIMPLY BE RESERVED BEFORE THE INSERT (which would
+ * remove the orphan case below): `connector_artifact.anchor_id` is a
+ * NOT-DEFERRABLE `REFERENCES public.anchors(id)` FK (migration 0343), so a
+ * client-generated anchor uuid cannot be written to it before the `anchors` row
+ * exists. The INSERT must come first; the gate is therefore a compare-and-set
+ * AFTER it, and the residual case is a created-but-unlinked anchor — see
+ * `abortSupersededMint`.
+ *
+ * DISCRIMINATING THE TWO ZERO-ROW CAUSES. A zero-row match means either the
+ * fingerprint moved OR the lease was lost. We must not conflate them: a
+ * superseded row should be REQUEUED (retry against fresh content), while a
+ * lost-lease row must be left exactly as its new owner left it. Rather than
+ * re-reading (another read-then-act), the discrimination is itself a guarded
+ * CAS: attempt `processing → queued`. It matches ONLY while we still hold the
+ * lease — so a match proves "ours, and the fingerprint was the mismatch"
+ * (superseded), and a miss proves the lease is gone (lost_lease).
+ */
+async function linkMaterializedAnchor(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  row: ConnectorArtifactRow,
+  anchorId: string,
+): Promise<LinkOutcome> {
+  const { data, error } = await deps.db
+    .from('connector_artifact')
+    .update({ status: 'materialized', anchor_id: anchorId, updated_at: new Date().toISOString() })
+    .eq('id', row.id)
+    .eq('org_id', orgId)
+    .eq('status', 'processing')
+    // THE GATE. `row.fingerprint_sha256` is the value `claimRow`'s own CAS
+    // RETURNING captured — never the batch SELECT's (that SELECT is id-only).
+    .eq('fingerprint_sha256', row.fingerprint_sha256)
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    // Fail-closed. Do NOT requeue on an error: the UPDATE may have committed
+    // server-side before the transport failed, in which case requeuing would
+    // clobber a legitimately linked row. The reaper owns the row from here.
+    deps.logger.warn({ error, orgId, artifactId: row.id }, 'connector-artifact freshness-gated link failed');
+    return 'lost_lease';
+  }
+  if (data != null) return 'linked';
+
+  // Zero rows. Discriminate WITHOUT a read: this CAS matches only while we
+  // still hold the lease.
+  const { data: requeued, error: requeueError } = await deps.db
+    .from('connector_artifact')
+    .update({ status: 'queued', updated_at: new Date().toISOString() })
+    .eq('id', row.id)
+    .eq('org_id', orgId)
+    .eq('status', 'processing')
+    .select('id')
+    .maybeSingle();
+
+  if (requeueError) {
+    deps.logger.warn({ error: requeueError, orgId, artifactId: row.id }, 'connector-artifact superseded-mint requeue failed');
+    return 'lost_lease';
+  }
+  return requeued != null ? 'superseded' : 'lost_lease';
+}
+
+/**
+ * The superseded-mint abort. `linkMaterializedAnchor` has ALREADY requeued the
+ * row (that requeue is what proved the outcome), so this handles the fallout:
+ *
+ *  1. Neutralize the ORPHAN anchor — but ONLY one THIS pass actually INSERTED
+ *     (`materialized.created === true`). An anchor we merely REUSED (the
+ *     envelope guard, or the 23505 duplicate-resolve) belongs to another writer
+ *     and may be live; soft-deleting it would be data loss. Absence of the flag
+ *     is treated as "not ours" — fail-safe, not fail-destructive.
+ *  2. If the guarded soft-delete matched zero rows, the orphan already advanced
+ *     past PENDING (a concurrent batch-anchor claimed it). That is a REAL
+ *     integrity event — an anchor may be broadcast carrying a superseded
+ *     fingerprint — and gets its own loud, distinct alert. Never swallowed,
+ *     and never retried into a race with the broadcaster.
+ *
+ * Counted as `supersededRequeued`, NOT `failed`: nothing failed. The gate did
+ * its job, the charge never happened, and the row is drainable again.
+ */
+async function abortSupersededMint(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  row: ConnectorArtifactRow,
+  materialized: MaterializedAnchor,
+  result: ConnectorArtifactDrainResult,
+): Promise<void> {
+  if (materialized.created === true) {
+    let neutralized = false;
+    try {
+      neutralized = await deps.neutralizeOrphanAnchor({ orgId, anchorId: materialized.anchorId });
+    } catch (err) {
+      deps.logger.error({ err, orgId, artifactId: row.id, anchorId: materialized.anchorId }, 'connector-artifact orphan-anchor neutralization threw');
+    }
+    if (!neutralized) {
+      deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'orphan_anchor_neutralize_failed' });
+      deps.logger.error(
+        { orgId, artifactId: row.id, anchorId: materialized.anchorId },
+        'connector-artifact could NOT neutralize the orphan anchor left by a superseded mint — it may be claimed and broadcast carrying a superseded fingerprint; operator follow-up required',
+      );
+    }
+  }
+
+  result.supersededRequeued += 1;
+  deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'artifact_fingerprint_superseded_requeued' });
+  deps.logger.warn(
+    { orgId, artifactId: row.id, anchorId: materialized.anchorId, anchorCreatedByThisPass: materialized.created === true },
+    'connector-artifact fingerprint superseded between claim and mint — anchor NOT linked, row requeued to re-drain against the healed value',
+  );
 }
 
 /**
@@ -1290,6 +1575,8 @@ export interface ConnectorArtifactDrainCronResult {
   confirmed: number;
   /** Materialized rows re-queued by confirmation (anchor lost forward progress). */
   reconfirmRequeued: number;
+  /** Mints ABORTED by the claim-to-mint freshness gate (a provenance heal landed). */
+  supersededRequeued: number;
 }
 
 export interface ConnectorArtifactDrainCronDeps {
@@ -1425,6 +1712,7 @@ export async function runConnectorArtifactDrain(
     failed: 0,
     confirmed: 0,
     reconfirmRequeued: 0,
+    supersededRequeued: 0,
   };
 
   if (!enabled) {
@@ -1452,6 +1740,7 @@ export async function runConnectorArtifactDrain(
       base.failed += r.failed;
       base.confirmed += r.confirmed;
       base.reconfirmRequeued += r.reconfirmRequeued;
+      base.supersededRequeued += r.supersededRequeued;
     } catch (err) {
       // Per-org isolation: surface as a cycle alert, keep draining other orgs.
       base.orgsFailed += 1;
