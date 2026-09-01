@@ -27,8 +27,7 @@ import {
 } from '../../../integrations/oauth/docusign-hmac.js';
 import { resolveHmacKeys, type HmacKeyEntry } from './docusign-hmac-helpers.js';
 import {
-  DocusignCapturedSigner,
-  MAX_CAPTURED_DOCUSIGN_SIGNERS,
+  captureDocusignSigners,
   type DocusignCapturedSignerT,
 } from '../../../integrations/connectors/schemas.js';
 
@@ -374,28 +373,15 @@ function findNotaryRecipient(recipients: RecipientGroups): Record<string, unknow
  * `recipients.carbonCopies[]` — `findNotaryRecipient` above only ever consults
  * `notaries` and `signers`, and this mirrors that same access pattern.
  *
- * PII discipline (R6): only `recipient_id_guid` / `user_id` / `status` /
- * `signed_at` are ever copied — each field is read individually via
- * `trimmedString`/`firstString` into a fresh literal, never spread from the
- * raw recipient object, so a DocuSign-supplied `name`/`email` can never reach
- * the result even if a future DocuSign payload shape adds more fields.
- * `DocusignCapturedSigner.safeParse` is a second, independent gate — its
- * default (non-`.passthrough()`) object mode strips anything not explicitly
- * listed, rejects entries missing a required `recipient_id_guid`/`status`,
- * AND (PR #2474 review, HIGH) rejects `recipient_id_guid`/`user_id` values
- * that are not GUID-shaped — key-name stripping alone cannot stop a
- * mis-slotted email/name riding in under the right field name; the value
- * shape is pinned too, so that failure mode fails closed (entry skipped),
- * not open.
- *
- * Also dedupes by `recipient_id_guid` — a resend/bounce can list the same
- * signer twice within one delivery, and a duplicate should not burn a second
- * slot of the cap.
- *
- * Capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS` entries (metadata-size + display
- * safety per R6) — truncates rather than rejecting the whole envelope, so an
- * oversized recipient list never blocks the fetch/anchor pipeline for the
- * signed document itself.
+ * PII discipline (R6) and the cap/dedupe/GUID-shape-validation behavior are
+ * all implemented exactly once, in the shared `captureDocusignSigners`
+ * (`integrations/connectors/schemas.ts`) — this function's only job is
+ * finding WHERE the raw `signers[]` array lives in a webhook payload before
+ * handing it to that shared mapper. See `captureDocusignSigners`'s own
+ * docstring for the PII/GUID-shape/dedupe/cap rationale in full; the signer
+ * backfill's `extractCapturedSigners` (integrations/oauth/docusign.ts) is the
+ * other caller, reading the same field names from a different envelope
+ * (the eSignature REST `/recipients` response, not a Connect webhook).
  */
 export function extractSigners(rawBody: Buffer | string): DocusignCapturedSignerT[] {
   try {
@@ -406,46 +392,7 @@ export function extractSigners(rawBody: Buffer | string): DocusignCapturedSigner
     const recipients = summary.recipients as RecipientGroups | undefined;
     if (!recipients) return [];
 
-    const signers = recipients.signers;
-    if (!signers || signers.length === 0) return [];
-
-    const captured: DocusignCapturedSignerT[] = [];
-    // Dedupe by recipient_id_guid — a resend/bounce can produce two recipient
-    // entries for the same signer within one delivery; without this, a
-    // duplicate burns a second slot of the 20-entry cap for no new signer.
-    const seenGuids = new Set<string>();
-    for (const raw of signers) {
-      if (captured.length >= MAX_CAPTURED_DOCUSIGN_SIGNERS) break;
-
-      const recipientIdGuid = trimmedString(raw, 'recipientIdGuid');
-      const userId = trimmedString(raw, 'userId');
-      const status = trimmedString(raw, 'status');
-      const signedAt = firstString(raw, ['signedDateTime']);
-      // Optional fields are only spread in when present — an explicit `undefined`
-      // value would still leave the key on the object (Zod .optional() accepts
-      // that), which would defeat the "absent, not merely falsy" contract the
-      // pure-email-link-signer case (no userId) and unsigned-recipient case (no
-      // signed_at) both rely on.
-      const candidate = {
-        ...(recipientIdGuid ? { recipient_id_guid: recipientIdGuid } : {}),
-        ...(userId ? { user_id: userId } : {}),
-        ...(status ? { status } : {}),
-        ...(signedAt ? { signed_at: signedAt } : {}),
-      };
-      const parsed = DocusignCapturedSigner.safeParse(candidate);
-      if (parsed.success && !seenGuids.has(parsed.data.recipient_id_guid)) {
-        seenGuids.add(parsed.data.recipient_id_guid);
-        captured.push(parsed.data);
-      }
-      // Entries missing a required recipient_id_guid/status, or whose
-      // recipient_id_guid/user_id is not GUID-shaped (PR #2474 review, HIGH:
-      // stripping-by-key-name alone cannot stop a mis-slotted email/name from
-      // riding in under the right field name), are silently skipped — never
-      // persisted as a partial/identity-less/PII row — matches
-      // extractNotaryData's fail-soft posture (best-effort metadata, never
-      // blocks the standard eSign flow).
-    }
-    return captured;
+    return captureDocusignSigners(recipients.signers);
   } catch {
     return [];
   }

@@ -106,6 +106,79 @@ export type DocusignCapturedSignerT = z.infer<typeof DocusignCapturedSigner>;
 /** R6: display cap + persistence cap for captured signers (metadata-size safety). */
 export const MAX_CAPTURED_DOCUSIGN_SIGNERS = 20;
 
+function trimmedSignerField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+/**
+ * Shared per-recipient mapping algorithm behind BOTH `extractSigners`
+ * (`api/v1/webhooks/docusign.ts`, the live Connect webhook) and
+ * `extractCapturedSigners` (`integrations/oauth/docusign.ts`, the signer
+ * backfill's `/recipients` REST fetch). The two call sites differ only in
+ * WHERE they find the raw `signers[]` array — `recipients.signers` off a
+ * webhook payload vs `signers` off the eSignature REST recipients response —
+ * not in how one raw recipient becomes a `DocusignCapturedSignerT`; that
+ * conversion lives here exactly once.
+ *
+ * PII discipline (R6): only `recipientIdGuid`/`userId`/`status`/
+ * `signedDateTime` are ever read off the raw recipient, individually, into a
+ * fresh literal — never a spread — so a DocuSign-supplied `name`/`email` can
+ * never reach the result even if a future payload shape adds more fields.
+ * `DocusignCapturedSigner.safeParse` is a second, independent gate: its
+ * default (non-`.passthrough()`) object mode strips anything not explicitly
+ * listed, rejects entries missing a required `recipient_id_guid`/`status`,
+ * and (PR #2474 review, HIGH) rejects `recipient_id_guid`/`user_id` values
+ * that are not GUID-shaped — key-name stripping alone cannot stop a
+ * mis-slotted email/name riding in under the right field name, so the value
+ * shape is pinned too; that failure mode fails closed (entry skipped), not
+ * open.
+ *
+ * Also dedupes by `recipient_id_guid` (a resend/bounce can list the same
+ * signer twice) and caps at `MAX_CAPTURED_DOCUSIGN_SIGNERS`, truncating
+ * rather than rejecting the whole envelope.
+ */
+export function captureDocusignSigners(
+  signers: Array<Record<string, unknown>> | undefined,
+): DocusignCapturedSignerT[] {
+  if (!signers || signers.length === 0) return [];
+
+  const captured: DocusignCapturedSignerT[] = [];
+  const seenGuids = new Set<string>();
+  for (const raw of signers) {
+    if (captured.length >= MAX_CAPTURED_DOCUSIGN_SIGNERS) break;
+
+    const recipientIdGuid = trimmedSignerField(raw, 'recipientIdGuid');
+    const userId = trimmedSignerField(raw, 'userId');
+    const status = trimmedSignerField(raw, 'status');
+    const signedAt = trimmedSignerField(raw, 'signedDateTime');
+    // Optional fields are only spread in when present — an explicit
+    // `undefined` value would still leave the key on the object (Zod
+    // `.optional()` accepts that), which would defeat the "absent, not
+    // merely falsy" contract the pure-email-link-signer case (no userId) and
+    // unsigned-recipient case (no signed_at) both rely on.
+    const candidate = {
+      ...(recipientIdGuid ? { recipient_id_guid: recipientIdGuid } : {}),
+      ...(userId ? { user_id: userId } : {}),
+      ...(status ? { status } : {}),
+      ...(signedAt ? { signed_at: signedAt } : {}),
+    };
+    const parsed = DocusignCapturedSigner.safeParse(candidate);
+    if (parsed.success && !seenGuids.has(parsed.data.recipient_id_guid)) {
+      seenGuids.add(parsed.data.recipient_id_guid);
+      captured.push(parsed.data);
+    }
+    // Entries missing a required recipient_id_guid/status, or whose
+    // recipient_id_guid/user_id is not GUID-shaped, are silently skipped —
+    // never persisted as a partial/identity-less/PII row — fail-soft, matches
+    // extractNotaryData's posture (best-effort metadata, never blocks the
+    // standard eSign flow or the backfill run).
+  }
+  return captured;
+}
+
 /** Adobe Sign agreement-signed payload — simplified shape. */
 export const AdobeAgreementSigned = z.object({
   event: z.literal('AGREEMENT_WORKFLOW_COMPLETED'),

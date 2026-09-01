@@ -3,7 +3,7 @@ _Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-s
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
-## 2026-08-30 — `config.ts` gains `enableDocusignSignerBackfill` (`feat/docusign-signer-backfill`, draft, T2)
+## 2026-08-31 — `config.ts` gains `enableDocusignSignerBackfill` (`feat/docusign-signer-backfill-v2`, draft, T2, stacked on `feat/docusign-signer-capture-outbound` / PR #2474)
 
 Gates `POST /jobs/docusign-signer-backfill` (`jobs/docusign-signer-backfill.ts` +
 `-deps.ts`), a one-time historical scan that enriches pre-existing DocuSign
@@ -11,11 +11,22 @@ anchors — created before signer capture (PR #2474) shipped — with
 `metadata._signers`. Default false. Cross-field guard: requires
 `ENABLE_DOCUSIGN_OAUTH=true` (the backfill authenticates via the same
 refreshable OAuth connection that flag gates). OUTBOUND-only by construction —
-see `jobs/agents.md` for the critical inbound-exclusion writeup. Branched from
-`rc/docusign-bilateral-2026-08-30` (NOT `main`) because the `DocusignCapturedSigner`
-schema, `resolveDocusignEnvironment`, and `ENVELOPE_ID_METADATA_KEYS` this job
-reuses live only on that RC as of this writing (PRs #2472/#2474/#2473/#2476
-mid-T3-soak) — see the PR body for the soak-safety rationale.
+see `jobs/agents.md` for the critical inbound-exclusion writeup.
+
+**Branch structure (corrected from the original PR #2521 attempt).** This job
+reuses `DocusignCapturedSigner`, `MAX_CAPTURED_DOCUSIGN_SIGNERS`,
+`resolveDocusignEnvironment`, and `ENVELOPE_ID_METADATA_KEYS`, which do not
+exist on `main` yet — they ship in PR #2474 (`feat/docusign-signer-capture-outbound`).
+The original attempt (PR #2521) branched from `rc/docusign-bilateral-2026-08-30`
+instead, an internal soak/integration branch that is not itself a PR into
+`main` — if that RC is ever abandoned post-soak, that work would never reach
+`main`. This branch (`feat/docusign-signer-backfill-v2`) instead branches
+directly from `feat/docusign-signer-capture-outbound` and opens as a PR
+**based on** that branch, so it stacks and follows PR #2474 to `main` rather
+than depending on the RC's survival. It intentionally carries ONLY the
+signer-capture prerequisite (#2474) plus this backfill — none of the RC's
+other in-flight features (inbound webhook classification, provenance
+auto-heal, migrations 0423/0424, disclosure work).
 
 ## 2026-08-18 — `config.ts` gains `enablePlatformHealthDigest` (`feat/platform-admin-daily-health-digest`, draft, T2)
 

@@ -2,7 +2,7 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
-## 2026-08-30 — `docusign-signer-backfill.ts` + `-deps.ts`: enrich pre-existing DocuSign anchors with `_signers` (follow-on to docusign-bilateral-2026-08 / PR #2474)
+## 2026-08-31 — `docusign-signer-backfill.ts` + `-deps.ts`: enrich pre-existing DocuSign anchors with `_signers` (follow-on to PR #2474 signer capture; supersedes the mis-targeted PR #2521)
 
 Existing DocuSign-sourced anchors created BEFORE the signer-capture PR (#2474,
 `jobs/docusign-envelope-completed.ts` / `api/v1/webhooks/docusign.ts`) shipped
@@ -11,39 +11,76 @@ empty for them. `runDocusignSignerBackfill()` + `makeDocusignSignerBackfillDeps(
 enrich those anchors in place: for each candidate, GET the envelope's current
 recipients from the DocuSign eSignature REST API
 (`fetchDocusignEnvelopeRecipients`, new in `integrations/oauth/docusign.ts`,
-alongside a new `extractCapturedSigners` that reuses the SAME
-`DocusignCapturedSigner` Zod gate + `MAX_CAPTURED_DOCUSIGN_SIGNERS` cap PR
-#2474 established — GUID-shape-validated, deduped, fail-soft skip on
-invalid/partial entries) and stamp `_signers` (+ `_docusign_env` if absent)
-onto the anchor's EXISTING metadata, merged via a plain spread — never
-clobbering any other key. Candidates are found via one indexed point-lookup
-per `ENVELOPE_ID_METADATA_KEYS` key (`docusign-anchor-reconciliation.ts`,
-migration 0381's indexes), same query-shape reasoning as
-`findExistingEnvelopeAnchor`.
+mapped through the SHARED `captureDocusignSigners` mapper in
+`integrations/connectors/schemas.ts` — the one algorithm both this job's
+`extractCapturedSigners` and the live webhook's `extractSigners`
+(`api/v1/webhooks/docusign.ts`) call, so the two cannot drift) and stamp
+`_signers` (+ `_docusign_env` if absent) onto the anchor's EXISTING metadata —
+merged, never clobbering any other key. Candidates are found via one indexed
+point-lookup per `ENVELOPE_ID_METADATA_KEYS` key
+(`docusign-anchor-reconciliation.ts`, migration 0381's indexes), same
+query-shape reasoning as `findExistingEnvelopeAnchor`.
 
 **Critical scope boundary — outbound only, enforced in code AND tested.**
 This job MUST NEVER fetch or enrich an anchor whose `metadata._direction ===
-'inbound'` (docusign-bilateral-2026-08 F1, `ENABLE_DOCUSIGN_INBOUND`
-default-off): an inbound envelope belongs to a FOREIGN DocuSign account the
+'inbound'`: an inbound envelope belongs to a FOREIGN DocuSign account the
 org's OAuth grant does not cover, and DocuSign 26.3 (Demo 2026-09-12 / Prod
-2026-09-21) is locking down cross-account access regardless.
-`isOutboundBackfillCandidate()` (exported, directly unit-tested) checks TWO
-independent signals before any DocuSign API call: `metadata._direction`
-(absent or exactly `'outbound'` passes) AND `anchors.fingerprint_source` (a
-real CHECK-constrained column, not metadata — anything other than
-`'issuer_record_attestation'`, the marker ONLY the inbound declared-hash
-materialization path in `connector-artifact-drain.ts` stamps, passes). Either
-signal alone failing skips the row without ever calling
-`deps.fetchEnvelopeSigners`; the "CRITICAL SAFETY" test block in
-`docusign-signer-backfill.test.ts` asserts that function is never invoked for
-such a row.
+2026-09-21) is locking down cross-account access regardless. (The inbound
+classification path is separate, not-yet-merged work — this branch does not
+ship it; the guard exists ahead of it landing, not because this branch can
+currently produce an inbound-classified row.) `isOutboundBackfillCandidate()`
+(exported, directly unit-tested) checks TWO signals before any DocuSign API
+call: `metadata._direction` (absent or exactly `'outbound'` passes) AND
+`anchors.fingerprint_source` (a real CHECK-constrained column, not metadata —
+anything other than `'issuer_record_attestation'` passes). These are NOT
+independent evidence against a shared misclassification bug at anchor-
+creation time (a materializer that mis-decides direction would set both from
+that one decision); what checking both DOES protect against is POST-CREATION
+drift of either signal alone — `fingerprint_source` is immutable after insert
+for non-service_role callers (migration 0384's trigger), while `_direction`
+is intended to get the equivalent guard from the separate, not-yet-merged
+DocuSign metadata-key write-authority migration. Either signal alone failing
+skips the row without ever calling `deps.fetchEnvelopeSigners`; the "CRITICAL
+SAFETY" test block in `docusign-signer-backfill.test.ts` asserts that
+function is never invoked for such a row.
 
-**Idempotent/resumable by construction, no run-state.** The candidate query's
-`metadata->>_signers IS NULL` filter is both the selector and the watermark —
-once written, an anchor drops out of every future candidate set, so no
-envelope is ever polled twice. `updateAnchorSigners` additionally re-checks
-`_signers IS NULL` at WRITE time (optimistic guard): a concurrent
-enrichment reports `updated:false`, a no-op not an error.
+**Idempotent/resumable, watermark independent of whether any signers were
+found (fixed 2026-08-31 review).** The ORIGINAL version used
+`metadata->>_signers IS NULL` as BOTH the candidate filter and the sole
+completion marker — so a `continue` on a legitimately zero-signer fetch
+(voided/declined envelope, or every entry failing GUID-shape validation)
+never called `updateAnchorSigners`, leaving that row a candidate FOREVER and
+re-fetching it from DocuSign on every future run (a real anti-polling-policy
+risk with no cursor/ordering to bound the damage). Fixed by a SEPARATE
+`metadata._signers_backfilled_at` timestamp, stamped unconditionally by
+`updateAnchorSigners` on every successful write regardless of whether any
+signers were found; `listCandidateAnchors` now filters on BOTH
+`_signers IS NULL` AND `_signers_backfilled_at IS NULL`. `_signers` itself is
+still never persisted as `[]` (omit-rather-than-persist-empty convention
+preserved). **`_signers_backfilled_at` needs to be added to migration 0423's
+guarded metadata-key family before either this PR or
+`fix/docusign-metadata-key-write-authority` merges** — 0423 lives on that
+other branch and is deliberately not touched here.
+
+**Concurrent-metadata-write safety (fixed 2026-08-31 review).** The ORIGINAL
+version merged onto the metadata snapshot captured at candidate-SELECT time
+and wrote the whole column back, with an optimistic guard that only
+re-checked `_signers` — so ANY other key written by something else (fraud
+tagging, an admin annotation, another job's breadcrumb) between the SELECT
+and this job's UPDATE was silently reverted, with no error and no signal.
+Fixed WITHOUT a migration (keeping this PR T2): `updateAnchorSigners` now
+re-reads the anchor's CURRENT metadata immediately before merging — ignoring
+the stale candidate-time snapshot entirely — and writes back with a
+compare-and-swap on that exact just-read value (`.eq('metadata', fresh)`;
+Postgres `jsonb =` is deep-equality, so ANY concurrent change fails the CAS
+and the row is left for the next run, a no-op not a clobber). This shrinks
+the write's exposure window to roughly one query round trip instead of up to
+a whole run's duration (candidates are processed sequentially with a pacing
+delay). True DB-side atomicity
+(`metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object(...)` in a
+SECURITY DEFINER RPC) would close even that narrow window but needs a new
+migration — deferred, same accepted tradeoff already on record for
+`connector-artifact-drain.ts`'s `markFailed` (see that file, ~line 1121).
 
 **Rate limiting.** Sequential (never concurrent) per-envelope requests with a
 configurable delay (`DEFAULT_BACKFILL_REQUEST_DELAY_MS` = 300ms) between
@@ -59,15 +96,12 @@ Cron route: `POST /jobs/docusign-signer-backfill` (`routes/cron.ts`), gated
 it requires `ENABLE_DOCUSIGN_OAUTH`). `page_size`/`run_limit` query params
 tune one invocation without redeploying.
 
-## 2026-08-30 — F1 (security review of PR #2476): `docusign-envelope-completed.ts` verifies its own enqueue result before trusting it
-
-`enqueueSignedDocument` used to treat any non-null id returned by `enqueue_connector_artifact` as success. The RPC is `ON CONFLICT DO NOTHING` on `(org_id, source, external_ref, revision)` — the SAME key the INBOUND declared-hash webhook path (`api/v1/webhooks/docusign.ts`) writes to for the SAME envelope with an UNVERIFIED, attacker-declarable fingerprint. A same-tenant attacker who self-POSTs a forged inbound event for this org's own real outbound envelope, racing the real async fetch, can win the INSERT — after which this call's own real, measured write silently loses (DO NOTHING) and the returned id is the FORGED row's, not this call's own.
-
-Fix: after the RPC returns a non-null id, read the persisted row back (`connector_artifact.fingerprint_sha256, metadata`) and compare against what THIS call just measured. Two independent tells, either disqualifying: the persisted hash isn't the one this call computed, or the persisted row is `metadata._direction === 'inbound'` at all (this IS the org's own outbound envelope — an inbound-marked row here is anomalous regardless of hash match, belt-and-suspenders against the vanishing chance of a hash collision). On either, throws a DISTINCTLY-named error (`docusign_connector_artifact_provenance_conflict`) after a loud structured-log signal (`docusign_connector_artifact_provenance_conflict: true`) — never the silent-success path, never the existing silent-orphan path. Detection only: `ON CONFLICT DO NOTHING` means this code cannot UPDATE-supersede the pre-existing row here; automatic outbound-supersedes-inbound reconciliation is separate, go-live-gated follow-up work. `DbClient` gained a `connector_artifact` read overload. See `machines/docusignInboundDedup.machine.ts`'s F1 extension (`machines/agents.md`) for the formal model of this exact property, and `docusign-envelope-completed.test.ts`'s `describe('F1 — connector_artifact provenance conflict detection')` for the race + fail-closed-on-readback-error tests.
-
-## 2026-08-30 — docusign-bilateral-2026-08 (flag-off, not going live this cycle): `defaultMaterializeAnchor` sets `fingerprint_source` for inbound declared-hash rows
-
-`connector-artifact-drain.ts`'s `defaultMaterializeAnchor` (documented at length below) reads `row.metadata._direction` — written ONLY by the webhook classifier's new inbound branch (`api/v1/webhooks/docusign.ts`, see that folder's agents.md) — and, when it equals `'inbound'`, sets `anchors.fingerprint_source = 'issuer_record_attestation'` (migration 0376 CHECK enum) on the `AnchorInsertPayload`. Every other row (100% of traffic today: DocuSign outbound, Google Drive) omits the field entirely (`undefined`, never `'document_bytes'` — this file never fetches bytes itself either; that measurement, when it happens, is upstream in `docusign-envelope-completed.ts`, which this materializer has no visibility into). `AnchorInsertPayload` gained the field as `.optional()`; the `.strict()` schema still rejects anything else. See `constants/connectorFingerprint.ts` for the downstream `FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED` class this enables on the public verify response.
+Tests: `docusign-signer-backfill.test.ts`, `docusign-signer-backfill-deps.test.ts`
+(the latter's `watermark durability + concurrent-metadata-write safety`
+describe block runs the fix against a real stateful in-memory `anchors` table
+— a zero-signer envelope is durably excluded on a simulated second run, and a
+simulated concurrent write to an unrelated metadata key survives the
+backfill write). T2 (worker behavior).
 
 ## 2026-08-15 — the `*Fetcher.ts` family cannot report failure as success any more (BUG-020/022/023)
 

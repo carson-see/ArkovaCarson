@@ -135,6 +135,15 @@ async function selectCandidatesForKey(
     .is('deleted_at', null)
     .eq('metadata->>connector_source', 'docusign')
     .is('metadata->>_signers', null)
+    // Separate completion watermark from `_signers` itself (see the WRITE
+    // SAFETY section in docusign-signer-backfill.ts): a candidate that was
+    // already processed and legitimately yielded zero signers has
+    // `_signers_backfilled_at` set but `_signers` still absent. Without this
+    // second filter such a row stays a "candidate" forever and is re-fetched
+    // from DocuSign on every run. NOTE: `_signers_backfilled_at` needs to be
+    // added to migration 0423's guarded metadata-key family once that
+    // (separate, not-yet-merged) migration lands — see agents.md.
+    .is('metadata->>_signers_backfilled_at', null)
     .not(`metadata->>${key}`, 'is', null)
     .limit(limit)) as DbQueryResult<AnchorCandidateRow[]>;
 
@@ -246,29 +255,75 @@ export function makeDocusignSignerBackfillDeps(
       });
     },
 
-    async updateAnchorSigners({ anchorId, orgId, metadata, signers, docusignEnv }) {
-      const existing = metadata && typeof metadata === 'object' ? metadata : {};
-      const merged = {
-        ...existing,
-        _signers: signers,
+    async updateAnchorSigners({ anchorId, orgId, signers, docusignEnv }) {
+      // The `metadata` snapshot the caller passes in was captured back at
+      // candidate-SELECT time and can be MINUTES stale by now (candidates in
+      // one run are processed sequentially with a pacing delay between
+      // DocuSign calls — see RATE LIMITING in docusign-signer-backfill.ts).
+      // Deliberately ignored here as the merge base: re-read the row's
+      // CURRENT metadata immediately before merging instead, so this write's
+      // exposure to a concurrent writer of some OTHER key shrinks to roughly
+      // one query round trip rather than up to this run's entire duration.
+      const { data: freshRow, error: readError } = (await db
+        .from('anchors')
+        .select('metadata')
+        .eq('id', anchorId)
+        .eq('org_id', orgId)
+        .maybeSingle()) as DbQueryResult<{ metadata: unknown }>;
+      if (readError) throw new Error(`anchor_reread_failed: ${dbErrorMessage(readError)}`);
+      if (!freshRow) return { updated: false }; // deleted/moved between SELECT and here — no-op.
+
+      const fresh =
+        freshRow.metadata && typeof freshRow.metadata === 'object' && !Array.isArray(freshRow.metadata)
+          ? (freshRow.metadata as Record<string, unknown>)
+          : {};
+
+      // Already completed by a concurrent run (backfill or, for `_signers`,
+      // the live webhook path) — no-op, not an error. Checked against the
+      // FRESH read, not the stale candidate snapshot.
+      if (fresh['_signers_backfilled_at'] != null || fresh['_signers'] != null) {
+        return { updated: false };
+      }
+
+      const merged: Record<string, unknown> = {
+        ...fresh,
+        // `_signers` itself is only ever written when non-empty — omit
+        // rather than persist `[]` (CLAUDE.md §6, matches the live webhook
+        // path's own "absent, never []" convention). The completion
+        // watermark below is written unconditionally either way.
+        ...(signers.length > 0 ? { _signers: signers } : {}),
+        _signers_backfilled_at: new Date().toISOString(),
         // Never overwrite an existing _docusign_env — a concurrent write may
         // have set it from a more authoritative source.
-        ...('_docusign_env' in existing ? {} : { _docusign_env: docusignEnv }),
+        ...('_docusign_env' in fresh ? {} : { _docusign_env: docusignEnv }),
       };
 
       // Org-scoped (§1.6A/agents.md DO rule: every service_role write filters
-      // .eq('org_id', ...)). Optimistic guard: `.is('metadata->>_signers', null)`
-      // re-checks at WRITE time that no concurrent run/webhook already
-      // enriched this row between the candidate SELECT and this UPDATE — if
-      // it has, this matches zero rows and `updated` comes back false, a
-      // no-op rather than a clobber. The 0423 metadata-key write-authority
-      // trigger passes this write through unchanged (service_role caller).
+      // .eq('org_id', ...)). `.eq('metadata', fresh)` is a compare-and-swap on
+      // the EXACT value just read: Postgres `jsonb =` is a deep-equality
+      // comparison, so if ANY key changed — not just `_signers` — between the
+      // read above and this UPDATE, the WHERE clause matches zero rows and
+      // `updated` comes back false instead of silently reverting whatever
+      // that concurrent writer set. The two `.is(...)` guards are redundant
+      // with the CAS in principle (both were confirmed null by the read that
+      // produced `fresh`) but are kept as cheap, self-documenting belt-and-
+      // suspenders. A row this loses a race on is left for the next run to
+      // pick up — a no-op, not a clobber.
+      //
+      // True DB-side atomicity (`metadata = COALESCE(metadata,'{}'::jsonb) ||
+      // jsonb_build_object(...)` in a SECURITY DEFINER RPC) would remove even
+      // this narrow read-then-write window, but needs a new migration —
+      // deferred (see connector-artifact-drain.ts's `markFailed` for the
+      // same accepted tradeoff on the same bug class) so this PR does not
+      // touch supabase/migrations/ and stays T2.
       const { data, error } = (await db
         .from('anchors')
         .update({ metadata: merged })
         .eq('id', anchorId)
         .eq('org_id', orgId)
+        .eq('metadata', fresh)
         .is('metadata->>_signers', null)
+        .is('metadata->>_signers_backfilled_at', null)
         .select('id')
         .maybeSingle()) as DbQueryResult<{ id: string }>;
 

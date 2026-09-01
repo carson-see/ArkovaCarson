@@ -1,15 +1,18 @@
 /**
  * DocuSign signer backfill (record-detail signer rows, follow-on to
- * docusign-bilateral-2026-08 / PR #2474 "outbound signer capture").
+ * signer capture / PR #2474 "outbound signer capture").
  *
  * Existing DocuSign-sourced anchors created BEFORE signer capture shipped
  * carry no `metadata._signers`, so the record-detail UI's signer rows render
  * empty for them. This job enriches those anchors in place: for each PAST
  * envelope, GET the envelope's CURRENT recipients from the DocuSign
  * eSignature REST API and stamp `_signers` (+ `_docusign_env` if absent) onto
- * the anchor's existing metadata — merged, never clobbering any other key
- * (enforced by the deps-layer write, which spreads the existing metadata
- * first; see `docusign-signer-backfill-deps.ts`).
+ * the anchor's existing metadata — merged, never clobbering any other key.
+ * The merge is NOT a plain read-modify-write of the metadata snapshot taken
+ * at candidate-SELECT time (see WRITE SAFETY below and
+ * `docusign-signer-backfill-deps.ts`'s `updateAnchorSigners`) — that snapshot
+ * can be stale by write time, and a naive whole-column overwrite from it
+ * would silently revert any OTHER key written concurrently in between.
  *
  * Pure function pattern (all I/O injected via DocusignSignerBackfillDeps) —
  * same shape as `docusign-reconciliation.ts` / `docusign-queue-reconciliation.ts`.
@@ -20,38 +23,73 @@
  * This job backfills ONLY envelopes owned by the org's OWN connected DocuSign
  * account — anchors whose `metadata._direction` is absent or exactly
  * 'outbound'. It MUST NEVER fetch or enrich an anchor whose
- * `metadata._direction === 'inbound'` (docusign-bilateral-2026-08 F1/PR-4 —
- * flag-OFF, staging-only as of this writing, gated by ENABLE_DOCUSIGN_INBOUND
- * default false): an inbound envelope belongs to a FOREIGN DocuSign account
- * the org's OAuth grant does not cover, so calling DocuSign's document/
- * recipients API for it would either be rejected outright or return data the
- * org has no authorization to see, and DocuSign release 26.3
- * (Demo 2026-09-12 / Prod 2026-09-21) is actively locking down cross-account
- * access regardless. Attempting it is BOTH a permissions violation AND a
- * §1.5 provenance violation: an inbound anchor's fingerprint is DECLARED by a
- * third party, never independently fetched/measured by Arkova (see
- * `FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED` in
- * `constants/connectorFingerprint.ts`) — signer identities for it are not
- * ours to go fetch either.
+ * `metadata._direction === 'inbound'`: an inbound envelope belongs to a
+ * FOREIGN DocuSign account the org's OAuth grant does not cover, so calling
+ * DocuSign's document/recipients API for it would either be rejected
+ * outright or return data the org has no authorization to see, and DocuSign
+ * release 26.3 (Demo 2026-09-12 / Prod 2026-09-21) is actively locking down
+ * cross-account access regardless. Attempting it is BOTH a permissions
+ * violation AND a §1.5 provenance violation: an inbound anchor's fingerprint
+ * is DECLARED by a third party, never independently fetched/measured by
+ * Arkova — signer identities for it are not ours to go fetch either. (The
+ * inbound classification path that would ever produce such a row is
+ * separate, later work and does not ship in this PR; this guard exists so
+ * the boundary is already enforced before that path lands on top of this
+ * one, not because this branch can currently produce an inbound row.)
  *
  * {@link isOutboundBackfillCandidate} is the enforcement point: it is checked
  * for EVERY candidate BEFORE any DocuSign API call (`deps.fetchEnvelopeSigners`
  * is the ONLY function in this module that calls out to DocuSign), and it
- * checks TWO INDEPENDENT signals so a bug or omission in one does not
- * silently reopen the boundary:
+ * checks TWO signals, EITHER of which failing skips the row:
  *   1. `metadata._direction` — absent or exactly 'outbound' passes; anything
  *      else (in particular 'inbound', or any unexpected value) fails closed.
  *   2. `fingerprintSource` — a REAL, CHECK-constrained `anchors.fingerprint_source`
- *      column (migration 0376/0384), not metadata, so it cannot be forged via
- *      the metadata blob. Anything other than 'issuer_record_attestation'
- *      passes; 'issuer_record_attestation' is the value ONLY the inbound
- *      declared-hash materialization path stamps
- *      (`jobs/connector-artifact-drain.ts`'s `isInboundDeclaredHash` branch) —
- *      an anchor this job may legitimately touch can never carry it.
- * A candidate fails the guard (is treated as inbound, skipped, never fetched)
- * if EITHER signal says so. See the "CRITICAL SAFETY" test block in
- * `docusign-signer-backfill.test.ts` for the test asserting
- * `fetchEnvelopeSigners` is never invoked for such a row.
+ *      column (migration 0376), not metadata, so it cannot be forged via the
+ *      metadata blob. Anything other than 'issuer_record_attestation' passes.
+ * These two signals are NOT independent evidence against a shared
+ * misclassification bug — an anchor materializer that mis-decides "inbound
+ * vs outbound" at creation time would set BOTH from that one wrong decision,
+ * so a bug there mis-sets both together, not just one. What checking both
+ * DOES independently protect against is POST-CREATION drift/tampering of
+ * EITHER signal in isolation: `fingerprint_source` is immutable after insert
+ * for non-service_role callers (migration 0384's
+ * `enforce_anchor_evidence_claim_authority` trigger refuses any later UPDATE
+ * that changes it), while `metadata._direction` is intended to get an
+ * equivalent non-service_role write-authority guard from a separate,
+ * not-yet-merged DocuSign metadata-key write-authority migration — until
+ * that lands, `_direction` alone is metadata and is only as tamper-resistant
+ * as whatever wrote it. Either signal alone failing skips the row without
+ * ever calling `deps.fetchEnvelopeSigners`; the "CRITICAL SAFETY" test block
+ * in `docusign-signer-backfill.test.ts` asserts that function is never
+ * invoked for such a row.
+ *
+ * ═════════════════════════════════════════════════════════════════════════
+ * WRITE SAFETY — idempotency watermark and concurrent-metadata-write safety
+ * ═════════════════════════════════════════════════════════════════════════
+ * A completed candidate (whether or not it turned up any signers) is marked
+ * durably via `metadata._signers_backfilled_at`, set unconditionally by
+ * `updateAnchorSigners` on every successful write. This is a SEPARATE
+ * completion marker from `metadata._signers` itself: an envelope that
+ * legitimately yields zero usable signers (voided/declined before any
+ * signature, or every recipient entry failing GUID-shape validation) must
+ * still be marked done, or the deps-layer candidate query — whose ONLY
+ * filter used to be `_signers IS NULL` — would re-select and re-fetch that
+ * same envelope from DocuSign on every future run forever. `_signers` itself
+ * is still omitted (never written as `[]`) when there is nothing to persist,
+ * per the "omit rather than persist an empty value" convention the record-
+ * detail UI and the live webhook path both already follow.
+ *
+ * The write itself re-reads the anchor's CURRENT metadata immediately before
+ * merging, and writes back with a compare-and-swap on that exact snapshot
+ * (`.eq('metadata', <just-read value>)`) rather than the possibly-stale
+ * metadata captured back at candidate-SELECT time. This bounds the window in
+ * which a concurrent writer to some OTHER metadata key could be silently
+ * reverted to roughly one query round trip, instead of up to this run's
+ * entire duration (candidates are processed sequentially with a pacing
+ * delay between DocuSign calls, so that duration is not negligible). If the
+ * CAS loses a race, the update matches zero rows, `updated` comes back
+ * `false`, and the row is left for the next run to pick up — a no-op, not a
+ * clobber or an error. See `docusign-signer-backfill-deps.ts`.
  *
  * ═════════════════════════════════════════════════════════════════════════
  * RATE LIMITING
@@ -59,12 +97,14 @@
  * DocuSign's anti-polling policy requires >=15 minutes between polls of the
  * SAME object, and gates sustained polling behind app approval. This job
  * satisfies both by construction, not by a timer:
- *   - It is a ONE-TIME backfill per envelope. Once `_signers` is written, the
- *     deps-layer candidate query's `metadata._signers IS NULL` filter
- *     permanently excludes that anchor from every future run — the field
- *     itself is the watermark, so this job is naturally idempotent/resumable
- *     with no separate run-state to track, and no envelope is EVER polled
- *     twice by this job regardless of how often the cron fires.
+ *   - It is a ONE-TIME backfill per envelope. Once `_signers_backfilled_at`
+ *     is written, the deps-layer candidate query's filter (both
+ *     `metadata._signers IS NULL` AND `metadata._signers_backfilled_at IS
+ *     NULL`) permanently excludes that anchor from every future run — the
+ *     field itself is the watermark, so this job is naturally
+ *     idempotent/resumable with no separate run-state to track, and no
+ *     envelope is EVER polled twice by this job regardless of how often the
+ *     cron fires.
  *   - Requests to DIFFERENT envelopes within one run are made SEQUENTIALLY
  *     (never concurrently), with a conservative fixed delay between them
  *     (`options.requestDelayMs`, default `DEFAULT_BACKFILL_REQUEST_DELAY_MS`
@@ -90,10 +130,10 @@ import { logger } from '../utils/logger.js';
 import { resolveDocusignEnvironment, type DocusignEnvironmentTag } from '../integrations/oauth/docusign.js';
 import type { DocusignCapturedSignerT } from '../integrations/connectors/schemas.js';
 
-/** anchors.fingerprint_source value stamped ONLY by the inbound declared-hash
- * materialization path (jobs/connector-artifact-drain.ts). An anchor this job
- * may touch can never legitimately carry it — see the CRITICAL SCOPE
- * BOUNDARY section above. */
+/** anchors.fingerprint_source value that a (separate, not-yet-merged) inbound
+ * declared-hash materialization path is the only intended writer of. An
+ * anchor this job may touch can never legitimately carry it — see the
+ * CRITICAL SCOPE BOUNDARY section above. */
 const INBOUND_FINGERPRINT_SOURCE = 'issuer_record_attestation';
 
 const DEFAULT_BACKFILL_PAGE_SIZE = 50;
@@ -144,7 +184,16 @@ export interface DocusignSignerBackfillDeps {
   updateAnchorSigners(args: {
     anchorId: string;
     orgId: string;
+    /**
+     * The candidate-SELECT-time metadata snapshot. Informational for the
+     * caller/tests only — the production implementation
+     * (`docusign-signer-backfill-deps.ts`) deliberately does NOT use this as
+     * its merge base, since it can be stale by write time; it re-reads the
+     * anchor's current metadata immediately before merging instead. See the
+     * WRITE SAFETY section above.
+     */
     metadata: Record<string, unknown> | null;
+    /** May be empty — a legitimately signer-less envelope still gets marked done (see WRITE SAFETY). `_signers` itself is only ever persisted when non-empty. */
     signers: DocusignCapturedSignerT[];
     docusignEnv: DocusignEnvironmentTag;
   }): Promise<{ updated: boolean }>;
@@ -165,12 +214,21 @@ export interface DocusignSignerBackfillResult {
   integrationsChecked: number;
   anchorsScanned: number;
   anchorsUpdated: number;
+  /**
+   * Fetched successfully but yielded ZERO usable signers (voided/declined
+   * before any signature, or every recipient entry failed GUID-shape
+   * validation) — `_signers` is deliberately never written as `[]`, but the
+   * anchor IS durably marked done via `_signers_backfilled_at` so it is not
+   * re-fetched from DocuSign on every future run. See the WRITE SAFETY
+   * section in the file header.
+   */
+  anchorsMarkedNoSigners: number;
   /** Never fetched or enriched — the critical safety exclusion. */
   anchorsSkippedInbound: number;
   anchorsSkippedNoEnvelopeId: number;
   /** 404/403/410 — purged/no-access/retention. Expected for old envelopes. */
   anchorsSkippedNotFound: number;
-  /** The update guard tripped (already enriched, e.g. by a concurrent run) — a no-op, not an error. */
+  /** The write-side CAS guard found the row already completed or concurrently changed (e.g. by another run) — a no-op, not an error. */
   anchorsAlreadyEnriched: number;
   errors: Array<{ anchor_id?: string; integration_id?: string; error: string }>;
 }
@@ -214,6 +272,7 @@ const EMPTY_RESULT: DocusignSignerBackfillResult = {
   integrationsChecked: 0,
   anchorsScanned: 0,
   anchorsUpdated: 0,
+  anchorsMarkedNoSigners: 0,
   anchorsSkippedInbound: 0,
   anchorsSkippedNoEnvelopeId: 0,
   anchorsSkippedNotFound: 0,
@@ -334,15 +393,18 @@ export async function runDocusignSignerBackfill(
         continue;
       }
 
-      if (signers.length === 0) {
-        // Nothing to write. Matches CLAUDE.md §6 (omit rather than persist an
-        // empty array) and the live webhook path's own "absent, never []"
-        // convention — an envelope can genuinely have zero completed signers
-        // captured (e.g. void/decline before any signature).
-        await deps.sleep(requestDelayMs);
-        continue;
-      }
-
+      // `signers` may legitimately be empty (void/decline before any
+      // signature, or every recipient entry failed GUID-shape validation).
+      // updateAnchorSigners is called EITHER WAY: `_signers` itself is still
+      // never persisted as `[]` (CLAUDE.md §6 — omit rather than persist an
+      // empty value, matching the live webhook path's own "absent, never []"
+      // convention), but the completion watermark
+      // (`metadata._signers_backfilled_at`) MUST be written regardless of
+      // whether any signers were found — otherwise a zero-signer envelope has
+      // no completion marker at all and `listCandidateAnchors` (whose ONLY
+      // filter used to be `_signers IS NULL`) re-selects and re-fetches it
+      // from DocuSign every single future run, forever. See the WRITE SAFETY
+      // section in the file header.
       try {
         const updateResult = await deps.updateAnchorSigners({
           anchorId: candidate.anchorId,
@@ -352,10 +414,17 @@ export async function runDocusignSignerBackfill(
           docusignEnv,
         });
         if (updateResult.updated) {
-          result.anchorsUpdated += 1;
+          if (signers.length > 0) {
+            result.anchorsUpdated += 1;
+          } else {
+            result.anchorsMarkedNoSigners += 1;
+          }
         } else {
-          // The write-side guard found _signers already present (a concurrent
-          // run/webhook won the race) — a no-op, not a failure.
+          // The write-side CAS guard found the row already completed, or lost
+          // a race against a concurrent metadata write (a concurrent
+          // run/webhook, or an unrelated writer) — a no-op, not a failure.
+          // The row stays a candidate (if not yet marked done) and is picked
+          // up again on the next run.
           result.anchorsAlreadyEnriched += 1;
         }
       } catch (err) {
@@ -377,6 +446,7 @@ export async function runDocusignSignerBackfill(
       integrationsChecked: result.integrationsChecked,
       anchorsScanned: result.anchorsScanned,
       anchorsUpdated: result.anchorsUpdated,
+      anchorsMarkedNoSigners: result.anchorsMarkedNoSigners,
       anchorsSkippedInbound: result.anchorsSkippedInbound,
       anchorsSkippedNoEnvelopeId: result.anchorsSkippedNoEnvelopeId,
       anchorsSkippedNotFound: result.anchorsSkippedNotFound,

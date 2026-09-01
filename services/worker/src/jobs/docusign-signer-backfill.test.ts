@@ -241,13 +241,39 @@ describe('runDocusignSignerBackfill', () => {
     expect(result.anchorsUpdated).toBe(1);
   });
 
-  it('does not write when the envelope has no signers (never persists an empty array)', async () => {
+  it('still calls updateAnchorSigners with an empty signers array when the envelope has no signers, to mark the watermark (does not count as anchorsUpdated)', async () => {
     const deps = makeDeps({ fetchEnvelopeSigners: vi.fn().mockResolvedValue([]) });
 
     const result = await runDocusignSignerBackfill(deps);
 
-    expect(deps.updateAnchorSigners).not.toHaveBeenCalled();
+    // The bug this guards against: a `continue` here without calling
+    // updateAnchorSigners left `_signers IS NULL` as the row's only
+    // completion marker, so a genuinely signer-less envelope (voided/
+    // declined, or every recipient entry failing GUID-shape validation) was
+    // re-selected as a candidate and re-fetched from DocuSign on EVERY
+    // future run, forever.
+    expect(deps.updateAnchorSigners).toHaveBeenCalledWith({
+      anchorId: 'anchor-1',
+      orgId: 'org-1',
+      metadata: { connector_source: 'docusign', envelope_id: 'env-1' },
+      signers: [],
+      docusignEnv: 'demo',
+    });
     expect(result.anchorsUpdated).toBe(0);
+    expect(result.anchorsMarkedNoSigners).toBe(1);
+  });
+
+  it('treats a failed watermark write for a zero-signer envelope as a real error, not a silent skip', async () => {
+    const deps = makeDeps({
+      fetchEnvelopeSigners: vi.fn().mockResolvedValue([]),
+      updateAnchorSigners: vi.fn().mockRejectedValue(new Error('db down')),
+    });
+
+    const result = await runDocusignSignerBackfill(deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.anchorsMarkedNoSigners).toBe(0);
   });
 
   it('treats an update guard trip (concurrently already-enriched) as a no-op, not an error', async () => {

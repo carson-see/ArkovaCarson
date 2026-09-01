@@ -13,8 +13,7 @@
 import { z } from 'zod';
 import {
   DocusignEnvelopeCompleted as DocusignEnvelopeCompletedSchema,
-  DocusignCapturedSigner,
-  MAX_CAPTURED_DOCUSIGN_SIGNERS,
+  captureDocusignSigners,
   type DocusignCapturedSignerT,
 } from '../connectors/schemas.js';
 import { boundedErrorDetail } from '../../utils/byte-safety.js';
@@ -363,56 +362,21 @@ export async function fetchDocusignEnvelopeRecipients(args: {
   return extractCapturedSigners(json?.signers);
 }
 
-function trimmedStringField(record: Record<string, unknown>, key: string): string | null {
-  const value = record[key];
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed || null;
-}
-
 /**
  * Map a raw DocuSign recipients array into the pseudonymous
- * `DocusignCapturedSignerT[]` shape — reuses the SAME `DocusignCapturedSigner`
- * Zod gate (`integrations/connectors/schemas.ts`) the Connect webhook's
- * `extractSigners` (api/v1/webhooks/docusign.ts) validates against: GUID-shape
- * validated `recipient_id_guid`/`user_id`, capped at
- * `MAX_CAPTURED_DOCUSIGN_SIGNERS`, deduped by `recipient_id_guid` (first
- * occurrence wins), invalid/partial entries silently skipped — never thrown,
- * never a name/email. Only `recipientIdGuid`/`userId`/`status`/
- * `signedDateTime` are ever read off the raw recipient, into a fresh literal
- * (never spread), so a DocuSign-supplied `name`/`email` can never reach the
- * result even if a future payload shape adds more fields.
+ * `DocusignCapturedSignerT[]` shape. A thin, name-preserving wrapper around
+ * the shared `captureDocusignSigners` (`integrations/connectors/schemas.ts`)
+ * — the SAME algorithm the Connect webhook's `extractSigners`
+ * (api/v1/webhooks/docusign.ts) uses, factored out once so the two call
+ * sites cannot drift: GUID-shape validated `recipient_id_guid`/`user_id`,
+ * capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS`, deduped by `recipient_id_guid`
+ * (first occurrence wins), invalid/partial entries silently skipped — never
+ * thrown, never a name/email.
  */
 export function extractCapturedSigners(
   signers: Array<Record<string, unknown>> | undefined,
 ): DocusignCapturedSignerT[] {
-  if (!signers || signers.length === 0) return [];
-
-  const captured: DocusignCapturedSignerT[] = [];
-  const seenGuids = new Set<string>();
-  for (const raw of signers) {
-    if (captured.length >= MAX_CAPTURED_DOCUSIGN_SIGNERS) break;
-
-    const recipientIdGuid = trimmedStringField(raw, 'recipientIdGuid');
-    const userId = trimmedStringField(raw, 'userId');
-    const status = trimmedStringField(raw, 'status');
-    const signedAt = trimmedStringField(raw, 'signedDateTime');
-    const candidate = {
-      ...(recipientIdGuid ? { recipient_id_guid: recipientIdGuid } : {}),
-      ...(userId ? { user_id: userId } : {}),
-      ...(status ? { status } : {}),
-      ...(signedAt ? { signed_at: signedAt } : {}),
-    };
-    const parsed = DocusignCapturedSigner.safeParse(candidate);
-    if (parsed.success && !seenGuids.has(parsed.data.recipient_id_guid)) {
-      seenGuids.add(parsed.data.recipient_id_guid);
-      captured.push(parsed.data);
-    }
-    // Missing recipient_id_guid/status, or a non-GUID-shaped recipient_id_guid/
-    // user_id (a mis-slotted email/name), fails safeParse and is silently
-    // skipped — fail-soft, matches extractSigners' posture exactly.
-  }
-  return captured;
+  return captureDocusignSigners(signers);
 }
 
 export function verifyDocusignConnectHmac(args: {
