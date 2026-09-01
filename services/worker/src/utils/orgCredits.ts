@@ -58,13 +58,40 @@ interface DeductOrgCreditRpcRow {
 type DbLike = typeof db;
 
 /**
+ * How long a per-org enrolment answer is reused before re-reading it.
+ *
+ * `deductOrgCredit` is on the anchoring hot path: `anchor-submit`,
+ * `anchor-pre-signing`, `credential-sources`, `anchor-bulk`,
+ * `rule-action-dispatcher` — and `batch-anchor.ts` calls it once per anchor
+ * inside a SEQUENTIAL loop over up to BATCH_SIZE claimed anchors in the nightly
+ * drain. An unconditional lookup there would add one network round trip per
+ * anchor to that run, where previously the flag-off path made zero queries.
+ *
+ * Caching is safe here because the underlying column changes rarely and only
+ * by service_role or a platform admin (migration 0429's trigger forbids an org
+ * from writing it), and because the answer is already allowed to be
+ * approximate: the helper fails open on a read error by design. The cost of
+ * staleness is bounded and symmetric — enrolling or un-enrolling an org takes
+ * effect within this window rather than instantly.
+ */
+const ENFORCEMENT_CACHE_TTL_MS = 60_000;
+
+const enforcementCache = new Map<string, { value: boolean; expiresAt: number }>();
+
+/** Test seam: drop memoised enrolment answers. */
+export function __resetOrgCreditEnforcementCache(): void {
+  enforcementCache.clear();
+}
+
+/**
  * Is anchor-credit enforcement in force for this org?
  *
  * True when the global flag is on (which short-circuits before any query, so
  * the enforced-everywhere case costs no extra round trip) or when the org is
  * individually enrolled via `organizations.credit_enforcement_enabled`.
  *
- * FAILS OPEN. A read error or a missing row returns `false` — not enforced —
+ * FAILS OPEN, including on a thrown rejection — not only on a returned
+ * `{ error }`. A read failure or a missing row returns `false` (not enforced),
  * which preserves the behaviour pinned by `orgCreditEnforcementFlag.test.ts`:
  * "a missing / false flag NEVER hard-blocks the anchor path for non-credit
  * orgs". Failing closed here would convert a transient read error into a 503
@@ -73,23 +100,41 @@ type DbLike = typeof db;
  * anchor during a database incident; it is logged at error level so those can
  * be reconciled, and the enrolled path still fails closed on the deduction RPC
  * itself (503 `credit_check_unavailable`).
+ *
+ * A failed read is deliberately NOT cached — retrying next call is cheap, and
+ * memoising an outage would extend unbilled anchoring past the incident.
  */
 async function isEnforcedForOrg(database: DbLike, orgId: string): Promise<boolean> {
   if (config.enableOrgCreditEnforcement) return true;
 
-  const { data, error } = await (database
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .from as any)('organizations')
-    .select('credit_enforcement_enabled')
-    .eq('id', orgId)
-    .maybeSingle();
+  const cached = enforcementCache.get(orgId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-  if (error) {
-    logger.error({ orgId, err: error.message }, 'org_credit_enforcement_lookup_failed');
+  try {
+    const { data, error } = await (database
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .from as any)('organizations')
+      .select('credit_enforcement_enabled')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    if (error) {
+      logger.error({ orgId, err: error.message }, 'org_credit_enforcement_lookup_failed');
+      return false;
+    }
+
+    const value = data?.credit_enforcement_enabled === true;
+    enforcementCache.set(orgId, { value, expiresAt: Date.now() + ENFORCEMENT_CACHE_TTL_MS });
+    return value;
+  } catch (err) {
+    // A network-level rejection, rather than a returned error object. Without
+    // this the documented fail-open would become a 500 for that request.
+    logger.error(
+      { orgId, err: err instanceof Error ? err.message : String(err) },
+      'org_credit_enforcement_lookup_failed',
+    );
     return false;
   }
-
-  return data?.credit_enforcement_enabled === true;
 }
 
 /**

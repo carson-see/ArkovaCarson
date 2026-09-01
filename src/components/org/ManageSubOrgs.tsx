@@ -30,6 +30,15 @@ interface SubOrg {
   logo_url: string | null;
 }
 
+/**
+ * SCRUM-3865 — the two directions of a credit transfer. A negative amount is a
+ * reclaim, so both rows drive the same endpoint and the same handler.
+ */
+const CREDIT_ACTIONS = [
+  { dir: 1 as const, labelKey: 'CREDITS_ADD' as const, variant: undefined },
+  { dir: -1 as const, labelKey: 'CREDITS_RECLAIM' as const, variant: 'outline' as const },
+];
+
 interface ManageSubOrgsProps {
   orgId: string;
 }
@@ -71,7 +80,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   const [parentBalance, setParentBalance] = useState<number | null>(null);
   const [childBalances, setChildBalances] = useState<Record<string, number>>({});
   const [creditAmounts, setCreditAmounts] = useState<Record<string, string>>({});
-  const [creditLoading, setCreditLoading] = useState<string | null>(null);
+  const [creditBusy, setCreditBusy] = useState<{ id: string; dir: 1 | -1 } | null>(null);
 
   // `isInitialLoad` gates the full-panel error state to the mount fetch and the
   // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
@@ -158,7 +167,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       return;
     }
 
-    setCreditLoading(childOrgId);
+    setCreditBusy({ id: childOrgId, dir: direction });
     try {
       const headers = await getAuthHeaders();
       const response = await fetch(
@@ -195,7 +204,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
     } catch {
       toast.error(SUB_ORG_LABELS.CREDITS_FAILED);
     } finally {
-      setCreditLoading(null);
+      setCreditBusy(null);
     }
   }, [creditAmounts, orgId]);
 
@@ -432,49 +441,62 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                 data-testid="sub-org-row"
                 className="p-3 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
               >
-              {/*
-                Wraps at narrow widths: with the actions pinned on the same
-                line the name truncated to a single character at 375px.
-              */}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
-                    {sub.logo_url ? (
-                      <img src={sub.logo_url} alt={`${sub.display_name} organization logo`} className="h-full w-full object-cover rounded-md" loading="lazy" decoding="async" width={40} height={40} />
-                    ) : (
-                      <Building2 className="h-5 w-5 text-muted-foreground" />
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium truncate">{sub.display_name}</p>
-                      {getStatusBadge(sub.parent_approval_status)}
+                {/*
+                  Wraps at narrow widths: with the actions pinned on the same
+                  line the name truncated to a single character at 375px.
+                */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
+                      {sub.logo_url ? (
+                        <img src={sub.logo_url} alt={`${sub.display_name} organization logo`} className="h-full w-full object-cover rounded-md" loading="lazy" decoding="async" width={40} height={40} />
+                      ) : (
+                        <Building2 className="h-5 w-5 text-muted-foreground" />
+                      )}
                     </div>
-                    {sub.domain && (
-                      <p className="text-xs text-muted-foreground truncate">{sub.domain}</p>
-                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium truncate">{sub.display_name}</p>
+                        {getStatusBadge(sub.parent_approval_status)}
+                      </div>
+                      {sub.domain && (
+                        <p className="text-xs text-muted-foreground truncate">{sub.domain}</p>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-2 shrink-0 ml-2">
-                  {sub.parent_approval_status === 'PENDING' && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/10"
-                        onClick={() => handleApprove(sub.id)}
-                        disabled={actionLoading === sub.id}
-                      >
-                        {actionLoading === sub.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            <Check className="mr-1 h-4 w-4" />
-                            {SUB_ORG_LABELS.APPROVE}
-                          </>
-                        )}
-                      </Button>
+                  <div className="flex items-center gap-2 shrink-0 ml-2">
+                    {sub.parent_approval_status === 'PENDING' && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/10"
+                          onClick={() => handleApprove(sub.id)}
+                          disabled={actionLoading === sub.id}
+                        >
+                          {actionLoading === sub.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Check className="mr-1 h-4 w-4" />
+                              {SUB_ORG_LABELS.APPROVE}
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-red-400 border-red-500/20 hover:bg-red-500/10"
+                          onClick={() => handleRevoke(sub.id)}
+                          disabled={actionLoading === sub.id}
+                        >
+                          <X className="mr-1 h-4 w-4" />
+                          {SUB_ORG_LABELS.REVOKE}
+                        </Button>
+                      </>
+                    )}
+                    {sub.parent_approval_status === 'APPROVED' && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -482,87 +504,77 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                         onClick={() => handleRevoke(sub.id)}
                         disabled={actionLoading === sub.id}
                       >
-                        <X className="mr-1 h-4 w-4" />
-                        {SUB_ORG_LABELS.REVOKE}
+                        {actionLoading === sub.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <X className="mr-1 h-4 w-4" />
+                            {SUB_ORG_LABELS.REVOKE}
+                          </>
+                        )}
                       </Button>
-                    </>
-                  )}
-                  {sub.parent_approval_status === 'APPROVED' && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-red-400 border-red-500/20 hover:bg-red-500/10"
-                      onClick={() => handleRevoke(sub.id)}
-                      disabled={actionLoading === sub.id}
-                    >
-                      {actionLoading === sub.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <>
-                          <X className="mr-1 h-4 w-4" />
-                          {SUB_ORG_LABELS.REVOKE}
-                        </>
-                      )}
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/*
-                SCRUM-3865 — credit provisioning. Offered only for an APPROVED
-                affiliation: funding an org whose affiliation is pending or
-                revoked would move credits across a boundary the parent has not
-                (or no longer) accepted. Reclaim is the same endpoint with a
-                negative amount, which is also the offboarding lever.
-              */}
-              {sub.parent_approval_status === 'APPROVED' && (
-                <div className="mt-3 pt-3 border-t border-border/40 flex flex-wrap items-end gap-2">
-                  <div className="w-28 shrink-0">
-                    <Label
-                      htmlFor={`credits-${sub.id}`}
-                      className="text-xs text-muted-foreground"
-                    >
-                      {SUB_ORG_LABELS.CREDITS_AMOUNT_LABEL}
-                    </Label>
-                    <Input
-                      id={`credits-${sub.id}`}
-                      type="number"
-                      min={1}
-                      step={1}
-                      inputMode="numeric"
-                      className="h-9"
-                      value={creditAmounts[sub.id] ?? ''}
-                      onChange={(e) =>
-                        setCreditAmounts((prev) => ({ ...prev, [sub.id]: e.target.value }))
-                      }
-                    />
+                    )}
                   </div>
-                  <Button
-                    size="sm"
-                    className="h-9"
-                    onClick={() => { void handleMoveCredits(sub.id, 1); }}
-                    disabled={creditLoading === sub.id}
-                  >
-                    {creditLoading === sub.id
-                      ? <Loader2 className="h-4 w-4 animate-spin" />
-                      : SUB_ORG_LABELS.CREDITS_ADD}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-9"
-                    onClick={() => { void handleMoveCredits(sub.id, -1); }}
-                    disabled={creditLoading === sub.id}
-                  >
-                    {SUB_ORG_LABELS.CREDITS_RECLAIM}
-                  </Button>
-                  {typeof childBalances[sub.id] === 'number' && (
-                    <span className="text-xs text-muted-foreground ml-auto self-center">
-                      {childBalances[sub.id]} {SUB_ORG_LABELS.CREDITS_BALANCE_SUFFIX}
-                    </span>
-                  )}
                 </div>
-              )}
+
+                {/*
+                  SCRUM-3865 — credit provisioning. Offered only for an APPROVED
+                  affiliation: funding an org whose affiliation is pending or
+                  revoked would move credits across a boundary the parent has not
+                  (or no longer) accepted. Reclaim is the same endpoint with a
+                  negative amount, which is also the offboarding lever.
+                */}
+                {sub.parent_approval_status === 'APPROVED' && (
+                  <div className="mt-3 pt-3 border-t border-border/40 flex flex-wrap items-end gap-2">
+                    <div className="w-28 shrink-0">
+                      <Label
+                        htmlFor={`credits-${sub.id}`}
+                        className="text-xs text-muted-foreground"
+                      >
+                        {SUB_ORG_LABELS.CREDITS_AMOUNT_LABEL}
+                      </Label>
+                      <Input
+                        id={`credits-${sub.id}`}
+                        type="number"
+                        min={1}
+                        step={1}
+                        inputMode="numeric"
+                        className="h-9"
+                        value={creditAmounts[sub.id] ?? ''}
+                        onChange={(e) =>
+                          setCreditAmounts((prev) => ({ ...prev, [sub.id]: e.target.value }))
+                        }
+                      />
+                    </div>
+                    {/*
+                      Both directions are one control driven from one list. Hand-
+                      written as two blocks they had already drifted: only the Add
+                      button showed a spinner while a transfer was in flight.
+                    */}
+                    {CREDIT_ACTIONS.map(({ dir, labelKey, variant }) => {
+                      const busy = creditBusy?.id === sub.id;
+                      return (
+                        <Button
+                          key={labelKey}
+                          size="sm"
+                          variant={variant}
+                          className="h-9"
+                          onClick={() => { void handleMoveCredits(sub.id, dir); }}
+                          disabled={busy}
+                        >
+                          {busy && creditBusy?.dir === dir
+                            ? <Loader2 className="h-4 w-4 animate-spin" />
+                            : SUB_ORG_LABELS[labelKey]}
+                        </Button>
+                      );
+                    })}
+                    {typeof childBalances[sub.id] === 'number' && (
+                      <span className="text-xs text-muted-foreground ml-auto self-center">
+                        {childBalances[sub.id]} {SUB_ORG_LABELS.CREDITS_BALANCE_SUFFIX}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

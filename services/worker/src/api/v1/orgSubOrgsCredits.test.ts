@@ -227,6 +227,40 @@ describe('POST /api/v1/org/sub-orgs/credits (SCRUM-3865)', () => {
     );
   });
 
+  it('403s an explicit orgId the caller only belongs to as a member', async () => {
+    // Explicit-org path now runs through the shared `isCallerOrgAdminResult`,
+    // which falls back to the profile role before answering. Pin that the
+    // fallback is reachable and still answers "no".
+    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+      if (table === 'org_members') {
+        const chain = {
+          eq: () => chain,
+          limit: () => chain,
+          maybeSingle: () => Promise.resolve({ data: { role: 'member' }, error: null }),
+        };
+        return { select: () => chain };
+      }
+      if (table === 'profiles') {
+        const chain = {
+          eq: () => chain,
+          maybeSingle: () => Promise.resolve({
+            data: { org_id: PARENT, role: 'MEMBER', is_platform_admin: false },
+            error: null,
+          }),
+        };
+        return { select: () => chain };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+
+    const res = await request(buildApp(ADMIN))
+      .post(`/api/v1/org/sub-orgs/credits?orgId=${PARENT}`)
+      .send({ childOrgId: CHILD, amount: 10 });
+
+    expect(res.status).toBe(403);
+    expect(rpc()).not.toHaveBeenCalled();
+  });
+
   it('503s when the membership lookup itself fails', async () => {
     (db.from as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       select: () => ({

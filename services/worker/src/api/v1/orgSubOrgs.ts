@@ -20,6 +20,8 @@ import { sendEmail } from '../../email/sender.js';
 import { buildInvitationEmail } from '../../email/templates.js';
 import { logger } from '../../utils/logger.js';
 import { db as _db } from '../../utils/db.js';
+import { isCallerOrgAdminResult } from '../_org-auth.js';
+import { callRpc } from '../../utils/rpc.js';
 
 // Sub-org columns from migration 0128 are not yet in generated types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -977,7 +979,26 @@ const AllocateCreditsSchema = z.object({
   note: z.string().trim().max(500).optional(),
 });
 
-/** RPC error code -> HTTP status. Anything unlisted is a 500. */
+interface AllocateCreditsRpcResult {
+  success?: boolean;
+  parent_balance?: number;
+  child_balance?: number;
+  error?: string;
+}
+
+interface CreditRollupRpcResult {
+  parent_org_id?: string;
+  parent_balance?: number;
+  children?: { child_org_id: string; balance: number; monthly_allocation: number }[];
+  error?: string;
+}
+
+/** RPC error code -> HTTP status. Anything unlisted is a 500.
+ *
+ * NOT `mapRpcErrorToStatus` (api/rpc-error-status.ts): that maps RAISEd
+ * exception MESSAGES by substring match. These two RPCs return structured
+ * `{ error: '<code>' }` jsonb instead of raising, so an exact-code lookup is
+ * the right shape and substring matching would be guesswork. */
 const CREDIT_RPC_STATUS: Record<string, number> = {
   authentication_required: 401,
   parent_admin_required: 403,
@@ -1012,47 +1033,60 @@ async function requireParentAdmin(
 
   const requestedOrgId = typeof req.query.orgId === 'string' ? req.query.orgId : undefined;
 
-  if (!requestedOrgId) {
-    const { data: memberships, error } = await db
-      .from('org_members')
-      .select('org_id, role')
-      .eq('user_id', userId);
-
-    if (error) {
-      logger.error({ err: error.message }, 'suborg_credit_membership_lookup_failed');
+  // Explicit org: defer to the shared resolver rather than this file's local
+  // `getUserOrgInfo` + `isOrgAdmin` pair. `isCallerOrgAdminResult` carries the
+  // precedence rules the rest of the worker uses — org_members owner/admin,
+  // then the own-org-scoped profile `ORG_ADMIN` and platform-admin fallbacks —
+  // and distinguishes a DB fault from a definitive "not an admin" so a fault
+  // surfaces as 503 instead of masquerading as 403. The local pair silently
+  // drops both, which is exactly the drift `_org-auth.ts` exists to prevent;
+  // the RPC accepts legacy `ORG_ADMIN` too, so without this the route was the
+  // narrower gate.
+  if (requestedOrgId) {
+    const admin = await isCallerOrgAdminResult(userId, requestedOrgId);
+    if (admin.error) {
       res.status(503).json({ error: 'membership_lookup_unavailable' });
       return null;
     }
-
-    const adminOrgs = (memberships ?? []).filter(
-      (m: { role: string | null }) => isOrgAdmin(m.role),
-    );
-
-    if (adminOrgs.length === 0) {
+    if (!admin.value) {
       res.status(403).json({ error: 'Admin permissions required' });
       return null;
     }
-    if (adminOrgs.length > 1) {
-      res.status(400).json({
-        error: 'org_id_required',
-        message: 'You administer more than one organization. Specify which one with ?orgId=.',
-      });
-      return null;
-    }
-    return { userId, orgId: adminOrgs[0].org_id };
+    return { userId, orgId: requestedOrgId };
   }
 
-  const { orgId, role } = await getUserOrgInfo(userId, requestedOrgId);
-  if (!orgId) {
-    res.status(403).json({ error: 'You are not a member of the selected organization' });
+  // No explicit org: the caller may administer several. The affiliate flow
+  // writes the parent admin into every child's `org_members` as `owner`, so a
+  // partner admin belongs to the parent AND to each client org, and whichever
+  // row we picked would decide which balance a transfer debits. Refuse rather
+  // than guess.
+  const { data: memberships, error } = await db
+    .from('org_members')
+    .select('org_id, role')
+    .eq('user_id', userId);
+
+  if (error) {
+    logger.error({ err: error.message }, 'suborg_credit_membership_lookup_failed');
+    res.status(503).json({ error: 'membership_lookup_unavailable' });
     return null;
   }
-  if (!isOrgAdmin(role)) {
+
+  const adminOrgs = (memberships ?? []).filter(
+    (m: { role: string | null }) => isOrgAdmin(m.role),
+  );
+
+  if (adminOrgs.length === 0) {
     res.status(403).json({ error: 'Admin permissions required' });
     return null;
   }
-
-  return { userId, orgId };
+  if (adminOrgs.length > 1) {
+    res.status(400).json({
+      error: 'org_id_required',
+      message: 'You administer more than one organization. Specify which one with ?orgId=.',
+    });
+    return null;
+  }
+  return { userId, orgId: adminOrgs[0].org_id };
 }
 
 orgSubOrgsRouter.post('/credits', async (req: Request, res: Response) => {
@@ -1071,7 +1105,7 @@ orgSubOrgsRouter.post('/credits', async (req: Request, res: Response) => {
 
     const { childOrgId, amount, note } = parsed.data;
 
-    const { data, error } = await db.rpc('allocate_credits_to_sub_org', {
+    const { data, error } = await callRpc<AllocateCreditsRpcResult>(db, 'allocate_credits_to_sub_org', {
       p_parent_org_id: ctx.orgId,
       p_child_org_id: childOrgId,
       p_amount: amount,
@@ -1112,7 +1146,7 @@ orgSubOrgsRouter.get('/credits', async (req: Request, res: Response) => {
     const ctx = await requireParentAdmin(req, res);
     if (!ctx) return;
 
-    const { data, error } = await db.rpc('get_parent_credit_rollup', {
+    const { data, error } = await callRpc<CreditRollupRpcResult>(db, 'get_parent_credit_rollup', {
       p_parent_org_id: ctx.orgId,
       p_caller_user_id: ctx.userId,
     });
@@ -1134,7 +1168,7 @@ orgSubOrgsRouter.get('/credits', async (req: Request, res: Response) => {
     res.json({
       parentBalance: data.parent_balance,
       children: (data.children ?? []).map(
-        (c: { child_org_id: string; balance: number; monthly_allocation: number }) => ({
+        (c) => ({
           childOrgId: c.child_org_id,
           balance: c.balance,
           monthlyAllocation: c.monthly_allocation,

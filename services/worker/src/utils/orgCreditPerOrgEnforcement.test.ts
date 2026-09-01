@@ -43,7 +43,7 @@ vi.mock('./logger.js', () => ({
   logger: { error: mockLoggerError, warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { deductOrgCredit } from './orgCredits.js';
+import { deductOrgCredit, __resetOrgCreditEnforcementCache } from './orgCredits.js';
 import { db } from './db.js';
 
 const ORG = '10000000-1000-4000-8000-000000000001';
@@ -63,6 +63,7 @@ describe('per-org credit enforcement (SCRUM-3866)', () => {
     mockFrom.mockReset();
     mockLoggerError.mockReset();
     mockConfig.enableOrgCreditEnforcement = false;
+    __resetOrgCreditEnforcementCache();
   });
 
   it('global off + org not enrolled: allowed, and never touches the RPC', async () => {
@@ -137,6 +138,45 @@ describe('per-org credit enforcement (SCRUM-3866)', () => {
     expect(out).toEqual({ allowed: true, reason: 'feature_disabled' });
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it('memoises the enrolment answer instead of re-reading per anchor', async () => {
+    // batch-anchor.ts calls deductOrgCredit once per anchor inside a sequential
+    // loop over up to BATCH_SIZE claimed anchors, so an unconditional lookup
+    // would add a round trip per anchor to the nightly drain.
+    mockOrgLookup({ data: { credit_enforcement_enabled: false }, error: null });
+
+    await deductOrgCredit(db, ORG, 1, 'anchor.create', 'ref-a');
+    await deductOrgCredit(db, ORG, 1, 'anchor.create', 'ref-b');
+    await deductOrgCredit(db, ORG, 1, 'anchor.create', 'ref-c');
+
+    expect(mockFrom).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not memoise a failed read', async () => {
+    mockOrgLookup({ data: null, error: { message: 'connection reset' } });
+
+    await deductOrgCredit(db, ORG, 1, 'anchor.create', 'ref-d');
+    await deductOrgCredit(db, ORG, 1, 'anchor.create', 'ref-e');
+
+    // Caching an outage would extend unbilled anchoring past the incident.
+    expect(mockFrom).toHaveBeenCalledTimes(2);
+  });
+
+  it('a THROWN rejection also fails open, not 500', async () => {
+    mockFrom.mockImplementation(() => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: () => Promise.reject(new Error('socket hang up')) }),
+      }),
+    }));
+
+    const out = await deductOrgCredit(db, ORG, 1, 'anchor.create', 'ref-f');
+
+    expect(out).toEqual({ allowed: true, reason: 'feature_disabled' });
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG }),
+      'org_credit_enforcement_lookup_failed',
+    );
   });
 
   it('reads only the enforcement column, scoped to the one org', async () => {

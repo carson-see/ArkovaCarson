@@ -210,48 +210,59 @@ DECLARE
 BEGIN
   caller_role := get_caller_role();
 
-  -- Trusted callers (the worker's service_role client, platform operators)
-  -- still get the re-parent reset below, but no column guard.
-  IF caller_role = 'service_role' OR is_current_user_platform_admin() THEN
-    IF OLD.parent_org_id IS DISTINCT FROM NEW.parent_org_id THEN
-      NEW.sub_org_listing_parent_optin := false;
-      NEW.sub_org_listing_child_optin  := false;
-    END IF;
-    RETURN NEW;
-  END IF;
+  -- Column guards apply to ordinary callers only. Trusted callers (the
+  -- worker's service_role client, platform operators) skip them -- but they do
+  -- NOT skip the re-parent reset below, which is an invariant rather than an
+  -- authorization rule and so is written once, after this block, for both
+  -- caller classes.
+  -- NULL-SAFE, and load-bearing. `get_caller_role()` returns NULL for an
+  -- ordinary authenticated caller (no `request.jwt.claim.role` GUC), so a bare
+  -- `NOT (caller_role = 'service_role' OR ...)` evaluates to NULL, the branch
+  -- does not execute, and EVERY column guard below silently becomes a no-op.
+  -- Caught by this PR's behaviour proof, which went 20/20 -> 15/20 on exactly
+  -- the negative-authority cases. Same three-valued-logic class as the
+  -- identity-guard fixes in 0380/0391/0392.
+  IF NOT (
+    coalesce(caller_role = 'service_role', false)
+    OR coalesce(is_current_user_platform_admin(), false)
+  ) THEN
 
-  -- Billing enforcement is never self-service: an org must not be able to
-  -- switch off the gate that bills it.
-  IF OLD.credit_enforcement_enabled IS DISTINCT FROM NEW.credit_enforcement_enabled THEN
-    RAISE EXCEPTION 'Cannot modify credit_enforcement_enabled directly'
-      USING ERRCODE = 'insufficient_privilege';
-  END IF;
-
-  -- Parent half of the consent: only an admin of the CURRENT parent org.
-  IF OLD.sub_org_listing_parent_optin IS DISTINCT FROM NEW.sub_org_listing_parent_optin THEN
-    IF OLD.parent_org_id IS NULL OR NOT is_org_admin_of(OLD.parent_org_id) THEN
-      RAISE EXCEPTION 'Only an admin of the parent organization may change sub_org_listing_parent_optin'
+    -- Billing enforcement is never self-service: an org must not be able to
+    -- switch off the gate that bills it.
+    IF OLD.credit_enforcement_enabled IS DISTINCT FROM NEW.credit_enforcement_enabled THEN
+      RAISE EXCEPTION 'Cannot modify credit_enforcement_enabled directly'
         USING ERRCODE = 'insufficient_privilege';
     END IF;
-  END IF;
 
-  -- Child half of the consent: an admin of THIS org who is not also an admin
-  -- of the parent. See the header note — the parent admin is an org_members
-  -- owner of every affiliate it creates, so without the second clause one
-  -- party could sign both halves.
-  IF OLD.sub_org_listing_child_optin IS DISTINCT FROM NEW.sub_org_listing_child_optin THEN
-    IF NOT is_org_admin_of(OLD.id) THEN
-      RAISE EXCEPTION 'Only an admin of this organization may change sub_org_listing_child_optin'
-        USING ERRCODE = 'insufficient_privilege';
+    -- Parent half of the consent: only an admin of the CURRENT parent org.
+    IF OLD.sub_org_listing_parent_optin IS DISTINCT FROM NEW.sub_org_listing_parent_optin THEN
+      IF OLD.parent_org_id IS NULL OR NOT is_org_admin_of(OLD.parent_org_id) THEN
+        RAISE EXCEPTION 'Only an admin of the parent organization may change sub_org_listing_parent_optin'
+          USING ERRCODE = 'insufficient_privilege';
+      END IF;
     END IF;
-    IF OLD.parent_org_id IS NOT NULL AND is_org_admin_of(OLD.parent_org_id) THEN
-      RAISE EXCEPTION 'A parent-org admin may not supply the sub-organization''s own listing consent'
-        USING ERRCODE = 'insufficient_privilege';
+
+    -- Child half of the consent: an admin of THIS org who is not also an admin
+    -- of the parent. See the header note -- the parent admin is an org_members
+    -- owner of every affiliate it creates, so without the second clause one
+    -- party could sign both halves.
+    IF OLD.sub_org_listing_child_optin IS DISTINCT FROM NEW.sub_org_listing_child_optin THEN
+      IF NOT is_org_admin_of(OLD.id) THEN
+        RAISE EXCEPTION 'Only an admin of this organization may change sub_org_listing_child_optin'
+          USING ERRCODE = 'insufficient_privilege';
+      END IF;
+      IF OLD.parent_org_id IS NOT NULL AND is_org_admin_of(OLD.parent_org_id) THEN
+        RAISE EXCEPTION 'A parent-org admin may not supply the sub-organization''s own listing consent'
+          USING ERRCODE = 'insufficient_privilege';
+      END IF;
     END IF;
+
   END IF;
 
   -- Consent is to a specific affiliation. Repointing the parent revokes both
-  -- halves. Runs LAST so it wins over any same-statement assignment above.
+  -- halves, for EVERY caller. Runs after the guards above so an unrelated
+  -- re-parent by a trusted caller cannot trip the parent-consent check, and
+  -- last overall so it wins over any same-statement assignment.
   IF OLD.parent_org_id IS DISTINCT FROM NEW.parent_org_id THEN
     NEW.sub_org_listing_parent_optin := false;
     NEW.sub_org_listing_child_optin  := false;
