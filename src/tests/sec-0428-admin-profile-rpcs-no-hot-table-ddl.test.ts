@@ -38,6 +38,14 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+// Reuse the repo's string-literal-aware stripper. A local `--`-line filter was
+// the first cut, but src/tests/public-anchor-pii-projection.contract.test.ts
+// already records why that is not enough: a commented-out prior definition
+// pasted into a future migration looks exactly like a /* */ block comment, and
+// a line filter leaves it visible to the scanner. That lesson is imported here
+// rather than re-learned. (The module is guarded by an isMain check, so
+// importing it runs nothing.)
+import { stripSqlComments } from '../../scripts/ci/check-views-security-invoker.js';
 
 const MIGRATIONS_DIR = path.join(process.cwd(), 'supabase/migrations');
 const MIGRATION_NAME = '0428_admin_profile_rpcs_remove_hot_table_trigger_ddl.sql';
@@ -56,48 +64,49 @@ const FORMERLY_DISABLED_TRIGGERS = [
   'trg_protect_platform_admin',
 ] as const;
 
-function migrationFiles(): { name: string; body: string }[] {
-  return fs
-    .readdirSync(MIGRATIONS_DIR)
-    .filter((n) => n.endsWith('.sql'))
-    .sort()
-    .map((n) => ({ name: n, body: fs.readFileSync(path.join(MIGRATIONS_DIR, n), 'utf8') }));
+/**
+ * Every migration, read and comment-stripped ONCE.
+ *
+ * The first cut re-read and re-stripped all 119 migrations inside latestBody(),
+ * which the suite calls 25 times — ~3,000 readFileSync calls and ~38 MB of
+ * re-reads per run, for a directory that does not change while the tests run.
+ */
+let migrationCache: { name: string; src: string }[] | null = null;
+function migrations(): { name: string; src: string }[] {
+  if (migrationCache === null) {
+    migrationCache = fs
+      .readdirSync(MIGRATIONS_DIR)
+      .filter((n) => n.endsWith('.sql'))
+      .sort()
+      .map((n) => ({ name: n, src: stripSqlComments(fs.readFileSync(path.join(MIGRATIONS_DIR, n), 'utf8')) }));
+  }
+  return migrationCache;
 }
 
-/** Strip `--` line comments so a ROLLBACK block quoting the old body never counts. */
-function stripComments(sql: string): string {
-  return sql
-    .split('\n')
-    .filter((l) => !l.trimStart().startsWith('--'))
-    .join('\n');
-}
+const bodyCache = new Map<string, { file: string; body: string } | null>();
 
 /**
  * Body of the LAST `CREATE [OR REPLACE] FUNCTION <name>` in the migration
- * sequence, comments removed. Null when no migration defines it (the routine
- * then lives only in the squashed baseline).
+ * sequence, comments already stripped. Null when no migration defines it (the
+ * routine then lives only in the squashed baseline).
+ *
+ * One regex captures the dollar tag and the body between matching tags, so
+ * there is no index arithmetic and no branch that can silently skip a
+ * definition — a ratchet that quietly finds nothing is worse than one that
+ * fails.
  */
 function latestBody(routine: string): { file: string; body: string } | null {
+  const cached = bodyCache.get(routine);
+  if (cached !== undefined) return cached;
+  const re = new RegExp(
+    `CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:public\\.)?${routine}\\s*\\([\\s\\S]*?AS\\s+(\\$[A-Za-z_]*\\$)([\\s\\S]*?)\\1`,
+    'gi',
+  );
   let found: { file: string; body: string } | null = null;
-  for (const { name, body } of migrationFiles()) {
-    const src = stripComments(body);
-    const re = new RegExp(
-      `CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:public\\.)?${routine}\\s*\\(`,
-      'gi',
-    );
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(src)) !== null) {
-      // Take everything to the end of the dollar-quoted body.
-      const rest = src.slice(m.index);
-      const tagMatch = /AS\s+(\$[A-Za-z_]*\$)/.exec(rest);
-      if (!tagMatch) continue;
-      const tag = tagMatch[1];
-      const start = rest.indexOf(tag) + tag.length;
-      const end = rest.indexOf(tag, start);
-      if (end === -1) continue;
-      found = { file: name, body: rest.slice(start, end) };
-    }
+  for (const { name, src } of migrations()) {
+    for (const m of src.matchAll(re)) found = { file: name, body: m[2] };
   }
+  bodyCache.set(routine, found);
   return found;
 }
 
@@ -165,18 +174,17 @@ describe('0428 — admin profile RPCs run no DDL on the hot `profiles` table', (
       expect(body).toMatch(/get_caller_role\(\)\s+IS\s+DISTINCT\s+FROM\s+'service_role'/i);
       // The two conditions are OR-ed inside the RAISE guard, i.e. either one
       // failing raises. Both must appear in the same condition.
-      expect(body).toMatch(
-        /current_setting\('arkova\.allow_role_change',\s*true\)\s+IS\s+DISTINCT\s+FROM\s+'on'\s*\n?\s*OR\s+get_caller_role\(\)\s+IS\s+DISTINCT\s+FROM\s+'service_role'/i,
+      // Whitespace-insensitive: pin the semantics (both operands OR-ed inside
+      // one RAISE guard), not the line wrapping.
+      const flat = body.replace(/\s+/g, ' ');
+      expect(flat).toMatch(
+        /current_setting\('arkova\.allow_role_change', true\) IS DISTINCT FROM 'on' OR get_caller_role\(\) IS DISTINCT FROM 'service_role'/i,
       );
     });
 
     it('does not exempt on current_user, which would cover 4 unrelated SECDEF fns', () => {
-      const body = latestBody('check_role_immutability')!.body;
-      const code = body
-        .split('\n')
-        .filter((l) => !l.trimStart().startsWith('--'))
-        .join('\n');
-      expect(code).not.toMatch(/current_user/i);
+      // latestBody() returns comment-stripped SQL, so this is the whole test.
+      expect(latestBody('check_role_immutability')!.body).not.toMatch(/current_user/i);
     });
 
     it('still stamps role_set_at OUTSIDE the exemption, for every caller', () => {
@@ -186,10 +194,14 @@ describe('0428 — admin profile RPCs run no DDL on the hot `profiles` table', (
       const stamp = /IF\s+OLD\.role\s+IS\s+NULL\s+AND\s+NEW\.role\s+IS\s+NOT\s+NULL\s+THEN\s+NEW\.role_set_at/i;
       expect(body).toMatch(stamp);
       const beforeStamp = body.slice(0, body.search(stamp));
-      // Every IF opened before the stamp must already be closed by an END IF.
-      // Count END IF first and remove it, so its own `IF` is not counted as an open.
+      // Every IF opened before the stamp must already be closed by an END IF,
+      // i.e. the stamp sits at the top level of the function body and not
+      // inside the service_role exemption. Remove END IF and ELSIF first so
+      // neither is miscounted as an opening IF.
       const closes = (beforeStamp.match(/\bEND\s+IF\b/gi) ?? []).length;
-      const opens = (beforeStamp.replace(/\bEND\s+IF\b/gi, '').match(/\bIF\b/gi) ?? []).length;
+      const opens = (
+        beforeStamp.replace(/\bEND\s+IF\b/gi, '').replace(/\bELSIF\b/gi, '').match(/\bIF\b/gi) ?? []
+      ).length;
       expect(closes).toBe(opens);
     });
 
@@ -208,6 +220,28 @@ describe('0428 — admin profile RPCs run no DDL on the hot `profiles` table', (
       expect(body).toMatch(/set_config\('arkova\.allow_role_change',\s*'off',\s*true\)/i);
       // is_local => true, so the flag cannot outlive the transaction.
       expect(body).not.toMatch(/set_config\('arkova\.allow_role_change',\s*'on',\s*false\)/i);
+    });
+
+    it('opens the exemption window around the UPDATE and nothing else', () => {
+      // The invariant that actually carries the design: the only statement
+      // between set_config('…','on') and set_config('…','off') is the UPDATE.
+      // Asserting that both calls merely EXIST would let a future editor widen
+      // the exemption by inserting a statement inside the window.
+      const body = latestBody('admin_change_user_role')!.body;
+      const open = body.search(/set_config\('arkova\.allow_role_change',\s*'on',\s*true\)/i);
+      const close = body.search(/(?:PERFORM\s+)?set_config\('arkova\.allow_role_change',\s*'off',\s*true\)/i);
+      expect(open).toBeGreaterThan(-1);
+      expect(close).toBeGreaterThan(open);
+      const window = body.slice(open, close);
+      const statements = window
+        .split(';')
+        .map((x) => x.trim())
+        .filter((x) => x.length > 0)
+        .slice(1); // drop the set_config('on') call itself
+      // Exactly the UPDATE and the GET DIAGNOSTICS that reads its ROW_COUNT.
+      expect(statements).toHaveLength(2);
+      expect(statements[0]).toMatch(/^UPDATE\s+profiles\s+SET\s+role\s*=/i);
+      expect(statements[1]).toMatch(/^GET\s+DIAGNOSTICS\s+\w+\s*=\s*ROW_COUNT$/i);
     });
 
     it('uses ROW_COUNT, because the trailing set_config PERFORM clobbers FOUND', () => {
@@ -243,7 +277,7 @@ describe('0428 — admin profile RPCs run no DDL on the hot `profiles` table', (
 
   it('the migration needs no lock_timeout because it alters no table', () => {
     const body = fs.readFileSync(path.join(MIGRATIONS_DIR, MIGRATION_NAME), 'utf8');
-    expect(stripComments(body)).not.toMatch(/\bALTER\s+TABLE\b/i);
+    expect(stripSqlComments(body)).not.toMatch(/\bALTER\s+TABLE\b/i);
   });
 
   it('reloads the PostgREST schema cache after redefining functions', () => {

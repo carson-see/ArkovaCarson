@@ -1,7 +1,7 @@
 {
   "environment_type": "clean_mirror",
   "staging_project_ref": "vofhfzyosxlneupohsem",
-  "timestamp": "2026-09-01T20:49:35.799Z",
+  "timestamp": "2026-09-01T21:01:57.085Z",
   "checks": [
     {
       "name": "staging_only_rows",
@@ -36,7 +36,7 @@
     {
       "name": "org_topology",
       "passed": true,
-      "details": "1 org(s), no staging seed orgs — prod-like single-tenant topology."
+      "details": "2 org(s), no staging seed orgs — prod-like single-tenant topology."
     }
   ],
   "artifact_rows": [],

@@ -150,10 +150,10 @@
 --                                   bypass of any kind, so this is the ONLY disable that
 --                                   ever did anything.
 --
--- Same measurement, restated for the record: inside a SECURITY DEFINER function
--- owned by postgres, current_user becomes 'postgres' but BOTH current_setting('role')
--- AND get_caller_role() still report the caller's role. That is the same empirical
--- result 0395 relied on, re-measured here rather than inherited.
+-- (Both signals survive SECURITY DEFINER: inside a definer-rights function owned
+-- by postgres, current_user becomes 'postgres' but current_setting('role') and
+-- get_caller_role() still report the caller's role -- the same empirical result
+-- 0395 relied on, re-measured here rather than inherited.)
 --
 -- So admin_set_platform_admin and admin_set_user_org need NO trigger change at
 -- all -- deleting their DDL is sufficient and behaviour-preserving. Only
@@ -162,20 +162,19 @@
 --
 -- THE FIX
 --
--- 1. check_role_immutability() gains the service_role exemption that
---    protect_privileged_profile_fields() already has -- but scoped to the RAISE
---    only. The `role_set_at` stamping stays on the same path for EVERY caller,
---    so a service_role write that sets `role` for the first time is still
---    stamped. A blanket `IF get_caller_role() = 'service_role' THEN RETURN NEW`
---    at the top would have silently dropped that stamping for the worker's own
---    profile-creation paths; this shape cannot.
+-- 1. check_role_immutability() gains an exemption scoped to the RAISE only,
+--    keyed on the transaction-local flag `arkova.allow_role_change` that
+--    admin_change_user_role sets around its own UPDATE, AND a service_role
+--    caller. Both must hold; an unset flag reads NULL and fails CLOSED.
 --
---    Not a privilege widening: `user_role` has exactly three values
---    (INDIVIDUAL, ORG_ADMIN, ORG_MEMBER -- confirmed against prod), which is the
---    same set admin_change_user_role already validates, and any holder of the
---    service_role key could already reach every one of them through that RPC.
---    NULL get_caller_role() fails CLOSED (`IS DISTINCT FROM`), so an unclaimed
---    session cannot slip through.
+--    The `role_set_at` stamping stays on the same path for EVERY caller, so a
+--    write that sets `role` for the first time is still stamped. A blanket
+--    `RETURN NEW` at the top would have silently dropped that stamping.
+--
+--    Do NOT relax this to a plain `get_caller_role() = 'service_role'` test.
+--    The full reasoning is in the trigger body below: the worker makes DIRECT
+--    service_role writes to profiles.role that MUST keep failing, and prod has
+--    16 profiles those writes would silently rewrite.
 --
 -- 2. protect_platform_admin_flag() additionally accepts get_caller_role() =
 --    'service_role'. Defence in depth only: the two signals were measured to

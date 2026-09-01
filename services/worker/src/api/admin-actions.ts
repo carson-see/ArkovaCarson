@@ -11,7 +11,13 @@
  *
  * The profile RPCs (change-role / promote-admin / set-org) run as service_role.
  * The protective BEFORE UPDATE triggers on `profiles` recognise service_role and
- * step aside, so these are plain UPDATEs. They used to wrap the write in
+ * step aside, so these are plain UPDATEs -- EXCEPT role immutability, which
+ * service_role alone does NOT satisfy: `check_role_immutability` additionally
+ * requires the transaction-local flag `arkova.allow_role_change` that
+ * `admin_change_user_role` sets around its own UPDATE. A direct service_role
+ * UPDATE of `profiles.role` from here would still be rejected, by design --
+ * see the backfills in invitations.ts / admin-org-members.ts, which rely on
+ * exactly that. They used to wrap the write in
  * `ALTER TABLE profiles DISABLE/ENABLE TRIGGER`, which took ShareRowExclusiveLock
  * on a table in the auth hot path and barriered every subsequent profile write
  * behind it; migration 0428 removed that DDL.
