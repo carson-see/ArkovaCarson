@@ -19,8 +19,7 @@ measurable cost against the GitHub Actions allowance.
    wrong repeatedly. A single file under `services/worker/src/api/` makes the whole
    change T2 no matter how small the diff.
 2. Confirm nothing is embarked in the Mergify queue. A direct push to `main`
-   invalidates an embarked train's pinned base and livelocks it — see
-   [[feedback_docs_push_livelocks_mergify]].
+   invalidates an embarked train's pinned base and livelocks it.
 3. `git commit` + `git push origin main`.
 
 ## The exceptions
@@ -34,5 +33,10 @@ measurable cost against the GitHub Actions allowance.
 - **`CLAUDE.md` rule changes**, per its own §0 rule 8: the constitution is the one
   doc that gets the second look.
 
-Related: [[feedback_no_prs_for_doc_updates]] is the narrower docs-only carve-out that
-this generalises.
+This generalises the narrower docs-only carve-out in CLAUDE.md §0 rule 8.
+
+Cross-references in this corpus use the `memory/<file>.md` path form, which
+`scripts/ci/check-doc-pointers.ts` validates. An earlier revision of this file used
+`[[wiki-link]]` syntax pointing at two rules that exist only in session-local
+assistant memory — dead on arrival, and invisible to the gate because `[[name]]`
+is not a path. That is the exact defect this rule was written to stop.
