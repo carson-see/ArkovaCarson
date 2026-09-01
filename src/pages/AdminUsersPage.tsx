@@ -57,18 +57,27 @@ export function AdminUsersPage() {
   const { items, total, page, limit, loading, error, fetchList } = useAdminList<AdminUser>('/api/admin/users');
   const [createOpen, setCreateOpen] = useState(false);
   const [orgOptions, setOrgOptions] = useState<OrgOption[]>([]);
+  const [orgOptionsTruncated, setOrgOptionsTruncated] = useState(false);
 
-  // Org list backs the create-account dialog's organization picker. Fetched
-  // once the admin opens the dialog rather than on every page load.
+  // Org list backs the create-account dialog's organization picker.
+  // `minimal=1` skips the list endpoint's member/anchor/credit enrichment,
+  // which would otherwise read a row per anchor across every org returned.
+  // Fetched once and reused: the picker only renders for org-scoped roles,
+  // and the default role is INDIVIDUAL, so most opens never show it.
   const loadOrgOptions = useCallback(async () => {
+    if (orgOptions.length > 0) return;
     try {
-      const res = await workerFetch('/api/admin/organizations?limit=100');
+      const res = await workerFetch('/api/admin/organizations?limit=100&minimal=1');
       const data = await res.json();
-      setOrgOptions((data.organizations ?? []).map((o: OrgOption) => ({ id: o.id, display_name: o.display_name })));
+      setOrgOptions(data.organizations ?? []);
+      // parsePagination clamps limit at 100. Past that the older orgs are
+      // simply absent from the picker, so say so rather than letting an admin
+      // conclude the org does not exist.
+      setOrgOptionsTruncated((data.total ?? 0) > (data.organizations ?? []).length);
     } catch {
       setOrgOptions([]);
     }
-  }, []);
+  }, [orgOptions.length]);
 
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
   const [roleFilter, setRoleFilter] = useState(searchParams.get('role') || 'ALL');
@@ -140,6 +149,7 @@ export function AdminUsersPage() {
       <CreateUserDialog
         open={createOpen}
         organizations={orgOptions}
+        organizationsTruncated={orgOptionsTruncated}
         onClose={() => setCreateOpen(false)}
         onCreated={() => { void fetchList({ page: 1 }); }}
       />

@@ -53,7 +53,40 @@ describe('CreateOrganizationDialog', () => {
     await waitFor(() => expect(workerFetch).toHaveBeenCalled());
     const body = JSON.parse(vi.mocked(workerFetch).mock.calls[0][1]?.body as string);
     expect(body.anchor_quota).toBeNull();
+  });
+
+  it('sends anchor_quota and is_test independently, matching the quota endpoint', async () => {
+    // handleSetOrgQuota treats these as separate fields — an org can be
+    // uncapped and still a test account, or capped and billable. Welding them
+    // to one switch would make the create and quota surfaces disagree.
+    vi.mocked(workerFetch).mockResolvedValue(res({ success: true, organization: { org_id: 'o1' } }));
+    renderDialog();
+
+    await userEvent.type(screen.getByLabelText(/organization name/i), 'BigCo');
+    await userEvent.click(screen.getByLabelText(/limit free test anchors/i)); // uncapped
+    await userEvent.click(screen.getByLabelText(/^test account$/i));          // billable
+
+    await userEvent.click(screen.getByRole('button', { name: /^create organization$/i }));
+    await waitFor(() => expect(workerFetch).toHaveBeenCalled());
+
+    const body = JSON.parse(vi.mocked(workerFetch).mock.calls[0][1]?.body as string);
+    expect(body.anchor_quota).toBeNull();
     expect(body.is_test).toBe(false);
+  });
+
+  it('an uncapped org can still be a test account', async () => {
+    vi.mocked(workerFetch).mockResolvedValue(res({ success: true, organization: { org_id: 'o1' } }));
+    renderDialog();
+
+    await userEvent.type(screen.getByLabelText(/organization name/i), 'TestCo');
+    await userEvent.click(screen.getByLabelText(/limit free test anchors/i)); // uncapped only
+
+    await userEvent.click(screen.getByRole('button', { name: /^create organization$/i }));
+    await waitFor(() => expect(workerFetch).toHaveBeenCalled());
+
+    const body = JSON.parse(vi.mocked(workerFetch).mock.calls[0][1]?.body as string);
+    expect(body.anchor_quota).toBeNull();
+    expect(body.is_test).toBe(true);
   });
 
   it('F3: a duplicate name asks for confirmation instead of silently creating a second org', async () => {

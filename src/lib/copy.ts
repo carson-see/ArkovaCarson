@@ -4457,6 +4457,8 @@ export const ADMIN_PROVISION_ORG_LABELS = {
   LEGAL_NAME_HINT: 'Defaults to the organization name.',
   CAP_TOGGLE_LABEL: 'Limit free test anchors',
   CAP_TOGGLE_HINT: 'Off means this organization has no anchor allowance cap.',
+  TEST_TOGGLE_LABEL: 'Test account',
+  TEST_TOGGLE_HINT: 'Off marks this as a billable production account.',
   QUOTA_LABEL: 'Anchor allowance',
   CREDITS_LABEL: 'Starting credits',
   NAME_REQUIRED_ERROR: 'Enter an organization name.',
@@ -4484,6 +4486,8 @@ export const ADMIN_PROVISION_USER_LABELS = {
   ROLE_ORG_MEMBER: 'Organization member',
   ORG_LABEL: 'Organization',
   ORG_PLACEHOLDER: 'Select an organization',
+  ORG_LIST_TRUNCATED:
+    'Only the most recent organizations are listed. If the one you need is missing, create the account without an organization and assign it from the organization page.',
   SEND_EMAIL_LABEL: 'Email them a sign-in link',
   SEND_EMAIL_HINT: 'Recommended. They choose their own password.',
   NO_EMAIL_WARNING:

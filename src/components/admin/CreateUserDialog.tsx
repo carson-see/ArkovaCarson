@@ -34,6 +34,8 @@ export interface OrgOption { id: string; display_name: string }
 export interface CreateUserDialogProps {
   open: boolean;
   organizations: readonly OrgOption[];
+  /** True when the org list was capped by the endpoint's page limit. */
+  organizationsTruncated?: boolean;
   onClose: () => void;
   onCreated: () => void;
 }
@@ -48,7 +50,7 @@ function messageForCode(code: unknown, fallback: string): string {
 }
 
 export function CreateUserDialog({
-  open, organizations, onClose, onCreated,
+  open, organizations, organizationsTruncated = false, onClose, onCreated,
 }: Readonly<CreateUserDialogProps>) {
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
@@ -191,6 +193,9 @@ export function CreateUserDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                {organizationsTruncated && (
+                  <p className="text-xs text-muted-foreground">{L.ORG_LIST_TRUNCATED}</p>
+                )}
               </div>
             )}
 

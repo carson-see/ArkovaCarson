@@ -12,6 +12,7 @@ import { logger } from '../utils/logger.js';
 import { rateLimiters } from '../utils/rateLimit.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 import { isAdminRouterPath } from './admin-paths.js';
+import { isPlatformAdmin } from '../utils/platformAdmin.js';
 // DEBT-3: Static imports — circular dependency resolved by router extraction
 import { handleTreasuryHealth, handleTreasuryStatus, handleTreasuryX402Stats } from '../api/treasury.js';
 import { handlePlatformStats } from '../api/admin-stats.js';
@@ -217,6 +218,32 @@ adminRouter.get('/admin/subscriptions', async (req, res) => {
     await handleAdminSubscriptions(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Admin subscriptions request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Structural platform-admin gate for every /admin/* route ───────────────
+// Each handler ALSO calls isPlatformAdmin itself, and those calls stay: this
+// is defence in depth, not a replacement. The point is that the property is no
+// longer a convention a new handler can forget — before this, adding a route
+// under /admin and omitting the check produced a reachable, unauthenticated
+// endpoint with no compile-time, route-level, or test-level signal. That risk
+// is not hypothetical for a surface whose newest members CREATE accounts and
+// GRANT roles.
+//
+// Scoped to '/admin' on purpose: this router also serves /treasury, /rules,
+// /queue and /anchor, which have their own (non-platform-admin) authorization.
+adminRouter.use('/admin', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = await extractAuthUserId(req);
+    if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+    if (!(await isPlatformAdmin(userId))) {
+      res.status(403).json({ error: 'Forbidden — platform admin access required' });
+      return;
+    }
+    next();
+  } catch (error) {
+    logger.error({ error }, 'Platform admin gate failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

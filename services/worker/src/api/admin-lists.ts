@@ -366,13 +366,25 @@ export async function handleAdminOrganizations(
   const { page, limit, search } = parsePagination(req);
   const offset = (page - 1) * limit;
 
+  // `minimal=1` returns id + display_name only and SKIPS the enrichment block
+  // below. That block reads one row per profile and ONE ROW PER ANCHOR for
+  // every org on the page and tallies them in Node; against prod's ~3.5M
+  // anchors that is an enormous read to render a picker. Callers that only
+  // need names (the create-account org picker, SCRUM-3873) must pass this.
+  const minimal = req.query.minimal === '1' || req.query.minimal === 'true';
+
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbAny = db as any;
 
     let query = dbAny
       .from('organizations')
-      .select('id, legal_name, display_name, domain, org_prefix, verification_status, created_at', { count: 'exact' })
+      .select(
+        minimal
+          ? 'id, display_name'
+          : 'id, legal_name, display_name, domain, org_prefix, verification_status, created_at',
+        { count: 'exact' },
+      )
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -394,7 +406,7 @@ export async function handleAdminOrganizations(
     const anchorCounts: Record<string, number> = {};
     const quotaByOrg: Record<string, { is_test: boolean; anchor_quota: number | null; balance: number | null }> = {};
 
-    if (orgIds.length > 0) {
+    if (orgIds.length > 0 && !minimal) {
       // Member counts
       const members = await readInChunks('admin-lists:orgMemberCounts', orgIds, (chunk) =>
         db.from('profiles').select('org_id').in('org_id', chunk).is('deleted_at', null));

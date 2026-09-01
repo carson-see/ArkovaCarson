@@ -39,6 +39,11 @@ export function CreateOrganizationDialog({
   const [displayName, setDisplayName] = useState('');
   const [legalName, setLegalName] = useState('');
   const [capEnabled, setCapEnabled] = useState(true);
+  // Independent of the cap: handleSetOrgQuota treats anchor_quota and is_test
+  // as separate fields (an org can be uncapped AND still a test account, or
+  // capped and billable). Welding them to one switch would make the create and
+  // quota surfaces disagree about what the toggle means.
+  const [isTest, setIsTest] = useState(true);
   const [quota, setQuota] = useState('10');
   const [credits, setCredits] = useState('0');
   const [submitting, setSubmitting] = useState(false);
@@ -46,7 +51,7 @@ export function CreateOrganizationDialog({
   const [duplicateWarning, setDuplicateWarning] = useState(false);
 
   function reset() {
-    setDisplayName(''); setLegalName(''); setCapEnabled(true);
+    setDisplayName(''); setLegalName(''); setCapEnabled(true); setIsTest(true);
     setQuota('10'); setCredits('0'); setError(null); setDuplicateWarning(false);
   }
 
@@ -80,7 +85,7 @@ export function CreateOrganizationDialog({
           legal_name: legalName.trim() || undefined,
           anchor_quota: parsed.anchor_quota,
           credits: parsed.credits,
-          is_test: capEnabled,
+          is_test: isTest,
           allow_duplicate_name: allowDuplicateName,
         }),
       });
@@ -93,15 +98,18 @@ export function CreateOrganizationDialog({
       if (!res.ok) { setError(data.error ?? L.ERROR_GENERIC); return; }
 
       toast.success(L.SUCCESS(displayName.trim()));
-      reset();
       onCreated();
-      onClose();
+      handleClose();
     } catch {
       setError(L.ERROR_GENERIC);
     } finally {
       setSubmitting(false);
     }
   }
+
+  let submitLabel: string = L.SUBMIT_BUTTON;
+  if (submitting) submitLabel = L.SUBMITTING_BUTTON;
+  else if (duplicateWarning) submitLabel = L.DUPLICATE_CONFIRM;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
@@ -141,6 +149,14 @@ export function CreateOrganizationDialog({
             </div>
           )}
 
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="org-is-test">{L.TEST_TOGGLE_LABEL}</Label>
+              <p className="text-xs text-muted-foreground">{L.TEST_TOGGLE_HINT}</p>
+            </div>
+            <Switch id="org-is-test" checked={isTest} onCheckedChange={setIsTest} />
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="org-credits">{L.CREDITS_LABEL}</Label>
             <Input id="org-credits" type="number" min={0} value={credits} onChange={(e) => setCredits(e.target.value)} />
@@ -162,10 +178,7 @@ export function CreateOrganizationDialog({
         <DialogFooter>
           <Button variant="outline" onClick={handleClose} disabled={submitting}>{L.CANCEL_BUTTON}</Button>
           <Button onClick={() => submit(duplicateWarning)} disabled={submitting}>
-            {(() => {
-              if (submitting) return L.SUBMITTING_BUTTON;
-              return duplicateWarning ? L.DUPLICATE_CONFIRM : L.SUBMIT_BUTTON;
-            })()}
+            {submitLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

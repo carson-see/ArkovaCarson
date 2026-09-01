@@ -7,8 +7,19 @@
  * POST /api/admin/organizations/:id/quota           — Set an org's free-tier testing cap (SCRUM-2225)
  * POST /api/admin/organizations/:id/credits/adjust  — Add/remove org credits (L2-A5)
  *
- * All endpoints gated behind platform admin check.
- * Uses service_role to bypass protective triggers.
+ * POST /api/admin/organizations                    — Create an organization (SCRUM-3873)
+ * POST /api/admin/users                             — Create an account (SCRUM-3873)
+ *
+ * All endpoints gated behind a platform admin check, both per-handler and
+ * structurally at the router ('/admin' in routes/admin.ts).
+ *
+ * The five original handlers dispatch to SECURITY DEFINER RPCs that use
+ * service_role to bypass protective triggers — and two of those RPCs do it via
+ * `ALTER TABLE … DISABLE TRIGGER`, which takes an ACCESS EXCLUSIVE lock on the
+ * hot `profiles` table with no lock_timeout (CLAUDE.md §1.2). The two
+ * provisioning handlers deliberately do NOT follow that shape: their logic
+ * lives in the dependency-injected `admin-provisioning.ts`, is unit-testable
+ * without a database, and takes zero DDL. Prefer that shape for new handlers.
  */
 
 /** Loose UUID-shape check — the RPC also validates via its `uuid` column type, but a

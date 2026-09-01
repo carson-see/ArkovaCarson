@@ -42,6 +42,7 @@ interface TableQueues { [table: string]: ReturnType<typeof chain>[] }
 
 function makeDb(queues: TableQueues, admin: Record<string, unknown> = {}) {
   return {
+    rpc: vi.fn(async () => ({ data: null, error: null })),
     from: vi.fn((table: string) => {
       const q = queues[table];
       if (!q || q.length === 0) throw new Error(`Unconfigured db.from('${table}') (queue exhausted)`);
@@ -83,7 +84,7 @@ function userInput(over: Record<string, unknown> = {}) {
 }
 
 const ACTOR = '11111111-1111-4111-8111-111111111111';
-const ORG_ROW = { id: 'org-new-1', public_id: 'abc123xyz789', org_prefix: 'PLA', display_name: 'PlanBook' };
+const ORG_ROW = { id: '22222222-2222-4222-8222-222222222222', public_id: 'abc123xyz789', org_prefix: 'PLA', display_name: 'PlanBook' };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -133,7 +134,7 @@ describe('validateCreateUserAccountInput', () => {
 
   it('F1: ignores an is_platform_admin field rather than honouring it', () => {
     const r = validateCreateUserAccountInput({
-      email: 'a@b.com', role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: true,
+      email: 'a@b.com', role: 'ORG_ADMIN', org_id: '22222222-2222-4222-8222-222222222222', is_platform_admin: true,
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value).not.toHaveProperty('is_platform_admin');
@@ -141,7 +142,7 @@ describe('validateCreateUserAccountInput', () => {
 
   it('requires org_id for org-scoped roles and forbids it for INDIVIDUAL', () => {
     expect(validateCreateUserAccountInput({ email: 'a@b.com', role: 'ORG_ADMIN' }).ok).toBe(false);
-    expect(validateCreateUserAccountInput({ email: 'a@b.com', role: 'INDIVIDUAL', org_id: 'org-1' }).ok).toBe(false);
+    expect(validateCreateUserAccountInput({ email: 'a@b.com', role: 'INDIVIDUAL', org_id: '22222222-2222-4222-8222-222222222222' }).ok).toBe(false);
   });
 
   it('F6: defaults send_invite_email to true', () => {
@@ -171,11 +172,19 @@ describe('createOrganization', () => {
       display_name: 'PlanBook', legal_name: 'PlanBook', anchor_quota: 10, credits: 2, is_test: true,
     }));
 
-    expect(result.org_id).toBe('org-new-1');
+    expect(result.org_id).toBe('22222222-2222-4222-8222-222222222222');
     expect(result.anchor_quota).toBe(10);
     expect(result.credits_balance).toBe(2);
-    expect(creditsChain.update).toHaveBeenCalledWith(
-      expect.objectContaining({ anchor_quota: 10, balance: 2, is_test: true }),
+    expect(creditsChain.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ anchor_quota: 10, is_test: true }),
+      expect.objectContaining({ onConflict: 'org_id' }),
+    );
+    // Starting credits go through the audited ledger RPC, never straight onto
+    // the balance — booking a grant as `purchased` would call it revenue.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((deps.db as any).rpc).toHaveBeenCalledWith(
+      'admin_adjust_org_credit',
+      expect.objectContaining({ p_amount: 2, p_actor: ACTOR }),
     );
   });
 
@@ -200,9 +209,26 @@ describe('createOrganization', () => {
 
     await createOrganization(deps, ACTOR, orgInput({ display_name: 'BigCo', anchor_quota: null, is_test: false, credits: 0 }));
 
-    expect(creditsChain.update).toHaveBeenCalledWith(
+    expect(creditsChain.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ anchor_quota: null, is_test: false }),
+      expect.objectContaining({ onConflict: 'org_id' }),
     );
+  });
+
+  it('upserts org_credits so a sub-org with no seeded row is not a silent success', async () => {
+    // trg_seed_free_tier_org_credits skips orgs with a parent, and PostgREST
+    // reports a zero-row UPDATE as success.
+    const creditsChain = chain({ data: null, error: null });
+    const deps = makeDeps({
+      organizations: [chain({ data: [], error: null }), chain({ data: ORG_ROW, error: null })],
+      org_credits: [creditsChain],
+      audit_events: [chain({ data: null, error: null })],
+    });
+
+    await createOrganization(deps, ACTOR, orgInput({ display_name: 'SubCo', credits: 0 }));
+
+    expect(creditsChain.upsert).toHaveBeenCalled();
+    expect(creditsChain.update).not.toHaveBeenCalled();
   });
 
   it('writes an audit event naming the actor', async () => {
@@ -216,7 +242,7 @@ describe('createOrganization', () => {
     await createOrganization(deps, ACTOR, orgInput({ display_name: 'PlanBook', credits: 0 }));
 
     expect(audit.insert).toHaveBeenCalledWith(
-      expect.objectContaining({ actor_id: ACTOR, org_id: 'org-new-1' }),
+      expect.objectContaining({ actor_id: ACTOR, org_id: '22222222-2222-4222-8222-222222222222' }),
     );
   });
 
@@ -252,7 +278,7 @@ describe('createUserAccount', () => {
     const deps = makeDeps(userQueues());
     await createUserAccount(deps, ACTOR, userInput({
       email: 'ogechi@example.com', full_name: 'Ogechi Welechi',
-      role: 'ORG_ADMIN', org_id: 'org-new-1', org_role: 'owner', send_invite_email: true,
+      role: 'ORG_ADMIN', org_id: '22222222-2222-4222-8222-222222222222', org_role: 'owner', send_invite_email: true,
     }));
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -273,7 +299,7 @@ describe('createUserAccount', () => {
 
     await expect(
       createUserAccount(deps, ACTOR, userInput({
-        email: 'ops@acme.com', role: 'ORG_ADMIN', org_id: 'org-new-1', send_invite_email: true,
+        email: 'ops@acme.com', role: 'ORG_ADMIN', org_id: '22222222-2222-4222-8222-222222222222', send_invite_email: true,
       })),
     ).rejects.toMatchObject({ code: 'role_conflict' });
   });
@@ -329,7 +355,7 @@ describe('createUserAccount', () => {
   it('F6: sends the invite email and reports it, without returning the link', async () => {
     const deps = makeDeps(userQueues());
     const r = await createUserAccount(deps, ACTOR, userInput({
-      email: 'ogechi@example.com', role: 'ORG_ADMIN', org_id: 'org-new-1', send_invite_email: true,
+      email: 'ogechi@example.com', role: 'ORG_ADMIN', org_id: '22222222-2222-4222-8222-222222222222', send_invite_email: true,
     }));
 
     expect(mockSendEmail).toHaveBeenCalledTimes(1);
@@ -340,7 +366,7 @@ describe('createUserAccount', () => {
   it('F6: opting out sends nothing, confirms the email, and returns the link for manual delivery', async () => {
     const deps = makeDeps(userQueues());
     const r = await createUserAccount(deps, ACTOR, userInput({
-      email: 'ogechi@example.com', role: 'ORG_ADMIN', org_id: 'org-new-1', send_invite_email: false,
+      email: 'ogechi@example.com', role: 'ORG_ADMIN', org_id: '22222222-2222-4222-8222-222222222222', send_invite_email: false,
     }));
 
     expect(mockSendEmail).not.toHaveBeenCalled();
@@ -374,12 +400,12 @@ describe('createUserAccount', () => {
     const deps = makeDeps(userQueues({ org_members: [members] }));
 
     await createUserAccount(deps, ACTOR, userInput({
-      email: 'ogechi@example.com', role: 'ORG_ADMIN', org_id: 'org-new-1', org_role: 'owner',
+      email: 'ogechi@example.com', role: 'ORG_ADMIN', org_id: '22222222-2222-4222-8222-222222222222', org_role: 'owner',
       send_invite_email: true,
     }));
 
     expect(members.insert).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: 'new-user-id', org_id: 'org-new-1', role: 'owner' }),
+      expect.objectContaining({ user_id: 'new-user-id', org_id: '22222222-2222-4222-8222-222222222222', role: 'owner' }),
     );
   });
 

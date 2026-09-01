@@ -17,9 +17,18 @@
  *    `role = COALESCE(role,'ORG_MEMBER')`. Because `enforce_role_immutability`
  *    is a BEFORE UPDATE trigger, a role set that way can never be corrected
  *    without DDL. Deferring confirmation until AFTER role + org are written
- *    means the race cannot happen — this is correctness by construction, not a
- *    guard. The `role_conflict` check below is a belt-and-braces assertion for
- *    the case where the address already had a profile.
+ *    means that race cannot happen — correctness by construction for the
+ *    PROFILE half of that trigger.
+ *
+ *    It does NOT close the trigger's other half: its
+ *    `INSERT INTO org_members (…, 'member') ON CONFLICT DO NOTHING` is
+ *    UNCONDITIONAL and still fires whenever the address is eventually
+ *    confirmed. An account provisioned into org A whose email domain is
+ *    claimed by org B will additionally acquire an org_members row in B, and
+ *    `get_user_org_ids()` feeds RLS off that table. That is pre-existing
+ *    platform behaviour for every signup, not something this module
+ *    introduces, and changing it belongs with the trigger — but do not read
+ *    the paragraph above as covering it.
  *
  * 2. **No DDL, ever.** The neighbouring `admin_change_user_role` /
  *    `admin_set_platform_admin` RPCs run `ALTER TABLE profiles DISABLE TRIGGER`
@@ -41,6 +50,8 @@
  * PII: never log the email address or full name — user id and org id only (§1.4).
  */
 
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from '../utils/logger.js';
 
@@ -103,131 +114,66 @@ const ORG_MEMBER_ROLES = ['owner', 'admin', 'member'] as const;
 export type ProfileRole = (typeof PROFILE_ROLES)[number];
 export type OrgMemberRole = (typeof ORG_MEMBER_ROLES)[number];
 
-/** Deliberately permissive: real addresses only need to round-trip Supabase. */
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_NAME_LEN = 200;
 
-export interface CreateOrganizationInput {
-  display_name: string;
-  legal_name: string;
-  /** null = uncapped. Always written explicitly (see F8). */
-  anchor_quota: number | null;
-  credits: number;
-  is_test: boolean;
-  allow_duplicate_name: boolean;
-}
+/**
+ * `anchor_quota` is tri-state and the distinction matters (F8):
+ *   omitted -> keep the seed trigger's default cap of 10
+ *   null    -> uncapped, explicitly written over the trigger's default
+ *   number  -> that cap
+ */
+const CreateOrganizationSchema = z
+  .object({
+    display_name: z.string().trim().min(1).max(MAX_NAME_LEN),
+    legal_name: z.string().trim().max(MAX_NAME_LEN).optional(),
+    anchor_quota: z.number().int().min(0).nullable().default(10),
+    credits: z.number().int().min(0).default(0),
+    is_test: z.boolean().default(true),
+    allow_duplicate_name: z.boolean().default(false),
+  })
+  .transform((v) => ({ ...v, legal_name: v.legal_name || v.display_name }));
 
-export interface CreateUserAccountInput {
-  email: string;
-  full_name: string | null;
-  role: ProfileRole;
-  org_id: string | null;
-  org_role: OrgMemberRole;
-  send_invite_email: boolean;
-}
+const CreateUserAccountSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email(),
+    full_name: z.string().trim().max(MAX_NAME_LEN).optional(),
+    role: z.enum(PROFILE_ROLES),
+    org_id: z.string().uuid().nullable().default(null),
+    org_role: z.enum(ORG_MEMBER_ROLES).default('member'),
+    send_invite_email: z.boolean().default(true),
+    // NOTE: `is_platform_admin` is deliberately absent (F1). Zod strips
+    // unknown keys, so passing it is silently ignored rather than honoured.
+  })
+  .transform((v) => ({ ...v, full_name: v.full_name || null }))
+  .superRefine((v, ctx) => {
+    if (v.role === 'INDIVIDUAL' && v.org_id !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'org_id must be null for an INDIVIDUAL account' });
+    }
+    if (v.role !== 'INDIVIDUAL' && v.org_id === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `org_id is required for role ${v.role}` });
+    }
+  });
+
+export type CreateOrganizationInput = z.infer<typeof CreateOrganizationSchema>;
+export type CreateUserAccountInput = z.infer<typeof CreateUserAccountSchema>;
 
 type Validated<T> = { ok: true; value: T } | { ok: false; error: string };
 
+function toValidated<T>(
+  result: { success: true; data: T } | { success: false; error: z.ZodError },
+): Validated<T> {
+  if (result.success) return { ok: true, value: result.data };
+  const first = result.error.issues[0];
+  const path = first.path.join('.');
+  return { ok: false, error: path ? `${path}: ${first.message}` : first.message };
+}
+
 export function validateCreateOrganizationInput(body: unknown): Validated<CreateOrganizationInput> {
-  const b = (body ?? {}) as Record<string, unknown>;
-
-  const displayName = typeof b.display_name === 'string' ? b.display_name.trim() : '';
-  if (displayName.length === 0) return { ok: false, error: 'display_name is required' };
-  if (displayName.length > MAX_NAME_LEN) {
-    return { ok: false, error: `display_name must be ${MAX_NAME_LEN} characters or fewer` };
-  }
-
-  const legalNameRaw = typeof b.legal_name === 'string' ? b.legal_name.trim() : '';
-  if (legalNameRaw.length > MAX_NAME_LEN) {
-    return { ok: false, error: `legal_name must be ${MAX_NAME_LEN} characters or fewer` };
-  }
-
-  // undefined => keep the seed trigger's default cap of 10; null => uncapped.
-  let anchorQuota: number | null = 10;
-  if (b.anchor_quota === null) {
-    anchorQuota = null;
-  } else if (b.anchor_quota !== undefined) {
-    if (typeof b.anchor_quota !== 'number' || !Number.isInteger(b.anchor_quota) || b.anchor_quota < 0) {
-      return { ok: false, error: 'anchor_quota must be a non-negative integer, or null for uncapped' };
-    }
-    anchorQuota = b.anchor_quota;
-  }
-
-  const credits = b.credits === undefined ? 0 : b.credits;
-  if (typeof credits !== 'number' || !Number.isInteger(credits) || credits < 0) {
-    return { ok: false, error: 'credits must be a non-negative integer' };
-  }
-
-  const isTest = b.is_test === undefined ? true : b.is_test;
-  if (typeof isTest !== 'boolean') return { ok: false, error: 'is_test must be a boolean' };
-
-  const allowDuplicateName = b.allow_duplicate_name === undefined ? false : b.allow_duplicate_name;
-  if (typeof allowDuplicateName !== 'boolean') {
-    return { ok: false, error: 'allow_duplicate_name must be a boolean' };
-  }
-
-  return {
-    ok: true,
-    value: {
-      display_name: displayName,
-      legal_name: legalNameRaw.length > 0 ? legalNameRaw : displayName,
-      anchor_quota: anchorQuota,
-      credits,
-      is_test: isTest,
-      allow_duplicate_name: allowDuplicateName,
-    },
-  };
+  return toValidated(CreateOrganizationSchema.safeParse(body ?? {}));
 }
 
 export function validateCreateUserAccountInput(body: unknown): Validated<CreateUserAccountInput> {
-  const b = (body ?? {}) as Record<string, unknown>;
-
-  const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
-  if (!EMAIL_RE.test(email)) return { ok: false, error: 'a valid email is required' };
-
-  const role = b.role as ProfileRole;
-  if (!PROFILE_ROLES.includes(role)) {
-    return { ok: false, error: `role must be one of ${PROFILE_ROLES.join(', ')}` };
-  }
-
-  const orgId = b.org_id === undefined || b.org_id === null ? null : b.org_id;
-  if (orgId !== null && typeof orgId !== 'string') {
-    return { ok: false, error: 'org_id must be a UUID string or null' };
-  }
-  if (role === 'INDIVIDUAL' && orgId !== null) {
-    return { ok: false, error: 'org_id must be null for an INDIVIDUAL account' };
-  }
-  if (role !== 'INDIVIDUAL' && orgId === null) {
-    return { ok: false, error: `org_id is required for role ${role}` };
-  }
-
-  const orgRole = (b.org_role === undefined ? 'member' : b.org_role) as OrgMemberRole;
-  if (!ORG_MEMBER_ROLES.includes(orgRole)) {
-    return { ok: false, error: `org_role must be one of ${ORG_MEMBER_ROLES.join(', ')}` };
-  }
-
-  const fullNameRaw = typeof b.full_name === 'string' ? b.full_name.trim() : '';
-  if (fullNameRaw.length > MAX_NAME_LEN) {
-    return { ok: false, error: `full_name must be ${MAX_NAME_LEN} characters or fewer` };
-  }
-
-  const sendInviteEmail = b.send_invite_email === undefined ? true : b.send_invite_email;
-  if (typeof sendInviteEmail !== 'boolean') {
-    return { ok: false, error: 'send_invite_email must be a boolean' };
-  }
-
-  // NOTE: `is_platform_admin` is intentionally NOT read from the body (F1).
-  return {
-    ok: true,
-    value: {
-      email,
-      full_name: fullNameRaw.length > 0 ? fullNameRaw : null,
-      role,
-      org_id: orgId,
-      org_role: orgRole,
-      send_invite_email: sendInviteEmail,
-    },
-  };
+  return toValidated(CreateUserAccountSchema.safeParse(body ?? {}));
 }
 
 export interface CreateOrganizationResult {
@@ -291,23 +237,49 @@ export async function createOrganization(
     throw new ProvisioningError('Failed to create the organization.', 'internal_error');
   }
 
-  // F8: `trg_seed_free_tier_org_credits` has already inserted
-  // (is_test=true, anchor_quota=10). Always overwrite with the resolved state
-  // so "uncapped" and "no credits" are real rather than silently defaulted.
+  // F8: `trg_seed_free_tier_org_credits` has normally already inserted
+  // (is_test=true, anchor_quota=10); always overwrite so "uncapped" is real
+  // rather than silently defaulted.
+  //
+  // UPSERT, not UPDATE: PostgREST reports a zero-row UPDATE as success, and the
+  // seed trigger skips orgs with a parent (`parent_org_id IS NOT NULL`). A bare
+  // update would then return success for an org with NO org_credits row at all
+  // and we would report a balance the org does not have — the same silent
+  // default this write exists to prevent.
   const { error: creditsError } = await db
     .from('org_credits')
-    .update({
+    .upsert({
+      org_id: orgRow.id,
       is_test: input.is_test,
       anchor_quota: input.anchor_quota,
-      balance: input.credits,
-      purchased: input.credits,
+      balance: 0,
+      purchased: 0,
       monthly_allocation: 0,
-    })
-    .eq('org_id', orgRow.id);
+    }, { onConflict: 'org_id' });
 
   if (creditsError) {
-    logger.error({ error: creditsError, orgId: orgRow.id }, 'Admin provisioning: org_credits write failed');
+    logger.error({ error: sanitizeError(creditsError), orgId: orgRow.id }, 'Admin provisioning: org_credits write failed');
     throw new ProvisioningError('Organization created but credit setup failed.', 'internal_error');
+  }
+
+  // Starting credits go through the existing audited ledger path
+  // (`admin_adjust_org_credit`, migration 0375) rather than being written
+  // straight onto the balance. Writing `purchased = credits` directly would
+  // keep the conservation invariant balanced only by booking a founder grant
+  // as revenue; the RPC books it as a GRANT row instead, which is what it is.
+  if (input.credits > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: grantError } = await (db as any).rpc('admin_adjust_org_credit', {
+      p_org_id: orgRow.id,
+      p_amount: input.credits,
+      p_reason: 'Starting credits at organization provisioning',
+      p_idempotency_key: randomUUID(),
+      p_actor: actorId,
+    });
+    if (grantError) {
+      logger.error({ error: sanitizeError(grantError), orgId: orgRow.id }, 'Admin provisioning: starting-credit grant failed');
+      throw new ProvisioningError('Organization created but the starting credit grant failed.', 'internal_error');
+    }
   }
 
   const { error: auditError } = await db.from('audit_events').insert({
@@ -324,7 +296,7 @@ export async function createOrganization(
     }),
   });
   if (auditError) {
-    logger.warn({ error: auditError, orgId: orgRow.id }, 'Admin provisioning: org audit emit failed');
+    logger.warn({ error: sanitizeError(auditError), orgId: orgRow.id }, 'Admin provisioning: org audit emit failed');
   }
 
   logger.info(
@@ -409,12 +381,13 @@ export async function createUserAccount(
   try {
     // The `on_auth_user_created` trigger normally wins this race and has
     // already inserted the row; 23505 is therefore success, not a conflict.
+    // Identity columns only. role / org_id / full_name are written by the
+    // single UPDATE below, so there is exactly ONE writer for them whether the
+    // row came from us or from `on_auth_user_created` — which in turn makes the
+    // role guard meaningful on both paths instead of only one.
     const { error: profileInsertError } = await db.from('profiles').insert({
       id: userId,
       email: input.email,
-      full_name: input.full_name,
-      role: input.role,
-      org_id: input.org_id,
       subscription_tier: 'free',
       status: 'ACTIVE',
     });
@@ -422,9 +395,13 @@ export async function createUserAccount(
       throw profileInsertError;
     }
 
-    // Belt-and-braces (F2): if anything pre-set a different role, that role is
-    // frozen by `enforce_role_immutability` and the account is unusable as
-    // requested. Fail loudly rather than shipping a silently mis-roled admin.
+    // Assertion, not a second existence check: nothing should have set a role
+    // by this point (the pre-check above already returned account_exists for a
+    // known address, and email_confirm:false keeps the auto-association writer
+    // dormant), so `currentRole` is expected to be null. If it is ever not,
+    // `enforce_role_immutability` has frozen the wrong role onto this account
+    // — fail loudly rather than ship a silently mis-roled admin. Do not delete
+    // the pre-check above on the assumption that this replaces it.
     const { data: profileRow, error: readBackError } = await db
       .from('profiles')
       .select('id, role')
@@ -469,7 +446,7 @@ export async function createUserAccount(
       details: JSON.stringify({ role: input.role, org_role: input.org_id ? input.org_role : null }),
     });
     if (auditError) {
-      logger.warn({ error: auditError, userId }, 'Admin provisioning: account audit emit failed');
+      logger.warn({ error: sanitizeError(auditError), userId }, 'Admin provisioning: account audit emit failed');
     }
 
     const link = await generateSetPasswordLink(deps, input.email);
@@ -507,7 +484,7 @@ export async function createUserAccount(
     const { error: deleteError } = await db.auth.admin.deleteUser(userId);
     if (deleteError) {
       logger.error(
-        { error: deleteError, userId },
+        { error: sanitizeError(deleteError), userId },
         'Admin provisioning: rollback deleteUser failed — orphaned auth user needs manual cleanup',
       );
     }
