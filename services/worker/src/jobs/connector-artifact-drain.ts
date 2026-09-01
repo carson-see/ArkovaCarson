@@ -13,7 +13,7 @@
  *   The claim is a per-row compare-and-set UPDATE:
  *     UPDATE connector_artifact SET status='processing'
  *       WHERE id = :id AND org_id = :org AND status IN ('pending','queued')
- *       RETURNING id
+ *       RETURNING id, fingerprint_sha256, metadata, anchor_id, ...
  *   Postgres evaluates this atomically under a row lock, so two concurrent
  *   drain cycles racing the same row: the winner's UPDATE matches and returns
  *   the row; the loser's UPDATE matches ZERO rows (status already 'processing')
@@ -24,6 +24,17 @@
  *   *additionally* idempotent: `debit_and_enqueue_anchor` keys the DEBIT on the
  *   anchor id, so even a crash between claim and debit re-drives the SAME single
  *   charge (never a double-debit).
+ *
+ *   CONTENT freshness (code-review finding, 2026-09-01): the CAS UPDATE's own
+ *   `RETURNING` is ALSO the only source of row CONTENT ever passed into
+ *   materialization — `claimRow` returns the fresh row, not a boolean, and
+ *   `drainConnectorArtifactsForOrg`'s batch SELECT is id-only. Reading content
+ *   at batch-SELECT time and materializing from that snapshot later (real
+ *   async time elapses per row: `resolveOrgActorUserId`,
+ *   `findExistingEnvelopeAnchor`, every earlier row in the batch) is a TOCTOU
+ *   window a concurrent provenance auto-heal
+ *   (`docusign-envelope-completed.ts`) can land inside of, minting an anchor
+ *   from a fingerprint already superseded as forged. See `claimRow`'s header.
  *
  * §1.6A: this module handles ONLY the server-computed fingerprint + bounded,
  * PII-scrubbed metadata that already live on the row. It never reads, fetches,
@@ -593,25 +604,46 @@ function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifa
 }
 
 /**
- * Claim a single row with a compare-and-set UPDATE. Returns true only if THIS
- * call transitioned it pending|queued → processing. A concurrent winner leaves
- * the loser's UPDATE matching zero rows → false (skip, never double-anchor).
+ * Claim a single row with a compare-and-set UPDATE. Returns the row's FRESH
+ * content (via the UPDATE's own `RETURNING`) only if THIS call transitioned it
+ * pending|queued → processing; `null` if a concurrent winner already claimed it
+ * (the loser's UPDATE matches zero rows → skip, never double-anchor).
+ *
+ * SECURITY (code-review finding, 2026-09-01 — closes a TOCTOU that let a drain
+ * mint an anchor from a FORGED fingerprint): this CAS UPDATE's `RETURNING` is
+ * the ONE point of truth for what gets materialized. The caller's batch SELECT
+ * a moment earlier is only a candidate-id list — its row content can go stale
+ * before this row's turn: `findExistingEnvelopeAnchor`, `resolveOrgActorUserId`,
+ * and every earlier row in the same batch (processed sequentially, each with
+ * its own awaits) all cost real wall-clock time, during which
+ * `docusign-envelope-completed.ts`'s provenance auto-heal can run and correctly
+ * overwrite this row's `fingerprint_sha256`/`metadata` (its own `WHERE
+ * anchor_id IS NULL` still matches an unclaimed row). Returning the row as of
+ * THIS UPDATE — not the batch-read snapshot — means materialization always
+ * sees whichever write (heal or claim) actually landed first, exactly as the
+ * heal's own `EvalPlanQual` reasoning already assumes for the reverse
+ * direction. Never widen this back to a boolean and re-introduce a second read
+ * of the row.
  */
-async function claimRow(deps: ConnectorArtifactDrainDeps, orgId: string, id: string): Promise<boolean> {
+async function claimRow(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  id: string,
+): Promise<ConnectorArtifactRow | null> {
   const { data, error } = await deps.db
     .from('connector_artifact')
     .update({ status: 'processing', updated_at: new Date().toISOString() })
     .eq('id', id)
     .eq('org_id', orgId)
     .in('status', DRAINABLE_STATUSES as unknown as string[])
-    .select('id')
+    .select('id, org_id, status, fingerprint_sha256, byte_length, source, external_ref, metadata, anchor_id, credit_deduction_id')
     .maybeSingle();
 
   if (error) {
     deps.logger.warn({ error, artifactId: id, orgId }, 'connector-artifact claim failed');
-    return false;
+    return null;
   }
-  return data != null;
+  return (data as ConnectorArtifactRow | null) ?? null;
 }
 
 /**
@@ -740,10 +772,15 @@ export async function drainConnectorArtifactsForOrg(
   // PENDING and would reject a BROADCASTING anchor).
   await confirmMaterializedArtifacts(deps, orgId, limit, result);
 
-  // Candidate rows for THIS org only.
+  // Candidate rows for THIS org only. DELIBERATELY id-only: this SELECT feeds
+  // ONLY the claim loop below with WHICH rows to attempt, never their content.
+  // Row CONTENT (fingerprint_sha256, metadata, anchor_id, ...) is read exactly
+  // once, at claim time, from `claimRow`'s own CAS UPDATE `RETURNING` — see
+  // that function's header for why a second, earlier read here would be a
+  // stale-snapshot TOCTOU.
   const { data: candidates, error: selectError } = await deps.db
     .from('connector_artifact')
-    .select('id, org_id, status, fingerprint_sha256, byte_length, source, external_ref, metadata, anchor_id, credit_deduction_id')
+    .select('id')
     .eq('org_id', orgId)
     .in('status', DRAINABLE_STATUSES as unknown as string[])
     .order('created_at', { ascending: true })
@@ -756,16 +793,21 @@ export async function drainConnectorArtifactsForOrg(
     throw new Error(`connector-artifact select failed for org ${orgId}`);
   }
 
-  const rows = (candidates ?? []) as ConnectorArtifactRow[];
-  if (rows.length === 0) return result;
+  const candidateIds = ((candidates ?? []) as Array<{ id?: string }>)
+    .map((r) => r.id)
+    .filter((id): id is string => typeof id === 'string');
+  if (candidateIds.length === 0) return result;
 
-  for (const row of rows) {
+  for (const id of candidateIds) {
     // Concurrency-safe claim. A loser (already 'processing') skips silently —
-    // it is NOT a failure, it's the exactly-once guarantee working.
-    const claimed = await claimRow(deps, orgId, row.id);
-    if (!claimed) continue;
+    // it is NOT a failure, it's the exactly-once guarantee working. The
+    // returned `claimedRow` is the row's content AS OF THIS CAS UPDATE — the
+    // only content ever passed into materialization (never the id-only
+    // candidate list above).
+    const claimedRow = await claimRow(deps, orgId, id);
+    if (!claimedRow) continue;
     result.claimed += 1;
-    await drainOneClaimedRow(deps, orgId, row, result);
+    await drainOneClaimedRow(deps, orgId, claimedRow, result);
   }
 
   deps.logger.info({ orgId, ...result }, 'connector-artifact drain pass complete');

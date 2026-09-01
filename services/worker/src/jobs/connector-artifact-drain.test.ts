@@ -299,6 +299,94 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.rows[0].status).toBe('processing');
   });
 
+  // SECURITY (code-review finding, 2026-09-01): cross-file TOCTOU regression.
+  // Simulates the real attack/failure sequence: a forged inbound row wins the
+  // ON CONFLICT DO NOTHING race and is picked up by the candidate SELECT, but
+  // `docusign-envelope-completed.ts`'s F1-heal (its OWN `WHERE anchor_id IS
+  // NULL` UPDATE, which can land on an unclaimed row at any time) overwrites
+  // the fingerprint + strips the declared-inbound markers BEFORE this row's
+  // claim CAS runs. The materialized anchor must carry the HEALED (verified)
+  // fingerprint and metadata — never the forged batch-read snapshot. This test
+  // would have FAILED against the pre-fix code, which passed the id-only
+  // candidate list's era of `row` — i.e. content read once, at batch-SELECT
+  // time — straight into materialization, bypassing whatever `claimRow`'s own
+  // CAS UPDATE actually saw.
+  it('TOCTOU regression: materializes from the row content AS OF THE CLAIM, not the batch-read snapshot, when a provenance heal lands in between', async () => {
+    const FORGED_FP = 'f'.repeat(64);
+    const VERIFIED_FP = 'e'.repeat(64);
+    const row = makeRow({
+      id: ART_1,
+      org_id: ORG_A,
+      status: 'queued',
+      fingerprint_sha256: FORGED_FP,
+      metadata: { _direction: 'inbound', _sending_account_id: 'acct-FOREIGN' },
+    });
+    const h = makeHarness([row]);
+
+    // Intercept the candidate SELECT's terminal `limit()`. The instant it
+    // resolves — i.e. the instant the batch-read snapshot has been taken —
+    // apply the SAME mutation `docusign-envelope-completed.ts`'s auto-heal
+    // makes to the row: overwrite `fingerprint_sha256` with the verified
+    // value and strip the declared-inbound markers. This models real async
+    // time elapsing between the batch-read and THIS row's claim
+    // (`resolveOrgActorUserId`, `findExistingEnvelopeAnchor`, and — in a
+    // multi-row batch — every earlier row's own awaits), during which the
+    // heal can land.
+    let healApplied = false;
+    const realFrom = h.deps.db.from.bind(h.deps.db);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (h.deps.db as any).from = (table: string) => {
+      const builder = realFrom(table);
+      const origLimit = builder.limit.bind(builder);
+      builder.limit = async (n: number) => {
+        const result = await origLimit(n);
+        if (!healApplied) {
+          healApplied = true;
+          h.rows[0].fingerprint_sha256 = VERIFIED_FP;
+          delete (h.rows[0].metadata as Record<string, unknown>)._direction;
+          delete (h.rows[0].metadata as Record<string, unknown>)._sending_account_id;
+        }
+        return result;
+      };
+      return builder;
+    };
+
+    const materialize = vi.fn(async (r: Row) => ({
+      anchorId: ANCHOR_1,
+      anchorPublicId: 'pub-1',
+      __sawFingerprint: r.fingerprint_sha256,
+    }));
+    h.deps.materializeAnchor = materialize as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(healApplied).toBe(true);
+    expect(result.claimed).toBe(1);
+    expect(materialize).toHaveBeenCalledTimes(1);
+
+    // The materializer — and therefore the minted anchor's fingerprint — saw
+    // the VERIFIED value, never the forged one the batch SELECT observed.
+    const materializedRow = materialize.mock.calls[0][0] as Row;
+    expect(materializedRow.fingerprint_sha256).toBe(VERIFIED_FP);
+    expect(materializedRow.fingerprint_sha256).not.toBe(FORGED_FP);
+
+    // The heal already stripped `_direction`, so `defaultMaterializeAnchor`'s
+    // `isInboundDeclaredHash` check (which reads `_direction` fresh from
+    // whatever row it is GIVEN) would see no declared-inbound marker here —
+    // the anchor is never stamped 'issuer_record_attestation' for a row this
+    // pass has ALREADY reconciled to a measured value. (`defaultMaterializeAnchor`
+    // itself never asserts the literal 'document_bytes' — §1.5/R19: it did not
+    // do the fetch, so it must not assert a class it did not measure — but the
+    // property under test is the one that matters here: a healed row must
+    // never be mis-classified as a declared/attested source.)
+    expect(materializedRow.metadata._direction).toBeUndefined();
+
+    // Full pipeline completed on the VERIFIED value — the row reached the
+    // terminal `anchored` state via the real anchor, not a forged one.
+    expect(h.rows[0].status).toBe('anchored');
+    expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
+  });
+
   it('charge-happens-once-at-securing: never debits at enqueue/claim, only after materialize', async () => {
     const order: string[] = [];
     const materialize = vi.fn(async () => { order.push('materialize'); return { anchorId: ANCHOR_1, anchorPublicId: 'p' }; });

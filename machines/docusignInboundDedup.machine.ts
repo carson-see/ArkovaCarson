@@ -22,6 +22,8 @@ const fingerprintClass = variable("fingerprintClass");
 const conflictDetected = variable("conflictDetected");
 const outboundHasActed = variable("outboundHasActed");
 const anchorMaterialized = variable("anchorMaterialized");
+const capturedFingerprintClass = variable("capturedFingerprintClass");
+const anchorFingerprintClass = variable("anchorFingerprintClass");
 
 /**
  * DocuSign Inbound/Outbound Anchor Dedup Machine (docusign-bilateral-2026-08,
@@ -165,6 +167,46 @@ const anchorMaterialized = variable("anchorMaterialized");
  * now requires `fingerprintClass[e] = REAL` — the real, auto-healed
  * guarantee this PR ships, not merely a detection floor.
  *
+ * TOCTOU EXTENSION (code review of `jobs/connector-artifact-drain.ts`,
+ * 2026-09-01 — closes the modelling gap that hid the bug this same review
+ * found): everything above modeled `materializeAnchorFromArtifact` as ONE
+ * atomic action reading CURRENT state (`fingerprintClass[e]` at the moment
+ * it fires) — which is exactly why a 121-state, fully-verified proof still
+ * could not see a real bug in the actual TypeScript: the drain's batch-read
+ * `row` object was captured ONCE, then handed unchanged through
+ * `resolveOrgActorUserId`/`findExistingEnvelopeAnchor` (real awaited DB
+ * round trips) into the `anchors` INSERT — a snapshot-then-act shape this
+ * machine had no variables to express. The code fix (this same PR) makes
+ * the CLAIM itself the point of truth (`claimRow`'s `UPDATE ... RETURNING`
+ * replaces the batch-read snapshot), which closes the LARGEST instance of
+ * this window (up to `DRAIN_LIMIT_MAX`=200 earlier rows' worth of awaited
+ * work in the same batch). It does NOT make materialization atomic end to
+ * end: `claimRow`'s capture and the eventual `anchors` INSERT are still two
+ * separate statements, separated by `resolveOrgActorUserId` and
+ * `findExistingEnvelopeAnchor`, and the heal's own guard
+ * (`WHERE anchor_id IS NULL`) has no notion of "this row was already
+ * claimed/captured" — only of whether an anchor exists yet.
+ *
+ * This extension makes that two-step shape modelable: `captureArtifactFingerprint`
+ * (models `claimRow`'s `RETURNING`) and `mintAnchorFromCapture` (models the
+ * `anchors` INSERT, using the CAPTURED value) REPLACE the single
+ * `materializeAnchorFromArtifact` action. `outboundHealsForgery` /
+ * `outboundLosesRaceUnhealed` are UNCHANGED — still gated only on
+ * `anchorMaterialized[e]`, exactly matching the real `anchor_id IS NULL`
+ * guard — so both remain independently schedulable in the gap between
+ * capture and mint. New invariant `anchorNeverMintedFromSupersededFingerprint`
+ * asserts what actually matters: no anchor is ever minted holding a FORGED
+ * fingerprint class.
+ *
+ * RESULT — see VERIFICATION STATUS below. If the check fails, that
+ * counterexample is a real, disclosed residual finding, not a defect to
+ * paper over: it says the code fix in this PR closes the batch-order-
+ * dependent window (the one the attack this PR fixes actually depends on)
+ * but a SMALLER window — bounded by `resolveOrgActorUserId` +
+ * `findExistingEnvelopeAnchor` alone, with no batch-of-up-to-200-rows
+ * multiplier — remains open as a distinct, smaller-magnitude follow-up. The
+ * invariant is NOT weakened to force a pass either way.
+ *
  * Adapter status: documentation-only — no runtimeAdapter. connector_artifact
  * rows are created via the migration-0343 RPC (ON CONFLICT DO NOTHING) and
  * superseded via a hand-written conditional UPDATE, not a plain table
@@ -174,21 +216,66 @@ const anchorMaterialized = variable("anchorMaterialized");
  * invariant is caught even though no adapter generates from it — same
  * posture as partnerProvisioning.machine.ts and calibrationWorkflow.machine.ts.
  *
- * VERIFICATION STATUS (2026-08-31, F1-heal extension): `npx tla-precheck
- * check docusignInboundDedup.machine.ts`, run from inside `machines/` (see
+ * VERIFICATION STATUS (2026-09-01, TOCTOU extension) — FAILS, and this is a
+ * disclosed, real finding, NOT weakened away. `npx tla-precheck check
+ * docusignInboundDedup.machine.ts`, run from inside `machines/` (see
  * agents.md's "how to invoke check" entry — repo-root invocation fails on
  * TS5096/TS5103 for unrelated cwd-resolution reasons, not a defect in this
- * file) PASSES. Certificate (tier `pr`): proofPassed: true; BOTH invariants
- * checked (`atMostOneArtifactOwner`, `outboundNeverSilentlyAcceptsForgery`);
- * graphEquivalence equivalent: true; ts/tlc state counts 121/121, edge counts
- * 374/374 (up from the F1 extension's 36/36 states, 96/96 edges — the new
- * `anchorMaterialized` boolean plus the `outboundHealsForgery` /
- * `outboundLosesRaceUnhealed` / `materializeAnchorFromArtifact` actions widen
- * the reachable state space); deadlock checked: true; TLC "Model checking
- * completed. No error has been found." on both the proof and equivalence
- * runs; machineSha256
- * f56a95d54929e4525c51751b18547b935752ed65d5cde2ddaa2e467b1841edec; graphHash
- * 2341f3943367221a90f3dc11b0a4d34acc2b61528ddad04c74633e6926eb2d47.
+ * file):
+ *
+ *   certificateVersion: 2; machine: DocusignInboundDedup; tier: pr;
+ *   proofPassed: FALSE; invariantsChecked: [atMostOneArtifactOwner,
+ *   outboundNeverSilentlyAcceptsForgery,
+ *   anchorNeverMintedFromSupersededFingerprint]; deadlockChecked: true;
+ *   graphEquivalenceAttempted: false (pr tier now budgets against the raw
+ *   product — see proof.tiers.pr comment); machineSha256
+ *   e4b22f11a4d55979d3ad977964738d78b80b06c8d6c167513eeff7846cd9ff47.
+ *   TLC halts on the FIRST violation it finds (not full exploration): 506
+ *   states generated, 200 distinct states found, 55 left on queue, search
+ *   depth 8, "Finished in 00s".
+ *
+ *   Error: Invariant anchorNeverMintedFromSupersededFingerprint is violated.
+ *   Counterexample trace (envelope e2; e1 is an uncontested envelope present
+ *   only to confirm the violation is NOT a cross-envelope leak):
+ *     1. materializeOutbound(e1)      — unrelated envelope, real fingerprint.
+ *     2. forgeInbound(e2)             — attacker wins the race: artifactOwner
+ *                                        =INBOUND, fingerprintClass=FORGED.
+ *     3. captureArtifactFingerprint(e2) — the drain's claim captures the
+ *                                        CURRENTLY-forged value:
+ *                                        capturedFingerprintClass=FORGED.
+ *     4. outboundHealsForgery(e2)     — the outbound job's heal fires
+ *                                        (anchorMaterialized[e2] is still
+ *                                        false, so its guard is satisfied):
+ *                                        fingerprintClass:=REAL,
+ *                                        artifactOwner:=OUTBOUND. The
+ *                                        CAPTURED value is untouched by this
+ *                                        — it is a snapshot in the drain's
+ *                                        memory, not a live read.
+ *     5. mintAnchorFromCapture(e2)    — the drain mints the anchor from the
+ *                                        STALE capture: anchorMaterialized
+ *                                        :=true, anchorFingerprintClass:=
+ *                                        FORGED. Now fingerprintClass[e2]=
+ *                                        REAL but anchorFingerprintClass[e2]
+ *                                        =FORGED — VIOLATION.
+ *
+ *   This is the SAME bug class the code review found in
+ *   `jobs/connector-artifact-drain.ts`, formally reproduced with the
+ *   BATCH-ORDER-DEPENDENT portion of the window removed by this PR's
+ *   `claimRow` fix (step 3 above models `claimRow`'s `RETURNING`, already
+ *   the fresh-at-claim-time read) — the counterexample only needs the
+ *   SMALLER residual window between capture (claim) and mint (the `anchors`
+ *   INSERT), bounded by `resolveOrgActorUserId` + `findExistingEnvelopeAnchor`
+ *   in the real code, with no batch-of-up-to-200-rows multiplier. TLC proves
+ *   that residual window is still sufficient in principle: if
+ *   `outboundHealsForgery` (real code: the F1-heal `UPDATE ...  WHERE
+ *   anchor_id IS NULL`) executes strictly between `claimRow`'s `RETURNING`
+ *   and the `anchors` INSERT for the SAME row, the minted anchor still
+ *   carries the pre-heal (forged) value. Disclosed, unresolved, tracked as a
+ *   follow-up — NOT fixed by this PR, whose scope was closing the
+ *   batch-read-snapshot window per the code review's explicit "FIX
+ *   (primary)". A full fix needs either a freshness re-check immediately
+ *   before the `anchors` INSERT or folding claim+materialize+mark into one
+ *   atomic DB operation (a genuinely bigger, separate change).
  */
 export const docusignInboundDedupMachine = defineMachine({
   version: 2,
@@ -242,6 +329,33 @@ export const docusignInboundDedupMachine = defineMachine({
     // conditional UPDATE checks (`WHERE anchor_id IS NULL`) — once true, a
     // forged/mismatched row can never again be healed, only flagged.
     anchorMaterialized: mapVar("Envelopes", boolType(), lit(false)),
+    // TOCTOU EXTENSION (code review, 2026-09-01 — closes the modelling gap
+    // that hid the drain's stale-snapshot bug; see the header section below).
+    // What the drain's own CAS claim (`claimRow`'s `UPDATE ... RETURNING`)
+    // read as this envelope's fingerprint class AT CAPTURE TIME. NONE until
+    // captured; never reset once set (a row is captured at most once per
+    // materialization attempt — the same "first guard" pattern as
+    // `artifactCreated` above).
+    capturedFingerprintClass: mapVar(
+      "Envelopes",
+      enumType("NONE", "REAL", "FORGED"),
+      lit("NONE"),
+    ),
+    // TOCTOU EXTENSION: the fingerprint class ACTUALLY baked into the
+    // materialized anchor — copied from `capturedFingerprintClass` at mint
+    // time, NOT re-read from the (possibly since-healed) live
+    // `fingerprintClass`. This is the variable that makes the bug
+    // observable: `fingerprintClass[e]` can move on after capture (the heal
+    // can still fire — its guard is `anchor_id IS NULL`, i.e.
+    // `not(anchorMaterialized[e])`, which says nothing about whether this
+    // envelope's row content has already been captured into someone's
+    // memory), while `anchorFingerprintClass[e]` is frozen at whatever was
+    // true at capture time.
+    anchorFingerprintClass: mapVar(
+      "Envelopes",
+      enumType("NONE", "REAL", "FORGED"),
+      lit("NONE"),
+    ),
   },
 
   actions: {
@@ -293,20 +407,58 @@ export const docusignInboundDedupMachine = defineMachine({
       ],
     },
 
-    // F1-heal: the connector-artifact drain (jobs/connector-artifact-
-    // drain.ts) materializes a LIVE anchor from this envelope's artifact —
-    // independently of which path created it, and independently of the
-    // outbound job's own timing. This is the action that can race ahead of
-    // `outboundHealsForgery` and flip which of the two mutually-exclusive
-    // "outbound loses the race" outcomes below is enabled.
-    materializeAnchorFromArtifact: {
+    // TOCTOU EXTENSION (code review, 2026-09-01): the connector-artifact
+    // drain's CLAIM step (`claimRow`'s `UPDATE ... RETURNING`) — the drain
+    // reads this envelope's CURRENT fingerprint class into memory ("captures"
+    // it). This is now a SEPARATE, independently-schedulable action from
+    // minting the anchor below — see `mintAnchorFromCapture`'s comment for
+    // why splitting this in two is the entire point of the extension.
+    captureArtifactFingerprint: {
       params: { e: "Envelopes" },
       guard: and(
         index(artifactCreated, param("e")),
+        eq(index(capturedFingerprintClass, param("e")), lit("NONE")),
+        not(index(anchorMaterialized, param("e"))),
+      ),
+      updates: [
+        setMap(
+          "capturedFingerprintClass",
+          param("e"),
+          index(fingerprintClass, param("e")),
+        ),
+      ],
+    },
+
+    // TOCTOU EXTENSION: the connector-artifact drain (jobs/connector-
+    // artifact-drain.ts) mints the anchor from the CAPTURED value — never a
+    // fresh re-read of `fingerprintClass[e]` — mirroring
+    // `defaultMaterializeAnchor`'s real signature: it receives the row
+    // object `drainOneClaimedRow` handed it (frozen at claim time) and never
+    // queries `connector_artifact` again before the `anchors` INSERT.
+    // Real wall-clock time separates capture from mint
+    // (`resolveOrgActorUserId`, `findExistingEnvelopeAnchor` — both awaited
+    // DB round trips), during which `outboundHealsForgery` /
+    // `outboundLosesRaceUnhealed` remain independently enabled (their guard
+    // is `not(anchorMaterialized[e])`, i.e. the heal's real `anchor_id IS
+    // NULL` WHERE clause — it has no notion of "someone already captured a
+    // snapshot"). THIS is the modelling gap the original single atomic
+    // `materializeAnchorFromArtifact` action (removed by this extension)
+    // could not express: reading current state and minting were ONE
+    // indivisible step, so no interleaving — and therefore no staleness —
+    // was ever reachable.
+    mintAnchorFromCapture: {
+      params: { e: "Envelopes" },
+      guard: and(
+        not(eq(index(capturedFingerprintClass, param("e")), lit("NONE"))),
         not(index(anchorMaterialized, param("e"))),
       ),
       updates: [
         setMap("anchorMaterialized", param("e"), lit(true)),
+        setMap(
+          "anchorFingerprintClass",
+          param("e"),
+          index(capturedFingerprintClass, param("e")),
+        ),
       ],
     },
 
@@ -433,6 +585,36 @@ export const docusignInboundDedupMachine = defineMachine({
         ),
       ),
     },
+
+    // TOCTOU EXTENSION invariant (code review, 2026-09-01). Deliberately NOT
+    // "an anchor is never materialized holding a FORGED fingerprint class" —
+    // that formula is TOO STRONG: a forged row that wins the enqueue race
+    // and gets captured-and-minted before the outbound job's heal ever gets
+    // a chance to run is the PRE-EXISTING, DOCUMENTED "already-materialized"
+    // exception (`outboundLosesRaceUnhealed` — an accepted operator-
+    // reconciliation case, not this bug). The property actually violated by
+    // a stale snapshot is a RELATIONSHIP: what got baked into the anchor
+    // must still match what is CURRENTLY true of the artifact. Because
+    // `fingerprintClass[e]` can only change (via `outboundHealsForgery`)
+    // BEFORE `anchorMaterialized[e]` becomes true — both heal actions guard
+    // on `anchorMaterialized[e]` in opposite directions — this comparison is
+    // stable for the rest of the run once it holds; a violation ONLY becomes
+    // reachable when a heal lands strictly between `captureArtifactFingerprint`
+    // and `mintAnchorFromCapture` for the SAME envelope, i.e. exactly the
+    // TOCTOU window this extension exists to make modelable.
+    anchorNeverMintedFromSupersededFingerprint: {
+      description:
+        "Once an anchor is materialized for an envelope, its baked-in fingerprint class must equal the artifact's CURRENT fingerprint class — a heal that lands between capture and mint must never leave the anchor holding a value the artifact itself has since moved past",
+      formula: forall("Envelopes", "e",
+        or(
+          not(index(anchorMaterialized, param("e"))),
+          eq(
+            index(anchorFingerprintClass, param("e")),
+            index(fingerprintClass, param("e")),
+          ),
+        ),
+      ),
+    },
   },
 
   proof: {
@@ -446,26 +628,39 @@ export const docusignInboundDedupMachine = defineMachine({
           // without the state space exploding.
           Envelopes: ids({ prefix: "e", size: 2 }),
         },
+        // TOCTOU EXTENSION (code review, 2026-09-01): the two new 3-valued
+        // per-envelope variables (`capturedFingerprintClass`,
+        // `anchorFingerprintClass`) raise the per-envelope raw combo count
+        // from the F1-heal extension's 2*3*3*2*2*2=144 to 144*3*3=1,296.
+        // Raw product at 2 envelopes is 1,296^2 = 1,679,616 — over the
+        // tool's 100,000 graph-equivalence cap, so — same shape as the
+        // pre-existing fix documented in agents.md for
+        // drainRunAccounting/calibrationWorkflow/partnerProvisioning's
+        // nightly tiers — `pr` now disables graph-equivalence too and
+        // budgets against the real raw product. This is a real, disclosed
+        // trade-off (this machine's `pr` tier previously ran WITH
+        // equivalence checking; it no longer does), not an attempt to dodge
+        // the cap — reducing `Envelopes` below 2 would remove the
+        // uncontested-vs-contested interleaving the header above explains
+        // this domain size exists to cover.
+        graphEquivalence: false,
         budgets: {
-          // F1-heal added a THIRD per-envelope boolean (anchorMaterialized)
-          // on top of the F1 extension's two — raised again from the F1
-          // extension's 30_000.
-          maxEstimatedStates: 100_000,
+          maxEstimatedStates: 2_000_000,
         },
       },
       nightly: {
         domains: {
           Envelopes: ids({ prefix: "e", size: 4 }),
         },
-        // Raw product at 4 envelopes is well over the tool's 100_000
-        // graph-equivalence cap — same shape as the pre-existing fix
-        // documented in agents.md for
+        // Raw product at 4 envelopes (1,296^4 ≈ 2.82e12) is far over the
+        // tool's 100,000 graph-equivalence cap — same shape as the
+        // pre-existing fix documented in agents.md for
         // drainRunAccounting/calibrationWorkflow/partnerProvisioning's
         // nightly tiers: disable graph-equivalence and budget against the
-        // real raw product instead. `pr` tier above keeps equivalence on.
+        // real raw product instead.
         graphEquivalence: false,
         budgets: {
-          maxEstimatedStates: 100_000_000,
+          maxEstimatedStates: 3_000_000_000_000,
         },
       },
     },

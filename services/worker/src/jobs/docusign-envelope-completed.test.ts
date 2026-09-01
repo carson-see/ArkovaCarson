@@ -390,8 +390,8 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         );
       });
 
-      it('detects a fingerprint mismatch even without an explicit _direction marker (belt-and-suspenders — the hash comparison alone catches it)', async () => {
-        const { db } = makeDb({
+      it('detects a fingerprint mismatch even without an explicit _direction marker (belt-and-suspenders — the hash comparison alone catches it), but does NOT auto-heal it (HIGH, code review 2026-09-01)', async () => {
+        const { db, state } = makeDb({
           provenanceResult: {
             data: { fingerprint_sha256: 'e'.repeat(64), metadata: null },
             error: null,
@@ -400,10 +400,44 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         const deps = makeDocusignEnvelopeJobDeps({ db });
 
         // No _direction marker at all — still detected on the hash mismatch
-        // alone, and still healed (anchor_id is NULL by default in this test).
-        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).resolves.toEqual({
-          queuedId: 'artifact-1',
-        });
+        // alone (`fingerprintMismatch`), but `wonByInboundRow` is false, so
+        // auto-heal is NOT licensed for this row: the CTO precedence rule
+        // ("a MEASURED fingerprint supersedes a DECLARED one, never the
+        // reverse") says nothing about two independently-MEASURED
+        // fingerprints disagreeing — this could be two legitimate outbound
+        // executions for the SAME envelope (a redelivered webhook, a job
+        // retry, or DocuSign's combined-PDF embedding a fetch-time
+        // timestamp), and auto-healing that shape would let the SECOND run
+        // silently overwrite the FIRST run's equally-measured value and
+        // mislabel it "forgery resolution". Stays in DETECT-AND-THROW
+        // territory (the pre-#2520 behaviour) with its own honest reason.
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+          'docusign_connector_artifact_provenance_conflict_unresolved',
+        );
+
+        // The heal's atomic UPDATE is never even attempted for a non-declared
+        // row — auto-heal is not licensed, so there is no race to lose.
+        expect(state.supersedeCalled).toBe(false);
+        expect(state.connectorArtifactFromCallCount).toBe(1);
+
+        expect(state.provenanceAuditInsertCalled).toBe(true);
+        const auditDetails = JSON.parse(state.provenanceAuditInsertedRow?.details as string) as Record<
+          string,
+          unknown
+        >;
+        expect(auditDetails.winner).toBe('unresolved_non_declared_mismatch');
+        expect(auditDetails.reason).toBe('fingerprint_mismatch_non_declared_row_autoheal_not_licensed');
+
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            docusign_connector_artifact_provenance_conflict_unresolved: true,
+            envelopeId: 'envelope-1',
+          }),
+          expect.any(String),
+        );
+
+        // Refused before the normal success breadcrumb — no partial state.
+        expect(state.insertCalled).toBe(false);
       });
 
       it('does NOT raise a conflict when the persisted row matches this call\'s own real, measured fingerprint (legitimate idempotent redelivery) — no supersession attempted', async () => {

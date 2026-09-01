@@ -560,12 +560,31 @@ export function makeDocusignEnvelopeJobDeps(
         // header names the exact follow-up: a `reconcileForgery` transition).
         // This block IS that follow-up.
         //
+        // GATED, not automatic on every conflict (code-review finding,
+        // 2026-09-01): the CTO precedence rule is "a MEASURED fingerprint
+        // supersedes a DECLARED one, never the reverse" — it says nothing
+        // about two independently-MEASURED fingerprints disagreeing. Only a
+        // persisted row this call can PROVE is declared/untrusted
+        // (`wonByInboundRow` — `_direction: 'inbound'`) is eligible for
+        // auto-heal. A bare `fingerprintMismatch` against a row NOT marked
+        // inbound is not evidence of forgery: it can be two legitimate
+        // outbound executions for the SAME envelope hashing differently (a
+        // redelivered webhook, a job retry, or DocuSign's combined-PDF
+        // embedding a fetch-time timestamp). Auto-healing that case would let
+        // the SECOND run silently overwrite the FIRST run's equally-measured
+        // value and mislabel the audit row as forgery resolution, and would
+        // defeat `ON CONFLICT DO NOTHING`'s idempotency by letting the
+        // fingerprint flap between retries. That shape stays in
+        // DETECT-AND-THROW territory — the pre-#2520 behaviour — with its own
+        // honest, distinct audit reason instead of being run through the heal
+        // path below.
+        const autoHealLicensed = wonByInboundRow;
+
         // `fingerprint` (computed via createHash above, from the bytes THIS
         // job just fetched from DocuSign's document-download API) is real,
-        // verified evidence. The persisted row is, by construction of this
-        // branch, something else this call did not produce: a declared
-        // (possibly attacker-forged) inbound hash, or — in the
-        // belt-and-suspenders hash-only-mismatch case — some other write.
+        // verified evidence. When `autoHealLicensed`, the persisted row is,
+        // by construction of this branch, something else this call did not
+        // produce: a declared (possibly attacker-forged) inbound hash.
         //
         // ONE atomic UPDATE is the entire supersession. No new migration or
         // RPC: `connector_artifact_service_all` (migration 0343) already
@@ -591,52 +610,73 @@ export function makeDocusignEnvelopeJobDeps(
         // the drain later reads the corrected fingerprint and never sees a
         // conflict; materialize-first means this UPDATE matches zero rows and
         // the refusal branch below fires instead of rewriting a live anchor.
-        const supersededMetadata: Record<string, unknown> = { ...(persistedMetadata ?? {}) };
-        // Strip the declared-inbound markers so a later drain read of this
-        // (now-healed) row takes the SAME path as any other outbound-owned
-        // artifact — `defaultMaterializeAnchor`'s `isInboundDeclaredHash`
-        // check reads `_direction` fresh at drain time, so leaving 'inbound'
-        // here would still wrongly stamp the eventual anchor
-        // `fingerprint_source: 'issuer_record_attestation'` even though the
-        // fingerprint is now the measured one. `_sending_account_id` is the
-        // paired classification field for the same declared-inbound claim.
-        delete supersededMetadata._direction;
-        delete supersededMetadata._sending_account_id;
-        // Provenance breadcrumb, not consumed by any reader today — kept on
-        // the row (and, once drained, on the resulting anchor's metadata —
-        // 0423's service_role bypass lets it pass through unstripped, and
-        // these keys are not in 0423's guarded family) purely for forensic
-        // traceability of what this row's fingerprint used to be.
-        supersededMetadata._superseded_declared_fingerprint = persistedArtifact.fingerprint_sha256;
-        supersededMetadata._superseded_at = new Date().toISOString();
-        supersededMetadata._superseded_reason = wonByInboundRow
-          ? 'declared_inbound_row_superseded_by_verified_outbound_fetch'
-          : 'fingerprint_mismatch_superseded_by_verified_outbound_fetch';
+        let healed = false;
+        let supersedeError: { message?: string } | null = null;
+        if (autoHealLicensed) {
+          const supersededMetadata: Record<string, unknown> = { ...(persistedMetadata ?? {}) };
+          // Strip the declared-inbound markers so a later drain read of this
+          // (now-healed) row takes the SAME path as any other outbound-owned
+          // artifact — `defaultMaterializeAnchor`'s `isInboundDeclaredHash`
+          // check reads `_direction` fresh at drain time, so leaving 'inbound'
+          // here would still wrongly stamp the eventual anchor
+          // `fingerprint_source: 'issuer_record_attestation'` even though the
+          // fingerprint is now the measured one. `_sending_account_id` is the
+          // paired classification field for the same declared-inbound claim.
+          delete supersededMetadata._direction;
+          delete supersededMetadata._sending_account_id;
+          // Provenance breadcrumb, not consumed by any reader today — kept on
+          // the row (and, once drained, on the resulting anchor's metadata —
+          // 0423's service_role bypass lets it pass through unstripped, and
+          // these keys are not in 0423's guarded family) purely for forensic
+          // traceability of what this row's fingerprint used to be.
+          supersededMetadata._superseded_declared_fingerprint = persistedArtifact.fingerprint_sha256;
+          supersededMetadata._superseded_at = new Date().toISOString();
+          // `wonByInboundRow` is always true on this branch (that is what
+          // `autoHealLicensed` gates on), so the reason is no longer a
+          // ternary over `wonByInboundRow` — the fingerprint-mismatch-only,
+          // non-declared-row case never reaches here at all (see the
+          // `!autoHealLicensed` branch below).
+          supersededMetadata._superseded_reason =
+            'declared_inbound_row_superseded_by_verified_outbound_fetch';
 
-        const { data: supersedeRow, error: supersedeError } = await (
-          db as unknown as ConnectorArtifactUpdateClient
-        )
-          .from('connector_artifact')
-          .update({
-            fingerprint_sha256: fingerprint,
-            metadata: supersededMetadata,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', artifactId)
-          .is('anchor_id', null)
-          .select('id')
-          .maybeSingle();
+          const { data: supersedeRow, error } = await (
+            db as unknown as ConnectorArtifactUpdateClient
+          )
+            .from('connector_artifact')
+            .update({
+              fingerprint_sha256: fingerprint,
+              metadata: supersededMetadata,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', artifactId)
+            .is('anchor_id', null)
+            .select('id')
+            .maybeSingle();
 
-        const healed = !supersedeError && supersedeRow != null;
+          supersedeError = error as { message?: string } | null;
+          healed = !error && supersedeRow != null;
+        }
 
         // AUDIT (org, envelope, both fingerprints, which won, why) — always
-        // written, for BOTH outcomes. Awaited-but-non-fatal on failure,
-        // mirroring the established audit_events convention elsewhere in
-        // this codebase (jobs/revocation.ts, jobs/chain-maintenance.ts): a
-        // lost audit row must never turn a successful heal (or a correctly
-        // refused rewrite) into a job failure/retry loop over an unrelated
-        // audit-table hiccup — but it IS always logged at error so the gap
-        // is visible rather than silently swallowed.
+        // written, for ALL THREE outcomes (healed / lost-the-race /
+        // not-licensed-to-heal). Awaited-but-non-fatal on failure, mirroring
+        // the established audit_events convention elsewhere in this codebase
+        // (jobs/revocation.ts, jobs/chain-maintenance.ts): a lost audit row
+        // must never turn a successful heal (or a correctly refused rewrite)
+        // into a job failure/retry loop over an unrelated audit-table hiccup
+        // — but it IS always logged at error so the gap is visible rather
+        // than silently swallowed.
+        const auditReason = !autoHealLicensed
+          ? 'fingerprint_mismatch_non_declared_row_autoheal_not_licensed'
+          : healed
+            ? 'outbound_verified_fetch_superseded_declared_row'
+            : 'declared_row_already_materialized_or_lost_supersede_race';
+        const auditWinner = !autoHealLicensed
+          ? 'unresolved_non_declared_mismatch'
+          : healed
+            ? 'verified_document_bytes'
+            : 'unresolved_declared_row';
+
         const { error: provenanceAuditError } = await db
           .from('audit_events')
           .insert({
@@ -664,11 +704,9 @@ export function makeDocusignEnvelopeJobDeps(
                 integration_id: input.integrationId,
                 verified_fingerprint_sha256: fingerprint,
                 declared_fingerprint_sha256: persistedArtifact.fingerprint_sha256,
-                winner: healed ? 'verified_document_bytes' : 'unresolved_declared_row',
+                winner: auditWinner,
                 persisted_direction: persistedMetadata?._direction ?? null,
-                reason: healed
-                  ? 'outbound_verified_fetch_superseded_declared_row'
-                  : 'declared_row_already_materialized_or_lost_supersede_race',
+                reason: auditReason,
               }),
               10000,
             ),
@@ -681,6 +719,23 @@ export function makeDocusignEnvelopeJobDeps(
             { error: provenanceAuditError, integrationId: input.integrationId, artifactId, healed },
             'DocuSign connector-artifact provenance audit_events insert failed — audit trail incomplete',
           );
+        }
+
+        if (!autoHealLicensed) {
+          // Bare mismatch against a row this call cannot prove is declared —
+          // never auto-heal (see `autoHealLicensed` comment above). Stay in
+          // DETECT-AND-THROW territory, same posture PR #2476 shipped for
+          // every conflict before #2520 introduced the heal.
+          logger.error(
+            {
+              docusign_connector_artifact_provenance_conflict_unresolved: true,
+              integrationId: input.integrationId,
+              envelopeId: input.envelopeId,
+              artifactId,
+            },
+            'DocuSign connector-artifact fingerprint mismatch against a row NOT marked declared/inbound — auto-heal is not licensed for this case (only a provably-declared row may be superseded by a measured one); left as the loud, unresolved integrity event for operator follow-up',
+          );
+          throw new Error('docusign_connector_artifact_provenance_conflict_unresolved');
         }
 
         if (!healed) {
@@ -702,6 +757,7 @@ export function makeDocusignEnvelopeJobDeps(
               integrationId: input.integrationId,
               envelopeId: input.envelopeId,
               artifactId,
+              supersedeError,
             },
             'DocuSign connector-artifact provenance conflict could NOT be healed — the declared row already materialized an anchor (or lost the supersede race); left as the loud, unresolved integrity event for operator follow-up',
           );
