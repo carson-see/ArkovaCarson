@@ -190,3 +190,12 @@ New invariants: **`supplementaryRequiresOriginalAttestation`** (supp ≠ NONE �
 Budgets raised for the added 3-valued variable: pr `2,304 × 3 = 6,912` per-anchor combos → `6,912² = 47,775,744` raw (budget 50M, was 6M); nightly `6,912³ = 330,225,942,528` (budget 350B, was 15B). `graphEquivalence` stays off on both (pre-existing — over the 100k cap).
 
 `check` results (`npm run verify:machines`, TLC2 2026.03.16.234659): **pr** proofPassed=true, **17 invariants** (was 14), **8,363 generated / 1,369 distinct** (was 3,221 / 529), deadlock checked, "No error has been found". **nightly** proofPassed=true, 464,092 / 50,653 distinct. `PASSED 4/4` across all machines.
+
+## subOrgListingConsent.machine.ts (SCRUM-3864)
+
+- Models the two-party listing-consent lifecycle added by migration `0429`: `parentOf`, `parentOptin`, `childOptin` per org. Proves that a consent pair can never outlive the affiliation it was given for — the failure that would publish an edge nobody agreed to.
+- Verified 2026-09-01: `proofPassed: true`, `equivalent: true`, 31 distinct states, invariants `listedImpliesAffiliated`, `noConsentWithoutAffiliation`, `noSelfParent`.
+- **`parent_approval_status` is deliberately NOT a separate variable.** `parentOf` alone carries "is there a live edge", and revoke is modelled as un-affiliation. Modelling the enum too pushed the graph to 262k estimated states, over the 100k equivalence-tier cap, for no additional consent property.
+- **The tree is NOT one level deep, and a draft invariant that claimed so was disproved by TLC** in three steps (`affiliate(o2,o1)` then `affiliate(o1,o3)`): an org that already has children can itself become a sub-org. That is correct — `check_sub_org_depth` permits a chain to depth 3, and the code rule is only that a sub-org may not *create* affiliates. The consequence is load-bearing: because chains are real, `0429` prunes `get_org_subtree` at the RECURSIVE term so a confidential org hides the branch beneath it, not just itself.
+- Authorization (who may sign which half) is **out of scope** — actor identity is not in this state. It is proven empirically instead, checks 5 and 9 of `docs/staging/hakichain-suborgs-2026-09/verify-0429.sql`.
+- Documentation-only, like `partnerProvisioning` and `calibrationWorkflow`: no `runtimeAdapter`. The consent columns live on `organizations`, which this machine does not own, so the adapter subset does not fit. Runtime enforcement is the `protect_org_tenancy_fields()` trigger; this spec proves that trigger's reset rule is sufficient.
