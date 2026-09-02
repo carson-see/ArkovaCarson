@@ -1036,8 +1036,18 @@ guard and a scope guard). The structural ratchet above covers these four mounts 
 
 `verify.ts` (`mapAnchorRow`) and `verify-proof.ts` no longer emit the fetch-time "Measured…" caveat on
 `connector_source` alone. The declared-hash rules dispatcher writes the same `connector_source='docusign'`
-without ever fetching, so both now gate on `isServerFetchedConnectorAnchor(metadata)` /
-`connectorFingerprintRederivabilityFieldsFor(metadata)` (requires `connector_artifact_id`, stamped only by
-`connector-artifact-drain.ts`). `mapAnchorRow` sets `connector_source` to null for a declared anchor, so the
-existing `isConnectorFetchSource(anchor.connector_source)` emission gate stays silent. See
-`constants/agents.md` (2026-08-30), SCRUM-3299 / SCRUM-3825.
+without ever fetching, so both now gate on positive fetch evidence — `resolveServerFetchedConnectorSource` /
+`connectorFingerprintRederivabilityFieldsFor` (requires a non-empty `connector_artifact_id`, stamped only by
+`connector-artifact-drain.ts`). See `constants/agents.md` (2026-08-30), SCRUM-3299 / SCRUM-3825.
+
+- **`AnchorByPublicId.connector_source` was RENAMED to `server_fetched_connector_source`.** Internal transport
+  field only — never a response key, not in `API_RICH_KEYS`, so no §1.8 surface change. Renamed because the
+  old name invited exactly the bug that was fixed: assigning the raw `metadata.connector_source` marker to it
+  re-arms the false "Measured…" claim. The name now states the invariant, and the only two writers are
+  `mapAnchorRow` (via the resolver) and `EMPTY_API_RICH_FIELDS` (null). **Never assign the raw marker to it.**
+- The `isConnectorFetchSource(...)` re-check at the emission site is a closed-set STRING guard, not a
+  re-derivation of fetch evidence — it cannot see metadata. Fetch proof lives entirely in the constructor.
+- **`verifyCache.ts` `KEY_PREFIX` bumped `verify:v6:` → `verify:v7:`** — mandatory per the standing rule below:
+  this change REMOVES response fields for declared-hash anchors, and a pre-deploy cache entry would otherwise
+  keep serving the false claim for the full TTL. `invalidateVerificationCache` does not help (the row is
+  unchanged, so nothing re-fires). Ratchet test in `utils/verifyCache.namespace.test.ts`.

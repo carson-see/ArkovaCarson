@@ -22,18 +22,34 @@
  *
  * WHAT IS MEASURED
  *
- * The classification is keyed on `anchors.metadata->>'connector_source'`, which
- * the two server-side connector materialization paths write
- * (`jobs/connector-artifact-drain.ts`, `jobs/rule-action-dispatcher.ts`) from
- * the `connector_artifact.source` CHECK enum / the rule execution's vendor.
+ * The classification is keyed on TWO metadata keys together — a recognised
+ * `connector_source` marker AND `connector_artifact_id` — see
+ * {@link isServerFetchedConnectorAnchor}. `connector_source` ALONE is NOT
+ * sufficient and keying on it was the original defect: BOTH the server-fetch
+ * drain (`jobs/connector-artifact-drain.ts`, which fetches and hashes real
+ * bytes → MEASURED) and the declared-hash rules dispatcher
+ * (`jobs/rule-action-dispatcher.ts`, which anchors a hash the vendor DECLARED
+ * in the trigger payload and fetches nothing → ASSERTED) write the same marker.
  * Only the closed marker set below is recognised — free text never routes here,
  * and the note never echoes the marker, so a spoofed metadata value can only
  * attach the weakening caveat to the spoofer's own record, never a vendor
- * provenance claim (R-7). NOTE the same honesty boundary that applies to
- * `verification_level` / `source_provider` (SCRUM-2481) applies here: the
- * metadata blob is org-writable on some legacy paths (e.g.
- * `bulk_create_anchors` persists client metadata verbatim), so this marker is
- * "recorded classification", not an independently provable fetch event.
+ * provenance claim (R-7).
+ *
+ * HONESTY BOUNDARY — WHAT IS *NOT* PROVEN (§1.5). The same boundary that
+ * applies to `verification_level` / `source_provider` (SCRUM-2481) applies
+ * here, and requiring two keys narrows it without closing it. `anchors.metadata`
+ * is a free-form, org-writable blob on the direct-PostgREST insert path
+ * (`anchors_insert_own` constrains `user_id` / `status` / `org_id` and NOTHING
+ * about `metadata`) and `bulk_create_anchors` copies it verbatim; the 0384 /
+ * 0394 evidence-authority triggers guard `verification_level`,
+ * `fingerprint_source` and the CE provenance keys, and do NOT cover
+ * `connector_source` or `connector_artifact_id`. So an authenticated caller can
+ * still self-assert both keys on its own row. This classification is therefore
+ * a RECORDED classification, not an independently provable fetch event —
+ * do not lean on it as forgery-proof. Closing that gap is a DB-trigger change
+ * (0384-family, service_role-only authority over both keys) and is tracked
+ * separately; it is deliberately out of scope for this API-surface fix, which
+ * only stops the platform's OWN honest paths from over-claiming.
  */
 
 /**
@@ -44,8 +60,11 @@
  * `connector_artifact.source` values): those bytes were supplied by the user,
  * so their fingerprints ARE reproducible from the user's retained file and the
  * fetch-time caveat would be a false weakening. `connector` is the
- * rule-action-dispatcher's vendor fallback marker — still a server-side
- * connector fetch, just with an unresolved vendor.
+ * rule-action-dispatcher's vendor fallback marker, retained here for the
+ * vendor-unresolved FETCH case only: membership in this set is necessary but
+ * NOT sufficient, and a dispatcher-written anchor carries no
+ * `connector_artifact_id`, so it never reaches an emission
+ * ({@link isServerFetchedConnectorAnchor} is the operative gate).
  */
 export const CONNECTOR_FETCH_SOURCE_MARKERS: ReadonlySet<string> = new Set([
   'docusign',
@@ -151,9 +170,14 @@ export function connectorFingerprintRederivabilityFields(): FingerprintRederivab
 }
 
 /**
- * Does this anchor's metadata prove an actual server-side connector FETCH
- * (§1.6A) produced the fingerprint — the ONLY basis on which a
- * `FETCH_TIME_SNAPSHOT` ("Measured: Arkova computed…") claim is honest?
+ * Resolve the connector-fetch marker for an anchor whose metadata carries
+ * evidence of an actual server-side connector FETCH (§1.6A) — returning the
+ * marker only on that evidence and `null` otherwise. This is the single
+ * implementation of the rule; the boolean and field-pair forms below derive
+ * from it.
+ *
+ * A fetch is the ONLY basis on which a `FETCH_TIME_SNAPSHOT`
+ * ("Measured: Arkova computed…") claim is honest.
  *
  * `connector_source` ALONE is NOT sufficient and keying the measurement claim
  * on it was a §1.5 / R-7 over-claim: TWO paths write `connector_source='docusign'`
@@ -166,21 +190,41 @@ export function connectorFingerprintRederivabilityFields(): FingerprintRederivab
  *
  * The discriminator is `connector_artifact_id`: the drain stamps it on every
  * anchor it materializes from a fetched `connector_artifact` row; the declared-
- * hash dispatcher never does. It is a service_role-only, write-authority-guarded
- * key (mig 0384 / R1 guard family), so a client cannot forge it. Requiring BOTH
- * a recognised fetch marker AND this stamp means the measurement claim rides
- * positive proof of the fetch, not an ambiguous source string.
+ * hash dispatcher never does, and the drain writes it AFTER spreading the
+ * artifact's own metadata so an attacker-influenced key cannot win. Requiring
+ * BOTH a recognised fetch marker AND this stamp means the measurement claim
+ * rides positive evidence of a fetch rather than an ambiguous source string.
+ *
+ * It does NOT make the claim unforgeable, and nothing here should be read as
+ * saying so: neither key is covered by the 0384 / 0394 evidence-authority
+ * triggers, and `anchors.metadata` is org-writable on the direct-PostgREST and
+ * `bulk_create_anchors` paths — see the HONESTY BOUNDARY in the module header.
+ * This gate closes the platform's own over-claim (our honest declared-hash path
+ * asserting a measurement we never made); a self-asserted metadata blob remains
+ * a recorded classification, not proof.
  *
  * The declared-hash path's OWN honest re-derivability class (`DECLARED_UNVERIFIED`)
  * is tracked separately (SCRUM-3825); until it ships, a declared anchor emits NO
  * re-derivability statement — silence is not a claim (§1.5).
  */
+export function resolveServerFetchedConnectorSource(
+  metadata: Record<string, unknown> | null | undefined,
+): string | null {
+  const marker = resolveConnectorFetchSource(metadata);
+  if (marker === null) return null;
+  const artifactId = metadata?.connector_artifact_id;
+  return typeof artifactId === 'string' && artifactId.length > 0 ? marker : null;
+}
+
+/**
+ * Boolean form of {@link resolveServerFetchedConnectorSource} — derived from
+ * it, never a second implementation of the rule, so the two can never disagree
+ * about what counts as a fetch.
+ */
 export function isServerFetchedConnectorAnchor(
   metadata: Record<string, unknown> | null | undefined,
 ): boolean {
-  if (resolveConnectorFetchSource(metadata) === null) return false;
-  const artifactId = metadata?.connector_artifact_id;
-  return typeof artifactId === 'string' && artifactId.length > 0;
+  return resolveServerFetchedConnectorSource(metadata) !== null;
 }
 
 /**

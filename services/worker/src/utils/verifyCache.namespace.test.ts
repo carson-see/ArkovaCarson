@@ -160,14 +160,28 @@ describe('BUG-018 — verify cache isolation on one shared Upstash database', ()
     expect(redis.distinctKeys()).toHaveLength(3);
   });
 
-  it('namespaces the key as verify:v6:<env>:<publicId>', async () => {
+  it('namespaces the key as verify:v7:<env>:<publicId>', async () => {
     const prod = await verifyCacheForService('arkova-worker');
     await prod.setCachedVerification(PUBLIC_ID, { verified: true });
-    expect(redis.peek(`verify:v6:prod:${PUBLIC_ID}`)).toBeDefined();
+    expect(redis.peek(`verify:v7:prod:${PUBLIC_ID}`)).toBeDefined();
 
     const staging = await verifyCacheForService('arkova-worker-staging');
     await staging.setCachedVerification(PUBLIC_ID, { verified: true });
-    expect(redis.peek(`verify:v6:arkova-worker-staging:${PUBLIC_ID}`)).toBeDefined();
+    expect(redis.peek(`verify:v7:arkova-worker-staging:${PUBLIC_ID}`)).toBeDefined();
+  });
+
+  // BUG-2026-08-13-010 declared-hash fix (this PR): the verify response shape
+  // CHANGED — `fingerprint_rederivability` + `_note` are no longer emitted for a
+  // declared-hash connector anchor. A cache HIT is returned verbatim without
+  // re-running `buildVerificationResult`, and `invalidateVerificationCache` never
+  // re-fires for these anchors (nothing about them changed), so without a version
+  // bump every pre-deploy entry keeps serving the false "Measured: Arkova computed
+  // its fingerprint..." claim for the full TTL — the exact §1.5 / R-7 over-claim
+  // this PR removes. Pinned as a ratchet: the constant cannot be reverted silently.
+  it('carries the version segment bumped for the declared-hash response-shape change', async () => {
+    const prod = await verifyCacheForService('arkova-worker');
+    await prod.setCachedVerification(PUBLIC_ID, { verified: true });
+    expect(redis.distinctKeys()).toEqual([`verify:v7:prod:${PUBLIC_ID}`]);
   });
 
   it('scopes invalidation to its own environment — staging must not evict prod', async () => {
@@ -200,11 +214,11 @@ describe('BUG-018 — verify cache isolation on one shared Upstash database', ()
     // No K_SERVICE: a local shell, a `docker run`, a CI job.
     const local = await verifyCacheForService(undefined);
     expect(await local.getCachedVerification(PUBLIC_ID)).toBeNull();
-    expect(redis.peek(`verify:v6:local-production:${PUBLIC_ID}`)).toBeUndefined();
+    expect(redis.peek(`verify:v7:local-production:${PUBLIC_ID}`)).toBeUndefined();
 
     await local.setCachedVerification(PUBLIC_ID, { verified: true, source: 'LOCAL' });
-    expect(redis.peek(`verify:v6:local-production:${PUBLIC_ID}`)).toBeDefined();
-    expect(redis.peek(`verify:v6:prod:${PUBLIC_ID}`)).toBe(
+    expect(redis.peek(`verify:v7:local-production:${PUBLIC_ID}`)).toBeDefined();
+    expect(redis.peek(`verify:v7:prod:${PUBLIC_ID}`)).toBe(
       JSON.stringify({ verified: true, source: 'PRODUCTION' }),
     );
   });
@@ -251,6 +265,6 @@ describe('PR #2223 / PERF-12 — one environment must still share ONE cache', ()
       await instance.setCachedVerification(PUBLIC_ID, { verified: true });
     }
 
-    expect(redis.distinctKeys()).toEqual([`verify:v6:prod:${PUBLIC_ID}`]);
+    expect(redis.distinctKeys()).toEqual([`verify:v7:prod:${PUBLIC_ID}`]);
   });
 });

@@ -42,6 +42,7 @@ import {
   FINGERPRINT_REDERIVABILITY_NOTE,
   CONNECTOR_FETCH_SOURCE_MARKERS,
   resolveConnectorFetchSource,
+  resolveServerFetchedConnectorSource,
   isServerFetchedConnectorAnchor,
   connectorFingerprintRederivabilityFields,
   connectorFingerprintRederivabilityFieldsFor,
@@ -144,6 +145,58 @@ describe('resolveConnectorFetchSource — closed marker set, never free text', (
   });
 });
 
+describe('resolveServerFetchedConnectorSource — the single fetch-evidence rule', () => {
+  it('returns the marker only when a recognised marker AND a connector_artifact_id are both present', () => {
+    expect(
+      resolveServerFetchedConnectorSource({ connector_source: 'docusign', connector_artifact_id: 'cart_1' }),
+    ).toBe('docusign');
+    expect(
+      resolveServerFetchedConnectorSource({ connector_source: 'google_drive', connector_artifact_id: 'cart_2' }),
+    ).toBe('google_drive');
+  });
+
+  it('returns null for a DECLARED-hash anchor — marker but no connector_artifact_id', () => {
+    expect(resolveServerFetchedConnectorSource({ connector_source: 'docusign' })).toBeNull();
+    expect(resolveServerFetchedConnectorSource({ connector_source: 'connector' })).toBeNull();
+    expect(
+      resolveServerFetchedConnectorSource({ connector_source: 'docusign', connector_artifact_id: '' }),
+    ).toBeNull();
+    expect(
+      resolveServerFetchedConnectorSource({ connector_source: 'docusign', connector_artifact_id: 42 }),
+    ).toBeNull();
+  });
+
+  it('returns null for a user-supplied source even with an artifact id, and for absent metadata', () => {
+    expect(
+      resolveServerFetchedConnectorSource({ connector_source: 'manual_upload', connector_artifact_id: 'c' }),
+    ).toBeNull();
+    expect(resolveServerFetchedConnectorSource({ connector_artifact_id: 'c' })).toBeNull();
+    expect(resolveServerFetchedConnectorSource(null)).toBeNull();
+    expect(resolveServerFetchedConnectorSource(undefined)).toBeNull();
+    expect(resolveServerFetchedConnectorSource({})).toBeNull();
+  });
+
+  // The boolean form must stay DERIVED from the resolver, never a second copy
+  // of the rule — a divergence would let one emission site claim a measurement
+  // another site denies.
+  it('agrees with isServerFetchedConnectorAnchor on every shape', () => {
+    const shapes: Array<Record<string, unknown> | null | undefined> = [
+      { connector_source: 'docusign', connector_artifact_id: 'cart_1' },
+      { connector_source: 'docusign' },
+      { connector_source: 'manual_upload', connector_artifact_id: 'cart_1' },
+      { connector_artifact_id: 'cart_1' },
+      {},
+      null,
+      undefined,
+    ];
+    for (const shape of shapes) {
+      expect(isServerFetchedConnectorAnchor(shape)).toBe(
+        resolveServerFetchedConnectorSource(shape) !== null,
+      );
+    }
+  });
+});
+
 describe('isServerFetchedConnectorAnchor — fetch marker AND connector_artifact_id proof', () => {
   it('true only when a recognised fetch marker AND a connector_artifact_id are both present', () => {
     expect(
@@ -217,35 +270,35 @@ describe('verify path: declared-hash anchor omits the caveat end-to-end (mapAnch
   });
 });
 
-describe('mapAnchorRow — connector_source derivation (fetch-evidence gated)', () => {
-  it('derives connector_source for a server-FETCHED anchor (marker + connector_artifact_id)', () => {
+describe('mapAnchorRow — server_fetched_connector_source derivation (fetch-evidence gated)', () => {
+  it('derives server_fetched_connector_source for a server-FETCHED anchor (marker + connector_artifact_id)', () => {
     const anchor = mapAnchorRow(
       createRow({ metadata: { connector_source: 'docusign', connector_artifact_id: 'cart_1' } }),
     );
-    expect(anchor.connector_source).toBe('docusign');
+    expect(anchor.server_fetched_connector_source).toBe('docusign');
   });
 
   it('yields null for a DECLARED-hash anchor (marker present, NO connector_artifact_id)', () => {
     // rule-action-dispatcher.ts writes connector_source='docusign' but never
     // fetches — so it must not key the FETCH_TIME_SNAPSHOT "Measured…" claim.
     expect(
-      mapAnchorRow(createRow({ metadata: { connector_source: 'docusign' } })).connector_source,
+      mapAnchorRow(createRow({ metadata: { connector_source: 'docusign' } })).server_fetched_connector_source,
     ).toBeNull();
   });
 
   it('yields null for non-connector anchors and unrecognised markers', () => {
-    expect(mapAnchorRow(createRow()).connector_source).toBeNull();
+    expect(mapAnchorRow(createRow()).server_fetched_connector_source).toBeNull();
     expect(
       mapAnchorRow(
         createRow({ metadata: { connector_source: 'manual_upload', connector_artifact_id: 'cart_2' } }),
-      ).connector_source,
+      ).server_fetched_connector_source,
     ).toBeNull();
   });
 });
 
 describe('buildVerificationResult — fingerprint_rederivability pair (§1.5 / §1.8)', () => {
   it('emits the class AND its note for a connector-sourced anchor', () => {
-    const result = buildVerificationResult(createAnchor({ connector_source: 'google_drive' }));
+    const result = buildVerificationResult(createAnchor({ server_fetched_connector_source: 'google_drive' }));
     expect(result.fingerprint_rederivability).toBe(FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT);
     expect(result.fingerprint_rederivability_note).toBe(
       FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT],
@@ -258,22 +311,22 @@ describe('buildVerificationResult — fingerprint_rederivability pair (§1.5 / �
     expect('fingerprint_rederivability_note' in result).toBe(false);
   });
 
-  it('OMITS both fields when connector_source is absent (not measured — batch/oracle paths)', () => {
+  it('OMITS both fields when server_fetched_connector_source is absent (not measured — batch/oracle paths)', () => {
     const bare = createAnchor();
-    delete (bare as unknown as Record<string, unknown>).connector_source;
+    delete (bare as unknown as Record<string, unknown>).server_fetched_connector_source;
     const result = buildVerificationResult(bare);
     expect('fingerprint_rederivability' in result).toBe(false);
   });
 
   it('the class never travels without its note, and vice versa', () => {
-    const withPair = buildVerificationResult(createAnchor({ connector_source: 'docusign' }));
+    const withPair = buildVerificationResult(createAnchor({ server_fetched_connector_source: 'docusign' }));
     expect(withPair.fingerprint_rederivability !== undefined).toBe(
       withPair.fingerprint_rederivability_note !== undefined,
     );
   });
 
-  it('EMPTY_API_RICH_FIELDS stays silent — connector_source null emits nothing', () => {
-    expect(EMPTY_API_RICH_FIELDS.connector_source).toBeNull();
+  it('EMPTY_API_RICH_FIELDS stays silent — server_fetched_connector_source null emits nothing', () => {
+    expect(EMPTY_API_RICH_FIELDS.server_fetched_connector_source).toBeNull();
     const result = buildVerificationResult(createAnchor({ ...EMPTY_API_RICH_FIELDS }));
     expect('fingerprint_rederivability' in result).toBe(false);
   });
