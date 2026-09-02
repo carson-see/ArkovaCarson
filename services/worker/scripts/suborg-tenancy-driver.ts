@@ -331,6 +331,7 @@ export function parseArgs(argv: string[]): { args: DriverArgs; blockers: string[
       case '--service-role-key': args.serviceRoleKey = next; i += 1; break;
       case '--anon-key': args.anonKey = next; i += 1; break;
       case '--target-url': args.targetUrl = next; i += 1; break;
+      case '--worker-bearer': args.bearerToken = next; i += 1; break;
       case '--evidence-jsonl': args.evidenceJsonl = next; i += 1; break;
       case '--admission-json': args.admissionJson = next; i += 1; break;
       default: break;
@@ -369,7 +370,12 @@ async function main(): Promise<void> {
       const anon = new Rpc(args.supabaseUrl!, args.anonKey!, true);
 
       if (args.targetUrl) {
-        const health = await fetch(`${args.targetUrl}/health`);
+        // The rig service is --no-allow-unauthenticated, so the liveness leg
+        // needs a Cloud Run identity token. The supervisor mints a fresh one
+        // per cycle because these expire well inside a 48h window.
+        const health = await fetch(`${args.targetUrl}/health`, {
+          headers: args.bearerToken ? { authorization: `Bearer ${args.bearerToken}` } : {},
+        });
         row.checks.worker_health = health.ok;
         if (!health.ok) throw new Error(`worker /health -> ${health.status}`);
       }
