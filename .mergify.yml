@@ -85,6 +85,8 @@ queue_rules:
       # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
+      # Policy Lints (SCRUM-3804) — see the default queue's note.
+      - check-success = Policy Lints
       # Third-party notices freshness (ci.yml `notices-freshness`). The
       # /legal/third-party-notices page is generated from the dependency set, but
       # nothing ran its generator in CI: the data file drifted for over a month
@@ -144,6 +146,8 @@ queue_rules:
       # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
+      # Policy Lints (SCRUM-3804) — see the default queue's note.
+      - check-success = Policy Lints
       # Third-party notices freshness — see the note on this check in the
       # s33-wave2-corpus queue above.
       - check-success = Third-Party Notices Freshness
@@ -217,6 +221,19 @@ queue_rules:
       # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
+      # Policy Lints (SCRUM-3804): the consolidated governance-lint job
+      # (coverage monotonic, count:'exact' baseline, feedback rules,
+      # config-drift, MCP tool-claim parity, HANDOFF verification lint,
+      # Confluence coverage, do-not-merge body/label parity). The ci.yml job
+      # has run on every PR but was never listed here, so it reported without
+      # blocking — and every override label documented for its steps
+      # (mcp-claim-parity-reviewed, handoff-narrative-only,
+      # coverage-drop-allowed, …) was a no-op AS A MERGE GATE, because even a
+      # red job stopped nothing. The job carries no job-level `if:` and no
+      # path filter, so it reports on every ci.yml PR run; it shares only the
+      # paths-ignore caveat documented above. Pinned by
+      # scripts/ci/mergify-policy-lints-gate.test.ts.
+      - check-success = Policy Lints
       # Third-party notices freshness — see the note on this check in the
       # s33-wave2-corpus queue above.
       - check-success = Third-Party Notices Freshness
