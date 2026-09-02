@@ -72,7 +72,11 @@ function makeDeps(queues: TableQueues, admin?: Record<string, unknown>): AdminPr
 }
 
 function orgInput(over: Record<string, unknown> = {}) {
-  const r = validateCreateOrganizationInput({ display_name: 'PlanBook', ...over });
+  const r = validateCreateOrganizationInput({
+    display_name: 'PlanBook',
+    idempotency_key: '99999999-9999-4999-8999-999999999999',
+    ...over,
+  });
   if (!r.ok) throw new Error(`bad test fixture: ${r.error}`);
   return r.value;
 }
@@ -94,6 +98,16 @@ beforeEach(() => {
 // ─────────────────────────── input validation ───────────────────────────
 
 describe('validateCreateOrganizationInput', () => {
+  it('requires an idempotency_key — an optional atomicity guarantee is not one', () => {
+    const r = validateCreateOrganizationInput({ display_name: 'A' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/idempotency_key/);
+  });
+
+  it('rejects a non-uuid idempotency_key', () => {
+    expect(validateCreateOrganizationInput({ display_name: 'A', idempotency_key: 'nope' }).ok).toBe(false);
+  });
+
   it('requires a non-empty display_name', () => {
     expect(validateCreateOrganizationInput({}).ok).toBe(false);
     expect(validateCreateOrganizationInput({ display_name: '   ' }).ok).toBe(false);
@@ -106,7 +120,7 @@ describe('validateCreateOrganizationInput', () => {
   it('rejects a negative or non-integer anchor_quota but allows null (uncapped)', () => {
     expect(validateCreateOrganizationInput({ display_name: 'A', anchor_quota: -1 }).ok).toBe(false);
     expect(validateCreateOrganizationInput({ display_name: 'A', anchor_quota: 1.5 }).ok).toBe(false);
-    expect(validateCreateOrganizationInput({ display_name: 'A', anchor_quota: null }).ok).toBe(true);
+    expect(validateCreateOrganizationInput({ idempotency_key: '99999999-9999-4999-8999-999999999999', display_name: 'A', anchor_quota: null }).ok).toBe(true);
   });
 
   it('rejects negative credits', () => {
@@ -114,7 +128,7 @@ describe('validateCreateOrganizationInput', () => {
   });
 
   it('defaults legal_name to display_name and credits to 0', () => {
-    const r = validateCreateOrganizationInput({ display_name: 'PlanBook' });
+    const r = validateCreateOrganizationInput({ idempotency_key: '99999999-9999-4999-8999-999999999999', display_name: 'PlanBook' });
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.value.legal_name).toBe('PlanBook');
@@ -186,6 +200,35 @@ describe('createOrganization', () => {
       'admin_adjust_org_credit',
       expect.objectContaining({ p_amount: 2, p_actor: ACTOR }),
     );
+  });
+
+  it('is idempotent: a replayed submission returns the first org, not a second one', async () => {
+    // The unique index on creation_idempotency_key (0422) is what makes the
+    // guard atomic — the display_name pre-check cannot be.
+    const prior = { id: 'org-first', public_id: 'pub1', org_prefix: 'PLA', display_name: 'PlanBook' };
+    const deps = makeDeps({
+      organizations: [
+        chain({ data: [], error: null }),                                   // dup-name probe: clear
+        chain({ data: null, error: { code: '23505', message: 'duplicate key' } }), // insert: replay
+        chain({ data: [prior], error: null }),                              // fetch the original
+      ],
+      org_credits: [chain({ data: null, error: null })],
+      audit_events: [chain({ data: null, error: null })],
+    });
+
+    const r = await createOrganization(deps, ACTOR, orgInput());
+    expect(r.org_id).toBe('org-first');
+  });
+
+  it('surfaces internal_error when the replay lookup finds nothing', async () => {
+    const deps = makeDeps({
+      organizations: [
+        chain({ data: [], error: null }),
+        chain({ data: null, error: { code: '23505', message: 'duplicate key' } }),
+        chain({ data: [], error: null }),
+      ],
+    });
+    await expect(createOrganization(deps, ACTOR, orgInput())).rejects.toMatchObject({ code: 'internal_error' });
   });
 
   it('F3: rejects a duplicate display_name with org_exists and surfaces the existing id', async () => {

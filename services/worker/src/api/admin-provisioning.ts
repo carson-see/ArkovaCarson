@@ -130,6 +130,11 @@ const CreateOrganizationSchema = z
     credits: z.number().int().min(0).default(0),
     is_test: z.boolean().default(true),
     allow_duplicate_name: z.boolean().default(false),
+    // REQUIRED. The display_name pre-check below is SELECT-then-INSERT and so
+    // cannot be atomic; this key is what actually makes creation idempotent
+    // (migration 0422). The endpoint is new and has no other consumers, so it
+    // is required rather than optional — an optional guarantee is not one.
+    idempotency_key: z.string().uuid(),
   })
   .transform((v) => ({ ...v, legal_name: v.legal_name || v.display_name }));
 
@@ -227,12 +232,31 @@ export async function createOrganization(
       legal_name: input.legal_name,
       verification_status: 'UNVERIFIED',
       tier: 'FREE',
+      creation_idempotency_key: input.idempotency_key,
     })
     .select('id, public_id, org_prefix, display_name')
     .single();
 
-  const orgRow = created as { id: string; public_id: string | null; org_prefix: string | null } | null;
-  if (insertError || !orgRow) {
+  let orgRow = created as { id: string; public_id: string | null; org_prefix: string | null } | null;
+
+  // 23505 on the partial unique index = this exact submission already created
+  // an organization. That is a REPLAY, not a failure: return the organization
+  // the first request made. This is the atomic half of the duplicate guard —
+  // the display_name pre-check above only catches the slow, sequential case.
+  if ((insertError as { code?: string } | null)?.code === '23505') {
+    const { data: prior, error: priorError } = await db
+      .from('organizations')
+      .select('id, public_id, org_prefix, display_name')
+      .eq('creation_idempotency_key', input.idempotency_key)
+      .limit(1);
+    const priorRow = (prior as Array<{ id: string; public_id: string | null; org_prefix: string | null }> | null)?.[0];
+    if (priorError || !priorRow) {
+      logger.error({ error: sanitizeError(priorError ?? insertError) }, 'Admin provisioning: idempotent replay lookup failed');
+      throw new ProvisioningError('Failed to create the organization.', 'internal_error');
+    }
+    logger.info({ orgId: priorRow.id, actorId }, 'Admin provisioning: idempotent replay of organization creation');
+    orgRow = priorRow;
+  } else if (insertError || !orgRow) {
     logger.error({ error: sanitizeError(insertError) }, 'Admin provisioning: organization insert failed');
     throw new ProvisioningError('Failed to create the organization.', 'internal_error');
   }

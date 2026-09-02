@@ -49,10 +49,14 @@ export function CreateOrganizationDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
+  // One key per dialog session. Kept across the duplicate-name confirm so a
+  // double-click on "create it anyway" is still a replay, not a second org.
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
   function reset() {
     setDisplayName(''); setLegalName(''); setCapEnabled(true); setIsTest(true);
     setQuota('10'); setCredits('0'); setError(null); setDuplicateWarning(false);
+    setIdempotencyKey(crypto.randomUUID());
   }
 
   function handleClose() { reset(); onClose(); }
@@ -87,6 +91,7 @@ export function CreateOrganizationDialog({
           credits: parsed.credits,
           is_test: isTest,
           allow_duplicate_name: allowDuplicateName,
+          idempotency_key: idempotencyKey,
         }),
       });
       const data = await res.json();

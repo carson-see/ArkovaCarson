@@ -4663,6 +4663,7 @@ export type Database = {
           domain: string | null
           domain_verification_method: string | null
           domain_verification_token: string | null
+          creation_idempotency_key: string | null
           domain_verification_token_expires_at: string | null
           domain_verified: boolean | null
           domain_verified_at: string | null
@@ -4712,6 +4713,7 @@ export type Database = {
           domain?: string | null
           domain_verification_method?: string | null
           domain_verification_token?: string | null
+          creation_idempotency_key?: string | null
           domain_verification_token_expires_at?: string | null
           domain_verified?: boolean | null
           domain_verified_at?: string | null
@@ -4761,6 +4763,7 @@ export type Database = {
           domain?: string | null
           domain_verification_method?: string | null
           domain_verification_token?: string | null
+          creation_idempotency_key?: string | null
           domain_verification_token_expires_at?: string | null
           domain_verified?: boolean | null
           domain_verified_at?: string | null
