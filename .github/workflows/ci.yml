@@ -1030,6 +1030,21 @@ jobs:
         with:
           path: services/worker/circuits/artifacts
           key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
+          # Prefix fallback for when the exact key rotates — which every
+          # services/worker/package-lock.json bump does. Only an EXACT hit sets
+          # `cache-hit`, so on a fallback the two steps below still run and
+          # regenerate wasm/zkey/vkey from source with the current snarkjs;
+          # what the fallback carries over is the SHA-256-pinned build INPUTS
+          # (powersOfTau28_hez_final_14.ptau, circomlib-v2.0.5.tar.gz) that
+          # build.sh would otherwise re-download, and build.sh re-verifies
+          # both against its pins before use. Needed because the download path
+          # has no working source: on 2026-09-02 both public ptau hosts
+          # (storage.googleapis.com/zkevm and hermez.s3-eu-west-1) answered
+          # 403 AccessDenied, so the dependabot lockfile bump in PR #2606
+          # turned main's Tests job red (run 33669376517). Contract pinned by
+          # scripts/ci/ci-workflow-contract.test.ts.
+          restore-keys: |
+            zk-artifacts-${{ runner.os }}-circom2.1.9-
 
       - name: Install circom (cache miss only)
         id: install-circom
