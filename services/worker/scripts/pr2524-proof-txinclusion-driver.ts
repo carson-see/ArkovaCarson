@@ -1442,7 +1442,7 @@ export async function runLive(args: DriverArgs, deps: LiveDeps = {}): Promise<Dr
   const proofHeaders: Record<string, string> = { accept: 'application/json' };
   if (args.bearerToken) proofHeaders['x-serverless-authorization'] = `Bearer ${args.bearerToken}`;
   if (sampleAnchor?.public_id) {
-    const res = await fetchImpl(`${targetUrl}/api/v1/proof/${encodeURIComponent(sampleAnchor.public_id)}`, {
+    const res = await fetchImpl(`${targetUrl}/api/v1/verify/${encodeURIComponent(sampleAnchor.public_id)}/proof`, {
       method: 'GET',
       headers: proofHeaders,
     });
