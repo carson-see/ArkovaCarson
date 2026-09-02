@@ -1,6 +1,15 @@
 # agents.md — e2e/
 
-_Last updated: 2026-08-29 (DocuSign record deep links spec added to record-detail.spec.ts)._
+_Last updated: 2026-09-02 (rc-batch-0902-frontend-evidence.spec.ts — PR #2528 targeted T1 evidence)._
+
+## 2026-09-02 — `rc-batch-0902-frontend-evidence.spec.ts` (PR #2528, frontend-targeted T1 in the rc/soak-batch-2026-09-02 RC)
+
+PR #2528 (`fix/published-verification-pointers`, head `7781bf0e`) is frontend-only, so the batched worker driver (`services/worker/scripts/rc-batch-0902-driver.ts`) does not cover it; this spec is its targeted evidence per the frontend path in `scripts/ci/check-staging-evidence.ts` (`T2_FRONTEND_FIELDS`). Two tests, each writing a JSON evidence file to `RC0902_EVIDENCE_DIR` (default `test-results/rc-batch-0902/`, gitignored) and attaching it to the report:
+
+1. **`/verify/independent`** (unauthenticated — `test.use({ storageState: { cookies: [], origins: [] } })`): reads every `a[href]`, the body text and every `<code>` block from the rendered page and asserts nothing names `verify.sh`, nothing links or points to an `arkova.ai/verify` host without the `app.` prefix (the exact regexes from `src/lib/publishedVerificationPointers.test.ts`), no `download` link remains, and — guarding the guard — at least four step commands rendered, step 3 invokes `node packages/verifier-cli/dist/cli.js …`, and the library-before-CLI build command is shown.
+2. **Certificate QR** (needs the normal E2E stack): creates a SECURED anchor via `createTestAnchor`, downloads the PDF from the real `/records/:id` page, and parses the `re` operators out of the content stream (same `paintedRects` approach as `src/lib/generateAuditReport.test.ts`, page height from `/MediaBox`). Asserts the painted rectangles are EXACTLY the runs of `buildQrMatrix(canonicalVerifyUrl(publicId))` in sorted geometry (count + position, so a transposed or absent QR fails), that `https://app.arkova.ai/verify/<publicId>` is printed as text, and that no `(…) Tj` run names `verify.sh` or a non-app verify host.
+
+Each evidence file records `servedBuild` (true when the origin has no `/@vite/client`, i.e. `vite preview` of a real build; false on the dev server) — cite whichever was actually used. **Not executed against a live stack in the authoring worktree** (no `.env.test`; the shared local Supabase containers belong to other sessions and were not touched); verified via `npx playwright test --list` and by running the unauthenticated page test against `vite preview` of a fresh build — see the RC's evidence notes for the real output.
 
 ## 2026-08-29 — DocuSign Record case added to `record-detail.spec.ts` (bilateral rollout, frontend-targeted T2)
 
