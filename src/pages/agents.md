@@ -1,6 +1,33 @@
 # agents.md — pages
 _Last updated: 2026-08-30_
 
+## 2026-08-30 SCRUM-3532 / SCRUM-3670 — fetch failures no longer masquerade as empty data
+
+Two page-level consumption gaps (deferred surfaces documented by SCRUM-1999, which bounded
+itself to OrgRegistryTable/ReportsList):
+
+- `DashboardPage.tsx` — `useAnchors` has exposed `error` since the React-Query migration but
+  the page never destructured it, so a failed anchors fetch fell through to the "secure your
+  first document" onboarding empty state. Now renders the canonical `DataErrorBanner`
+  (`data-testid="records-fetch-error-banner"`, title `DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE`,
+  message `TOAST.RECORDS_FETCH_FAILED`, Retry → `refreshAnchors`) inside the records
+  CardContent; the empty state and the filter no-results block are gated on `!recordsError`,
+  and stale records from a previous successful fetch stay visible below the banner
+  (React-Query keeps `data` on refetch error). The raw hook `error` string is deliberately
+  NOT rendered — generic copy only (§1.4; the hook's error is raw PostgREST text). Same
+  treatment in `src/components/vault/VaultDashboard.tsx`. Tests:
+  `DashboardPage.fetch-error.test.tsx` (4 cases, red-first).
+- `ComplianceDashboardPage.tsx` — `useJurisdictionRules()` now exposes `error`/`refetch`
+  (see `src/hooks/agents.md`); the page renders a retryable `DataErrorBanner`
+  (`data-testid="compliance-rules-error-banner"`) above the jurisdiction/industry selectors
+  when the public rules fetch fails, instead of silently empty pickers. The selects stay
+  mounted — their US-CA/accounting fallback options still drive the score card during retry.
+  Copy is local `RULES_ERROR_COPY` (§1.3-clean; copy.ts locked under concurrent PRs — same
+  precedent as `ReportsList.tsx`'s `REPORTS_STATE_COPY`). Both pre-existing suites' hook
+  mocks updated to the full new return shape. Tests:
+  `ComplianceDashboardPage.rulesError.test.tsx` (3 cases, red-first). Known remaining gap,
+  on the record: the page still does not consume `useComplianceScore().error` (score/gap
+  fetch failures render as "No data") — out of SCRUM-3670's scope, untracked.
 ## 2026-08-30 SCRUM-3524 — `OrgProfilePage.tsx` `handleInvite` propagates the invite result
 
 `useInviteMember.inviteMember` never rethrows (SCRUM-1979 toast-safety) — it

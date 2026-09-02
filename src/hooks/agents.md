@@ -1,5 +1,19 @@
 # agents.md — hooks
-_Last updated: 2026-08-12_
+_Last updated: 2026-08-30_
+
+## 2026-08-30 — `useComplianceScore.ts` `useJurisdictionRules` error surfacing (SCRUM-3670)
+
+`useJurisdictionRules()` swallowed fetch failures (bare `catch {}`, no else on `!res.ok`),
+so an HTTP 500 from the public `/api/v1/compliance/rules` endpoint was indistinguishable
+from an empty rule set — the compliance-score pickers rendered silently empty. Now mirrors
+the sibling `useComplianceScore()` shape: `useCallback` fetch that sets `error` on non-ok
+(`Failed to fetch compliance rules (HTTP <status>)`) and on throw (`err.message` /
+`'Network error'`), returned as `{ rules, jurisdictions, industries, loading, error, refetch }`.
+The effect uses the sibling's `async function run()` wrapper (avoids
+`react-hooks/set-state-in-effect`). Consumers render generic copy, never the raw `error`
+string. Sole consumer: `ComplianceDashboardPage` (see `src/pages/agents.md`). Tests:
+`useComplianceScore.test.tsx` (4 cases, red-first — pins the HTTP-status message, the
+network-failure message, and `refetch()` recovery).
 
 ## 2026-08-12 — `useApiKeys.ts`: revoke/delete actually reachable now (FD-P7)
 
