@@ -960,8 +960,20 @@ async function drainOneClaimedRow(
       // Deliberately NO orphan neutralization here: this outcome does not
       // prove the anchor is unlinked (the new owner may have linked it, or the
       // gate CAS may have errored after committing), and soft-deleting a live
-      // anchor is worse than leaving an orphan an operator can see.
-      deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease before debit — stopping row');
+      // anchor is worse than leaving one an operator can see.
+      //
+      // But if THIS pass inserted the anchor, it may now be a PENDING,
+      // UNLINKED row — and `claim_pending_anchors` claims any PENDING,
+      // undeleted anchor, so it is broadcast-eligible. That must not be a
+      // logger.warn nobody reads: alert it explicitly so an operator can
+      // decide whether it is a duplicate to retire or a legitimate hand-off.
+      if (materialized.created === true) {
+        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'unlinked_anchor_left_by_lost_lease' });
+      }
+      deps.logger.warn(
+        { orgId, artifactId: row.id, anchorId, anchorCreatedByThisPass: materialized.created === true },
+        'connector-artifact lost lease before debit — stopping row',
+      );
       return;
     }
 
@@ -1049,12 +1061,29 @@ type LinkOutcome = 'linked' | 'superseded' | 'lost_lease';
  *
  * DISCRIMINATING THE TWO ZERO-ROW CAUSES. A zero-row match means either the
  * fingerprint moved OR the lease was lost. We must not conflate them: a
- * superseded row should be REQUEUED (retry against fresh content), while a
- * lost-lease row must be left exactly as its new owner left it. Rather than
- * re-reading (another read-then-act), the discrimination is itself a guarded
- * CAS: attempt `processing → queued`. It matches ONLY while we still hold the
- * lease — so a match proves "ours, and the fingerprint was the mismatch"
- * (superseded), and a miss proves the lease is gone (lost_lease).
+ * superseded row should eventually be REQUEUED (retry against fresh content),
+ * while a lost-lease row must be left exactly as its new owner left it. Rather
+ * than re-reading (another read-then-act), the discrimination is a guarded
+ * LEASE PROBE: a `processing → processing` CAS that only touches `updated_at`.
+ * It matches ONLY while we still hold the lease — so a match proves "ours, and
+ * the fingerprint was the mismatch" (superseded) and a miss proves the lease is
+ * gone (lost_lease).
+ *
+ * THE PROBE DELIBERATELY DOES NOT REQUEUE, and that is a correctness
+ * requirement, not a style choice. `defaultMaterializeAnchor` stamps
+ * `external_ref` into the anchor's metadata, and `findExistingEnvelopeAnchor`
+ * looks anchors up by exactly `metadata->>external_ref` (filtering only
+ * `deleted_at IS NULL` and `status <> 'REVOKED'`) — so an un-neutralized orphan
+ * is DISCOVERABLE by the envelope-reuse guard. Requeuing here, before
+ * `abortSupersededMint` has soft-deleted that orphan, would open a window in
+ * which a concurrent drain (prod runs Cloud Run `minScale=2`, so two instances
+ * execute this cron simultaneously, and `list_drainable_connector_orgs` does
+ * not lease orgs) re-claims the row, finds the orphan through the envelope
+ * guard, REUSES it (`created:false`, so it is never neutralized), links it and
+ * broadcasts it. That is the forged fingerprint reaching Bitcoin by a second
+ * route: the gate closes the front door and the orphan is the back one. So the
+ * lease is HELD across the neutralization and released only afterwards, by
+ * `abortSupersededMint`.
  */
 async function linkMaterializedAnchor(
   deps: ConnectorArtifactDrainDeps,
@@ -1083,41 +1112,78 @@ async function linkMaterializedAnchor(
   }
   if (data != null) return 'linked';
 
-  // Zero rows. Discriminate WITHOUT a read: this CAS matches only while we
-  // still hold the lease.
-  const { data: requeued, error: requeueError } = await deps.db
+  // Zero rows. Discriminate WITHOUT a read and WITHOUT releasing the lease:
+  // this CAS matches only while the row is still ours, and leaves it
+  // `processing` so no other pass can claim it (or reach our orphan through the
+  // envelope guard) before `abortSupersededMint` has neutralized it.
+  const { data: stillOurs, error: probeError } = await deps.db
     .from('connector_artifact')
-    .update({ status: 'queued', updated_at: new Date().toISOString() })
+    .update({ updated_at: new Date().toISOString() })
     .eq('id', row.id)
     .eq('org_id', orgId)
     .eq('status', 'processing')
     .select('id')
     .maybeSingle();
 
-  if (requeueError) {
-    deps.logger.warn({ error: requeueError, orgId, artifactId: row.id }, 'connector-artifact superseded-mint requeue failed');
+  if (probeError) {
+    deps.logger.warn({ error: probeError, orgId, artifactId: row.id }, 'connector-artifact superseded-mint lease probe failed');
     return 'lost_lease';
   }
-  return requeued != null ? 'superseded' : 'lost_lease';
+  return stillOurs != null ? 'superseded' : 'lost_lease';
 }
 
 /**
- * The superseded-mint abort. `linkMaterializedAnchor` has ALREADY requeued the
- * row (that requeue is what proved the outcome), so this handles the fallout:
+ * Release the lease on a superseded row: `processing → queued`, so the next
+ * drain pass re-claims it and captures the HEALED fingerprint. Guarded, and
+ * called ONLY after the orphan anchor is provably gone — see
+ * `linkMaterializedAnchor`'s note on why the ordering is load-bearing.
+ */
+async function releaseSupersededRow(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  id: string,
+): Promise<boolean> {
+  const { data, error } = await deps.db
+    .from('connector_artifact')
+    .update({ status: 'queued', updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('org_id', orgId)
+    .eq('status', 'processing')
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    deps.logger.warn({ error, orgId, artifactId: id }, 'connector-artifact superseded-mint requeue failed');
+    return false;
+  }
+  return data != null;
+}
+
+/**
+ * The superseded-mint abort. We STILL HOLD the lease here (the discrimination
+ * in `linkMaterializedAnchor` is a non-destructive probe, deliberately — see
+ * its header), and the order below is the whole point:
  *
- *  1. Neutralize the ORPHAN anchor — but ONLY one THIS pass actually INSERTED
- *     (`materialized.created === true`). An anchor we merely REUSED (the
- *     envelope guard, or the 23505 duplicate-resolve) belongs to another writer
- *     and may be live; soft-deleting it would be data loss. Absence of the flag
- *     is treated as "not ours" — fail-safe, not fail-destructive.
- *  2. If the guarded soft-delete matched zero rows, the orphan already advanced
- *     past PENDING (a concurrent batch-anchor claimed it). That is a REAL
- *     integrity event — an anchor may be broadcast carrying a superseded
- *     fingerprint — and gets its own loud, distinct alert. Never swallowed,
- *     and never retried into a race with the broadcaster.
+ *  1. Neutralize the ORPHAN anchor FIRST, while the row is still `processing`
+ *     and therefore unclaimable by any other pass. Only one THIS pass actually
+ *     INSERTED (`materialized.created === true`) is a candidate: an anchor we
+ *     merely REUSED (the envelope guard, or the 23505 duplicate-resolve)
+ *     belongs to another writer and may be live, so soft-deleting it would be
+ *     data loss. Absence of the flag is treated as "not ours" — fail-safe, not
+ *     fail-destructive.
+ *  2. ONLY THEN release the lease (`processing → queued`) so the next pass
+ *     re-drains against the healed fingerprint.
+ *
+ * If the guarded soft-delete matches zero rows the orphan already advanced past
+ * PENDING (a concurrent batch-anchor claimed it) and is now BROADCASTING —
+ * which `findExistingEnvelopeAnchor` STILL matches, since it excludes only
+ * deleted and REVOKED anchors. Releasing the lease in that state would hand the
+ * next pass a live, forged anchor to reuse, so we FAIL CLOSED: keep the row
+ * `processing`, alert loudly, and leave it to the operator. (The stuck-row
+ * reaper will eventually re-queue it — by which time the alert has been
+ * standing for 15 minutes.) We never retry into a race with the broadcaster.
  *
  * Counted as `supersededRequeued`, NOT `failed`: nothing failed. The gate did
- * its job, the charge never happened, and the row is drainable again.
+ * its job and the charge never happened.
  */
 async function abortSupersededMint(
   deps: ConnectorArtifactDrainDeps,
@@ -1134,12 +1200,22 @@ async function abortSupersededMint(
       deps.logger.error({ err, orgId, artifactId: row.id, anchorId: materialized.anchorId }, 'connector-artifact orphan-anchor neutralization threw');
     }
     if (!neutralized) {
+      // FAIL CLOSED: keep the lease. A re-drainable row plus a live orphan the
+      // envelope guard can find is exactly how the forged fingerprint would get
+      // re-adopted.
       deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'orphan_anchor_neutralize_failed' });
       deps.logger.error(
         { orgId, artifactId: row.id, anchorId: materialized.anchorId },
-        'connector-artifact could NOT neutralize the orphan anchor left by a superseded mint — it may be claimed and broadcast carrying a superseded fingerprint; operator follow-up required',
+        'connector-artifact could NOT neutralize the orphan anchor left by a superseded mint — row deliberately LEFT in-flight (not requeued) so the envelope guard cannot re-adopt it; operator follow-up required',
       );
+      result.supersededRequeued += 1;
+      return;
     }
+  }
+
+  // The orphan is gone (or there never was one) — safe to hand the row back.
+  if (!(await releaseSupersededRow(deps, orgId, row.id))) {
+    deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease at superseded-mint release — stopping row');
   }
 
   result.supersededRequeued += 1;

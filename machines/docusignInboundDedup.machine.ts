@@ -522,8 +522,12 @@ export const docusignInboundDedupMachine = defineMachine({
     // is what `anchorMaterialized` models, so it is outside this machine's
     // state. The real code neutralizes it with a guarded soft-delete
     // (`deleted_at`, the filter both `claim_pending_anchors` and
-    // `findExistingEnvelopeAnchor` already apply) and alerts loudly when that
-    // guard matches zero rows; that behaviour is pinned by unit tests in
+    // `findExistingEnvelopeAnchor` already apply) BEFORE releasing the row's
+    // lease, and if that soft-delete fails it keeps the lease and alerts
+    // rather than handing a re-drainable row back next to a live orphan the
+    // envelope guard could re-adopt. This action's reset to NONE therefore
+    // models only the SUCCESS path (orphan gone, row re-drainable); the
+    // fail-closed path has no reset and is pinned by unit tests in
     // `connector-artifact-drain.test.ts`, not by TLC. Adding an
     // orphan-lifecycle variable here would multiply the state space to prove
     // a property the type system and a test already carry.

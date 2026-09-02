@@ -1670,14 +1670,98 @@ describe('claim-to-mint gate — DB-failure branches are fail-closed', () => {
 
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
 
-    // The throw is contained: the row still lands requeued and BOTH alerts fire.
+    // The throw is CONTAINED (no row-level crash) and counted...
     expect(result.supersededRequeued).toBe(1);
-    expect(h.rows[0].status).toBe('queued');
+    // ...but a throw means the orphan is NOT provably gone, so the abort fails
+    // CLOSED: the lease is kept. Handing the row back while a live orphan is
+    // still discoverable by `findExistingEnvelopeAnchor` is how the forged
+    // fingerprint would get re-adopted by the next pass.
+    expect(h.rows[0].status).toBe('processing');
+    expect(h.rows[0].status).not.toBe('queued');
     expect(h.alert).toHaveBeenCalledWith(
       expect.objectContaining({ artifactId: ART_1, reason: 'orphan_anchor_neutralize_failed' }),
     );
+  });
+});
+
+describe('claim-to-mint abort — ORDERING (the orphan must die before the row is re-drainable)', () => {
+  it('neutralizes the orphan while STILL HOLDING the lease — never requeues first', async () => {
+    // WHY THIS ORDER IS LOAD-BEARING. `defaultMaterializeAnchor` stamps
+    // `external_ref` into the anchor's metadata, and `findExistingEnvelopeAnchor`
+    // looks anchors up by exactly `metadata->>external_ref` (filtering only
+    // deleted_at IS NULL / status != REVOKED). So an un-neutralized orphan is
+    // DISCOVERABLE by the envelope-reuse guard.
+    //
+    // If the row is requeued BEFORE the orphan is soft-deleted, a concurrent
+    // drain — prod runs Cloud Run minScale=2, so two instances run this cron
+    // simultaneously — can re-claim the row in that window, find the orphan via
+    // the envelope guard, REUSE it (`created:false`, so it is never
+    // neutralized), link it and broadcast it. That is the forged fingerprint
+    // reaching Bitcoin by a different route: the gate closed the front door and
+    // the orphan is the back one.
+    const h = makeHarness([
+      makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: 'f'.repeat(64) }),
+    ]);
+    h.deps.materializeAnchor = (async () => {
+      h.rows[0].fingerprint_sha256 = 'e'.repeat(64); // heal lands mid-materialize
+      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
+    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
+
+    let statusAtNeutralizeTime: string | null = null;
+    h.deps.neutralizeOrphanAnchor = (async () => {
+      statusAtNeutralizeTime = h.rows[0].status;
+      return true;
+    }) as unknown as ConnectorArtifactDrainDeps['neutralizeOrphanAnchor'];
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    // The lease is still ours when the orphan dies — no other pass can have the row.
+    expect(statusAtNeutralizeTime).toBe('processing');
+    // ...and only then is it handed back for re-drain.
+    expect(h.rows[0].status).toBe('queued');
+    expect(result.supersededRequeued).toBe(1);
+  });
+
+  it('a FAILED neutralization does NOT hand the row back: leaving it re-drainable would reuse the live orphan', async () => {
+    // Neutralize returning false means the orphan advanced past PENDING (a
+    // concurrent batch-anchor claimed it). It is now BROADCASTING — which
+    // `findExistingEnvelopeAnchor` still matches (it excludes only deleted and
+    // REVOKED). Requeuing here would hand the next pass a live, forged anchor
+    // to reuse. Fail closed: keep the lease, alert, let the operator resolve.
+    const h = makeHarness([
+      makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: 'f'.repeat(64) }),
+    ]);
+    h.deps.materializeAnchor = (async () => {
+      h.rows[0].fingerprint_sha256 = 'e'.repeat(64);
+      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
+    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
+    h.deps.neutralizeOrphanAnchor = (async () => false) as unknown as ConnectorArtifactDrainDeps['neutralizeOrphanAnchor'];
+
+    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(h.rows[0].status).not.toBe('queued');
+    expect(h.rows[0].status).toBe('processing');
     expect(h.alert).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: ART_1, reason: 'artifact_fingerprint_superseded_requeued' }),
+      expect.objectContaining({ artifactId: ART_1, reason: 'orphan_anchor_neutralize_failed' }),
+    );
+  });
+
+  it('a LOST LEASE after this pass inserted an anchor still ALERTS — an unlinked PENDING anchor is broadcast-eligible', async () => {
+    // `claim_pending_anchors` claims any PENDING/undeleted anchor. An orphan we
+    // created and could not link is therefore broadcast-eligible, and until now
+    // this path only wrote a logger.warn about the lease — nothing paged.
+    const h = makeHarness([
+      makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: FP_1 }),
+    ]);
+    h.deps.materializeAnchor = (async () => {
+      h.rows[0].status = 'queued'; // reaper took the row; fingerprint UNCHANGED
+      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
+    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
+
+    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(h.alert).toHaveBeenCalledWith(
+      expect.objectContaining({ artifactId: ART_1, reason: 'unlinked_anchor_left_by_lost_lease' }),
     );
   });
 });
