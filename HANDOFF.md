@@ -763,8 +763,19 @@ separately). Full verdicts, defects, and landing-order constraints:
 - **Clock basis = Cloud Run worker uptime**; 12h T2 window **2026-09-02T19:49:27Z → 2026-09-03T07:49:27Z**.
   Scheduler: `…-populate-confirmation-proofs` + `…-check-confirmations` (`*/5`); `batch-anchors` deliberately absent → nothing broadcasts.
 - Manifest: `docs/staging/rc-manifests/rc-batch-2026-09-02.json` (per-PR head SHA coverage, `approval_status: pending`).
-- RC seed fixture + driver (`soak/rc-batch-0902-driver`) land when the authoring agent finishes; until then the window
-  accrues worker-uptime + scheduler cycles only.
+- **Admission:** `docs/staging/rc-batch-0902/isolated-rig-provision-rc-batch-0902.json`. **Fixture** `scripts/staging/seed-rc-batch-0902-fixture.sql`
+  applied ~20:23Z (11 SECURED anchors on real receipts, 11 proofs, 10 attestations, 2 orgs). **Driver** `services/worker/scripts/rc-batch-0902-driver.ts`
+  on `soak/rc-batch-0902-driver` @ `31569f76e` (sha256 `29fd4c4d3824cb887464ba9e28befa334a529b966989c9783452f9b33bd994df`), 17 assertions
+  (A27 verdict/bundle, A25 attestation park + PII sweep, A26 detect-reorgs manifest + endpoint). **`rc-live-01` 20:25Z: 17/17 pass,
+  `evidenceForSoak=true`** (`docs/staging/rc-batch-0902/evidence/rc-live-01.jsonl`); a detached loop re-runs it every 2 h until the window closes.
+- **0417 replay gap, reconciled:** the post-seed preflight found migration `0417` (in the RC head; present in the prod migration ledger since 2026-08-22) missing from the rig;
+  applied 20:31:13Z via `supabase db push --linked --include-all` (one file), preflight from the RC head checkout back to `clean_mirror` 7/7
+  at 20:31:20Z (`post-reconcile-preflight-rc-batch-0902.json`). Full sequence + why `rc-live-01` stays valid: `evidence/E1-…-0417-reconciliation-2026-09-02.md`. Filed SCRUM-3951.
+- **Rollback rehearsal done 20:32Z** (`evidence/E2-rollback-rehearsal-2026-09-02.md`): prod image `8147ed3a…` booted healthy as a zero-traffic tagged
+  revision, serving instance untouched (uptime continuous), revision then deleted.
+- **#2528 targeted frontend evidence: QR works end-to-end — YES** (`evidence/frontend-2528-qr/frontend-2528-qr-e2e.md`): certificate QR decodes to
+  `https://app.arkova.ai/verify/<id>` (jsQR on the matrix and on the rasterised PDF), prod renders `ARK-DOC-9G5HQZ` Secured at 1280/375 and under an iOS
+  Safari UA, `ARK-DOC-ZZZZZZ` fails honestly, 38/38 vitest.
 - **Do not** touch this rig, its Scheduler jobs, `rc/soak-batch-2026-09-02`, or the four member PR branches.
 
 **(superseded above — RC batch rig was STANDING at the previous refresh.)**
