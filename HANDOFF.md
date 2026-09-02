@@ -726,6 +726,15 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
+**OPEN PROD FINDING (2026-09-02, SCRUM-3953, P1/T3) — `anchor_proofs.block_height` is stale on 711,250 of 714,129 rows (99.6 %).**
+The broadcast path stores the chain tip at broadcast time (`chain/signet.ts` `broadcastSignedTx`, "observability only") and `publicRecordAnchor.ts`
+persists it into `anchor_proofs`; confirmation corrects only `anchors.chain_block_height` (384/384 correct), and the populate job re-asserts the stale
+proof-row value next to the correct hash/header. `block_timestamp` is wrong on the same rows. Public API / webhooks / SDK read `anchors` and are
+correct; the downloadable audit certificate reads the proof row, prints "Network Record #N-2" and its embedded packet fails `arkova-verify --rpc`
+with `height_mismatch`. Not a regression (since PR #761, 2026-05-11); the current worker build still writes it. Audience today: the Arkova
+public-records org only. Finding, 476-row chain check and T3 fix design: `docs/staging/findings/prod-block-height-2026-09-02/finding.md`.
+Supersedes the "44 block hashes at more than one height" thread — same mechanism.
+
 **RUNNING — PR #2524 T3 isolated soak (`feat/proof-tx-inclusion-branch`, migration `0427`), started 2026-09-02.**
 - **Rig:** isolated Supabase `uqobkjhlnqmcpjidngxr` (`arkova-soak-proof-txincl-0427`, us-east-2),
   ledger head **0427** (119 rows; `0381` applied via session-pooler psql + ledger row per
