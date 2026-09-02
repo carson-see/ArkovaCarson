@@ -33,7 +33,7 @@ guard_probe() {
   # ONE psql session: set_config is session-scoped, so the role GUC and the
   # INSERT it governs MUST share a connection. Splitting them across `psql -c`
   # calls silently ran every branch as an untrusted caller (cycle 1: "0000").
-  local n="$1" out
+  local n="$1-$(date -u +%s)-$$" out
   out="$(psql "$PGURI" -At -v ON_ERROR_STOP=1 <<SQL 2>/dev/null | tail -1
 SELECT set_config('request.jwt.claim.role','',false);
 INSERT INTO public.anchors (user_id,org_id,fingerprint,filename,metadata) VALUES
@@ -67,6 +67,12 @@ cat <<JSON
 JSON
 }
 newid() { uuidgen | tr 'A-Z' 'a-z'; }
+# A driver killed between a probe INSERT and its DELETE leaves GUARDPROBE rows
+# behind. Combined with cycle numbering restarting at 1 on relaunch, that made
+# the assertion subquery match 2 rows -> "more than one row returned by a
+# subquery used as an expression" -> empty result -> guard="0000", i.e. a
+# SPURIOUS guard failure that looks exactly like the 0423 trigger breaking.
+psql "$PGURI" -At -c "DELETE FROM public.anchors WHERE filename LIKE 'GUARDPROBE-%';" >/dev/null 2>&1
 CYCLE=0; PREV_UPTIME=0; RESTARTS=0
 while [ "$(date -u +%s)" -lt "$END_EPOCH" ]; do
   CYCLE=$((CYCLE+1)); TS="$(date -u +%s)"
