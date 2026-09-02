@@ -107,8 +107,9 @@ describe('cloud-scheduler.sh — ce-registry-drift-check job declaration', () =>
  * `org-queue-scheduler` (two customer anchors PENDING for three days),
  * `nonce-sweep` (SOC 2 CC7.4 control that never executed), and
  * `drive-file-changed` (launch-critical drain with live producers) went
- * silently untriggered — in-process node-cron is dormant on Cloud Run
- * (PROOF-03), so an unbound route NEVER runs in production.
+ * silently untriggered — in-process node-cron is not a durable trigger and does
+ * not fire at all on a revision scaled to zero (PROOF-03, as narrowed by
+ * SCRUM-3384), so an unbound route cannot be relied on to run in production.
  *
  * Adding a cron route without deciding its trigger fails this test; the
  * author must place it in one of the two registries in the same change.
