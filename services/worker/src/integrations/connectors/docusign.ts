@@ -9,6 +9,7 @@
  * payloads.
  */
 import { z } from 'zod';
+import { dbUuid } from '../../utils/db-row-validation.js';
 import {
   exchangeDocusignCode,
   fetchDocusignCombinedDocument,
@@ -18,7 +19,7 @@ import {
 } from '../oauth/docusign.js';
 
 export const DocusignEnvelopeCompletedJobPayload = z.object({
-  org_id: z.string().uuid(),
+  org_id: dbUuid('org_id'),
   integration_id: z.string().min(1),
   account_id: z.string().min(1),
   envelope_id: z.string().min(1),

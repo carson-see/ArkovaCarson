@@ -33,7 +33,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { ModuleInfos } from 'license-checker';
@@ -42,7 +42,7 @@ import { GPL_DENYLIST } from './license-denylist.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..');
-const OUTPUT_PATH = resolve(REPO_ROOT, 'src/data/thirdPartyNotices.generated.json');
+export const OUTPUT_PATH = resolve(REPO_ROOT, 'src/data/thirdPartyNotices.generated.json');
 const PINNED_PATH = resolve(__dirname, 'third-party-notices.pinned.json');
 const ALLOWLIST_PATH = resolve(__dirname, 'license-denylist.allowlist.json');
 
@@ -52,16 +52,6 @@ export interface NoticeEntry {
   license: string;
   repository?: string;
   sourceUrl?: string;
-  /**
-   * SCRUM-3559: strict MIT-family attribution wants the copyright line and the
-   * notice text themselves included, not just an SPDX identifier. Both come
-   * from the package's own published license file — `copyright` via
-   * license-checker's extractor, `licenseText` read verbatim from
-   * `licenseFile` (never license-checker's flattened `licenseText`, which
-   * rewrites quotes/newlines when invoked programmatically).
-   */
-  copyright?: string;
-  licenseText?: string;
 }
 
 export interface PinnedCopyleftEntry extends NoticeEntry {
@@ -106,13 +96,6 @@ async function runLicenseChecker(): Promise<ModuleInfos> {
         production: true,
         excludePrivatePackages: true,
         json: true,
-        // `copyright` asks license-checker to extract the copyright statement
-        // from each package's license file (SCRUM-3559). Deliberately NOT
-        // requesting `licenseText` here: invoked programmatically (no CLI
-        // `_args`), license-checker flattens newlines and rewrites quotes,
-        // which is no longer the verbatim upstream text. The verbatim read
-        // happens in attachVerbatimLicenseTexts() from `licenseFile` instead.
-        customFormat: { copyright: '' },
       },
       (err: Error, packages: ModuleInfos) => {
         if (err) reject(err);
@@ -122,61 +105,10 @@ async function runLicenseChecker(): Promise<ModuleInfos> {
   });
 }
 
-/**
- * Make `licenseText`/`copyright` trustworthy on every scanned row, in place.
- *
- * AUTHORITATIVE, not additive: when customFormat is set at all,
- * license-checker fills `licenseText` and `copyright` for EVERY package from
- * whatever file it settled on as `licenseFile` — and its detection falls back
- * to the package README when no license file exists. A README is not a
- * license text (live example: @img/sharp-libvips-* ships only a README, whose
- * prose would have been published on /legal/third-party-notices as "license
- * text"), so rows whose licenseFile fails the name check get BOTH fields
- * removed. Rows with a real license file get `licenseText` re-read verbatim
- * from disk — license-checker's programmatic value rewrites quotes/newlines —
- * and keep license-checker's extracted `copyright`.
- */
-export function attachVerbatimLicenseTexts(raw: ModuleInfos): void {
-  for (const row of Object.values(raw)) {
-    if (row.licenseFile && licenseFileLooksLikeLicense(row.licenseFile)) {
-      try {
-        row.licenseText = readFileSync(row.licenseFile, 'utf8');
-        continue;
-      } catch {
-        // Unreadable license file: fall through and strip rather than ship
-        // license-checker's flattened copy of a file we could not verify.
-      }
-    }
-    delete row.licenseText;
-    delete row.copyright;
-  }
-}
-
 /** license-checker reports `licenses` as either a string or a string[] (dual/multi-license). */
 function normalizeLicenses(licenses: string | string[] | undefined): string {
   if (!licenses) return 'UNKNOWN';
   return Array.isArray(licenses) ? licenses.join(' AND ') : licenses;
-}
-
-/**
- * license-checker pre-seeds every module with the customFormat default value
- * (an empty string) before extraction runs, so "no copyright found" arrives as
- * `''`, not `undefined`. Blank strings must never ship as rendered fields.
- */
-function normalizeOptionalText(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-/**
- * license-checker's licenseFile detection falls back to a package's README
- * when no license file exists. A README is not a license text — inlining one
- * on /legal/third-party-notices would publish arbitrary prose as if it were
- * the license — so only files whose NAME looks like a license/notice file are
- * eligible for verbatim inclusion.
- */
-export function licenseFileLooksLikeLicense(filePath: string): boolean {
-  return /licen[cs]e|copying|notice/i.test(basename(filePath));
 }
 
 export function classifyEntries(
@@ -208,14 +140,7 @@ export function classifyEntries(
     if (name === 'arkova') continue;
 
     const license = normalizeLicenses(row.licenses);
-    const entry: NoticeEntry = {
-      name,
-      version,
-      license,
-      repository: row.repository,
-      copyright: normalizeOptionalText(row.copyright),
-      licenseText: normalizeOptionalText(row.licenseText),
-    };
+    const entry: NoticeEntry = { name, version, license, repository: row.repository };
 
     if (GPL_DENYLIST.test(license)) {
       // Copyleft-family license. Only include it here if it has been
@@ -239,9 +164,38 @@ export function classifyEntries(
   return { general, unresolvedCopyleft, allowlistedCopyleft };
 }
 
-async function main() {
+export interface NoticesBuild {
+  output: {
+    generatedAt: string;
+    generalDependencies: NoticeEntry[];
+    copyleftDependencies: PinnedCopyleftEntry[];
+  };
+  /**
+   * Allowlist-cleared copyleft deps with NO pinned notice. Non-empty means the
+   * CLI below refuses to write — see main(). Returned rather than thrown so a
+   * caller that only needs to know whether the COMMITTED file still matches the
+   * dependency set (scripts/ci/check-third-party-notices-fresh.ts) can still
+   * compute that while this is outstanding, instead of being blinded by an
+   * unrelated compliance gap.
+   */
+  missingNotice: NoticeEntry[];
+  unresolvedCopyleft: NoticeEntry[];
+}
+
+/**
+ * Compose the notices payload. Pure of I/O apart from the license-checker scan
+ * and reading the two committed JSON inputs, so both the CLI and the freshness
+ * gate go through exactly one implementation — a second, re-derived copy in the
+ * checker would drift from this one and silently start comparing the wrong thing.
+ *
+ * `generatedAt` is injectable because it is the one field that legitimately
+ * changes on every run, and the freshness gate has to hold it constant to diff
+ * anything at all.
+ */
+export async function buildNotices(
+  generatedAt: string = new Date().toISOString(),
+): Promise<NoticesBuild> {
   const raw = await runLicenseChecker();
-  attachVerbatimLicenseTexts(raw);
   const allowlist = loadAllowlist();
   const pinned = loadPinned();
 
@@ -255,6 +209,21 @@ async function main() {
   const missingNotice = allowlistedCopyleft.filter(
     (entry) => !pinnedNames.has(`${entry.name}@${entry.version}`),
   );
+
+  return {
+    output: {
+      generatedAt,
+      generalDependencies: general,
+      copyleftDependencies: pinned,
+    },
+    missingNotice,
+    unresolvedCopyleft,
+  };
+}
+
+async function main() {
+  const { output, missingNotice, unresolvedCopyleft } = await buildNotices();
+
   if (missingNotice.length > 0) {
     console.error(
       '[generate-third-party-notices] FATAL: allowlist-cleared copyleft dependencies have no entry in ' +
@@ -278,32 +247,11 @@ async function main() {
     }
   }
 
-  // Enrich pinned entries with the copyright line / verbatim license text of
-  // the INSTALLED package where the scan found one (e.g. libheif-js and jszip
-  // ship real license files; the @img/sharp-* platform binaries publish none,
-  // so those keep their licenseTextUrls links only). Hand-curated fields in
-  // the pinned file always win over scan-derived ones.
-  const copyleftDependencies = pinned.map((entry) => {
-    const scanned = raw[`${entry.name}@${entry.version}`];
-    if (!scanned) return entry;
-    return {
-      ...entry,
-      copyright: entry.copyright ?? normalizeOptionalText(scanned.copyright),
-      licenseText: entry.licenseText ?? normalizeOptionalText(scanned.licenseText),
-    };
-  });
-
-  const output = {
-    generatedAt: new Date().toISOString(),
-    generalDependencies: general,
-    copyleftDependencies,
-  };
-
   mkdirSync(dirname(OUTPUT_PATH), { recursive: true });
   writeFileSync(OUTPUT_PATH, `${JSON.stringify(output, null, 2)}\n`);
   console.log(
-    `[generate-third-party-notices] Wrote ${general.length} general + ${copyleftDependencies.length} copyleft ` +
-    `entries to ${OUTPUT_PATH}`,
+    `[generate-third-party-notices] Wrote ${output.generalDependencies.length} general + ` +
+    `${output.copyleftDependencies.length} copyleft entries to ${OUTPUT_PATH}`,
   );
 }
 

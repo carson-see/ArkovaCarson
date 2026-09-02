@@ -68,7 +68,7 @@ describe('runOrgQueueScheduler', () => {
 
     const result = await runOrgQueueScheduler();
 
-    expect(result).toEqual({ claimed: 0, succeeded: 0, skipped: 0, failed: 0, processed: 0 });
+    expect(result).toEqual({ claimed: 0, succeeded: 0, skipped: 0, failed: 0, processed: 0, quarantined: 0 });
     expect(mockDbRpc).not.toHaveBeenCalled();
     expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
   });
@@ -100,7 +100,7 @@ describe('runOrgQueueScheduler', () => {
       p_limit: 10,
     });
     expect(mockProcessBatchAnchors).toHaveBeenCalledWith({ force: true, orgId: ORG_A });
-    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 3 });
+    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 3, quarantined: 0 });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({
       org_id: ORG_A,
       trigger: 'scheduled',
@@ -151,7 +151,7 @@ describe('runOrgQueueScheduler', () => {
       },
     );
 
-    expect(result).toEqual({ claimed: 2, succeeded: 1, skipped: 0, failed: 1, processed: 1 });
+    expect(result).toEqual({ claimed: 2, succeeded: 1, skipped: 0, failed: 1, processed: 1, quarantined: 0 });
     expect(mockProcessBatchAnchors).toHaveBeenNthCalledWith(1, { force: true, orgId: ORG_A });
     expect(mockProcessBatchAnchors).toHaveBeenNthCalledWith(2, { force: true, orgId: ORG_B });
     expect(upsert.mock.calls[0]?.[0]).not.toHaveProperty('last_success_at');
@@ -189,7 +189,7 @@ describe('runOrgQueueScheduler', () => {
       { now: () => new Date('2026-08-02T01:00:00.000Z'), workerId: 'worker-3' },
     );
 
-    expect(result).toEqual({ claimed: 1, succeeded: 0, skipped: 1, failed: 0, processed: 0 });
+    expect(result).toEqual({ claimed: 1, succeeded: 0, skipped: 1, failed: 0, processed: 0, quarantined: 0 });
     // No false run-evidence row.
     expect(insert).not.toHaveBeenCalled();
     // The claim IS released — otherwise the org stays locked and is never
@@ -218,15 +218,87 @@ describe('runOrgQueueScheduler', () => {
       { now: () => new Date('2026-08-02T01:00:00.000Z'), workerId: 'worker-3' },
     );
 
-    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 0 });
+    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 0, quarantined: 0 });
     expect(insert).toHaveBeenCalled();
     expect(upsert.mock.calls[0]?.[0]).toHaveProperty('last_run_at');
   });
 
-  it('fails loudly when the claim RPC returns malformed rows', async () => {
-    mockDbRpc.mockResolvedValue({ data: [{ org_id: 'not-a-uuid' }], error: null });
+  // BUG-2026-08-12-003 / FD-15. The pre-fix parse was a wholesale
+  // `z.array(ClaimedOrgSchema).safeParse(data)` that THREW on the first bad
+  // row, so a single malformed value denied service to every other org in the
+  // claim batch — the whole scheduler pass returned INTERNAL. The blast radius
+  // was the defect, not the literal. A bad row must now be quarantined and
+  // logged loudly while the rest of the batch runs.
+  it('quarantines a malformed row instead of denying service to the whole batch (FD-15)', async () => {
+    mockDbRpc.mockResolvedValue({
+      data: [{ org_id: 'not-a-uuid' }, { org_id: ORG_A, last_run_at: null }],
+      error: null,
+    });
+    mockProcessBatchAnchors.mockResolvedValue({
+      processed: 2,
+      batchId: 'batch-ok',
+      merkleRoot: 'c'.repeat(64),
+      txId: 'tx-ok',
+    });
 
-    await expect(runOrgQueueScheduler()).rejects.toThrow(/invalid rows/i);
+    const result = await runOrgQueueScheduler({ limit: 10 }, { workerId: 'worker-fd15' });
+
+    // The healthy org still got its run.
+    expect(mockProcessBatchAnchors).toHaveBeenCalledWith({ force: true, orgId: ORG_A });
+    expect(mockProcessBatchAnchors).toHaveBeenCalledTimes(1);
+    expect(result.claimed).toBe(1);
+    expect(result.succeeded).toBe(1);
+    expect(result.processed).toBe(2);
+    // The bad row is surfaced, not swallowed.
+    expect(result.quarantined).toBe(1);
+    expect(mockLogger.error).toHaveBeenCalled();
+  });
+
+  it('still runs the batch when EVERY claimed row is malformed does not throw (FD-15)', async () => {
+    mockDbRpc.mockResolvedValue({
+      data: [{ org_id: 'not-a-uuid' }, { org_id: 42 }],
+      error: null,
+    });
+
+    const result = await runOrgQueueScheduler({ limit: 10 }, { workerId: 'worker-fd15-all' });
+
+    // No throw: an all-bad batch is an observable, alertable outcome — not an
+    // exception that takes the cron endpoint to INTERNAL.
+    expect(result.claimed).toBe(0);
+    expect(result.quarantined).toBe(2);
+    expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+    expect(mockLogger.error).toHaveBeenCalled();
+  });
+
+  // FD-15 literal: the seeded fixture org UUIDs have zero version/variant
+  // nibbles. Postgres `uuid` accepts and stores them; Zod 4.4.3's strict
+  // RFC-9562 `.uuid()` rejected them. The DB-sourced column type is the
+  // authority here, so the row must parse.
+  it('accepts a DB-sourced UUID with zero version/variant nibbles (FD-15)', async () => {
+    const FIXTURE_ORG = 'aaaaaaaa-0000-0000-0000-000000000001';
+    mockDbRpc.mockResolvedValue({
+      data: [{ org_id: FIXTURE_ORG, last_run_at: null }],
+      error: null,
+    });
+    mockProcessBatchAnchors.mockResolvedValue({
+      processed: 1,
+      batchId: 'batch-fx',
+      merkleRoot: 'e'.repeat(64),
+      txId: 'tx-fx',
+    });
+
+    const result = await runOrgQueueScheduler({ limit: 10 }, { workerId: 'worker-fixture' });
+
+    expect(mockProcessBatchAnchors).toHaveBeenCalledWith({ force: true, orgId: FIXTURE_ORG });
+    expect(result).toMatchObject({ claimed: 1, succeeded: 1, failed: 0, quarantined: 0 });
+  });
+
+  // A non-array RPC payload is NOT "one bad row" — there is nothing to salvage
+  // and no per-row recovery is meaningful. That must still fail loudly.
+  it('still fails loudly when the claim RPC returns a non-array payload', async () => {
+    mockDbRpc.mockResolvedValue({ data: { org_id: ORG_A }, error: null });
+
+    await expect(runOrgQueueScheduler()).rejects.toThrow(/expected an array/i);
     expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
   });
 
@@ -264,7 +336,7 @@ describe('runOrgQueueScheduler', () => {
       },
     );
 
-    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 1, processed: 0, skipped: 0 });
+    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 1, processed: 0, skipped: 0, quarantined: 0 });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({
       org_id: ORG_A,
       trigger: 'scheduled',
@@ -317,7 +389,7 @@ describe('runOrgQueueScheduler', () => {
     const result = await runOrgQueueScheduler({}, { workerId: 'worker-3' });
 
     expect(mockDbRpc).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 2 });
+    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 2, quarantined: 0 });
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.any(String) }),
       expect.stringContaining('retrying once'),
