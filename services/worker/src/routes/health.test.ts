@@ -582,6 +582,56 @@ describe('anchoring RPC credential check (SCRUM-3374)', () => {
     expect(rpc.credentialVerified).toBe(false);
   });
 
+  // ─── The never-probed carve-out, WIRED (regression, 2026-09-02) ───
+  // `evaluateAnchoringRpcHealth`'s cold-cache rule (a `checkedAtMs === null`
+  // snapshot degrades when prod anchoring is ON) was unit-tested in
+  // `anchoring-rpc-probe.test.ts` but never exercised THROUGH
+  // `buildHealthResponse`. This suite's default config has
+  // `enableProdNetworkAnchoring: false`, so nothing here could see it either.
+  // The gap was not theoretical: `health-detail-auth.test.ts` sets the flag
+  // true and omits the probe dep, so the carve-out silently reclassified its
+  // compact response and turned the whole worker `Tests` job red on main.
+  // These pin the wiring — deps.config -> prodAnchoringEnabled -> UNPROBED.
+  describe('cold cache (never probed) reaches the verdict through the response', () => {
+    const prodAnchoringOn = (overrides: Partial<HealthCheckDeps> = {}): HealthCheckDeps =>
+      createMockDeps({
+        config: { ...createMockDeps().config, enableProdNetworkAnchoring: true },
+        ...overrides,
+      });
+
+    it('degrades compact anchoring when prod anchoring is ON and nothing was ever probed', async () => {
+      const result = await buildHealthResponse(prodAnchoringOn(), false);
+
+      expect(checks(result).anchoring).toBe('warning');
+      // §1.9 / the canary gate: an unmeasured credential is an integrity
+      // signal, never an availability one.
+      expect(result.body.status).toBe('healthy');
+      expect(result.statusCode).toBe(200);
+    });
+
+    it('stays ok when prod anchoring is OFF and nothing was probed (off-prod default)', async () => {
+      const result = await buildHealthResponse(createMockDeps(), false);
+
+      expect(checks(result).anchoring).toBe('ok');
+    });
+
+    it('stays ok with prod anchoring ON once a real probe has landed', async () => {
+      const deps = prodAnchoringOn({ getAnchoringRpcStatus: () => probe('ok') });
+      const result = await buildHealthResponse(deps, false);
+
+      expect(checks(result).anchoring).toBe('ok');
+    });
+
+    // A transient `unknown` that FOLLOWS a real probe keeps `checkedAtMs` and
+    // must NOT degrade — otherwise a GetBlock blip flaps verify-worker-runtime.yml.
+    it('does not degrade on a transient unknown that followed a real probe', async () => {
+      const deps = prodAnchoringOn({ getAnchoringRpcStatus: () => probe('unknown') });
+      const result = await buildHealthResponse(deps, false);
+
+      expect(checks(result).anchoring).toBe('ok');
+    });
+  });
+
   it('never throws when the probe accessor itself explodes', async () => {
     const deps = createMockDeps({
       getAnchoringRpcStatus: () => {
