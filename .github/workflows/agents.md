@@ -566,7 +566,9 @@ Cloud Scheduler job (`drive-subscription-renewal`, declared in
 separate, manual `gcloud scheduler jobs create` step outside this workflow's
 reach (no `gcloud` credentials in the authoring session). Until it runs, renewal
 relies solely on the hourly in-process backup, which is not a reliable substitute
-under Cloud Run CPU throttling (node-cron does not fire on a throttled instance).
+— a process-local timer has no retry, no attempt deadline and no run history, and
+it stops entirely on a revision scaled to zero (SCRUM-3384 narrows the older
+CPU-throttling reading: on a warm instance node-cron fires normally).
 See the activating PR's body for the exact command and a post-deploy verification
 runbook.
 
