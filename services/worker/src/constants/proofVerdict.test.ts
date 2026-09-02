@@ -11,6 +11,7 @@ import {
   PROOF_VERDICT,
   PROOF_VERDICT_NOTE,
   classifyInclusionVerdict,
+  isStructuralGuardEffective,
   proofVerdictFields,
   type ProofVerdict,
 } from './proofVerdict.js';
@@ -40,6 +41,28 @@ describe('R3 — PROOF_VERDICT vocabulary', () => {
     const note = PROOF_VERDICT_NOTE[PROOF_VERDICT.UNVERIFIABLE];
     expect(note).toMatch(/not a failed one/i);
     expect(note).toMatch(/still be correctly anchored/i);
+  });
+
+  it('the invalid note does NOT claim a recompute that may never have run', () => {
+    // §1.5: "Measured" must name what was actually measured. Five of the
+    // verifier's failure reasons (leaf/root/sibling not 64-hex, bad position,
+    // branch not an array) and the leafIndex range check all return BEFORE a
+    // single SHA-256 call, so a note asserting "the fingerprint was recomputed"
+    // is false for those records. The honest statement is that the check ran to
+    // a conclusion and did not pass.
+    const note = PROOF_VERDICT_NOTE[PROOF_VERDICT.INVALID];
+    expect(note).not.toMatch(/was recomputed/i);
+    expect(note).toMatch(/did not pass/i);
+  });
+
+  it('the valid note does NOT presuppose an anchor receipt exists', () => {
+    // R-7 / §1.5: `verdict` is gated on the app-tree recompute ONLY and never
+    // consults `chain_tx_id`. A batch whose anchor_proofs rows are written
+    // before broadcast/confirmation reads `valid` with tx_id/block_height null,
+    // so asserting inclusion "under the root committed by the record's anchor
+    // receipt" names a receipt that may not exist yet.
+    const note = PROOF_VERDICT_NOTE[PROOF_VERDICT.VALID];
+    expect(note).not.toMatch(/committed by the record's anchor receipt/i);
   });
 
   it('the invalid note does not over-claim tampering', () => {
@@ -119,6 +142,57 @@ describe('R3 — classifyInclusionVerdict is total and one-way', () => {
 
   it('never returns valid when the guard did not arm (K4 honesty)', () => {
     expect(classifyInclusionVerdict({ valid: true }, false)).not.toBe(PROOF_VERDICT.VALID);
+  });
+});
+
+describe('R3 — isStructuralGuardEffective: armed is not the same as exercised', () => {
+  // The verifier turns its structural mode ON when {leafIndex, leafCount>=1}
+  // are supplied — but "on" is not "ran". `verifyMerkleInclusion` short-circuits
+  // an EMPTY branch before the structural walk, and its level arithmetic
+  // (levelSize = ceil(levelSize/2), floored at 1) stops constraining anything
+  // once it bottoms out. `valid` claims the guard passed, so it may only be
+  // emitted when the claimed tree shape actually describes this branch.
+
+  it('is false without a leaf index', () => {
+    expect(isStructuralGuardEffective(null, 4, 2)).toBe(false);
+    expect(isStructuralGuardEffective(undefined, 4, 2)).toBe(false);
+  });
+
+  it('is false without a leaf count, or with a count below 1', () => {
+    expect(isStructuralGuardEffective(0, null, 2)).toBe(false);
+    expect(isStructuralGuardEffective(0, 0, 2)).toBe(false);
+    expect(isStructuralGuardEffective(0, -1, 2)).toBe(false);
+  });
+
+  it('is true when the branch length is exactly the claimed tree depth', () => {
+    expect(isStructuralGuardEffective(0, 1, 0)).toBe(true); // single leaf, no siblings
+    expect(isStructuralGuardEffective(0, 2, 1)).toBe(true);
+    expect(isStructuralGuardEffective(0, 3, 2)).toBe(true); // odd level, dup last
+    expect(isStructuralGuardEffective(0, 4, 2)).toBe(true);
+    expect(isStructuralGuardEffective(0, 5, 3)).toBe(true);
+    expect(isStructuralGuardEffective(0, 6, 3)).toBe(true);
+    expect(isStructuralGuardEffective(0, 1024, 10)).toBe(true);
+  });
+
+  it('is FALSE for an empty branch in a tree the record claims has >1 leaf', () => {
+    // The verifier returns at `branch.length === 0` before the structural walk,
+    // so nothing was inspected — yet a record whose stored merkle_root equals
+    // its own fingerprint recomputes clean. Claiming `valid` there asserts a
+    // check that provably did not run.
+    expect(isStructuralGuardEffective(0, 4, 0)).toBe(false);
+    expect(isStructuralGuardEffective(0, 2, 0)).toBe(false);
+  });
+
+  it('is FALSE for a branch longer than the claimed tree can produce', () => {
+    // Past the real root the level size is pinned at 1, which makes
+    // `isRightmostOddNode` true at every extra level — the guard stops
+    // rejecting self-pairs entirely.
+    expect(isStructuralGuardEffective(0, 1, 3)).toBe(false);
+    expect(isStructuralGuardEffective(0, 4, 5)).toBe(false);
+  });
+
+  it('is FALSE for a branch shorter than the claimed tree depth', () => {
+    expect(isStructuralGuardEffective(0, 1024, 3)).toBe(false);
   });
 });
 

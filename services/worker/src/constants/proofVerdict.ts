@@ -83,18 +83,19 @@ export const PROOF_VERDICT_NOTE: Record<ProofVerdict, string> = {
   [PROOF_VERDICT.VALID]:
     'Measured: the document fingerprint shown here was recomputed against the '
     + 'stored inclusion branch and matches the committed root, and the '
-    + 'duplicate-node structural check was armed and passed. '
-    + 'Asserted: this fingerprint is included under the root committed by the '
-    + "record's anchor receipt. "
-    + 'Not asserted: that the committed root has itself been confirmed on the '
-    + 'production network — that is a separate check, made against the anchor '
-    + 'receipt and the self-contained proof bundle. Nothing is asserted about '
-    + 'the accuracy, authenticity, completeness, or legal effect of the '
-    + 'underlying document or of the statements it contains.',
+    + 'duplicate-node structural check was exercised and passed. '
+    + 'Asserted: this fingerprint is included under the root recorded for this '
+    + "record's batch. "
+    + 'Not asserted: that a network receipt for that root exists, or that the '
+    + 'root has been confirmed on the production network — those are separate '
+    + 'checks, made against the anchor receipt and the self-contained proof '
+    + 'bundle. Nothing is asserted about the accuracy, authenticity, '
+    + 'completeness, or legal effect of the underlying document or of the '
+    + 'statements it contains.',
 
   [PROOF_VERDICT.INVALID]:
-    'Measured: the document fingerprint shown here was recomputed against the '
-    + 'stored inclusion branch and the check did not pass. '
+    'Measured: the inclusion check for this record ran to a conclusion and did '
+    + 'not pass. '
     + 'Asserted: the inclusion evidence stored for this record does not '
     + 'establish that this fingerprint sits under the committed root. '
     + 'Not asserted: that the underlying document was altered, or that any '
@@ -134,6 +135,74 @@ export function proofVerdictFields(verdict: ProofVerdict): ProofVerdictFields {
 }
 
 /**
+ * Levels a Bitcoin-convention Merkle tree of `leafCount` leaves has — i.e. the
+ * EXACT length of every inclusion branch in it.
+ *
+ * Mirrors `utils/merkle.ts::buildMerkleTree`'s level reduction (an odd level
+ * duplicates its last element, so the next level is `ceil(size / 2)`) and the
+ * identical reduction `verifyMerkleInclusion` walks. Computed by iteration
+ * rather than `Math.ceil(Math.log2(n))` so it is exact at every size — the
+ * float form is not reliable near large powers of two, and this value decides
+ * whether we may claim a check passed.
+ */
+function merkleBranchDepth(leafCount: number): number {
+  let depth = 0;
+  for (let size = leafCount; size > 1; size = Math.ceil(size / 2)) depth += 1;
+  return depth;
+}
+
+/**
+ * Was the CVE-2012-2459 structural guard actually EXERCISED for an inclusion
+ * call — not merely switched on?
+ *
+ * `verifyMerkleInclusion` enables its structural mode whenever a leaf index and
+ * a leaf count >= 1 are supplied. That is necessary but NOT sufficient for the
+ * guard to have constrained anything, because the verifier has two states where
+ * it is nominally armed and inspects nothing:
+ *
+ *  1. **Empty branch.** `branch.length === 0` returns `leaf === root` BEFORE the
+ *     structural walk. A row whose stored `merkle_root` equals its own
+ *     fingerprint therefore recomputes clean with zero siblings examined — even
+ *     when the record claims to sit in a multi-leaf tree, which cannot produce
+ *     an empty branch at all. That combination is reachable: the metadata arm of
+ *     `extractStoredProof`/`extractMetadataProof` reads a root and branch that
+ *     org-writable `anchors.metadata` can supply, while `leafCount` comes
+ *     separately from the `anchor_proofs` row count for the batch.
+ *  2. **Branch longer than the tree.** Once the walk passes the real root,
+ *     `levelSize` is pinned at 1, which makes `levelIndex === levelSize - 1 &&
+ *     levelSize % 2 === 1` true at every remaining level — so the self-pair
+ *     rejection stops firing exactly where a forged tail would sit.
+ *
+ * In both, the claimed tree shape does not describe the branch that was walked,
+ * so the guard's level arithmetic (`isRightmostOddNode`) is not a statement
+ * about this proof. `valid` asserts the duplicate-node check was exercised and
+ * passed, so it may only be emitted when branch length is EXACTLY the depth the
+ * claimed leaf count implies. Anything else is `unverifiable` — the honest
+ * "we could not complete this check", never `invalid` (nothing failed).
+ *
+ * This only ever DOWNGRADES a pass. `classifyInclusionVerdict` short-circuits a
+ * failed check to `invalid` before consulting it, so it can never launder a
+ * failure, and `verified` is untouched either way.
+ *
+ * @param leafIndex    `merkle_index` as handed to the verifier (null/absent ⇒ off)
+ * @param leafCount    exact leaf count as handed to the verifier (null/absent ⇒ off)
+ * @param branchLength number of sibling entries in the inclusion branch
+ */
+export function isStructuralGuardEffective(
+  leafIndex: number | null | undefined,
+  leafCount: number | null | undefined,
+  branchLength: number,
+): boolean {
+  // The verifier's OWN arming condition, verbatim (utils/merkle-verify.ts).
+  // Deliberately NOT `leafIndex != null && leafCount != null`: `leafCount === 0`
+  // passes that and fails the verifier's, and a disagreement in that direction
+  // would report `valid` with the guard inactive.
+  if (!Number.isInteger(leafIndex)) return false;
+  if (!Number.isInteger(leafCount) || (leafCount as number) < 1) return false;
+  return branchLength === merkleBranchDepth(leafCount as number);
+}
+
+/**
  * THE MAPPING. Derive the tri-state verdict from the SINGLE inclusion
  * computation that also produces the boolean `verified`.
  *
@@ -150,14 +219,15 @@ export function proofVerdictFields(verdict: ProofVerdict): ProofVerdictFields {
  * `valid` and `unverifiable` partition the old `true` bucket; `false` is
  * untouched. No existing consumer sees a changed `verified`.
  *
- * @param inclusion            the result of `verifyMerkleInclusion` — the same
- *                             object `verified` is read from.
- * @param structuralGuardArmed whether the CVE-2012-2459 duplicate-node guard
- *                             was actually live for THAT call. It arms only
- *                             when both a leaf index and a leaf count >= 1 were
- *                             supplied; see the caller.
+ * @param inclusion       the result of `verifyMerkleInclusion` — the same object
+ *                        `verified` is read from.
+ * @param guardExercised  whether the CVE-2012-2459 duplicate-node guard actually
+ *                        constrained THAT call — `isStructuralGuardEffective`
+ *                        above, which is the verifier's arming condition PLUS
+ *                        the branch-shape precondition the verifier does not
+ *                        itself check.
  *
- * WHY A PASSING RECOMPUTE WITH AN UNARMED GUARD IS `unverifiable`, NOT `valid`.
+ * WHY A PASSING RECOMPUTE WITH AN UNEXERCISED GUARD IS `unverifiable`, NOT `valid`.
  * This is the judgement call at the centre of R3, and it is decided on §1.5 /
  * K4 honesty grounds. When the guard is not armed, `verifyMerkleInclusion`
  * still recomputes and compares, and that comparison genuinely passed — so
@@ -179,10 +249,10 @@ export function proofVerdictFields(verdict: ProofVerdict): ProofVerdictFields {
  */
 export function classifyInclusionVerdict(
   inclusion: MerkleInclusionResult,
-  structuralGuardArmed: boolean,
+  guardExercised: boolean,
 ): ProofVerdict {
-  // A completed check that failed is an alarm, whatever the guard did. Guard
-  // arming may only ever DOWNGRADE a pass; it can never launder a failure.
+  // A completed check that failed is an alarm, whatever the guard did. The
+  // guard flag may only ever DOWNGRADE a pass; it can never launder a failure.
   if (!inclusion.valid) return PROOF_VERDICT.INVALID;
-  return structuralGuardArmed ? PROOF_VERDICT.VALID : PROOF_VERDICT.UNVERIFIABLE;
+  return guardExercised ? PROOF_VERDICT.VALID : PROOF_VERDICT.UNVERIFIABLE;
 }

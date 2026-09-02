@@ -60,7 +60,7 @@ Read this carefully; it is the one place reality differs from the story's shorth
 
 ## 2. Response catalogue (real shapes, from code — do not invent fields)
 
-### 2.1 `200 OK` — `MerkleProofResponse` (`verify-proof.ts:177-197`)
+### 2.1 `200 OK` — `MerkleProofResponse` (`verify-proof.ts:194-251`)
 
 ```jsonc
 {
@@ -72,7 +72,7 @@ Read this carefully; it is the one place reality differs from the story's shorth
   "block_height": "number | null",
   "block_timestamp": "string | null",
   "batch_id": "string | null",
-  "verified": "boolean",            // cryptographic recompute of the root — NEVER derived from anchors.status (verify-proof.ts:187-191, 494-499)
+  "verified": "boolean",            // cryptographic recompute of the root — NEVER derived from anchors.status (verify-proof.ts:208, 646-685)
   "verdict": "\"valid\" | \"invalid\" | \"unverifiable\"",  // R3, additive (§1.8) — same computation as `verified`, three states
   "verdict_note": "string",         // R3 — the §1.5 measured/asserted/NOT-asserted statement for `verdict`
   "proof_bundle": "ProofBundle | null"  // additive nullable (§1.8); null whenever the two-layer proof is incomplete
@@ -88,12 +88,23 @@ alarm — retry or fetch more evidence). `verdict` separates them:
 |---|---|---|
 | `valid` | Every check this endpoint claims to run, ran and passed. | `verified: true` |
 | `invalid` | A check RAN and FAILED. **Alarm.** | `verified: false` (exactly this set) |
-| `unverifiable` | A check could not be completed — most commonly the record carries no `merkle_index`/`leaf_count`, so the CVE-2012-2459 duplicate-node structural guard could not be armed. **Not an alarm.** | `verified: true` |
+| `unverifiable` | A check could not be completed — the CVE-2012-2459 duplicate-node structural guard was not exercised. Most commonly the record carries no `merkle_index`/`leaf_count`; it also covers a stored branch whose length does not match the tree its `leaf_count` describes (an empty branch, or one longer than the tree, leaves the guard nominally on and inspecting nothing). **Not an alarm.** | `verified: true` |
 
 `valid` and `unverifiable` partition the old `verified: true` bucket and
 `invalid` is exactly `verified: false`, so **the two fields can never
 contradict** — both are derived from one `verifyMerkleInclusion` call. A
 consumer still reading only `verified` sees no change whatsoever.
+
+Note the deliberate asymmetry: only the `true` bucket is split. `verified: false`
+also covers malformed stored evidence (a sibling or root that is not 64-hex, a
+`merkle_index` outside the tree), which the frozen cross-package reason enum
+(`packages/verifier-cli/src/lib/reason-codes.ts`) classifies as
+`MALFORMED_BUNDLE` / `LEAF_INDEX_OUT_OF_RANGE` rather than as a cryptographic
+mismatch. Those still read `invalid` here. That is the conservative direction —
+over-alarming rather than under-alarming — and the `invalid` note says so
+explicitly: a failure can equally mean the stored proof data is corrupt, so it
+is a signal to investigate the RECORD, never a determination about the
+document.
 
 Scope: `verdict` describes the **layer-1 app-tree inclusion check only**,
 exactly like `verified`. It says nothing about whether the committed root
@@ -101,13 +112,25 @@ appears in a confirmed network receipt — that is what `proof_bundle` is for. A
 record can legitimately be `verdict: "valid"` with `proof_bundle: null`
 (state 1b below).
 
-FE guidance: gate the download on `verdict === "valid"` where you previously
-used `verified === true`, and treat `unverifiable` the same as the honest
-empty-state — **not** as an error toast. `unverifiable` must never be rendered
-as a failed or suspect document; render `verdict_note` verbatim if you surface
-a reason at all.
+**Not yet consumed by the FE — this section describes the API, not shipped
+behaviour.** `src/hooks/useProofAvailability.ts` narrows the 200 body to
+`{ verified, proof_bundle }`, so `verdict` never reaches
+`classifyProofAvailability` or `VerifierProofDownload`. Widening that narrow is
+a separate change.
 
-`proof_bundle` (`ProofBundle`, `verify-proof.ts:132-174`) — the CANONICAL self-contained packet
+When it is made: gate the download on `verdict === "valid"` where you previously
+used `verified === true`. That swap is behaviour-preserving, not a tightening —
+the download control only appears in state 1 (`proof_bundle` non-null), and a
+non-null `proof_bundle` already requires `merkle_index` + `leaf_count`, so
+`verdict === "valid"` and `verified === true` coincide on every record that
+reaches the control. The value of the swap is that a future control gated on
+`valid` cannot silently accept an unexercised check.
+
+Treat `unverifiable` the same as the honest empty-state — **not** as an error
+toast. `unverifiable` must never be rendered as a failed or suspect document;
+render `verdict_note` verbatim if you surface a reason at all.
+
+`proof_bundle` (`ProofBundle`, `verify-proof.ts:149-191`) — the CANONICAL self-contained packet
 (frozen; PROOF-04 PDF and PROOF-07 CLI conform to it):
 
 ```jsonc

@@ -192,6 +192,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProofErrorResponse"
+        "500":
+          description: >-
+            Two distinct fail-closed states. `Merkle proof data is malformed` —
+            the stored branch could not be parsed, so extraction failed before
+            any verification was attempted and the body carries NO `verdict`.
+            `Proof leaf count could not be determined` — the proof IS
+            batch-linked but its exact leaf_count is unresolvable, so the
+            CVE-2012-2459 structural guard cannot honestly run; rather than
+            silently downgrading to the weaker verdict, the request fails closed
+            and the body carries `verdict: unverifiable`. Neither is a statement
+            that the record is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofErrorResponse"
 
   /verify/batch:
     post:
@@ -1245,8 +1260,11 @@ components:
             The SAME computation as `verified`, reported as three states instead
             of two. `invalid` = a check RAN and FAILED — an alarm, and exactly
             equivalent to `verified: false`. `unverifiable` = a check could not
-            be completed (e.g. the record carries no merkle_index/leaf_count, so
-            the CVE-2012-2459 duplicate-node guard could not be armed) — NOT an
+            be completed — the CVE-2012-2459 duplicate-node guard was not
+            exercised, either because the record carries no
+            merkle_index/leaf_count or because the stored branch length does not
+            match the tree its leaf_count describes (an empty branch, or one
+            longer than the tree, leaves the guard inspecting nothing). NOT an
             alarm, and the record may be correctly anchored. `valid` = every
             check this endpoint claims to run, ran and passed. `valid` and
             `unverifiable` partition the old `verified: true` bucket, so the two

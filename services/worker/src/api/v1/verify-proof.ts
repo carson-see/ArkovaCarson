@@ -28,6 +28,7 @@ import {
 import {
   PROOF_VERDICT,
   classifyInclusionVerdict,
+  isStructuralGuardEffective,
   proofVerdictFields,
   type ProofVerdict,
 } from '../../constants/proofVerdict.js';
@@ -649,28 +650,28 @@ export function buildProofResponse(
     inclusionOpts,
   );
 
-  // R3 — was the CVE-2012-2459 structural guard actually LIVE for that call?
+  // R3 — was the CVE-2012-2459 structural guard actually EXERCISED for that
+  // call? Read off the SAME `inclusionOpts` object and the SAME branch that
+  // were just handed to the verifier, so the flag cannot describe a different
+  // call than the one `verified` came from.
   //
-  // Read off the SAME `inclusionOpts` object that was just handed to the
-  // verifier, using the verifier's OWN arming condition verbatim
-  // (utils/merkle-verify.ts: `Number.isInteger(leafIndex) &&
-  // Number.isInteger(leafCount) && leafCount >= 1`). Deriving it from
-  // `proofSource.merkleIndex != null && leafCount != null` instead would be a
-  // second, subtly different predicate — `leafCount === 0` passes that and
-  // fails the verifier's — and a disagreement in that direction would report
-  // `valid` with the guard inactive, the exact dishonesty K4 forbids.
-  //
-  // The duplication is deliberate and unavoidable: `merkle-verify.ts` is pinned
+  // The predicate lives in `constants/proofVerdict.ts` — see its docblock for
+  // why the verifier's own arming condition is necessary but not sufficient
+  // (an empty branch, or a branch longer than the claimed tree, leaves the
+  // guard nominally on and inspecting nothing). The duplication of the arming
+  // condition is deliberate and unavoidable: `merkle-verify.ts` is pinned
   // byte-for-byte against `packages/verifier-cli/src/vendor/merkle-verify.ts`
-  // (`test/sync-recompute.test.ts`), so it cannot grow a "guard armed" flag on
-  // its result without editing the vendored verifier's trusted computing base.
-  // `verify-proof.verdict.test.ts` pins the two in agreement BEHAVIOURALLY —
-  // the forged self-pair fixture must be rejected exactly when this flag is
-  // true — so drift fails a test rather than silently upgrading a verdict.
-  const structuralGuardArmed =
-    Number.isInteger(inclusionOpts.leafIndex) &&
-    Number.isInteger(inclusionOpts.leafCount) &&
-    (inclusionOpts.leafCount as number) >= 1;
+  // (`test/sync-recompute.test.ts`), so it cannot grow a "guard exercised" flag
+  // on its result without editing the vendored verifier's trusted computing
+  // base. `verify-proof.verdict.test.ts` pins the two in agreement
+  // BEHAVIOURALLY — the forged self-pair fixture must be rejected exactly when
+  // this flag is true — so drift fails a test rather than silently upgrading a
+  // verdict.
+  const guardExercised = isStructuralGuardEffective(
+    inclusionOpts.leafIndex,
+    inclusionOpts.leafCount,
+    proofSource.merkleProof.length,
+  );
 
   return {
     public_id: anchor.public_id,
@@ -685,7 +686,7 @@ export function buildProofResponse(
     // R3: the SAME `inclusion` object the boolean above is read from — one
     // computation, two encodings, so K1 (they must never contradict) holds by
     // construction rather than by review. `invalid` <=> `verified === false`.
-    ...proofVerdictFields(classifyInclusionVerdict(inclusion, structuralGuardArmed)),
+    ...proofVerdictFields(classifyInclusionVerdict(inclusion, guardExercised)),
     // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
     proof_bundle: buildProofBundle(anchor, proofSource, leafCount),
     // BUG-2026-08-13-010 (§1.5/§1.6A): connector-sourced fingerprints attest
@@ -696,6 +697,31 @@ export function buildProofResponse(
       ? connectorFingerprintRederivabilityFields()
       : {}),
   };
+}
+
+/**
+ * R3 — the signed envelope carries EVIDENCE ONLY.
+ *
+ * `?format=signed` spreads the whole response into the DID-bound payload before
+ * signing it, so anything left in here becomes a cryptographically attested,
+ * issuer-bound claim. `verdict` / `verdict_note` must not be: they are
+ * API-layer INTERPRETATION derived at READ time from the row's CURRENT
+ * completeness, not stored evidence. Signing them would
+ *
+ *   (a) attest a claim outside `PROOF_ASSERTIONS` — the bundle's own §1.5 / R-7
+ *       declaration of exactly what a bound bundle does and does not assert,
+ *       which enumerates the anchoring facts and says nothing about a verdict;
+ *   (b) let ONE record produce two validly-signed, correctly-bound bundles that
+ *       disagree — `unverifiable` before a `merkle_index`/`leaf_count` backfill
+ *       and `valid` after — with no way for a holder of both to tell which is
+ *       current.
+ *
+ * Same rule that keeps the pair out of `proof_bundle`, applied to the outer
+ * payload. The unsigned 200 body is unaffected and still carries both.
+ */
+function proofEvidenceForSigning(response: MerkleProofResponse): Record<string, unknown> {
+  const { verdict: _verdict, verdict_note: _verdictNote, ...evidence } = response;
+  return { ...evidence };
 }
 
 /**
@@ -819,10 +845,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
           // signing, so a verifier follows one chain — issuer DID →
           // assertionMethod key (signer.keyId) → anchored proof.
           const bundle = await createSignedBundle({
-            payload: buildBoundProofPayload(
-              result as unknown as Record<string, unknown>,
-              signer.keyId,
-            ),
+            payload: buildBoundProofPayload(proofEvidenceForSigning(result), signer.keyId),
             sign: signer.sign,
           });
           res.json(bundle);
@@ -870,10 +893,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       // signing, so a verifier follows one chain — issuer DID →
       // assertionMethod key (signer.keyId) → anchored proof.
       const bundle = await createSignedBundle({
-        payload: buildBoundProofPayload(
-          result as unknown as Record<string, unknown>,
-          signer.keyId,
-        ),
+        payload: buildBoundProofPayload(proofEvidenceForSigning(result), signer.keyId),
         sign: signer.sign,
       });
       res.json(bundle);

@@ -18,13 +18,14 @@
  *    self-pair fixture, which reads `verified: true` today.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express, { type Request } from 'express';
 import request from 'supertest';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import {
   verifyProofRouter,
   buildProofResponse,
+  __resetSignerCacheForTests,
   type ProofLookup,
   type ProofAnchorData,
   type ProofRecordData,
@@ -242,6 +243,29 @@ const CASES: Case[] = [
     expected: PROOF_VERDICT.UNVERIFIABLE,
   },
   {
+    name: 'empty branch claimed inside a 4-leaf tree (guard armed but never walked)',
+    // `verifyMerkleInclusion` returns at `branch.length === 0` BEFORE the
+    // structural walk, so a stored row whose merkle_root equals its own
+    // fingerprint recomputes clean with the guard inspecting nothing. A 4-leaf
+    // tree cannot produce an empty branch; `valid` would assert a check that
+    // provably did not run.
+    anchor: metaAnchor({ merkle_root: DOC_FP, merkle_proof: [], merkle_index: 0 }),
+    leafCount: 4,
+    expected: PROOF_VERDICT.UNVERIFIABLE,
+  },
+  {
+    name: 'branch longer than a 1-leaf tree can produce (guard arithmetic bottomed out)',
+    // Past the real root the verifier pins levelSize at 1, which makes every
+    // remaining level "rightmost odd" and stops the self-pair rejection.
+    anchor: metaAnchor({
+      merkle_root: TREE.root,
+      merkle_proof: DOC_BRANCH,
+      merkle_index: 0,
+    }),
+    leafCount: 1,
+    expected: PROOF_VERDICT.UNVERIFIABLE,
+  },
+  {
     name: 'batch-linked proof whose exact leaf_count is indeterminate (fails closed)',
     anchor: ANCHOR,
     leafCount: null,
@@ -258,6 +282,11 @@ function runCase(c: Case) {
     c.leafCount ?? null,
     c.indeterminate ?? false,
   );
+}
+
+/** One ad-hoc response body, for assertions that are not table-driven. */
+function bodyFor(anchor: ProofAnchorData, leafCount: number | null) {
+  return buildProofResponse(anchor, null, leafCount, false) as unknown as Record<string, unknown>;
 }
 
 describe('R3 — verdict mapping, case by case', () => {
@@ -322,8 +351,8 @@ describe('R3 K4 — honesty: a guard that did not arm is never reported as valid
     // unknown (verify-proof.test.ts pins that as documented residual risk).
     // Calling that `valid` would launder a known-forgeable state into a clean
     // bill of health; `unverifiable` states what actually happened.
-    const without = runCase({ ...CASES[0], name: '', anchor: FORGED_ANCHOR, leafCount: null, expected: '' }) as unknown as Record<string, unknown>;
-    const with_ = runCase({ ...CASES[0], name: '', anchor: FORGED_ANCHOR, leafCount: 4, expected: '' }) as unknown as Record<string, unknown>;
+    const without = bodyFor(FORGED_ANCHOR, null);
+    const with_ = bodyFor(FORGED_ANCHOR, 4);
 
     expect(without.verified).toBe(true);
     expect(without.verdict).toBe(PROOF_VERDICT.UNVERIFIABLE);
@@ -338,8 +367,8 @@ describe('R3 K4 — honesty: a guard that did not arm is never reported as valid
     // rejected". If the arming predicate here ever drifts from the one inside
     // the (byte-identity-pinned) verifier, one of these two flips and this test
     // goes red.
-    const armed = runCase({ ...CASES[0], name: '', anchor: FORGED_ANCHOR, leafCount: 4, expected: '' }) as unknown as Record<string, unknown>;
-    const honestArmed = runCase({ ...CASES[0], name: '', anchor: ANCHOR, leafCount: LEAVES.length, expected: '' }) as unknown as Record<string, unknown>;
+    const armed = bodyFor(FORGED_ANCHOR, 4);
+    const honestArmed = bodyFor(ANCHOR, LEAVES.length);
 
     // Guard live => forgery rejected AND honest proof still valid.
     expect(armed.verdict).toBe(PROOF_VERDICT.INVALID);
@@ -350,14 +379,7 @@ describe('R3 K4 — honesty: a guard that did not arm is never reported as valid
     // A count of 0 passes a naive `!= null` check but NOT the verifier's
     // `>= 1`. Deriving the flag from a different predicate than the verifier
     // uses is exactly how `valid` would be claimed with the guard inactive.
-    const body = runCase({
-      ...CASES[0],
-      name: '',
-      anchor: ANCHOR,
-      leafCount: 0,
-      expected: '',
-    }) as unknown as Record<string, unknown>;
-    expect(body.verdict).toBe(PROOF_VERDICT.UNVERIFIABLE);
+    expect(bodyFor(ANCHOR, 0).verdict).toBe(PROOF_VERDICT.UNVERIFIABLE);
   });
 });
 
@@ -376,13 +398,7 @@ describe('R3 K2 — additive only, existing contract untouched (§1.8)', () => {
   ];
 
   it('every pre-existing key is still present with its old value', () => {
-    const body = runCase({
-      ...CASES[0],
-      name: '',
-      anchor: ANCHOR,
-      leafCount: LEAVES.length,
-      expected: '',
-    }) as unknown as Record<string, unknown>;
+    const body = bodyFor(ANCHOR, LEAVES.length);
     for (const k of LEGACY_KEYS) {
       expect(body, `missing legacy key ${k}`).toHaveProperty(k);
     }
@@ -393,13 +409,7 @@ describe('R3 K2 — additive only, existing contract untouched (§1.8)', () => {
   });
 
   it('the ONLY new top-level keys are verdict + verdict_note', () => {
-    const body = runCase({
-      ...CASES[0],
-      name: '',
-      anchor: ANCHOR,
-      leafCount: LEAVES.length,
-      expected: '',
-    }) as unknown as Record<string, unknown>;
+    const body = bodyFor(ANCHOR, LEAVES.length);
     const extra = Object.keys(body).filter((k) => !LEGACY_KEYS.includes(k));
     expect(extra.sort()).toEqual(['verdict', 'verdict_note']);
   });
@@ -433,6 +443,18 @@ describe('R3 — route-level emission', () => {
     lookupByPublicId: async () => anchor,
   });
 
+  beforeEach(() => {
+    delete process.env.PROOF_SIGNING_KMS_KEY;
+    __resetSignerCacheForTests();
+  });
+
+  afterEach(() => {
+    delete process.env.PROOF_SIGNING_KEY_PEM;
+    delete process.env.PROOF_SIGNING_KEY_ID;
+    delete process.env.PROOF_SIGNING_KMS_KEY;
+    __resetSignerCacheForTests();
+  });
+
   it('200 body carries verdict + verdict_note alongside the unchanged verified', async () => {
     const res = await request(buildApp(lookupFor(ANCHOR))).get('/api/v1/verify/abc123/proof');
     expect(res.status).toBe(200);
@@ -461,6 +483,32 @@ describe('R3 — route-level emission', () => {
     const res = await request(buildApp(lookupFor(ANCHOR))).get('/api/v1/verify/ab/proof');
     expect(res.status).toBe(400);
     expect(res.body).not.toHaveProperty('verdict');
+  });
+
+  it('the ?format=signed envelope carries NO verdict — it signs evidence only', async () => {
+    // The signed bundle is a cryptographic artifact. `verdict`/`verdict_note`
+    // are API-layer interpretation computed at READ time from the row's CURRENT
+    // completeness, so signing them would (a) attest a claim that is outside
+    // `PROOF_ASSERTIONS`, the bundle's own §1.5/R-7 declaration of what it
+    // asserts, and (b) let one record yield two validly-signed, DID-bound
+    // bundles that disagree — `unverifiable` before a merkle_index/leaf_count
+    // backfill and `valid` after. Same rule that keeps them out of
+    // `proof_bundle`, applied to the outer signed payload.
+    const kp = generateKeyPairSync('ed25519');
+    process.env.PROOF_SIGNING_KEY_PEM = kp.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+    process.env.PROOF_SIGNING_KEY_ID = 'arkova-proof-test';
+    __resetSignerCacheForTests();
+
+    const res = await request(buildApp(lookupFor(ANCHOR))).get(
+      '/api/v1/verify/abc123/proof?format=signed',
+    );
+    expect(res.status).toBe(200);
+    // The evidence is all still there …
+    expect(res.body.payload.merkle_root).toBe(TREE.root);
+    expect(res.body.payload.verified).toBe(true);
+    // … and the interpretation is not.
+    expect(res.body.payload).not.toHaveProperty('verdict');
+    expect(res.body.payload).not.toHaveProperty('verdict_note');
   });
 
   it('a malformed stored branch 500s WITHOUT an alarm verdict', async () => {
