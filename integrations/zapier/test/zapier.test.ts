@@ -166,4 +166,34 @@ describe('Constants', () => {
     expect(VALID_EVENTS).toContain('anchor.revoked');
     expect(VALID_EVENTS).toContain('anchor.expired');
   });
+
+  // Drift guard (DI-775 / SCRUM-3538). `VALID_EVENTS` mirrors the worker's
+  // `VALID_WEBHOOK_EVENTS`, which is DERIVED from the keys of
+  // `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in
+  // services/worker/src/webhooks/payload-schemas.ts. This integration is a
+  // separate workspace and cannot import that constant, so the next-best guard
+  // is pinning the expected set (and its order) here. `anchor.superseded` was
+  // dispatchable and subscribable in the worker for months while this list
+  // omitted it.
+  //
+  // Two things this pin is NOT. It does not fire when the worker map grows and
+  // this list stands still — it is a hardcoded array, so it only catches an
+  // edit to VALID_EVENTS that forgets to update it here. And it does not run in
+  // PR CI: no workflow runs this package's suite. The gate that covers both
+  // holes is scripts/ci/check-webhook-event-registration-drift.ts, which parses
+  // the worker map and runs inside the required root `Tests` job.
+  it('mirrors the worker allowlist exactly (drift guard)', () => {
+    expect([...VALID_EVENTS]).toEqual([
+      'anchor.submitted',
+      'anchor.secured',
+      'anchor.revoked',
+      'anchor.expired',
+      'anchor.superseded',
+      'anchor.batch_secured',
+      'credential.issued',
+      'credential.verified',
+      'credential.status_changed',
+      'compliance.document_expiring',
+    ]);
+  });
 });

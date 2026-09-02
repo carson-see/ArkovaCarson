@@ -1,0 +1,72 @@
+{
+  "driver": "cft-contract-surface-driver",
+  "batch": "contract-frontend-tooling",
+  "cycle_id": "20260830T224712Z",
+  "captured_at": "2026-08-30T22:47:21.931Z",
+  "api_base": "https://arkova-worker-soak-contract-frontend-tooling-stag-kvojbeutfa-uc.a.run.app",
+  "supabase_ref": "https://udpzylbccncnwvhbfjsu.supabase.co",
+  "ok": 12,
+  "fail": 0,
+  "detail": {
+    "health": {
+      "ok": 1,
+      "fail": 0,
+      "last": "http 200 git_sha=82f879e2b3860e4a5dc9893a1baa43abeee2bc09"
+    },
+    "sdk.fingerprint": {
+      "ok": 1,
+      "fail": 0,
+      "last": "ef41ff9e964726b8"
+    },
+    "sdk.verify": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":\"Arkova articles of incorporation\",\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirma"
+    },
+    "sdk.getAnchor": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":null,\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirmations\":null,\"parentPublicId\":n"
+    },
+    "sdk.verifyFingerprint": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":null,\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirmations\":null,\"parentPublicId\":n"
+    },
+    "sdk.webhooks.create[anchor.superseded]": {
+      "ok": 1,
+      "fail": 0,
+      "last": "id=9cddfe5f-c779-4a86-ba8d-d78a805f1be2"
+    },
+    "sdk.webhooks.list[anchor.superseded]": {
+      "ok": 1,
+      "fail": 0,
+      "last": "n=1 total=1"
+    },
+    "auth.orgAdminSignIn": {
+      "ok": 1,
+      "fail": 0,
+      "last": "token len=802"
+    },
+    "supersede.target": {
+      "ok": 1,
+      "fail": 0,
+      "last": "minted ARK-DOC-ZTQG3C"
+    },
+    "supersede.dispatch": {
+      "ok": 1,
+      "fail": 0,
+      "last": "http 200 {\"new_anchor_id\":\"61285fe8-373c-4406-aa62-b65d6c585963\"}"
+    },
+    "webhook.delivery[anchor.superseded]": {
+      "ok": 1,
+      "fail": 0,
+      "last": "status=200 at=2026-08-30T22:47:16.605509+00:00"
+    },
+    "sink.received[anchor.superseded]": {
+      "ok": 1,
+      "fail": 0,
+      "last": "sink rows=5 superseded=4 newest=2026-08-30T22:47:16.679Z"
+    }
+  }
+}

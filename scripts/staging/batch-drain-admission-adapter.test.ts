@@ -538,8 +538,9 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## `fullsoak-daily-check.sh` — daily rig/prod parity for the 2026-08 7-day soak (2026-08-12)',
       '## `fullsoak-daily-probes.sh` — daily BEHAVIOURAL probes for the 2026-08 7-day soak (2026-08-12)',
       '## Orphan tag cleanup covers EVERY tag, not just `pr-<N>` (BUG-2026-08-22-001, 2026-08-22)',
+      '## Provisioner repairs found by standing up a real rig (consolidated-mm-2026-08, 2026-08-30)',
     ]);
-    expect(new Set(headings).size).toBe(16);
+    expect(new Set(headings).size).toBe(17);
   });
 
   it('preserves each authoritative Team2 section body exactly once', () => {
@@ -569,19 +570,13 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     expect(STAGING_AGENTS_RAW).not.toContain('## Admission rollback and identity pins\n');
   });
 
-  // NOTE: scripts/staging/agents.md is pinned by content hash in TWO places.
-  // Any edit to that file must recompute BOTH:
-  //   1. the whole-file pin CANONICAL_CROSS_LANE_AGENTS_SHA256 in
-  //      scripts/staging/provision-isolated-rig.test.ts
-  //   2. the prefix + batch-drain section pins in this test
-  // Updating only one leaves the root suite red (see the 2026-08-30 breakage).
   it('preserves exact Team1 f61 rules plus the one admission provenance rule', () => {
     const prefix = STAGING_AGENTS_RAW.slice(0, STAGING_AGENTS_RAW.indexOf(STEP4_HEADING));
     const batchDrain = markdownSection(STAGING_AGENTS_RAW, BATCH_DRAIN_HEADING);
     const provenanceOccurrences = occurrenceCount(batchDrain, TEAM1_ADMISSION_PROVENANCE_RULE);
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
-    expect(sha256(prefix)).toBe('e21c85f5fad258ab6d3a1b915ad61daec31998363a3ef03490ba001261d935f9');
+    expect(sha256(prefix)).toBe('94e04024ecae3995e2706acb70454491d891f1ea154710d65820a1235e81ff8e');
     expect(sha256(f61BatchDrain)).toBe('60efd4982ed6446bf757f6b9099e9b2ac88486f8dac428f2c338b78ebbd7e014');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');

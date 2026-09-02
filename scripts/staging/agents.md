@@ -26,7 +26,7 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | `teardown-and-reset.sh` | Lease-aware truncate + migration sync + reseed. Run between PRs. Note: superseded by `seed.ts --reset` (which uses the new `staging_purge_synthetic_data` RPC); keep this script around only for the migration-sync step. |
 | `seed-baseline-fixture.sql` | **Baseline fixture for ISOLATED rigs.** Inserts the minimal valid FK chain (`auth.users` → `auth.identities` → `organizations` → `profiles` → one `anchors` row with `status='SUBMITTED'`) so `staging-honesty-preflight.ts` Check 5 passes. Without it a fresh isolated rig has zero SUBMITTED anchors → `fixture_seeded` → HOLLOW soak. **Data-only (§1.11A):** no migration-ledger writes, no `migration repair`; idempotent via `ON CONFLICT (id) DO NOTHING` on `5eed0000-…` fixture ids. Unlike `seed.ts` it inserts `auth.users` directly (isolated rigs lack the `staging_seed_auth_users` RPC). Sets a txn-local `service_role` JWT claim so `protect_anchor_status_transition()` permits the SUBMITTED insert. Run via `supabase db query --linked --file …` (the Mgmt API read-write `/database/query` endpoint is Cloudflare-blocked, HTTP 403 `error code: 1010`, for automated clients). **Durability (FD-SEED-1):** the fixture anchor carries a synthetic 64-hex `chain_tx_id` (two `md5()` halves) **and** `legal_hold = true` — both are required and neither substitutes for the other. `chain_tx_id` NOT NULL is what keeps it outside `recover_stuck_broadcasts()` (migration `0379`), which runs in-process every 2 min in ALL environments and deliberately ignores `legal_hold`; `legal_hold` is what keeps it outside `autoConfirmMockAnchors()` / `monitorStuckTransactions()` / `rebroadcastDroppedTransactions()`. With a NULL txid the fixture reverted to PENDING ~7 min after provisioning and preflight Check 5 silently began reading zero. A closing `DO $$ … $$` block asserts all of it in-transaction, so a `RAISE` there aborts `provision-isolated-rig.sh` (`set -euo pipefail`) instead of admitting a doomed rig; re-running the file repairs a rig seeded before the fix. |
 | `seed-baseline-fixture.test.ts` | Vitest structural-contract tests for the fixture + its wiring: asserts the SUBMITTED anchor, full FK chain, idempotency, no ledger writes, synthetic ids, and that `provision-isolated-rig.sh` runs the seed after deploy and before the preflight. Also pins the FD-SEED-1 durability contract: `chain_tx_id` present and md5-derived, the ON CONFLICT repair path (backfill + PENDING→SUBMITTED reinstate, but never over a real txid), and the presence of the in-transaction post-condition block. |
-| `provision-isolated-rig.sh` | S0-4.1 / **L2-S2a (SCRUM-2673)** one-command isolated-rig provision (create project → schema replay → deploy worker → **Cloud Scheduler /jobs/\* wiring** → **seed baseline fixture** → `clean_mirror` preflight → `ADMISSION_JSON=...`). `--dry-run` default; live run needs `--apply` + `CONFIRM_PROVISION=<name>`. **`--profile mock\|chain\|gemini`** selects the worker env/secret overlay: `mock` (default, safe: `USE_MOCKS=true`, anchoring off, no Scheduler), `chain` (real anchoring — GetBlock RPC + WIF signer + `KMS_PROVIDER`, Scheduler-driven), `gemini` (real tuned model + prompt; chain mocked, Scheduler-driven). Every profile also wires the boot-critical secrets (Stripe / API-key HMAC / cron / `FRONTEND_URL`) so `config.ts`'s production Zod superRefine does not crash-loop the worker. A live **non-mock** profile requires a second ack `CONFIRM_REAL_CONFIG=<profile>` (real credentials / real Bitcoin exposure). All real credentials are Secret Manager references — never inlined. Hard-denies prod (`vzwyaatejekddvltxyye`) + shared staging. Admission JSON carries SHA/base SHA, image digest, Cloud Run service/tag URL, isolated Supabase ref, preflight result, harness/tool version, owner, and stop conditions. |
+| `provision-isolated-rig.sh` | S0-4.1 / **L2-S2a (SCRUM-2673)** one-command isolated-rig provision (create project → **wait for `ACTIVE_HEALTHY`** → schema replay → deploy worker → **Cloud Scheduler /jobs/\* wiring** → **seed baseline fixture** → `clean_mirror` preflight → `ADMISSION_JSON=...`). `--dry-run` default; live run needs `--apply` + `CONFIRM_PROVISION=<name>`. **`--profile mock\|chain\|gemini`** selects the worker env/secret overlay: `mock` (default, safe: `USE_MOCKS=true`, anchoring off, no Scheduler), `chain` (real anchoring — GetBlock RPC + WIF signer + `KMS_PROVIDER`, Scheduler-driven), `gemini` (real tuned model + prompt; chain mocked, Scheduler-driven). Every profile also wires the boot-critical secrets (Stripe / API-key HMAC / cron / **per-rig `IP_HASH_PEPPER`** / `FRONTEND_URL`) so `config.ts`'s production Zod superRefine does not crash-loop the worker. A live **non-mock** profile requires a second ack `CONFIRM_REAL_CONFIG=<profile>` (real credentials / real Bitcoin exposure). All real credentials are Secret Manager references — never inlined. Hard-denies prod (`vzwyaatejekddvltxyye`) + shared staging. Admission JSON carries SHA/base SHA, image digest, Cloud Run service/tag URL, isolated Supabase ref, preflight result, harness/tool version, owner, and stop conditions. |
 | `provision-isolated-rig.test.ts` | Vitest structural + dry-run behavioral contract tests for the profile overlay plumbing (SCRUM-2673): default-mock safety, chain/gemini env-var + secret deltas, all-profiles boot-critical secrets, Cloud Scheduler `/jobs/*` wiring for non-mock profiles, no-inline-credential invariants, and the `CONFIRM_REAL_CONFIG` apply gate. No infra created — every invocation omits `--apply`. **Stub-stdin contract (2026-07-26):** the apply-mode PATH-stub `gcloud` must drain stdin on any `--data-file=-` invocation (real gcloud semantics) — a non-draining stub races `ensure_secret_with_value`'s `printf \| gcloud` hand-off and flakes SIGPIPE/rc=141 under `pipefail` on loaded CI runners. A regression test pipes a >64 KiB secret through the real path so a non-draining stub fails deterministically, not intermittently. **Load-determinism contract (2026-08-17):** the synchronous child deadline (`PROVISION_CHILD_TIMEOUT_MS` = 120s) is a HANG detector, not a healthy-run bound — the previous 15s deadline was reachable by CPU contention alone (full root suite + concurrent typecheck/lint:copy SIGKILLed children mid-run: rc=124, admission/preflight artifacts never written, 18 green-in-isolation tests red). Do not add per-test timeouts smaller than the file-level `vi.setConfig` budget (they silently override it), and do not assert tight wall-clock bounds on child spawn/kill cycles. |
 | `provision-isolated-rig.test.sh` | Dry-run-only shell contract test for the isolated-rig admission JSON. Runs no Supabase/gcloud side-effect commands. |
 
@@ -338,3 +338,54 @@ left `webhook_id` unset, so no seeded environment could exercise the (now-fixed)
 rows only (independent `randomBytes(8)`, matching every other synthetic-identifier field in this
 function rather than reusing the row's own `id`); every other provider still gets `null`,
 matching DocuSign's account_id-based resolution (`0306`).
+## Provisioner repairs found by standing up a real rig (consolidated-mm-2026-08, 2026-08-30)
+
+Standing up the consolidated merged-main T3 rig with `provision-isolated-rig.sh`
+surfaced four defects that made the script unable to produce a working rig on its
+own. Every 2026-08 rig carried the same hand-made repairs; they are now in the
+script. Source: `docs/staging/consolidated-mm-2026-08/soak-start-2026-08-30T1546Z.md`
+("Findings filed from this stand-up") and that stand-up's admission `deviations`.
+
+- **`IP_HASH_PEPPER` is now part of every profile's overlay, per-rig and
+  create-once.** `services/worker/src/config.ts` has required it in production
+  since 2026-08-11 (DPA Schedules 1+2 warrant hashed caller IPs), so a rig
+  deployed exactly as scripted **crash-looped at boot** — a soak that never
+  starts, from a script whose own Step-3 comment claimed the overlay was
+  boot-complete. The script now generates a 256-bit pepper and writes
+  `ip-hash-pepper-<name>-staging` the same way Step 2b writes the Supabase pair.
+  It is **created once and never rotated**: adding a version on a resumed
+  provision would orphan every audit-log IP hash the rig had already written, so
+  an existing secret is kept and only proven readable. `teardown-isolated-rig.sh`
+  reclaims it with the other per-rig secrets.
+- **The Scheduler hold schedule must be a date that exists.** Cloud Scheduler
+  calendar-validates day-of-month, so creating jobs on day 31 of month 2 was
+  rejected `INVALID_ARGUMENT` by the live API and **Step 4 could not execute at
+  all** — the create→pause→verify-`PAUSED` guard never ran, and a chain/gemini
+  rig silently had no triggers. The hold schedule is now February 29th: a real
+  date the validator accepts, whose next occurrence is years away and therefore
+  cannot fire inside the seconds between create and the immediate pause. Both
+  test pins assert the executed `--schedule`, and a regression test asserts the
+  rejected literal appears nowhere in the script.
+- **Private-node RPC now requires (and can attach) a VPC connector.** The chain
+  profile's default `bitcoin-*-staging` secret names do **not exist** in
+  `arkova1`; the only live signet RPC secrets are `arkova-s33-rig-b1-*`, and they
+  address a private `10.33.10.10` Bitcoin Core node that Cloud Run cannot reach
+  without Serverless VPC Access. New `--vpc-connector` / `--vpc-egress` flags
+  (default: none, so an unrelated deploy is byte-identical to before) attach
+  `fullsoak-btc-rpc` + `private-ranges-only`. Selecting one of those private-node
+  secrets **without** a connector is refused before any paid mutation, and
+  `require_gcloud_secret`'s chain failure now names the live secret set, the
+  connector, and `BITCOIN_NETWORK=signet`. The defaults are deliberately NOT
+  changed to the signet names: silently pointing a mainnet-capable chain profile
+  at a signet node and signet WIF is a worse failure than an actionable abort.
+- **Step 2 waits for `ACTIVE_HEALTHY` before linking.** `projects create` returns
+  as soon as the row exists; linking a `COMING_UP` project persists the legacy
+  IPv6 direct-db config and the push then dies on `LegacyDbConfigIpv6Error`
+  before the pooler tenant exists (STAGING_RIG.md gotcha 4). The script now polls
+  `supabase projects list` until the captured ref reports `ACTIVE_HEALTHY`
+  (`STAGING_PROJECT_READY_MAX_ATTEMPTS` × `STAGING_PROJECT_READY_POLL_SECONDS`,
+  default 60 × 10s) and only then links; `link` and `db push` each retry a
+  bounded number of times (`STAGING_LINK_MAX_ATTEMPTS`, default 6) to absorb the
+  pooler tenant lagging just after the project comes up. Exhausting either budget
+  **exits non-zero** — a rig that never linked must never reach a deploy, and the
+  failure message says the project exists, is billable, and names teardown.
