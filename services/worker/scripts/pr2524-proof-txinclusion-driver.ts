@@ -575,6 +575,7 @@ export function evaluateFoldGuard(input: {
 export function evaluateCoherence(input: {
   httpStatus: number;
   errorCode?: string | null;
+  errorBody?: string | null;
   dbBranch: unknown;
   dbIndex: number | null;
   publishedBranch: unknown;
@@ -613,7 +614,7 @@ export function evaluateCoherence(input: {
     detail: '',
   };
   if (input.httpStatus !== 200) {
-    a8.detail = `/proof answered HTTP ${input.httpStatus}`;
+    a8.detail = `/proof answered HTTP ${input.httpStatus}${input.errorBody ? ` body=${JSON.stringify(input.errorBody)}` : ''}`;
   } else if (!input.bundlePresent) {
     a8.detail = '/proof answered 200 but proof_bundle is null';
   } else if (!pubHasPair) {
@@ -1427,6 +1428,7 @@ export async function runLive(args: DriverArgs, deps: LiveDeps = {}): Promise<Dr
   const coherenceInput = {
     httpStatus: 0,
     errorCode: null as string | null,
+    errorBody: null as string | null,
     dbBranch: sampleRow?.tx_inclusion_branch ?? null,
     dbIndex: sampleRow?.tx_block_index ?? null,
     publishedBranch: null as unknown,
@@ -1434,13 +1436,26 @@ export async function runLive(args: DriverArgs, deps: LiveDeps = {}): Promise<Dr
     publishedFoldsToHeaderRoot: false,
     bundlePresent: false,
   };
+  // /proof is a public route, but an isolated rig's Cloud Run is --no-allow-unauthenticated: the
+  // IAM front door must see the identity token (X-Serverless-Authorization, stripped before the
+  // app) or it answers 403 before the app does. The cron secret is deliberately NOT sent here.
+  const proofHeaders: Record<string, string> = { accept: 'application/json' };
+  if (args.bearerToken) proofHeaders['x-serverless-authorization'] = `Bearer ${args.bearerToken}`;
   if (sampleAnchor?.public_id) {
     const res = await fetchImpl(`${targetUrl}/api/v1/proof/${encodeURIComponent(sampleAnchor.public_id)}`, {
       method: 'GET',
-      headers: { accept: 'application/json' },
+      headers: proofHeaders,
     });
     coherenceInput.httpStatus = res.status;
-    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const rawText = await res.text();
+    if (!res.ok) coherenceInput.errorBody = rawText.slice(0, 400);
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(rawText);
+      if (typeof parsed === 'object' && parsed !== null) body = parsed as Record<string, unknown>;
+    } catch {
+      // non-JSON error page (e.g. Cloud Run IAM 403 HTML) — preserved in errorBody for diagnosis
+    }
     coherenceInput.errorCode = typeof body.code === 'string' ? body.code : null;
     const bundle =
       typeof body.proof_bundle === 'object' && body.proof_bundle !== null
