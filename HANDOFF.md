@@ -14,6 +14,134 @@
 
 ## Now
 
+### CI — dead `memory/` pointers were invisible to the gate built to catch them (2026-08-31)
+
+`memory/project_deploy_typecheck_blackout.md` was cited by six sites — `scripts/ci/check-deploy-build-parity.ts`, `scripts/ci/check-deploy-typecheck-parity.ts`, `scripts/ci/agents.md`, `.github/workflows/agents.md` (x2) and a `ci.yml` comment — and had **never existed in the repo**. It resolved only inside one session's private assistant memory, so any human or CI runner following it found nothing.
+
+`scripts/ci/check-doc-pointers.ts` exists to fail CI on exactly this, but its scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. Nested `agents.md` files and `.github/workflows/*.yml` were not scanned, so all six sites were invisible to it.
+
+Fixed: the memory file now exists in the repo corpus (the failure class is real and has three live parity gates holding it shut), and the scan set covers every tracked nested `agents.md` plus the **comment lines** of workflow YAML. Resolution is now multi-base (doc dir -> package root -> repo root), which is what folder-local notes actually mean; repo-root-only resolution called 59 correctly-written references dead. Widening surfaced **five more** dead `memory/` pointers, each naming a rule that lived only in a session's local memory; those citations now state the fact inline instead. Deliberately-absent paths (negative examples, generated artifacts, named planned work) live in `scripts/ci/snapshots/doc-pointer-exemptions.json` with reasons, and a test fails on a stale one. Coverage went 1,310 -> 1,323 asserted references with the gate green.
+
+**The gate is not merge-blocking.** `Doc Pointer Resolution` is not in `.mergify.yml merge_conditions`, and `main` carries **no** `required_status_checks` at all (`gh api repos/carson-see/ArkovaCarson/branches/main/protection` returns no such block). It reports red without stopping a merge. Wiring it into the queue conditions is the same class of change as the `Orphaned Export Lint` / `Python SDK Tests` entries recorded in `.github/workflows/agents.md`, and was deliberately left out of this PR.
+
+Found incidentally while adding the third-party-notices freshness gate (PR #2530); deliberately kept out of that PR. T0 — no prod surface, no staging evidence required.
+
+### Bug — Adobe Sign webhooks 500 on every delivery, never worked in prod (found 2026-08-30)
+
+`services/worker/src/api/v1/webhooks/adobe-sign.ts` `findIntegration()` queries
+`org_integrations.webhook_id`, a column that has **never existed** — absent from the baseline and
+every numbered migration. Every correctly HMAC-signed `AGREEMENT_WORKFLOW_COMPLETED` delivery
+500s on `42703: column org_integrations.webhook_id does not exist` and lands in `webhook_dlq`,
+which nothing drains — total, permanent loss for the Adobe Sign path.
+
+**Found live** during the `worker-webhook-runtime` T3 soak on isolated rig
+`sawvgrwhgsmxjlwhpsyx` (2026-08-30), reproduced with a real HMAC-signed delivery.
+
+**Confirmed via a read-only `information_schema.columns` query against prod `vzwyaatejekddvltxyye`**
+the same day (Supabase Management API, `SELECT column_name FROM information_schema.columns WHERE
+table_name = 'org_integrations'`): 23 columns returned, none named `webhook_id`. **Adobe Sign has
+never worked in any environment built from this schema, prod included** — this is not a
+stale-baseline-only gap.
+
+Fix: [PR #2519](https://github.com/carson-see/ArkovaCarson/pull/2519), migration
+`0426_org_integrations_adobe_sign_webhook_id.sql` — **DRAFT, NOT applied to prod or any rig,
+NOT soaked.** Verified forward/idempotent/rollback only on an isolated throwaway Postgres 17
+container. Migrations are always T3 (CLAUDE.md §1.12); this needs its own 48 h isolated-rig soak
+exercising a real Adobe Sign webhook delivery before it can go Ready.
+
+**Blocks [PR #2496](https://github.com/carson-see/ArkovaCarson/pull/2496)** (Adobe Sign 16KB
+rule-event payload fix) from ever being soaked — its payload builder sits downstream of this
+lookup.
+
+**Not yet logged in the Confluence Bug Tracker or Jira** (CLAUDE.md §0 rule 5 / §3 gate 2) — the
+Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` / `/mcp` OAuth
+before any session can write to Jira/Confluence; whoever picks this up should file it before
+closing out.
+
+### Soaks — DocuSign bilateral **RC-2** T3 (RUNNING)
+
+- **Rig:** Supabase `aqikotdkmhxmznonwmwk`; worker `arkova-worker-docusign-bilateral-staging` rev **00004-xpn**, image `sha256:edca3f40…`, source head **`2302e815e61fca5af449ba53a7ccca2fac49606e`** (`rc/docusign-bilateral-2026-08-30`).
+- **Clock = Cloud Run revision ready 2026-08-31T00:46:58Z → T3 closes 2026-09-02T00:46:58Z.** Driver detached (PPID 1), 15-min cycles.
+- **Covers 9 PRs:** #2472 guard mig 0423 · #2473 frontend links · #2474 signer capture · #2476 inbound + mig 0424 · #2479 harness · #2485 16KB rule-event bound · #2489 DECLARED_UNVERIFIED disclosure (6 surfaces) · #2516 seed fixture · #2518 0424 rollback executable · #2520 F1 auto-heal · #2521 signer backfill.
+- **Live state:** 37/37 connector artifacts materialized, 37 anchors at `fingerprint_source=issuer_record_attestation`, 152/152 nonces account-scoped, 0 PII leaks, 0 unresolved provenance conflicts.
+- **RC-1 (`2a676981`) 35 sealed cycles** preserved in `~/arkova-soak/docusign-bilateral/round1-sealed/`; clock deliberately restarted so ONE window covers the complete feature.
+- **Documented deviations (residual risk, not defects):** outbound document-fetch cannot be exercised on a synthetic rig (no real DocuSign OAuth grant) so `document_bytes` anchors = 0 and signer capture is proven at the job layer only; the F1 auto-heal is carried by its verified TLA invariant + unit tests, not this window's load; the signer backfill has no eligible candidates for the same reason. See `docs/staging/docusign-bilateral-2026-08/evidence/E5-rc2-complete-window.md`.
+- **Prod keeps `ENABLE_DOCUSIGN_INBOUND` OFF** pending the SCRUM-3818 go-live gate. Do not touch this rig or the concurrent soaks.
+
+- **Rig:** isolated Supabase `aqikotdkmhxmznonwmwk` (`arkova-soak-docusign-bilateral`, us-east-2), ledger head **0424**. Cloud Run `arkova-worker-docusign-bilateral-staging` rev **00003-kt9**, image `sha256:642487e3…`, source head `2a676981cfcc337f87f42169b2d2085fdb886c87` (branch `rc/docusign-bilateral-2026-08-30`).
+- **Covers:** PRs #2472 (guard mig 0423), #2474 (signer capture), #2473 (frontend links), #2476 (inbound + mig 0424), harness #2479.
+- **Clock = Cloud Run uptime**, revision ready **2026-08-30T16:23:20Z**, T3 closes **2026-09-01T16:23:20Z**. Driver `~/arkova-soak/docusign-bilateral/supervisor.sh` (detached, PPID 1), 15-min cycles.
+- **Staging-only:** `ENABLE_DOCUSIGN_INBOUND=true` on the rig. **Prod keeps inbound OFF** pending the SCRUM-3818 go-live gate.
+- **Evidence:** `docs/staging/docusign-bilateral-2026-08/evidence/` — E1/E2 guard behavior, E3 live adversarial matrix, E4 inbound envelopes anchored end-to-end (ARK-DOC-JFQ9QR, ARK-DOC-DGHFW2, `fingerprint_source=issuer_record_attestation`), zero PII leakage.
+- **Do not touch** this rig or the concurrent `credits-2442` / `cleanup-2335` soaks.
+
+### Soaks — consolidated-mm-2026-08 T3 (CLOSED — `pause_lift_obligation` still NOT satisfied, 2026-09-01)
+
+- **Ran:** `consolidated-mm-2026-08`, RC `RC-2026-08-22-deferred-basedrift-exit`, head
+  `b2a65edddff9a3bfb0bb6ec35729bbdd7558a678`, worker rev
+  `arkova-worker-consolidated-mm-2026-08-staging-00001-7n4`. Window
+  2026-08-30T15:46:33Z → 2026-09-01T15:46:33Z, 289/289 cycles clean across every named probe
+  (health/auth/rate-limit/cron/isolation). Sealed evidence:
+  `docs/staging/consolidated-mm-2026-08/cycles/window-summary.json`. Full write-up:
+  `docs/staging/consolidated-mm-2026-08/close-out-2026-09-01.md`.
+- **CTO ruling: this soak does NOT satisfy `pause_lift_obligation`.** The rig never seeded
+  `ENABLE_BATCH_ANCHORING` into `switchboard_flags`, so the batch-anchor/chain-signing path never
+  ran — `max_secured_observed=0` against 13,204 pending anchors from real injected load, and both
+  daily flush fires returned `{"processed":0,"batchId":null,"merkleRoot":null,"txId":null}`
+  (2026-08-31T03:04:55Z and 2026-09-01T03:05:35Z, captured verbatim in the window summary). Prod
+  (`ENABLE_BATCH_ANCHORING=true` since 2026-07-17) secured 13,711 anchors in the same window —
+  confirmed by direct SQL against prod `vzwyaatejekddvltxyye`, so this is a rig-provisioning gap,
+  not a `main` defect. Jira SCRUM-3861.
+- **Everything else this soak proves stands** (289/289 clean cycles is real evidence for the
+  surfaces it covered). It just isn't the one thing `pause_lift_obligation` requires: proof that
+  the anchoring/batch path is safe at the accumulated `main` head.
+  `docs/staging/rc-manifests/rc-deferred-2026-08-22.json` `pause_lift_obligation` updated in place
+  with this same ruling, same date.
+- **`DEPLOY_WORKER_PAUSED` stays `true`.** Lifting it needs a re-soak (or a targeted extension of
+  this rig) with `ENABLE_BATCH_ANCHORING` confirmed `true` via preflight *before* the clock starts.
+  Not scheduled yet — next action for whoever picks up the pause-lift gate.
+
+
+**State as of 2026-08-27T21:00Z, verified live this session.** This block is the only current-state
+claim in this file; everything under `## History` is the dated record and is not re-asserted here.
+Everything dated 2026-08-27 below was read directly this session — `gcloud run services describe
+arkova-worker`, a live `/health` fetch, `gh run view`, `gh variable get`, `gh pr view`,
+`gh pr checks`, the Supabase MCP `list_migrations` / `list_projects`, and `git log --all
+--diff-filter=A` over every ref. Sub-blocks carrying an earlier date still carry their own earlier
+reading and say so; where 2026-08-27 supersedes one, the older text is marked, not deleted.
+
+**Three headline changes since the 2026-08-23 snapshot:**
+1. **Prod was redeployed 2026-08-27** off a week-old SHA — see `### Prod`.
+2. **Migrations `0418` and `0419` reached prod**, moving the prod ledger head from `0414` to `0419`
+   while `main` still tops out at `0414` — see `### Migrations`.
+3. **No soak window is open.** Every soak the 2026-08-23 block described as RUNNING has closed and
+   been sealed; the rigs are still standing and are now a cost item — see `### Soaks`.
+
+**2026-08-29 scoped addendum — this sub-block asserts only what this session verified today; the
+2026-08-27 readings above are not re-asserted:**
+- **Webhook catalog `credential.*` liveness truth-fix is LIVE on the frontend.** PR #2462 merged
+  2026-08-29T21:49:54Z (merge `4ed6b280147140f689349cf80dfe324ee1615419`); the Vercel Production
+  deploy for that commit reported `success`, and the served chunk
+  `WebhookSettingsPage-DdFdKSIo.js` was read directly from `app.arkova.ai` at 21:52:11Z:
+  `"credential.issued":{live:!0,…}`, suffix-free labels for issued/status_changed, "(coming soon)"
+  only on Record Verified. The badges now match the worker: `credential.issued` +
+  `credential.status_changed` have live, unflagged producers **at the prod worker SHA**
+  (`0440ce7e5`, `/health` read 2026-08-29T14:35Z), while `credential.verified` is dark —
+  `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` absent from the live service env per
+  `gcloud run services describe arkova-worker` the same day.
+- **Evidence debt added to the pause-lift obligation:** #2462 (required-tier T2 solely via the
+  `docs/api/` path rule; zero worker/migration delta) merged on the `deferred_consolidated_soak`
+  path — manifest `docs/staging/rc-manifests/rc-deferred-webhook-catalog-2026-08-29.json`
+  (PR #2463, merged `a19b5c32f`), `approval_status: pending` until the consolidated soak of merged
+  main covers it.
+- Bug log: Confluence child page 132415516 under the master tracker — BUG-2026-08-29-001 (the false
+  badges) fixed + prod-verified; BUG-2026-08-29-002 **open**: `job.completed` and
+  `anchor.revocation_anchored` are dispatched but unregistered in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`
+  (validation bypassed; revocation_anchored carries `anchor_id` + `fingerprint`), not deliverable
+  today and now fenced in `services/worker/src/webhooks/agents.md`. Jira SCRUM-3794 Done.
+
+_(2026-08-23 header paragraph and the two-soaks warning follow, SUPERSEDED, kept for the record.)_
+
 **State as of 2026-08-23T19:45Z, verified live.** This block is the only current-state claim in
 this file; everything under `## History` is the dated record and is not re-asserted here. The prod,
 soak-warning and documentation sub-blocks below were all re-verified 2026-08-23 against live
@@ -23,6 +151,13 @@ live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-
 full-functionality soak has its own register — `FD-1`…`FD-16` in
 [docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md) §11.
 
+> ⚠️ **SUPERSEDED 2026-08-27 — NEITHER of these soaks is running any more.** Both windows closed
+> on 2026-08-23 and their evidence is sealed. `gcloud run services list --project arkova1 --region
+> us-central1` on 2026-08-27T21:00Z still shows `arkova-worker-ferpa2314-staging` and
+> `arkova-worker-wave2-2026-08-staging` standing, and `list_projects` still shows
+> `wjuelohtpklodpjklvqy` / `tkciooifwxwnkoizgalp` ACTIVE_HEALTHY — **a standing service is not a
+> running soak.** See `### Soaks`. The original warning is kept verbatim below.
+>
 > ⚠️ **TWO soaks are RUNNING tonight (2026-08-23). Read this before touching any rig, driver or PR.**
 > - **ferpa2314** (PR #2314, FD-FERPA-1) — isolated Supabase `wjuelohtpklodpjklvqy`; T3 clock closed
 >   **2026-08-23T19:24:30Z**. Supervisor healthy through 19:05:06Z (ok=419-440, fail=0 per cycle).
@@ -59,7 +194,64 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
 
 ### Prod
 
-- Worker `git_sha 3db27b5402507213473bbb7de189dd6fcc696de5` (short `3db27b540`), revision
+- **Worker `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`, revision `arkova-worker-01322-tol`
+  serving 100%. Verified live 2026-08-27T21:00Z** by direct `/health` read against
+  `https://arkova-worker-kvojbeutfa-uc.a.run.app`:
+  `{"status":"healthy","version":"0.1.0","git_sha":"0440ce7e5c09ab15da60157e9a96128f669dc999",
+  "network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`, cross-checked
+  against `gcloud run services describe arkova-worker --region us-central1 --project arkova1`
+  (`status.traffic` → `arkova-worker-01322-tol`, `percent: 100`, `latestRevision: true`).
+  Landed by deploy-worker run
+  [**33114229919**](https://github.com/carson-see/ArkovaCarson/actions/runs/33114229919) —
+  `event: workflow_dispatch`, `headSha 0440ce7e5c09ab15da60157e9a96128f669dc999`,
+  `conclusion: success`, 2026-08-27T20:37:29Z → 20:49:15Z.
+  _(2026-08-27 sub-block; supersedes the 2026-08-23 `3db27b540` / `arkova-worker-01319-lit` claim
+  immediately below, which was its ancestor.)_
+
+- **The deploy pause is still ON — this deploy went around it, deliberately and by the documented
+  path.** `gh variable get DEPLOY_WORKER_PAUSED` reads **`true`** at 2026-08-27T21:00Z, unchanged.
+  The redeploy used `workflow_dispatch`, which `.github/workflows/agents.md` §"Deploy-worker pause
+  gate" records as ALWAYS bypassing the pause ("a human pressing the button is the override"). So
+  the standing rule is intact: a `push` to `main` still does **not** reach prod, and the
+  `pause_lift_obligation` in
+  [`docs/staging/rc-manifests/rc-deferred-2026-08-22.json`](docs/staging/rc-manifests/rc-deferred-2026-08-22.json)
+  is **still owed** — a workflow_dispatch deploy does not discharge it. Do not read this deploy as
+  the pause having been lifted.
+
+- **Prod had been stale for eight days before this.** `3db27b540` was deployed 2026-08-23 and, by
+  2026-08-27, sat 39 commits behind `main`. `0440ce7e5` is the merge commit of PR #2400.
+
+- **Prod is already three merges behind `main` again.** `origin/main` is `c9b210bd1` at
+  2026-08-27T21:00Z (`git rev-parse origin/main`); prod is `0440ce7e5`. The three commits prod does
+  not carry are `ccd74f8d9` (#2431, frontend/copy only — not worker code), `59cdbd075` (#2428,
+  `.claude/hooks` + `scripts/agent` only — not worker code) and `c9b210bd1` (#2264,
+  `@google-cloud/kms` 5.7.0 → 6.0.0 in `services/worker/package.json`, **which IS worker code and is
+  NOT in prod**). Only the last one is a real prod-vs-main delta in worker behaviour.
+  **The pause held on the push path, observed rather than assumed:** #2264's merge fired
+  deploy-worker run
+  [33114500322](https://github.com/carson-see/ArkovaCarson/actions/runs/33114500322)
+  (`event: push`, `headSha c9b210bd1`, 20:40:51Z → 20:54:53Z, `conclusion: success`), whose jobs read
+  `Pre-deploy Quality Gates: success` → `Deploy Gate (pause check): success` →
+  `Build & Deploy (canary → full): **skipped**`. A green "Deploy Worker" run on `main` therefore does
+  NOT mean prod moved — quality gates run either way and the run still reports success. Prod
+  `/health` re-read after that run still returns `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`.
+
+- **What this deploy actually shipped.** `0440ce7e5` carries the seven PRs merged 2026-08-27T20:24Z
+  – 20:28Z. The load-bearing one is **#2400** (`services/worker/src/lib/safe-fetch.ts`): the
+  dependabot bump undici 7.29.0 → 8.10.0 would have broken **100% of worker egress** without the
+  accompanying code fix. `defaultSafeFetchDeps().dispatch` was pairing an Agent from the *npm*
+  `undici` package with `globalThis.fetch`, which is backed by Node's *internal* bundled undici;
+  undici 8 dropped the legacy-handler shim, so `Agent.dispatch` now rejects Node's internal handler
+  with `InvalidArgumentError: invalid onRequestStart method` (`UND_ERR_INVALID_ARG`). The fix imports
+  undici's own `fetch` so Agent and fetch share one realm. Blast radius had it shipped unfixed:
+  credential-source imports and the CE Registry / CTDL egress path. Also in this deploy: **#2269**
+  (rate-limit cluster — cross-instance Upstash state, once-per-request counting, env-namespaced
+  keyspaces), **#2427** (worker typecheck as a required PR-time check), **#2430** (the
+  `evidence-identity` + `anti-hollow-soak` gates flipped fail-closed), **#2428** (three force-push
+  bypasses closed in the merge-block hook), **#2431** (CLE detail metadata + copy single-sourcing).
+
+- _(superseded, 2026-08-23 — see the 2026-08-27 sub-block above)_ Worker
+  `git_sha 3db27b5402507213473bbb7de189dd6fcc696de5` (short `3db27b540`), revision
   `arkova-worker-01319-lit` serving 100%. **Verified live 2026-08-23T18:12Z** by direct `/health`
   read: `{"status":"healthy","git_sha":"3db27b5402507213473bbb7de189dd6fcc696de5",
   "network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`, cross-checked
@@ -157,7 +349,145 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
   `pg_index` / direct query at apply time; see the exemption file's `_comment` history for the per-row
   rationale (kept there deliberately as the audit trail, not duplicated here).
 
+### Migrations (2026-08-27)
+
+- **★ `main` is RED on `Migration Drift Check` right now, and it is the direct consequence of
+  applying 0418/0419 ahead of their PRs.** Two blocking `ledger-orphan-prod-row` annotations, read
+  from the check-run annotations API on run
+  [33117360131](https://github.com/carson-see/ArkovaCarson/actions/runs/33117360131): *"prod ledger
+  has version=0418 (name=0418_sec_replay_dashboard_cache_refresher_revokes) with no matching
+  supabase/migrations/0418_*.sql in the repo — a migration reached prod WITHOUT its source landing
+  on main"*, and the same for `0419`. **No docs commit caused this** — the immediately preceding
+  drift run on `c9b210bd1`
+  ([33114500112](https://github.com/carson-see/ArkovaCarson/actions/runs/33114500112), 20:40:51Z)
+  passed with warnings only, so the flip happened when the two rows entered the prod ledger between
+  20:41Z and 21:00Z; `git diff --name-only c9b210bd1..main` over the docs commits that followed
+  shows zero `.sql` and zero exemption-file changes.
+  The gate names both remedies itself: **merge the owning PRs** (#2336, #2355 — lands the files and
+  reconciles it properly) **or** add `0418`/`0419` to
+  `scripts/ci/snapshots/ledger-numeric-exemptions.json` with a documented reason as a holding
+  measure. **A parallel session has already built the second option** on branch
+  `fix/ledger-exempt-0418-0419` (`d181947959`, pushed 2026-08-27, "exempt 0418/0419 pending merge,
+  drop stale 0410-0413 exemptions [T0]") — check that branch before writing a competing fix.
+  The same run also carries four NON-blocking `ledger-stale-exemption` warnings: `0410`–`0413` are
+  now reconciled (present in prod AND on main), so their exemptions suppress nothing real and only
+  mask a future genuine drift on those prefixes. That branch drops them in the same commit.
+
+- **Prod ledger head is `0419`.** `0418_sec_replay_dashboard_cache_refresher_revokes` and
+  `0419_sec_replay_v_slow_queries_relation_revoke` were applied to prod (`vzwyaatejekddvltxyye`) on
+  2026-08-27 via the Supabase MCP `apply_migration`, then reconciled to their NUMERIC ledger
+  versions per CLAUDE.md §0 rule 10. Confirmed after the fact by the MCP `list_migrations` tool
+  against `vzwyaatejekddvltxyye` at 2026-08-27T21:00Z, whose last two rows read
+  `{"version":"0418","name":"0418_sec_replay_dashboard_cache_refresher_revokes"}` and
+  `{"version":"0419","name":"0419_sec_replay_v_slow_queries_relation_revoke"}` — numeric, not
+  timestamp-style, so the migration-drift gate's numeric-ledger check can see them.
+
+- **Both were measured to be no-ops against prod BEFORE they were applied**, which is the whole
+  point of a replay migration: `refresh_cache_*` already had `anon=f`, `authenticated=f`,
+  `service_role=t`, and `v_slow_queries` already had anon `SELECT=f` / service_role `SELECT=t`.
+  These files replay decisions prod already made; they make prod match the repo, not the other way
+  round, so every environment REBUILT from `main` stops being weaker than prod. Nothing about prod's
+  effective ACL changed on 2026-08-27.
+
+- **`main` still tops out at `0414`.** `ls supabase/migrations/` on `c9b210bd1` ends at
+  `0414_sec_replay_missing_anon_revokes.sql`. `0415`–`0421` all live on unmerged branches. This is
+  the standard prod-ahead-of-main shape for this repo (see the `0347` precedent), not a new defect —
+  but it does mean **the prod ledger and `main` disagree by five numbers and the disagreement is
+  expected**; do not "fix" it by deleting rows.
+
+- **Prod's ledger has a real numeric gap at `0415`, `0416`, `0417`.** Prod goes `…0413, 0414, 0418,
+  0419`. Those three prefixes are claimed on branches (`0415_ferpa_directory_info_opt_out_public_projections`
+  and `0415_false_secured_offchain_anchor_quarantine`, `0416_secured_count_measured_not_derived`,
+  `0417_cleanup_expired_data_singleton_advisory_lock`) and have reached neither `main` nor prod.
+  Flagging it because the SCRUM-2500 full-ledger numeric-integrity audit reads gaps, and this one is
+  legitimate — 0418/0419 were applied ahead of their unmerged siblings, not instead of them.
+
+- **`0420` prefix collision — RESOLVED.** Two branches claimed `0420` 47 seconds apart on
+  2026-08-23: `c835c32a6` at 20:43:24 (#2442, `0420_scrum2538_check_unified_credits_fail_closed.sql`)
+  and `a4509d220` at 20:44:11 (#2440, `0420_scrum3529_public_anchor_sub_type_projection.sql`) —
+  timestamps read from `git log --all --diff-filter=A` over every ref, not from either PR body.
+  First claim wins (the RTE protocol in `supabase/migrations/agents.md`), so **#2442 keeps `0420`**
+  and **#2440 renumbered to `0421`** in commit `dbd9ca53c` ("renumber 0420 -> 0421 to resolve the
+  SCRUM-3529 / SCRUM-2538 prefix collision", 2026-08-27T20:55:33Z), which is now #2440's head.
+
+- **★ `0415` is claimed TWICE and is NOT resolved.** `git log --all --diff-filter=A` shows two
+  distinct files at that prefix: `0415_ferpa_directory_info_opt_out_public_projections.sql`
+  (`93747a6aa451991476ab0b00d58c3fb0754f2e2d`, 2026-08-21T12:40:06, PR #2314 — and note that SHA is
+  the FROZEN soak head recorded in the 2026-08-23 block above) and
+  `0415_false_secured_offchain_anchor_quarantine.sql` (`6860390a80f959c272c08a692e81ba635e233964`,
+  2026-08-21T18:42:10). Same class as the `0420` collision, same fix shape — the LATER claim
+  (`6860390a8`, by 6 h) renumbers. **Nobody has done it.** Whichever of the two merges second will
+  land a duplicate prefix. This is the one open migration-numbering hazard on the board.
+
+### CI — new required check `Third-Party Notices Freshness` (added 2026-08-30)
+
+`src/data/thirdPartyNotices.generated.json` (the data behind the shipped `/legal/third-party-notices`
+page) is generated by `npm run license:notices:generate`, but **nothing ever ran that generator in
+CI** — a grep of `.github/workflows/*.yml` and `scripts/ci/*.ts` for `license:notices` returned zero
+hits. So it drifted silently: the committed file is stamped `generatedAt: 2026-07-28` and is out of
+sync for **81 package names**, including 13+ production dependencies that are installed and appear
+nowhere on the page (`xlsx`, `heic-decode`, `upng-js`, `utif2`, the SheetJS stack). `qrcode-generator@2.0.4`
+reached a branch undisclosed and was caught by hand, not by CI. The generator has also been failing
+closed the whole time (exits 1, writes nothing) on an allowlist-cleared `@img/sharp-libvips-*` with no
+pinned notice.
+
+`scripts/ci/check-third-party-notices-fresh.ts` closes the *detection* half. What other sessions need
+to know:
+
+- **It is now in all three `.mergify.yml` queue `merge_conditions`.** A ci.yml job absent from that
+  list gates nothing, so it was wired in the same change. The job runs unconditionally (no job-level
+  `if:`, no path filter, no `continue-on-error`) — pinned by `mergify-notices-freshness-gate.test.ts`,
+  because a `skipped` check never satisfies `check-success` and would deadlock the queue.
+- **It is a RATCHET, and green today.** The inherited drift above is recorded in
+  `scripts/ci/snapshots/third-party-notices-drift-baseline.json` with `expires: 2026-10-31`. New drift
+  fails immediately; inherited drift warns on every run; everything hard-fails past the expiry. This
+  is deliberate — failing on the inherited state would have red-ed every open PR at once.
+- **If your PR fails it:** run `npm run license:notices:generate` and commit the result. Note that this
+  currently exits 1 without writing, because of the pinned-notice gap above — that gap is owned by the
+  "Regenerate third-party notices (blocked by sharp)" task and is the blocker to retiring the baseline.
+- The comparison excludes platform-variant packages (detected from `os`/`cpu`/`libc` in
+  `package-lock.json`), so a file generated on darwin matches an ubuntu runner. Checked both ways
+  locally: darwin-arm64 excludes 3 names, a linux-x64 tree excludes 7, and both emit an identical
+  81-name drift set and exit 0.
+
+No prod state is asserted or changed by this; it is CI-only (T0).
+
 ### PR board
+
+#### Refreshed 2026-08-27 — the 2026-08-12/08-18 entries below are largely SUPERSEDED
+
+The freeze notice and the Day-6 campaign block immediately below describe a board that has moved.
+Read this first; the older blocks are kept because their defect analysis is still the best record of
+*why* each fix exists, not because their PR states are current.
+
+- **Seven PRs merged 2026-08-27** (`gh pr view --json state,mergedAt,mergeCommit`, read this
+  session): **#2427** `26718d948` 20:24:12Z (worker typecheck on a required PR-time check,
+  SCRUM-1811); **#2430** `4a1e96690` 20:24:21Z (activates the `evidence-identity` +
+  `anti-hollow-soak` gates fail-closed — they had been installed but switched off, gating nothing);
+  **#2269** `c22f586cb` 20:24:02Z (the consolidated rate-limit cluster, T2); **#2400** `0440ce7e5`
+  20:28:09Z (undici 7→8 **plus** the cross-realm `safe-fetch.ts` fix); **#2431** `ccd74f8d9`
+  20:39:57Z (CLE detail metadata + copy single-sourcing, T1); **#2428** `59cdbd075` 20:40:02Z
+  (three force-push bypasses closed in `block-pr-merge.sh`, SCRUM-3492); **#2264** `c9b210bd1`
+  20:40:48Z (`@google-cloud/kms` 6.0.0). Earlier: **#2219** merged `8fac11bc5` 2026-08-23T20:57:21Z
+  (partner-provisioning HTTP router, T3).
+- **The two "New PR opened 2026-08-12" rate-limiter entries further down are now MERGED**, as
+  #2269's consolidation. Their bodies stay because the F-1 (store never shared state) and F-2
+  (`apiIpShadowGuard` double-mount, so the documented §1.10 60/min was really 30/min) analyses are
+  the reason the fix looks the way it does. Their "opened in DRAFT, not queued toward Ready, no soak
+  was run" clauses are **no longer true**.
+- **Only two non-draft PRs are open**, both dependabot: **#2450** (`worker-deps` group,
+  `mergeStateStatus: UNSTABLE`) and **#2446** (`production-deps` group, `mergeStateStatus:
+  UNKNOWN`). `gh pr checks` on both reads `Mergify Merge Queue — skipping`, i.e. **nothing is
+  embarked in the merge queue** as of 2026-08-27T21:00Z.
+- **Four migration-owning PRs remain OPEN and DRAFT:** #2336 (`0418`), #2355 (`0419`), #2442
+  (`0420`), #2440 (`0421`). #2336 and #2355 now carry full sealed T3 evidence (see `### Soaks`) —
+  their migrations are already in prod, so the "PR numeric ledger drift" leg of the migration-drift
+  gate that used to red them should now be satisfied; **that has not been re-checked and is
+  unverified here.** #2314 (`0415`, FERPA) is also still open and draft at head `99ea75fbf`.
+- **`SOAK_GATE_DISABLED` reads `false`** (`gh variable get`, 2026-08-27T21:00Z) — unchanged, so a
+  green Staging Soak Evidence Gate still means the evidence block was actually read.
+
+_(The 2026-08-18 freeze notice and Day-6 campaign block follow, largely superseded.)_
 
 **FROZEN for the soak window (2026-08-12T15:51:30Z → 2026-08-19T15:51:30Z).** `DEPLOY_WORKER_PAUSED=true`,
 so worker deploys do not run and `deferred_consolidated_soak` is gated — merging worker code now would put
@@ -266,6 +596,60 @@ separately). Full verdicts, defects, and landing-order constraints:
   **Flagged, not fixed:** `chain/fee-estimator.ts` has the same mainnet-only default, so a
   non-mainnet deployment reports mainnet fee rates — that fix is T3 (`chain/`) and is tracked
   separately rather than folded in.
+- **New PR opened 2026-08-12** (`services/worker/src/utils/rateLimit.ts`,
+  `utils/upstashRateLimit.ts`): the v1 Upstash rate-limit store never shared state. `get()`
+  returned its local `Map` and never read Redis; `rateLimit()` called `store.set()` only on the
+  create-new-entry branch, so the later `entry.count++` mutated in place with no write-back and
+  Redis received `{"count":0}` once per window; `syncFromRedis()` was never called outside its own
+  test. Net: every Cloud Run instance enforced a private bucket behind a docstring promising a
+  shared one. **Verified live, not inferred from code** — prod `arkova-worker` mounts
+  `UPSTASH_REDIS_REST_URL`/`_TOKEN` as secrets (`gcloud run services describe`), logs
+  `Upstash Redis rate limiting initialized` (`gcloud logging read`, 5 hits within 7d, latest
+  2026-08-12T13:20:18Z), and runs `minScale=2, maxScale=10`, so configured limits were effectively
+  up to 10x their stated value and cold starts reset counters. Fixed by adding an optional atomic
+  `increment()` to `IRateLimitStore` (single pipelined `INCR`+`PTTL`, `PEXPIRE` only to arm a new
+  window), which is the design `api/v2/rateLimit.ts` already shipped — v1 is now at parity. Redis
+  loss degrades to a bounded per-instance bucket that logs on every degraded request, rather than
+  being the silent default. TDD: 17 new cross-instance tests written first, **14 confirmed red**
+  against the old implementation (incl. `expected 429, got 200` for a request served by a second
+  instance); 54/54 green after. Worker typecheck + `npm run lint` clean. T2 by path rule
+  (`services/worker/src/utils/`); opened in DRAFT, **not** queued toward Ready — the full-soak rig
+  is occupied by `pr-2195` and frozen, so no soak was run; see the PR's evidence block for the
+  per-field NOT RUN disclosure and the `SOAK_GATE_DISABLED` state checked at open time.
+  **Two corrections to the incoming report, both load-bearing:** (1) `rateLimiters.auth` (5/min,
+  the "most severe, brute-force" item) is **not mounted on any route** — it is referenced only by
+  tests and comments, so it protects nothing today at any multiplier; the real exposure is
+  `rateLimiters.api`/`apiIpShadowGuard` (60/min) and `checkout`/`quotaCheck` (10/min). (2) The
+  cited write-up `docs/staging/fullsoak-2026-08/connector-sidecar-evidence.md` **does not exist**
+  in this repo or anywhere in git history, and the `F-1` label collides with the existing, unrelated
+  F-1 (org-queue-scheduler 500s) in `docs/staging/SOAK-FINDINGS-2026-08.md` — the code defect was
+  re-derived and confirmed from source and live prod state independently of that document.
+  **Flagged, not fixed:** `apiIpShadowGuard` is mounted twice (`app.use('/api', …)` at index.ts:418
+  and unprefixed `app.use(…, didWebRouter)` at index.ts:446), so one `/api/*` request is counted
+  twice against the same key — which is exactly the `48 → 46 → 44` header stride in the report, and
+  means the documented 60/min per IP is really 30/min. Separate defect, separate risk profile, not
+  folded in.
+- **New PR opened 2026-08-12** (`services/worker/src/utils/rateLimit.ts`, comment-only in
+  `services/worker/src/index.ts`): `apiIpShadowGuard` is mounted twice — `index.ts:418` under `/api`
+  and `index.ts:446` unprefixed — and Express runs every mount a request matches, so one request was
+  counted twice by the same limiter instance. **The documented 60 req/min per IP (§1.10) was really
+  30/min.** Path-dependent, which is why it hid: `/api/badge/:id` is answered by `badgeRouter` and
+  never reaches mount 446 (counted once, looks correct), while anonymous `/api/v1/*` is answered by
+  neither and falls through to 446 (counted twice). Matches the side-rig's `x-ratelimit-remaining`
+  48 → 46 → 44 stride, which one correctly-mounted limiter cannot produce. **Neither mount could be
+  deleted** — the unprefixed one serves did:web paths outside `/api` and must carry the same skip
+  predicate (F-2, #1768). Fixed by stamping the request with the limiter's own `Symbol` and counting
+  at most once per limiter INSTANCE; deliberately per-instance, not global, because `index.ts` shares
+  one per-IP bucket across different limiters and each must still charge it. Also fixes
+  `rateLimiters.api`, which double-counted on overlapping prefixes (`/api/v1/org` at :470 vs
+  `/api/v1/org/sub-orgs` at :471). TDD: 7 tests written first, **4 confirmed red**
+  (`expected [8, 6, 4] to deeply equal [9, 8, 7]`); all adjacent rate-limit suites pass, worker
+  typecheck + `npm run lint` clean. **This LOOSENS enforcement** (30/min → the intended 60/min) — it
+  changes enforcement numbers, so it is not a cleanup. T2 by path rule; opened in DRAFT, **not**
+  queued toward Ready — the full-soak rig is occupied by `pr-2195` and frozen and
+  `arkova-worker-staging` is dead, so no soak was run; `SOAK_GATE_DISABLED` read `false` at open
+  time, so its Staging Soak Evidence Gate is expected to fail. Independent of, and additive to,
+  the F-1 store fix in #2223 — until both land, each `/api/*` request costs two Upstash round trips.
 
 ### Documentation & ticket state (2026-08-23)
 
@@ -292,6 +676,91 @@ separately). Full verdicts, defects, and landing-order constraints:
   they could fire.
 
 ### Soaks
+
+> ### ✅ PR #2461 soak CLOSED and SEALED — rig torn down 2026-08-31
+>
+> T2 window **2026-08-31T00:15:22Z → 12:15:22Z**, full 12 h served, on isolated rig
+> `evkcynsqcmctugoscgeh` / `arkova-worker-pii2461b-staging-00003-gb4`, head
+> `5083fbba4e27121e6bd845361ccd7dda323e3183`.
+>
+> **142 cycles, 142 pass, 0 fail.** 426 extraction jobs claimed and processed, 34,080,426 characters
+> of adversarial dotted evidence driven through `stripSensitiveString`, 426 CTDL projections probed,
+> 0 leaks, 0 under-redactions. Soak clock = Cloud Run worker uptime 43,647 s (12.12 h). Preflight
+> `clean_mirror` 7/7 at **both** ends (00:06:17Z and 12:21:56Z). Evidence is in the PR body; the
+> `Staging Soak Evidence Gate` passes in CI with `SOAK_GATE_DISABLED=false`.
+>
+> **Rig reclaimed (§7):** Supabase project deleted, Cloud Run service deleted, per-rig secrets
+> deleted, plus the two orphaned `supabase-db-password-<ref>` secrets for this rig and its swept
+> predecessor — the teardown script does not remove those, which is why one had survived a prior
+> sweep as a dead credential.
+>
+> Two failures worth carrying forward, both already fixed in tooling:
+> 1. The first rig was swept mid-setup because its provision aborted before persisting an admission
+>    artifact, so it had no lease marker. A `### Soaks` entry is that lease — use one.
+> 2. `rollback-rehearsal.sh` selected `status.traffic[0]` as "the serving revision"; with a
+>    `rollback` tag present that is the **0%** entry, so it restored traffic to the prod image and
+>    reported success while the rig served the wrong code. Select on `percent == 100` and verify by
+>    reading `/health` `git_sha` back. STAGING_RIG.md pitfall 7, recurring inside our own tooling.
+
+**★ NO SOAK WINDOW IS OPEN as of 2026-08-31T12:30Z.**
+Every window described in the dated entries Every window described in the dated entries
+below has closed. This block — not any `## History` entry, and not the presence of a Cloud Run
+service — is the authoritative answer to "is a soak running" (CLAUDE.md §0.1). Three soaks closed
+and were SEALED; their evidence is in the PR bodies, read this session with `gh pr view --json body`:
+
+| PR | Tier | Window | Cycles | Result |
+|---|---|---|---|---|
+| **#2400** (undici 8 + safe-fetch realm) | T2 | 2026-08-24T00:21:00Z → 12:27:51Z (**12.11 h**) | 32 | 13,049 ok / 14 fail; 8,597× 200, 4,128× 404, 326× 400, **zero 429s**, 0 termination events |
+| **#2336** (`0418` dashboard-cache revokes) | T3 | 2026-08-23T23:55:55Z → 2026-08-25T23:55:55Z (**full 48 h**) | 115 | Trigger A 8239/0, Trigger B 6859/0, flush 345/0, isolation 345/0 |
+| **#2355** (`0419` `v_slow_queries` revoke) | T3 | 2026-08-24T00:12:53Z → 2026-08-26T00:12:53Z (**full 48 h**) | 115 | Trigger A 6199/0, Trigger B 1714/0, flush 345/0, isolation **344 / 1** |
+
+- **That single #2355 isolation failure is NOT an isolation breach, and the distinction matters.**
+  Cycle `20260825T135335Z` recorded `per-org isolation: anon organizations http 000 body=[]`.
+  HTTP 000 is a **curl transport failure** — no server response at all — and the body it captured
+  was `[]`, i.e. anon reached **zero** org-scoped rows, which is the correct outcome. The same cycle
+  carried two health 401s from ID-token expiry, matching the Cloud Run token-verification warnings
+  at close. No cycle in either T3 recorded anon successfully reading an org-scoped row. It is
+  disclosed rather than filtered, which is the standard this repo holds itself to.
+- **All three ran on isolated, clean-mirror rigs**, each with its own Supabase project and its own
+  wired `*-staging` Cloud Run service, preflight `environment_type=clean_mirror` captured BEFORE the
+  clock started: #2400 on `fizyjojbebyalirtjjht` / `arkova-worker-staging-00349-sef` (re-run at
+  close also clean); #2336 on `cdevaqafshzdxipjbech` / `arkova-worker-sec-2336-staging-00003-k5d`;
+  #2355 on `zehwymytxihxxbdirqzu` / `arkova-worker-sec-2355-staging-00002-tb2`.
+- **#2400's clock is asserted from load restart, not revision creation, and says so.**
+  `clock_matches_creation: False` by design — revision `00349-sef` came up 2026-08-23T22:02:45Z but
+  its driver halted at 22:42:25Z on an upstream 504; rather than claim the unbacked window, the
+  clock runs from the 00:21:00Z load restart. That is the conservative boundary, not the generous
+  one, and the 12.11 h still clears the T2 12 h floor.
+- **#2336 and #2355 remain OPEN and DRAFT** even though their migrations are in prod and their soaks
+  are sealed. Marking them ready is a §1.12 / merge-council call, not a docs call.
+
+- **★ COST SWEEP OWED (CLAUDE.md §7).** With no soak running, **eight** non-prod Supabase projects
+  are still `ACTIVE_HEALTHY` and **eight** `*-staging` Cloud Run services are still standing —
+  read live 2026-08-27T21:00Z from the MCP `list_projects` and `gcloud run services list --project
+  arkova1 --region us-central1`:
+
+  | Supabase project | ref | Paired Cloud Run service |
+  |---|---|---|
+  | `arkova-fullsoak-2026-08` | `gnkuaywlpmsaezwvlvhk` | `arkova-worker-fullsoak-2026-08-staging` |
+  | `arkova-staging-2026-08` | `fizyjojbebyalirtjjht` | `arkova-worker-staging` (the standing rig) |
+  | `arkova-wave2-2026-08` | `tkciooifwxwnkoizgalp` | `arkova-worker-wave2-2026-08-staging` |
+  | `arkova-wave3-2026-08` | `jiotjhqmedkajdsojsbn` | `arkova-worker-wave3-2026-08-staging` |
+  | `arkova-ferpa-2314-2026-08` | `wjuelohtpklodpjklvqy` | `arkova-worker-ferpa2314-staging` |
+  | `arkova-node22-2026-08` | `yklabujmzhzbvnhovcjt` | `arkova-worker-node22-staging` |
+  | `arkova-soak-sec-2336` | `cdevaqafshzdxipjbech` | `arkova-worker-sec-2336-staging` |
+  | `arkova-soak-sec-2355` | `zehwymytxihxxbdirqzu` | `arkova-worker-sec-2355-staging` |
+
+  `arkova-staging-2026-08` / `arkova-worker-staging` is the standing shared rig and should stay
+  (`docs/reference/STAGING_RIG.md` is its operations doc). The other seven are per-soak rigs whose
+  windows have all closed; `scripts/staging/teardown-isolated-rig.sh` is the mechanism. **Do NOT
+  tear down `cdevaqafshzdxipjbech` or `zehwymytxihxxbdirqzu` while #2336 / #2355 are still open** —
+  their evidence blocks name those refs and a reviewer may want to re-read the rig. Per §7, a paid
+  Supabase project cannot be paused via the MCP (`pause_project` needs a free-tier downgrade first),
+  so the choice is delete-or-flag-for-Carson, not pause. **This sweep has not been executed — it is
+  recorded here as owed, not done.**
+
+_(The dated 2026-08-20/21/23 soak stand-up entries follow. Every window they describe has CLOSED;
+they are the record of how each rig was stood up, not a statement that anything is running.)_
 
 - **TRAIN-6 CLOCK RESTARTED 2026-08-21T20:33:58Z — the 18:54:36Z window is VOID.** PR #2249 (T3,
   anchor lifecycle) on `arkova-worker-wave2-2026-08-staging`.
@@ -470,7 +939,36 @@ separately). Full verdicts, defects, and landing-order constraints:
 `gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
 bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 
-_Last refreshed: 2026-08-23 by Claude Opus 5 (CTO session) — claims verified against live output, not
+**Worker health endpoint — BOTH `/health` and `/api/health` are live, and this has been mis-stated
+in both directions.** Checked live 2026-08-27T21:00Z against
+`https://arkova-worker-kvojbeutfa-uc.a.run.app`: `/health` → 200 with the full body, `/api/health` →
+200 with a byte-identical body, `/api/v1/health` → 404. In source, `services/worker/src/index.ts`
+mounts `app.get('/health', healthCheckHandler)` at :212 and `app.get('/api/health',
+healthCheckHandler)` at :214 — the second is an alias of the same handler, added by the pentest-prep
+work whose comment at :116-120 records that `/api/health` used to 404 despite CLAUDE.md §1.9 naming
+it. **So §1.9 is now correct and needs no amendment**; an earlier session's note that "§1.9 is wrong,
+the path is `/health` only" was true before that alias landed and is false now. Two live instances
+answer (prod runs `minScale=2`), so the `uptime` field differs between calls to the two paths — that
+is two containers, not two services.
+
+_Last refreshed: 2026-08-30 by Claude Sonnet 5 — claims verified against gcloud/MCP/CI output.
+Scope: the "Bug — Adobe Sign webhooks" addendum only — earlier readings keep their own dates.
+`org_integrations.webhook_id` absence on prod confirmed via the Supabase Management API,
+`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name
+= 'org_integrations'` against `vzwyaatejekddvltxyye` — 23 rows returned, no `webhook_id`. The
+Adobe Sign 500 was reproduced live on isolated rig `sawvgrwhgsmxjlwhpsyx` during the same
+session's `worker-webhook-runtime` T3 soak. PR #2519's migration is verified only against an
+isolated throwaway Postgres 17 container — NOT applied to prod or any rig, NOT soaked; do not
+read this entry as prod-fix-live._
+
+_Last refreshed: 2026-08-29 by Claude Fable 5 (CTO session) — claims verified against gcloud/MCP/CI output:
+prod `/health` read 2026-08-29T14:35Z (`git_sha 0440ce7e5`, healthy); `gcloud run services describe
+arkova-worker` env scan (no ENABLE_CREDENTIAL_VERIFIED_WEBHOOK); PR #2462 merge `4ed6b280` + Vercel
+Production `success` + served-bundle grep at 21:52:11Z; `gh variable get DEPLOY_WORKER_PAUSED` → `true`,
+`SOAK_GATE_DISABLED` → `false`. Scope: the 2026-08-29 addendum only — earlier readings keep their own dates._
+
+_(Prior footer, 2026-08-23, kept as its own dated record:)_
+_2026-08-23 by Claude Opus 5 (CTO session) — claims verified against live output, not
 prior-session prose: prod `/health` read 2026-08-23T18:12Z (`git_sha 3db27b540`, `checks` all ok) cross-checked
 with `gcloud run services describe arkova-worker --region us-central1 --project arkova1`
 (`arkova-worker-01319-lit` 100%); `gh variable get DEPLOY_WORKER_PAUSED` → `true`; deploy-worker runs
@@ -1419,4 +1917,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-21 by Claude Opus 5 (TRAIN-6 clock-restart session) — claims verified against gcloud/MCP/CI output: `gcloud run services describe` + `gcloud run revisions describe` for every revision and creationTimestamp named above, `gcloud logging read` for the probe timings, the Supabase Management API query endpoint for every row count, and `staging-honesty-preflight.ts` run to completion from the PR-head checkout. Nothing here is asserted from prior-session prose._
+_Last refreshed: 2026-08-31 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._

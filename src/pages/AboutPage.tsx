@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Building2, ExternalLink, Lightbulb, Globe } from 'lucide-react';
 import { usePageMeta } from '@/hooks/usePageMeta';
+import { PLATFORM_METRICS, PLATFORM_METRICS_AS_OF } from '@/lib/copy';
 
 const TEAM = [
   {
@@ -107,24 +108,22 @@ export function AboutPage() {
           </p>
         </div>
 
-        {/* Traction — GEO-16: Social proof / metrics */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16" aria-label="Platform metrics">
-          <div className="p-5 rounded-xl border bg-card text-center">
-            <p className="text-3xl font-bold text-primary">1.39M+</p>
-            <p className="text-xs text-muted-foreground mt-1">Records Secured</p>
+        {/* Traction — GEO-16: Social proof / metrics.
+            Figures are single-sourced from PLATFORM_METRICS (R-7: a public
+            number is a claim and must be sourced + dated). Never re-state one
+            inline here. */}
+        <section className="mb-16" aria-label="Platform metrics">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {Object.entries(PLATFORM_METRICS).map(([key, metric]) => (
+              <div key={key} className="p-5 rounded-xl border bg-card text-center">
+                <p className="text-3xl font-bold text-primary">{metric.value}</p>
+                <p className="text-xs text-muted-foreground mt-1">{metric.label}</p>
+              </div>
+            ))}
           </div>
-          <div className="p-5 rounded-xl border bg-card text-center">
-            <p className="text-3xl font-bold text-primary">320K+</p>
-            <p className="text-xs text-muted-foreground mt-1">Public Records Indexed</p>
-          </div>
-          <div className="p-5 rounded-xl border bg-card text-center">
-            <p className="text-3xl font-bold text-primary">21</p>
-            <p className="text-xs text-muted-foreground mt-1">Document Types</p>
-          </div>
-          <div className="p-5 rounded-xl border bg-card text-center">
-            <p className="text-3xl font-bold text-primary">87.2%</p>
-            <p className="text-xs text-muted-foreground mt-1">AI Extraction F1</p>
-          </div>
+          <p className="text-xs text-muted-foreground mt-3 text-center">
+            {PLATFORM_METRICS_AS_OF}
+          </p>
         </section>
 
         {/* Mission cards */}

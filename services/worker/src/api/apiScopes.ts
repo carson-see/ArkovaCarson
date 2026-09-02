@@ -4,8 +4,11 @@
 // V2 set or the compliance/anchor/oracle/agents/attestations/webhooks set.
 //
 // FERPA, HIPAA, emergency-access, and directory-opt-out routes use JWT auth
-// (not API keys) so scope guards there are a no-op for now. The follow-up to
-// gate those routes via JWT claims is tracked separately under SCRUM-1271.
+// (not API keys), so `apiKeyAuth.requireScope` is a no-op there. As of
+// SCRUM-3514 they are gated by `middleware/requireScopeAnyAuth.ts` instead,
+// which resolves a grant for either auth mode and has no pass-through branch.
+// Do not "restore" a `requireScope` mount on those routes — it would read as
+// enforcement and enforce nothing.
 
 export const API_V2_SCOPES = [
   'read:records',

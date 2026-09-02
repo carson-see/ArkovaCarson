@@ -30,6 +30,46 @@ over-redacting would cost observability for no security gain.
 Pinned by `logger.error-serializer.test.ts`, which builds a REAL pino over an in-memory
 destination and asserts the emitted JSON line — `logger.test.ts` mocks pino wholesale and is
 structurally blind to redaction defects.
+## 2026-08-23 — `rateLimit.ts`: every limiter owns its own bucket (SCRUM-3418)
+
+**Do not reintroduce:** two limiters keying into the same `rateLimitStore` entry.
+
+Buckets are keyed `${bucketScope}:${keyGenerator(req)}`. `scope` used to default to `''`, and the key
+was then the bare keyGenerator output — so EVERY limiter that kept the default `req.ip` keyGenerator
+read and wrote ONE Map entry per IP. The 60/min `apiIpShadowGuard`, the 10/min `checkout`, the 5/min
+`auth` and the 100/min v1 `anonRateLimiter` were, at runtime, a single counter with four different
+opinions about its ceiling. Two §1.10 violations fall out of that, and they compound:
+
+1. **The lowest cap in a chain bound every surface sharing its IP.** The checkout limiter logged
+   `count: 60, maxRequests: 10` and 429'd callers who had never touched a checkout route.
+2. **One request that crossed N such limiters advanced the counter N times**, so the effective budget
+   was `min(caps) / N` — not any documented tier. Anonymous `/api/v1/verify` measured ~30/min against
+   a published 100/min because the 60/min `apiIpShadowGuard` and the 100/min `anonRateLimiter` both
+   charged the SAME bare-per-IP entry, two increments per request, and the lower cap refused first.
+   That is a different axis from the 2026-08-12 double-mount fix below: scoping separates DISTINCT
+   limiters, COUNTED_LIMITERS de-duplicates ONE limiter's mounts.
+
+`scope` now defaults to a private per-instance id (`rl-<n>`), so limiters cannot collide by accident.
+**Name it anyway** — every production limiter passes an explicit `scope`, because the scope is what
+appears in the `Rate limit exceeded` log line (the log key is the attribution: see
+`docs/staging/429-limiter-map-s33.md` §2a) and what keeps a bucket stable across restarts. The
+auto-id is derived from construction order: stable within a process, not across a change that
+reorders module imports — which matters only for a shared/persistent `IRateLimitStore`, since the
+in-memory default resets anyway.
+
+Two things that did NOT change and must not:
+
+- **A single limiter instance still shares ONE bucket across all its mount points and paths.** That
+  is the 2026-04-26 bug-bounty F5 fix (`/verify/ABC` and `/verify/XYZ` must not get separate
+  buckets). Never put `req.path` in a scope.
+- **A scope is not a substitute for a keyGenerator prefix, and vice versa.** Limiters that already
+  hand-prefix inside their keyGenerator (`credits:`, `ai:`, `ctdl-import:`) are isolated that way;
+  if you add a `scope` to one, drop the prefix or the key becomes `credits:credits:<user>` — the
+  same note `cpe-log-export.ts` carries.
+
+Store-size note: entries per caller went from 1 to (number of limiters that caller touches), a small
+constant. `RATE_LIMIT_MAX_SIZE` (50K) and the 60s sweep cover it; the old comment claiming the cap
+sized for "~800 IPs × ~60 paths" was stale — paths left the key with F5.
 
 ## 2026-08-17 — new `utf16-truncate.ts`: surrogate-safe truncation (poison-record incident)
 
@@ -364,6 +404,201 @@ oracle call in this service and `jobs/treasury-cache.ts` owns it (every 10 min �
   becomes staler than the row it caches. Failures memoize too, and concurrent callers share one
   in-flight read — an outage must not turn every gated request into a DB round trip.
 
+## 2026-08-15 — new `db-row-validation.ts`: DB-sourced UUIDs + per-row batch parsing (BUG-2026-08-12-003 / FD-15)
+
+Two helpers, one bug.
+
+- **`dbUuid()` is shape-only, and that is the point.** Zod 4.x's `z.string().uuid()` is a strict
+  RFC-9562 check: it rejects any UUID whose version nibble is not 1–8 or whose variant nibble is not
+  8/9/a/b. Postgres `uuid` is *looser* — it accepts and stores any 128-bit value. Re-validating a
+  value the database already typed as `uuid` with a STRICTER rule than the column enforces cannot
+  add safety; it can only false-reject data we ourselves stored. The seeded fixture orgs
+  (`aaaaaaaa-0000-0000-0000-000000000001`) are exactly that case. Format-only was already the house
+  convention — `billing/entitlements.ts`, `api/audit-event.ts`, `api/admin-org-members.ts` and
+  `api/invitations.ts` each carried their own copy of the literal; this gives it one home.
+- **Do NOT use `dbUuid` on external input.** Request bodies, query strings, URL params, webhook
+  payloads and OAuth callbacks keep strict `.uuid()` — there the strictness IS the security
+  boundary, because nothing upstream has guaranteed the shape.
+  `external-uuid-strictness.ratchet.test.ts` pins both directions and fails if either drifts: an
+  external-input module may not import this helper, and a relaxed DB-sourced site may not go back
+  to strict.
+- **`parseDbRows` exists because `z.array(Schema).safeParse(rows)` is all-or-nothing.** One
+  malformed row failed the whole array, so a single bad value denied service to every other row in
+  the batch — that is how `org-queue-scheduler` returned INTERNAL on every run for an entire soak.
+  Per-row now: bad rows are quarantined and logged at `error`, good rows proceed. A **non-array**
+  payload still throws: that is a broken query contract, not one poison row, and silently returning
+  zero rows would hide it.
+- **Callers must surface the quarantine count, not swallow it.** Quarantining is a degraded mode; if
+  nothing reports it, a slow-growing data problem looks like a quiet system.
+- **The quarantine log carries issue paths + messages only, never the row value** (§1.4 / §1.6A). DB
+  rows routinely carry user-scoped data; Zod's messages describe the expectation, not the input, so
+  they are safe to pass through.
+## 2026-08-12 — F-1: `rateLimit.ts` + `upstashRateLimit.ts` share one counter now
+
+The v1 limiter enforced a **per-instance** bucket while its docstring promised a shared one. Prod
+runs `minScale=2, maxScale=10` with Upstash installed (`Upstash Redis rate limiting initialized`
+in the worker log), so every configured limit was effectively up to 10x its stated value, and a
+cold start reset the counter outright.
+
+- **`IRateLimitStore.get()/set()` CANNOT express a shared limit — this is structural, not a bug in
+  one adapter.** `get()` is synchronous, so a network-backed store has nothing to return but a
+  local cache; and `rateLimit()` mutated `entry.count++` in place, writing back only on the
+  create-new-entry branch. Redis received `{"count":0}` once per window and was never read again.
+  Any future store that implements only get/set is single-instance by construction.
+- **The shared path is the optional `increment(key, windowMs, now)`** — one atomic server-side
+  `INCR` returning the count *including* this request. A store that omits it keeps the original
+  synchronous path, so the bare `Map` default still works unchanged. Enforcement compares
+  `count > maxRequests` (post-increment) which is the same allowance as the sync path's
+  `count >= maxRequests` (pre-increment); don't "fix" one to match the other.
+- **Counter keys are namespaced `arkova:rl:`, deliberately separate from the raw keys used by
+  `set()`/`delete()`.** An `INCR` against a key holding the legacy JSON blob errors, and a
+  `delete()` fired by local-cache expiry must never be able to clear a live shared window early.
+- **`syncFromRedis()` was deleted, not wired up.** It warm-loaded the local cache at startup and
+  was never called outside its own test. Under server-side counting it would be actively wrong —
+  seeding a local mirror can only double-count or race the server TTL.
+- **The local `Map` is now the fail-open bucket and nothing else.** It is never populated by a
+  successful `increment()`. When Redis is unreachable the store counts locally, bounded and swept,
+  and logs a warning on every degraded request — the pre-fix behaviour, kept deliberately as the
+  degradation, never as the default.
+- **Cost of correctness: one Upstash round trip per request on the hot path** (`rateLimiters.api`
+  sits in front of nearly every route). `INCR`+`PTTL` are pipelined into a single HTTP call, and a
+  second call fires only on the first hit of a window to arm the TTL. A test pins the
+  one-round-trip steady state; if you add a command, expect it to fail.
+- **A `PTTL` of -1 re-arms the window.** That is both the first hit and the shape left behind by a
+  process that died between `INCR` and `PEXPIRE` — without the re-arm, such a key would block its
+  bucket with no expiry until someone noticed.
+- **The pre-existing `upstashRateLimit.test.ts` stayed green through the entire life of this
+  defect** because every assertion in it was one store round-tripping its own cache. The
+  cross-instance invariant lives in `upstashRateLimit.distributed.test.ts` — two store instances,
+  one fake Redis. Single-store tests cannot catch a sharing bug.
+- `api/v2/rateLimit.ts` already had the correct design (`UpstashV2RateLimitStore.increment`); this
+  brings v1 to parity. Prefer changing both together.
+## 2026-08-12 — one request counts ONCE per limiter instance
+
+`rateLimit()` stamps the request with the limiter's own `Symbol` (`COUNTED_LIMITERS`) and skips
+counting if that instance already counted it. This exists because a limiter instance can be mounted
+more than once on purpose.
+
+- **`apiIpShadowGuard` is mounted twice by design** — `index.ts:418` under `/api`, and `index.ts:446`
+  unprefixed because `didWebRouter` serves `/.well-known/did.json` and `/orgs/:id/did.json`, which
+  are outside `/api` and must carry the same skip predicate (F-2, PR #1768 / `6f844d484`). Deleting
+  either mount breaks a route family. Do not "simplify" it.
+- **The bug was path-dependent, which is why it hid.** Express runs every mount a request matches, so
+  the double count only landed on requests that *fell through* the `/api` mount unanswered. A
+  `/api/badge/:id` request is answered by `badgeRouter` and never reaches mount 446 — counted once,
+  looks fine. An anonymous `/api/v1/*` request is answered by neither, reaches 446, and was counted
+  twice. Documented 60/min per IP was really 30/min for exactly that traffic. Side-rig 2026-08-12
+  saw `x-ratelimit-remaining` walk 48 → 46 → 44.
+- **The stamp is per INSTANCE, never global.** `index.ts` deliberately shares one per-IP bucket
+  across *different* limiters (the F5 fix keys buckets purely on `scope` + `keyGenerator`, and none
+  of the preconfigured limiters set a `scope`), so `rateLimiters.api` and `apiIpShadowGuard` both
+  legitimately charge the same bucket. A global "already counted" flag would silently stop the
+  second limiter enforcing anything. A test pins this.
+- **It also fixes `rateLimiters.api`**, which is mounted on overlapping prefixes (e.g.
+  `/api/v1/org` at index.ts:470 and `/api/v1/org/sub-orgs` at :471) and double-counted on the same
+  fall-through mechanism.
+- **This LOOSENS enforcement** (30/min → the intended 60/min for fall-through anon traffic). It is a
+  change in enforcement numbers, not a cleanup — treat it as such when reviewing.
+- The stamp lives on the request object, so it cannot leak between requests; a test pins that too.
+
+## 2026-08-15 — BUG-018 / D-8: every rate-limit key carries an environment namespace
+
+`environmentNamespace.ts` is new. It answers "which deployment surface am I?" and every key written
+to the shared Upstash database now starts with that answer.
+
+- **Prod, shared staging and the connector side-rig are bound to ONE Upstash database** via the same
+  un-suffixed `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` secrets. The v1 counter key was
+  `arkova:rl:` + the limiter key, which for the per-IP guard is the **bare client IP** — so the key
+  was identical in every environment. Inert only while the limiter never read Redis; live the moment
+  F-1 landed. Key shapes now: counters `arkova:rl:<env>:<key>`, legacy blobs
+  `arkova:rl:blob:<env>:<key>` (those were written **raw**, i.e. a Redis key that was literally a
+  client IP), v2 `arkova:v2:ratelimit:<env>:<key>`.
+- **`NODE_ENV` is NOT the discriminator, and must never become one.** Rigs and shared staging run
+  `NODE_ENV=production`. `K_SERVICE` — the Cloud Run service name — is the honest signal; only
+  `arkova-worker` earns the `prod` namespace, and off Cloud Run a bare `NODE_ENV=production`
+  resolves to `local-production`. Same derivation and same reasoning as
+  `resolveSentryEnvironment` (MT-1 / SCRUM-2901); `PROD_SERVICE_NAME` is defined in
+  `environmentNamespace.ts` and re-exported by `sentry.ts` so the two cannot drift.
+- **Derive NOTHING instance-local in that module** — `K_REVISION`, hostname, pid, a random id. Any
+  of those silently un-shares every shared counter, i.e. re-opens F-1 while all its tests stay
+  green. `upstashRateLimit.namespace.test.ts` asserts both halves at once: different environments
+  must NOT share a bucket, and two instances of the SAME service MUST.
+- **`prod` and `blob` are reserved namespace tokens.** A service literally named `prod` would
+  otherwise share production's counters, and one named `blob` could forge a counter key that
+  collides with the `arkova:rl:blob:` keyspace. Both get a `-nonprod` suffix.
+- **Still un-namespaced on the same database, deliberately out of scope here:**
+  `utils/verifyCache.ts` (`verify:v5:<publicId>`) and `middleware/upstashIdempotency.ts`
+  (`idem:<key>`). Those are worse than a rate-limit collision — a cached verification result
+  computed against a staging database can be served to a production caller — but they change
+  public-verify behaviour and need their own T2 change. Do not assume they were fixed here.
+  **Closed by the follow-up below (same branch stack) — that carve-out is no longer open.**
+
+## 2026-08-15 — BUG-018 / D-8 follow-up: the verify cache carries the same namespace
+
+Closes the carve-out the section above left open. `verifyCache.ts` keys are now
+`verify:v5:<env>:<publicId>`; `middleware/upstashIdempotency.ts` is covered in that folder's
+`agents.md`.
+
+- **This one is a correctness defect, not a budget defect.** A `publicId` is by construction the
+  SAME string in every environment — that is what a public identifier IS — so the old
+  `verify:v5:<publicId>` key collided across environments **by default**, not under contention.
+  `GET /api/v1/verify/:publicId` serves a cache hit **verbatim** and never re-runs
+  `buildVerificationResult`, so a result computed against a staging database was served to a
+  production caller for the full 300s TTL. Staging rows are fixtures; production rows are the
+  evidence product. §1.5 — the API must state what it actually measured.
+- **It cut both ways.** `invalidateVerificationCache` is called by `jobs/revocation.ts` and
+  `jobs/check-confirmations.ts`. Fired on a rig, it evicted **production's** cache entry for that
+  publicId. Cheap in isolation, but it means rig traffic could keep production permanently cold on
+  a hot anchor.
+- **The version segment stays AHEAD of the namespace** (`verify:v5:<env>:` and not
+  `verify:<env>:v5:`) so a `v5` → `v6` bump still rotates every environment at once, exactly as the
+  bump log above it describes. Keep that ordering when you bump.
+- **The namespace is memoised at module scope**, next to `_redisConfig` and for the same reason —
+  the public verify path is the hot path and must not re-run the sanitiser per request. That is why
+  `verifyCache.namespace.test.ts` models each environment as a fresh module instance
+  (`vi.resetModules()` + re-`import`) rather than a mutated env var: it makes the same-service test
+  genuinely two independent instances instead of one module asked twice.
+- **Both halves are asserted in one file, deliberately.** Different environments must NOT read each
+  other's cache, AND two instances of one service MUST share one — a namespace that also broke
+  sharing would be a PERF-12 regression dressed as a fix, and every cache-hit test would still pass.
+
+## 2026-08-18 — consolidated rate-limit cluster: fail-open path emits §1.10 headers
+
+`enforceShared`'s last-resort catch (store `increment` rejects — normally unreachable behind the
+Upstash store's internal fallback bucket) now sets best-effort `X-RateLimit-*` headers before
+`next()`. §1.10 says headers on every response; a header-less allow was the one gap. Values are
+best-effort by design: configured limit, one request charged against a fresh window — there is no
+shared state to read on this path. Pinned in `rateLimit.test.ts` ("distributed fail-open path").
+
+## 2026-08-18 — per-instance circuit breaker around the Upstash `increment()` hot path
+
+CTO decision, PR #2269 soak-plan gap: `increment()` is on the blocking hot path
+(`rateLimit()` -> `enforceShared()` awaits it before `next()`), and every attempt paid up to
+`REDIS_TIMEOUT_MS` (2s, `AbortSignal.timeout`) before its internal catch fell back to the local
+bucket — nothing ever stopped it from retrying Redis on every single call. A full Upstash outage
+therefore added ~2s to every rate-limited request, indefinitely. `UpstashCircuitBreaker` (private
+to `UpstashRateLimitStore`) fixes that: opens after 5 CONSECUTIVE failures, skips the Redis round
+trip entirely while open (straight to `fallbackIncrement`), half-opens after 30s to let exactly one
+probe through, closes on a successful probe, and a failed probe re-opens immediately — it does not
+re-accumulate 5 more failures first.
+
+- **LATENCY SHIELD, NOT A CORRECTNESS MECHANISM — say this every time.** Breaker state is a private
+  field on the store instance, so N Cloud Run instances trip and recover independently and never
+  coordinate. That is fine: the shared counter was already fail-open before this change
+  (`fallbackIncrement` keeps counting locally during an outage), so a broken or out-of-sync breaker
+  cannot turn the limiter into "unlimited" — it can only make one instance slower to give up on a
+  dead Redis than another. Do not reach for this as a building block for anything that needs
+  cross-instance agreement.
+- **Scoped to `increment()` only** — the blocking call every request pays for. `decrement()` (best
+  effort, fire-and-forget, result never awaited by the caller) and the legacy `set`/`delete` blob
+  write-throughs are unaffected; they were never the latency problem PR #2269's soak plan flagged.
+- **The self-heal PEXPIRE call is inside the same try block as the pipeline**, so a failure there
+  also counts toward the breaker — one code path, one failure signal, no separate accounting to
+  keep in sync.
+- Regression suite: `upstashRateLimit.circuitBreaker.test.ts` — trips at 5 consecutive failures
+  (and NOT at 4, boundary-pinned), returns a valid fail-open entry (so §1.10 headers keep working)
+  while open, and both half-open outcomes (probe succeeds -> closes; probe fails -> re-opens without
+  needing 5 more failures).
 ## 2026-08-17 — surrogate-safe truncation sweep (follow-up to `utf16-truncate.ts`)
 
 > Placed at EOF deliberately: PR #2266 introduces `utf16-truncate.ts` and inserts its section near
@@ -414,3 +649,50 @@ the lease forever, disabling SUBMITTED→SECURED promotion for every tenant with
   blockstream — the path is the correlation value). A credential-bearing URL — e.g. token-in-path
   `https://go.getblock.io/<ACCESS_TOKEN>` — must be reduced to a sanitized label first; the RPC
   path uses `sanitizeRpcUrlForError` (origin-only) in `chain/utxo-provider.ts` (S3.3-F1).
+
+## 2026-08-22 — `upstashRateLimit.ts` transport reads are bounded (PR #2269, surfaced by merging `main`)
+
+Both Upstash transport methods now read their response body through
+`readJsonBounded(res, label, REDIS_TIMEOUT_MS)` instead of a bare `await res.json()`:
+`pipeline()` (the INCR + PTTL hot path) and `command()` (PEXPIRE self-heal, DECR, SET, DEL).
+
+Why it was found late rather than in review: `feedback_bounded_body_reads` (F-D0-5) landed on `main`
+*after* this branch was cut, so the detector and this code first met when `main` was merged in to
+clear a conflict. The rule was right — `increment()` is awaited on the blocking path of
+`rateLimit()`, and the circuit breaker only counts failures it is told about, so a body that stalls
+after headers would park every rate-limited request indefinitely and never reach the fail-open local
+bucket that exists for exactly this case. `AbortSignal.timeout()` does not help: it bounds the
+request, not the read.
+
+**The label argument is not cosmetic.** `BodyReadTimeoutError` embeds it verbatim in `.message`,
+which reaches warn logs and Sentry, and `command()`'s real request path is `/<command>/<key>` where
+an anonymous limiter key IS a caller IP. So the label is `${baseUrl}/${command}` — host and verb, no
+key (§1.4/§1.6). `pipeline()` can pass its real URL because `/pipeline` is static.
+
+Pinned by `upstashRateLimit.bodyRead.test.ts`, which fails by TIMING OUT rather than asserting if the
+bounding is removed — the failure mode under test is a hang, so the test has to be able to hang.
+
+## The consolidated rate-limit cluster is LIVE IN PROD (2026-08-27)
+
+`upstashRateLimit.ts` / `rateLimit.ts` / `environmentNamespace.ts` as described above shipped to
+prod in `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999` (revision `arkova-worker-01322-tol`,
+100% traffic — `gcloud run services describe` + live `/health`, 2026-08-27T21:00Z), via PR #2269
+merged as `c22f586cb`. That PR consolidates four earlier closed PRs (#2223 / #2224 / #2231 / #2238).
+
+Consequences that are now true of the running system, and were not before:
+
+- **Cross-instance state is real.** Prod runs `minScale=2, maxScale=10`, so before this the
+  configured limits were effectively up to 10x their stated value and cold starts reset counters.
+  Do not re-derive limits from a single-instance test.
+- **The documented §1.10 60 req/min per IP is now actually 60**, not 30. `apiIpShadowGuard` was
+  mounted twice (`app.use('/api', …)` and the unprefixed did:web mount) and Express runs every
+  matching mount, so one request was charged twice by the same limiter instance. The fix stamps the
+  request with the limiter's own `Symbol` and counts at most once **per limiter INSTANCE** —
+  deliberately per-instance, not global, because `index.ts` shares one per-IP bucket across
+  different limiters and each must still charge it. **This LOOSENED enforcement.** If you are
+  reading a §1.10 number off a header stride, a `48 → 46 → 44` pattern is the OLD double-count and
+  should no longer appear.
+- **Keyspaces are env-namespaced.** A staging rig and prod can no longer share a bucket by accident.
+- `rateLimiters.auth` (5/min) is still **not mounted on any route** — referenced only by tests and
+  comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
+  own tier, not a cleanup.

@@ -39,6 +39,8 @@ import {
   type S33Wave1PacketInspection,
 } from './s33-wave1-dual-dag.js';
 
+import { removeTempRoot } from './testing/remove-temp-root.js';
+
 const GIT = '/usr/bin/git';
 const roots: string[] = [];
 const HISTORICAL_STATUS = 'HISTORICAL_BLOCKED';
@@ -87,7 +89,7 @@ const REVISION12_CHANGED_PATHS = [
 ];
 
 afterEach(() => {
-  while (roots.length > 0) rmSync(roots.pop()!, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+  while (roots.length > 0) removeTempRoot(roots.pop()!);
 });
 
 function sha256(value: string | Uint8Array): string {
