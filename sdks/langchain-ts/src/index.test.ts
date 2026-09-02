@@ -110,6 +110,23 @@ describe('ArkovaSearchTool', () => {
       expect.any(Object),
     );
   });
+
+  // F3 parity with mcp-server: a disabled semantic-search capability must
+  // not read as an empty result.
+  it('discloses a disabled search capability instead of swallowing the 503', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve({ error: 'service_unavailable', message: 'Semantic search is not currently enabled' }),
+    });
+
+    const tool = new ArkovaSearchTool(mockConfig);
+    const result = JSON.parse(await tool.call('test'));
+
+    expect(result.error).toContain('disabled');
+    expect(result.error).toContain('NOT an empty result');
+    expect(result.error).toContain('Semantic search is not currently enabled');
+  });
 });
 
 describe('ArkovaAttestTool', () => {
@@ -163,11 +180,27 @@ describe('ArkovaBatchVerifyTool', () => {
     expect(result.error).toContain('array');
   });
 
-  it('should reject >100 IDs', async () => {
-    const ids = Array.from({ length: 101 }, (_, i) => `ARK-${i}`);
+  // D6/F7 parity with mcp-server: SYNC_THRESHOLD=20 server-side; above that
+  // the worker returns 202+job_id with no results and this tool cannot
+  // fetch them.
+  it('should reject >20 IDs', async () => {
+    const ids = Array.from({ length: 21 }, (_, i) => `ARK-${i}`);
     const tool = new ArkovaBatchVerifyTool(mockConfig);
     const result = JSON.parse(await tool.call(JSON.stringify(ids)));
-    expect(result.error).toContain('100');
+    expect(result.error).toContain('20');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('should accept exactly 20 IDs', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ results: [] }),
+    });
+    const ids = Array.from({ length: 20 }, (_, i) => `ARK-${i}`);
+    const tool = new ArkovaBatchVerifyTool(mockConfig);
+    const result = JSON.parse(await tool.call(JSON.stringify(ids)));
+    expect(result.error).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalled();
   });
 });
 
@@ -196,6 +229,24 @@ describe('ArkovaVerifySignatureTool', () => {
     expect(result.valid).toBe(false);
     expect(result.error).toContain('not found');
   });
+
+  // F4 parity with mcp-server: a disabled AdES signature capability must
+  // not read as "not found" or as a negative verification result.
+  it('discloses a disabled signature capability instead of swallowing the 503', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve({ error: 'AdES signature service is not currently enabled', code: 'ADES_SIGNATURES_DISABLED' }),
+    });
+
+    const tool = new ArkovaVerifySignatureTool(mockConfig);
+    const result = JSON.parse(await tool.call('ARK-SIG-1'));
+
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('disabled');
+    expect(result.error).toContain('NOT a "not found" or negative verification result');
+    expect(result.error).toContain('ADES_SIGNATURES_DISABLED');
+  });
 });
 
 describe('getArkovaTools', () => {
@@ -210,5 +261,43 @@ describe('getArkovaTools', () => {
       'arkova_batch_verify',
       'arkova_verify_signature',
     ]);
+  });
+});
+
+// F5 — CLAUDE.md §1.3 bans crypto/blockchain terminology in user-visible
+// strings. Tool name/description text is the surface an agent framework
+// reads to decide when to call a tool — treat it like UI copy. Mirrors the
+// standing guard in sdks/mcp-server/src/index.test.ts.
+describe('Tool terminology guard (CLAUDE.md §1.3 + F8 credential scrub)', () => {
+  const banned = /\b(wallet|gas|hash|block|transaction|crypto|blockchain|bitcoin|testnet|mainnet|utxo|broadcast)\b/i;
+  const tools = getArkovaTools(mockConfig);
+
+  it('should not use §1.3-banned terminology in any tool name or description', () => {
+    for (const tool of tools) {
+      expect(tool.name, `tool name "${tool.name}"`).not.toMatch(banned);
+      expect(tool.description, `${tool.name} description: "${tool.description}"`).not.toMatch(banned);
+    }
+  });
+
+  // F8 — "credential" in an agent tool namespace reads as authentication
+  // secrets, not as a verified record. No tool NAME may contain
+  // "credential", and no description may contain "credentials" (plural).
+  it('should not use "credential" in any tool name', () => {
+    for (const tool of tools) {
+      expect(tool.name.toLowerCase(), `tool name "${tool.name}"`).not.toContain('credential');
+    }
+  });
+
+  it('should not use "credentials" (plural) in any tool description', () => {
+    for (const tool of tools) {
+      expect(tool.description.toLowerCase(), `${tool.name} description: "${tool.description}"`).not.toContain('credentials');
+    }
+  });
+
+  // F6 — the API only ever matches public_id on this route; there is no
+  // fingerprint lookup path for it.
+  it('should not claim public_id can be a document fingerprint', () => {
+    const verifyTool = tools.find(t => t.name === 'arkova_verify_anchor')!;
+    expect(verifyTool.description.toLowerCase()).not.toContain('fingerprint');
   });
 });

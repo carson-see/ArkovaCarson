@@ -158,7 +158,7 @@ describe('bin invocation via a real npm-style symlink', () => {
 
     expect(toolsList.result).toBeDefined();
     const tools = (toolsList.result as { tools: Array<{ name: string }> }).tools;
-    expect(tools.length).toBe(10);
+    expect(tools.length).toBe(6);
   }, 15_000);
 
   it('warns to stderr (not a crash) when ARKOVA_API_KEY is unset, through the same symlinked entry point', async () => {

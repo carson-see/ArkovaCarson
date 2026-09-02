@@ -77,7 +77,7 @@ export interface VerifyResult {
  */
 export class ArkovaVerifyTool {
   name = 'arkova_verify_anchor';
-  description = 'Verify the authenticity of a credential or document by its Arkova public ID. Returns whether the record is verified, its status (ACTIVE/REVOKED/PENDING), the issuer name, credential type, and blockchain anchor timestamp. Use this when you need to confirm a credential is authentic.';
+  description = 'Verify the authenticity of a credential or document by its Arkova public ID. Returns whether the record is verified, its status (ACTIVE/REVOKED/PENDING), the issuer name, credential type, and network anchor timestamp. Use this when you need to confirm a credential is authentic.';
   config: ArkovaToolConfig;
 
   constructor(config: ArkovaToolConfig) {

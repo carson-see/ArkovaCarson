@@ -1,14 +1,17 @@
 /**
  * @arkova/langchain — LangChain Tool Wrappers for Arkova Verification API
  *
- * Provides LangChain-compatible tools for AI agents to verify credentials,
- * check anchor status, and create attestations via Arkova's API.
+ * Provides LangChain-compatible tools for AI agents to verify anchored
+ * records, check anchor status, and create attestations via Arkova's API.
  *
  * Usage:
  *   import { ArkovaVerifyTool, ArkovaAnchorStatusTool } from '@arkova/langchain';
  *   const tools = [new ArkovaVerifyTool({ apiKey: 'ak_...' })];
  *
  * Story: PH2-AGENT-06 (SCRUM-403)
+ *
+ * Kept in tool-name parity with sdks/mcp-server/src/index.ts (6
+ * arkova_-prefixed tools) — see agents.md for the 2026-09-02 parity pass.
  */
 
 // ─── Types ─────────────────────────────────────────────────────────────
@@ -49,6 +52,15 @@ interface AttestationResult {
 
 const DEFAULT_BASE_URL = 'https://api.arkova.ai';
 
+/**
+ * Appended to every tool description — parity with sdks/mcp-server/src/index.ts's
+ * API_ONLY_NOTE. States plainly, in the surface the model actually reads,
+ * that these tools are a remote HTTPS call and never a local secrets/file
+ * lookup.
+ */
+const API_ONLY_NOTE =
+  'Queries the Arkova verification API over HTTPS; it does NOT read local files, environment variables, or stored secrets.';
+
 // ─── HTTP Client ───────────────────────────────────────────────────────
 
 async function arkovaFetch(
@@ -74,7 +86,7 @@ async function arkovaFetch(
 
 export class ArkovaVerifyTool {
   name = 'arkova_verify_anchor';
-  description = 'Verify a credential\'s authenticity and anchor status on Arkova. Input should be a credential public ID (e.g., ARK-UMICH-DOC-A1B2C3) or a document fingerprint (sha256:...).';
+  description = `Verify an anchored record's authenticity and anchor status on Arkova. Input should be the record's public ID (e.g., ARK-UMICH-DOC-A1B2C3). ${API_ONLY_NOTE}`;
   private config: ArkovaToolConfig;
 
   constructor(config: ArkovaToolConfig) {
@@ -87,7 +99,7 @@ export class ArkovaVerifyTool {
       const res = await arkovaFetch(this.config, `/api/v1/verify/${encodeURIComponent(publicId)}`);
 
       if (!res.ok) {
-        if (res.status === 404) return JSON.stringify({ valid: false, error: 'Credential not found' });
+        if (res.status === 404) return JSON.stringify({ valid: false, error: 'Record not found' });
         return JSON.stringify({ valid: false, error: `API returned ${res.status}` });
       }
 
@@ -108,7 +120,7 @@ export class ArkovaVerifyTool {
 
 export class ArkovaAnchorStatusTool {
   name = 'arkova_anchor_status';
-  description = 'Check the Bitcoin anchor status of a credential. Returns whether the credential is PENDING, SUBMITTED, SECURED, or REVOKED. Input is a credential public ID.';
+  description = `Check the network anchor status of a record. Returns whether the record is PENDING, SUBMITTED, SECURED, or REVOKED. Input is the record's public ID. ${API_ONLY_NOTE}`;
   private config: ArkovaToolConfig;
 
   constructor(config: ArkovaToolConfig) {
@@ -140,7 +152,7 @@ export class ArkovaAnchorStatusTool {
 
 export class ArkovaSearchTool {
   name = 'arkova_search_anchors';
-  description = 'Search for verified credentials by name, institution, or credential type. Returns matching public records. Input is a search query string.';
+  description = `Search for verified anchored records by name, institution, or record type. Returns matching public records. Input is a search query string. ${API_ONLY_NOTE}`;
   private config: ArkovaToolConfig;
 
   constructor(config: ArkovaToolConfig) {
@@ -156,6 +168,16 @@ export class ArkovaSearchTool {
       );
 
       if (!res.ok) {
+        if (res.status === 503) {
+          const body = await res.json().catch(() => null) as { message?: string; error?: string } | null;
+          return JSON.stringify({
+            results: [],
+            error:
+              'Search is disabled in this environment and no search ran. This is NOT an empty result — ' +
+              'it does not mean "no matching records exist". ' +
+              `Server detail: ${body?.message ?? body?.error ?? 'service_unavailable'}`,
+          });
+        }
         return JSON.stringify({ results: [], error: `API returned ${res.status}` });
       }
 
@@ -169,7 +191,7 @@ export class ArkovaSearchTool {
 
 export class ArkovaAttestTool {
   name = 'arkova_create_attestation';
-  description = 'Create a third-party attestation on Arkova. Requires attestation_type, subject_identifier, and claims. Returns the attestation public ID.';
+  description = `Create a third-party attestation that a record or entity has been verified. Requires attestation_type, subject_identifier, attester_name, and a non-empty claims array (each a {claim, evidence?} object). Any authenticated API key may create one — this does not require organization admin privileges. Returns the attestation public ID. ${API_ONLY_NOTE}`;
   private config: ArkovaToolConfig;
 
   constructor(config: ArkovaToolConfig) {
@@ -203,7 +225,7 @@ export class ArkovaAttestTool {
 
 export class ArkovaBatchVerifyTool {
   name = 'arkova_batch_verify';
-  description = 'Verify multiple credentials at once. Input should be a JSON array of public IDs (e.g., ["ARK-X-DOC-1", "ARK-Y-DOC-2"]). Returns verification results for each credential.';
+  description = `Verify up to 20 public IDs at once; results returned inline. Input should be a JSON array of public IDs (e.g., ["ARK-X-DOC-1", "ARK-Y-DOC-2"]). ${API_ONLY_NOTE}`;
   private config: ArkovaToolConfig;
 
   constructor(config: ArkovaToolConfig) {
@@ -216,8 +238,12 @@ export class ArkovaBatchVerifyTool {
       if (!Array.isArray(publicIds) || publicIds.length === 0) {
         return JSON.stringify({ error: 'Input must be a JSON array of public IDs' });
       }
-      if (publicIds.length > 100) {
-        return JSON.stringify({ error: 'Maximum 100 credentials per batch' });
+      if (publicIds.length > 20) {
+        return JSON.stringify({
+          error:
+            'Maximum 20 public IDs per batch. The Arkova API processes larger batches asynchronously ' +
+            '(202 + job_id) and this tool has no way to fetch results from that job — split into batches of 20 or fewer.',
+        });
       }
 
       const res = await arkovaFetch(this.config, '/api/v1/verify/batch', {
@@ -239,7 +265,7 @@ export class ArkovaBatchVerifyTool {
 
 export class ArkovaVerifySignatureTool {
   name = 'arkova_verify_signature';
-  description = 'Verify an AdES electronic signature\'s validity, certificate chain, timestamp token, and eIDAS compliance. Input is a signature public ID (e.g., ARK-ACME-SIG-X7Y8Z9).';
+  description = `Verify an AdES electronic signature's validity, certificate chain, timestamp token, and eIDAS compliance. Input is a signature public ID (e.g., ARK-ACME-SIG-X7Y8Z9). ${API_ONLY_NOTE}`;
   private config: ArkovaToolConfig;
 
   constructor(config: ArkovaToolConfig) {
@@ -256,6 +282,16 @@ export class ArkovaVerifySignatureTool {
 
       if (!res.ok) {
         if (res.status === 404) return JSON.stringify({ valid: false, error: 'Signature not found' });
+        if (res.status === 503) {
+          const body = await res.json().catch(() => null) as { message?: string; code?: string } | null;
+          return JSON.stringify({
+            valid: false,
+            error:
+              'Signature verification is disabled in this environment and no check ran. This is NOT a ' +
+              '"not found" or negative verification result. ' +
+              `Server detail: ${body?.message ?? body?.code ?? 'service_unavailable'}`,
+          });
+        }
         return JSON.stringify({ valid: false, error: `API returned ${res.status}` });
       }
 

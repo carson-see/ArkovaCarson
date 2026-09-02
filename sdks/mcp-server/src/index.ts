@@ -1,20 +1,27 @@
 /**
- * Arkova MCP Server — Model Context Protocol tools for credential verification
+ * Arkova MCP Server — Model Context Protocol tools for record verification
  *
  * Exposes Arkova verification as MCP tools usable by Claude, OpenAI, Cursor,
  * and any MCP-compatible LLM client.
  *
  * Tools (all prefixed with arkova_ for namespace consistency — DX-04):
- *   - arkova_verify_anchor: Verify a credential by public ID or fingerprint
+ *   - arkova_verify_anchor: Verify an anchored record by public ID
  *   - arkova_anchor_status: Get anchor status and proof details
- *   - arkova_search_anchors: Search verified credentials by query
+ *   - arkova_search_anchors: Search verified records by query
  *   - arkova_create_attestation: Create a third-party attestation
- *   - arkova_batch_verify: Verify multiple credentials at once (DX-05)
+ *   - arkova_batch_verify: Verify up to 20 public IDs at once, inline (DX-05)
  *   - arkova_verify_signature: Verify an AdES signature (Phase III)
  *
  * Auth: API key via environment variable ARKOVA_API_KEY
  *
  * Story: PH2-AGENT-06 (SCRUM-403)
+ *
+ * 2026-09-02: the four nessie_-prefixed compliance-intelligence tools
+ * (NCE-19) were removed. Three 401'd for every real caller — the worker
+ * mounts Supabase-JWT-only `requireAuth` on `/compliance/*`, explicitly
+ * rejecting `Bearer ak_…`, while this server only ever sends `X-API-Key`.
+ * The fourth (`nessie_ask`) was already a standing 503 by founder directive.
+ * See sdks/mcp-server/agents.md for the full writeup.
  */
 
 // ─── Types ─────────────────────────────────────────────────────────────
@@ -24,7 +31,7 @@ interface McpToolDefinition {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, { type: string; description: string; enum?: string[] }>;
+    properties: Record<string, { type: string; description: string; enum?: string[]; maxItems?: number }>;
     required: string[];
   };
 }
@@ -69,13 +76,13 @@ const API_ONLY_NOTE =
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: 'arkova_verify_anchor',
-    description: 'Verify an anchored record on the Arkova network by its public ID or document fingerprint. Returns the verification result including issuer, record type, and anchor proof. ' + API_ONLY_NOTE,
+    description: 'Verify an anchored record on the Arkova network by its public ID. Returns the verification result including issuer, record type, and anchor proof. ' + API_ONLY_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
         public_id: {
           type: 'string',
-          description: 'The credential public ID (e.g., ARK-UMICH-DOC-A1B2C3) or document fingerprint (sha256:...)',
+          description: "The record's public ID (e.g., ARK-UMICH-DOC-A1B2C3)",
         },
       },
       required: ['public_id'],
@@ -89,7 +96,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         public_id: {
           type: 'string',
-          description: 'The credential public ID',
+          description: "The record's public ID",
         },
       },
       required: ['public_id'],
@@ -103,7 +110,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         query: {
           type: 'string',
-          description: 'Search query — name, institution, or credential type',
+          description: 'Search query — name, institution, or record type',
         },
         limit: {
           type: 'string',
@@ -115,7 +122,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'arkova_create_attestation',
-    description: 'Create a third-party attestation that a credential or entity has been verified. Requires organization admin privileges.',
+    description: 'Create a third-party attestation that a record or entity has been verified. Any authenticated API key may create one — this does not require organization admin privileges.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -128,102 +135,35 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
           type: 'string',
           description: 'The entity being attested (public ID, name, or identifier)',
         },
+        attester_name: {
+          type: 'string',
+          description: 'Name of the attester — the person or entity making this attestation',
+        },
+        claims: {
+          type: 'string',
+          description: 'JSON array of at least one claim object, e.g. [{"claim":"Employed 2020-2024","evidence":"HR letter"}]',
+        },
         summary: {
           type: 'string',
           description: 'Brief summary of the attestation',
         },
       },
-      required: ['attestation_type', 'subject_identifier', 'summary'],
+      required: ['attestation_type', 'subject_identifier', 'attester_name', 'claims', 'summary'],
     },
   },
   {
     name: 'arkova_batch_verify',
-    description: 'Verify multiple credentials at once by providing an array of public IDs. Returns verification results for each credential in a single response.',
+    description: 'Verify up to 20 public IDs at once; results returned inline in a single response.',
     inputSchema: {
       type: 'object',
       properties: {
         public_ids: {
           type: 'string',
-          description: 'JSON array of credential public IDs to verify (max 100)',
+          description: 'JSON array of up to 20 public IDs to verify',
+          maxItems: 20,
         },
       },
       required: ['public_ids'],
-    },
-  },
-  // ─── Nessie Compliance Intelligence (NCE-19) ───
-  {
-    name: 'nessie_compliance_score',
-    description: 'Get the compliance score for an organization in a specific jurisdiction and industry. Returns score (0-100), grade (A-F), present/missing documents, and recommendations.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        jurisdiction: {
-          type: 'string',
-          description: 'Jurisdiction code (e.g., US-CA, US-NY, US-TX)',
-        },
-        industry: {
-          type: 'string',
-          description: 'Industry code (e.g., accounting, legal, nursing)',
-        },
-      },
-      required: ['jurisdiction', 'industry'],
-    },
-  },
-  {
-    name: 'nessie_gap_analysis',
-    description: 'Identify missing required and recommended documents for compliance in a given jurisdiction and industry. Returns prioritized gaps with regulatory citations.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        jurisdiction: {
-          type: 'string',
-          description: 'Jurisdiction code (e.g., US-CA, US-NY)',
-        },
-        industry: {
-          type: 'string',
-          description: 'Industry code (e.g., accounting, legal)',
-        },
-      },
-      required: ['jurisdiction', 'industry'],
-    },
-  },
-  {
-    name: 'nessie_ask',
-    // BUG-008/027 (CTO ruling R-1 STRENGTHENED, 2026-08-12): Nessie is
-    // permanently disabled by standing founder directive. This tool used to
-    // return the worker's 200-shaped
-    // `{"answer":"No relevant verified documents were found…","confidence":0}`
-    // verbatim — a fluent sentence an agent reads as "searched, found nothing".
-    // The description now says what the caller will actually get.
-    description: 'DISABLED. Arkova\'s Nessie compliance intelligence engine is not currently served: this tool returns an explicit `nessie_disabled` error rather than an analysis. A response from it never means "no matching documents were found".',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'The compliance question to ask Nessie',
-        },
-        task: {
-          type: 'string',
-          description: 'Task type: compliance_qa, risk_analysis, or recommendation',
-          enum: ['compliance_qa', 'risk_analysis', 'recommendation'],
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'nessie_cross_reference',
-    description: 'Cross-reference multiple documents to find inconsistencies (name mismatches, duplicate credentials, jurisdiction conflicts). Provide anchor IDs to compare.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        anchor_ids: {
-          type: 'string',
-          description: 'JSON array of anchor UUIDs to cross-reference (min 2, max 100)',
-        },
-      },
-      required: ['anchor_ids'],
     },
   },
   {
@@ -255,19 +195,11 @@ export async function handleToolCall(
       case 'arkova_anchor_status':
         return await handleGetCredentialStatus(args.public_id);
       case 'arkova_search_anchors':
-        return await handleSearchCredentials(args.query, parseInt(args.limit || '5', 10));
+        return await handleSearchCredentials(args.query, parseLimit(args.limit));
       case 'arkova_create_attestation':
         return await handleCreateAttestation(args);
       case 'arkova_batch_verify':
         return await handleBatchVerify(args.public_ids);
-      case 'nessie_compliance_score':
-        return await handleNessieComplianceScore(args.jurisdiction, args.industry);
-      case 'nessie_gap_analysis':
-        return await handleNessieGapAnalysis(args.jurisdiction, args.industry);
-      case 'nessie_ask':
-        return await handleNessieAsk(args.query, args.task);
-      case 'nessie_cross_reference':
-        return await handleNessieCrossReference(args.anchor_ids);
       case 'arkova_verify_signature':
         return await handleVerifySignature(args.signature_id);
       default:
@@ -278,10 +210,21 @@ export async function handleToolCall(
   }
 }
 
+/**
+ * F10 — `parseInt(args.limit || '5', 10)` yields NaN on non-numeric input
+ * (e.g. `limit: 'abc'`), which was then sent to the API as literal
+ * `limit=NaN`. Guard with Number.isFinite and fall back to the same
+ * default of 5 the tool description advertises.
+ */
+function parseLimit(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  return Number.isFinite(parsed) ? parsed : 5;
+}
+
 async function handleVerifyCredential(publicId: string): Promise<McpToolResult> {
   const res = await arkovaFetch(`/api/v1/verify/${encodeURIComponent(publicId)}`);
   if (!res.ok) {
-    if (res.status === 404) return textResult('Credential not found. The public ID may be incorrect.');
+    if (res.status === 404) return textResult('Record not found. The public ID may be incorrect.');
     return errorResult(`Verification API returned ${res.status}`);
   }
   const data = await res.json();
@@ -295,26 +238,70 @@ async function handleGetCredentialStatus(publicId: string): Promise<McpToolResul
   return textResult(JSON.stringify(data, null, 2));
 }
 
+/**
+ * F3 — the worker answers a disabled semantic-search capability with a 503
+ * (`{"error":"service_unavailable","message":"Semantic search is not
+ * currently enabled"}`). Swallowing that into a bare "returned 503" leaves
+ * an agent guessing whether the search ran and found nothing, or didn't run
+ * at all. Mirror the disclosure pattern used for the (now-removed)
+ * nessie_ask 503 path: say in words that the capability is off in this
+ * environment, that this is NOT an empty/negative result, and include the
+ * server's own message.
+ */
 async function handleSearchCredentials(query: string, limit: number): Promise<McpToolResult> {
   const safeLimit = Math.min(Math.max(limit, 1), 20);
   const res = await arkovaFetch(`/api/v1/verify/search?q=${encodeURIComponent(query)}&limit=${safeLimit}`);
-  if (!res.ok) return errorResult(`Search API returned ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 503) {
+      const body = await res.json().catch(() => null) as { message?: string; error?: string } | null;
+      return errorResult(
+        'Search is disabled in this environment and no search ran. This is NOT an empty result — ' +
+        'it does not mean "no matching records exist". ' +
+        `Server detail: ${body?.message ?? body?.error ?? 'service_unavailable'}`,
+      );
+    }
+    return errorResult(`Search API returned ${res.status}`);
+  }
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
 }
 
+/**
+ * F2/F11/F12 — the worker's CreateAttestationSchema
+ * (services/worker/src/api/v1/attestations.ts) requires `attester_name`
+ * (min length 1) and a non-empty `claims` array; without them every call
+ * 400s. Both are now required inputs and passed through. On a validation
+ * failure the worker returns `{error:'validation_error', details:[{field,
+ * message}]}` — surface that `details` array so a caller can tell exactly
+ * which field is wrong instead of a bare "API returned 400".
+ */
 async function handleCreateAttestation(args: Record<string, string>): Promise<McpToolResult> {
+  let claims: unknown;
+  try {
+    claims = JSON.parse(args.claims);
+  } catch {
+    return errorResult('Invalid JSON for claims. Provide a JSON array of claim objects, e.g. [{"claim":"..."}].');
+  }
+  if (!Array.isArray(claims) || claims.length === 0) {
+    return errorResult('claims must be a non-empty JSON array of claim objects.');
+  }
+
   const res = await arkovaFetch('/api/v1/attestations', {
     method: 'POST',
     body: JSON.stringify({
       attestation_type: args.attestation_type,
       subject_identifier: args.subject_identifier,
+      attester_name: args.attester_name,
+      claims,
       summary: args.summary,
     }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    return errorResult((err as any).error || `API returned ${res.status}`);
+    const err = await res.json().catch(() => ({})) as { error?: string; details?: Array<{ field: string; message: string }> };
+    const detailText = Array.isArray(err.details) && err.details.length > 0
+      ? ` Details: ${err.details.map((d) => `${d.field}: ${d.message}`).join('; ')}`
+      : '';
+    return errorResult((err.error || `API returned ${res.status}`) + detailText);
   }
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
@@ -327,12 +314,26 @@ async function handleVerifySignature(signatureId: string): Promise<McpToolResult
   });
   if (!res.ok) {
     if (res.status === 404) return textResult('Signature not found.');
+    if (res.status === 503) {
+      const body = await res.json().catch(() => null) as { message?: string; code?: string } | null;
+      return errorResult(
+        'Signature verification is disabled in this environment and no check ran. This is NOT a ' +
+        '"not found" or negative verification result. ' +
+        `Server detail: ${body?.message ?? body?.code ?? 'service_unavailable'}`,
+      );
+    }
     return errorResult(`Signature verification API returned ${res.status}`);
   }
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
 }
 
+/**
+ * D6/F7 — the worker's SYNC_THRESHOLD is 20; a batch above that returns
+ * `202 {job_id,…}` with no results and this tool has no way to fetch them
+ * later. Cap the tool's own limit at 20 so every call this tool accepts
+ * returns results inline.
+ */
 async function handleBatchVerify(publicIdsJson: string): Promise<McpToolResult> {
   let publicIds: string[];
   try {
@@ -343,8 +344,11 @@ async function handleBatchVerify(publicIdsJson: string): Promise<McpToolResult> 
   if (!Array.isArray(publicIds) || publicIds.length === 0) {
     return errorResult('Input must be a non-empty JSON array of public IDs.');
   }
-  if (publicIds.length > 100) {
-    return errorResult('Maximum 100 credentials per batch.');
+  if (publicIds.length > 20) {
+    return errorResult(
+      'Maximum 20 public IDs per batch. The Arkova API processes larger batches asynchronously ' +
+      '(202 + job_id) and this tool has no way to fetch results from that job — split into batches of 20 or fewer.',
+    );
   }
 
   const res = await arkovaFetch('/api/v1/verify/batch', {
@@ -352,91 +356,6 @@ async function handleBatchVerify(publicIdsJson: string): Promise<McpToolResult> 
     body: JSON.stringify({ public_ids: publicIds }),
   });
   if (!res.ok) return errorResult(`Batch verify API returned ${res.status}`);
-  const data = await res.json();
-  return textResult(JSON.stringify(data, null, 2));
-}
-
-// ─── Nessie Compliance Handlers (NCE-19) ──────────────────────────────
-
-async function handleNessieComplianceScore(jurisdiction: string, industry: string): Promise<McpToolResult> {
-  const params = new URLSearchParams({ jurisdiction, industry });
-  const res = await arkovaFetch(`/api/v1/compliance/score?${params}`);
-  if (!res.ok) {
-    if (res.status === 404) return textResult(`No compliance rules found for ${jurisdiction} / ${industry}.`);
-    return errorResult(`Compliance score API returned ${res.status}`);
-  }
-  const data = await res.json();
-  return textResult(JSON.stringify(data, null, 2));
-}
-
-async function handleNessieGapAnalysis(jurisdiction: string, industry: string): Promise<McpToolResult> {
-  const res = await arkovaFetch('/api/v1/compliance/gap-analysis', {
-    method: 'POST',
-    body: JSON.stringify({ jurisdiction, industry }),
-  });
-  if (!res.ok) {
-    if (res.status === 404) return textResult(`No compliance rules found for ${jurisdiction} / ${industry}.`);
-    return errorResult(`Gap analysis API returned ${res.status}`);
-  }
-  const data = await res.json();
-  return textResult(JSON.stringify(data, null, 2));
-}
-
-/**
- * BUG-008/027 — a disabled capability must not read as an empty answer.
- *
- * The worker's capability gate answers 503 with
- * `{error:'capability_disabled', code:'nessie_disabled', enabled:false, …}`.
- * Surfacing that as a bare "returned 503" would leave an agent guessing at an
- * outage; surfacing the old context-mode body ("No relevant verified documents
- * were found…", `confidence: 0`) was worse still — a fluent sentence that reads
- * as a successful, empty search. The disabled reason is passed through intact,
- * flagged as an error, and explicitly separated from "found nothing".
- */
-async function handleNessieAsk(query: string, task?: string): Promise<McpToolResult> {
-  const params = new URLSearchParams({
-    q: query,
-    mode: 'context',
-    ...(task && { task }),
-    limit: '10',
-  });
-  const res = await arkovaFetch(`/api/v1/nessie/query?${params}`);
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => null) as
-      | { code?: string; enabled?: boolean; message?: string }
-      | null;
-
-    if (res.status === 503 && (body?.code === 'nessie_disabled' || body?.enabled === false)) {
-      return errorResult(
-        'Nessie is disabled and was not queried. This is NOT an empty result — no search ran, ' +
-        'so it does not mean "no matching documents exist". ' +
-        `Server detail: ${body?.message ?? 'capability_disabled'}`,
-      );
-    }
-
-    return errorResult(`Nessie query API returned ${res.status}`);
-  }
-
-  const data = await res.json();
-  return textResult(JSON.stringify(data, null, 2));
-}
-
-async function handleNessieCrossReference(anchorIdsJson: string): Promise<McpToolResult> {
-  let anchorIds: string[];
-  try {
-    anchorIds = JSON.parse(anchorIdsJson);
-  } catch {
-    return errorResult('Invalid JSON. Provide a JSON array of anchor UUIDs.');
-  }
-  if (!Array.isArray(anchorIds) || anchorIds.length < 2) {
-    return errorResult('Minimum 2 anchor IDs required for cross-reference.');
-  }
-  const res = await arkovaFetch('/api/v1/compliance/cross-reference', {
-    method: 'POST',
-    body: JSON.stringify({ anchor_ids: anchorIds }),
-  });
-  if (!res.ok) return errorResult(`Cross-reference API returned ${res.status}`);
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
 }
