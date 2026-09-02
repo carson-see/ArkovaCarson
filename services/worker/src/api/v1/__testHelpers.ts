@@ -90,6 +90,12 @@ export interface BuilderState {
   selectData?: unknown;
   /** Alias for `error` matching the compliance-audit field name. */
   selectError?: unknown;
+  /**
+   * Row count for `.select(cols, { count: 'exact', head: true })` chains
+   * (SCRUM-3863 D3 sub-org cap). Defaults to 0 so a builder that never opted
+   * in still answers a count query rather than failing closed.
+   */
+  count?: number;
 }
 
 /**
@@ -116,11 +122,22 @@ export function makeBuilder(state: BuilderState = {}): Builder {
   // compliance-audit awaited `.limit()`).
   const listPayload = () =>
     Object.assign(
-      Promise.resolve({ data: listData, error: listError }),
+      Promise.resolve({ data: listData, error: listError, count: state.count ?? 0 }),
       builder,
     );
 
-  builder.select = vi.fn(chain);
+  // A COUNT select (`select(cols, { count: 'exact', head: true })`) terminates
+  // on its last `.eq()`, not on a named terminal, so it gets its own small
+  // thenable chain. Scoped deliberately: making `.eq()` itself awaitable for
+  // every builder broke unrelated create/approve chains.
+  const countChain: Record<string, unknown> = {};
+  countChain.eq = () => countChain;
+  countChain.is = () => countChain;
+  countChain.then = (resolve: (v: unknown) => unknown) =>
+    Promise.resolve({ data: null, error: null, count: state.count ?? 0 }).then(resolve);
+
+  builder.select = vi.fn((_cols?: unknown, opts?: { count?: string }) =>
+    (opts && opts.count ? countChain : builder));
   builder.insert = vi.fn(chain);
   builder.update = vi.fn(chain);
   builder.delete = vi.fn(chain);

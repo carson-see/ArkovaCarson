@@ -143,6 +143,61 @@ async function getUserOrgInfo(
   return { orgId: data?.org_id ?? null, role: data?.role ?? null };
 }
 
+/**
+ * Platform cap on sub-organizations per parent (Carson, 2026-09-01).
+ *
+ * `organizations.max_sub_orgs` already existed, was settable via POST /max and
+ * was returned by the list endpoint — and was checked by NOTHING, so a parent
+ * could create unlimited affiliates. This is the fallback when an org carries
+ * no explicit override; the override still wins in either direction.
+ */
+export const DEFAULT_MAX_SUB_ORGS = 20;
+
+export interface SubOrgCap {
+  ok: boolean;
+  limit: number;
+  current: number;
+  /** The count could not be read — refuse rather than guess. */
+  unavailable?: boolean;
+}
+
+/**
+ * How many sub-orgs may this parent still add?
+ *
+ * FAILS CLOSED. Unlike the credit-enforcement lookup, a read failure here must
+ * refuse: guessing would let a parent walk straight past the cap during a
+ * database blip, and the cost of refusing is one retry.
+ *
+ * `?? DEFAULT` and not `|| DEFAULT` is load-bearing — an org explicitly capped
+ * at 0 must stay at 0, not silently inherit the full default.
+ */
+export async function resolveSubOrgCap(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  database: any,
+  parentOrgId: string,
+): Promise<SubOrgCap> {
+  const { data: org } = await database
+    .from('organizations')
+    .select('max_sub_orgs')
+    .eq('id', parentOrgId)
+    .maybeSingle();
+
+  const limit: number = org?.max_sub_orgs ?? DEFAULT_MAX_SUB_ORGS;
+
+  const { count, error } = await database
+    .from('organizations')
+    .select('id', { count: 'exact', head: true })
+    .eq('parent_org_id', parentOrgId)
+    .eq('parent_approval_status', 'APPROVED');
+
+  if (error || typeof count !== 'number') {
+    logger.error({ err: error?.message, parentOrgId }, 'suborg_cap_count_failed');
+    return { ok: false, limit, current: -1, unavailable: true };
+  }
+
+  return { ok: count < limit, limit, current: count };
+}
+
 /** Check if user is admin/owner of their org */
 function isOrgAdmin(role: string | null): boolean {
   return role === 'owner' || role === 'admin';
@@ -461,6 +516,21 @@ async function updateAffiliateStatus(
     return routeFailure(400, action.alreadyStatusError);
   }
 
+  // D3 — the cap applies to BOTH paths that add a sub-org. Approving a pending
+  // request is one of them; enforcing only on create would leave a cap you can
+  // walk around by asking to be affiliated instead of being created.
+  if (action.targetStatus === 'APPROVED') {
+    const cap = await resolveSubOrgCap(db, context.orgId);
+    if (!cap.ok) {
+      return routeFailure(
+        cap.unavailable ? 503 : 409,
+        cap.unavailable
+          ? 'Could not verify the affiliated-organization limit. Try again.'
+          : `Affiliated-organization limit reached (${cap.current} of ${cap.limit}).`,
+      );
+    }
+  }
+
   const { error: updateError } = await db
     .from('organizations')
     .update(buildAffiliateStatusUpdate(action.targetStatus))
@@ -659,6 +729,19 @@ orgSubOrgsRouter.post('/create', async (req: Request, res: Response) => {
 
     const { orgId } = parentContext.value;
     const adminProfile = adminLookup.value;
+
+    // D3 — refuse before creating anything. `max_sub_orgs` was settable and
+    // displayed but checked by nothing, so this cap did not exist in practice.
+    const cap = await resolveSubOrgCap(db, orgId);
+    if (!cap.ok) {
+      res.status(cap.unavailable ? 503 : 409).json({
+        error: cap.unavailable ? 'cap_check_unavailable' : 'sub_org_limit_reached',
+        limit: cap.limit,
+        current: cap.current,
+      });
+      return;
+    }
+
     const createResult = await createAffiliateOrg(orgId, parsed.data);
     if (!createResult.ok) {
       res.status(createResult.status).json({ error: createResult.error });

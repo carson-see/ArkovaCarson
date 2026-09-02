@@ -1074,3 +1074,10 @@ guard and a scope guard). The structural ratchet above covers these four mounts 
 - The balance is read BEFORE anything moves: a balance we cannot read is a reclaim we cannot size, so that path 503s without touching credits.
 - **Anchored records are never touched.** They are the customer's evidence and must stay verifiable after the relationship ends; the 0431 proof asserts this explicitly.
 - Uses migration 0431's identity-carrying `suspend_suborg` overload — the 3-arg form resolves the caller via `auth.uid()` and is NULL under the worker's service_role client.
+
+## Sub-org cap (D3, Carson 2026-09-01)
+
+- `DEFAULT_MAX_SUB_ORGS = 20`. `organizations.max_sub_orgs` already existed, was settable via `POST /max` and was returned by the list endpoint — and was **checked by nothing**, so a parent could create unlimited affiliates. `resolveSubOrgCap()` is the enforcement, and it runs on **both** paths that add a sub-org: `/create` and `/approve`. Enforcing only on create would leave a cap you walk around by asking to be affiliated instead of being created.
+- Resolution is `max_sub_orgs ?? DEFAULT_MAX_SUB_ORGS` — `??` not `||`, so an org explicitly capped at 0 stays at 0 instead of silently inheriting 20. An explicit override wins in either direction.
+- **Fails CLOSED** (503) when the count cannot be read. Unlike the credit-enforcement lookup, guessing here would let a parent walk past the cap during a database blip, and the cost of refusing is one retry.
+- `org_tier_entitlements.included_sub_orgs` is **not** the source of truth and is read by no code. The live cap is the column above. Do not "fix" the entitlement row expecting it to change behaviour.
