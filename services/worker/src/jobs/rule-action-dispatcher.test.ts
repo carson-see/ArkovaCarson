@@ -620,11 +620,16 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
   // NULL renders as nothing (FingerprintSourceDisplay) and asserts nothing.
   // Rationale: docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md
   //
-  // HARD RATCHET: fingerprint_source is service_role-writable at INSERT and
-  // IMMUTABLE afterward (migration 0384), so a wrong value here is permanent. The
-  // obvious-but-wrong instinct is to copy the sibling connector-artifact-drain
-  // path's 'document_bytes' (that path FETCHES + hashes real bytes — §1.6A — and
-  // is a different evidence class). These tests exist to stop that.
+  // HARD RATCHET, and these tests are the ONLY guard. Migration 0384 refuses
+  // post-insert changes to fingerprint_source for NON-service_role callers only;
+  // this module writes as service_role, so the DB lets it through. A wrong value
+  // written here is permanent for every practical purpose.
+  //
+  // The obvious-but-wrong instinct is to reach for 'document_bytes' because the
+  // sibling connector-artifact-drain path FETCHES + hashes real bytes (§1.6A) and
+  // is therefore a different evidence class. Two reasons that is wrong: the class
+  // does not describe THIS path, and that sibling does not even set
+  // fingerprint_source today (it is PR-2's write). These tests exist to stop it.
   describe('fingerprint_source evidence class (R19 §1.5)', () => {
     const anchorActions = ['AUTO_ANCHOR', 'FAST_TRACK_ANCHOR', 'INSTANT_SECURE'] as const;
 

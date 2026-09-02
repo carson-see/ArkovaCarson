@@ -1345,14 +1345,33 @@ prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead o
 ## `rule-action-dispatcher.ts` — `fingerprint_source` is deliberately NULL (R19 §1.5)
 
 The anchor-creating actions (`AUTO_ANCHOR` / `FAST_TRACK_ANCHOR` / `INSTANT_SECURE`) set the top-level
-`anchors.fingerprint_source` column (migration `0376`) to **`NULL`**, enforced by a required
-`z.null()` in the module's local `AnchorInsertSchema` and pinned by the `fingerprint_source evidence
-class (R19 §1.5)` tests. **Do not "fix the gap" by copying the sibling `connector-artifact-drain.ts`
-value (`document_bytes`).** This path anchors a DocuSign-**declared** hash (asserted, never fetched or
-hashed by Arkova — see `docusign-anchor-reconciliation.ts` path A, and `rules-engine.ts`), so
-`document_bytes` (a measurement claim) and `issuer_record_attestation` ("no document exists") are BOTH
-false here. `NULL` = unclassified, renders as nothing. `fingerprint_source` is immutable post-insert
-(migration `0384`) and this path is `service_role` (no DB guard), so the schema + tests ARE the guard.
-Distinct from the free-text `metadata.fingerprint_source` debug label (which payload field the hash was
-read from) — never conflate them. Rationale + the separate, higher-severity `FETCH_TIME_SNAPSHOT`
-mis-classification finding (out of scope, coordinated with PR-4): `docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.
+`anchors.fingerprint_source` column (migration `0376`) to **`NULL`**, enforced by a required `z.null()`
+in the module's local `AnchorInsertSchema` and pinned by the `fingerprint_source evidence class
+(R19 §1.5)` tests. It is a decision, not an oversight — **do not "fix the gap."**
+
+**Why neither enum value works.** This path anchors a DocuSign-**declared** hash: asserted, never
+fetched or hashed by Arkova (`docusign-anchor-reconciliation.ts` path A; `rules-engine.ts` passes the
+payload hash through verbatim). So `document_bytes` (a measurement claim we cannot make) and
+`issuer_record_attestation` ("no source document exists" — one demonstrably does) are BOTH false, in
+opposite directions. `NULL` renders as nothing and asserts nothing.
+
+**The trap.** The instinct is to reach for `document_bytes` because the sibling
+`connector-artifact-drain.ts` genuinely does fetch and hash real bytes (§1.6A). Two problems: that class
+does not describe *this* path, and that sibling sets no `fingerprint_source` at all today — grep it,
+zero occurrences. `document_bytes` there is **PR-2**'s write, not an existing value to copy.
+
+**Nothing else stops a wrong value.** `0384` freezes `fingerprint_source` post-insert for
+**non-`service_role`** callers only; this module writes as `service_role`, so the DB waves it through.
+The schema + tests ARE the guard. (That same carve-out is what keeps a future backfill possible.)
+
+**Two unrelated things share the name.** The typed top-level column vs. the free-text
+`metadata.fingerprint_source` debug label (which payload field the hash was read from). Never conflate.
+
+**If you need to find these anchors later** — e.g. the backfill to `issuer_record_attestation` +
+`DECLARED_UNVERIFIED` once PR-4 lands — the discriminator is `metadata->>'rule_action_type'`, written on
+every anchor this module has ever created. Not `connector_source`: the drain path writes `'docusign'`
+there too.
+
+Full rationale, plus the separate and higher-severity `FETCH_TIME_SNAPSHOT` mis-classification these same
+anchors still emit on three public surfaces:
+`docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.
