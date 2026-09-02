@@ -1,0 +1,105 @@
+### PR #2500 targeted check — full RLS suite, FULL-PARALLEL, against the isolated rig
+captured_at: 2026-08-30T22:30:15Z
+rig: udpzylbccncnwvhbfjsu   files: 22   logical cpus: 10
+(vitest default pool=forks with file parallelism ON — the mode the collisions appear in;
+ a serial run would prove nothing, which is the whole point of this PR.)
+
+===== RUN 1 (soak head) =====
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/29]⎯
+
+ FAIL  tests/rls/views-security-invoker.test.ts > SCRUM-1276: public-schema views security_invoker audit
+Error: Auth failed for demo-user@arkova.local (INDIVIDUAL): Request rate limit reached
+ ❯ withUser src/tests/rls/helpers.ts:107:11
+    105|
+    106|   if (error) {
+    107|     throw new Error(`Auth failed for ${email} (${role}): ${error.messa…
+       |           ^
+    108|   }
+    109|
+ ❯ tests/rls/views-security-invoker.test.ts:39:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/29]⎯
+
+
+ Test Files  11 failed | 11 passed (22)
+      Tests  197 passed | 101 skipped (298)
+   Start at  18:30:15
+   Duration  12.13s (transform 409ms, setup 0ms, import 1.49s, tests 70.26s, environment 1ms)
+
+
+===== RUN 1 DIAGNOSIS =====
+The 11 failures above are ALL 'Auth failed for <user>: Request rate limit reached' — hosted
+Supabase GoTrue throttling concurrent signInWithPassword calls (rate_limit_token_refresh=150/h
+by default), NOT a fixture collision. The suite is written for the local stack, which has no
+such limit. Rig auth limits raised via the Management API
+(rate_limit_token_refresh 150 -> 3600, rate_limit_verify 30 -> 3600, rate_limit_anonymous_users
+30 -> 3600) and re-run below. Recorded rather than filtered.
+
+===== RUN 2 (soak head, raised auth limits) =====
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.rls.ts:20:25). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft
+
+
+ Test Files  22 passed (22)
+      Tests  298 passed (298)
+   Start at  18:30:58
+   Duration  19.96s (transform 331ms, setup 0ms, import 1.31s, tests 139.96s, environment 1ms)
+
+
+===== RUN 3 + RUN 4 (soak head, repeat for stability — a collision bug is flaky) =====
+-- run 3 --
+ Test Files  22 passed (22)
+      Tests  298 passed (298)
+-- run 4 --
+ Test Files  22 passed (22)
+      Tests  298 passed (298)
+
+===== RATCHET: same rig, same parallelism, RLS suite + helpers reverted to origin/main =====
+-- main-revert run 1 --
+ Test Files  22 passed (22)
+      Tests  298 passed (298)
+-- main-revert run 2 --
+ Test Files  22 passed (22)
+      Tests  298 passed (298)
+-- worktree restored: 0 tracked files modified --
+
+===== HONEST RESULT ON THE RATCHET ATTEMPT =====
+Reverting the RLS suite + helpers to origin/main and re-running full-parallel on this rig
+did NOT reproduce the collision: main's version also passed 22/22 (298/298), twice. The
+cross-file failure is a TIMING race (a global signOut in one worker's afterAll revoking a
+shared demo user's session while another worker is mid-run); against a HOSTED rig the
+network-latency interleaving differs from the local stack the flake was observed on, so the
+live run here is a NON-REGRESSION check, not a reproduction of the defect. Saying otherwise
+would be a hollow claim. The load-bearing evidence for this PR is the STATIC ratchet below.
+
+===== STATIC RATCHET (tests/infra/rls-suite-parallel-safety.test.ts) =====
+-- on the SOAK HEAD: must PASS --
+ Test Files  1 passed (1)
+      Tests  47 passed (47)
+
+-- with the RLS suite + helpers reverted to origin/main: the ratchet must FAIL --
+     × tests/rls/connector-artifact.test.ts carries no unscoped auth.signOut() 3ms
+     × tests/rls/cpe-org-dashboard.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/credential-source-providers.test.ts derives no fixture identity from auth.getUser() 0ms
+     × tests/rls/credential-source-providers.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/docusign-integrations.test.ts derives no fixture identity from auth.getUser() 0ms
+     × tests/rls/docusign-integrations.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/folders.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/get_org_members_public.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/p7.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/rls-extended.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/rls.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/scrum-1284-matview-revokes.test.ts carries no unscoped auth.signOut() 0ms
+     × tests/rls/security-hardening-0160.test.ts carries no unscoped auth.signOut() 0ms
+     × src/tests/rls/helpers.ts carries no unscoped auth.signOut() 0ms
+⎯⎯⎯⎯⎯⎯ Failed Tests 14 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/infra/rls-suite-parallel-safety.test.ts > RLS suite parallel-safety ratchet (SCRUM-3618) > tests/rls/connector-artifact.test.ts carries no unscoped auth.signOut()
+AssertionError: bare auth.signOut() defaults to scope:'global' and revokes EVERY session of that shared demo user — suites still running in other vitest workers lose their sessions mid-run (SCRUM-3618; same cascade as the 2026-08-15 e2e incident). Pass an explicit scope, normally { scope: 'local' }: line 92: await arkovaAdminClient.auth.signOut();; line 93: await betaAdminClient.auth.signOut();: expected [ { line: 92, …(1) }, …(1) ] to have a length of +0 but got 2
+ FAIL  tests/infra/rls-suite-parallel-safety.test.ts > RLS suite parallel-safety ratchet (SCRUM-3618) > tests/rls/cpe-org-dashboard.test.ts carries no unscoped auth.signOut()
+AssertionError: bare auth.signOut() defaults to scope:'global' and revokes EVERY session of that shared demo user — suites still running in other vitest workers lose their sessions mid-run (SCRUM-3618; same cascade as the 2026-08-15 e2e incident). Pass an explicit scope, normally { scope: 'local' }: line 181: await u?.client.auth.signOut();: expected [ { line: 181, …(1) } ] to have a length of +0 but got 1
+ FAIL  tests/infra/rls-suite-parallel-safety.test.ts > RLS suite parallel-safety ratchet (SCRUM-3618) > tests/rls/credential-source-providers.test.ts derives no fixture identity from auth.getUser()
+-- worktree restored: 0 tracked files modified --

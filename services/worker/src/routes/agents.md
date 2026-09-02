@@ -2,6 +2,29 @@
 
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
+## 2026-08-23 — the "unscoped limiters share one IP bucket" mechanism is GONE (SCRUM-3418)
+
+Two long notes in this file — the 2026-08-10 `anchor.ts` activation entry and the SCRUM-3012
+invitation entry — explain that `rateLimit()` keys unscoped buckets on the client IP alone, so a
+route's own limiter shared a counter with `index.ts`'s `apiIpShadowGuard` and each request burned
+two of the cap. **That mechanism no longer exists.** Buckets are now always keyed
+`${bucketScope}:${key}`, and a limiter that passes no `scope` gets a private per-instance namespace
+instead of the shared bare-IP entry (`utils/agents.md` has the full writeup).
+
+What that changes for this folder:
+
+- `scope: 'invitations'` (30/min) and `scope: 'activation'` (10/min) in `anchor.ts` are still
+  correct and should stay — but the reason is now "a named bucket is a readable, stable log key",
+  not "otherwise it collides with the shadow guard".
+- The standing advice is unchanged in practice: **give any new unauthenticated burst-prone route an
+  explicit `scope`.** It is just no longer load-bearing for correctness.
+- `cron.ts`'s `cronJobsLimiter` gained `scope: 'cron-jobs'` with `keyGenerator: () => 'global'`. It
+  was never at risk (its keyGenerator returned a constant string, not an IP), so this is naming
+  only; the single global 30/min bucket is unchanged.
+- `anchor-invitation-ratelimit.test.ts` still runs the REAL limiters behind a stand-in shadow guard
+  and still earns its keep — it pins the budget an invitee actually gets, independent of the keying
+  rule underneath. Its header now records the old mechanism as history rather than as current fact.
+
 ## Files
 - `cron.ts` — HTTP-triggered cron endpoints. Cloud Scheduler hits these. Includes `POST /jobs/anchor-expiry-sweep` (SCRUM-1736), `POST /jobs/check-stuck-anchors` (SCRUM-2234), and `POST /jobs/populate-confirmation-proofs` (PROOF-03 / SCRUM-2336 — see below).
 - **GH #1835 (2026-08-03):** `POST /jobs/drive-subscription-renewal` — renews Google Drive `changes.watch` push channels before their ~7-day expiry (nothing did this before; every Drive connection went silent within a week). Calls `runDriveSubscriptionRenewal()` (`jobs/drive-subscription-renewal-deps.ts`) with no args — that function wires the pure `renewDriveSubscriptions()` orchestrator (`integrations/connectors/drive-subscription-renewal.ts`) to real deps AND wraps the whole call in the cross-instance `withRunLease` primitive. **`scheduled.ts` also has an hourly in-process backup calling the SAME `runDriveSubscriptionRenewal()`** (see below) — an earlier round of PR #1944's review had this route be Cloud-Scheduler-only and explicitly removed the backup to avoid a double-fire race; that was reversed once it became clear Cloud Scheduler is not yet applied to prod (`scripts/gcp-setup/cloud-scheduler.sh` — review PR #1944 for current status), which would have made the job never run automatically at all. The lease (`DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`, `jobs/run-lease.ts`) is what makes running both safe: whichever trigger fires first wins the lease and runs the body, the other observes the lease held and no-ops (`{skipped: true}`) rather than racing a second sweep against the same due connections. See `services/worker/src/jobs/agents.md`'s GH #1835 entry for the full lease + restoration writeup.
@@ -60,6 +83,25 @@ up before reaching upstream (missing credential, dead endpoint) must return one 
 Pinned by `routes/ingestionResponse.test.ts` (the contract) and the `ingestion response contract` block in
 `cron.test.ts` (the three named routes end to end, plus all four flag states). Note `cron.test.ts`'s `db`
 double now answers a `switchboard_flags` read — every other table still returns `undefined` as before.
+
+## 2026-08-30 SCRUM-3374 — `/health` reported `anchoring: "ok"` while the RPC credential was REVOKED
+
+**Verified production defect, not a theoretical one.** On 2026-08-30 the stored `bitcoin-rpc-url` GetBlock access token was revoked and returned `HTTP 401 "Unknown token"`, while prod `/health` kept serving `{"status":"healthy","checks":{"anchoring":"ok"}}` (reproduced live at 2026-08-30T16:22:51Z on `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`). A dead anchoring credential was invisible to every monitor, alert and soak that trusts `/health` — and because soak evidence across this repo cites `/health` as proof of anchoring liveness, the blast radius included **evidence integrity**, not just paging.
+
+**Root cause — it was a literal, not a weak check.** `buildHealthResponse` computed `status: drainVerdict?.status ?? 'ok'`. `drainVerdict` is only computed `if (detailed)`, so on every **compact** request (plain `/health` — what monitors, uptime checks and deploy gates actually read) it was `null` and the status fell through to the hardcoded `'ok'`. Nothing in the worker had ever contacted the RPC provider. `batch-drain-deadman.ts`'s own header already named this: *"/health hardcodes anchoring.status='ok'"* — it closed the backlog-aging half; this closes the credential half.
+
+**The fix** — new `anchoring-rpc-probe.ts`, wired through an optional `getAnchoringRpcStatus` dep on `HealthCheckDeps` and a monitor singleton in `index.ts`:
+- Live authenticated `getblockcount` against the configured `BITCOIN_RPC_URL` — the cheapest call that still exercises **authentication**, which is the thing that broke.
+- **State taxonomy** (`ok` / `unauthenticated` / `unreachable` / `unknown` / `not_configured`). `ok` now means *verified*; `unknown` is reported as unknown rather than laundered into `ok`.
+- **Only `unauthenticated` (401/403) degrades** `anchoring.status` to `warning`. `verify-worker-runtime.yml` (lines 73 and 106) and `deploy-staging.yml` (line 200) hard-assert `anchoring == "ok"`, so degrading on a transient `unreachable`/`unknown` would let a brief GetBlock blip block deploys and flap the gates. A 401 is definitive, non-transient and actionable.
+- **Status stays inside the existing `'ok' | 'warning'` union.** `scripts/staging/targeted/health-batch-drain-deadman.ts` hard-rejects any other value of `checks.anchoring.status`; the new detail therefore lives in an **additive** `checks.anchoring.rpc` sub-object (no consumer in the repo rejects unknown keys — verified across workflows, `scripts/`, `infra/` and the soak harnesses).
+- **Top-level `status` is deliberately unchanged** — still driven by the DB alone. The GCP uptime check and the Cloudflare LB monitor page on `status`/body `healthy`, and `deploy-worker.yml`'s canary gate asserts `.status == "healthy"`. A dead anchoring credential is an **integrity** failure, not an **availability** failure: it must fail the deploy-verification gates that exist to catch it, and must not wake anyone at 3am or mark the origin down.
+
+**Why it is safe on a public, high-frequency endpoint.** `/health` is polled by the Cloudflare LB monitor (30s), the GCP uptime check (60s), deploy verification and the soak harnesses. `getAnchoringRpcStatus` is a **synchronous, TTL-cached snapshot read** — `createAnchoringRpcMonitor` refreshes in the background, so `/health` never awaits GetBlock and a wedged provider adds **0ms** of health latency (no probe-timeout or restart-loop risk). 60s TTL at `--min-instances 2` is ~2 provider calls/minute. The probe has a hard 2.5s request timeout **plus** a separate bounded body read (an `AbortSignal` does not cover a provider that sends headers then stalls — the F-D0-5 lesson from `chain/utxo-provider.ts`). Failure is always a state, never an exception.
+
+**§1.4 — the URL is itself a secret.** Prod `BITCOIN_RPC_URL` carries the token in the URL **path** (`https://go.getblock.io/<ACCESS_TOKEN>`) and `/health` is public. Only the sanitized **origin** ever leaves the probe module, caught errors never propagate their (URL-bearing) messages, and the `rpc` sub-object — including `endpoint` — is confined to `?detailed=true`, consistent with SCRUM-2653. Tests assert the token never appears in any serialized output.
+
+No `chain/` file was modified — the probe deliberately has no runtime import of the chain graph, so `/health` does not pull config/bitcoinjs-lib/signing providers onto the health path.
 
 ## Recent changes
 

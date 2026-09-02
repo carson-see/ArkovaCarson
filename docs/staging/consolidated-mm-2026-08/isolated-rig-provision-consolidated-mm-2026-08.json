@@ -1,0 +1,41 @@
+{
+  "status": "admission_persisted_scheduler_enabled",
+  "reason": "",
+  "generated_at": "2026-08-30T15:57:05Z",
+  "rig_name": "consolidated-mm-2026-08",
+  "profile": "chain",
+  "cloud_run_service": "arkova-worker-consolidated-mm-2026-08-staging",
+  "cloud_run_region": "us-central1",
+  "gcp_project": "arkova1",
+  "supabase_org_id": "byhkazrpmivhcsuqjtva",
+  "supabase_project_name": "arkova-soak-consolidated-mm-2026-08",
+  "supabase_project_ref": "krhegsltjkazuomynbww",
+  "secrets": {
+    "supabase_url": "supabase-url-consolidated-mm-2026-08-staging",
+    "supabase_service_role_key": "supabase-service-role-key-consolidated-mm-2026-08-staging"
+  },
+  "image": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:12eddc1e080c9a4ac4a648b2889eda1b96ed14f16dc530754d3b31271218b65f",
+  "declared_source_head": "b2a65edddff9a3bfb0bb6ec35729bbdd7558a678",
+  "source_head_image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:b2a65edddff9a3bfb0bb6ec35729bbdd7558a678",
+  "source_head_image_digest": "sha256:12eddc1e080c9a4ac4a648b2889eda1b96ed14f16dc530754d3b31271218b65f",
+  "soak_id": "SOAK-CONSOLIDATED-MM-2026-08",
+  "rig_id": "RIG-CMM-1",
+  "lease_id": "LEASE-CMM-2026-08-30",
+  "required_uptime_min": 2880,
+  "required_wall_min": 2910,
+  "deployed_revision": "arkova-worker-consolidated-mm-2026-08-staging-00001-7n4",
+  "deployed_image_digest": "sha256:305faf4e5fb828c7a9888c96ada3d4875951f215a31e6a87dee952934aabe96c",
+  "deployed_source_head": "b2a65edddff9a3bfb0bb6ec35729bbdd7558a678",
+  "scheduler_state": "resumed_after_clean_mirror",
+  "scheduler_creation_guard": "non-firing hold schedule; create then immediate pause + PAUSED verification",
+  "clean_mirror": {
+    "artifact": "docs/staging/consolidated-mm-2026-08/clean-mirror-preflight-consolidated-mm-2026-08.json",
+    "verified_at": "2026-08-30T15:51:21.385Z",
+    "attestation_id": "sha256:6a62c4e17b9e3504e785503d06f621fb045d7696a51055ccbbfc135e5e4013ae"
+  },
+  "created_cloud_run_service": 1,
+  "created_supabase_secrets": 1,
+  "state_path": "docs/staging/consolidated-mm-2026-08/isolated-rig-provision-consolidated-mm-2026-08.json",
+  "cleanup_hint": "If status is blocked_after_project_create, either resume with the same rig name/ref and verify these secrets, or run scripts/staging/teardown-isolated-rig.sh against the recorded service/ref.",
+  "provenance_note": "scripts/staging/provision-isolated-rig.sh --apply executed Step 1 (project create, ref captured + deny-list validated) and fail-closed at Step 2 (db push, see deviations in the admission JSON); Steps 2-6 were completed by the operator following the script's own printed plan byte-for-byte except the seven disclosed deviations recorded in isolated-rig-admission-consolidated-mm-2026-08.json. The script's original blocked_after_project_create state was superseded by this record after clean_mirror admission."
+}

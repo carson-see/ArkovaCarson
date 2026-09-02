@@ -16,6 +16,7 @@
  */
 
 import { z } from 'zod';
+import { dbUuid } from '../utils/db-row-validation.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { processNextJob } from '../utils/jobQueue.js';
@@ -27,7 +28,7 @@ const MAX_JOB_LIMIT = 100;
 // ── Zod payload schema ──────────────────────────────────────────────
 
 export const DocusignNotarizationCompletedJobPayload = z.object({
-  org_id: z.string().uuid(),
+  org_id: dbUuid('org_id'),
   integration_id: z.string().min(1),
   account_id: z.string().min(1),
   envelope_id: z.string().min(1),

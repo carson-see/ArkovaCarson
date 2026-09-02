@@ -248,7 +248,7 @@ describe('SCRUM-2940 — folders RLS (cross-tenant isolation + owner-scope join 
     for (const fid of createdFolderIds) await svc.from('folders').delete().eq('id', fid);
     for (const userId of createdUserIds) await svc.auth.admin.deleteUser(userId);
     for (const orgId of [ORG_A, ORG_B]) await svc.from('organizations').delete().eq('id', orgId);
-    for (const u of [orgAAdmin, orgAMember, orgAMember2, orgBAdmin, soloUser]) await u?.client.auth.signOut();
+    for (const u of [orgAAdmin, orgAMember, orgAMember2, orgBAdmin, soloUser]) await u?.client.auth.signOut({ scope: 'local' });
   }, 60_000);
 
   // ── USER-scoped ────────────────────────────────────────────────────────────

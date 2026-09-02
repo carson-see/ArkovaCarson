@@ -54,6 +54,7 @@
  */
 import crypto from 'node:crypto';
 import { z } from 'zod';
+import { dbUuid } from '../utils/db-row-validation.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
@@ -127,8 +128,8 @@ function hasControlChars(value: string): boolean {
 const AnchorInsertSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   status: z.literal('PENDING'),
-  org_id: z.string().uuid(),
-  user_id: z.string().uuid(),
+  org_id: dbUuid('org_id'),
+  user_id: dbUuid('user_id'),
   filename: z.string().min(1).max(255).refine(
     (value) => !hasControlChars(value),
     'filename cannot contain control characters',

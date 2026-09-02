@@ -29,6 +29,8 @@ No `## Staging Soak Evidence` block is required when every touched file is T0. T
 
 T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, public API contracts, auth, billing, anchoring, worker behavior, queue/concurrency, chain/treasury, and security-sensitive changes.
 
+**`Human approver:` must name a human.** It is the only approval evidence T1 carries, so the gate rejects values that name no one — `NONE`, `N/A`, `TBD`, `pending`, `nobody` (with or without trailing explanation) — and values that name the agent (`Claude`, `Claude Code`, `@claude`) or the requester (`me`, `myself`, `the author`). If no human has approved yet, leave the gate red; do not fill the field with a marker saying so.
+
 ---
 
 ## T2 — Standard merge-grade soak (public API / worker behavior / webhook / SDK / AI; 12h minimum)
@@ -154,6 +156,10 @@ Both preflight fields have exactly one escape hatch, and it is the same one. Say
 - `Preflight timestamp:` — either a reading **after** `Soak start:` (it does not describe the state the soak ran against), or no reading at all. For "no reading at all", write the literal `NOT RUN`. Also accepted: `NONE`, `N/A`, `NO PREFLIGHT`, `NOT APPLICABLE`, each optionally followed by ` — <reason>`. Any other free text is still a hard parse error, and leaving the field out entirely still fails the required-field check.
 
 The note must carry all five sub-fields, and `Approved by:` must name a real person — blank, `pending`, `TBD`, or `N/A` is a self-waiver and fails. The note is scoped to the preflight fields only: it does not waive the soak-duration floor, head/base SHA identity, evidence scope, or the deploy-artifact value checks.
+
+**The approver cannot be you (SCRUM-3481).** `Approved by: me` / `myself` / `self` / `the author` / `PR author` fails, and so does an `@handle` or bare login that matches the PR author's own GitHub login (resolved live by the workflow from the GitHub API, not from this body). Name the human who actually granted the exception. This applies to every `Approved by:` note the gate reads — `### Residual-risk note`, `### Unsoakable-surface note`, and `### Base-drift residual-risk note`.
+
+**Emphasis is decoration, not evidence (SCRUM-3481).** Bolding, italicising or code-wrapping a label or a value is fine — `**Approved by:** Carson (2026-08-23)`, `- [x] **Soak start:** …` — but it no longer hides a placeholder: `**Approved by:** TBD` is read as `TBD` and rejected exactly as the unbolded form is.
 
 ```markdown
 ### Residual-risk note (preflight timestamp not a pre-clock reading)

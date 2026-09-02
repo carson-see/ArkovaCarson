@@ -1,7 +1,12 @@
-# Arkova Memory Files — `feedback_*.md` rule index
+# Arkova Memory Files — rule index
 
 > Rule index only. This directory records durable engineering preferences and
 > enforcement mechanisms; it is not project status, backlog, or release truth.
+>
+> Most files are `feedback_*.md` — a preference or policy, with an enforcement
+> mechanism. A `project_*.md` file records a durable **failure class** that
+> existing gates exist to prevent: the mechanism, the blast radius, and which
+> gates hold it shut. Neither kind carries status, dates, or backlog.
 
 These files capture engineering preferences and policy decisions that
 should outlast individual sessions. Each rule is enforced one of three ways:
@@ -29,10 +34,18 @@ should outlast individual sessions. Each rule is enforced one of three ways:
 ## Current rules
 
 Every row below points at a file that exists in this directory — and
-`scripts/ci/check-doc-pointers.ts` now fails CI if CLAUDE.md, AGENTS.md, a
-skill, or a hook cites a `memory/` path that does not resolve. Before that
-check existed, 17 cited rule files were missing, including one named inside a
-hook's own deny message.
+`scripts/ci/check-doc-pointers.ts` fails CI if a `memory/` path cited by the
+required-reading set does not resolve. Before that check existed, 17 cited rule
+files were missing, including one named inside a hook's own deny message.
+
+The scan set was widened on 2026-08-31 to the **nested `agents.md`** files and
+the **comment lines** of `.github/workflows/*.yml`. Both cite this corpus and
+neither was covered, so `memory/project_deploy_typecheck_blackout.md` sat dead
+across six sites — including two CI gate sources — until someone found it by
+hand. That widening surfaced five more dead `memory/` pointers, each of which
+named a rule that lived only in one session's private memory. **A rule that
+exists only in a session's local memory does not exist** (CLAUDE.md §0.1): if
+you cite `memory/x.md`, the file has to be in this directory.
 
 | Memory file | Enforcement | Status |
 |---|---|---|
@@ -51,6 +64,7 @@ hook's own deny message.
 | `feedback_never_merge_without_ok.md` | Agent hook `.claude/hooks/block-pr-merge.sh` (exit 2 on `gh pr merge`) + Mergify queue policy in `.mergify.yml`. *Not* Atlassian R5 — that rule gates Jira Done on red checks. | ✅ live |
 | `feedback_git_merge_driver_override.md` | Agent hook `.claude/hooks/check-git-merge-driver-flag.sh` (exit 2 on a transient `-c merge.*.driver=` override) + bootstrap config scan `scripts/agent/check-git-merge-config.sh` + cause-agnostic CI backstop `scripts/ci/check-agents-md-append-only.ts`. No override label — a no-op driver is never intentional. | ✅ live |
 | `feedback_secdef_function_grants.md` | CI lint (`secdef-function-grants.ts`), auto-loaded by the `check-feedback-rules.ts` orchestrator's `Policy Lints` job; merge-time gate is `secdef-function-grants.test.ts` in `Tests`. Burn-down baseline in `scripts/ci/feedback-rules/secdef-grants-baseline.json`. | ✅ live (R0-7) |
+| `feedback_relation_anon_grants.md` | CI lint (`relation-anon-grants.ts`) — the RELATION axis (tables/views/matviews/sequences) of the same defect `secdef-function-grants.ts` guards for functions; that rule is function-shaped throughout and could never see a view, which is why `v_slow_queries` survived both `0414` and `0418`. Pins in `REPLAY_PARITY_REVOKES`; merge-time gate is `relation-anon-grants.test.ts` in `Tests`. No override label — removing a pin is the escape hatch. | ✅ live (R0-7) |
 | `feedback_merges_go_through_mergify.md` | `.mergify.yml` queue rules + `.github/workflows/merge-authority.yml` tier marker | 📖 docs only (policy) |
 | `feedback_confluence_is_the_doc.md` | Documentation only (CLAUDE.md §0 rule 4, §3 gate 3, §4 Doc Update Matrix) | 📖 docs only |
 | `feedback_vertex_endpoint_hygiene.md` | Documentation only (CLAUDE.md §0 rule 7 + §7 end-of-sprint infra sweep) | 📖 docs only |
@@ -58,6 +72,13 @@ hook's own deny message.
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
 | `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
 | `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |
+| `feedback_no_prs_for_t0.md` | Documentation only (tier is computed by `requiredTierFor()`; no detector can tell a T0 that *should* have skipped the PR from one that legitimately opened it) | 📖 docs only |
+
+## Failure-class notes
+
+| Memory file | Enforcement | Status |
+|---|---|---|
+| `project_deploy_typecheck_blackout.md` | CI lint ×3 — `check-deploy-lint-parity.ts` (R0-4 / SCRUM-1250), `check-deploy-build-parity.ts`, `check-deploy-typecheck-parity.ts` (SCRUM-1811). All three are pure file readers in the required `typecheck-lint` job. Override `ci-config-change` at the workflow level. | ✅ live |
 
 ## Override pattern
 
@@ -72,8 +93,9 @@ and documented in the rule script. Examples:
 - `secdef-grants-skip` → overrides `feedback_secdef_function_grants`
 - `unbounded-body-read-reviewed` → overrides `feedback_bounded_body_reads`
 
-`feedback_pr_target_repo` and `feedback_no_worktree_isolation` have **no**
-override label. `feedback_dont_recommend_do` needs none — it cannot fail.
+`feedback_pr_target_repo`, `feedback_no_worktree_isolation` and
+`feedback_relation_anon_grants` have **no** override label (for the last, removing
+the `REPLAY_PARITY_REVOKES` pin is the deliberate, reviewable escape hatch). `feedback_dont_recommend_do` needs none — it cannot fail.
 
 If you find yourself reaching for an override more than once, file a Jira
 sub-story to update the policy and remove the override path.

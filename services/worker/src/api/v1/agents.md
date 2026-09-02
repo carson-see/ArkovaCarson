@@ -7,6 +7,95 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 Spec-only change, additive under §1.8: a `'403'` response and a description note on a path that was already there. Worth knowing WHY it is a doc fix and not a contract change — **the spec was already right and the implementation was wrong.** `queuePaths()` has tagged `/api/queue/pending` `['Queue', 'OrgAdmin']` with `security: [{ OrgAdminBearer: [] }]` since it was written, but the handler enforced org scope only (see `services/worker/src/api/agents.md`, SCRUM-3569). The gate now exists in `api/queue-resolution.ts`, so the documented `OrgAdminBearer` is finally load-bearing and the 403 it implies is spelled out.
 
 Note this path lives on `adminRouter`, not a v1 leaf router, so `docs.routeParity.test.ts`'s `MOUNTS` set does not cover it — the parity harness asserts route/path presence, not response codes, either way.
+## 2026-08-23 — every limiter in `router.ts` now names its bucket scope (SCRUM-3418)
+
+`rateLimit()` used to default `scope` to `''` and key the bucket on the bare keyGenerator output, so
+every limiter that kept the default `req.ip` keyGenerator shared ONE Map entry per IP with every
+other unscoped limiter in the worker — including `index.ts`'s 60/min `apiIpShadowGuard` and the
+10/min `checkout`. `anonRateLimiter` could therefore never enforce its own §1.10 100/min contract.
+See `utils/agents.md` for the mechanism and `docs/staging/429-limiter-map-s33.md` §2a for what it
+does to log attribution.
+
+Two things to keep true in this file:
+
+- **Every limiter declared here passes an explicit `scope`.** The default is now a private
+  per-instance id (`rl-<n>`) rather than the shared bucket, so omitting it is no longer a
+  correctness bug — but the auto-id is derived from module construction order, which makes it a
+  useless (and unstable) thing to see in a `Rate limit exceeded` log line. The scope IS the
+  attribution.
+- **Where a limiter's keyGenerator used to carry its own string prefix** (`credits:`, `ai:`,
+  `ctdl-import:`, …), that prefix moved into `scope` and the keyGenerator now returns the bare
+  caller identifier. Doing both would produce `ai:ai:<user>` — `cpe-log-export.ts` has carried a
+  comment warning about exactly that since it was written.
+
+`batch` is the one scope deliberately shared by two limiter instances: `batchRateLimiter` here and
+`attestationBatchRateLimiter` in `attestations.ts`, so the §1.10 batch tier is one 10/min budget
+across both surfaces. Post-SCRUM-3418 a shared explicit scope is the ONLY way two limiters can share
+a bucket — which is what makes that sharing reviewable instead of accidental. Don't "tidy" it apart.
+## 2026-08-23 — DI-398: `GET /anchor/:publicId/evidence` 404'd for EVERY anchor (three phantom columns)
+
+`anchor-evidence.ts`'s `defaultLookup.byPublicId` selected `jurisdiction, merkle_root,
+recipient_hash` from `anchors`. **None of the three is a column on that table** — not in the baseline
+`CREATE TABLE`, not added by any migration, and absent from the generated `anchors` Row in both
+`database.types.ts` copies. PostgREST answered `42703`, the handler destructured only `{ data }`, and
+`if (!data) return null` sent the route to its 404 branch. The endpoint was anon-reachable
+(`router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter)`) and had **never** returned a row.
+
+Predicted-but-understated by PR #1316, which fixed the identical class in `verify.ts` and noted the
+sibling "has the same latent gap". It was not latent: `verify.ts` hardcoded `null` and lost data,
+`anchor-evidence.ts` could not return a row at all.
+
+**Why nothing caught it.** Every existing test injected `_testEvidenceLookup`, so the production
+select string was never executed by anything; there is no `/evidence` E2E. A mocked lookup cannot
+fail on a column that does not exist.
+
+**Fix, mirroring `verify.ts`:** `merkle_root` from the `anchor_proofs(merkle_root)` embed (to-one, so
+object OR one-element array — both handled) with the legacy `metadata->>'merkle_root'` fallback;
+`jurisdiction` from `anchors.metadata`; `recipient_hash` hard-`null`.
+
+**`recipient_identifier` is null on purpose and is not a TODO.** The public value is a *peppered
+HMAC* computed inside the `get_public_anchor` SECURITY DEFINER RPC (0356/0383/0385) with a
+server-side pepper the worker does not hold. Emitting the raw recipient from an anon route would be a
+§1.6 PII leak, so null is the only correct worker-side answer — same posture as `verify.ts`.
+
+**A PostgREST error is now a 500, never a 404.** The old code collapsed 42703, a 42501 RLS
+regression, and a full DB outage into "Anchor not found", which hid outages and made the 404 an
+unreliable existence signal on a route partners treat as authoritative. Only `PGRST116` (zero rows —
+unambiguous here, `anchors_public_id_key` is UNIQUE) still 404s; anything else throws to the route's
+catch. Same split as `anchor-revoke.ts` and `webhooks/delivery.ts`.
+
+**Don't go back to a bare select string.** The column list is
+`EVIDENCE_ANCHOR_COLUMNS ... as const satisfies readonly (keyof Database['public']['Tables']['anchors']['Row'])[]`,
+and `AnchorEvidenceSelectRow` derives its scalar half from that same list
+(`Pick<anchors['Row'], (typeof EVIDENCE_ANCHOR_COLUMNS)[number]>`) instead of restating the fields by
+hand — a hand-written row shape is a second place for a phantom column to hide. A phantom column is a
+`typecheck` failure, not a silent production outage.
+
+Double-ratcheted: `anchor-evidence.test.ts` also drives the route through the **real** `defaultLookup`
+against a schema-faithful `db` double built from the generated `database.types.ts`. The double covers
+BOTH halves of the class — base scalars (`42703`) and, because `merkle_root` now arrives through an
+embed, the embedded relations as well: embed columns are checked against the referenced relation's
+generated `Row` (`anchor_proofs(recipient_hash)` → 42703), and an embed with no resolvable
+relationship answers `PGRST200`. A phantom column *inside an embed* is exactly as invisible to `tsc`
+as `jurisdiction` was. The guard is itself pinned by a self-test, because a double that quietly stops
+rejecting anything makes every other test in that block pass vacuously.
+
+Verified both arms bite, on the 27-test file: re-adding `'jurisdiction'` to the column list produces
+`TS2322` **and** `TS2344`, plus 9 red tests; reverting `anchor-evidence.ts` to its pre-fix content
+reds 10. The sets differ by design — a phantom column 500s the "PGRST116 still 404s" case, while the
+full revert 404s both 500-path cases. Only the double's own self-test is source-independent.
+Assertions in that block name the evidence package explicitly (`public_id`, `not 404`) — checking
+only for the ABSENCE of a field passes against the 404 body `{ error: 'Anchor not found' }`, which is
+how one of these tests originally passed against the broken code.
+
+**Known duplication, deliberately not fixed here.** `AnchorProofEmbed` / `proofEmbedRows` /
+`resolveMerkleRoot` / `resolveJurisdiction` are byte-identical to the private copies in `verify.ts`,
+whose own comment argues for one helper per reader because "a divergent copy fails SILENTLY to `[]`" —
+the same failure mode that produced `utils/profilePublicIds.ts`. The extraction is not in this PR
+because `verify.test.ts` cannot be executed in a worktree without the worker's own `node_modules`
+(`@sentry/profiling-node` unresolvable), and refactoring the hottest public endpoint with no local
+test run is not a trade worth making inside a P0 route fix. Extract to a shared util when the two
+files are next touched together.
 
 ## 2026-08-12 — FD-P7: key revocation/deletion were unreachable from every client (CC6.8)
 
@@ -926,3 +1015,49 @@ Soak-proven: re-fetching the same unchanged DocuSign envelope yields a DIFFERENT
 - `AnchorByPublicId.connector_source` is tri-state like `has_stored_proof_branch`: marker = emit, `null` = measured-not-connector, absent = not measured (batch/oracle via `EMPTY_API_RICH_FIELDS` stay silent).
 - `verifyCache.ts` KEY_PREFIX bumped v5 → v6 (response-shape change; a pre-deploy cached connector record would otherwise serve no statement for the whole TTL).
 - Tests: `verify-connector-fingerprint.test.ts` (marker closed-set, pair inseparability, no-vendor-echo, bundle-untouched).
+
+## 2026-08-23 SECURITY — SCRUM-1272 / SCRUM-3514: the PHI/PII routes had no scope layer at all
+
+`requireScope` (from `../../middleware/apiKeyAuth.js`) is **API-key-only**. Its first two lines are
+`if (!req.apiKey) { next(); return; }`. That fall-through is correct where it is used — `/verify` and
+`/anchor` allow deliberate anonymous GETs (§1.10) — but it means the guard is a **silent no-op on any
+JWT-authenticated route**. SCRUM-1272 shipped the scope *vocabulary* and closed Done with its central
+acceptance criterion unmet for exactly this reason: the four routes its own "Why now" named
+(`/ferpa`, `/directory-opt-out`, `/hipaa/audit`, `/emergency-access`) authenticate with a Supabase JWT,
+so mounting `requireScope` on them would have enforced nothing and *looked* like it did.
+
+All four now mount `requireScopeAnyAuth('compliance:read')` (`../../middleware/requireScopeAnyAuth.ts`)
+between `requireAuth` and the rate limiter. That guard resolves a grant for **whichever** auth mode is
+in play and has **no pass-through branch** — API key → the key's `scopes`; JWT → the caller's org role,
+intersected with any `scopes` claim on the presented token; neither → 401. When a request carries
+BOTH (an `X-API-Key` alongside the JWT, which `apiKeyAuth`'s router-wide mount makes possible here),
+**each** credential must independently satisfy the scope — otherwise a key from an unrelated org could
+decide the capability for a JWT caller who would be denied on their own.
+
+**Order is the contract** and is pinned by `middleware/__tests__/phiScopeMount.test.ts`:
+`requireAuth` first (it populates `req.authUserId`, which the scope guard reads), then the scope guard,
+then the rate limiter. That order matches the existing `/keys` chain — but `/keys`
+(`requireAuth, requireScope('keys:manage')`, router.ts) is itself an instance of the no-op described
+above, not a model to copy: its scope guard enforces nothing for the JWT callers it is built for, and
+the real gate is the in-handler AUTH-06 ORG_ADMIN check in `keys.ts`. Untouched here as out of scope.
+
+**This layer is the capability gate only — it did not move the tenant boundary.** `requireOrgId` still
+validates real membership against `x-org-id` inside each router, and `requireOrgAdmin` still gates the
+admin-only routes (HIPAA audit read/export, FERPA disclosure list/export, emergency-access approve).
+Do not "simplify" by folding those into the scope check; they answer different questions and the scope
+mapping is deliberately coarse so it cannot drift from them.
+
+**Behaviour change to know about:** a verified caller with no `public.profiles` row is now 403 on these
+four routes (previously they reached `requireOrgId`, which admits on an `org_members` row alone —
+`org_members.user_id` FKs to `auth.users`, not `profiles`). Denied deliberately on a PHI/PII surface and
+logged at `warn`; see the "Residual" note in `requireScopeAnyAuth.ts`.
+
+**What this did NOT do:** the JWT role mapping grants `compliance:read` to any caller with a `profiles`
+row, so for dashboard callers the new layer is closer to a liveness + downscoped-token check than to an
+authorization decision. Real authorization against a specific org's PHI is still `requireOrgId` +
+`requireOrgAdmin` inside each router, exactly as before. What changed is that the routes can no longer
+be reached with no scope source at all, a downscoped token is now enforceable, an API key presented
+alongside is now checked, and the guard cannot be mounted as a no-op.
+
+**Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
+guard and a scope guard). The structural ratchet above covers these four mounts only.

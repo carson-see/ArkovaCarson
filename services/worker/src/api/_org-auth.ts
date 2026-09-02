@@ -23,11 +23,6 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
-/**
- * The caller columns every org-auth decision in this module reads. Exported so
- * a handler can hold the row it already loaded and hand it back as
- * `isCallerOrgAdminResult`'s `preloadedProfile` without redeclaring the shape.
- */
 export interface CallerProfile {
   org_id: string | null;
   role: string | null;
@@ -78,20 +73,16 @@ export async function getCallerProfile(userId: string): Promise<CallerProfile | 
 }
 
 /**
- * Profile fetch that ALSO reports whether the lookup hit a DB/operational
- * error, so a handler can return 500 on a fault instead of collapsing it into
- * the "no profile row" branch. `{ value: null, error: false }` is a true
- * negative; `{ value: null, error: true }` is operational.
+ * `*Result` sibling of `getCallerProfile`: the same single profile fetch, but
+ * surfacing whether the lookup hit a DB/operational error so a caller can
+ * distinguish "this user genuinely has no profile row" (→ 403) from "we could
+ * not find out" (→ 500). `{ value: null, error: false }` is the true negative.
  *
- * Prefer this over hand-rolling a `profiles` select in a handler: the column
- * list the admin precedence rule reads (`org_id, role, is_platform_admin`)
- * then lives in exactly ONE place, so a handler can never hand
- * `isCallerOrgAdminResult` a `preloadedProfile` that is silently missing the
- * columns that decide the answer (SCRUM-3569).
+ * Added for `middleware/requireScopeAnyAuth.ts`, which derives a JWT caller's
+ * scope grant from their role and must NOT treat a transient lookup failure as
+ * an empty (or full) grant.
  */
-export async function getCallerProfileResult(
-  userId: string,
-): Promise<OrgAuthResult<CallerProfile | null>> {
+export async function getCallerProfileResult(userId: string): Promise<OrgAuthResult<CallerProfile | null>> {
   const { profile, error } = await loadCallerProfile(userId);
   return { value: profile, error };
 }
