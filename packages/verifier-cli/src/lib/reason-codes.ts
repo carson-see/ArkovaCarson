@@ -12,13 +12,13 @@
  *     (src/vendor/merkle-verify.ts — a byte-identity-guarded copy, so these
  *     strings can only change when the worker itself changes and the sync test
  *     forces this mapping to be revisited);
- *   - `chainReasonCode` maps `@arkova/verifier` ConfirmInclusionStatus values.
+ *   - `chainReasonCode` maps `arkova-verifier` ConfirmInclusionStatus values.
  *
  * Codes are machine-readable JSON output only — the human report keeps the
  * terminology-ban-compliant prose (§1.3).
  */
 
-import type { ConfirmInclusionStatus } from '@arkova/verifier';
+import type { ConfirmInclusionStatus } from 'arkova-verifier';
 
 export const REASON_CODES = [
   'MALFORMED_BUNDLE',

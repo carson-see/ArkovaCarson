@@ -1,6 +1,12 @@
 # agents.md — lib
 
-_Last updated: 2026-08-23_
+_Last updated: 2026-08-29_
+
+## 2026-08-29 — `docusignLinks.ts` (DocuSign record deep links, bilateral rollout, frontend-targeted T2)
+
+New module `docusignLinks.ts`: turns DocuSign account/envelope/recipient identifiers already present on an anchor's metadata into deep links back into DocuSign's own console (`https://apps.docusign.com` prod / `https://apps-d.docusign.com` demo, selected by `resolveDocusignEnv(metadata._docusign_env)`, default `'prod'`). The security property is validate-before-build: `accountUrl`/`envelopeUrl`/`signerUrl` each call `isStrictUuid` (exact `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}` match, case-insensitive, no RFC 4122 version/variant constraint — see the module's own header for why) FIRST and return `null` on anything that does not match, so no metadata value ever reaches a template-literal href — immune to `javascript:`/open-redirect injection by construction, not by downstream sanitization. `signerUrl` is a thin alias of `envelopeUrl` (DocuSign has no per-recipient profile URL; the envelope-details page is the only signer-verification surface), called with the recipient GUID at the actual call site in `AssetDetailView.tsx`. 52 unit tests in `docusignLinks.test.ts` cover valid/invalid/empty/injection-shaped inputs plus both env bases — see that folder's own `agents.md` for the consumer side (`MetadataRow`/`DocusignSignerRows` in `src/components/anchor/AssetDetailView.tsx`).
+
+**Scope note — CORRECTED 2026-08-29 (post-review):** this module renders metadata IF PRESENT; it does not write it. An earlier version of this note claimed the module was inert against prod data, citing `services/worker/src/jobs/rule-action-dispatcher.ts` `buildAnchorInsertPayload` (which does write hashed `account_id_sha256`/`source_envelope_id`) as the live writer. That citation was the WRONG path — verified by direct read, not assumption. The actual live, authoritative writer is the **connector-artifact path**: `docusign-envelope-completed.ts` (~line 420) enqueues RAW `account_id`/`envelope_id` into `connector_artifacts.metadata` via the `enqueue_connector_artifact` RPC; `connector-artifact-drain.ts` `defaultMaterializeAnchor` (~line 399-415) then spreads that row's metadata onto the new `anchors` row FIRST, overriding only `connector_source`/`connector_artifact_id`/`external_ref` — so the raw `account_id`/`envelope_id` pass through untouched onto `anchors.metadata`. `docusign-anchor-reconciliation.ts`'s `connectorPathIsAuthoritative()` makes this the exclusive writer whenever `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` AND `ENABLE_CONNECTOR_ARTIFACT_DRAIN` are both true — confirmed both are `true` in prod's `deploy-worker.yml` `--set-env-vars` string (line ~485). **This means the `account_id`/`envelope_id` deep links in `MetadataRow` render on real existing prod DocuSign anchors the moment this PR merges — an immediate prod-visible change, not a no-op.** Only the `_signers` signer-row feature remains genuinely inert until a separate PR (#2474) lands the `_signers`/`_docusign_env` writer — no current producer path sets either key.
 
 ## 2026-08-23 R-7 — `PLATFORM_METRICS` in `copy.ts` is the only home for a public traction figure
 
@@ -411,3 +417,15 @@ client, and the migration header's claim to the contrary was false.
   today, so it was green, but a field added to the API bundle without touching
   the frontend packet would have passed — the exact failure mode the detector is
   named for.
+## DI-775 / SCRUM-3538 — `WEBHOOK_EVENT_DESCRIPTIONS` is a registration surface
+
+`WEBHOOK_EVENT_DESCRIPTIONS` in `copy.ts` is keyed by webhook event id and must carry an entry for
+every key of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in
+`services/worker/src/webhooks/payload-schemas.ts` — the event catalog renders
+`WEBHOOK_EVENT_DESCRIPTIONS[entry.id]`, so a missing key renders an event with no description at
+all. `anchor.superseded` was added here alongside the picker and catalog.
+
+Keep the entries in the worker's declaration order and keep the copy §1.3-clean (no Transaction /
+Hash / Blockchain — "replaced by a newer version", not "superseded transaction").
+`scripts/ci/check-webhook-event-registration-drift.ts` compares this map's key list against the
+worker map on every PR, in the required root `Tests` job.

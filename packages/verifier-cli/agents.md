@@ -12,7 +12,7 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
   the worker routine changes, re-copy the files (see README) — do not hand-edit
   the vendored copies.
 - **One on-chain routine — import, never duplicate.** The OP_RETURN decode +
-  inclusion/header/reorg confirmation is OWNED by `@arkova/verifier`
+  inclusion/header/reorg confirmation is OWNED by `arkova-verifier`
   (PROOF-07 / #1349), imported as a `file:../verifier` dependency. The CLI calls
   its `confirmInclusion` / `createEsploraFetch`; it keeps **no second decoder**.
   #1349 has the correct canonical decode (`ARKV(4)‖root(32)`, no version byte,
@@ -53,6 +53,16 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
 - **Terminology ban (§1.3)** applies to all user-facing strings (CLI help +
   rendered report): Fingerprint / Network Receipt / Network Observed Time — not
   Hash / Transaction / Block / Broadcast. `test/cli.test.ts` asserts this.
+- **Never compare `process.argv[1]` to `import.meta.url` unresolved.** npm
+  installs a `bin` as a SYMLINK (`node_modules/.bin/arkova-verify ->
+  ../arkova-verifier-cli/dist/cli.js`); `import.meta.url` is always the
+  realpath, `argv[1]` is the path as invoked, so an unresolved comparison is
+  false for **every** global install and every `npx` run — `main()` never runs
+  and the CLI exits 0 having printed nothing. `isDirectInvocation()` in
+  `src/cli.ts` resolves with `realpathSync` and builds the URL with
+  `pathToFileURL` (`new URL('file://' + p)` mis-parses `#`, `?`, `%` in a path).
+  Every other CLI test drives `main()` in-process and cannot catch this, so the
+  guard is exported and pinned directly in `test/cli.test.ts`.
 - **No `verified`-from-packet.** The verifier ignores the packet's `verified`
   field for its verdict and only surfaces it for comparison.
 - **Network Observed Time is MEASURED, never claimed (§1.5; Carson #1353 2nd-pass).**
@@ -64,7 +74,7 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
   corroborated". In recompute-only mode no header is measured, so the time is
   surfaced as the record's own *claim*, never promoted to "observed". Fixtures
   `forged-timestamp-fail` (mismatch → fail) and `txid-body-mismatch-fail` (body
-  whose own txid differs → tripped by the `@arkova/verifier` txid-binding GUARD
+  whose own txid differs → tripped by the `arkova-verifier` txid-binding GUARD
   at `independent-node.ts:160`, distinct from the weaker `txid-mismatch-fail`
   whose body echoes the requested txid and only trips later inclusion) pin both.
 
@@ -75,7 +85,7 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
   `createEsploraFetch`; `--key` loads a published key SET (kid-resolved) or a
   raw PEM.
 - `src/verify.ts` — the orchestrator → `VerifyReport` (schema gate → recompute
-  → on-chain steps 2 & 3 via `@arkova/verifier`'s `confirmInclusion` →
+  → on-chain steps 2 & 3 via `arkova-verifier`'s `confirmInclusion` →
   timestamp honesty → signature). Emits per-step `code` + top-level
   `reasonCode` from the frozen enum.
 - `src/lib/reason-codes.ts` — the FROZEN S3-B reason enum + the two mapping
@@ -109,14 +119,14 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
 
 Self-contained toolchain (own `package.json` / `tsconfig.json` / `eslint.config.js`
 / `vitest.config.ts`), like `packages/embed` — but it depends on the sibling
-`@arkova/verifier` (`file:../verifier`), so **build that first**:
+`arkova-verifier` (`file:../verifier`), so **build that first**:
 `cd ../verifier && npm ci && npm run build`, then `cd ../verifier-cli &&
 npm ci && npm test && npm run lint && npm run typecheck` (`lint` covers
 `src`, `test` AND `scripts` — the parity comparator is linted with Node ESM
 globals, not ignored). The test suite is
 **clean-room**: it touches no network (and `test/no-network.test.ts` enforces
 that at the transport layer, not just by convention). CI job: `verifier-cli` in
-`.github/workflows/ci.yml` (builds `@arkova/verifier` before installing the CLI).
+`.github/workflows/ci.yml` (builds `arkova-verifier` before installing the CLI).
 `npm run parity` additionally requires `python3` ≥ 3.9 (runs the independent
 Python verifier over the same manifest) — suggested as its own CI job; it is
 deliberately NOT part of `npm test`.
@@ -150,3 +160,37 @@ against the merkleroot at `block_header` bytes [36,68) (also byte-reversed).
 `test/tx-inclusion-packet.test.ts` is where that decision must be made explicitly.
 
 `proof_schema_version` is unchanged at 1 — these are nullable additions (§1.8).
+## Publishing
+
+Full ordered runbook: [`PUBLISHING.md`](./PUBLISHING.md). The parts that are
+rules, not steps:
+
+- npm name is the **unscoped `arkova-verifier-cli`**; the bin is `arkova-verify`.
+  The `@arkova` scope does not exist and is not being created. Unscoped public
+  is npm's default, so **no `--access public` and no `publishConfig`**.
+- **`arkova-verifier` publishes FIRST.** This package depends on it, and the
+  dependency is committed as `file:../verifier` **on purpose**: that sibling is
+  not on the registry, so a `^0.1.0` range would break `npm install` in a fresh
+  clone and in CI. The swap to a version range happens *between* the two
+  publishes and is **reverted afterwards** — never left in the committed tree,
+  or local edits to `packages/verifier` stop reaching this package and the CI
+  "build the dependency first" step, the byte-identity guard and the parity gate
+  all start testing the published copy instead of the working tree.
+- `prepack` runs the build, so `npm publish` cannot ship a stale or absent
+  `dist/` behind the `bin` entry.
+- **`prepublishOnly` (`scripts/check-publishable.mjs`) hard-fails the publish
+  while any `file:` dependency is present.** Do not remove it and do not work
+  around it with `--ignore-scripts`: npm will publish a `file:` path without
+  complaint, the tarball then installs with exit `0` and a dangling link, and
+  the binary fails only at runtime with `ERR_MODULE_NOT_FOUND` — permanently,
+  because publishes are irreversible. The guard is the only thing standing
+  between a skipped step 2 and a broken `0.1.0`.
+- The published tarball deliberately EXCLUDES `dist/**/*.map` (the maps are
+  dangling — `src/` does not ship and `sourcesContent` is absent) and the two
+  fixture authoring tools (`author-adversarial.py`, `generate-fixtures.mjs` —
+  a Python script has no place in a JS consumer install). The fixture CORPUS
+  still ships so auditors can re-run it. 33 files / 193.4 kB.
+- `scripts/publish-packages.sh` covers `sdk` + `embed` only and must NOT be used
+  here — it has no concept of the ordered two-step `file:` dependency swap.
+- `fixtures/` ships (auditors can re-run the corpus) but nothing in `src/` reads
+  it at runtime, so it is corpus value only, not a runtime dependency.

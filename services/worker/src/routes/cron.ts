@@ -146,7 +146,8 @@ cronRouter.use(corsMiddleware);
 const cronJobsLimiter = rateLimit({
   windowMs: 60000,
   maxRequests: 30,
-  keyGenerator: () => 'cron-jobs',
+  scope: 'cron-jobs',
+  keyGenerator: () => 'global', // one bucket for all cron callers
 });
 
 cronRouter.use(cronJobsLimiter);

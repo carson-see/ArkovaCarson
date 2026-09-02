@@ -11,7 +11,7 @@
  *      by sync-recompute.test.ts) — with leaf/internal domain separation and the
  *      CVE-2012-2459 duplicate-leaf guard (driven by merkle_index + leaf_count).
  *   2 & 3. CONFIRM the recomputed root is committed on-chain AND the receipt is
- *      in a real block — by delegating to `@arkova/verifier`'s `confirmInclusion`
+ *      in a real block — by delegating to `arkova-verifier`'s `confirmInclusion`
  *      (PROOF-07 / #1349). That ONE shared routine owns the canonical OP_RETURN
  *      decode (`ARKV(4)‖root(32)`, no version byte — fixed byte offset, never a
  *      substring match), the txid-binding inclusion proof (a proof for a
@@ -25,7 +25,7 @@
  * (verdict-from-status is the exact anti-pattern this sidesteps).
  */
 
-import { confirmInclusion, type ConfirmInclusionResult } from '@arkova/verifier';
+import { confirmInclusion, type ConfirmInclusionResult } from 'arkova-verifier';
 import { verifyMerkleInclusion } from './vendor/merkle-verify.js';
 import { verifyBundleSignature, type SignatureResult } from './lib/signature.js';
 import { chainReasonCode, recomputeReasonCode, type ReasonCode } from './lib/reason-codes.js';
@@ -112,7 +112,7 @@ export interface VerifyOptions {
    * Independent on-chain source. Omit to skip on-chain confirmation
    * (recompute-only). The `fetch` + `label` are produced by the CLI from a
    * vetted `--rpc` endpoint (see lib/independent-endpoint.ts) and wrap
-   * `@arkova/verifier`'s `createEsploraFetch`.
+   * `arkova-verifier`'s `createEsploraFetch`.
    */
   chain?: IndependentNode;
   /** Signed bundle (optional) for signature verification. */
@@ -486,7 +486,7 @@ interface OnChainResult {
 }
 
 /**
- * Delegate the on-chain confirmation to `@arkova/verifier`'s `confirmInclusion`
+ * Delegate the on-chain confirmation to `arkova-verifier`'s `confirmInclusion`
  * and map its single `ConfirmInclusionResult` into the CLI's two auditor-legible
  * steps (OP_RETURN payload + block inclusion). `confirmInclusion` is bound to
  * `packet.tx_id` — it recomputes the inclusion proof FROM that txid, so a node

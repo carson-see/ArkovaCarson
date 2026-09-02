@@ -1,5 +1,5 @@
 /**
- * @arkova/verifier — standalone, zero-Arkova-dependency Bitcoin anchor verifier.
+ * arkova-verifier — standalone, zero-Arkova-dependency Bitcoin anchor verifier.
  *
  * The PROOF-07 verifier CLI imports from here. Everything is pure-buffer +
  * injectable HTTP, so the package runs with no Arkova runtime coupling and

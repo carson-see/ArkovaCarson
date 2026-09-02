@@ -82,7 +82,7 @@ Do NOT read pre-2026-04-21 CLAUDE.md iterations — historical only.
 
 **Memory feedback rules CI-enforced (R0-7 / SCRUM-1253):** `memory/feedback_*.md` rules are no longer advisory — each one with a parsable detector ships as a CI script under `scripts/ci/feedback-rules/`. The `feedback-rules` CI job runs the orchestrator on every PR. See `memory/README.md` for the index and override labels.
 
-The repo `memory/` corpus is the **durable, versioned** copy of these rules and the only one CI runners, cloud agents, fresh clones, and teammates can read. A session's local assistant memory is an operational cache, not the source of truth — if a rule exists only there, it does not exist. `memory/README.md` is the index; `scripts/ci/check-doc-pointers.ts` fails CI if this file, `AGENTS.md`, a skill, or a hook cites a path that does not resolve.
+The repo `memory/` corpus is the **durable, versioned** copy of these rules and the only one CI runners, cloud agents, fresh clones, and teammates can read. A session's local assistant memory is an operational cache, not the source of truth — if a rule exists only there, it does not exist. `memory/README.md` is the index; `scripts/ci/check-doc-pointers.ts` fails CI if a path cited by the required-reading set does not resolve — this file, `AGENTS.md`, every skill, every hook, every `memory/**` file, **every nested `agents.md`** (§0.1 step 5 makes them required reading), and the **comment lines** of `.github/workflows/*.yml`. Dated narrative is deliberately out of scope (`HANDOFF.md`, `docs/**` runbooks and soak evidence): a path cited there may be legitimately dead today. A path that is absent on purpose goes in `scripts/ci/snapshots/doc-pointer-exemptions.json` with a reason.
 
 ---
 

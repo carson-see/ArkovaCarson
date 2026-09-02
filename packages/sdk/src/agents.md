@@ -60,3 +60,21 @@ If you are here to settle it, the question is: for a SINGLE-LEAF app tree, is
 `merkleProof: []` an honest complete branch (root == leaf) or an unverifiable
 one? The bitcoin-tree side has already answered the analogous question with
 "complete". Whichever way it goes, the two should end up agreeing.
+## DI-775 / SCRUM-3538 — `WebhookEventType` mirrors the worker allowlist
+
+`WebhookEventType` in `types.ts` is a hand-maintained mirror of
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in `services/worker/src/webhooks/payload-schemas.ts` (the worker's
+`VALID_WEBHOOK_EVENTS` is `Object.keys()` of that map). `anchor.superseded` was missing from the
+union for months while the worker dispatched it and the CRUD API accepted subscriptions to it, so a
+typed SDK consumer could not subscribe to an event Arkova was already sending.
+
+`client.test.ts` now pins the union with an exhaustive `Record<WebhookEventType, true>` plus a
+runtime key-set assertion. Know its limits before trusting it: it is a hardcoded list, so it catches
+an edit to the union that forgets the pin, **not** a new event registered in the worker; and neither
+`npm test` nor `npm run typecheck` here runs on a pull request — `.github/workflows/publish-sdk.yml`
+is the only workflow that touches this package and it triggers on an `sdk-v*` tag. The PR-time gate
+for the drift class is `scripts/ci/check-webhook-event-registration-drift.ts`, which parses the
+worker map and compares this union against it from inside the required root `Tests` job.
+
+When you add a member here, add it in the worker's declaration order — the drift check compares the
+code mirrors as ordered arrays.
