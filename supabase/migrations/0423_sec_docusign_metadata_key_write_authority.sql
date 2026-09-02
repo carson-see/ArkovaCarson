@@ -236,6 +236,18 @@ $$;
 
 ALTER FUNCTION public.enforce_docusign_metadata_key_authority() OWNER TO postgres;
 
+-- SECURITY DEFINER hardening. On Supabase, ALTER DEFAULT PRIVILEGES grants anon
+-- and authenticated EXECUTE *directly* at CREATE time, and `REVOKE ... FROM
+-- PUBLIC` does not remove a direct role grant. This function RETURNS trigger, so
+-- Postgres refuses a direct call and PostgREST never exposes it -- the ACL is not
+-- reachable today. The revoke is still inline and adjacent to the definition
+-- because CREATE OR REPLACE re-applies default privileges on every replay, so a
+-- revoke living in a later migration would re-open on the next replay of this
+-- file. No GRANT is paired with it: trigger invocation does not consult EXECUTE
+-- on the trigger function (the privilege is checked at CREATE TRIGGER time, and
+-- the owner retains it), so granting service_role here would be inert.
+REVOKE ALL ON FUNCTION public.enforce_docusign_metadata_key_authority() FROM PUBLIC, anon, authenticated;
+
 COMMENT ON FUNCTION public.enforce_docusign_metadata_key_authority() IS
   'DocuSign metadata key write authority (0423). Non-service_role callers may not introduce, change, or delete the service-stamped DocuSign provenance keys in anchors.metadata: connector_source, connector_artifact_id, _signers, _docusign_env, _direction, _sending_account_id are guarded unconditionally; account_id, envelope_id are guarded only when the row claims DocuSign provenance via connector_source, so the same generic names in non-DocuSign AI-extracted/org-template metadata pass through untouched. Guarded keys are stripped on INSERT, reverted to OLD on UPDATE, anchor still written. Closes the direct-PostgREST / bulk_create_anchors forgery of DocuSign trust links and signer rows (CTO Decision Record R1, security Finding 2).';
 
