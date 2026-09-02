@@ -130,11 +130,14 @@ Model Context Protocol endpoint for AI agents. New integrations should prefer th
 
 ### 7. Webhooks (outbound) — your URL
 
-Arkova POSTs HMAC-SHA256-signed JSON to your endpoint when anchors transition state. Three event types:
+Arkova POSTs HMAC-SHA256-signed JSON to your endpoint when anchors transition state. A representative subset:
 
 - `anchor.secured` — network confirmation complete
 - `anchor.revoked` — Org admin revoked the credential
 - `anchor.expired` — `expires_at` passed
+- `anchor.superseded` — the record was replaced by a re-issued version
+
+That is not the full set — see the webhooks guide below for every subscribable event type and its payload fields.
 
 Register, list, update, and delete webhook endpoints **programmatically** via `POST/GET/PATCH/DELETE /api/v1/webhooks` — no UI needed.
 

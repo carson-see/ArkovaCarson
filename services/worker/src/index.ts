@@ -21,7 +21,8 @@ import { callRpc } from './utils/rpc.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature } from './stripe/client.js';
-import { rateLimiters, rateLimit } from './utils/rateLimit.js';
+import { rateLimiters } from './utils/rateLimit.js';
+import { apiIpShadowGuard, publicVerifyAnonLimiter } from './middleware/apiIpShadowGuard.js';
 import { apiV1Router } from './api/v1/router.js';
 import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
@@ -54,6 +55,7 @@ import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { buildHealthResponse, isDetailedHealthAuthorized, type HealthCheckDeps } from './routes/health.js';
+import { createAnchoringRpcMonitor, probeAnchoringRpcOnce } from './routes/anchoring-rpc-probe.js';
 import { setupScheduledJobs } from './routes/scheduled.js';
 import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
 import { startHeapMonitor, logHeapStatus } from './utils/heapMonitor.js';
@@ -89,6 +91,26 @@ const feeEstimatorInstance = createFeeEstimator({
   mempoolApiUrl: config.mempoolApiUrl,
   network: config.bitcoinNetwork,
   fallbackRate: config.bitcoinFallbackFeeRate,
+});
+
+// SCRUM-3374 — anchoring RPC credential monitor singleton.
+//
+// Fixes a verified prod defect (2026-08-30): the GetBlock access token was
+// revoked and answered HTTP 401 "Unknown token", yet /health reported
+// `"anchoring":"ok"` because that value was a hardcoded literal — nothing in
+// the worker ever verified the credential.
+//
+// One monitor per process, mirroring `feeEstimatorInstance` above. It holds a
+// 60s TTL cache and refreshes in the BACKGROUND, so `read()` below is a
+// synchronous snapshot: /health never awaits GetBlock, and a provider outage
+// costs 0ms of health latency instead of risking probe timeouts. At
+// --min-instances 2 this is at most ~2 provider calls per minute.
+const anchoringRpcMonitor = createAnchoringRpcMonitor({
+  probe: () =>
+    probeAnchoringRpcOnce({
+      rpcUrl: config.bitcoinRpcUrl,
+      rpcAuth: config.bitcoinRpcAuth,
+    }),
 });
 
 const app = express();
@@ -199,6 +221,9 @@ const healthCheckHandler = async (req: Request, res: Response) => {
         return null;
       }
     },
+    // SCRUM-3374: cached, synchronous, non-blocking snapshot — see the
+    // monitor singleton above. Never performs I/O on the request path.
+    getAnchoringRpcStatus: () => anchoringRpcMonitor.read(),
   };
 
   const result = await buildHealthResponse(deps, detailed, { detailDenied });
@@ -391,31 +416,21 @@ app.use(
   identityRouter,
 );
 
-// F-2 (2026-08 soak) — this 60/min-per-IP limiter was catching EVERY `/api/*`
-// request, including `/api/v1/*` traffic already carrying a valid API key.
-// apiV1Router (mounted below) applies its own 1,000/min-per-key limiter, but
-// requests never got there — this bucket exhausted at 60/min per source IP
-// first, capping every keyed customer regardless of tier (Constitution 1.10).
-// Fix: skip this specific limiter for `/api/v1/*` requests that present a
-// syntactically-formed API key credential (Bearer ak_… or X-API-Key: ak_…).
-// Those requests are still fully rate-limited downstream — either by
-// apiV1Router's keyedRateLimiter (1,000/min/key) or, for the handful of
-// /api/v1/* mounts registered outside apiV1Router (org, integrations,
-// rules/templates, versions, anchor, audit, partner-provisioning), by their
-// own explicit `rateLimiters.api` instance. Anonymous /api/v1 traffic and
-// everything outside /api/v1 (badge, checkout, verify-anchor, treasury,
-// admin) is unaffected and still capped here at 60/min per IP.
-const hasApiKeyCredential = (req: Request): boolean => {
-  const auth = req.headers.authorization;
-  if (typeof auth === 'string' && auth.startsWith('Bearer ak_')) return true;
-  const xApiKey = req.headers['x-api-key'];
-  return typeof xApiKey === 'string' && xApiKey.startsWith('ak_');
-};
-const apiIpShadowGuard = rateLimit({
-  windowMs: 60000,
-  maxRequests: 60,
-  skip: (req) => req.originalUrl.startsWith('/api/v1/') && hasApiKeyCredential(req),
-});
+// Public verification (Constitution 1.10: anonymous 100 req/min per IP).
+// Mounted here, ahead of both the broad `/api` routers and apiV1Router, because
+// apiV1Router runs `verificationApiGate()` before its own anon limiter — with
+// ENABLE_VERIFICATION_API off, a verify request 503s without ever reaching it.
+// This mount is middleware-only: it counts, sets the §1.10 headers and calls
+// next(), leaving the verify handlers where they are inside apiV1Router.
+app.use('/api/v1/verify', publicVerifyAnonLimiter);
+
+// The broad 60/min-per-IP backstop for anonymous `/api/*` traffic. It is NOT
+// the limiter that implements any Constitution 1.10 tier — each tier has its
+// own, correctly-keyed limiter further down the chain, and this guard carves
+// out the two families that would otherwise be shadowed by it: keyed
+// `/api/v1/*` requests (F-2) and the anonymous public verification surface
+// (SCRUM-2603, §1.10's 100/min). Both the cap and those carve-outs live in
+// `middleware/apiIpShadowGuard.ts` with the full writeup.
 app.use('/api', apiIpShadowGuard, badgeRouter); // /api/badge/:publicId
 app.use('/api', billingRouter);    // /api/checkout/session, /api/billing/portal
 app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/account
@@ -449,10 +464,20 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // by kms-signer.ts and every signed proof bundle's `signing_key_id` — but was
 // never mounted here, so it 404'd on every worker host while its sibling
 // didWebRouter returned 200. Verifiers could not resolve the public key a
-// bundle names. It rides the SAME `app.use` chain as didWebRouter deliberately:
-// a second `app.use(apiIpShadowGuard, ...)` would run the limiter twice per
-// request against one shared bucket, halving the anonymous cap to 30/min —
-// the exact re-shadowing failure the F-2 note above describes.
+// bundle names. It rides the SAME `app.use` chain as didWebRouter deliberately —
+// see the double-mount note just below for why a separate `app.use` would be
+// wrong on a store without per-instance counting.
+//
+// 2026-08-12 — this is the SECOND mount of the same `apiIpShadowGuard`
+// instance (the first is at the `/api` mount above). That is intentional and
+// both are needed: did:web paths live outside `/api`, and this mount must
+// carry the same skip predicate. But Express runs every mount a request
+// matches, so an anonymous `/api/v1/*` request — which falls through the
+// `/api` mount unanswered — used to be counted by this guard TWICE, making
+// the documented 60/min per IP actually 30/min. `rateLimit()` now counts a
+// request at most once per limiter INSTANCE (see `utils/rateLimit.ts`,
+// COUNTED_LIMITERS), which is what makes mounting one limiter twice safe.
+// Do not "simplify" this by deleting a mount; see rateLimitDoubleMount.test.ts.
 app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
@@ -605,7 +630,12 @@ const server = app.listen(config.port, async () => {
   const idempotencyRedisStore = createUpstashIdempotencyStore();
   if (idempotencyRedisStore) {
     setIdempotencyStore(idempotencyRedisStore);
-    logger.info('Upstash Redis idempotency store initialized');
+    // BUG-018 / D-8: log the derived namespace so the deployed keyspace is
+    // observable in Cloud Run logs without reading Redis.
+    logger.info(
+      { environmentNamespace: idempotencyRedisStore.environmentNamespace },
+      'Upstash Redis idempotency store initialized'
+    );
   } else if (!redisRateInit) {
     logger.info('Upstash Redis not configured — using in-memory stores (rate limit + idempotency)');
   }

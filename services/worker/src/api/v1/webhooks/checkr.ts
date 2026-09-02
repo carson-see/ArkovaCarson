@@ -153,6 +153,78 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
+  /**
+   * AUDIT-0424-10 / SCRUM-3479 — release the replay nonce before returning any
+   * post-nonce 5xx.
+   *
+   * The nonce row is committed BEFORE `enqueue_rule_event` runs, so without
+   * this compensation a transient enqueue failure is unrecoverable rather than
+   * retryable: Checkr re-presents the same delivery, the insert hits the
+   * `(report_id, payload_hash)` UNIQUE violation, and the handler answers
+   * `200 {duplicate:true}` — the completed background check is dropped AND the
+   * vendor is told it succeeded. The `webhook_dlq` row written alongside is a
+   * record of the loss, not a recovery path: nothing under `jobs/` drains it.
+   *
+   * Deleting the nonce restores exactly-once-on-success semantics — the row is
+   * the claim on in-flight work, so it is released only when that work did not
+   * happen. The success path never calls this, so replay protection for
+   * genuinely duplicate deliveries is unchanged. Mirrors `middesk.ts`'s
+   * `releaseNonce` and the `webhook_event_claims` release in
+   * `stripe/handlers.ts`.
+   *
+   * RESIDUAL RISK — this is a deliberate at-least-once trade, not a free win.
+   * If the RPC *throws* after Postgres already committed the insert (e.g. the
+   * connection drops while awaiting the response), we cannot tell "enqueue
+   * happened" from "enqueue did not", and releasing the nonce lets the retry
+   * enqueue a SECOND `organization_rule_events` row. Nothing de-dupes that:
+   * `enqueue_rule_event` is a bare INSERT with no `ON CONFLICT`, and the
+   * executions idempotency index is `UNIQUE(rule_id, trigger_event_id)` where
+   * `trigger_event_id` is the rule-event id — freshly minted per enqueue, so
+   * two enqueues are two distinct keys. We accept a rare duplicate execution
+   * over the guaranteed silent loss this replaces; a background check that
+   * runs twice is recoverable, one that vanishes while the vendor is told
+   * `200` is not. Narrowing the window needs an idempotency key carried into
+   * `enqueue_rule_event` itself — out of scope here, tracked separately.
+   */
+  let nonceCommitted = false;
+  async function releaseNonce(reason: string): Promise<void> {
+    // Only compensate a nonce THIS delivery committed. The insert below fails
+    // open on non-23505 errors, and the enclosing try also covers work that
+    // runs before the insert — in both cases a row matching this key could
+    // only belong to an EARLIER delivery, and deleting it would re-open that
+    // delivery to replay.
+    if (!nonceCommitted) return;
+    try {
+      // Filter on BOTH columns of the UNIQUE key
+      // (`checkr_webhook_nonces_report_id_payload_hash_key`). Deleting by
+      // `report_id` alone would drop the nonce for a different payload
+      // revision of the same report, disarming its replay protection.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: releaseErr } = await (db as any)
+        .from('checkr_webhook_nonces')
+        .delete()
+        .eq('report_id', completed.data.object.id)
+        .eq('payload_hash', payloadHash);
+      if (releaseErr) {
+        // Nothing further we can do — log loudly. The event is now stuck and
+        // needs a manual replay from the Checkr dashboard.
+        logger.error(
+          { error: releaseErr, reason },
+          'Failed to release Checkr webhook nonce — event will not be reprocessed on retry',
+        );
+        return;
+      }
+      nonceCommitted = false;
+      logger.warn({ reason }, 'Released Checkr webhook nonce so retry can reprocess');
+    } catch (releaseThrew) {
+      // Best-effort: never let the compensation mask the original failure.
+      logger.error(
+        { error: releaseThrew, reason },
+        'Checkr webhook nonce release threw — event will not be reprocessed on retry',
+      );
+    }
+  }
+
   try {
     const integration = await findIntegration(accountHeader(req));
     if (!integration) {
@@ -174,8 +246,20 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
         return;
       }
       logger.error({ error: nonceErr }, 'Checkr webhook: nonce insert failed');
-      // Fail open on the nonce write — the executions table's idempotency
-      // index still de-dupes downstream side effects.
+      // Fail open on the nonce write: prefer processing the event to dropping
+      // it. No row was committed, so `releaseNonce` must stay disarmed for
+      // this delivery.
+      //
+      // NOTE: the older comment here claimed "the executions table's
+      // idempotency index still de-dupes downstream side effects". That is
+      // not true for THIS path and was removed rather than left as false
+      // comfort — the index is `UNIQUE(rule_id, trigger_event_id)` and
+      // `trigger_event_id` is the per-enqueue rule-event id, so a
+      // re-delivery that enqueues again produces a different key and is not
+      // de-duped. Failing open here can therefore double-process; that is an
+      // accepted trade against losing the event, not a guarded no-op.
+    } else {
+      nonceCommitted = true;
     }
 
     const canonical = adaptCheckr(completed, { org_id: integration.org_id });
@@ -204,6 +288,7 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
         externalId: completed.data.object.id,
         payloadHash,
       });
+      await releaseNonce('rule_event_enqueue_failed');
       res.status(500).json({ error: { code: 'webhook_processing_failed' } });
       return;
     }
@@ -213,6 +298,7 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : 'unexpected';
     logger.error({ error: err }, 'Checkr webhook processing failed');
     await dlqInsert({ reason: message, externalId: completed.data.object.id, payloadHash });
+    await releaseNonce(message);
     res.status(500).json({ error: { code: 'webhook_processing_failed' } });
   }
 });

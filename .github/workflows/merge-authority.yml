@@ -30,7 +30,7 @@ jobs:
       contents: read
       pull-requests: write # to add/remove the label
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -45,7 +45,14 @@ jobs:
         name: Compute tiered-merge authority
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
-        run: npx tsx scripts/ci/compute-merge-authority.ts
+        # Resolved local binary, not `npx tsx` (SonarCloud githubactions:S6505 —
+        # `npx` can install packages on-demand and run their lifecycle scripts —
+        # and S8543 — pin an exact version). The `npm ci --ignore-scripts` step
+        # above already installs the pinned root `tsx` devDependency, so
+        # `node_modules/.bin/tsx` is deterministic and uses the locked version.
+        # Matches the identical fix already applied in ci.yml,
+        # staging-evidence.yml:221 and migration-drift.yml:436.
+        run: node_modules/.bin/tsx scripts/ci/compute-merge-authority.ts
 
       - name: Apply needs-carson-merge label (T2/T3)
         if: ${{ steps.authority.outputs.merge_authority == 'needs-carson' }}

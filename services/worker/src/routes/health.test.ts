@@ -18,6 +18,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { buildHealthResponse, type HealthCheckDeps } from './health.js';
+import type { AnchoringRpcProbeResult, AnchoringRpcState } from './anchoring-rpc-probe.js';
 
 
 function createMockDeps(overrides: Partial<HealthCheckDeps> = {}): HealthCheckDeps {
@@ -454,5 +455,161 @@ describe('buildHealthResponse (P7-TS-06)', () => {
 
       expect(result.body.connection).toMatchObject({ mode: 'direct' });
     });
+  });
+});
+
+/**
+ * SCRUM-3374 — anchoring RPC credential liveness in /health.
+ *
+ * VERIFIED PRODUCTION DEFECT (2026-08-30): the stored bitcoin-rpc-url GetBlock
+ * token was revoked and returned HTTP 401 "Unknown token", while prod /health
+ * served {"status":"healthy","checks":{"anchoring":"ok"}} — reproduced live at
+ * 2026-08-30T16:22:51Z on git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999.
+ *
+ * Root cause: in compact mode `drainVerdict` is null and `anchoring.status`
+ * fell back to the literal 'ok'. The endpoint never contacted the provider.
+ */
+describe('anchoring RPC credential check (SCRUM-3374)', () => {
+  const probe = (state: AnchoringRpcState): AnchoringRpcProbeResult => ({
+    state,
+    endpoint: 'https://go.getblock.io',
+    checkedAtMs: 1_700_000_000_000,
+    ...(state === 'ok' ? { httpStatus: 200, blockHeight: 913_244 } : {}),
+    ...(state === 'unauthenticated' ? { httpStatus: 401 } : {}),
+  });
+
+  // ─── THE REGRESSION ───
+  it('does NOT report anchoring ok when the RPC credential is revoked (compact)', async () => {
+    const deps = createMockDeps({ getAnchoringRpcStatus: () => probe('unauthenticated') });
+    const result = await buildHealthResponse(deps, false);
+
+    expect(checks(result).anchoring).not.toBe('ok');
+    expect(checks(result).anchoring).toBe('warning');
+  });
+
+  it('does NOT report anchoring ok when the credential is revoked (detailed)', async () => {
+    const deps = createMockDeps({ getAnchoringRpcStatus: () => probe('unauthenticated') });
+    const result = await buildHealthResponse(deps, true);
+
+    const anchoring = checks(result).anchoring as Record<string, unknown>;
+    expect(anchoring.status).toBe('warning');
+    expect((anchoring.rpc as Record<string, unknown>).state).toBe('unauthenticated');
+    expect((anchoring.rpc as Record<string, unknown>).credentialVerified).toBe(false);
+  });
+
+  it('reports anchoring ok when the probe actually succeeded', async () => {
+    const deps = createMockDeps({ getAnchoringRpcStatus: () => probe('ok') });
+    const result = await buildHealthResponse(deps, false);
+
+    expect(checks(result).anchoring).toBe('ok');
+  });
+
+  it('surfaces credentialVerified true only on a real successful probe', async () => {
+    const deps = createMockDeps({ getAnchoringRpcStatus: () => probe('ok') });
+    const result = await buildHealthResponse(deps, true);
+
+    const anchoring = checks(result).anchoring as Record<string, unknown>;
+    const rpc = anchoring.rpc as Record<string, unknown>;
+    expect(rpc.credentialVerified).toBe(true);
+    expect(rpc.state).toBe('ok');
+    expect(rpc.blockHeight).toBe(913_244);
+  });
+
+  // Transient states must not flap the deploy gates that assert anchoring=="ok"
+  // (verify-worker-runtime.yml, deploy-staging.yml).
+  it.each(['unknown', 'unreachable', 'not_configured'] as const)(
+    'does not degrade anchoring on transient/unproven state %s',
+    async (state) => {
+      const deps = createMockDeps({ getAnchoringRpcStatus: () => probe(state) });
+      const result = await buildHealthResponse(deps, false);
+
+      expect(checks(result).anchoring).toBe('ok');
+    },
+  );
+
+  it('still reports the unproven state honestly in detailed mode', async () => {
+    const deps = createMockDeps({ getAnchoringRpcStatus: () => probe('unknown') });
+    const result = await buildHealthResponse(deps, true);
+
+    const rpc = (checks(result).anchoring as Record<string, unknown>).rpc as Record<string, unknown>;
+    expect(rpc.state).toBe('unknown');
+    expect(rpc.credentialVerified).toBe(false);
+  });
+
+  // §1.4 / SCRUM-2653: compact /health is PUBLIC and unauthenticated. The RPC
+  // endpoint host must not be disclosed there.
+  it('does not disclose the rpc sub-object (or endpoint host) in compact mode', async () => {
+    const deps = createMockDeps({ getAnchoringRpcStatus: () => probe('unauthenticated') });
+    const result = await buildHealthResponse(deps, false);
+
+    expect(JSON.stringify(result.body)).not.toContain('go.getblock.io');
+    expect(typeof checks(result).anchoring).toBe('string');
+  });
+
+  it('never leaks a credential-bearing URL even in detailed mode', async () => {
+    const deps = createMockDeps({
+      getAnchoringRpcStatus: () => ({
+        state: 'unauthenticated' as const,
+        endpoint: 'https://go.getblock.io',
+        checkedAtMs: 1,
+        httpStatus: 401,
+      }),
+    });
+    const result = await buildHealthResponse(deps, true);
+
+    expect(JSON.stringify(result.body)).not.toContain('super-secret');
+  });
+
+  // The top-level `status` contract is load-bearing: the GCP uptime check and
+  // the Cloudflare LB monitor page on it, and deploy-worker.yml's canary gate
+  // asserts `.status == "healthy"`. A dead anchoring credential is an
+  // integrity failure, not an availability failure — it must not page.
+  it('leaves top-level status driven by the database alone', async () => {
+    const deps = createMockDeps({ getAnchoringRpcStatus: () => probe('unauthenticated') });
+    const result = await buildHealthResponse(deps, false);
+
+    expect(result.body.status).toBe('healthy');
+    expect(result.statusCode).toBe(200);
+  });
+
+  // Backwards compatibility: every existing caller/mock omits the new dep.
+  it('falls back to unknown (not ok-by-assumption) when no probe is wired', async () => {
+    const deps = createMockDeps();
+    const result = await buildHealthResponse(deps, true);
+
+    const rpc = (checks(result).anchoring as Record<string, unknown>).rpc as Record<string, unknown>;
+    expect(rpc.state).toBe('unknown');
+    expect(rpc.credentialVerified).toBe(false);
+  });
+
+  it('never throws when the probe accessor itself explodes', async () => {
+    const deps = createMockDeps({
+      getAnchoringRpcStatus: () => {
+        throw new Error('provider is down');
+      },
+    });
+
+    await expect(buildHealthResponse(deps, true)).resolves.toBeDefined();
+    const result = await buildHealthResponse(deps, false);
+    expect(result.statusCode).toBe(200);
+    expect(checks(result).anchoring).toBe('ok');
+  });
+
+  // A stalled drain and a dead credential are independent faults; either alone
+  // must be loud, and together they must not cancel out.
+  it('keeps the drain warning when the rpc probe is healthy', async () => {
+    const deps = createMockDeps({
+      getAnchoringRpcStatus: () => probe('ok'),
+      getPendingAnchorCount: async () => ({ count: 42, error: null }),
+      getOldestPendingAnchor: async () => ({
+        data: [{ created_at: new Date(Date.now() - 9 * 60 * 60 * 1000).toISOString() }],
+        error: null,
+      }),
+    });
+    const result = await buildHealthResponse(deps, true);
+
+    const anchoring = checks(result).anchoring as Record<string, unknown>;
+    expect(anchoring.status).toBe('warning');
+    expect(anchoring.drainStalled).toBe(true);
   });
 });

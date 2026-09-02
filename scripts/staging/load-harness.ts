@@ -36,6 +36,12 @@
  *   latency p50/p95/p99, error rate, and per-HTTP-status counts. Used to
  *   fill the PR's `## Staging Soak Evidence` block.
  *
+ *   SIGINT/SIGTERM (SCRUM-3444): an interrupted run flushes the same summary
+ *   with `partial: true`, the received signal, and the planned window, then
+ *   exits 130/143 — so a killed 48h soak salvages its elapsed evidence
+ *   instead of losing the file. A partial file is NOT completed-soak
+ *   evidence and must never be pasted into a PR as such.
+ *
  * Env:
  *   STAGING_API_BASE       REQUIRED per-PR or named train tag URL printed by
  *                          `scripts/staging/deploy.sh`:
@@ -70,6 +76,15 @@ import { randomBytes, randomUUID, createHmac } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
 import { resolveStagingApiBase } from './load-harness-env';
+import {
+  createEvidenceSink,
+  newStats,
+  percentile,
+  record,
+  summarize,
+  type EvidenceFile,
+  type RunStats,
+} from './load-harness-evidence';
 
 const { values: args } = parseArgs({
   options: {
@@ -158,58 +173,9 @@ function boundedSleep(ms: number, endAt: number): Promise<void> {
   return new Promise((r) => setTimeout(r, Math.min(ms, remaining)));
 }
 
-interface RequestOutcome {
-  mode: string;
-  endpoint: string;
-  status: number;
-  latencyMs: number;
-  ok: boolean;
-}
-
-interface RunStats {
-  startedAt: number;
-  outcomes: RequestOutcome[];
-  byMode: Record<string, { ok: number; fail: number; latencyMs: number[]; byStatus: Record<number, number> }>;
-  classifier: {
-    completed: number;
-    refused: number;
-    lockRefused: number;
-    writesAppliedNonZero: number;
-    malformedBodies: number;
-  };
-}
-
-function newStats(): RunStats {
-  return {
-    startedAt: Date.now(),
-    outcomes: [],
-    byMode: {},
-    classifier: {
-      completed: 0,
-      refused: 0,
-      lockRefused: 0,
-      writesAppliedNonZero: 0,
-      malformedBodies: 0,
-    },
-  };
-}
-
-function record(stats: RunStats, o: RequestOutcome): void {
-  stats.outcomes.push(o);
-  const slot = stats.byMode[o.mode] ?? { ok: 0, fail: 0, latencyMs: [], byStatus: {} };
-  if (o.ok) slot.ok++;
-  else slot.fail++;
-  slot.latencyMs.push(o.latencyMs);
-  slot.byStatus[o.status] = (slot.byStatus[o.status] ?? 0) + 1;
-  stats.byMode[o.mode] = slot;
-}
-
-function percentile(arr: number[], p: number): number {
-  if (arr.length === 0) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * sorted.length)));
-  return sorted[idx];
-}
+// Stats + evidence model (RunStats, record, percentile, summarize, the
+// partial-evidence marker, and the single-write sink) lives in
+// ./load-harness-evidence so it can be unit tested without running main().
 
 function printPerMinute(stats: RunStats): void {
   const elapsedSec = (Date.now() - stats.startedAt) / 1000;
@@ -619,55 +585,6 @@ function startMinuteSummaryLoop(stats: RunStats, endAt: number): NodeJS.Timeout 
 
 // --- Evidence file ---
 
-interface EvidenceFile {
-  startedAt: string;
-  endedAt: string;
-  durationSec: number;
-  apiBase: string;
-  mode: string;
-  concurrency: number;
-  totalRequests: number;
-  byMode: Record<string, {
-    ok: number;
-    fail: number;
-    errorRate: number;
-    p50Ms: number;
-    p95Ms: number;
-    p99Ms: number;
-    byStatus: Record<number, number>;
-  }>;
-  classifier?: RunStats['classifier'];
-}
-
-function summarize(stats: RunStats, mode: string, concurrency: number): EvidenceFile {
-  const startedAt = new Date(stats.startedAt).toISOString();
-  const endedAt = new Date().toISOString();
-  const durationSec = (Date.now() - stats.startedAt) / 1000;
-  const byMode: EvidenceFile['byMode'] = {};
-  for (const [m, slot] of Object.entries(stats.byMode)) {
-    byMode[m] = {
-      ok: slot.ok,
-      fail: slot.fail,
-      errorRate: slot.fail / Math.max(slot.ok + slot.fail, 1),
-      p50Ms: percentile(slot.latencyMs, 50),
-      p95Ms: percentile(slot.latencyMs, 95),
-      p99Ms: percentile(slot.latencyMs, 99),
-      byStatus: slot.byStatus,
-    };
-  }
-  return {
-    startedAt,
-    endedAt,
-    durationSec,
-    apiBase: API_BASE,
-    mode,
-    concurrency,
-    totalRequests: stats.outcomes.length,
-    byMode,
-    classifier: mode === 'classifier' ? stats.classifier : undefined,
-  };
-}
-
 const EVIDENCE_ROOT = resolve(process.cwd(), 'docs', 'staging');
 
 function resolveEvidencePath(path: string): string {
@@ -719,6 +636,32 @@ async function main(): Promise<void> {
   // Warm IAM token before clock starts.
   iamToken();
 
+  // SCRUM-3444: flush a partial evidence file on SIGINT/SIGTERM so an
+  // interrupted soak still yields evidence instead of losing the whole
+  // window. The sink writes at most once, so the handler can never clobber
+  // a completed run's file and normal completion can never write twice.
+  const flushEvidence = evidencePath
+    ? createEvidenceSink((evidence: EvidenceFile) => writeEvidence(evidencePath, evidence))
+    : null;
+  const onShutdownSignal = (signal: NodeJS.Signals): void => {
+    const elapsedSec = ((Date.now() - stats.startedAt) / 1000).toFixed(0);
+    let disposition = 'no --evidence-out set; nothing to flush';
+    if (flushEvidence) {
+      const flushed = flushEvidence(summarize(stats, mode, concurrency, API_BASE, {
+        signal,
+        plannedDurationSec: durationMin * 60,
+      }));
+      disposition = flushed
+        ? 'partial evidence flushed (partial: true)'
+        : 'evidence already written; leaving it untouched';
+    }
+    console.error(`::warning::load-harness interrupted by ${signal} after ${elapsedSec}s of ${durationMin * 60}s — ${disposition}.`);
+    // Conventional 128+signum codes so wrappers see an aborted soak, not a pass.
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  };
+  process.once('SIGINT', onShutdownSignal);
+  process.once('SIGTERM', onShutdownSignal);
+
   const summaryTimer = startMinuteSummaryLoop(stats, endAt);
 
   try {
@@ -766,7 +709,7 @@ async function main(): Promise<void> {
   console.log(`\n=== FINAL SUMMARY (${pad2(durationMin)}min ${mode} mode) ===`);
   printPerMinute(stats);
 
-  if (evidencePath) writeEvidence(evidencePath, summarize(stats, mode, concurrency));
+  if (flushEvidence) flushEvidence(summarize(stats, mode, concurrency, API_BASE));
 }
 
 main().catch((err) => {

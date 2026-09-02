@@ -118,7 +118,7 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const refs = extractScrumRefs([prTitle, prBody, prCommitsMsgs].join('\n'));
+  const refs = extractScrumRefs([prTitle, prBody, prCommitsMsgs()].join('\n'));
   if (refs.length === 0) {
     console.log('No SCRUM refs found in PR title/body/commits — nothing to check.');
     return 0;

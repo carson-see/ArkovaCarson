@@ -5,6 +5,7 @@ import { API_V2_SCOPES, type ApiV2Scope } from '../apiScopes.js';
 import {
   DEFAULT_V2_SCOPE_RATE_LIMITS,
   MemoryV2RateLimitStore,
+  UpstashV2RateLimitStore,
   createV2ApiKeyRateLimit,
   createV2ScopeRateLimit,
   getV2ScopeRateLimitConfig,
@@ -230,5 +231,169 @@ describe('SCRUM-1225: MemoryV2RateLimitStore evicts expired entries', () => {
     expect(await survives(store, 'burst-0', () => now)).toBe(false);
     // The latest entries must have survived.
     expect(await survives(store, 'burst-50000', () => now)).toBe(true);
+  });
+});
+
+/**
+ * BUG-018 / D-8 — the v2 keyspace has the same environment-collision defect as
+ * the v1 limiter, and unlike v1 it is NOT inert: `UpstashV2RateLimitStore`
+ * already reads and writes Redis on every request today, so prod and every
+ * staging surface bound to the one shared Upstash database have been sharing
+ * `arkova:v2:ratelimit:<key>` all along. Fixing only v1 would leave v2 as the
+ * remaining hole in the same database.
+ */
+describe('BUG-018 — v2 rate-limit keyspace is namespaced per environment', () => {
+  const BASE = 'https://fake.upstash.io';
+
+  /** One shared Upstash database, as prod + staging + the side-rig all bind. */
+  function sharedUpstash() {
+    const counters = new Map<string, number>();
+    const fetchImpl = async (input: string | URL): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const [command, key] = url
+        .replace(`${BASE}/`, '')
+        .split('/')
+        .map(decodeURIComponent);
+
+      let result: number;
+      switch (command) {
+        case 'incr':
+          result = (counters.get(key) ?? 0) + 1;
+          counters.set(key, result);
+          break;
+        case 'pexpire':
+          result = 1;
+          break;
+        case 'pttl':
+          result = 60_000;
+          break;
+        default:
+          throw new Error(`unsupported command ${command}`);
+      }
+      return new Response(JSON.stringify({ result }), { status: 200 });
+    };
+    return { counters, fetchImpl };
+  }
+
+  it('an API key burst on staging does not consume that key\'s production budget', async () => {
+    const { counters, fetchImpl } = sharedUpstash();
+    const prod = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl, 'prod');
+    const staging = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl, 'arkova-worker-staging');
+    const key = 'apikey:ak_live_2a54';
+
+    for (let i = 0; i < 900; i++) await staging.increment(key, 60_000, () => Date.now());
+    const first = await prod.increment(key, 60_000, () => Date.now());
+
+    expect(first.count).toBe(1);
+    expect(counters.get(`arkova:v2:ratelimit:prod:${key}`)).toBe(1);
+    expect(counters.get(`arkova:v2:ratelimit:arkova-worker-staging:${key}`)).toBe(900);
+    // The pre-fix shape — one global key serving every environment.
+    expect(counters.get(`arkova:v2:ratelimit:${key}`)).toBeUndefined();
+  });
+
+  it('two instances of the SAME service still share one v2 bucket', async () => {
+    const { counters, fetchImpl } = sharedUpstash();
+    const a = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl, 'prod');
+    const b = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl, 'prod');
+    const key = 'apikey:shared';
+
+    await a.increment(key, 60_000, () => Date.now());
+    const second = await b.increment(key, 60_000, () => Date.now());
+
+    expect(second.count).toBe(2);
+    expect(counters.get(`arkova:v2:ratelimit:prod:${key}`)).toBe(2);
+  });
+
+  it('defaults the namespace to the deployment surface when none is passed', async () => {
+    const { counters, fetchImpl } = sharedUpstash();
+    const prev = process.env.K_SERVICE;
+    process.env.K_SERVICE = 'arkova-worker-staging';
+    try {
+      const store = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl);
+      await store.increment('apikey:derived', 60_000, () => Date.now());
+      expect(counters.get('arkova:v2:ratelimit:arkova-worker-staging:apikey:derived')).toBe(1);
+    } finally {
+      if (prev === undefined) delete process.env.K_SERVICE;
+      else process.env.K_SERVICE = prev;
+    }
+  });
+});
+
+/**
+ * Permanent-lockout regression (rate-limit cluster review, MEDIUM finding).
+ *
+ * A process that dies between INCR and PEXPIRE leaves a TTL-less key. The
+ * pre-fix store armed PEXPIRE only on `count === 1`, so such a key was never
+ * healed: its count grew forever and, once past the limit, that bucket blocked
+ * its key permanently. The v1 store (utils/upstashRateLimit.ts) re-arms the
+ * TTL whenever PTTL reports no expiry; this suite pins the same self-heal
+ * behavior onto the v2 store.
+ */
+describe('UpstashV2RateLimitStore — crash-orphaned TTL-less keys self-heal', () => {
+  const BASE = 'https://fake.upstash.io';
+
+  /** Fake Upstash that actually models TTL state: PTTL is -1 until PEXPIRE. */
+  function statefulUpstash() {
+    const counters = new Map<string, number>();
+    const ttls = new Map<string, number>();
+    let pexpireCalls = 0;
+    const fetchImpl = async (input: string | URL): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const [command, key, arg] = url
+        .replace(`${BASE}/`, '')
+        .split('/')
+        .map(decodeURIComponent);
+
+      let result: number;
+      switch (command) {
+        case 'incr':
+          result = (counters.get(key) ?? 0) + 1;
+          counters.set(key, result);
+          break;
+        case 'pexpire':
+          pexpireCalls += 1;
+          ttls.set(key, Number(arg));
+          result = 1;
+          break;
+        case 'pttl':
+          result = ttls.get(key) ?? -1; // -1 = key exists, no expiry
+          break;
+        default:
+          throw new Error(`unsupported command ${command}`);
+      }
+      return new Response(JSON.stringify({ result }), { status: 200 });
+    };
+    return { counters, ttls, fetchImpl, getPexpireCalls: () => pexpireCalls };
+  }
+
+  it('re-arms the window TTL when INCR lands on a key with no expiry', async () => {
+    const { counters, ttls, fetchImpl } = statefulUpstash();
+    const store = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl, 'prod');
+    const key = 'apikey:orphaned';
+    const redisKey = `arkova:v2:ratelimit:prod:${key}`;
+
+    // The crash shape: already counted (so count !== 1 on the next INCR),
+    // but the PEXPIRE that should have armed the window never ran.
+    counters.set(redisKey, 5);
+
+    const entry = await store.increment(key, 60_000, () => 1_000_000);
+
+    expect(entry.count).toBe(6);
+    // The heal: the next increment must arm the TTL so the bucket expires
+    // like any live window instead of counting up forever.
+    expect(ttls.get(redisKey)).toBe(60_000);
+    expect(entry.resetAt).toBe(1_000_000 + 60_000);
+  });
+
+  it('arms the TTL exactly once on the first hit of a clean window', async () => {
+    const { fetchImpl, getPexpireCalls } = statefulUpstash();
+    const store = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl, 'prod');
+
+    await store.increment('apikey:clean', 60_000, () => Date.now());
+    expect(getPexpireCalls()).toBe(1);
+
+    // Steady state: armed window, no re-arm.
+    await store.increment('apikey:clean', 60_000, () => Date.now());
+    expect(getPexpireCalls()).toBe(1);
   });
 });

@@ -11,7 +11,8 @@
 #
 # Jira: SCRUM-908 (PROD-DRIFT-01)
 # Runbook: docs/runbooks/migration-drift-playbook.md
-# ADR: docs/confluence/16_migration_drift_prevention.md
+# ADR: "Migration drift prevention" in Confluence space A (the repo copy under
+# docs/confluence/ was deleted when Confluence became canonical).
 
 name: Migration Drift Check
 
@@ -51,7 +52,7 @@ jobs:
       id-token: write
       # Read-only. No write anywhere.
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -428,10 +429,53 @@ jobs:
         if: ${{ env.PROD_LEDGER_JSON_PATH != '' }}
         run: npm ci --ignore-scripts
 
+      # Orphan blast-radius scoping (2026-08-30). `ledger-orphan-prod-row` is
+      # evaluated against the WHOLE prod ledger on every PR, so a single
+      # out-of-band prod apply reds this required check on EVERY open PR at once
+      # — and because it is a Mergify queue gate, that stalls the whole board.
+      # It happened on 08-11 (0401/0402), 08-27 (0418/0419) and 08-30 (0425, 36
+      # PRs, including ones touching zero migrations). An unrelated PR's author
+      # can neither merge the owning PR nor write the exemption, so the gate was
+      # blocking exactly the people who cannot fix it.
+      #
+      # This computes whether the PR touches the migration surface. The audit
+      # BLOCKS on an orphan when it does, and WARNS (still annotated, still
+      # visible) when it does not. FAIL-CLOSED: the flag is only ever set to '0'
+      # for a pull_request we successfully diffed; push-to-main, workflow_dispatch
+      # and any diff failure leave it unset, which the script treats as blocking.
+      - name: Scope orphan-row blocking to migration-surface PRs
+        if: ${{ env.PROD_LEDGER_JSON_PATH != '' && github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          base_sha=$(jq -r '.pull_request.base.sha // empty' "$GITHUB_EVENT_PATH")
+          head_sha=$(jq -r '.pull_request.head.sha // empty' "$GITHUB_EVENT_PATH")
+          if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+            echo "::notice::Could not read PR SHAs; leaving orphan blocking at its fail-closed default."
+            exit 0
+          fi
+          if ! merge_base=$(git merge-base "$base_sha" "$head_sha"); then
+            echo "::notice::No merge base; leaving orphan blocking at its fail-closed default."
+            exit 0
+          fi
+          touched=$(
+            git diff --name-only "$merge_base" "$head_sha" -- \
+              'supabase/migrations/**' \
+              'scripts/ci/snapshots/ledger-numeric-exemptions.json' \
+              | grep -c . || true
+          )
+          if [ "$touched" -eq 0 ]; then
+            echo "LEDGER_PR_MIGRATION_SURFACE=0" >> "$GITHUB_ENV"
+            echo "PR touches no migration surface -> prod-ledger orphan rows are advisory for this PR."
+          else
+            echo "LEDGER_PR_MIGRATION_SURFACE=1" >> "$GITHUB_ENV"
+            echo "PR touches $touched migration-surface file(s) -> prod-ledger orphan rows BLOCK this PR."
+          fi
+
       - name: Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)
         if: ${{ env.PROD_LEDGER_JSON_PATH != '' }}
         env:
           LEDGER_JSON_PATH: ${{ env.PROD_LEDGER_JSON_PATH }}
+          LEDGER_PR_MIGRATION_SURFACE: ${{ env.LEDGER_PR_MIGRATION_SURFACE }}
         # Resolved local binary, not `npx tsx` — see comment above.
         run: node_modules/.bin/tsx scripts/ci/check-ledger-numeric-integrity.ts
 

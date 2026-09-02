@@ -67,6 +67,35 @@ queue_rules:
       - check-success = Orphaned Export Lint
       # Python SDK suite (BUG-2026-08-12-007) — see the default queue's note.
       - check-success = Python SDK Tests (packages/arkova-py)
+      # Soak-integrity gates (SCRUM-2897/2965, SCRUM-2977). Both ci.yml jobs
+      # shipped REPORT-ONLY under the W3-freeze CTO carve-out and were never
+      # listed here, so they were hollow twice over: the CLI could not exit
+      # non-zero, and even a red job would not have blocked a merge. Activated
+      # fail-closed together with the ci.yml wiring.
+      # `Evidence-identity gate` skips Mergify's own speculative merge-queue
+      # PRs per-STEP rather than at job level, so it reports success (not
+      # `skipped`, which never satisfies check-success) and cannot deadlock the
+      # queue. `Anti-hollow-soak guards` carries no job-level `if:` and no path
+      # filter, and no-ops green while no soak-preflight JSON is committed.
+      # Caveat, shared with `Orphaned Export Lint` / `Python SDK Tests` above
+      # and NOT introduced here: both jobs live in ci.yml, whose
+      # `pull_request:` trigger carries `paths-ignore` (LICENSE, .gitignore,
+      # README.md, memory/**.md). A PR touching ONLY those paths runs no ci.yml
+      # job at all, so none of these checks report and the queue waits. Read
+      # the lines above as "cannot deadlock ON A RUN", not "always runs".
+      - check-success = Evidence-identity gate
+      - check-success = Anti-hollow-soak guards
+      # Third-party notices freshness (ci.yml `notices-freshness`). The
+      # /legal/third-party-notices page is generated from the dependency set, but
+      # nothing ran its generator in CI: the data file drifted for over a month
+      # and `qrcode-generator@2.0.4` shipped undisclosed until a human caught it.
+      # Listed here because a ci.yml job absent from merge_conditions gates
+      # NOTHING — it can be red while Mergify merges anyway, which is the same
+      # hollowness that left Orphaned Export Lint inert for a month. The job runs
+      # unconditionally (no job-level `if:`, no path filter), so requiring it
+      # cannot deadlock a PR on a never-reported check — subject to the same
+      # ci.yml `paths-ignore` caveat noted above.
+      - check-success = Third-Party Notices Freshness
       - check-success = Staging Soak Evidence Gate
       - check-success = S3.3 Wave 2 Exact-Head Acceptance
     merge_method: merge
@@ -97,6 +126,27 @@ queue_rules:
       - check-success = Orphaned Export Lint
       # Python SDK suite (BUG-2026-08-12-007) — see the default queue's note.
       - check-success = Python SDK Tests (packages/arkova-py)
+      # Soak-integrity gates (SCRUM-2897/2965, SCRUM-2977). Both ci.yml jobs
+      # shipped REPORT-ONLY under the W3-freeze CTO carve-out and were never
+      # listed here, so they were hollow twice over: the CLI could not exit
+      # non-zero, and even a red job would not have blocked a merge. Activated
+      # fail-closed together with the ci.yml wiring.
+      # `Evidence-identity gate` skips Mergify's own speculative merge-queue
+      # PRs per-STEP rather than at job level, so it reports success (not
+      # `skipped`, which never satisfies check-success) and cannot deadlock the
+      # queue. `Anti-hollow-soak guards` carries no job-level `if:` and no path
+      # filter, and no-ops green while no soak-preflight JSON is committed.
+      # Caveat, shared with `Orphaned Export Lint` / `Python SDK Tests` above
+      # and NOT introduced here: both jobs live in ci.yml, whose
+      # `pull_request:` trigger carries `paths-ignore` (LICENSE, .gitignore,
+      # README.md, memory/**.md). A PR touching ONLY those paths runs no ci.yml
+      # job at all, so none of these checks report and the queue waits. Read
+      # the lines above as "cannot deadlock ON A RUN", not "always runs".
+      - check-success = Evidence-identity gate
+      - check-success = Anti-hollow-soak guards
+      # Third-party notices freshness — see the note on this check in the
+      # s33-wave2-corpus queue above.
+      - check-success = Third-Party Notices Freshness
       # Risk-tiered staging evidence gate (CLAUDE.md §1.11)
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
@@ -149,6 +199,27 @@ queue_rules:
       # absent from merge_conditions can be red while Mergify merges anyway,
       # which is the exact after-the-release blindness the job exists to close.
       - check-success = Python SDK Tests (packages/arkova-py)
+      # Soak-integrity gates (SCRUM-2897/2965, SCRUM-2977). Both ci.yml jobs
+      # shipped REPORT-ONLY under the W3-freeze CTO carve-out and were never
+      # listed here, so they were hollow twice over: the CLI could not exit
+      # non-zero, and even a red job would not have blocked a merge. Activated
+      # fail-closed together with the ci.yml wiring.
+      # `Evidence-identity gate` skips Mergify's own speculative merge-queue
+      # PRs per-STEP rather than at job level, so it reports success (not
+      # `skipped`, which never satisfies check-success) and cannot deadlock the
+      # queue. `Anti-hollow-soak guards` carries no job-level `if:` and no path
+      # filter, and no-ops green while no soak-preflight JSON is committed.
+      # Caveat, shared with `Orphaned Export Lint` / `Python SDK Tests` above
+      # and NOT introduced here: both jobs live in ci.yml, whose
+      # `pull_request:` trigger carries `paths-ignore` (LICENSE, .gitignore,
+      # README.md, memory/**.md). A PR touching ONLY those paths runs no ci.yml
+      # job at all, so none of these checks report and the queue waits. Read
+      # the lines above as "cannot deadlock ON A RUN", not "always runs".
+      - check-success = Evidence-identity gate
+      - check-success = Anti-hollow-soak guards
+      # Third-party notices freshness — see the note on this check in the
+      # s33-wave2-corpus queue above.
+      - check-success = Third-Party Notices Freshness
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
     # Aug-10 release push: expand the default batch to 10 PRs so the CI-green
