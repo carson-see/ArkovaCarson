@@ -1,5 +1,8 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-29 — Policy Lints now gates the Mergify queue; do-not-merge body/label parity step (SCRUM-3804)
+
+`check-success = Policy Lints` was added to all three `.mergify.yml` queue rules' `merge_conditions` (s33-wave2-corpus, urgent, default). The `policy-lints` job — coverage monotonic, count:'exact' baseline, feedback rules, config-drift, MCP tool-claim parity, HANDOFF verification lint, Confluence coverage — had run on every PR but was never in `merge_conditions`, so it reported without blocking, and every override label documented for its steps (`mcp-claim-parity-reviewed`, `handoff-narrative-only`, `coverage-drop-allowed`, …) was a no-op AS A MERGE GATE (the same "reports without blocking" class as the 2026-08-17 Orphaned Export Lint entry; `scripts/ci/agents.md` recorded the gap on 2026-08-23). The job carries no job-level `if:` and no path filter, so it reports on every ci.yml PR run — only the ci.yml-wide `paths-ignore` caveat applies, shared with every other gated check. Branch protection's required-check set stays a separate Carson/admin surface. The job also gained one step: `Do-not-merge body/label parity (SCRUM-3804)` runs `scripts/ci/check-do-not-merge-body.ts`, failing any NON-DRAFT PR whose body says "do not merge" (case-insensitive) without the `do-not-merge` label — a prose hold is inert to Mergify (the #2240 pattern), so it must be label-backed, drafted, or removed. Contract test: `scripts/ci/mergify-policy-lints-gate.test.ts`.
 ## 2026-08-29 — merge-queue skips require the mergify[bot] PR author, not just the branch name (SCRUM-3812)
 
 Both `ci.yml` (`evidence-identity`) and `staging-evidence.yml` skip their enforcement steps for
