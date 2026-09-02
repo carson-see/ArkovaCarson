@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-02-docusign-bilateral",
+  "created_at": "2026-09-01T22:35:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "soak_mode": "isolated_rig_soak",
+  "approval_status": "pending",
+  "train_launch_sha": "2302e815e61fca5af449ba53a7ccca2fac49606e",
+  "target_main_sha": "9ffc117cc23d85dc9be02b9a6da131e5e07fb489",
+  "allowed_base_shas": ["9ffc117cc23d85dc9be02b9a6da131e5e07fb489"],
+  "covered_main_shas": ["2302e815e61fca5af449ba53a7ccca2fac49606e"],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "supabase_project_ref": "aqikotdkmhxmznonwmwk",
+    "cloud_run_service": "arkova-worker-docusign-bilateral-staging",
+    "cloud_run_revision": "arkova-worker-docusign-bilateral-staging-00005-ss6",
+    "staging_api_base": "https://arkova-worker-docusign-bilateral-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-docusign-bilateral-staging-270018525501.us-central1.run.app",
+    "image_digest": "sha256:edca3f401ddde4aa96c81dc01062cb836166eb14eb0ae064a83ba8f69f835d6b",
+    "soak_window": "2026-08-31T04:55:06Z to 2026-09-02T04:55:06Z (48h T3)",
+    "preflight_result": "environment_type=fixture_seeded (NOT clean_mirror) — declared deviation, see exceptions[0] and docs/staging/docusign-bilateral-2026-08/evidence/E8-preflight-residual-risk.md"
+  },
+  "included_prs": [
+    {
+      "number": 2472,
+      "head_sha": "b89fdd6acd0a956b3511cefdab52b9e914fb6e81",
+      "base_sha": "9ffc117cc23d85dc9be02b9a6da131e5e07fb489",
+      "risk_tier": "T3",
+      "owner": "carson@arkova.io",
+      "soak_train": "docusign-bilateral RC-3",
+      "soak_window": "2026-08-31T04:55:06Z to 2026-09-02T04:55:06Z (48h T3)",
+      "maturity_record": "docs/staging/docusign-bilateral-2026-08/evidence/E5-rc2-complete-window.md",
+      "ci_summary": "DB write-authority guard trigger (migration 0423) making the DocuSign provenance key family service_role-only in anchors.metadata. Head is a verified ancestor of the soaked tree 2302e815e. Behaviour proven on-rig: forged keys stripped on INSERT, reverted on UPDATE, service_role writes preserved, non-DocuSign account_id preserved (conditional guard).",
+      "rollback_note": "DROP TRIGGER trg_strip_unattested_docusign_metadata_keys ON public.anchors; DROP FUNCTION public.enforce_docusign_metadata_key_authority(); NOTIFY pgrst,'reload schema'. No backfill, no data rewrite — ingest-only change, existing rows untouched.",
+      "migration_files": ["supabase/migrations/0423_sec_docusign_metadata_key_write_authority.sql"]
+    },
+    {
+      "number": 2485,
+      "head_sha": "ed42ea3bcc70d407d26a8a66f905e1698bd637b3",
+      "base_sha": "9ffc117cc23d85dc9be02b9a6da131e5e07fb489",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "docusign-bilateral RC-3",
+      "soak_window": "2026-08-31T04:55:06Z to 2026-09-02T04:55:06Z (48h, exceeds the 12h T2 floor)",
+      "maturity_record": "docs/staging/docusign-bilateral-2026-08/evidence/E5-rc2-complete-window.md",
+      "ci_summary": "Bounds the DocuSign rule-event payload under the organization_rule_events 16KB pg_column_size CHECK at max cardinality by replacing the unbounded document_ids array with document_count. Head is a verified ancestor of the soaked tree. Exercised continuously by the soak's max-cardinality webhook family.",
+      "rollback_note": "Single revert of the PR merge. No schema, no migration, no flag, no backfill.",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [
+    { "number": 2474, "reason": "Head drifted past the soaked tree: a merge-from-main brought 31 worker runtime files, and services/worker/src/jobs/connector-artifact-drain.ts — this feature's own execution path — differs from the soaked version. Not soak-covered; requires a fresh window on its current head." },
+    { "number": 2476, "reason": "Head drifted (ce3b7f98) AND independently blocked: SCRUM-3818 carries a failing TLA invariant anchorNeverMintedFromSupersededFingerprint with a machine-checked counterexample. Ships flag-OFF only after that is closed." },
+    { "number": 2489, "reason": "Stacked inside #2476; lands only when it does." },
+    { "number": 2518, "reason": "Stacked inside #2476; lands only when it does." },
+    { "number": 2520, "reason": "Stacked inside #2476; superseded in part by #2566." },
+    { "number": 2566, "reason": "Stacked inside #2476; TLA invariant intentionally failing (honest residual), not merge-ready." },
+    { "number": 2565, "reason": "Stacked on #2474; no independent soak coverage." }
+  ],
+  "exceptions": [
+    {
+      "id": "preflight-not-clean-mirror",
+      "scope": "environment.preflight_result",
+      "detail": "The honesty preflight returned environment_type=fixture_seeded, not clean_mirror. Cause is a process error: the rig was hand-provisioned via the Supabase MCP instead of scripts/staging/provision-isolated-rig.sh, so the preflight was never run before the feature migrations were applied. 5 of 7 checks PASS. submitted_anchors FAILS because every anchor progressed to SECURED (the check exists to catch hollow soaks; it is defeated here by the pipeline working — 166 cycles, 994 probes, 161 anchor confirmations). prod_divergence FAILS listing 0418/0419 (documented prod-ahead-of-main) and 0423/0424 (the migrations under test). missing_from_staging is empty. Raw artifact: docs/staging/docusign-bilateral-2026-08/preflight/clean-mirror-preflight-docusign-bilateral.json. Requires human accept/reject per CLAUDE.md 1.11A.",
+      "approved_by": "PENDING — Carson"
+    }
+  ],
+  "notes": "DRAFT written 6.4h before window close to validate manifest shape against the gate early. Numbers and window-close facts are finalized at 2026-09-02T04:55:06Z. Merge order: #2472 then #2485. Migration 0423 is applied to prod only AFTER #2472 merges, so its NNNN prefix is on origin/main and the prod-apply hook permits it without a ledger-numeric exemption."
+}

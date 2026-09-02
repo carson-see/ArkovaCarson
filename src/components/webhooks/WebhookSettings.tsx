@@ -78,6 +78,11 @@ export const AVAILABLE_EVENTS = [
   { id: 'anchor.secured', label: 'Anchor Secured' },
   { id: 'anchor.revoked', label: 'Anchor Revoked' },
   { id: 'anchor.expired', label: 'Anchor Expired' },
+  // DI-775 (SCRUM-3538): the worker has dispatched this since SCRUM-2937
+  // (POST /api/anchor/:id/supersede → services/worker/src/api/anchor-lineage.ts)
+  // and the CRUD allowlist accepted it, but it was never offered here — so an
+  // org could be sent an event it had no way to subscribe to.
+  { id: 'anchor.superseded', label: 'Anchor Superseded' },
   { id: 'anchor.batch_secured', label: 'Anchor Batch Secured' },
   // credential.issued + credential.status_changed have live, unflagged emit
   // points (SCRUM-1798 Phase 2a / SCRUM-1800). credential.verified is wired

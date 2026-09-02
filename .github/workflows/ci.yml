@@ -271,6 +271,49 @@ jobs:
         working-directory: services/worker
         run: npm ci --ignore-scripts && npm audit --audit-level=critical --omit=dev
 
+  # Third-party notices freshness (see scripts/ci/check-third-party-notices-fresh.ts).
+  #
+  # src/data/thirdPartyNotices.generated.json backs the shipped
+  # /legal/third-party-notices page and is GENERATED, but nothing ran its
+  # generator in CI — so it drifted from the dependency set for over a month with
+  # no signal, and `qrcode-generator@2.0.4` shipped as an undisclosed production
+  # dependency until a reviewer caught it by hand.
+  #
+  # Runs UNCONDITIONALLY: no job-level `if:`, no path filter. That is a
+  # requirement, not an oversight — this check is listed in .mergify.yml
+  # merge_conditions, and a skipped job reports `skipped`, which never satisfies
+  # `check-success` and would deadlock the queue. It is also the reason the check
+  # is a ratchet against a recorded baseline rather than an absolute assertion:
+  # the committed file is currently ~1 month stale and the generator is failing
+  # closed, both owned by the separate "Regenerate third-party notices (blocked by
+  # sharp)" task, and failing on that inherited state would red every open PR at
+  # once.
+  #
+  # The dependency set it compares against is the INSTALLED tree, so this job
+  # must actually install. `--ignore-scripts` matches Dependency Scanning: the
+  # check reads package metadata and never executes the app, so a transitive
+  # postinstall must not be able to fail a compliance gate.
+  notices-freshness:
+    name: Third-Party Notices Freshness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check third-party notices are fresh
+        run: node_modules/.bin/tsx scripts/ci/check-third-party-notices-fresh.ts
+
   # SCRUM-1068: Sonatype SCA evidence job. Non-blocking for the first sprint;
   # GPL/AGPL/SSPL license policy is enforced locally even when Lifecycle
   # credentials are not yet present in repo secrets.
@@ -1313,7 +1356,7 @@ jobs:
 
       - name: Set up Java (for TLC model checker)
         if: steps.tla-changed.outputs.changed == 'true'
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: temurin
           java-version: '17'
