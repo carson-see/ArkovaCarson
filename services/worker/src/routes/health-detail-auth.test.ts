@@ -211,20 +211,25 @@ describe('buildHealthResponse — denied detail degrades to compact', () => {
 
     // Compact liveness signal is preserved — probes must still work.
     expect(result.body.status).toBe('healthy');
-    // `anchoring: 'warning'` is the CORRECT verdict for this fixture, not a
-    // regression. `createMockDeps()` supplies no `getAnchoringRpcStatus` and
-    // sets `enableProdNetworkAnchoring: true`, i.e. prod anchoring is ON and
-    // the RPC cache has NEVER been probed (`checkedAtMs === null`).
-    // `evaluateAnchoringRpcHealth` fails that case closed (PR #2335 /
-    // `anchoring-rpc-probe.ts`): CLAUDE.md §1.5 forbids asserting health we
-    // have not measured, and a cold cache reading 'ok' is exactly the
-    // revoked-credential blind spot that probe exists to catch. This assertion
-    // still pins what this test is ABOUT — that the compact shape survives a
-    // denied detail request and leaks nothing — so it tracks the evaluator
-    // rather than freezing a value the evaluator no longer returns.
+    // `anchoring: 'ok'` is the REAL measured verdict passing through the
+    // compact shape, not a masked or manufactured value: `createMockDeps()`
+    // wires a genuinely-probed healthy snapshot (`state: 'ok'`, non-null
+    // `checkedAtMs`), so `evaluateAnchoringRpcHealth` has a measurement to
+    // report. Denying detail redacts WHAT is disclosed (no `rpc` block, no
+    // `pendingCount`, no provider) — never the status itself. An operator
+    // probing without the token must still see a true anchoring verdict.
+    //
+    // History, so nobody "restores" either half: PR #2573's never-probed
+    // carve-out turned this assertion red while the fixture wired no probe.
+    // PR #2584 answered by expecting 'warning'; PR #2587 by wiring the probe
+    // above. Both merged within nine seconds and were first run together on
+    // `main` — a probed-'ok' fixture asserting 'warning' can never pass. The
+    // cold-cache verdict has its own tests (`anchoring-rpc-probe.test.ts`, and
+    // end-to-end through `buildHealthResponse` in `health.test.ts`); this
+    // suite is about SCRUM-2653 redaction and must not depend on it.
     expect(result.body.checks).toEqual({
       database: 'ok',
-      anchoring: 'warning',
+      anchoring: 'ok',
       kms: 'ok',
     });
   });
