@@ -1581,7 +1581,7 @@ async function markFailed(
   // A row that fails there is already requeued rather than failed. It is not
   // provably impossible, though, and the durable form remains a server-side
   // `metadata = metadata || jsonb_build_object('drain_error', $1)` in an RPC —
-  // tracked as the same follow-up as the materialize RPC (SCRUM-3879).
+  // tracked as the same follow-up as the materialize RPC (SCRUM-3882).
   const existingMetadata =
     row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
       ? (row.metadata as Record<string, unknown>)
