@@ -1304,6 +1304,8 @@ export const ATTESTATION_LABELS = {
   VIEW_VERIFICATION: 'View Verification',
 
   // Empty state
+  LOAD_FAILED: 'Could not load attestations. This is a loading error, not an empty list.',
+  RETRY: 'Try Again',
   NO_ATTESTATIONS: 'No attestations yet',
   NO_ATTESTATIONS_DESC: 'Create an attestation to verify, endorse, or audit a record.',
   CREATE_ATTESTATION: 'Create Attestation',
