@@ -20,7 +20,16 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// The park imports the parked handler's id pattern (single source of truth),
+// which transitively loads config/db. Neither is exercised here — the park
+// answers before any of it — but both must resolve for the import to succeed.
+vi.mock('../config.js', () => ({
+  config: { bitcoinNetwork: 'signet', frontendUrl: 'https://test.arkova.ai' },
+}));
+vi.mock('../utils/db.js', () => ({ db: { from: vi.fn() } }));
+
 import { parkedAttestationVerify, PARKED_ATTESTATION_ROUTE } from './parkedAttestationVerify.js';
+import { ATTESTATION_ID_PATTERN } from '../api/v1/verify/attestation.js';
 
 function createApp() {
   const app = express();
@@ -60,6 +69,31 @@ describe('parkedAttestationVerify', () => {
   it('keeps the published `verified` field on the 404 (frozen shape, CLAUDE.md §1.8)', async () => {
     const res = await request(createApp()).get('/api/v1/verify/attestation/ARK-ATT-ABC123');
     expect(res.body.verified).toBe(false);
+  });
+
+  it('accepts exactly the ids the parked handler accepts', async () => {
+    // The park and the handler must 400 the same set of ids. They share one
+    // regex (the park imports it) rather than holding two copies: a copy would
+    // silently diverge the moment the handler is widened on the unpark path,
+    // and every test would stay green. This asserts the agreement behaviourally,
+    // so re-introducing a copy that drifts fails here.
+    const app = createApp();
+    const ids = [
+      'ARK-ATT-ABC123',
+      'ARK-ATT-a',
+      `ARK-ATT-${'x'.repeat(64)}`,
+      `ARK-ATT-${'x'.repeat(65)}`,
+      'ARK-ATT-',
+      'ARK-ARK-VER-196485',
+      'INVALID!!!',
+      'ark-att-lowercase',
+    ];
+
+    for (const id of ids) {
+      const res = await request(app).get(`/api/v1/verify/attestation/${id}`);
+      const accepted = ATTESTATION_ID_PATTERN.test(id);
+      expect({ id, status: res.status }).toEqual({ id, status: accepted ? 404 : 400 });
+    }
   });
 
   it('leaves other methods and the bare path to fall through', async () => {

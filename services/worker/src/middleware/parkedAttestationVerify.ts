@@ -19,11 +19,18 @@
  * exactly as published (400 malformed / 404 well-formed); what changes is the
  * 404's `error` string, which no longer implies a corpus was searched.
  *
- * WHY IT IS MOUNTED HERE rather than inside `verify/attestation.ts`: mounting
- * it ahead of `apiKeyAuth` / `usageTracking` means a parked request costs no
- * HMAC, no `api_keys` read, and no `api_key_usage` read+upsert — and does not
- * charge the caller's monthly quota for a response that can never succeed
- * (`usageTracking` has no refund path despite its comment).
+ * WHY IT IS MOUNTED IN `router.ts` rather than inside `verify/attestation.ts`:
+ * it sits ABOVE `idempotency` / `usageTracking`, so a parked request costs no
+ * `api_key_usage` read+upsert and does not charge the caller's monthly quota
+ * for a response that can never succeed (`usageTracking` has no refund path
+ * despite its comment). It sits BELOW `apiKeyAuth` and the rate limiters: this
+ * is a public endpoint and §1.10 ("headers on every response") applies to it
+ * like any other. Mounting it above them took the path off rate limiting
+ * altogether — `publicVerifyAnonLimiter` skips on `hasApiKeyCredential`, which
+ * is a syntax-only header check, and `apiIpShadowGuard` skips the whole
+ * `/api/v1/verify` prefix — so a made-up `X-API-Key: ak_…` bought unthrottled
+ * access, and a genuinely bad key got a 404 where it had always got a 401.
+ * `src/tests/api-e2e.test.ts` pins both halves.
  *
  * TO UNPARK: delete this module and its mount in `api/v1/router.ts`, then land,
  * in order — (1) a creation API writing `draft` rows, (2) the DocuSign send
@@ -34,12 +41,17 @@
  * `verify/attestation.ts` are retained intact and are what step 3 re-exposes.
  */
 import type { Request, Response } from 'express';
+// Imported, not re-declared. A copied regex here would silently diverge the
+// park's 400 from the handler's the moment either is widened, and every test
+// would stay green — the handler this park stands in front of is exactly the
+// one the unpark checklist tells you to edit.
+import {
+  ATTESTATION_ID_PATTERN,
+  INVALID_ATTESTATION_ID_ERROR,
+} from '../api/v1/verify/attestation.js';
 
 /** The single route this park covers. Other methods and paths fall through. */
 export const PARKED_ATTESTATION_ROUTE = '/verify/attestation/:attestationId';
-
-/** Mirrors the id guard in `verify/attestation.ts` so the 400 is unchanged. */
-const ATTESTATION_ID_PATTERN = /^ARK-ATT-[A-Za-z0-9_-]{1,64}$/;
 
 export function parkedAttestationVerify(
   req: Request<{ attestationId: string }>,
@@ -52,7 +64,7 @@ export function parkedAttestationVerify(
   if (!attestationId || !ATTESTATION_ID_PATTERN.test(attestationId)) {
     res.status(400).json({
       verified: false,
-      error: 'Invalid attestation ID format — expected ARK-ATT-* prefix',
+      error: INVALID_ATTESTATION_ID_ERROR,
     });
     return;
   }

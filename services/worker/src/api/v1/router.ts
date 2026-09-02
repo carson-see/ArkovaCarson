@@ -188,15 +188,6 @@ router.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// ─── PARKED: legally binding attestation verification (SCRUM-1873) ───
-// Mounted ABOVE apiKeyAuth/usageTracking deliberately: the feature has no
-// writer, so charging a caller's monthly quota (and three DB round-trips) for
-// a response that can never succeed is pure waste. Scoped to the one GET route
-// so every other method and path keeps its existing fall-through to the
-// sibling /verify mounts below. See middleware/parkedAttestationVerify.ts for
-// the prod evidence, why it is a 404 and not a 501, and the unpark checklist.
-router.get(PARKED_ATTESTATION_ROUTE, parkedAttestationVerify);
-
 // ─── API key auth (optional — attaches req.apiKey if present) ───
 // AUTH-02: Fail fast if HMAC secret is unset — empty string would make all key hashes reproducible
 const hmacSecret = config.apiKeyHmacSecret;
@@ -232,6 +223,29 @@ router.use((req: Request, res: Response, next: NextFunction) => {
     anonRateLimiter(req, res, next);
   }
 });
+
+// ─── PARKED: legally binding attestation verification (SCRUM-1873) ───
+// Position is load-bearing in BOTH directions, and is pinned by
+// `src/tests/api-e2e.test.ts` ("parked GET /verify/attestation/:attestationId"):
+//
+//   BELOW apiKeyAuth + the rate limiters — a public endpoint stays on its
+//   §1.10 budget and keeps its `X-RateLimit-*` headers ("headers on every
+//   response"), and a caller presenting a bad key still gets the 401 it got
+//   before the park rather than a 404. Mounting above them took this path off
+//   rate limiting entirely: `publicVerifyAnonLimiter` (index.ts) skips on
+//   `hasApiKeyCredential`, a SYNTAX-only check, and `apiIpShadowGuard` skips
+//   the whole `/api/v1/verify` prefix — so any caller sending a made-up
+//   `X-API-Key: ak_…` was unthrottled.
+//
+//   ABOVE idempotency + usageTracking — the feature has no writer, so charging
+//   a caller's monthly quota for a response that can never succeed is waste,
+//   and `usageTracking` has no refund path.
+//
+// Scoped to the one GET route so every other method and path keeps its existing
+// fall-through to the sibling /verify mounts below. See
+// middleware/parkedAttestationVerify.ts for the prod evidence, why it is a 404
+// and not a 501, and the unpark checklist.
+router.get(PARKED_ATTESTATION_ROUTE, parkedAttestationVerify);
 
 // ─── Idempotency-Key support on POST endpoints (DX-4) ───
 router.use(idempotencyMiddleware());

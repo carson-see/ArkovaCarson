@@ -62,6 +62,27 @@ export const PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES: readonly string[] = Obje
   'anchored',
 ]);
 
+/**
+ * The id shape this endpoint accepts. Exported as the SINGLE definition:
+ * `middleware/parkedAttestationVerify.ts` imports it so the park's 400 and the
+ * handler's 400 cannot drift while the route is parked. Widening it here
+ * widens both — see the note on the route handler before you do.
+ *
+ * No `g` flag: `RegExp.test` with `g` is stateful via `lastIndex` and would
+ * alternate pass/fail across calls on a shared instance.
+ */
+export const ATTESTATION_ID_PATTERN = /^ARK-ATT-[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * The 400 body for an id that is not `ARK-ATT-*`. Exported alongside the
+ * pattern so the park cannot answer the same rejection in different words —
+ * the string is part of the published contract (§1.8), and it is the hint that
+ * routes a caller holding an `ARK-…` id for the OTHER attestations resource to
+ * `GET /api/v1/attestations/:publicId`.
+ */
+export const INVALID_ATTESTATION_ID_ERROR =
+  'Invalid attestation ID format — expected ARK-ATT-* prefix';
+
 /** Fails closed: anything not explicitly listed above is withheld. */
 export function isPubliclyDisclosable(status: string | null | undefined): boolean {
   return status != null && PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES.includes(status);
@@ -214,6 +235,21 @@ export function buildAttestationVerificationResult(
   };
 }
 
+/**
+ * Every read on this path fails loud. A swallowed PostgREST `error` is not an
+ * absent row: collapsing the two reports a statement timeout, an RLS denial or
+ * a schema-cache miss as a confident 404 (primary query) or a confident 200
+ * with the issuer unverified and the anchor proof missing (sibling queries),
+ * and leaves no operator signal either way — the failure class in
+ * `memory/project_hollow_200_statement_timeout_swallow.md`. Throwing surfaces
+ * it as a 500.
+ */
+function throwOnQueryError(error: unknown, attestationId: string, what: string): void {
+  if (!error) return;
+  logger.error({ error, attestationId }, `${what} failed`);
+  throw new Error(`${what} failed`);
+}
+
 // ── Default DB-backed lookup ───────────────────────────────────────
 
 export const defaultLookup: AttestationLookup = {
@@ -239,39 +275,42 @@ export const defaultLookup: AttestationLookup = {
       .in('status', PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES)
       .maybeSingle();
 
-    // A failed query is NOT a missing attestation. Collapsing the two would
-    // report a statement timeout, an RLS denial or a PostgREST schema-cache
-    // miss to the caller as a confident 404 and leave no operator signal —
-    // the failure class in memory/project_hollow_200_statement_timeout_swallow.md.
-    // Throw so the route returns 500.
-    if (error) {
-      logger.error({ error, attestationId }, 'Legally binding attestation lookup failed');
-      throw new Error('Legally binding attestation lookup failed');
-    }
+    // A failed query is NOT a missing attestation.
+    throwOnQueryError(error, attestationId, 'Legally binding attestation lookup');
 
     if (!data) {
       return null;
     }
 
+    // The two sibling reads below run AFTER the attestation row is in hand, so
+    // a failure there cannot 404 — it silently degrades the published body:
+    // `attesting_org.verified: false` for a genuinely VERIFIED issuer, or
+    // `anchor: null` next to `verified: true` (which derives from `status`
+    // alone) for an anchored attestation. On a legal-attestation verification
+    // endpoint that is a false evidence claim (§1.5), not a cosmetic gap.
+
     // Look up organization verification status
     let orgVerified = false;
     if (data.attesting_org_id) {
-      const { data: org } = await dbAny
+      const { data: org, error: orgError } = await dbAny
         .from('organizations')
         .select('verification_status')
         .eq('id', data.attesting_org_id)
         .maybeSingle();
+      throwOnQueryError(orgError, attestationId, 'Attestation issuer org lookup');
       orgVerified = org?.verification_status === 'VERIFIED';
     }
 
     // Look up anchor chain proof data if anchor_id exists
     let anchorData: Record<string, unknown> | null = null;
     if (data.anchor_id) {
-      const { data: anchor } = await db
+      const { data: anchor, error: anchorError } = await db
         .from('anchors')
         .select('public_id, status, fingerprint, chain_tx_id, chain_block_height, chain_timestamp')
         .eq('id', data.anchor_id)
         .maybeSingle();
+      throwOnQueryError(anchorError, attestationId, 'Attestation anchor proof lookup');
+      // A missing anchor row (no error) is a real absence, not a failure.
       if (anchor) {
         anchorData = anchor as unknown as Record<string, unknown>;
       }
@@ -340,10 +379,10 @@ router.get('/:attestationId', async (req: Request<{ attestationId: string }>, re
   // the expected prefix points the caller at the right endpoint; relaxing the
   // pattern would only convert that into an unresolvable 404 while widening the
   // set of strings that reach the database.
-  if (!attestationId || !/^ARK-ATT-[A-Za-z0-9_-]{1,64}$/.test(attestationId)) {
+  if (!attestationId || !ATTESTATION_ID_PATTERN.test(attestationId)) {
     res.status(400).json({
       verified: false,
-      error: 'Invalid attestation ID format — expected ARK-ATT-* prefix',
+      error: INVALID_ATTESTATION_ID_ERROR,
     });
     return;
   }

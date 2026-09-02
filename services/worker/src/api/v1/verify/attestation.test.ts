@@ -575,6 +575,78 @@ describe('defaultLookup', () => {
 
     await expect(defaultLookup.lookupByPublicId('ARK-ATT-ABC123')).resolves.toBeNull();
   });
+
+  // ── Sibling reads: the same hollow-200 class as the primary query ──
+  //
+  // The org and anchor reads run AFTER the attestation row is in hand, so a
+  // failure there cannot 404 — it degrades the body instead. Swallowing them
+  // publishes `attesting_org.verified: false` for a genuinely VERIFIED issuer,
+  // or `anchor: null` alongside `verified: true` for an anchored attestation.
+  // On a legal-attestation verification endpoint that is a false evidence
+  // claim (§1.5), not a cosmetic gap. Both must surface as a 500.
+
+  /** Chain whose first `from()` returns the attestation, then the sibling. */
+  function twoStepChain(
+    attestationRow: Record<string, unknown>,
+    sibling: { data: unknown; error: unknown },
+  ) {
+    const attestation = chainFor({ data: attestationRow, error: null }).chain;
+    const second = chainFor(sibling).chain;
+    let call = 0;
+    mockFrom.mockImplementation((() => (call++ === 0 ? attestation : second)) as never);
+  }
+
+  const ANCHORED_ROW = {
+    attestation_id: 'ARK-ATT-ABC123',
+    attestation_type: 'notarized',
+    attesting_org_name: 'Acme Notary LLC',
+    subject_name: 'Jane Doe',
+    status: 'anchored',
+    notary_name: null,
+    notary_commission_state: null,
+    notary_commission_number: null,
+    notarization_completed_at: null,
+    anchor_timestamp: null,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    attesting_org_id: 'org-uuid',
+    anchor_id: null,
+  };
+
+  it('throws when the organizations read errors, rather than publishing verified:false', async () => {
+    twoStepChain(ANCHORED_ROW, {
+      data: null,
+      error: { message: 'canceling statement due to statement timeout' },
+    });
+
+    await expect(defaultLookup.lookupByPublicId('ARK-ATT-ABC123')).rejects.toThrow();
+  });
+
+  it('still reports an unverified org when the organizations read succeeds', async () => {
+    twoStepChain(ANCHORED_ROW, { data: { verification_status: 'PENDING' }, error: null });
+
+    const row = await defaultLookup.lookupByPublicId('ARK-ATT-ABC123');
+    expect(row?.org_verified).toBe(false);
+  });
+
+  it('throws when the anchors read errors, rather than publishing anchor:null', async () => {
+    twoStepChain(
+      { ...ANCHORED_ROW, attesting_org_id: null, anchor_id: 'anchor-uuid' },
+      { data: null, error: { message: 'canceling statement due to statement timeout' } },
+    );
+
+    await expect(defaultLookup.lookupByPublicId('ARK-ATT-ABC123')).rejects.toThrow();
+  });
+
+  it('leaves anchor fields null when the anchors read succeeds with no row', async () => {
+    twoStepChain(
+      { ...ANCHORED_ROW, attesting_org_id: null, anchor_id: 'anchor-uuid' },
+      { data: null, error: null },
+    );
+
+    const row = await defaultLookup.lookupByPublicId('ARK-ATT-ABC123');
+    expect(row?.anchor_public_id).toBeNull();
+  });
 });
 
 // ── Helpers ─────────────────────────────────────────────────
