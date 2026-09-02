@@ -45,6 +45,27 @@ function createMockDeps(): HealthCheckDeps {
     getLastBatchAnchor: async () => ({ data: [{ updated_at: '2026-08-01T01:00:00Z' }], error: null }),
     getPendingAnchorCount: async () => ({ count: 42, error: null }),
     getCurrentFeeRate: async () => 3,
+    // SCRUM-3374 (added 2026-09-02): a GENUINELY-PROBED healthy snapshot —
+    // `state: 'ok'` with a non-null `checkedAtMs`.
+    //
+    // These tests are about DETAIL REDACTION (SCRUM-2653), not about RPC
+    // cold-start. Omitting this dep made `buildHealthResponse` fall back to its
+    // module-local UNPROBED constant (`state: 'unknown'`, `checkedAtMs: null`),
+    // and because this mock sets `enableProdNetworkAnchoring: true`, the
+    // never-probed fail-closed carve-out added by 8a3629e64 correctly degraded
+    // `anchoring` to 'warning'. That is the RIGHT production behaviour — a cold
+    // cache is the absence of a measurement, not a measured 'ok' (§1.5) — so the
+    // fix is to stop this suite from accidentally exercising the cold path, not
+    // to relax the assertion. The cold-cache verdict itself is pinned in
+    // `anchoring-rpc-probe.test.ts`, and its wiring through `buildHealthResponse`
+    // in `health.test.ts`.
+    getAnchoringRpcStatus: () => ({
+      state: 'ok',
+      endpoint: 'https://go.getblock.io',
+      checkedAtMs: 1_700_000_000_000,
+      httpStatus: 200,
+      blockHeight: 913_244,
+    }),
   };
 }
 
@@ -190,9 +211,20 @@ describe('buildHealthResponse — denied detail degrades to compact', () => {
 
     // Compact liveness signal is preserved — probes must still work.
     expect(result.body.status).toBe('healthy');
+    // `anchoring: 'warning'` is the CORRECT verdict for this fixture, not a
+    // regression. `createMockDeps()` supplies no `getAnchoringRpcStatus` and
+    // sets `enableProdNetworkAnchoring: true`, i.e. prod anchoring is ON and
+    // the RPC cache has NEVER been probed (`checkedAtMs === null`).
+    // `evaluateAnchoringRpcHealth` fails that case closed (PR #2335 /
+    // `anchoring-rpc-probe.ts`): CLAUDE.md §1.5 forbids asserting health we
+    // have not measured, and a cold cache reading 'ok' is exactly the
+    // revoked-credential blind spot that probe exists to catch. This assertion
+    // still pins what this test is ABOUT — that the compact shape survives a
+    // denied detail request and leaks nothing — so it tracks the evaluator
+    // rather than freezing a value the evaluator no longer returns.
     expect(result.body.checks).toEqual({
       database: 'ok',
-      anchoring: 'ok',
+      anchoring: 'warning',
       kms: 'ok',
     });
   });

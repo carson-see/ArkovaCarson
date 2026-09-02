@@ -1799,6 +1799,65 @@ echo
 # preview-branch builder). Bootstrap extensions + enum pre-adds per
 # docs/reference/STAGING_RIG.md "How to populate".
 # ---------------------------------------------------------------------------
+# Replay the repo schema onto the new project.
+#
+# `supabase db push` sends migrations down a single extended-query pipeline, and
+# Postgres refuses CREATE INDEX CONCURRENTLY inside one (SQLSTATE 25001,
+# "cannot be executed within a pipeline"). Migration 0381 uses CONCURRENTLY, so
+# from 0381 onward EVERY fresh rig dies mid-replay, and the CLI exposes no flag
+# to turn pipelining off. psql runs each statement in its own implicit
+# transaction, where CONCURRENTLY is legal.
+#
+# Retry semantics are preserved: a fresh project can still be settling (pooler
+# tenant not yet resolvable), which is worth retrying. The pipeline error is
+# deterministic and is NOT worth retrying, so it short-circuits to the fallback.
+# The fallback applies only migrations absent from the remote history table and
+# records each one, so the resulting ledger matches what db push would produce.
+replay_schema() {
+  print_cmd npx supabase db push --linked
+  [[ $APPLY -eq 1 ]] || return 0
+  local attempt=1 out rc pipeline_error=0
+  while (( attempt <= LINK_MAX_ATTEMPTS )); do
+    echo "executing (attempt ${attempt}/${LINK_MAX_ATTEMPTS}): npx supabase db push --linked" >&2
+    set +e
+    out="$(npx supabase db push --linked 2>&1)"; rc=$?
+    set -e
+    printf '%s\n' "$out"
+    if (( rc == 0 )); then
+      return 0
+    fi
+    if printf '%s' "$out" | grep -qiE 'within a pipeline|25001'; then
+      echo "# db push hit the CONCURRENTLY/pipeline limitation — deterministic, not retrying." >&2
+      pipeline_error=1
+      break
+    fi
+    echo "# supabase db push attempt ${attempt}/${LINK_MAX_ATTEMPTS} failed — a fresh project can" >&2
+    echo "#   still be settling; retrying." >&2
+    attempt=$((attempt + 1))
+    (( attempt <= LINK_MAX_ATTEMPTS )) && sleep "$LINK_RETRY_SECONDS"
+  done
+  echo "# falling back to psql schema replay (CONCURRENTLY-safe)." >&2
+  command -v psql >/dev/null 2>&1 || { echo "ERROR: psql not on PATH; cannot replay schema." >&2; exit 1; }
+  : "${STAGING_NEW_SUPABASE_DB_PASSWORD:?required for the psql schema-replay fallback}"
+  local uri applied=0 v exists f
+  # Session-mode pooler (5432): the direct db.<ref> host is frequently IPv6-only
+  # and unroutable, which is the same LegacyDbConfigIpv6Error class handled above.
+  uri="postgresql://postgres.${NEW_PROJECT_REF}:${STAGING_NEW_SUPABASE_DB_PASSWORD}@aws-0-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require"
+  psql "$uri" -At -c 'select 1' >/dev/null 2>&1 || { echo "ERROR: psql fallback could not connect to ${NEW_PROJECT_REF}." >&2; exit 1; }
+  for f in supabase/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+    v="$(basename "$f" | cut -d_ -f1)"
+    exists="$(psql "$uri" -At -c "select 1 from supabase_migrations.schema_migrations where version='${v}' limit 1;" 2>/dev/null || true)"
+    [[ "$exists" == "1" ]] && continue
+    echo "  applying ${v} $(basename "$f")" >&2
+    if ! psql "$uri" -v ON_ERROR_STOP=1 -q -f "$f"; then
+      echo "ERROR: psql schema replay failed at ${v}." >&2; exit 1
+    fi
+    psql "$uri" -q -c "insert into supabase_migrations.schema_migrations(version,name) values ('${v}','$(basename "$f")') on conflict do nothing;" >/dev/null
+    applied=$((applied + 1))
+  done
+  echo "# psql schema replay applied ${applied} migration(s); pipeline_error=${pipeline_error}." >&2
+}
+
 echo "# Step 2/6 — wait for ACTIVE_HEALTHY, then link to the captured ref + replay repo schema"
 echo "#   (CLI parser, lettered-suffix safe)"
 print_cmd npx supabase projects list --output json
@@ -1814,8 +1873,7 @@ run_cmd_with_retry "supabase link" "$LINK_MAX_ATTEMPTS" "$LINK_RETRY_SECONDS" \
   npx supabase link --project-ref "$NEW_PROJECT_REF"
 echo "#   bootstrap extensions + enum pre-adds (see STAGING_RIG.md) via MCP execute_sql / Mgmt API"
 echo "#   db push --linked now targets the just-linked $NEW_PROJECT_REF (validated above)."
-run_cmd_with_retry "supabase db push" "$LINK_MAX_ATTEMPTS" "$LINK_RETRY_SECONDS" \
-  npx supabase db push --linked
+replay_schema
 echo
 
 echo "# Step 2b/6 — create/record per-rig Supabase Secret Manager secrets"

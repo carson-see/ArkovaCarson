@@ -101,7 +101,7 @@ The repo `memory/` corpus is the **durable, versioned** copy of these rules and 
 | Chain | bitcoinjs-lib. **Signing**: WIF in Secret Manager is the active signer; the GCP KMS code path exists and is selected only when WIF is unset. **Broadcast**: GetBlock RPC. **UTXO listing + fee estimation + frontend balance reads**: still via public `mempool.space` — the paths differ, so verify which one you are on before claiming sovereignty. AWS KMS provider non-deployed (`memory/feedback_no_aws.md`). MockChainClient for tests. |
 | Testing | Vitest + Playwright + RLS helpers. |
 | Formal verification | TLA PreCheck. `machines/bitcoinAnchor.machine.ts`. |
-| Ingress | Cloudflare Tunnel, Zero Trust. No public ports. |
+| Ingress | **Split three ways — verify which before claiming any edge control protects a path.** Cloudflare proxies only `api.` / `edge.` / `docs.arkova.ai`. The frontend (`arkova.ai`, `app.`, `search.`) is Vercel on DNS-only records, so no Arkova WAF rule reaches it. The prod Cloud Run origin (`arkova-worker-*.run.app`) answers **publicly and unauthenticated** — `ingress=all`, `invoker-iam-disabled`, empty IAM policy, no Cloud Armor, no GCLB — i.e. the same app as `api.arkova.ai` with nothing in front of it. There is also no Cloudflare rate limiting: the `http_ratelimit` phase does not exist on arkova.ai, and all real limits are the in-code ones in §1.10. Verified 2026-09-02. |
 | Edge compute | Cloudflare Workers + `wrangler`. Peripheral only — NOT core worker logic. |
 | Observability | Sentry. PII scrubbing mandatory. |
 | AI | Gemini (primary), `@cloudflare/ai` (fallback, `ENABLE_AI_FALLBACK` default false), `replicate` (QA only, hard-blocked in prod). |
