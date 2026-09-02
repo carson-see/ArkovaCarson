@@ -102,6 +102,41 @@ export class Rpc {
     return (await res.json()) as T[];
   }
 
+  /**
+   * `org_members.user_id` FKs to `auth.users`, so a cycle needs a REAL auth
+   * user rather than a bare uuid. Created and deleted per cycle through the
+   * admin API so the rig does not accumulate accounts over 48 hours.
+   */
+  async createAuthUser(): Promise<string> {
+    const email = `soak-${Date.now()}-${Math.floor(Math.random() * 1e6)}@suborg-soak.invalid`;
+    const id = await this.createAuthUserRaw(email);
+    // `audit_events.actor_id` FKs to `profiles`, and an admin-API user does not
+    // get one, so the RPC's audit insert would fail on an otherwise-valid call.
+    await this.write('profiles', [{ id, email, full_name: 'soak actor' }]);
+    return id;
+  }
+
+  private async createAuthUserRaw(email: string): Promise<string> {
+    const res = await fetch(`${this.url}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: {
+        apikey: this.key,
+        authorization: `Bearer ${this.key}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ email, password: `${randomUUID()}Aa1!`, email_confirm: true }),
+    });
+    if (!res.ok) throw new Error(`create auth user -> ${res.status} ${await res.text()}`);
+    return ((await res.json()) as { id: string }).id;
+  }
+
+  async deleteAuthUser(id: string): Promise<void> {
+    await fetch(`${this.url}/auth/v1/admin/users/${id}`, {
+      method: 'DELETE',
+      headers: { apikey: this.key, authorization: `Bearer ${this.key}` },
+    }).catch(() => undefined);
+  }
+
   async write(table: string, rows: unknown, method = 'POST', query = ''): Promise<void> {
     const res = await fetch(`${this.url}/rest/v1/${table}${query ? `?${query}` : ''}`, {
       method,
@@ -130,11 +165,20 @@ interface Ctx {
 async function seed(svc: Rpc): Promise<Ctx & { cleanup: () => Promise<void> }> {
   const parent = randomUUID();
   const child = randomUUID();
-  const admin = randomUUID();
+  const admin = await svc.createAuthUser();
   const tag = `soak-${Date.now()}`;
 
+  // PostgREST rejects a bulk insert whose objects do not share an identical key
+  // set ("All object keys must match"), so the pair is written with the same
+  // shape rather than as two differently-shaped rows.
   await svc.write('organizations', [
-    { id: parent, legal_name: `${tag}-parent`, display_name: `${tag}-parent` },
+    {
+      id: parent,
+      legal_name: `${tag}-parent`,
+      display_name: `${tag}-parent`,
+      parent_org_id: null,
+      parent_approval_status: null,
+    },
     {
       id: child,
       legal_name: `${tag}-child`,
@@ -144,10 +188,10 @@ async function seed(svc: Rpc): Promise<Ctx & { cleanup: () => Promise<void> }> {
     },
   ]);
   await svc.write('org_members', [{ user_id: admin, org_id: parent, role: 'owner' }]);
-  await svc.write('org_credits', [
-    { org_id: parent, balance: 100 },
-    { org_id: child, balance: 0 },
-  ]);
+  // A trigger already creates the org_credits row on organization insert, so
+  // these are updates, not inserts.
+  await svc.write('org_credits', { balance: 100 }, 'PATCH', `org_id=eq.${parent}`);
+  await svc.write('org_credits', { balance: 0 }, 'PATCH', `org_id=eq.${child}`);
 
   return {
     svc,
@@ -157,6 +201,7 @@ async function seed(svc: Rpc): Promise<Ctx & { cleanup: () => Promise<void> }> {
     admin,
     cleanup: async () => {
       await svc.write('organizations', undefined, 'DELETE', `id=in.(${child},${parent})`).catch(() => {});
+      await svc.deleteAuthUser(admin);
     },
   };
 }
@@ -191,7 +236,10 @@ export async function runCycle(svc: Rpc, anon: Rpc): Promise<{ checks: Record<st
 
     // 3. F1 — re-parenting revokes both halves.
     const other = randomUUID();
-    await svc.write('organizations', [{ id: other, legal_name: 'soak-other', display_name: 'soak-other' }]);
+    await svc.write('organizations', [{
+      id: other, legal_name: 'soak-other', display_name: 'soak-other',
+      parent_org_id: null, parent_approval_status: null,
+    }]);
     await svc.write('organizations', { parent_org_id: other }, 'PATCH', `id=eq.${ctx.child}`);
     const afterReparent = await svc.sql<{ sub_org_listing_parent_optin: boolean; sub_org_listing_child_optin: boolean }>(
       'organizations', `id=eq.${ctx.child}&select=sub_org_listing_parent_optin,sub_org_listing_child_optin`);
@@ -215,10 +263,12 @@ export async function runCycle(svc: Rpc, anon: Rpc): Promise<{ checks: Record<st
     counts.creditsMoved = 40;
 
     // A non-admin must not be able to move another org's credits.
+    const strangerId = await svc.createAuthUser();
     const stranger = await svc.call<{ error?: string }>('allocate_credits_to_sub_org', {
       p_parent_org_id: ctx.parent, p_child_org_id: ctx.child, p_amount: 5,
-      p_note: 'soak', p_caller_user_id: randomUUID(),
+      p_note: 'soak', p_caller_user_id: strangerId,
     });
+    await svc.deleteAuthUser(strangerId);
     assert('f3_non_admin_refused', stranger.error === 'parent_admin_required');
 
     // 5. F2 — per-org enforcement flag is settable only by service_role, and
@@ -230,7 +280,21 @@ export async function runCycle(svc: Rpc, anon: Rpc): Promise<{ checks: Record<st
 
     // 6. F6 + SCRUM-3874 — offboard: reclaim, then suspend, audit row written,
     //    records survive.
-    await svc.write('anchors', [{ org_id: ctx.child, status: 'SECURED', credential_type: 'CERTIFICATE' }]);
+    await svc.write('anchors', [{
+      org_id: ctx.child,
+      user_id: ctx.admin,
+      status: 'SECURED',
+      credential_type: 'CERTIFICATE',
+      filename: 'soak-evidence.pdf',
+      fingerprint: randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, ''),
+      // `anchors_chain_data_consistency` requires a SECURED row to carry its
+      // receipt. The claim under test is that an ALREADY-SECURED record
+      // survives offboarding, so the row is created SECURED with chain data
+      // rather than downgraded to PENDING to dodge the constraint.
+      chain_tx_id: randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, ''),
+      chain_timestamp: new Date().toISOString(),
+      chain_block_height: 900000,
+    }]);
     const reclaim = await svc.call<{ success?: boolean }>('allocate_credits_to_sub_org', {
       p_parent_org_id: ctx.parent, p_child_org_id: ctx.child, p_amount: -40,
       p_note: 'soak offboard', p_caller_user_id: ctx.admin,

@@ -43,6 +43,8 @@ function healthyService() {
       return [];
     }),
     write: vi.fn(async () => {}),
+    createAuthUser: vi.fn(async () => `user-${Math.random().toString(36).slice(2)}`),
+    deleteAuthUser: vi.fn(async () => {}),
   } as unknown as Rpc;
 }
 
@@ -56,6 +58,8 @@ function anonWithConsentSequence(profileCounts: number[], childParent: string | 
     }),
     sql: vi.fn(async () => []),
     write: vi.fn(async () => {}),
+    createAuthUser: vi.fn(async () => 'anon-unused'),
+    deleteAuthUser: vi.fn(async () => {}),
   } as unknown as Rpc;
 }
 

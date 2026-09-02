@@ -48,11 +48,22 @@ CREATE TABLE public.profiles (
   is_public_profile boolean DEFAULT false
 );
 
+-- REAL enum, matching prod. It was `text` here originally, and that divergence
+-- hid a live defect for the whole first round of proofs: every sub-org RPC
+-- compares `role IN ('owner','admin','ORG_ADMIN')`, and 'ORG_ADMIN' is not a
+-- label of this type, so on the real schema the comparison raises 22P02 and the
+-- function throws. Against a text column it silently passed. Keep this faithful.
+DO $r$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname='org_member_role') THEN
+    CREATE TYPE public.org_member_role AS ENUM ('owner','admin','member','compliance_officer');
+  END IF;
+END $r$;
+
 CREATE TABLE public.org_members (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
   org_id uuid NOT NULL REFERENCES public.organizations(id),
-  role text NOT NULL DEFAULT 'member',
+  role public.org_member_role NOT NULL DEFAULT 'member',
   joined_at timestamptz NOT NULL DEFAULT now()
 );
 
