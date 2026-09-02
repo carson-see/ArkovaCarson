@@ -735,6 +735,21 @@ with `height_mismatch`. Not a regression (since PR #761, 2026-05-11); the curren
 public-records org only. Finding, 476-row chain check and T3 fix design: `docs/staging/findings/prod-block-height-2026-09-02/finding.md`.
 Supersedes the "44 block hashes at more than one height" thread — same mechanism.
 
+**CLOSE-OUT RUNBOOK (drafted 2026-09-02; gate dry-runs in `docs/staging/rc-batch-0902/closeout/gate-dry-run.md`).**
+- **RC batch, window closes 2026-09-03T07:49:27Z.** (1) Stop the loop, confirm every `rc-live-NN.jsonl` is `pass`. (2) Open a separate `docs(rc):` PR
+  replacing `docs/staging/rc-manifests/rc-batch-2026-09-02.json` with `docs/staging/rc-batch-0902/closeout/rc-batch-2026-09-02.CLOSEOUT-DRAFT.json`
+  (drops the unrecognised `soak_mode`, adds `environment.revision/deploy_tag/deploy_log_id`, the `soak` object, `approval_*`, and fixes #2526's
+  `base_sha` to GitHub's live base `19d7adfb…`). Carson's CODEOWNERS review of that PR is the approval the manifest asserts — do not set
+  `approval_actor` to an agent; the gate rejects agent self-attestation. (3) After it merges and GitHub recomputes the merge previews, paste
+  `closeout/pr-252{5,6,7,8}-evidence-block.md` into the PR bodies (grep for `<<` first — the gate does not catch leftover markers).
+  #2528 is not a draft: a green gate on it is merge authorization. Main's `Tests` job must be green first (fix in flight, see below).
+- **R1 / #2524, window closes 2026-09-04T13:38:43Z.** (1) Stop the loop. (2) Run the 0427 rollback rehearsal ON THE RIG after the window
+  (apply the file's `-- ROLLBACK:` SQL, re-apply 0427, re-run the driver once). (3) Paste `docs/staging/proof-txincl-0427/closeout/pr-2524-evidence-block.md`
+  with `Soak end`, the cycle count and the rehearsal filled; human approver = Carson. The base must stay `4b3db0c0c` — **do not merge `main` into
+  the branch again**: once the base passes `1b7d8601c` the migration-ledger carve-out fires and demands a re-soak. No `staging_deploy_log` row exists on
+  either rig (manual standup); the provenance text in the blocks passes the parser, SCRUM-1803 intent unmet.
+- **Then** tear both rigs down (`scripts/staging/teardown-isolated-rig.sh`, §7 cost sweep) and close the soak entries here.
+
 **RUNNING — PR #2524 T3 isolated soak (`feat/proof-tx-inclusion-branch`, migration `0427`), started 2026-09-02.**
 - **Rig:** isolated Supabase `uqobkjhlnqmcpjidngxr` (`arkova-soak-proof-txincl-0427`, us-east-2),
   ledger head **0427** (119 rows; `0381` applied via session-pooler psql + ledger row per
