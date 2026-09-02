@@ -1,7 +1,7 @@
 {
-  "environment_type": "clean_mirror",
-  "staging_project_ref": "vofhfzyosxlneupohsem",
-  "timestamp": "2026-09-02T14:48:53.416Z",
+  "environment_type": "fixture_seeded",
+  "staging_project_ref": "aqikotdkmhxmznonwmwk",
+  "timestamp": "2026-09-01T20:34:30.210Z",
   "checks": [
     {
       "name": "staging_only_rows",
@@ -25,18 +25,18 @@
     },
     {
       "name": "submitted_anchors",
-      "passed": true,
-      "details": "1 SUBMITTED anchor(s) found."
+      "passed": false,
+      "details": "Zero SUBMITTED anchors — environment may lack test fixtures."
     },
     {
       "name": "prod_divergence",
-      "passed": true,
-      "details": "Rig ledger reconciles with repo migration files + canonical baseline."
+      "passed": false,
+      "details": "Unexplained extras (not in repo or prod): [0418, 0419, 0423, 0424]"
     },
     {
       "name": "org_topology",
       "passed": true,
-      "details": "2 org(s), no staging seed orgs — prod-like single-tenant topology."
+      "details": "3 org(s), no staging seed orgs — prod-like single-tenant topology."
     }
   ],
   "artifact_rows": [],
@@ -153,9 +153,9 @@
     "0412",
     "0413",
     "0414",
-    "0417",
     "0418",
     "0419",
-    "0428"
+    "0423",
+    "0424"
   ]
 }

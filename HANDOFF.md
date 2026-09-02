@@ -14,6 +14,54 @@
 
 ## Now
 
+### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
+
+**711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
+`anchors.chain_block_height`. Every single disagreement is **low** (`proof_lower=711027`,
+`proof_higher=0`). Read-only against prod `vzwyaatejekddvltxyye` on 2026-09-02.
+
+**Which value is right:** `anchors.chain_block_height`. Checked all 44 block hashes that carry more
+than one recorded height against the chain (`getblockheader` over the worker's own GetBlock RPC): in
+34 of 44 groups **neither** recorded `anchor_proofs` height is the real one, and
+`anchors.chain_block_height` equals the chain's height in **44/44**. This is not "pick the majority"
+and not an off-by-one.
+
+**Mechanism.** `SignetChainClient.broadcastSignedTx` (`services/worker/src/chain/signet.ts:859-863`)
+returns `blockHeight = getBlockchainInfo().blocks` — the chain **tip at broadcast**, with an
+in-code comment saying the real height "is recovered at confirmation time". For `anchors` it is:
+`check-confirmations.ts` overwrites `chain_block_height` with the tx's actual `status.block_height`.
+For `anchor_proofs` it never is — `ConfirmationProof` carries no height field at all, and
+`populateConfirmationProofs` re-writes `blockHeight: anchor.blockHeight ?? null`, i.e. the stale
+value onto itself. So the delta is simply the number of blocks mined between broadcast and
+confirmation: 1 (45%), 2 (36%), 3 (12%), tail to 13, plus one 89-row cluster at 2747 from the
+2026-04-15→04-29 SECURED gap.
+
+**Published-surface impact — this is a proof-integrity issue, not untidy data.**
+`/api/v1/proof`, `audit-export.ts` and the JSON "download proof package" are all **clean**: they read
+height from `anchors`. The exposed path is the **certificate PDF**:
+`src/lib/sourceProofInput.ts:183` reads `proofRow.block_height ?? anchor.chain_block_height` —
+preferring the wrong column, and it is non-null on 713,949/713,950 rows so the correct fallback
+effectively never fires. `buildProofPacket` then prefers it again over the correct `data.blockHeight`
+that `RecordDetailPage` already passes. It lands in the certificate as "Network Record #…" **and** in
+`embeddedProofJson`, the machine-readable packet published so the certificate "can be re-verified
+offline". All three Arkova verifiers bind that field to the chain and hard-reject on mismatch
+(`arkova-py` `_height_binding_failure`, `packages/verifier/src/independent-node.ts:221`,
+`packages/verifier-cli`), so a customer verifying a genuine anchor with a node gets
+`ok:false, reason_code: HEIGHT_MISMATCH` plus a failed `timestamp_honesty`. A **false negative on a
+valid document**, matching the shape of the repo's own forgery fixture
+(`packages/verifier-cli/fixtures/author-adversarial.py:401`). Offline-only verification (no node)
+still passes — the chain steps are skipped.
+
+Found incidentally while sourcing real mainnet txids for the [PR #2524](https://github.com/carson-see/ArkovaCarson/pull/2524)
+soak fixture. **Not a regression from that PR** — the rows predate it — and it does not block that soak.
+
+**No fix applied. Prod was read-only for this investigation (SELECT only).** The code fix is small
+(prefer `anchors.chain_block_height`; thread the confirmed height through `ConfirmationProof`), but
+the 711k-row backfill is a T3 migration needing operator approval and its own soak.
+**Not yet logged in the Confluence Bug Tracker** — the Atlassian MCP connector is unauthenticated in
+this session and the `Atlassian` Secret Manager token returns 401. Paste-ready entry is in the
+session report; whoever has Atlassian auth should file it as BUG-2026-09-02-001.
+
 ### DB — three admin RPCs ran unguarded DDL on the hot `profiles` table (fixed, pre-soak, 2026-09-01)
 
 `admin_change_user_role`, `admin_set_platform_admin` and `admin_set_user_org` each wrapped their
@@ -145,6 +193,32 @@ closing out.
 - **Staging-only:** `ENABLE_DOCUSIGN_INBOUND=true` on the rig. **Prod keeps inbound OFF** pending the SCRUM-3818 go-live gate.
 - **Evidence:** `docs/staging/docusign-bilateral-2026-08/evidence/` — E1/E2 guard behavior, E3 live adversarial matrix, E4 inbound envelopes anchored end-to-end (ARK-DOC-JFQ9QR, ARK-DOC-DGHFW2, `fingerprint_source=issuer_record_attestation`), zero PII leakage.
 - **Do not touch** this rig or the concurrent `credits-2442` / `cleanup-2335` soaks.
+
+### Soaks — consolidated-mm-2026-08 T3 (CLOSED — `pause_lift_obligation` still NOT satisfied, 2026-09-01)
+
+- **Ran:** `consolidated-mm-2026-08`, RC `RC-2026-08-22-deferred-basedrift-exit`, head
+  `b2a65edddff9a3bfb0bb6ec35729bbdd7558a678`, worker rev
+  `arkova-worker-consolidated-mm-2026-08-staging-00001-7n4`. Window
+  2026-08-30T15:46:33Z → 2026-09-01T15:46:33Z, 289/289 cycles clean across every named probe
+  (health/auth/rate-limit/cron/isolation). Sealed evidence:
+  `docs/staging/consolidated-mm-2026-08/cycles/window-summary.json`. Full write-up:
+  `docs/staging/consolidated-mm-2026-08/close-out-2026-09-01.md`.
+- **CTO ruling: this soak does NOT satisfy `pause_lift_obligation`.** The rig never seeded
+  `ENABLE_BATCH_ANCHORING` into `switchboard_flags`, so the batch-anchor/chain-signing path never
+  ran — `max_secured_observed=0` against 13,204 pending anchors from real injected load, and both
+  daily flush fires returned `{"processed":0,"batchId":null,"merkleRoot":null,"txId":null}`
+  (2026-08-31T03:04:55Z and 2026-09-01T03:05:35Z, captured verbatim in the window summary). Prod
+  (`ENABLE_BATCH_ANCHORING=true` since 2026-07-17) secured 13,711 anchors in the same window —
+  confirmed by direct SQL against prod `vzwyaatejekddvltxyye`, so this is a rig-provisioning gap,
+  not a `main` defect. Jira SCRUM-3861.
+- **Everything else this soak proves stands** (289/289 clean cycles is real evidence for the
+  surfaces it covered). It just isn't the one thing `pause_lift_obligation` requires: proof that
+  the anchoring/batch path is safe at the accumulated `main` head.
+  `docs/staging/rc-manifests/rc-deferred-2026-08-22.json` `pause_lift_obligation` updated in place
+  with this same ruling, same date.
+- **`DEPLOY_WORKER_PAUSED` stays `true`.** Lifting it needs a re-soak (or a targeted extension of
+  this rig) with `ENABLE_BATCH_ANCHORING` confirmed `true` via preflight *before* the clock starts.
+  Not scheduled yet — next action for whoever picks up the pause-lift gate.
 
 
 **State as of 2026-08-27T21:00Z, verified live this session.** This block is the only current-state
@@ -1962,4 +2036,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-09-01 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye`, `getblockheader` over the worker's GetBlock RPC, and (for the 0428 entry) Supabase MCP `execute_sql` plus `pg_locks` measurement on isolated rig `vofhfzyosxlneupohsem`._

@@ -38,6 +38,9 @@
  *     npx tsx scripts/staging/targeted/public-projection-driver.ts \
  *       --duration 60 --projection-head 0421 --evidence-out docs/staging/.../x.json
  */
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
   newDriverStats,
@@ -48,6 +51,38 @@ import {
   type JsonBody,
 } from './driver-core.js';
 import { iamOnlyHeaders, requireEnv, writeEvidenceFile } from './runtime.js';
+
+// ─── log sanitizer (SonarCloud S5145, log injection) ────────────────────────
+// `args` comes from process.argv and rig-supplied env, so every value
+// interpolated into a log line is user-controlled. This driver's stdout IS the
+// soak transcript that the evidence block is read from, so a forged
+// `\n[mpp] ...` record is an evidence-integrity problem, not just a cosmetic
+// one. Strip control and format characters at the sink so every call site is
+// covered, including the `log` passed to verifyFixtures.
+export function sanitizeLogToken(s: string): string {
+  return s.replace(/[\p{Cc}\p{Cf}]/gu, ' ');
+}
+
+// ─── entry-point detection ──────────────────────────────────────────────────
+// True when THIS module is the process entry point, false when it is imported.
+// Both sides are canonicalised to a real absolute path because the two inputs
+// arrive in different shapes: `moduleUrl` is a fully-resolved file:// URL,
+// while `argv1` is whatever was typed on the command line — and the soak
+// supervisor types a RELATIVE path (`npm exec tsx scripts/staging/...`).
+// realpath additionally collapses the macOS `/tmp` -> `/private/tmp` symlink,
+// which a plain resolve() would leave as a false mismatch. Falls back to
+// resolve() when a path cannot be stat'ed (it may legitimately not exist).
+export function isDirectRun(moduleUrl: string, argv1: string | undefined): boolean {
+  if (!argv1) return false;
+  const canonical = (p: string): string => {
+    try {
+      return realpathSync(resolve(p));
+    } catch {
+      return resolve(p);
+    }
+  };
+  return canonical(fileURLToPath(moduleUrl)) === canonical(argv1);
+}
 
 // ─── Fixture identity ───────────────────────────────────────────────────────
 // Stable synthetic UUIDs so re-running the driver is idempotent and every row
@@ -99,7 +134,7 @@ const ANCHORS: AnchorSpec[] = [
 ];
 
 // ─── args ───────────────────────────────────────────────────────────────────
-interface Args {
+export interface Args {
   durationMin: number;
   evidenceOut?: string;
   projectionHead: '0415' | '0421';
@@ -107,7 +142,7 @@ interface Args {
   passIntervalMs: number;
 }
 
-function parse(argv: string[]): Args {
+export function parsePublicProjectionArgs(argv: string[]): Args {
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -162,7 +197,7 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** FERPA: what the SQL projection must look like for a SUPPRESSED row. */
-function assertSqlSuppressed(b: JsonBody): string | null {
+export function assertSqlSuppressed(b: JsonBody): string | null {
   if (!isObj(b)) return 'not an object';
   if (b.issued_date !== null) return `issued_date leaked: ${JSON.stringify(b.issued_date)}`;
   if (b.expiry_date !== null) return `expiry_date leaked: ${JSON.stringify(b.expiry_date)}`;
@@ -176,7 +211,7 @@ function assertSqlSuppressed(b: JsonBody): string | null {
 }
 
 /** FERPA: what it must look like for a PUBLISHED row. */
-function assertSqlPublished(b: JsonBody): string | null {
+export function assertSqlPublished(b: JsonBody): string | null {
   if (!isObj(b)) return 'not an object';
   if (b.issued_date === null || b.issued_date === undefined) return 'issued_date withheld on a non-opted-out row';
   if (!b.issuer_public_id) return 'issuer_public_id withheld on a non-opted-out row';
@@ -185,7 +220,7 @@ function assertSqlPublished(b: JsonBody): string | null {
 }
 
 /** #2440: canonical sub_type projection. */
-function assertSubType(b: JsonBody, expected: string | null): string | null {
+export function assertSubType(b: JsonBody, expected: string | null): string | null {
   if (!isObj(b)) return 'not an object';
   if (!('sub_type' in b)) return 'sub_type key ABSENT (0421 not live / clobbered)';
   if (b.sub_type !== expected) return `sub_type=${JSON.stringify(b.sub_type)} expected ${JSON.stringify(expected)}`;
@@ -193,7 +228,7 @@ function assertSubType(b: JsonBody, expected: string | null): string | null {
 }
 
 /** Per-org isolation: the published record carries ITS OWN org's identity. */
-function assertOrgIsolation(b: JsonBody, expectedIssuer: string): string | null {
+export function assertOrgIsolation(b: JsonBody, expectedIssuer: string): string | null {
   if (!isObj(b)) return 'not an object';
   if (b.issuer_name !== expectedIssuer) {
     return `cross-org issuer bleed: got ${JSON.stringify(b.issuer_name)} expected ${JSON.stringify(expectedIssuer)}`;
@@ -202,7 +237,7 @@ function assertOrgIsolation(b: JsonBody, expectedIssuer: string): string | null 
 }
 
 /** Worker REST surface: TS predicate (suppressesDirectoryInfo) — 0415's twin. */
-function assertRestSuppressed(b: JsonBody): string | null {
+export function assertRestSuppressed(b: JsonBody): string | null {
   if (!isObj(b)) return 'not an object';
   const r = isObj(b.result) ? b.result : b;
   const cred = isObj(r.credential) ? r.credential : r;
@@ -270,19 +305,14 @@ async function call(o: CallOpts): Promise<void> {
 
 // ─── main ───────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
-  const args = parse(process.argv.slice(2));
+  const args = parsePublicProjectionArgs(process.argv.slice(2));
   const apiBase = requireEnv('STAGING_API_BASE', 'public-projection-driver').replace(/\/$/, '');
   const sbUrl = requireEnv('STAGING_SUPABASE_URL', 'public-projection-driver').replace(/\/$/, '');
   const svcKey = requireEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY', 'public-projection-driver');
   const anonKey = requireEnv('STAGING_SUPABASE_ANON_KEY', 'public-projection-driver');
-  // S5145 (log injection). `args` comes from process.argv and rig-supplied
-  // env, so every value interpolated into a log line below is user-controlled.
-  // This driver's stdout IS the soak transcript that the evidence block is
-  // read from, so a forged `\n[mpp] ...` record is an evidence-integrity
-  // problem, not just a cosmetic one. Strip control characters at the sink so
-  // every call site is covered, including the `log` passed to verifyFixtures.
-  const log = (m: string) =>
-    console.log(`[mpp] ${new Date().toISOString()} ${m.replace(/[\p{Cc}\p{Cf}]/gu, ' ')}`);
+  // S5145 (log injection) — see sanitizeLogToken above. Sanitizing at the sink
+  // covers every call site, including the `log` passed to verifyFixtures.
+  const log = (m: string) => console.log(`[mpp] ${new Date().toISOString()} ${sanitizeLogToken(m)}`);
 
   if (/vzwyaatejekddvltxyye/.test(sbUrl) || /arkova-worker-[0-9]+\.us-central1|arkova-worker-kvojbeutfa/.test(apiBase)) {
     throw new Error('refusing to run against production');
@@ -418,7 +448,16 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error(`[mpp] FATAL ${err instanceof Error ? err.stack : String(err)}`);
-  process.exit(1);
-});
+// ─── entry guard ────────────────────────────────────────────────────────────
+// Importing this module (e.g. from its test sibling) must NOT launch the soak.
+// The comparison resolves BOTH sides to an absolute path rather than testing
+// `import.meta.url === \`file://${process.argv[1]}\``: the soak supervisor runs
+// this driver through `npm exec tsx scripts/staging/targeted/...`, so argv[1]
+// arrives RELATIVE. A bare string compare would never match under the real
+// launch path and main() would silently never run — worse than no guard.
+if (isDirectRun(import.meta.url, process.argv[1])) {
+  main().catch((err) => {
+    console.error(`[mpp] FATAL ${err instanceof Error ? err.stack : String(err)}`);
+    process.exit(1);
+  });
+}
