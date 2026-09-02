@@ -272,9 +272,11 @@ describe('PR_LABELS ⇄ gh token parity across .github/workflows', () => {
     const perJob = Object.fromEntries(
       parseJobs(raw).map((job) => [job.name, jobSteps(job).filter(seedsPrLabels).length]),
     );
-    // 11 in dependency-scan + 6 in policy-lints = the 17 PR_LABELS lines in the file.
+    // 11 in dependency-scan + 7 in policy-lints = the 18 PR_LABELS lines in
+    // the file (the 7th is the do-not-merge body/label parity step,
+    // SCRUM-3804).
     expect(perJob['dependency-scan']).toBe(11);
-    expect(perJob['policy-lints']).toBe(6);
+    expect(perJob['policy-lints']).toBe(7);
   });
 });
 
