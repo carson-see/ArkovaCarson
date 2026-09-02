@@ -730,8 +730,13 @@ separately). Full verdicts, defects, and landing-order constraints:
 - **Rig:** isolated Supabase `uqobkjhlnqmcpjidngxr` (`arkova-soak-proof-txincl-0427`, us-east-2),
   ledger head **0427** (119 rows; `0381` applied via session-pooler psql + ledger row per
   STAGING_RIG.md item 3). Cloud Run `arkova-worker-proof-txincl-0427-staging` rev **00001-f8j**,
-  image digest `sha256:daa5e4112f280b8aa5ff65c4e24b9c4afe569a69257630ed2a2e91ecb069a956`, source head
-  `a3f1d6b36b513d2fd9d65e2d1e6f6f5f2b6cf20c` (frozen — do not push to that branch).
+  image digest `sha256:daa5e4112f280b8aa5ff65c4e24b9c4afe569a69257630ed2a2e91ecb069a956`, built from
+  `a3f1d6b36b513d2fd9d65e2d1e6f6f5f2b6cf20c`. **The PR head is `e5815e9ac`** — a merge of `origin/main`
+  (`4b3db0c0c`) into `a3f1d6b36` committed 2026-09-02T12:54Z, 44 min *before* the window opened. The
+  PR-authored diff is byte-identical across the two heads; the only runtime delta under the PR's own paths
+  is a rate-limiter bucket rename in `routes/cron.ts` from an already-merged PR. CTO decision: clock kept,
+  residual-risk note `docs/staging/proof-txincl-0427/evidence/E2-base-movement-residual-risk-2026-09-02.md`.
+  Branch still frozen — do not push to it.
 - **Preflight:** `environment_type=clean_mirror` 7/7 —
   `docs/staging/proof-txincl-0427/clean-mirror-preflight-proof-txincl-0427.json`.
 - **Clock basis = Cloud Run worker uptime**, revision ready **2026-09-02T13:38:43Z**;
@@ -739,8 +744,12 @@ separately). Full verdicts, defects, and landing-order constraints:
   (wedge 120 / bulk 450 / spread 2430), 2 orgs. Scheduler: only `…-populate-confirmation-proofs`
   (`*/5`) is wired — `batch-anchors` deliberately absent, so **nothing broadcasts**.
 - **Driver:** `services/worker/scripts/pr2524-proof-txinclusion-driver.ts` on branch
-  `soak/proof-txincl-driver` (sha256 `6c5069c64e28e077a49c1c392cef8314ecbbf55153573b1d5610cc3a7996d3fe`);
-  evidence rows land in `docs/staging/proof-txincl-0427/evidence/` (worktree, committed at close-out).
+  `soak/proof-txincl-driver` @ `455dffaa0` (sha256 `6221c0a9d9f4ae862d594f759f0ddfb3c4e055ecb43d939cd950e051692a4a99`); evidence is
+  committed under `docs/staging/proof-txincl-0427/evidence/`. **`r1-live-06` (2026-09-02T20:10Z) passed A1–A9 with
+  `evidenceForSoak=true`** (`evidence/live-06.jsonl`): stored and published tx-inclusion pair identical
+  (index 1966, 12 siblings) and folds to the published header merkleroot. The `live-01..05` A7/A8 failures
+  were driver defects (missing IAM header, then the wrong route `/api/v1/proof/:id`), not reader defects —
+  see `evidence/E1-direct-probes-2026-09-02.md`.
 - **Health read 2026-09-02T19:30Z:** 2,880 / 3,000 populated; the remaining 120 are the designed
   wedge cohort (1 shared txid, 120 distinct wrong block hashes); 0 half-pairs, 0 index-out-of-range.
 - **Do not** touch this rig, its Scheduler job, or `feat/proof-tx-inclusion-branch`.
@@ -2010,3 +2019,5 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
 _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye` and `getblockheader` over the worker's GetBlock RPC._
+
+_Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
