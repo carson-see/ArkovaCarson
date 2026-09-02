@@ -24,6 +24,9 @@ interface GeneralNoticeEntry {
   version: string;
   license: string;
   repository?: string;
+  /** SCRUM-3559: copyright line + verbatim license text from the package's published license file. */
+  copyright?: string;
+  licenseText?: string;
 }
 
 interface CopyleftNoticeEntry extends GeneralNoticeEntry {
@@ -33,6 +36,23 @@ interface CopyleftNoticeEntry extends GeneralNoticeEntry {
   unmodified: boolean;
   licenseTextUrls: string[];
   licenseTextNote?: string;
+}
+
+/**
+ * Collapsible verbatim license text (SCRUM-3559). Collapsed by default so the
+ * full MIT/LGPL texts of 200+ components stay scannable; the text itself is in
+ * the DOM either way, which is what discharges the "include the notice"
+ * obligation rather than merely linking out to it.
+ */
+function LicenseTextDetails({ text }: Readonly<{ text: string }>) {
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-primary hover:underline">
+        {THIRD_PARTY_NOTICES_LABELS.LICENSE_TEXT_TOGGLE}
+      </summary>
+      <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-muted-foreground">{text}</pre>
+    </details>
+  );
 }
 
 const NOTICES = thirdPartyNotices as {
@@ -94,6 +114,10 @@ export function ThirdPartyNoticesPage() {
                     <p className="text-muted-foreground">{THIRD_PARTY_NOTICES_LABELS.UNMODIFIED_LABEL}</p>
                   )}
 
+                  {entry.copyright && <p className="text-xs text-muted-foreground">{entry.copyright}</p>}
+
+                  {entry.licenseText && <LicenseTextDetails text={entry.licenseText} />}
+
                   <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs">
                     {entry.repository && (
                       <a
@@ -119,7 +143,11 @@ export function ThirdPartyNoticesPage() {
                       <a
                         key={url}
                         href={url}
-                        className="text-primary hover:underline"
+                        // break-all: these labels embed full URLs, which have no
+                        // natural break points and overflow a 375px viewport
+                        // otherwise (found in UAT — pre-existing on the jszip
+                        // entry, not introduced by SCRUM-3559).
+                        className="break-all text-primary hover:underline"
                         target="_blank"
                         rel="noopener noreferrer"
                       >
@@ -145,14 +173,15 @@ export function ThirdPartyNoticesPage() {
 
           <div className="rounded-lg border divide-y text-sm">
             {NOTICES.generalDependencies.map((entry) => (
-              <div
-                key={`${entry.name}@${entry.version}`}
-                className="flex flex-wrap items-center justify-between gap-2 px-4 py-2"
-              >
-                <span className="font-mono text-foreground">
-                  {entry.name}@{entry.version}
-                </span>
-                <span className="text-xs text-muted-foreground">{entry.license}</span>
+              <div key={`${entry.name}@${entry.version}`} className="space-y-1 px-4 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-foreground">
+                    {entry.name}@{entry.version}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{entry.license}</span>
+                </div>
+                {entry.copyright && <p className="text-xs text-muted-foreground">{entry.copyright}</p>}
+                {entry.licenseText && <LicenseTextDetails text={entry.licenseText} />}
               </div>
             ))}
           </div>
