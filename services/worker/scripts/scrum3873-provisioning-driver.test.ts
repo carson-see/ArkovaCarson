@@ -32,12 +32,12 @@ describe('validateLiveArgs', () => {
 
   it('blocks a live run with no target or tokens', () => {
     const b = validateLiveArgs({ mode: 'live' });
-    expect(b.length).toBe(3);
+    expect(b.length).toBe(4);
   });
 
   it('requires the non-admin token — the 403 assertion is the point of this driver', () => {
     const b = validateLiveArgs({
-      mode: 'live', targetUrl: 'https://rig.run.app', bearerToken: 't',
+      mode: 'live', targetUrl: 'https://rig.run.app', bearerToken: 't', collisionDomain: 'x.test',
     });
     expect(b.join(' ')).toMatch(/non-admin-token/);
   });
@@ -45,6 +45,7 @@ describe('validateLiveArgs', () => {
   it('refuses to run against production', () => {
     const b = validateLiveArgs({
       mode: 'live', targetUrl: 'https://app.arkova.ai', bearerToken: 't', nonAdminToken: 'n',
+      collisionDomain: 'x.test',
     });
     expect(b.join(' ')).toMatch(/production/);
   });
@@ -52,8 +53,23 @@ describe('validateLiveArgs', () => {
   it('refuses a non-https target', () => {
     const b = validateLiveArgs({
       mode: 'live', targetUrl: 'http://rig.run.app', bearerToken: 't', nonAdminToken: 'n',
+      collisionDomain: 'x.test',
     });
     expect(b.join(' ')).toMatch(/https/);
+  });
+
+  it('refuses a live run with no collision domain — F2 would go unexercised', () => {
+    const b = validateLiveArgs({
+      mode: 'live', targetUrl: 'https://rig.run.app', bearerToken: 't', nonAdminToken: 'n',
+    });
+    expect(b.join(' ')).toMatch(/collision-domain/);
+  });
+
+  it('accepts a fully-specified live run', () => {
+    expect(validateLiveArgs({
+      mode: 'live', targetUrl: 'https://rig.run.app', bearerToken: 't', nonAdminToken: 'n',
+      collisionDomain: 'collide.test',
+    })).toEqual([]);
   });
 });
 

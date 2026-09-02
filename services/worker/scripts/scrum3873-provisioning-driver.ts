@@ -22,6 +22,8 @@ export interface DriverArgs {
   bearerToken?: string;
   nonAdminToken?: string;
   evidenceJsonl?: string;
+  /** Domain claimed by a pre-seeded org, used to force the F2 collision. */
+  collisionDomain?: string;
 }
 
 export interface DriverRow {
@@ -56,6 +58,7 @@ export function parseDriverArgs(argv: string[]): DriverArgs {
     bearerToken: get('--bearer-token'),
     nonAdminToken: get('--non-admin-token'),
     evidenceJsonl: get('--evidence-jsonl'),
+    collisionDomain: get('--collision-domain'),
   };
 }
 
@@ -73,6 +76,12 @@ export function validateLiveArgs(args: DriverArgs): string[] {
   }
   if (args.targetUrl && /vzwyaatejekddvltxyye|app\.arkova\.ai/.test(args.targetUrl)) {
     blockers.push('--target-url points at production; this driver creates orgs and accounts');
+  }
+  if (!args.collisionDomain) {
+    // Without this the run never exercises the auto-association trigger, which
+    // is the single mechanism the whole design is built around. A soak that
+    // skips it is not evidence for this PR.
+    blockers.push('--collision-domain is required in live mode: without it F2 is never exercised');
   }
   return blockers;
 }
@@ -121,8 +130,10 @@ async function call(
  * One full cycle. Every assertion maps to a pre-mortem failure mode, so a
  * regression shows up as a named check rather than a generic 500 count.
  */
-export async function runCycle(args: Required<Pick<DriverArgs, 'targetUrl' | 'bearerToken' | 'nonAdminToken'>>): Promise<CycleResult> {
-  const { targetUrl, bearerToken, nonAdminToken } = args;
+export async function runCycle(
+  args: Required<Pick<DriverArgs, 'targetUrl' | 'bearerToken' | 'nonAdminToken' | 'collisionDomain'>>,
+): Promise<CycleResult> {
+  const { targetUrl, bearerToken, nonAdminToken, collisionDomain } = args;
   const counts: Record<string, number | boolean> = {};
   const checks: Record<string, string> = {};
   const stamp = randomUUID().slice(0, 8);
@@ -198,6 +209,50 @@ export async function runCycle(args: Required<Pick<DriverArgs, 'targetUrl' | 'be
   // behavioural regression — or quietly counted as a pass.
   const rateLimited = Object.values(checks).some((v) => v.includes('429'));
   if (rateLimited) checks.rate_limited = 'FAIL driver exceeded the 10/min admin limit; row is not behavioural evidence';
+  // ── F2: the email-domain collision. THE case this design exists for. ──
+  // A pre-seeded org claims `collisionDomain`, so creating an account at that
+  // domain drives auto_associate_profile_to_org_by_email_domain. The product
+  // must either land the requested role or refuse with role_conflict — what it
+  // must NEVER do is silently return 201 with a different, now-frozen role.
+  const collide = await call(targetUrl, '/api/admin/users', bearerToken, {
+    email: `collide-${stamp}@${collisionDomain}`, full_name: 'Collision Probe',
+    role: 'ORG_ADMIN', org_id: orgId, org_role: 'owner', send_invite_email: false,
+  });
+  const collideAccount = (collide.json.account ?? {}) as Record<string, unknown>;
+  if (collide.status === 201) {
+    const roleOk = collideAccount.role === 'ORG_ADMIN';
+    const orgOk = collideAccount.org_id === orgId;
+    checks.collision_role_intact = roleOk
+      ? 'pass'
+      : `FAIL silently created with role ${String(collideAccount.role)} instead of ORG_ADMIN`;
+    // Per-org isolation: the account must belong to the org we asked for, not
+    // the domain-claiming one.
+    checks.collision_org_isolation = orgOk
+      ? 'pass'
+      : `FAIL landed in org ${String(collideAccount.org_id)} instead of ${String(orgId)}`;
+  } else if (collide.status === 409 && collide.json.code === 'role_conflict') {
+    checks.collision_role_intact = 'pass';
+    checks.collision_org_isolation = 'pass';
+  } else {
+    checks.collision_role_intact = `FAIL got ${collide.status} ${String(collide.json.code ?? '')}`;
+    checks.collision_org_isolation = `FAIL got ${collide.status}`;
+  }
+  counts.collision_exercised = true;
+
+  // ── Concurrency: the duplicate guard is SELECT-then-INSERT, so it is not
+  // atomic. Two simultaneous identical submits must still yield exactly one
+  // organization, not two orgs sharing a name by race.
+  const raceName = `Race Org ${randomUUID().slice(0, 8)}`;
+  const [r1, r2] = await Promise.all([
+    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName }),
+    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName }),
+  ]);
+  const created201 = [r1, r2].filter((r) => r.status === 201).length;
+  checks.concurrent_duplicate_guard = created201 === 1
+    ? 'pass'
+    : `FAIL ${created201} of 2 concurrent identical submits created an org`;
+  counts.concurrent_created = created201;
+
   const ok = Object.values(checks).every((v) => v === 'pass');
   counts.checks_total = Object.keys(checks).length;
   counts.checks_passed = Object.values(checks).filter((v) => v === 'pass').length;
@@ -249,6 +304,7 @@ async function main(): Promise<void> {
     targetUrl: args.targetUrl!,
     bearerToken: args.bearerToken!,
     nonAdminToken: args.nonAdminToken!,
+    collisionDomain: args.collisionDomain!,
   });
   const row = buildRow('live', result, args.targetUrl);
   if (args.evidenceJsonl) appendFileSync(args.evidenceJsonl, `${JSON.stringify(row)}\n`);
