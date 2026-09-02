@@ -2,6 +2,9 @@
  * Adobe Sign webhook handler tests (SCRUM-1148).
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -47,10 +50,18 @@ function sign(body: string | Buffer): string {
   return crypto.createHmac('sha256', TEST_SECRET).update(body).digest('base64');
 }
 
+interface AdobeDocumentFixture {
+  id: string;
+  name?: string;
+  sha256?: string;
+}
+
 function validBody(overrides: Partial<{
   event: string;
   agreementId: string;
   webhookId: string;
+  senderEmail: string;
+  documents: AdobeDocumentFixture[];
 }> = {}): string {
   return JSON.stringify({
     event: overrides.event ?? 'AGREEMENT_WORKFLOW_COMPLETED',
@@ -59,8 +70,8 @@ function validBody(overrides: Partial<{
     agreement: {
       id: overrides.agreementId ?? AGREEMENT_ID,
       name: 'Sample MSA.pdf',
-      senderInfo: { email: 'sender@example.com' },
-      documents: [{ id: 'doc-1', name: 'Sample MSA.pdf' }],
+      senderInfo: { email: overrides.senderEmail ?? 'sender@example.com' },
+      documents: overrides.documents ?? [{ id: 'doc-1', name: 'Sample MSA.pdf' }],
     },
   });
 }
@@ -76,6 +87,37 @@ function integrationLookup(data: unknown, error: unknown = null) {
 
 function nonceInsertMock(error: { code: string; message?: string } | null = null) {
   return { insert: vi.fn().mockResolvedValue({ data: null, error }) };
+}
+
+/**
+ * `adobe_sign_webhook_nonces` is deduped on the composite UNIQUE key
+ * `(agreement_id, payload_hash)` (baseline migration
+ * `adobe_sign_webhook_nonces_agreement_id_payload_hash_key`), so a compensating
+ * release must filter on BOTH columns — deleting by `agreement_id` alone would
+ * drop the nonce for a DIFFERENT payload revision of the same agreement and
+ * silently disarm replay protection for a delivery this request never touched.
+ * This mock records the ordered filter chain so tests can assert both.
+ */
+function nonceTableMock(insertError: { code: string; message?: string } | null = null) {
+  const filters: Array<[string, unknown]> = [];
+  const makeEq = (): ReturnType<typeof vi.fn> =>
+    vi.fn((col: string, val: unknown) => {
+      filters.push([col, val]);
+      const thenable = Promise.resolve({ error: null }) as Promise<{ error: unknown }> & {
+        eq: unknown;
+      };
+      thenable.eq = makeEq();
+      return thenable;
+    });
+  const deleteFn = vi.fn(() => ({ eq: makeEq() }));
+  return {
+    filters,
+    deleteFn,
+    table: {
+      insert: vi.fn().mockResolvedValue({ data: null, error: insertError }),
+      delete: deleteFn,
+    },
+  };
 }
 
 function postSignedBody(body: string | Buffer) {
@@ -99,11 +141,7 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
   it('returns 503 when client secret is not configured', async () => {
     delete process.env.ADOBE_SIGN_CLIENT_SECRET;
     const body = validBody();
-    const res = await request(createApp())
-      .post('/webhooks/adobe-sign')
-      .set('Content-Type', 'application/json')
-      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
     expect(res.status).toBe(503);
   });
 
@@ -120,11 +158,7 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
 
   it('200 + ignored=true for non-completed events (CREATED, RECALLED, REJECTED)', async () => {
     const body = validBody({ event: 'AGREEMENT_CREATED' });
-    const res = await request(createApp())
-      .post('/webhooks/adobe-sign')
-      .set('Content-Type', 'application/json')
-      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, ignored: true });
   });
@@ -135,11 +169,7 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
       throw new Error(`unexpected: ${table}`);
     });
     const body = validBody();
-    const res = await request(createApp())
-      .post('/webhooks/adobe-sign')
-      .set('Content-Type', 'application/json')
-      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
   });
@@ -154,11 +184,7 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
     });
     rpcMock.mockResolvedValueOnce({ data: 'rule-event-uuid', error: null });
     const body = validBody();
-    const res = await request(createApp())
-      .post('/webhooks/adobe-sign')
-      .set('Content-Type', 'application/json')
-      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
     expect(res.status).toBe(202);
     expect(res.body).toMatchObject({ ok: true, rule_event_id: 'rule-event-uuid' });
     expect(rpcMock).toHaveBeenCalledWith(
@@ -180,11 +206,7 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
       throw new Error(`unexpected: ${table}`);
     });
     const body = validBody();
-    const res = await request(createApp())
-      .post('/webhooks/adobe-sign')
-      .set('Content-Type', 'application/json')
-      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, duplicate: true });
     expect(rpcMock).not.toHaveBeenCalled();
@@ -202,11 +224,7 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
     });
     rpcMock.mockResolvedValueOnce({ data: null, error: { message: 'rpc boom' } });
     const body = validBody();
-    const res = await request(createApp())
-      .post('/webhooks/adobe-sign')
-      .set('Content-Type', 'application/json')
-      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
     expect(res.status).toBe(500);
     expect(dlq.insert).toHaveBeenCalledTimes(1);
     const dlqRow = (dlq.insert as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
@@ -224,11 +242,7 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
       throw new Error(`unexpected: ${table}`);
     });
     const body = '{ malformed';
-    const res = await request(createApp())
-      .post('/webhooks/adobe-sign')
-      .set('Content-Type', 'application/json')
-      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
     expect(res.status).toBe(400);
     expect(dlq.insert).toHaveBeenCalledTimes(1);
   });
@@ -294,33 +308,85 @@ function uniqueDocHash(index: number): string {
 }
 
 /**
- * A signed AGREEMENT_WORKFLOW_COMPLETED body carrying `count` documents, each
- * with an `id` of exactly `idLength` chars and a unique SHA-256. Adobe imposes
- * NO length cap on the document id, so `idLength` can be arbitrarily large — the
- * whole point of the finding.
+ * A body carrying `count` documents, each with an `id` of exactly `idLength`
+ * chars and a unique SHA-256. Adobe imposes NO length cap on the document id,
+ * so `idLength` can be arbitrarily large — the whole point of the finding.
  */
 function bodyWithDocuments(count: number, idLength: number): string {
-  const documents = Array.from({ length: count }, (_, i) => ({
-    id: `${i}-`.padEnd(idLength, 'x').slice(0, idLength),
-    name: 'contract.pdf',
-    sha256: uniqueDocHash(i),
-  }));
-  return JSON.stringify({
-    event: 'AGREEMENT_WORKFLOW_COMPLETED',
-    eventDate: '2026-04-25T00:00:00Z',
-    webhookId: WEBHOOK_ID,
-    agreement: {
-      id: 'CBSCTBAAA-maxcard',
+  return validBody({
+    agreementId: 'CBSCTBAAA-maxcard',
+    documents: Array.from({ length: count }, (_, i) => ({
+      id: `${i}-`.padEnd(idLength, 'x').slice(0, idLength),
       name: 'contract.pdf',
-      senderInfo: { email: 'sender@example.com' },
-      documents,
-    },
+      sha256: uniqueDocHash(i),
+    })),
   });
 }
 
-describe('rule-event payload 16KB guard (Adobe Sign Finding 7)', () => {
-  const PAYLOAD_SIZE_LIMIT = 16384;
+/**
+ * Effective numeric bound of a named CHECK constraint, read from the migration
+ * set in applied (filename) order — the baseline sorts first, so a later
+ * widening/narrowing migration correctly wins.
+ *
+ * Hardcoding `16384` here would let the guard and the constraint drift apart in
+ * exactly the direction that hurts: narrow the CHECK in a future migration and
+ * a hardcoded test keeps passing while production starts raising 23514. Same
+ * reasoning (and same shape) as the `verification_status` code/constraint
+ * parity test in `middesk.test.ts`.
+ *
+ * All three bounds come from ONE pass over the migration set — the directory is
+ * hundreds of files and several MB, so a read-per-constraint would be three
+ * full sweeps of the same bytes on every run of this file.
+ */
+const migrationsDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../../../../supabase/migrations',
+);
 
+function effectiveCheckMaxima(constraintNames: string[]): Record<string, number> {
+  // NaN, not a default: an unparsed constraint must fail the anchor test below
+  // and every bound assertion, never silently pass with a plausible number.
+  const bounds = Object.fromEntries(constraintNames.map((n) => [n, Number.NaN]));
+  const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
+  for (const file of files) {
+    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+    for (const name of constraintNames) {
+      // The CHECK body runs to the end of its constraint line (`,\n`) or to the
+      // close of the CREATE TABLE (`\n)`); the LAST `<= N` inside it is the
+      // upper bound (`external_file_id` also carries a `>= 1` lower bound).
+      const re = new RegExp(`${name}[\\s\\S]{0,400}?CHECK([\\s\\S]{0,400}?)(?:,\\n|\\n\\))`, 'g');
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(sql)) !== null) {
+        const uppers = [...m[1].matchAll(/<=\s*\(?\s*(\d+)/g)].map((x) => Number(x[1]));
+        if (uppers.length > 0) bounds[name] = uppers[uppers.length - 1];
+      }
+    }
+  }
+  return bounds;
+}
+
+const CHECK_BOUNDS = effectiveCheckMaxima([
+  'organization_rule_events_payload_size',
+  'organization_rule_events_external_file_id_length',
+  'organization_rule_events_sender_email_length',
+]);
+
+/** `pg_column_size(payload) <= N` on `organization_rule_events`. */
+const PAYLOAD_SIZE_LIMIT = CHECK_BOUNDS.organization_rule_events_payload_size;
+/** `char_length(external_file_id) <= N` — fed by `agreement.id`. */
+const EXTERNAL_FILE_ID_LIMIT = CHECK_BOUNDS.organization_rule_events_external_file_id_length;
+/** `char_length(sender_email) <= N` — fed by `agreement.senderInfo.email`. */
+const SENDER_EMAIL_LIMIT = CHECK_BOUNDS.organization_rule_events_sender_email_length;
+
+describe('rule-event column bounds are read from the migration set', () => {
+  // Guards the regex itself: a silent no-match would leave every bound NaN and
+  // make the assertions that use them vacuous.
+  it.each(Object.entries(CHECK_BOUNDS))('resolves %s from the migrations', (name, bound) => {
+    expect(bound, `could not parse ${name} from the migration set`).toBeGreaterThan(0);
+  });
+});
+
+describe('rule-event payload 16KB guard (Adobe Sign Finding 7)', () => {
   function primeEnqueueMocks(): void {
     dbFromMock.mockImplementation((table: string) => {
       if (table === 'org_integrations') {
@@ -368,7 +434,9 @@ describe('rule-event payload 16KB guard (Adobe Sign Finding 7)', () => {
     // so the builder must be size-invariant to id length. Drive it directly at an
     // id length far past anything realistic (2000 chars each) to prove the fix —
     // the payload no longer contains the ids, so its size does not move.
-    const event = {
+    // Annotated, not cast: `as` would hide a shape drift in the very interface
+    // this guard depends on.
+    const event: AdobeAgreementCompletedEvent = {
       event: 'AGREEMENT_WORKFLOW_COMPLETED',
       agreementId: 'CBSCTBAAA-idlen-max',
       agreementName: 'contract.pdf',
@@ -379,7 +447,7 @@ describe('rule-event payload 16KB guard (Adobe Sign Finding 7)', () => {
         sha256: uniqueDocHash(i),
       })),
       webhookId: WEBHOOK_ID,
-    } as AdobeAgreementCompletedEvent;
+    };
 
     const payload = buildAdobeSignRuleEventPayload({
       integrationId: INTEGRATION_ID,
@@ -390,5 +458,261 @@ describe('rule-event payload 16KB guard (Adobe Sign Finding 7)', () => {
     expect(payload.document_count).toBe(100);
     expect(payload).not.toHaveProperty('document_ids');
     expect(jsonbColumnSize(payload)).toBeLessThanOrEqual(PAYLOAD_SIZE_LIMIT);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Code/constraint parity for the OTHER unbounded legs of the same enqueue.
+//
+// Dropping `document_ids` bounds the `documents` leg only. The SAME
+// `enqueue_rule_event` INSERT also writes, from the SAME vendor-controlled
+// body:
+//   agreement.id               -> payload.agreement_id (16KB pg_column_size CHECK)
+//                              -> external_file_id     (char_length <= 500 CHECK)
+//   agreement.senderInfo.email -> sender_email         (char_length <= 320 CHECK)
+// `RawAdobeWebhookPayload` capped neither, and they failed differently:
+//   - the id WAS rejected, but late — `NonEmptyString.max(500)` throws inside
+//     `adaptAdobeSign`, which runs AFTER the replay nonce is committed, so the
+//     handler DLQ'd and returned 500 and the retry was swallowed as a duplicate.
+//     (That is why the over-bound case below asserts 400, not "no 23514": the
+//     pre-fix status was 500, and 500 on this handler means a lost event.)
+//   - the email was not bounded at all (`MaybeEmail` has no length cap), so it
+//     reached Postgres and raised SQLSTATE 23514 inside the RPC — same 500,
+//     same swallowed retry. Pre-fix this case returned 202 from the mocked DB,
+//     which is exactly why a mock cannot be the whole story here and the bounds
+//     are asserted against the migration set instead.
+//
+// Parity means: the parse layer must reject what the constraint cannot store,
+// so an oversize field is a bounded 400 + DLQ audit row instead of a 5xx.
+// Bounds are read from the migration set, never hardcoded here.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('code/constraint parity: vendor input is bounded to what the row can store', () => {
+  function primeAllTables(): { dlq: ReturnType<typeof dlqInsertMock> } {
+    const dlq = dlqInsertMock();
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, webhook_id: WEBHOOK_ID });
+      }
+      if (table === 'adobe_sign_webhook_nonces') return nonceInsertMock(null);
+      if (table === 'webhook_dlq') return dlq;
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockResolvedValue({ data: 'rule-event-uuid', error: null });
+    return { dlq };
+  }
+
+  /** An address of exactly `length` chars that still parses as an email. */
+  function emailOfLength(length: number): string {
+    const domain = '@example.com';
+    return `${'a'.repeat(length - domain.length)}${domain}`;
+  }
+
+  it('accepts an agreement id at exactly the external_file_id bound', async () => {
+    primeAllTables();
+    const agreementId = 'A'.repeat(EXTERNAL_FILE_ID_LIMIT);
+
+    const res = await postSignedBody(validBody({ agreementId }));
+
+    expect(res.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledWith(
+      'enqueue_rule_event',
+      expect.objectContaining({ p_external_file_id: agreementId }),
+    );
+  });
+
+  it('rejects an agreement id one char over the bound at ingress, not with a 5xx', async () => {
+    const { dlq } = primeAllTables();
+
+    const res = await postSignedBody(
+      validBody({ agreementId: 'A'.repeat(EXTERNAL_FILE_ID_LIMIT + 1) }),
+    );
+
+    // Pre-fix: 500. `adaptAdobeSign`'s `NonEmptyString.max(500)` threw AFTER the
+    // nonce was committed, so the retry came back as a duplicate and the event
+    // was lost. Rejecting at parse time keeps it in front of the nonce.
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(dlq.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a sender email at exactly the sender_email bound', async () => {
+    primeAllTables();
+
+    const res = await postSignedBody(validBody({ senderEmail: emailOfLength(SENDER_EMAIL_LIMIT) }));
+
+    expect(res.status).toBe(202);
+  });
+
+  it('rejects a sender email one char over the bound instead of 5xx-ing on 23514', async () => {
+    const { dlq } = primeAllTables();
+
+    const res = await postSignedBody(
+      validBody({ senderEmail: emailOfLength(SENDER_EMAIL_LIMIT + 1) }),
+    );
+
+    // Pre-fix this was bounded NOWHERE — `MaybeEmail` has no length cap, so it
+    // sailed past both parse layers into the RPC (202 against a mocked DB) and
+    // raised `organization_rule_events_sender_email_length` (23514) in prod.
+    expect(res.status).toBe(400);
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(dlq.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it('never leaks the oversize value into the DLQ reason', async () => {
+    const { dlq } = primeAllTables();
+    const agreementId = 'A'.repeat(EXTERNAL_FILE_ID_LIMIT + 1);
+
+    await postSignedBody(validBody({ agreementId }));
+
+    expect(dlq.insert).toHaveBeenCalledTimes(1);
+    const row = (dlq.insert as ReturnType<typeof vi.fn>).mock.calls[0][0] as { reason: string };
+    expect(row.reason).not.toContain(agreementId);
+    expect(row.reason.length).toBeLessThanOrEqual(500);
+  });
+
+  it('the built payload stays under the CHECK at the maximum ACCEPTED input', () => {
+    // Worst case reachable through ingress after the bounds above: the longest
+    // admissible agreement id AND the full 100-document array.
+    const payload = buildAdobeSignRuleEventPayload({
+      integrationId: INTEGRATION_ID,
+      event: {
+        event: 'AGREEMENT_WORKFLOW_COMPLETED',
+        agreementId: 'A'.repeat(EXTERNAL_FILE_ID_LIMIT),
+        agreementName: 'x'.repeat(500),
+        senderEmail: emailOfLength(SENDER_EMAIL_LIMIT),
+        documents: Array.from({ length: 100 }, (_, i) => ({
+          id: `${i}`.padEnd(2000, 'x'),
+          name: 'contract.pdf',
+          sha256: uniqueDocHash(i),
+        })),
+        webhookId: WEBHOOK_ID,
+      },
+      payloadHash: 'a'.repeat(64),
+    });
+
+    expect(jsonbColumnSize(payload)).toBeLessThanOrEqual(PAYLOAD_SIZE_LIMIT);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// AUDIT-0424-10 / SCRUM-3479 — release the replay nonce on post-nonce 5xx.
+//
+// This is the loss path the Finding 7 fix is meant to close, and it is NOT
+// "Adobe retries the identical payload forever": the nonce row is committed
+// BEFORE `enqueue_rule_event` runs and the 500 path never released it. Adobe's
+// first retry carries the identical body, so it produces the identical
+// `payload_hash`, hits the `(agreement_id, payload_hash)` UNIQUE violation, and
+// is answered `200 {duplicate:true}` — the ESIGN_COMPLETED event is dropped
+// after ONE retry AND the vendor is told it succeeded. The `webhook_dlq` row is
+// a record of the loss, not a recovery path (nothing under `jobs/` drains it).
+//
+// SCRUM-3479 fixed `checkr.ts` and `ats.ts`; this handler was left behind while
+// the folder's own agents.md DO-rule required it. Same compensating-delete
+// shape as `middesk.ts::releaseNonce`.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('AUDIT-0424-10: releases the replay nonce on post-nonce failure', () => {
+  const PAYLOAD_HASH = crypto.createHash('sha256').update(validBody()).digest('hex');
+
+  it('releases the nonce when enqueue_rule_event returns an error', async () => {
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, webhook_id: WEBHOOK_ID });
+      }
+      if (table === 'adobe_sign_webhook_nonces') return nonce.table;
+      if (table === 'webhook_dlq') return dlqInsertMock();
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: 'rpc boom' } });
+
+    const res = await postSignedBody(validBody());
+
+    expect(res.status).toBe(500);
+    // Both columns of the UNIQUE key — deleting by agreement_id alone would
+    // disarm replay protection for a different payload revision.
+    expect(nonce.filters).toEqual([
+      ['agreement_id', AGREEMENT_ID],
+      ['payload_hash', PAYLOAD_HASH],
+    ]);
+  });
+
+  it('releases the nonce when post-nonce processing throws', async () => {
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, webhook_id: WEBHOOK_ID });
+      }
+      if (table === 'adobe_sign_webhook_nonces') return nonce.table;
+      if (table === 'webhook_dlq') return dlqInsertMock();
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockImplementationOnce(() => {
+      throw new Error('connection terminated unexpectedly');
+    });
+
+    const res = await postSignedBody(validBody());
+
+    expect(res.status).toBe(500);
+    expect(nonce.filters).toEqual([
+      ['agreement_id', AGREEMENT_ID],
+      ['payload_hash', PAYLOAD_HASH],
+    ]);
+  });
+
+  it('does NOT release the nonce on success (replay protection intact)', async () => {
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, webhook_id: WEBHOOK_ID });
+      }
+      if (table === 'adobe_sign_webhook_nonces') return nonce.table;
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockResolvedValueOnce({ data: 'rule-event-uuid', error: null });
+
+    const res = await postSignedBody(validBody());
+
+    expect(res.status).toBe(202);
+    expect(nonce.deleteFn).not.toHaveBeenCalled();
+  });
+
+  it('does NOT delete a nonce this delivery never committed (pre-nonce failure)', async () => {
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockImplementation((table: string) => {
+      // The integration lookup fails BEFORE the nonce insert, so any row
+      // matching (agreement_id, payload_hash) belongs to an EARLIER delivery.
+      if (table === 'org_integrations') return integrationLookup(null, { message: 'lookup boom' });
+      if (table === 'adobe_sign_webhook_nonces') return nonce.table;
+      if (table === 'webhook_dlq') return dlqInsertMock();
+      throw new Error(`unexpected: ${table}`);
+    });
+
+    const res = await postSignedBody(validBody());
+
+    expect(res.status).toBe(500);
+    expect(nonce.deleteFn).not.toHaveBeenCalled();
+  });
+
+  it('does NOT delete when the nonce insert failed open (non-23505)', async () => {
+    // The handler deliberately continues when the nonce write fails for a
+    // non-duplicate reason. No row was committed, so there is nothing to
+    // compensate — a matching row could only be an earlier delivery's.
+    const nonce = nonceTableMock({ code: '42501', message: 'permission denied' });
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, webhook_id: WEBHOOK_ID });
+      }
+      if (table === 'adobe_sign_webhook_nonces') return nonce.table;
+      if (table === 'webhook_dlq') return dlqInsertMock();
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: 'rpc boom' } });
+
+    const res = await postSignedBody(validBody());
+
+    expect(res.status).toBe(500);
+    expect(nonce.deleteFn).not.toHaveBeenCalled();
   });
 });

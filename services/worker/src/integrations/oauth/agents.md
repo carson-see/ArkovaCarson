@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/oauth/
 
-_Last updated: 2026-06-16 (SCRUM-2492 byte-safe error types + bounded `detail` on non-document paths)._
+_Last updated: 2026-09-02 (Adobe Sign parse-layer bounds in code/constraint parity with `organization_rule_events`)._
 
 ## What This Folder Contains
 
@@ -13,7 +13,7 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 | `drive.ts` | Google Drive OAuth client — token exchange, refresh, changes.watch, files.get, channels.stop. **DRIVE-02 (S2)**: `createChangesWatch` now returns the `startPageToken` (additive) and accepts an optional `driveId` to scope startPageToken + changes.watch to a shared-drive corpus. |
 | `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC |
 | `docusign-rate-limit.ts` | DocuSign outbound API guard — per-account 3,000/hour local slot budget plus Retry-After-aware 429 retry wrapper |
-| `adobe-sign.ts` | Adobe Sign webhook HMAC verification helpers |
+| `adobe-sign.ts` | Adobe Sign webhook HMAC verification + `RawAdobeWebhookPayload` parse. `agreement.id` / `agreement.name` / `senderInfo.email` are `.max()`-bounded to the `organization_rule_events` column CHECKs (500 / 500 / 320) the webhook handler writes them into |
 | `docusign-hmac.ts` | SCRUM-2043: multi-key HMAC verifier + signature header extractor for dual-key rotation |
 | `docusign-hmac.test.ts` | Tests for multi-key HMAC verification |
 
@@ -22,6 +22,8 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 - **DO** use `crypto.ts` for all token storage — dedicated symmetric KMS key, not the Bitcoin signing key
 - **DO** use `hmac.ts` centralized verifier for all webhook signatures (prevents drift on timing-safe path)
 - **DO** route DocuSign cron/job API fetches through `docusign-rate-limit.ts` so refresh/document calls share one per-account budget
+- **DO** bound every vendor string a parser admits to what the column it lands in can store, AT THE PARSE LAYER — not wherever a downstream throw happens to land. `RawAdobeWebhookPayload` capped neither `agreement.id` (→ `organization_rule_events.external_file_id`, `char_length <= 500`) nor `senderInfo.email` (→ `sender_email`, `<= 320`). The id was caught late by `NonEmptyString.max(500)` inside `adaptAdobeSign` — but that throw fires AFTER the replay nonce is committed, so it produced a 500 whose retry is answered `200 {duplicate:true}`: the event is lost and the vendor is told it succeeded. The email was not caught at all (`MaybeEmail` has no length cap) and raised SQLSTATE 23514 in Postgres for the same result. A `.max()` on the ingress schema moves both into the handler's bounded 400 + DLQ branch, before any nonce exists. The webhook test reads those bounds out of `supabase/migrations/` so the two cannot drift.
+- **KNOWN GAP:** `MaybeEmail` in `connectors/schemas.ts` is length-unbounded and is shared by the DocuSign (`sender.email`) and Checkr (`candidate.email`) adapters, which write the same 320-char `sender_email` column. Capping `MaybeEmail` is one line but changes three handlers' ingress at once — own ticket, own soak covering all three.
 - **DO NOT** log response bodies from OAuth token exchanges (contain cleartext tokens)
 - **DO NOT** reuse the Bitcoin asymmetric signing key for OAuth token encryption
 - **DO NOT** add a `body`/raw-response field to `DocusignApiError` / `DriveApiError` (§1.6A / SCRUM-2492). They carry NO raw response body — a document-bearing response must never ride an error into a logger/Sentry/`last_error`. On `fetchDocusignCombinedDocument`'s non-2xx path (the only document-fetch path), do NOT read the response body and do NOT pass a `detail`; throw status + message only.
