@@ -333,9 +333,23 @@ export function evaluateAnchoringRpcHealth(
   probe: AnchoringRpcProbeResult,
   opts: AnchoringRpcVerdictOptions = {},
 ): AnchoringRpcVerdict {
+  // A cache that was NEVER probed (`checkedAtMs === null`) is not a transient --
+  // it is the absence of any measurement at all. The monitor refreshes in the
+  // BACKGROUND, so a freshly-started instance answers its first /health from a
+  // cold cache: state 'unknown', checkedAtMs null. `deploy-staging.yml` and
+  // `verify-worker-runtime.yml` fire exactly one health curl at exactly that
+  // moment, so before this carve-out a revoked credential still read 'ok' in
+  // the precise scenario this probe exists to catch.
+  //
+  // Fail closed, matching `not_configured` directly below: when prod anchoring
+  // is ON and we have measured nothing, say 'warning'. §1.5 forbids asserting
+  // health we have not measured. A transient 'unknown' that FOLLOWS a real
+  // probe keeps `checkedAtMs`, stays non-degrading, and so cannot flap a gate.
+  const neverProbed = probe.checkedAtMs === null;
   const degraded =
     probe.state === 'unauthenticated' ||
-    (probe.state === 'not_configured' && opts.prodAnchoringEnabled === true);
+    ((probe.state === 'not_configured' || (probe.state === 'unknown' && neverProbed))
+      && opts.prodAnchoringEnabled === true);
   return {
     status: degraded ? 'warning' : 'ok',
     credentialVerified: probe.state === 'ok',

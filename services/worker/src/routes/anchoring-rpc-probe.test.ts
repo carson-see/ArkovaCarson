@@ -485,6 +485,48 @@ describe('probeAnchoringRpcOnce — `ok` must mean a verified call (LOW)', () =>
   });
 });
 
+describe('evaluateAnchoringRpcHealth — NEVER-PROBED cold cache while prod anchoring is on (HIGH)', () => {
+  // The defect this PR exists to close, in the exact scenario it names as its
+  // consumer. `deploy-staging.yml` and `verify-worker-runtime.yml` fire a single
+  // health curl at a freshly-started instance. The monitor refreshes in the
+  // BACKGROUND, so that first request reads a cold cache: state 'unknown',
+  // checkedAtMs null. 'unknown' is not 'unauthenticated', so `degraded` was
+  // false, so the compact vocabulary served 'ok' -- a revoked credential read
+  // as healthy precisely when the gate evaluated it.
+  //
+  // A never-probed cache is NOT a transient. We have no measurement at all, and
+  // §1.5 forbids asserting something we have not measured. Fail closed, exactly
+  // as `not_configured` already does one line above.
+  it('degrades when the cache was never probed and prod anchoring is enabled', () => {
+    expect(
+      evaluateAnchoringRpcHealth(
+        { state: 'unknown', endpoint: null, checkedAtMs: null },
+        { prodAnchoringEnabled: true },
+      ).status,
+    ).toBe('warning');
+  });
+
+  it('stays ok for a never-probed cache when prod anchoring is OFF', () => {
+    expect(
+      evaluateAnchoringRpcHealth(
+        { state: 'unknown', endpoint: null, checkedAtMs: null },
+        { prodAnchoringEnabled: false },
+      ).status,
+    ).toBe('ok');
+  });
+
+  it('does NOT degrade a transient unknown that follows a real probe (no deploy-gate flapping)', () => {
+    // checkedAtMs set => we probed at least once; a later timeout is transient
+    // and must stay quiet, which is the behaviour the original design chose.
+    expect(
+      evaluateAnchoringRpcHealth(
+        { state: 'unknown', endpoint: null, checkedAtMs: 1_700_000_000_000 },
+        { prodAnchoringEnabled: true },
+      ).status,
+    ).toBe('ok');
+  });
+});
+
 describe('evaluateAnchoringRpcHealth — not_configured while prod anchoring is on (MEDIUM)', () => {
   it('degrades when the RPC URL is absent but prod anchoring is enabled', () => {
     const v = evaluateAnchoringRpcHealth(
