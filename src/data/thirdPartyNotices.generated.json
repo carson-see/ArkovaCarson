@@ -465,13 +465,13 @@
     },
     {
       "name": "@tanstack/query-core",
-      "version": "5.101.4",
+      "version": "5.102.8",
       "license": "MIT",
       "repository": "https://github.com/TanStack/query"
     },
     {
       "name": "@tanstack/react-query",
-      "version": "5.101.4",
+      "version": "5.102.8",
       "license": "MIT",
       "repository": "https://github.com/TanStack/query"
     },
@@ -1263,7 +1263,7 @@
     },
     {
       "name": "zod",
-      "version": "4.4.3",
+      "version": "4.5.4",
       "license": "MIT",
       "repository": "https://github.com/colinhacks/zod"
     }
