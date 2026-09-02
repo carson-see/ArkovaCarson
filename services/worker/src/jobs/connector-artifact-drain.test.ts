@@ -62,6 +62,7 @@ interface Row {
   metadata: Record<string, unknown>;
   anchor_id: string | null;
   credit_deduction_id: string | null;
+  updated_at: string;
 }
 
 function makeRow(over: Partial<Row> & Pick<Row, 'id' | 'org_id'>): Row {
@@ -74,6 +75,7 @@ function makeRow(over: Partial<Row> & Pick<Row, 'id' | 'org_id'>): Row {
     metadata: {},
     anchor_id: null,
     credit_deduction_id: null,
+    updated_at: '2026-09-02T00:00:00.000Z',
     ...over,
   };
 }
@@ -476,6 +478,45 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.alert).toHaveBeenCalledWith(
       expect.objectContaining({ scope: 'row', orgId: ORG_A, artifactId: ART_1, reason: 'artifact_fingerprint_superseded_requeued' }),
     );
+  });
+
+  it('claim-to-mint gate is a ROW-VERSION check: a heal that strips _direction WITHOUT changing the hash still aborts', async () => {
+    // The F1-heal is licensed by `wonByInboundRow`, NOT by `fingerprintMismatch`
+    // — `docusign-envelope-completed.ts` says it fires "even in the vanishingly
+    // unlikely case the hashes happened to coincide". Such a heal writes
+    // `fingerprint_sha256` (byte-identical) AND `metadata` (with `_direction`
+    // stripped) in one UPDATE. A fingerprint-only gate would PASS, and
+    // `defaultMaterializeAnchor` would then read `_direction` from the CAPTURED
+    // metadata and stamp `fingerprint_source: 'issuer_record_attestation'` —
+    // asserting a DECLARED evidence class for a fingerprint the system has just
+    // reclassified as MEASURED (§1.5 / R19 mislabel).
+    const SAME_FP = 'd'.repeat(64);
+    const h = makeHarness([
+      makeRow({
+        id: ART_1,
+        org_id: ORG_A,
+        status: 'queued',
+        fingerprint_sha256: SAME_FP,
+        metadata: { _direction: 'inbound', _sending_account_id: 'acct-X' },
+        updated_at: '2026-09-02T00:00:00.000Z',
+      }),
+    ]);
+    h.deps.materializeAnchor = (async () => {
+      // Heal lands: hash UNCHANGED, metadata reclassified, version bumped.
+      delete (h.rows[0].metadata as Record<string, unknown>)._direction;
+      delete (h.rows[0].metadata as Record<string, unknown>)._sending_account_id;
+      h.rows[0].updated_at = '2026-09-02T00:00:05.000Z';
+      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
+    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    // The fingerprint never moved, so ONLY a version-keyed gate catches this.
+    expect(h.rows[0].fingerprint_sha256).toBe(SAME_FP);
+    expect(result.supersededRequeued).toBe(1);
+    expect(h.rows[0].anchor_id).toBeNull();
+    expect(h.debit).not.toHaveBeenCalled();
+    expect(h.neutralizeOrphanAnchor).toHaveBeenCalledTimes(1);
   });
 
   it('claim-to-mint abort: an anchor this pass did NOT create (reused envelope/duplicate anchor) is never neutralized', async () => {
@@ -1478,6 +1519,7 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
     external_ref: 'env-inbound-1',
     anchor_id: null,
     credit_deduction_id: null,
+    updated_at: '2026-09-02T00:00:00.000Z',
   };
 
   it('sets fingerprint_source=issuer_record_attestation when metadata._direction is inbound', async () => {

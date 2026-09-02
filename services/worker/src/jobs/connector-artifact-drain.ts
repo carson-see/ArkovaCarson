@@ -85,7 +85,7 @@ function boundedReason(raw: string): string {
  * Zod on every write path). The `metadata` carries semi-external artifact fields,
  * so validate the whole row shape before insert — a malformed fingerprint /
  * empty filename / wrong status is rejected before it reaches Postgres. The
- * status-update writes (claim/markStatus/markFailed/markRequeued) persist
+ * status-update writes (claim/transitionArtifact/markFailed) persist
  * server-controlled status LITERALS only, so they don't need a schema.
  *
  * EXPORTED for the SCRUM-2486 AC-4 importer-cannot-set-SECURED guard test —
@@ -132,6 +132,13 @@ export interface ConnectorArtifactRow {
   metadata: Record<string, unknown> | null;
   anchor_id: string | null;
   credit_deduction_id: string | null;
+  /**
+   * The row's version stamp AS OF THE CLAIM. Every writer of this table sets
+   * it, so it is the one value that changes when ANY captured field changes —
+   * which is why the claim-to-mint gate keys on it and not on
+   * `fingerprint_sha256` alone. See `linkMaterializedAnchor`.
+   */
+  updated_at: string;
 }
 
 export interface MaterializedAnchor {
@@ -287,12 +294,17 @@ export interface ConnectorArtifactDrainResult {
    */
   reconfirmRequeued: number;
   /**
-   * Rows whose mint was ABORTED because the artifact's `fingerprint_sha256`
-   * changed under us between the claim and the link (a
+   * Mints ABORTED by the claim-to-mint freshness gate: the artifact's row
+   * version moved between the claim and the link (a
    * `docusign-envelope-completed.ts` provenance heal landed in the window).
-   * The anchor was never linked, never charged, never anchored; the row was
-   * requeued to re-drain against the healed value. Counted separately from
-   * `failed` — this is the freshness gate WORKING, not a row failure.
+   * The anchor was never linked, never charged, never anchored.
+   *
+   * Counts BOTH abort outcomes — the row requeued for re-drain, and the
+   * fail-closed case where the orphan could not be neutralized so the row was
+   * deliberately left in-flight. They are deliberately one number (the gate
+   * fired either way, and no charge landed); the stuck case is distinguished
+   * by its own `orphan_anchor_neutralize_failed` alert, not by this counter.
+   * Separate from `failed` — this is the gate WORKING, not a row failure.
    */
   supersededRequeued: number;
 }
@@ -743,7 +755,7 @@ async function claimRow(
     .eq('id', id)
     .eq('org_id', orgId)
     .in('status', DRAINABLE_STATUSES as unknown as string[])
-    .select('id, org_id, status, fingerprint_sha256, byte_length, source, external_ref, metadata, anchor_id, credit_deduction_id')
+    .select('id, org_id, status, fingerprint_sha256, byte_length, source, external_ref, metadata, anchor_id, credit_deduction_id, updated_at')
     .maybeSingle();
 
   if (error) {
@@ -825,7 +837,7 @@ async function confirmOneMaterializedArtifact(
 
   if (isAnchorAdvanced(anchor)) {
     // Irreversibly advanced → promote to terminal anchored (status-guarded).
-    if (await markStatus(deps, orgId, ref.id, 'materialized', 'anchored', { anchor_id: anchorId })) {
+    if (await markAnchored(deps, orgId, ref.id, anchorId)) {
       result.anchored += 1;
       result.confirmed += 1;
       deps.logger.info({ orgId, artifactId: ref.id, anchorId, anchorStatus: anchor!.status }, 'connector-artifact confirmed anchored');
@@ -967,11 +979,11 @@ async function drainOneClaimedRow(
       // undeleted anchor, so it is broadcast-eligible. That must not be a
       // logger.warn nobody reads: alert it explicitly so an operator can
       // decide whether it is a duplicate to retire or a legitimate hand-off.
-      if (materialized.created === true) {
+      if (materialized.created) {
         deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'unlinked_anchor_left_by_lost_lease' });
       }
       deps.logger.warn(
-        { orgId, artifactId: row.id, anchorId, anchorCreatedByThisPass: materialized.created === true },
+        { orgId, artifactId: row.id, anchorId, anchorCreatedByThisPass: Boolean(materialized.created) },
         'connector-artifact lost lease before debit — stopping row',
       );
       return;
@@ -1097,8 +1109,32 @@ async function linkMaterializedAnchor(
     .eq('id', row.id)
     .eq('org_id', orgId)
     .eq('status', 'processing')
-    // THE GATE. `row.fingerprint_sha256` is the value `claimRow`'s own CAS
-    // RETURNING captured — never the batch SELECT's (that SELECT is id-only).
+    // THE GATE — an OPTIMISTIC-CONCURRENCY check on the row VERSION, not on
+    // one column. `row.updated_at` is the stamp `claimRow`'s own CAS RETURNING
+    // captured (never the batch SELECT's — that SELECT is id-only), and every
+    // writer of this table sets it, so this predicate fails if ANY captured
+    // field moved.
+    //
+    // Keying on `fingerprint_sha256` alone was NOT enough, and the miss is a
+    // real one: the F1-heal writes `fingerprint_sha256` AND `metadata` in the
+    // SAME UPDATE, and it is licensed by `wonByInboundRow` — NOT by
+    // `fingerprintMismatch` (see `docusign-envelope-completed.ts`, which says
+    // in as many words that it fires "even in the vanishingly unlikely case
+    // the hashes happened to coincide"). So a heal against a declared-inbound
+    // row whose declared hash HAPPENED to equal the measured one strips
+    // `_direction` while leaving the fingerprint byte-identical. A
+    // fingerprint-only gate passes, and `defaultMaterializeAnchor` then reads
+    // `_direction` from the CAPTURED metadata and stamps the anchor
+    // `fingerprint_source: 'issuer_record_attestation'` — asserting a DECLARED
+    // evidence class for a fingerprint the system has just reclassified as
+    // MEASURED. That is a §1.5/R19 provenance mislabel, quieter than the
+    // forged-mint but the same class of lie.
+    //
+    // `fingerprint_sha256` is kept ALONGSIDE it deliberately: it is the
+    // predicate the TLA proof models and the one whose removal the mutation
+    // test catches, and a redundant equality costs nothing on a PK-targeted,
+    // already-row-locked UPDATE.
+    .eq('updated_at', row.updated_at)
     .eq('fingerprint_sha256', row.fingerprint_sha256)
     .select('id')
     .maybeSingle();
@@ -1112,50 +1148,28 @@ async function linkMaterializedAnchor(
   }
   if (data != null) return 'linked';
 
-  // Zero rows. Discriminate WITHOUT a read and WITHOUT releasing the lease:
-  // this CAS matches only while the row is still ours, and leaves it
-  // `processing` so no other pass can claim it (or reach our orphan through the
-  // envelope guard) before `abortSupersededMint` has neutralized it.
-  const { data: stillOurs, error: probeError } = await deps.db
-    .from('connector_artifact')
-    .update({ updated_at: new Date().toISOString() })
-    .eq('id', row.id)
-    .eq('org_id', orgId)
-    .eq('status', 'processing')
-    .select('id')
-    .maybeSingle();
-
-  if (probeError) {
-    deps.logger.warn({ error: probeError, orgId, artifactId: row.id }, 'connector-artifact superseded-mint lease probe failed');
-    return 'lost_lease';
-  }
-  return stillOurs != null ? 'superseded' : 'lost_lease';
+  // Zero rows. Discriminate WITHOUT a read and WITHOUT releasing the lease: a
+  // `processing -> processing` probe matches only while the row is still ours,
+  // and leaves it `processing` so no other pass can claim it (or reach our
+  // orphan through the envelope guard) before `abortSupersededMint` has
+  // neutralized it. A DB error maps to `lost_lease` too — fail-closed.
+  return (await transitionArtifact(deps, orgId, row.id, 'processing', 'processing'))
+    ? 'superseded'
+    : 'lost_lease';
 }
 
 /**
- * Release the lease on a superseded row: `processing → queued`, so the next
- * drain pass re-claims it and captures the HEALED fingerprint. Guarded, and
- * called ONLY after the orphan anchor is provably gone — see
- * `linkMaterializedAnchor`'s note on why the ordering is load-bearing.
+ * Release the lease on a superseded row: `processing -> queued`, so the next
+ * drain pass re-claims it and captures the HEALED content. Called ONLY after
+ * the orphan anchor is provably gone — see `linkMaterializedAnchor` on why the
+ * ordering is load-bearing.
  */
 async function releaseSupersededRow(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
   id: string,
 ): Promise<boolean> {
-  const { data, error } = await deps.db
-    .from('connector_artifact')
-    .update({ status: 'queued', updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .eq('org_id', orgId)
-    .eq('status', 'processing')
-    .select('id')
-    .maybeSingle();
-  if (error) {
-    deps.logger.warn({ error, orgId, artifactId: id }, 'connector-artifact superseded-mint requeue failed');
-    return false;
-  }
-  return data != null;
+  return transitionArtifact(deps, orgId, id, 'processing', 'queued');
 }
 
 /**
@@ -1192,38 +1206,47 @@ async function abortSupersededMint(
   materialized: MaterializedAnchor,
   result: ConnectorArtifactDrainResult,
 ): Promise<void> {
-  if (materialized.created === true) {
-    let neutralized = false;
-    try {
-      neutralized = await deps.neutralizeOrphanAnchor({ orgId, anchorId: materialized.anchorId });
-    } catch (err) {
-      deps.logger.error({ err, orgId, artifactId: row.id, anchorId: materialized.anchorId }, 'connector-artifact orphan-anchor neutralization threw');
-    }
-    if (!neutralized) {
-      // FAIL CLOSED: keep the lease. A re-drainable row plus a live orphan the
-      // envelope guard can find is exactly how the forged fingerprint would get
-      // re-adopted.
-      deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'orphan_anchor_neutralize_failed' });
-      deps.logger.error(
-        { orgId, artifactId: row.id, anchorId: materialized.anchorId },
-        'connector-artifact could NOT neutralize the orphan anchor left by a superseded mint — row deliberately LEFT in-flight (not requeued) so the envelope guard cannot re-adopt it; operator follow-up required',
-      );
-      result.supersededRequeued += 1;
-      return;
-    }
+  // The gate fired and no charge landed — true on BOTH branches below.
+  result.supersededRequeued += 1;
+
+  // Nothing to neutralize (we reused an existing anchor) counts as clean.
+  const orphanGone = !materialized.created || (await neutralizeOrphan(deps, orgId, row, materialized.anchorId));
+
+  if (!orphanGone) {
+    // FAIL CLOSED: keep the lease. A re-drainable row next to a live orphan
+    // the envelope guard can find is exactly how the superseded fingerprint
+    // would get re-adopted.
+    deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'orphan_anchor_neutralize_failed' });
+    deps.logger.error(
+      { orgId, artifactId: row.id, anchorId: materialized.anchorId },
+      'connector-artifact could NOT neutralize the orphan anchor left by a superseded mint — row deliberately LEFT in-flight (not requeued) so the envelope guard cannot re-adopt it; operator follow-up required',
+    );
+    return;
   }
 
-  // The orphan is gone (or there never was one) — safe to hand the row back.
   if (!(await releaseSupersededRow(deps, orgId, row.id))) {
     deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease at superseded-mint release — stopping row');
   }
-
-  result.supersededRequeued += 1;
   deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'artifact_fingerprint_superseded_requeued' });
   deps.logger.warn(
-    { orgId, artifactId: row.id, anchorId: materialized.anchorId, anchorCreatedByThisPass: materialized.created === true },
-    'connector-artifact fingerprint superseded between claim and mint — anchor NOT linked, row requeued to re-drain against the healed value',
+    { orgId, artifactId: row.id, anchorId: materialized.anchorId, anchorCreatedByThisPass: Boolean(materialized.created) },
+    'connector-artifact row version moved between claim and mint — anchor NOT linked, row requeued to re-drain against the healed content',
   );
+}
+
+/** Neutralize + contain: a throwing sink is the same outcome as a false one. */
+async function neutralizeOrphan(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  row: ConnectorArtifactRow,
+  anchorId: string,
+): Promise<boolean> {
+  try {
+    return await deps.neutralizeOrphanAnchor({ orgId, anchorId });
+  } catch (err) {
+    deps.logger.error({ err, orgId, artifactId: row.id, anchorId }, 'connector-artifact orphan-anchor neutralization threw');
+    return false;
+  }
 }
 
 /**
@@ -1308,7 +1331,7 @@ async function reconcileRejectedDebitAnchor(
 
   if (isAnchorAdvanced(advancedAnchor)) {
     // Irreversibly advanced → promote to terminal anchored (status-guarded).
-    if (await markStatus(deps, orgId, row.id, 'materialized', 'anchored', { anchor_id: anchorId })) {
+    if (await markAnchored(deps, orgId, row.id, anchorId)) {
       result.anchored += 1;
       result.confirmed += 1;
       deps.logger.info({ orgId, artifactId: row.id, anchorId, anchorStatus: advancedAnchor!.status }, 'connector-artifact debit saw advanced anchor — promoted anchored (idempotent, no re-charge)');
@@ -1383,7 +1406,7 @@ async function submitAndConfirmAnchor(
 
   // STATUS-GUARDED materialized → anchored. A zero-row match = LOST LEASE
   // (reaper/another worker took it) → stop, don't count anchored.
-  if (!(await markStatus(deps, orgId, row.id, 'materialized', 'anchored', { anchor_id: anchorId }))) {
+  if (!(await markAnchored(deps, orgId, row.id, anchorId))) {
     deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease before mark-anchored — stopping row');
     return;
   }
@@ -1442,71 +1465,72 @@ async function handleRowDrainError(
 }
 
 /**
- * STATUS-GUARDED transition that RETURNS whether a row actually matched.
- * `.eq('status', from)` means a row the reaper has already re-queued (or another
- * worker reclaimed/anchored) is NOT clobbered by a slow/zombie worker finishing
- * its old pass — the UPDATE matches zero rows. `.select('id').maybeSingle()`
- * surfaces that zero-row case as `false` (a LOST LEASE), so the caller can STOP
- * the row instead of pressing on with a stale lease. A DB error is also `false`
- * (fail-closed — don't proceed on an unconfirmed transition).
+ * THE guarded artifact transition. One place implements the safety property
+ * every status write in this module shares: org-scoped, guarded on the exact
+ * `from` status, RETURNS whether a row actually matched, and fails CLOSED on a
+ * DB error (`false`). A zero-row match means LOST LEASE — the reaper re-queued
+ * the row, or another worker reclaimed it — so the caller must STOP rather
+ * than press on with a stale lease.
+ *
+ * This replaced five hand-rolled copies of the same builder chain. The guard
+ * set IS the safety property (see this file's header), so it lives once.
+ *
+ * NOTE the deliberately NARROW `to` surface: `processing -> materialized` is
+ * NOT offered here, because that transition is the one the claim-to-mint
+ * freshness gate owns (`linkMaterializedAnchor`) and it carries an extra
+ * predicate this generic helper has no parameter for. A caller reaching for it
+ * here would silently bypass the gate. If you need it, you need the gate.
  */
-async function markStatus(
+async function transitionArtifact(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
   id: string,
   from: 'processing' | 'materialized',
-  to: 'materialized' | 'anchored',
+  to: 'processing' | 'queued' | 'anchored',
   extra: Record<string, unknown> = {},
 ): Promise<boolean> {
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), ...extra };
+  // `processing -> processing` is the LEASE PROBE: it asserts ownership without
+  // changing state, so it must not write `status` at all.
+  if (from !== to) patch.status = to;
+
   const { data, error } = await deps.db
     .from('connector_artifact')
-    .update({ status: to, updated_at: new Date().toISOString(), ...extra })
+    .update(patch)
     .eq('id', id)
     .eq('org_id', orgId)
     .eq('status', from)
     .select('id')
     .maybeSingle();
   if (error) {
-    deps.logger.warn({ error, orgId, artifactId: id, from, to }, `connector-artifact mark-${to} failed`);
+    deps.logger.warn({ error, orgId, artifactId: id, from, to }, `connector-artifact ${from}->${to} transition failed`);
     return false;
   }
   return data != null;
 }
 
+/** Terminal promote: `materialized -> anchored`, recording the anchor. */
+async function markAnchored(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  id: string,
+  anchorId: string,
+): Promise<boolean> {
+  return transitionArtifact(deps, orgId, id, 'materialized', 'anchored', { anchor_id: anchorId });
+}
+
 /**
- * RETRYABLE requeue: reset a row back to 'queued' so the next daily drain
- * re-claims it. Used for insufficient_credits — a transient condition, not a
- * hard failure. STATUS-GUARDED on the in-flight `materialized` status (the row
- * is materialized by step 1 before the debit runs), consistent with the
- * `markStatus` pattern: if the reaper has already re-queued the row (or another
- * worker reclaimed it), this matches zero rows and does NOT clobber it.
- */
-/**
- * RETRYABLE requeue: reset a row back to 'queued' so the next daily drain
- * re-claims it. Used for insufficient_credits — a transient condition, not a
- * hard failure. STATUS-GUARDED on the in-flight `materialized` status (the row
- * is materialized by step 1 before the debit runs) and RETURNS whether a row
- * matched: a zero-row update means the reaper/another worker already took the
- * row (LOST LEASE) → the caller must NOT also count it.
+ * RETRYABLE requeue for a MATERIALIZED row: back to 'queued' so the next daily
+ * drain re-claims it. Used for `insufficient_credits` and by the confirmation
+ * step — transient conditions, not hard failures. `failed` is NOT a drainable
+ * status, so marking one of these failed would strand the row forever.
  */
 async function markRequeued(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
   id: string,
 ): Promise<boolean> {
-  const { data, error } = await deps.db
-    .from('connector_artifact')
-    .update({ status: 'queued', updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .eq('org_id', orgId)
-    .eq('status', 'materialized')
-    .select('id')
-    .maybeSingle();
-  if (error) {
-    deps.logger.warn({ error, orgId, artifactId: id }, 'connector-artifact mark-requeued failed');
-    return false;
-  }
-  return data != null;
+  return transitionArtifact(deps, orgId, id, 'materialized', 'queued');
 }
 
 /**
@@ -1539,12 +1563,25 @@ async function markFailed(
   // was a Sentry alert.
   //
   // This is a read-modify-WRITE of the whole `metadata` column from the snapshot
-  // taken at claim time. Safe TODAY because `markFailed` is the only writer of
-  // this column after insert (`enqueue_connector_artifact` is ON CONFLICT DO
-  // NOTHING). The first writer that does `ON CONFLICT DO UPDATE` on `metadata`
-  // gets silently clobbered by this. The durable form is a server-side
-  // `metadata = metadata || jsonb_build_object('drain_error', $1)` in an RPC,
-  // which needs a migration — do that before adding a second writer.
+  // taken at claim time.
+  //
+  // CORRECTION (2026-09-02): the comment that used to sit here claimed
+  // `markFailed` is "the only writer of this column after insert". That is
+  // FALSE and has been since the F1-heal shipped —
+  // `docusign-envelope-completed.ts`'s supersede UPDATE writes `metadata`
+  // (stripping `_direction`/`_sending_account_id`, adding
+  // `_superseded_declared_fingerprint`/`_superseded_at`/`_superseded_reason`).
+  // So this write CAN clobber a heal's provenance breadcrumbs and restore
+  // `_direction: 'inbound'` on a row the heal deliberately reclassified.
+  //
+  // Bounded in practice: this runs only on the terminal `failed` path, whose
+  // status guard is `IN ('processing','materialized')`, and the heal's own
+  // guard is `anchor_id IS NULL` — so the overlap is a row claimed but not yet
+  // linked, exactly the claim-to-mint window `linkMaterializedAnchor` gates.
+  // A row that fails there is already requeued rather than failed. It is not
+  // provably impossible, though, and the durable form remains a server-side
+  // `metadata = metadata || jsonb_build_object('drain_error', $1)` in an RPC —
+  // tracked as the same follow-up as the materialize RPC (SCRUM-3879).
   const existingMetadata =
     row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
       ? (row.metadata as Record<string, unknown>)
