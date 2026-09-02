@@ -98,16 +98,16 @@ Three rules came out of it. Do not relax any of them:
 
 ## `TOOL_DEFINITIONS` descriptions are CI-guarded (BUG-026, 2026-08-15)
 
-`TOOL_DEFINITIONS` in `mcp-tools.ts` is the canonical text for five published surfaces: this file, `public/.well-known/mcp/server-card.json`, `public/AGENTS.md`, `public/llms.txt` + `public/llms-full.txt`, and `docs/api/mcp-tools.md`. Nothing compared the description TEXT between them, which is how BUG-026 — `search_credentials` advertising semantic/vector matching over an ILIKE substring scan — survived on six surfaces at once.
+`TOOL_DEFINITIONS` in `mcp-tools.ts` is the canonical text for five published surfaces: this file, `public/.well-known/mcp/server-card.json`, `public/AGENTS.md`, `public/llms.txt` + `public/llms-full.txt`, and `docs/api/mcp-tools.md`. Nothing compared the description TEXT between them, which is how BUG-026 — `search_anchors` advertising semantic/vector matching over an ILIKE substring scan — survived on six surfaces at once.
 
 `scripts/ci/check-mcp-claim-parity.ts` now enforces it (ci.yml `policy-lints`). What this means when you edit a description here:
 
 - The manifest description must still START WITH your new canonical text. Editing one side alone fails the build. The manifest may APPEND discovery-only guidance (8 of the 16 tools do); it may not restate the mechanism.
 - A new tool must be documented in `docs/api/mcp-tools.md` in the same PR (`reference-coverage`, strict, no baseline).
-- `CLAIM_RULES` in the gate declares assertions a description may not make about a given tool, with a qualifier that makes the claim honest — `search_credentials` may not claim semantic/vector retrieval unless the same text also discloses `search_mode` or the lexical/substring fallback, and `nessie_query` may not be described in the present tense without a DISABLED marker. Adding a rule is the intended way to close the next instance; deleting one asserts the behaviour changed, and needs the code that changed it.
+- `CLAIM_RULES` in the gate declares assertions a description may not make about a given tool, with a qualifier that makes the claim honest — `search_anchors` may not claim semantic/vector retrieval unless the same text also discloses `search_mode` or the lexical/substring fallback, and `nessie_query` may not be described in the present tense without a DISABLED marker. Adding a rule is the intended way to close the next instance; deleting one asserts the behaviour changed, and needs the code that changed it.
 - Known outstanding, in `scripts/ci/mcp-claim-parity-baseline.json`: this file's `nessie_query` description still makes a present-tense capability claim (owned by PR #2236), and `oracle_batch_verify` / `list_agents` carry one-word hand-copy drift against the manifest that is UNOWNED. The gate could not fix them — every published surface is above T0.
 - The gate scopes text by tool NAME. A module-header comment that names no tool is out of scope; `mcp-tools.ts`'s own header was one of BUG-026's six surfaces and would not be caught.
-## 2026-08-15 BUG-008/027 — `nessie_query` fails CLOSED; BUG-026 — `search_credentials` describes itself honestly
+## 2026-08-15 BUG-008/027 — `nessie_query` fails CLOSED; BUG-026 — `search_anchors` describes itself honestly
 
 **`nessie_query`.** Gated on `SupabaseConfig.nessieEnabled`, sourced from the `ENABLE_NESSIE_QUERY`
 edge var (`env.ENABLE_NESSIE_QUERY === 'true'`). **Absent means disabled** — Nessie is permanently
@@ -126,7 +126,7 @@ The disabled result carries `isError: true`, `enabled: false`, `code: 'nessie_di
 of `total`/`results`/`answer`/`confidence`/`citations`. The absence is the contract: an agent reading
 only `total` would otherwise conclude "0 results".
 
-**`search_credentials` (BUG-026).** The description used to LEAD with "Uses semantic (vector)
+**`search_anchors` (BUG-026).** The description used to LEAD with "Uses semantic (vector)
 similarity matching". In practice the vector path needs a configured worker AND an open
 `ENABLE_SEMANTIC_SEARCH` gate; with the gate closed the worker answers 503 and every call is served
 lexically. Reproduced on the rig: the non-word fragment `aten` matched

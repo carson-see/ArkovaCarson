@@ -39,7 +39,7 @@ const perform = async (z: any, bundle: any) => {
 };
 
 export const verifyCredentialAction = {
-  key: 'verify_credential',
+  key: 'verify_anchor',
   noun: 'Verification',
   display: {
     label: 'Verify Credential',

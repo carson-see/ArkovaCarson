@@ -141,8 +141,8 @@ export const agentGetDocumentSchema = agentGetAnchorSchema;
 
 // ── Registry ─────────────────────────────────────────────────────────────
 export const MCP_TOOL_SCHEMAS = {
-  verify_credential: verifyCredentialSchema,
-  search_credentials: searchCredentialsSchema,
+  verify_anchor: verifyCredentialSchema,
+  search_anchors: searchCredentialsSchema,
   nessie_query: nessieQuerySchema,
   anchor_document: anchorDocumentSchema,
   verify_document: verifyDocumentSchema,

@@ -22,7 +22,7 @@
  *      (organization name; string also locked by copy-claims-gate.test.ts
  *      R-7 wording) and LinkedIn's own "Credential URL" profile field.
  *   5. Frozen API identifiers rendered as code — MCP tool names
- *      verify_credential / search_credentials (§1.8: published contract).
+ *      verify_anchor / search_anchors (§1.8: published contract).
  *
  * Internal code identifiers (export names, object keys like CREDENTIAL_TYPE,
  * DB enum values) are NOT UI copy and are out of scope (§1.3 "Internal code

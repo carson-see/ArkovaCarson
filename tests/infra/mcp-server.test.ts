@@ -19,15 +19,15 @@ import {
 } from '../../services/edge/src/mcp-tools';
 
 describe('MCP Tool Definitions', () => {
-  it('exports verify_credential tool', () => {
-    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'verify_credential');
+  it('exports verify_anchor tool', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'verify_anchor');
     expect(tool).toBeDefined();
     expect(tool!.description).toBeDefined();
     expect(tool!.inputSchema.properties).toHaveProperty('public_id');
   });
 
-  it('exports search_credentials tool', () => {
-    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'search_credentials');
+  it('exports search_anchors tool', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'search_anchors');
     expect(tool).toBeDefined();
     expect(tool!.description).toBeDefined();
     expect(tool!.inputSchema.properties).toHaveProperty('query');

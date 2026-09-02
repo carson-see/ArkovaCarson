@@ -6,7 +6,7 @@
     "  a tool listed here that disappears from that surface fails the build. Growing a list",
     "  is always allowed and needs no edit here (the gate only reads it as a floor).",
     "  NOTE the finding this encodes: public/AGENTS.md and public/llms*.txt each document",
-    "  2 of the 16 registered tools — verify_credential and search_credentials. (A count of",
+    "  2 of the 16 registered tools — verify_anchor and search_anchors. (A count of",
     "  4 appears if you match bare `search` / `verify`, but those hits are the English words",
     "  and the REST path `verify-anchor`, not the MCP tools; see mentionRegex.) That is the",
     "  same under-advertisement shape as the 2-of-16 discovery-manifest bug that",
@@ -18,11 +18,11 @@
     "  a claim introduced by your own PR."
   ],
   "proseCoverage": {
-    "public/AGENTS.md": ["verify_credential", "search_credentials"],
-    "public/llms.txt": ["verify_credential", "search_credentials"],
-    "public/llms-full.txt": ["verify_credential", "search_credentials"],
+    "public/AGENTS.md": ["verify_anchor", "search_anchors"],
+    "public/llms.txt": ["verify_anchor", "search_anchors"],
+    "public/llms-full.txt": ["verify_anchor", "search_anchors"],
     "docs/api/mcp-tools.md": [
-      "verify_credential", "search_credentials", "nessie_query", "anchor_document",
+      "verify_anchor", "search_anchors", "nessie_query", "anchor_document",
       "verify_document", "verify_batch", "search", "verify", "list_orgs", "get_anchor",
       "get_organization", "get_record", "get_fingerprint", "get_document",
       "oracle_batch_verify", "list_agents"
@@ -30,7 +30,7 @@
   },
   "knownViolations": [
     {
-      "key": "card-description-parity::public/.well-known/mcp/server-card.json::search_credentials",
+      "key": "card-description-parity::public/.well-known/mcp/server-card.json::search_anchors",
       "owner": "PR #2236 (BUG-026) — held for the 2026-08 full-soak freeze",
       "reason": "The manifest rewrote the mechanism sentence instead of appending to it: canonical says semantic matching qualified by search_mode/lexical_substring, the manifest says unqualified 'semantic similarity matching against the credential database'. #2236 replaces the manifest description to match the tool definition."
     },
@@ -45,17 +45,17 @@
       "reason": "Hand-copy drift: canonical 'the authenticated caller organization', manifest 'the authenticated caller's organization'. The manifest's wording is the correct English; the fix belongs in services/edge/src/mcp-tools.ts (T2). Same tier constraint as oracle_batch_verify above."
     },
     {
-      "key": "retrieval-mechanism-claim::public/.well-known/mcp/server-card.json::search_credentials",
+      "key": "retrieval-mechanism-claim::public/.well-known/mcp/server-card.json::search_anchors",
       "owner": "PR #2236 (BUG-026)",
       "reason": "BUG-026 residue: 'Uses semantic similarity matching against the credential database. Returns ranked results with verification status and relevance scores.' No search_mode / lexical disclosure."
     },
     {
-      "key": "retrieval-mechanism-claim::public/AGENTS.md::search_credentials",
+      "key": "retrieval-mechanism-claim::public/AGENTS.md::search_anchors",
       "owner": "PR #2236 (BUG-026)",
-      "reason": "BUG-026 residue: the search_credentials section repeats the manifest's unqualified semantic claim."
+      "reason": "BUG-026 residue: the search_anchors section repeats the manifest's unqualified semantic claim."
     },
     {
-      "key": "retrieval-mechanism-claim::docs/api/mcp-tools.md::search_credentials",
+      "key": "retrieval-mechanism-claim::docs/api/mcp-tools.md::search_anchors",
       "owner": "PR #2236 (BUG-026)",
       "reason": "BUG-026 residue: tool-index row 10 reads 'Semantic search across credentials'."
     },

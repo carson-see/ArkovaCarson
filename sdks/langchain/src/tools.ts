@@ -76,7 +76,7 @@ export interface VerifyResult {
  * Output: Verification result with status, issuer, type, and chain proof
  */
 export class ArkovaVerifyTool {
-  name = 'arkova_verify_credential';
+  name = 'arkova_verify_anchor';
   description = 'Verify the authenticity of a credential or document by its Arkova public ID. Returns whether the record is verified, its status (ACTIVE/REVOKED/PENDING), the issuer name, credential type, and blockchain anchor timestamp. Use this when you need to confirm a credential is authentic.';
   config: ArkovaToolConfig;
 
@@ -151,7 +151,7 @@ export class ArkovaOracleTool {
  * Output: Matching credentials and issuers
  */
 export class ArkovaSearchTool {
-  name = 'arkova_search_credentials';
+  name = 'arkova_search_anchors';
   description = 'Search the Arkova credential verification registry by issuer name, person name, or credential type. Returns matching credentials with their verification status. Use this to find credentials before verifying them.';
   config: ArkovaToolConfig;
 

@@ -48,8 +48,8 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 6 | **`get_record`** | **Public-safe record detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
 | 7 | **`get_fingerprint`** | **Public-safe latest-anchor lookup by SHA-256 fingerprint** | **SCRUM-1132 / SCRUM-1584** |
 | 8 | **`get_document`** | **Public-safe document detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
-| 9 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
-| 10 | `search_credentials` | Keyword (lexical substring) search across credentials | P8-S19 |
+| 9 | `verify_anchor` | Verify a single credential by public ID | P8-S19 |
+| 10 | `search_anchors` | Keyword (lexical substring) search across credentials | P8-S19 |
 | 11 | `nessie_query` | **DISABLED** — returns `nessie_disabled`, never results | PH1-SDK-03 |
 | 12 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
 | 13 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
@@ -111,7 +111,7 @@ Input:
 
 ---
 
-## 1. `verify_credential`
+## 1. `verify_anchor`
 
 Verify the authenticity and current status of a single credential by its public identifier.
 
@@ -143,11 +143,11 @@ Verify the authenticity and current status of a single credential by its public 
 
 ### Example agent prompt
 
-> "Use the verify_credential tool to check ARK-2026-001 and tell me if it's still valid."
+> "Use the verify_anchor tool to check ARK-2026-001 and tell me if it's still valid."
 
 ---
 
-## 2. `search_credentials`
+## 2. `search_anchors`
 
 Keyword search across anchored credentials.
 
@@ -382,9 +382,9 @@ Verify multiple credentials in a single call. Accepts up to 100 public IDs and r
 
 > "Verify these candidate credentials in one batch: ARK-2026-001, ARK-2026-002, ARK-2026-003. Then tell me which are revoked."
 
-### Why a separate tool from `verify_credential`?
+### Why a separate tool from `verify_anchor`?
 
-Calling `verify_credential` 100 times in a loop creates 100 turns of agent overhead (100 prompt re-evaluations, 100 tool dispatches, 100 result-parsing steps). `verify_batch` collapses that to **one** turn — far cheaper for the model and far faster wall-clock. Use `verify_batch` whenever you have a known list of IDs.
+Calling `verify_anchor` 100 times in a loop creates 100 turns of agent overhead (100 prompt re-evaluations, 100 tool dispatches, 100 result-parsing steps). `verify_batch` collapses that to **one** turn — far cheaper for the model and far faster wall-clock. Use `verify_batch` whenever you have a known list of IDs.
 
 ---
 
@@ -409,9 +409,9 @@ Tool calls share the per-API-key rate limits with the REST API:
 
 | Tool | Limit |
 |---|---|
-| `verify_credential`, `verify_document` | 1,000 req/min |
+| `verify_anchor`, `verify_document` | 1,000 req/min |
 | `anchor_document` | Gated write tool; not exposed in default launch manifest |
-| `search_credentials`, `nessie_query` | 30 req/min (AI-rate-limited) |
+| `search_anchors`, `nessie_query` | 30 req/min (AI-rate-limited) |
 | `verify_batch` | 10 req/min (batch tier) |
 
 Rate limit responses include `Retry-After`. Agents should back off and retry.
@@ -439,7 +439,7 @@ curl -X POST https://edge.arkova.ai/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "verify_credential",
+      "name": "verify_anchor",
       "arguments": { "public_id": "ARK-2026-001" }
     }
   }'
@@ -477,7 +477,7 @@ curl -X POST https://edge.arkova.ai/mcp \
 | v1.2 | 2026-05-03 | SCRUM-1132 + SCRUM-1584 | Added v2 detail aliases `get_organization`, `get_record`, `get_fingerprint`, `get_document`, plus `oracle_batch_verify` and `list_agents`. Total tools: 16. |
 | v1.1 | 2026-04-11 | INT-02 (SCRUM-643) | Added `verify_batch` tool (cle_verify deferred to INT-02b) |
 | v1.0 | 2026-03-22 | PH1-SDK-03 | Added `nessie_query`, `anchor_document`, `verify_document` |
-| v0.9 | 2026-03-08 | P8-S19 | Initial release with `verify_credential` + `search_credentials` |
+| v0.9 | 2026-03-08 | P8-S19 | Initial release with `verify_anchor` + `search_anchors` |
 
 ---
 

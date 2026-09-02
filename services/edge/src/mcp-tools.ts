@@ -5,8 +5,8 @@
  * MCP endpoint and tests.
  *
  * Tools:
- *   - verify_credential: Verify a credential by public ID
- *   - search_credentials: Lexical substring search across credentials; vector
+ *   - verify_anchor: Verify a credential by public ID
+ *   - search_anchors: Lexical substring search across credentials; vector
  *     search only when the deployment enables it (BUG-026)
  *   - nessie_query:      DISABLED — returns an explicit `nessie_disabled`
  *     error, never results (BUG-008/027, CTO ruling R-1)
@@ -34,7 +34,7 @@ const NESSIE_WORKER_FETCH_TIMEOUT_MS = 30_000;
 const SEARCH_WORKER_FETCH_TIMEOUT_MS = 15_000;
 
 /**
- * Search mode reported on every `search_credentials` result payload.
+ * Search mode reported on every `search_anchors` result payload.
  *
  * The tool historically advertised "semantic similarity matching" while the
  * only code path was an ILIKE substring scan (`search_public_credentials`
@@ -277,12 +277,24 @@ function nessieDisabledResult(): ToolResult {
 // Tool Definitions
 // ---------------------------------------------------------------------------
 
+/**
+ * Appended to the two tool descriptions that were previously named
+ * `verify_anchor` / `search_anchors`. In an agent tool namespace
+ * "credentials" reads as auth secrets rather than verified records: given
+ * the old names, an agent skipped this server entirely and swept the local
+ * filesystem for .env files instead. The rename is the primary fix; this
+ * note states the boundary in the surface the model actually reads.
+ */
+const API_ONLY_NOTE =
+  'Queries the Arkova verification API over HTTPS; it does NOT read local files, environment variables, or stored secrets.';
+
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
-    name: 'verify_credential',
+    name: 'verify_anchor',
     description:
-      'Verify a credential\'s authenticity and current status by its public identifier. ' +
-      'Returns verification status, issuer information, credential type, dates, and network anchoring proof.',
+      'Verify an anchored record\'s authenticity and current status by its public identifier. ' +
+      'Returns verification status, issuer information, record type, dates, and network anchoring proof. ' +
+      API_ONLY_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
@@ -295,7 +307,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'search_credentials',
+    name: 'search_anchors',
     // BUG-026: this description used to LEAD with "Uses semantic (vector)
     // similarity matching". In practice the vector path requires a configured
     // worker AND an open ENABLE_SEMANTIC_SEARCH gate; with the gate closed the
@@ -317,7 +329,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       'Every result reports `search_mode`: "lexical_substring" for the ' +
       'substring path, or "semantic_vector" when a real vector match ran (that ' +
       'mode alone carries a `similarity` score). ' +
-      'Read `search_mode` before presenting results as semantically ranked.',
+      'Read `search_mode` before presenting results as semantically ranked. ' +
+      API_ONLY_NOTE +
+      ' It does not search the local filesystem and never returns API keys or authentication secrets.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -343,7 +357,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       'DISABLED. Arkova\'s Nessie intelligence engine is not currently served: this tool ' +
       'returns an explicit `nessie_disabled` error, never results. It does not search, and ' +
       'an empty answer from it must not be read as "no matching documents". ' +
-      'Use `search` or `search_credentials` for record lookup instead.',
+      'Use `search` or `search_anchors` for record lookup instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -729,7 +743,7 @@ export async function handleSearchCredentials(
       // the ILIKE pattern scan in large tables).
       const errBody = await response.text().catch(() => '');
       console.error(
-        `[search_credentials] RPC returned HTTP ${response.status}: ${errBody}`,
+        `[search_anchors] RPC returned HTTP ${response.status}: ${errBody}`,
       );
       return searchCredentialsFallback(input.query, maxResults, config);
     }
@@ -824,7 +838,7 @@ async function searchCredentialsFallback(
       })),
     });
   } catch (err) {
-    console.error('[search_credentials] fallback failed:', err);
+    console.error('[search_anchors] fallback failed:', err);
     return errorResult(`Search failed: both RPC and fallback query failed — ${err instanceof Error ? err.message : 'unknown'}`);
   }
 }
@@ -895,7 +909,7 @@ async function searchCredentialsWorkerSemantic(
       // 503 = ENABLE_SEMANTIC_SEARCH gate closed. Status only — never the key
       // or the full URL with params.
       console.warn(
-        `[search_credentials] worker semantic proxy HTTP ${response.status}; falling back to lexical search`,
+        `[search_anchors] worker semantic proxy HTTP ${response.status}; falling back to lexical search`,
       );
       return null;
     }
@@ -908,7 +922,7 @@ async function searchCredentialsWorkerSemantic(
     // Unrecognised shape — treat as "semantic did not run" rather than
     // reporting a misleading total:0 under a semantic label.
     if (!Array.isArray(body.results)) {
-      console.warn('[search_credentials] worker semantic proxy returned an unexpected shape; falling back to lexical search');
+      console.warn('[search_anchors] worker semantic proxy returned an unexpected shape; falling back to lexical search');
       return null;
     }
 
@@ -933,7 +947,7 @@ async function searchCredentialsWorkerSemantic(
   } catch (err) {
     const reason = err instanceof Error ? err.name : 'unknown';
     console.warn(
-      `[search_credentials] worker semantic proxy failed (${reason}); falling back to lexical search`,
+      `[search_anchors] worker semantic proxy failed (${reason}); falling back to lexical search`,
     );
     return null;
   } finally {
@@ -1048,7 +1062,7 @@ async function searchAgentRecords(
 
 /**
  * Agent-friendly alias for API v2 `search(q,type?)`. The legacy
- * `search_credentials` tool remains for backwards compatibility; this shape
+ * `search_anchors` tool remains for backwards compatibility; this shape
  * matches the OpenAPI 3.1 operationId consumed by function-call importers.
  */
 export async function handleAgentSearch(
@@ -1600,7 +1614,7 @@ export async function handleAnchorDocument(
  * Calls the `get_public_anchor_by_fingerprint` SECURITY DEFINER RPC
  * (migration 0339) and maps SECURED results through `shapeAnchorRow`, so verify
  * returns the SAME truthful, redacted anchor shape as `get_anchor` /
- * `verify_credential` once a document is actually anchored. The prior implementation hit
+ * `verify_anchor` once a document is actually anchored. The prior implementation hit
  * `/rest/v1/public_records?...&select=...public_id...` with a column set that
  * does not match the table shape — it returned HTTP 400 universally and the
  * tool was 100% broken.

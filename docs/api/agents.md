@@ -31,7 +31,7 @@ Developer-facing API documentation. Engineering mirrors and guides for the Arkov
 - A published description is a CLAIM (§1.13 R-7), governed like any other. When runtime behaviour and
   a description disagree, one of them is a defect — say which. 2026-08-15: `/nessie/query` is marked
   DISABLED + `deprecated: true` in `openapi.yaml` with the 503 `nessie_disabled` envelope documented
-  as its only reachable response (CTO ruling R-1), and `search_credentials` in `mcp-tools.md` now
+  as its only reachable response (CTO ruling R-1), and `search_anchors` in `mcp-tools.md` now
   leads with lexical substring matching rather than semantic similarity (BUG-026 — a false
   description, not a broken search; no behaviour changed).
 - `mcp-tools.md` mirrors the live tool descriptions in `services/edge/src/mcp-tools.ts`, and

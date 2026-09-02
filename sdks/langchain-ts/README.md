@@ -26,9 +26,9 @@ const tools = getArkovaTools({
 
 | Tool | Description |
 |------|-------------|
-| `arkova_verify_credential` | Verify a credential by public ID |
+| `arkova_verify_anchor` | Verify a credential by public ID |
 | `arkova_anchor_status` | Check anchor status and proof details |
-| `arkova_search_credentials` | Search verified credentials |
+| `arkova_search_anchors` | Search verified credentials |
 | `arkova_create_attestation` | Create a third-party attestation |
 
 ## Configuration

@@ -27,7 +27,7 @@ surface undercounts by 8x.
   - `get_record` and `get_document` both call `handleAgentGetAnchor`,
     which is itself a documented "agent-friendly alias" wrapper around
     `handleVerifyCredential` — byte-identical response to `get_anchor`
-    (and to `verify_credential`, modulo the caller-supplied-`public_id`
+    (and to `verify_anchor`, modulo the caller-supplied-`public_id`
     framing).
   - `get_fingerprint` calls `handleAgentVerify`, a documented alias of
     `handleVerifyDocument` — byte-identical response to `verify` (and
@@ -44,11 +44,11 @@ surface undercounts by 8x.
     (not done here): deprecate then remove `get_record`, `get_document`,
     `get_fingerprint` from the server once no active integration depends
     on them (grep MCP audit log `tool_name` distribution first), leaving
-    `verify_credential` + `get_anchor` (id-based family) and `verify` /
+    `verify_anchor` + `get_anchor` (id-based family) and `verify` /
     `verify_document` (fingerprint-based family) as the two canonical
-    lookup primitives. `search` vs `search_credentials` were evaluated
+    lookup primitives. `search` vs `search_anchors` were evaluated
     and are NOT duplicates — `search` spans org/record/fingerprint/
-    document, `search_credentials` is scoped to the credential corpus
+    document, `search_anchors` is scoped to the credential corpus
     only; both stay.
 - **Drift guard, wired as a test not a new CI job**
   (`tests/infra/mcp-manifest-parity.test.ts`, root-level, imports
@@ -207,7 +207,7 @@ harness; PR-2: BUG-1 RPC; PR-3: nessie proxy through the worker).
   (network-observed time, §1.5; defaults to **null** not `''`),
   `recipient_identifier`, `issued_date`, `expiry_date`. Was reading six keys
   the RPC never returns, so every field silently defaulted. Fixes
-  verify_credential / verify_batch / get_anchor / get_record / get_document
+  verify_anchor / verify_batch / get_anchor / get_record / get_document
   (all route through `shapeAnchorRow`). `shapeAnchorRow` is now exported for
   direct unit testing.
 - **BUG-3b (`nessieTextFallback`, mcp-tools.ts):** source literals lowercased
@@ -277,7 +277,7 @@ column set that does not match the table shape, so PostgREST 400'd every call.
 - **`handleVerifyDocument` (mcp-tools.ts)** now POSTs the RPC and maps through
   the PR-1-fixed `shapeAnchorRow` (passing `data.public_id` so the envelope
   echoes `public_id` and builds the correct `record_uri`). Verify now returns
-  the SAME shape as the `get_anchor` / `verify_credential` (`get_public_anchor`)
+  the SAME shape as the `get_anchor` / `verify_anchor` (`get_public_anchor`)
   envelope (§1.8 fix-to-spec, PO-approved) — this is the get_public_anchor
   envelope, NOT the worker's leaner `/verify/:fingerprint` shape. Public-id
   verification may surface PENDING/SUBMITTED; fingerprint verification only

@@ -90,8 +90,8 @@ describe('AGENTS.md validation', () => {
   });
 
   it('documents available MCP tools', () => {
-    expect(agentsMd).toContain('verify_credential');
-    expect(agentsMd).toContain('search_credentials');
+    expect(agentsMd).toContain('verify_anchor');
+    expect(agentsMd).toContain('search_anchors');
   });
 
   it('includes authentication instructions', () => {

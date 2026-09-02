@@ -53,8 +53,8 @@ afterEach(() => {
 // ── TOOL_DEFINITIONS ──────────────────────────────────────────────────
 
 const EXPECTED_TOOL_NAMES = [
-  'verify_credential',
-  'search_credentials',
+  'verify_anchor',
+  'search_anchors',
   'nessie_query',
   'anchor_document',
   'verify_document',

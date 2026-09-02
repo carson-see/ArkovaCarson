@@ -46,8 +46,8 @@ MCP server for AI agent access:
 
 - **Endpoint:** `https://edge.arkova.ai/mcp`
 - **Transport:** Streamable HTTP
-- `verify_credential` — Verify by public_id
-- `search_credentials` — Keyword search by query with max_results. Lexical substring match, not meaning-based; check the `search_mode` field on every result
+- `verify_anchor` — Verify by public_id
+- `search_anchors` — Keyword search by query with max_results. Lexical substring match, not meaning-based; check the `search_mode` field on every result
 - `verify_fingerprint` — Check SHA-256 fingerprint match
 
 ## Traction

@@ -17,7 +17,7 @@
  * required-argument contract, the property names, banned UI terminology
  * (Constitution 1.3) and registry over-claims between (1) and (2). It
  * explicitly does not compare description text. That was the hole: BUG-026 —
- * `search_credentials` advertising "semantic (vector) similarity matching"
+ * `search_anchors` advertising "semantic (vector) similarity matching"
  * when the only served path is an ILIKE substring scan — survived on SIX
  * surfaces at once, and no check could see it.
  *
@@ -64,7 +64,7 @@
  * field. Prose surfaces are checked per REGION: the single line naming the
  * tool (table row, llms.txt bullet) plus any markdown section whose heading
  * names it. Region scoping is why a semantic claim in the `nessie_query`
- * section is not blamed on `search_credentials`.
+ * section is not blamed on `search_anchors`.
  *
  * KNOWN BOUNDARY, stated rather than papered over: module-level comments and
  * free prose that never name a tool are out of scope. `mcp-tools.ts`'s own
@@ -190,7 +190,7 @@ function violation(rule: string, surface: string, subject: string, detail: strin
  * Matches a mention of `toolName` — and nothing else. Two forms, because the
  * 16 tool names are not equally distinctive:
  *
- *   - MULTI-TOKEN names (`search_credentials`, `get_anchor`) match on a
+ *   - MULTI-TOKEN names (`search_anchors`, `get_anchor`) match on a
  *     boundary that excludes `_` and `-` on BOTH sides. Plain `\b` is not
  *     enough: `\bverify\b` matches inside `verify_batch` (because `_` is a
  *     word character on the far side of the boundary), and `verify-anchor` —
@@ -411,11 +411,11 @@ export function applyBaseline(
 export const CLAIM_RULES: ClaimRule[] = [
   {
     id: 'retrieval-mechanism-claim',
-    tools: ['search_credentials'],
+    tools: ['search_anchors'],
     pattern: /\bsemantic(?:ally)?\b|\bvector\b|\bembeddings?\b|\brelevance scores?\b|\bnearest[- ]neighbou?rs?\b/i,
     qualifier: /\bsearch_mode\b|\blexical\b|\bsubstring\b/i,
     reason:
-      'search_credentials serves LEXICAL SUBSTRING matching, not vector retrieval '
+      'search_anchors serves LEXICAL SUBSTRING matching, not vector retrieval '
       + `(see SEARCH_MODE_LEXICAL in ${CANONICAL_SOURCE}; the worker answers 503 when semantic search is disabled). `
       + 'A semantic/vector/relevance-ranking claim is allowed only when the same region also discloses '
       + '`search_mode` or the lexical/substring fallback.',

@@ -113,7 +113,7 @@ A vanilla-JS, zero-dependency, CSP-safe `<script>` tag that drops a verification
 
 ### 6. MCP server — `https://edge.arkova.ai/mcp`
 
-Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, and `get_anchor`; legacy read tools remain available as `verify_credential`, `search_credentials`, `nessie_query`, `verify_document`, and `verify_batch`. MCP launch is read-only by default: `anchor_document` is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write scope, either `write:anchors` or `anchor:write`. `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
+Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, and `get_anchor`; legacy read tools remain available as `verify_anchor`, `search_anchors`, `nessie_query`, `verify_document`, and `verify_batch`. MCP launch is read-only by default: `anchor_document` is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write scope, either `write:anchors` or `anchor:write`. `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
 
 ```json
 {

@@ -2508,9 +2508,9 @@ export const DEVELOPER_PAGE_LABELS = {
   // MCP Server
   MCP_TITLE: 'MCP Server for AI Agents',
   MCP_DESC: 'Arkova provides a Model Context Protocol (MCP) server for AI agents. Connect your agent to verify records and search the registry programmatically.',
-  MCP_TOOL_VERIFY: 'verify_credential',
+  MCP_TOOL_VERIFY: 'verify_anchor',
   MCP_TOOL_VERIFY_DESC: 'Verify a record by its public ID',
-  MCP_TOOL_SEARCH: 'search_credentials',
+  MCP_TOOL_SEARCH: 'search_anchors',
   MCP_TOOL_SEARCH_DESC: 'Search the public record registry',
 
   // API docs card on ApiKeySettingsPage

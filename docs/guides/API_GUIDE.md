@@ -711,7 +711,7 @@ ARKOVA_BASE = "https://arkova-worker-270018525501.us-central1.run.app/api/v1"
 # Define the tools the agent can use
 tools = [
     {
-        "name": "verify_credential",
+        "name": "verify_anchor",
         "description": "Verify a credential's authenticity by its Arkova Public ID (e.g., ARK-2026-ABCD1234). Returns whether the credential is blockchain-verified, who issued it, what type it is, and when it was anchored.",
         "input_schema": {
             "type": "object",
@@ -817,7 +817,7 @@ def call_arkova_tool(tool_name: str, tool_input: dict) -> str:
     """Execute an Arkova API call based on the tool name and input."""
     headers = {"X-API-Key": ARKOVA_API_KEY, "Content-Type": "application/json"}
 
-    if tool_name == "verify_credential":
+    if tool_name == "verify_anchor":
         resp = httpx.get(
             f"{ARKOVA_BASE}/verify/{tool_input['public_id']}",
             headers=headers
@@ -922,7 +922,7 @@ tools = [
     {
         "type": "function",
         "function": {
-            "name": "verify_credential",
+            "name": "verify_anchor",
             "description": "Verify a credential by its Arkova Public ID",
             "parameters": {
                 "type": "object",
@@ -953,7 +953,7 @@ tools = [
 
 def call_tool(name, args):
     headers = {"X-API-Key": ARKOVA_API_KEY}
-    if name == "verify_credential":
+    if name == "verify_anchor":
         r = httpx.get(f"{ARKOVA_BASE}/verify/{args['public_id']}", headers=headers)
         return r.text
     elif name == "search_records":

@@ -73,7 +73,7 @@ async function arkovaFetch(
 // They can be used with any LangChain-compatible agent framework.
 
 export class ArkovaVerifyTool {
-  name = 'arkova_verify_credential';
+  name = 'arkova_verify_anchor';
   description = 'Verify a credential\'s authenticity and anchor status on Arkova. Input should be a credential public ID (e.g., ARK-UMICH-DOC-A1B2C3) or a document fingerprint (sha256:...).';
   private config: ArkovaToolConfig;
 
@@ -139,7 +139,7 @@ export class ArkovaAnchorStatusTool {
 }
 
 export class ArkovaSearchTool {
-  name = 'arkova_search_credentials';
+  name = 'arkova_search_anchors';
   description = 'Search for verified credentials by name, institution, or credential type. Returns matching public records. Input is a search query string.';
   private config: ArkovaToolConfig;
 

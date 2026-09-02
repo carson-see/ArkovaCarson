@@ -48,7 +48,7 @@ headers, media types, conditional rewrite, caching, and CORS for these files.
 
 ## Available Tools
 
-### `verify_credential`
+### `verify_anchor`
 
 Verify a credential's authenticity and current status by its public identifier.
 
@@ -68,7 +68,7 @@ Verify a credential's authenticity and current status by its public identifier.
 
 **Returns:** Verification status including issuer, credential type, dates, and network anchoring proof.
 
-### `search_credentials`
+### `search_anchors`
 
 Search anchored public credentials by keyword.
 
@@ -110,13 +110,13 @@ semantically ranked.
 
 ### Verify a specific credential
 ```
-Tool: verify_credential
+Tool: verify_anchor
 Input: { "public_id": "ARK-2026-001" }
 ```
 
 ### Search for credentials from a specific institution
 ```
-Tool: search_credentials
+Tool: search_anchors
 Input: { "query": "Stanford University" }
 ```
 Keep queries to literal keywords. A long descriptive phrase is matched as one
@@ -125,8 +125,8 @@ nothing unless that exact string appears in a record.
 
 ### Bulk verification workflow
 ```
-1. Use search_credentials to find matching credentials
-2. For each result, use verify_credential with the public_id
+1. Use search_anchors to find matching credentials
+2. For each result, use verify_anchor with the public_id
 3. Check the "status" field: ACTIVE = valid, REVOKED/EXPIRED = invalid
 ```
 

@@ -44,7 +44,7 @@ const SDK_EXAMPLES = {
   curl: `curl -X GET \\
   ${PUBLIC_API_URL}/api/v1/verify/abc123-def456 \\
   -H "Authorization: Bearer YOUR_API_KEY"`,
-  typescript: `import { Arkova } from '@carsonarkova/sdk';
+  typescript: `import { Arkova } from 'arkova';
 
 const client = new Arkova({ apiKey: 'YOUR_API_KEY' });
 const result = await client.verify('abc123-def456');
@@ -351,11 +351,11 @@ export function DevelopersPage() {
               </p>
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
-                  <code className="font-mono text-[#a8e8ff] font-bold block mb-2">verify_credential</code>
+                  <code className="font-mono text-[#a8e8ff] font-bold block mb-2">verify_anchor</code>
                   <p className="text-xs text-[#bbc9cf]">Verify any record by its public ID and receive full cryptographic proof.</p>
                 </div>
                 <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
-                  <code className="font-mono text-[#a8e8ff] font-bold block mb-2">search_credentials</code>
+                  <code className="font-mono text-[#a8e8ff] font-bold block mb-2">search_anchors</code>
                   <p className="text-xs text-[#bbc9cf]">Search the public record registry by issuer, type, or metadata attributes.</p>
                 </div>
               </div>

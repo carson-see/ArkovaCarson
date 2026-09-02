@@ -42,8 +42,8 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
     const names: McpToolName[] = Object.keys(MCP_TOOL_SCHEMAS) as McpToolName[];
     expect(names).toEqual(
       expect.arrayContaining([
-        'verify_credential',
-        'search_credentials',
+        'verify_anchor',
+        'search_anchors',
         'nessie_query',
         'anchor_document',
         'verify_document',
@@ -85,14 +85,14 @@ describe('validateToolArgs — unknown tool', () => {
   });
 });
 
-describe('validateToolArgs — verify_credential', () => {
+describe('validateToolArgs — verify_anchor', () => {
   it('accepts a canonical public_id', () => {
-    const result = validateToolArgs('verify_credential', { public_id: VALID_PUBLIC_ID });
+    const result = validateToolArgs('verify_anchor', { public_id: VALID_PUBLIC_ID });
     expect(result.ok).toBe(true);
   });
 
   it('rejects a lowercase public_id with INVALID_ARGS', () => {
-    const result = validateToolArgs('verify_credential', { public_id: 'ark-deg-abc' });
+    const result = validateToolArgs('verify_anchor', { public_id: 'ark-deg-abc' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('INVALID_ARGS');
@@ -101,7 +101,7 @@ describe('validateToolArgs — verify_credential', () => {
   });
 
   it('rejects extra fields in strict mode', () => {
-    const result = validateToolArgs('verify_credential', {
+    const result = validateToolArgs('verify_anchor', {
       public_id: VALID_PUBLIC_ID,
       injected: 'x',
     });
@@ -109,29 +109,29 @@ describe('validateToolArgs — verify_credential', () => {
   });
 
   it('rejects missing public_id', () => {
-    const result = validateToolArgs('verify_credential', {});
+    const result = validateToolArgs('verify_anchor', {});
     expect(result.ok).toBe(false);
   });
 
   it('rejects non-object input', () => {
-    const result = validateToolArgs('verify_credential', 'not-an-object');
+    const result = validateToolArgs('verify_anchor', 'not-an-object');
     expect(result.ok).toBe(false);
   });
 });
 
-describe('validateToolArgs — search_credentials', () => {
+describe('validateToolArgs — search_anchors', () => {
   it('accepts query + optional max_results', () => {
-    const result = validateToolArgs('search_credentials', { query: 'registered nurse', max_results: 5 });
+    const result = validateToolArgs('search_anchors', { query: 'registered nurse', max_results: 5 });
     expect(result.ok).toBe(true);
   });
 
   it('rejects empty query', () => {
-    const result = validateToolArgs('search_credentials', { query: '' });
+    const result = validateToolArgs('search_anchors', { query: '' });
     expect(result.ok).toBe(false);
   });
 
   it('rejects max_results > 50', () => {
-    const result = validateToolArgs('search_credentials', { query: 'x', max_results: 500 });
+    const result = validateToolArgs('search_anchors', { query: 'x', max_results: 500 });
     expect(result.ok).toBe(false);
   });
 });
@@ -312,7 +312,7 @@ describe('validateToolArgs — list_agents', () => {
 
 describe('validationErrorToToolResult', () => {
   it('returns an MCP error envelope without leaking internal state', () => {
-    const result = validateToolArgs('verify_credential', { public_id: 'lowercase' });
+    const result = validateToolArgs('verify_anchor', { public_id: 'lowercase' });
     if (result.ok) throw new Error('expected failure');
 
     const envelope = validationErrorToToolResult(result.error);
@@ -324,7 +324,7 @@ describe('validationErrorToToolResult', () => {
       issues: { path: string; message: string }[];
     };
     expect(body.error).toBe('INVALID_ARGS');
-    expect(body.tool).toBe('verify_credential');
+    expect(body.tool).toBe('verify_anchor');
     expect(body.issues.length).toBeGreaterThan(0);
     // No `received` field, no stack traces, no internal paths.
     expect(envelope.content[0].text).not.toContain('ZodError');

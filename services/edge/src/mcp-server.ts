@@ -264,25 +264,25 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
   // ── Tools ─────────────────────────────────────────────────────────────
 
   tool(
-    'verify_credential',
-    TOOL_DESC['verify_credential'],
+    'verify_anchor',
+    TOOL_DESC['verify_anchor'],
     { public_id: publicIdSchema.describe('The credential\'s public identifier (e.g., ARK-2026-001)') },
     withTelemetry(
-      'verify_credential',
+      'verify_anchor',
       async ({ public_id }) => handleVerifyCredential({ public_id }, config),
       telemetry,
     ),
   );
 
   tool(
-    'search_credentials',
-    TOOL_DESC['search_credentials'],
+    'search_anchors',
+    TOOL_DESC['search_anchors'],
     {
       query: freeTextQuerySchema.describe('Natural language search query'),
       max_results: z.number().int().min(1).max(50).optional().describe('Maximum results to return (default: 10, max: 50)'),
     },
     withTelemetry(
-      'search_credentials',
+      'search_anchors',
       async ({ query, max_results }) => handleSearchCredentials({ query, max_results }, config),
       telemetry,
     ),
@@ -576,11 +576,11 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           '  get_record           — Fetch record details by Arkova public ID',
           '  get_fingerprint      — Fetch record details by SHA-256 fingerprint',
           '  get_document         — Fetch document details by Arkova public ID',
-          '  verify_credential    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
+          '  verify_anchor    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
           // BUG-026 / BUG-008 / R-1: this listing is a published claim. Keep it
-          // matched to what the tools actually do — search_credentials is served
+          // matched to what the tools actually do — search_anchors is served
           // lexically, and nessie_query is disabled.
-          '  search_credentials   — Keyword (substring) search across the anchored records corpus',
+          '  search_anchors   — Keyword (substring) search across the anchored records corpus',
           '  oracle_batch_verify  — Batch-verify up to 25 credentials with query-envelope metadata',
           '  nessie_query         — DISABLED: returns an explicit nessie_disabled error, never results',
           ...(telemetry.anchorDocumentEnabled
@@ -641,7 +641,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           type: 'text' as const,
           text:
             `${SAFETY_PREFIX}\n\n` +
-            `Please verify the credential whose public ID is provided below using the verify_credential tool. ` +
+            `Please verify the credential whose public ID is provided below using the verify_anchor tool. ` +
             'Report the verification status, issuer, credential type, dates, and anchoring proof.\n\n' +
             fenceUserInput(public_id, 'public_id'),
         },

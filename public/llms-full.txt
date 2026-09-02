@@ -100,8 +100,8 @@ Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-R
 
 ### Tools
 
-- `verify_credential` — Verify a credential by public ID. Input: `{ "public_id": "string" }`
-- `search_credentials` — Keyword search over credentials. Lexical substring match on title/description, not meaning-based; paraphrases will not match. Every result carries a `search_mode` field — read it before presenting results as ranked. Input: `{ "query": "string", "max_results": number }`
+- `verify_anchor` — Verify a credential by public ID. Input: `{ "public_id": "string" }`
+- `search_anchors` — Keyword search over credentials. Lexical substring match on title/description, not meaning-based; paraphrases will not match. Every result carries a `search_mode` field — read it before presenting results as ranked. Input: `{ "query": "string", "max_results": number }`
 - `verify_fingerprint` — Check if a SHA-256 fingerprint matches an anchored record. Input: `{ "fingerprint": "string" }`
 
 ## Use Cases

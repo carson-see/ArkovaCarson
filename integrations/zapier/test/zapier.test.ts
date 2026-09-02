@@ -24,7 +24,7 @@ describe('Zapier App Structure', () => {
 
   it('has required actions', () => {
     expect(App.creates.anchor_document).toBeDefined();
-    expect(App.creates.verify_credential).toBeDefined();
+    expect(App.creates.verify_anchor).toBeDefined();
     expect(App.creates.batch_verify).toBeDefined();
   });
 
@@ -125,7 +125,7 @@ describe('Anchor Document Action', () => {
 });
 
 describe('Verify Credential Action', () => {
-  const action = App.creates.verify_credential;
+  const action = App.creates.verify_anchor;
 
   it('requires public_id input', () => {
     const fields = action.operation.inputFields;

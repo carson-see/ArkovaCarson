@@ -33,7 +33,7 @@ beforeEach(() => {
 describe('ArkovaVerifyTool', () => {
   it('should have correct name and description', () => {
     const tool = new ArkovaVerifyTool(mockConfig);
-    expect(tool.name).toBe('arkova_verify_credential');
+    expect(tool.name).toBe('arkova_verify_anchor');
     expect(tool.description).toContain('Verify');
   });
 
@@ -203,9 +203,9 @@ describe('getArkovaTools', () => {
     const tools = getArkovaTools(mockConfig);
     expect(tools).toHaveLength(6);
     expect(tools.map(t => t.name)).toEqual([
-      'arkova_verify_credential',
+      'arkova_verify_anchor',
       'arkova_anchor_status',
-      'arkova_search_credentials',
+      'arkova_search_anchors',
       'arkova_create_attestation',
       'arkova_batch_verify',
       'arkova_verify_signature',

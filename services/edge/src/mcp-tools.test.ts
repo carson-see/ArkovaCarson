@@ -716,7 +716,7 @@ describe('handleNessieQuery worker proxy (BUG-3a)', () => {
   });
 });
 
-// ── search_credentials: real semantic path + truthful mode label ──────────
+// ── search_anchors: real semantic path + truthful mode label ──────────
 //
 // The tool advertised "semantic similarity matching" on six public surfaces
 // while BOTH code paths were lexical: the `search_public_credentials` RPC is
@@ -898,7 +898,7 @@ describe('handleSearchCredentials — semantic path + search_mode labelling', ()
   });
 
   it('(h) the advertised tool description documents search_mode instead of promising semantic unconditionally', async () => {
-    const def = TOOL_DEFINITIONS.find((t) => t.name === 'search_credentials');
+    const def = TOOL_DEFINITIONS.find((t) => t.name === 'search_anchors');
     expect(def).toBeDefined();
     // The description must tell an agent how to tell the two modes apart.
     expect(def!.description).toContain('search_mode');
@@ -1026,7 +1026,7 @@ describe('handleNessieQuery — capability disabled (BUG-008/027)', () => {
   });
 });
 
-// ─── BUG-026: search_credentials must describe what it actually does ─────────
+// ─── BUG-026: search_anchors must describe what it actually does ─────────
 
 /**
  * Reproduced on the rig: the non-word fragment `aten` matched
@@ -1039,8 +1039,8 @@ describe('handleNessieQuery — capability disabled (BUG-008/027)', () => {
  * here. What is pinned: the description states the served behaviour first, and
  * does not assert semantic matching as the unconditional default.
  */
-describe('search_credentials tool description — honest by default (BUG-026)', () => {
-  const def = () => TOOL_DEFINITIONS.find((t) => t.name === 'search_credentials')!;
+describe('search_anchors tool description — honest by default (BUG-026)', () => {
+  const def = () => TOOL_DEFINITIONS.find((t) => t.name === 'search_anchors')!;
 
   it('names lexical substring matching as what the tool does', () => {
     expect(def().description.toLowerCase()).toContain('substring');

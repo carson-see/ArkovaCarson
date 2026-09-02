@@ -48,8 +48,8 @@
   },
   "tools": [
     {
-      "name": "verify_credential",
-      "description": "Verify a credential's authenticity and current status by its public identifier. Returns verification status, issuer information, credential type, dates, and network anchoring proof.",
+      "name": "verify_anchor",
+      "description": "Verify an anchored record's authenticity and current status by its public identifier. Returns verification status, issuer information, record type, dates, and network anchoring proof. Queries the Arkova verification API over HTTPS; it does NOT read local files, environment variables, or stored secrets.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -60,7 +60,7 @@
       }
     },
     {
-      "name": "search_credentials",
+      "name": "search_anchors",
       "description": "Search anchored public credentials by keyword. The served behaviour is LEXICAL: a case-insensitive substring match on credential title/description, with no relevance score and no understanding of meaning — a query only matches text that literally appears in the record, so paraphrases and synonyms will not match, and a fragment of a longer word will. Semantic (vector) similarity is used ONLY WHEN the deployment has semantic search enabled and reachable; it is not guaranteed and must not be assumed. Every result reports `search_mode`: \"lexical_substring\" for the substring path, or \"semantic_vector\" when a real vector match ran (that mode alone carries a `similarity` score). Read `search_mode` before presenting results as semantically ranked.",
       "inputSchema": {
         "type": "object",
@@ -74,7 +74,7 @@
     },
     {
       "name": "search",
-      "description": "Agent-friendly v2 search tool. Search organizations, anchored records, fingerprints, and documents by natural language query or exact fingerprint. Broader in scope than search_credentials, which is limited to the credential corpus — prefer this tool for general discovery.",
+      "description": "Agent-friendly v2 search tool. Search organizations, anchored records, fingerprints, and documents by natural language query or exact fingerprint. Broader in scope than search_anchors, which is limited to the credential corpus — prefer this tool for general discovery.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -149,7 +149,7 @@
     },
     {
       "name": "get_anchor",
-      "description": "Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id. Canonical name for this capability — get_record and get_document are documented aliases returning the identical response; verify_credential returns the same underlying data shaped for direct credential lookups.",
+      "description": "Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id. Canonical name for this capability — get_record and get_document are documented aliases returning the identical response; verify_anchor returns the same underlying data shaped for direct credential lookups.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -229,7 +229,7 @@
     },
     {
       "name": "nessie_query",
-      "description": "DISABLED. Arkova's Nessie intelligence engine is not currently served: this tool returns an explicit `nessie_disabled` error, never results. It does not search, and an empty answer from it must not be read as \"no matching documents\". Use `search` or `search_credentials` for record lookup instead.",
+      "description": "DISABLED. Arkova's Nessie intelligence engine is not currently served: this tool returns an explicit `nessie_disabled` error, never results. It does not search, and an empty answer from it must not be read as \"no matching documents\". Use `search` or `search_anchors` for record lookup instead.",
       "inputSchema": {
         "type": "object",
         "properties": {

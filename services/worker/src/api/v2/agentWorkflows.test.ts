@@ -225,8 +225,8 @@ describe('canonical agent workflow documentation', () => {
     expect(promptBlock).toContain('get_organization');
     expect(promptBlock).toContain('call verify');
     expect(promptBlock).toContain('call get_anchor');
-    expect(promptBlock).not.toContain('search_credentials');
-    expect(promptBlock).not.toContain('verify_credential');
+    expect(promptBlock).not.toContain('search_anchors');
+    expect(promptBlock).not.toContain('verify_anchor');
   });
 
   it('keeps MCP anchor_document out of the default launch surface unless explicitly enabled and scoped', () => {

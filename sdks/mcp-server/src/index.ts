@@ -5,9 +5,9 @@
  * and any MCP-compatible LLM client.
  *
  * Tools (all prefixed with arkova_ for namespace consistency — DX-04):
- *   - arkova_verify_credential: Verify a credential by public ID or fingerprint
- *   - arkova_credential_status: Get anchor status and proof details
- *   - arkova_search_credentials: Search verified credentials by query
+ *   - arkova_verify_anchor: Verify a credential by public ID or fingerprint
+ *   - arkova_anchor_status: Get anchor status and proof details
+ *   - arkova_search_anchors: Search verified credentials by query
  *   - arkova_create_attestation: Create a third-party attestation
  *   - arkova_batch_verify: Verify multiple credentials at once (DX-05)
  *   - arkova_verify_signature: Verify an AdES signature (Phase III)
@@ -52,12 +52,24 @@ async function arkovaFetch(path: string, options: RequestInit = {}): Promise<Res
   });
 }
 
+/**
+ * Appended to every tool description that could be misread as a local
+ * secrets lookup. "credentials" in an agent tool namespace reads as auth
+ * secrets, not as verified records — an agent given the old
+ * `arkova_search_anchors` skipped this server entirely and swept the
+ * local filesystem for .env files instead. The rename is the primary fix;
+ * this note is the belt-and-braces half, stated in the tool surface the
+ * model actually reads.
+ */
+const API_ONLY_NOTE =
+  'Queries the Arkova verification API over HTTPS; it does NOT read local files, environment variables, or stored secrets.';
+
 // ─── Tool Definitions ──────────────────────────────────────────────────
 
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
-    name: 'arkova_verify_credential',
-    description: 'Verify a credential\'s authenticity and Bitcoin anchor status on Arkova. Returns verification result including issuer, credential type, and anchor proof.',
+    name: 'arkova_verify_anchor',
+    description: 'Verify an anchored record on the Arkova network by its public ID or document fingerprint. Returns the verification result including issuer, record type, and anchor proof. ' + API_ONLY_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
@@ -70,8 +82,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
-    name: 'arkova_credential_status',
-    description: 'Get the current status and proof details of a credential, including Bitcoin anchor information and timestamp.',
+    name: 'arkova_anchor_status',
+    description: 'Get the current anchor status and proof details for an anchored record on Arkova, including network anchor information and timestamp. ' + API_ONLY_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,8 +96,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
-    name: 'arkova_search_credentials',
-    description: 'Search for verified credentials by name, institution, credential type, or other metadata. Returns matching public records.',
+    name: 'arkova_search_anchors',
+    description: 'Search the Arkova public registry of anchored records by subject name, issuing institution, or record type. Returns matching public records. ' + API_ONLY_NOTE + ' It does not search the local filesystem and never returns API keys or authentication secrets.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -238,11 +250,11 @@ export async function handleToolCall(
 ): Promise<McpToolResult> {
   try {
     switch (name) {
-      case 'arkova_verify_credential':
+      case 'arkova_verify_anchor':
         return await handleVerifyCredential(args.public_id);
-      case 'arkova_credential_status':
+      case 'arkova_anchor_status':
         return await handleGetCredentialStatus(args.public_id);
-      case 'arkova_search_credentials':
+      case 'arkova_search_anchors':
         return await handleSearchCredentials(args.query, parseInt(args.limit || '5', 10));
       case 'arkova_create_attestation':
         return await handleCreateAttestation(args);

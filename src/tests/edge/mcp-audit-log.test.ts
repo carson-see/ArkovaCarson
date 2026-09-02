@@ -157,7 +157,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
 const ENTRY = {
   apiKeyId: 'ak-1',
   userId: '11111111-2222-3333-4444-555555555555',
-  toolName: 'verify_credential',
+  toolName: 'verify_anchor',
   argsJson: JSON.stringify({ public_id: 'ARK-DEG-ABC' }),
   outcome: 'success' as const,
   latencyMs: 42,
@@ -240,7 +240,7 @@ describe('successful insert shape', () => {
     expect(body.event_category).toBe('SECURITY');
     expect(body.actor_id).toBe(ENTRY.userId);
     expect(body.target_type).toBe('mcp_tool');
-    expect(body.target_id).toBe('verify_credential');
+    expect(body.target_id).toBe('verify_anchor');
   });
 
   it('carries hashed args + keyed ip in details, never raw values', async () => {
@@ -281,7 +281,7 @@ describe('the loud-failure path (an audit control that fails silently is the def
     expect(record.severity).toBe('critical');
     expect(record.http_status).toBe(400);
     expect(record.pg_code).toBe('23514');
-    expect(record.tool).toBe('verify_credential');
+    expect(record.tool).toBe('verify_anchor');
     expect(String(record.action)).toContain('PERMANENT');
   });
 
