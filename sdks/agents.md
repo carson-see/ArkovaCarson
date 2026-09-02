@@ -25,7 +25,7 @@ Developer SDK packages for integrating with the Arkova Verification API. Each su
 
 **`packages/sdk/`** — that is the one true `arkova` package (class `Arkova`),
 wired into `.github/workflows/publish-sdk.yml` and
-`scripts/publish-packages.sh` / `scripts/release/publish-npm.sh`. A stale duplicate previously
+`scripts/publish-packages.sh`. A stale duplicate previously
 lived here at `sdks/typescript/` (class `ArkovaClient`) claiming the same npm name and
 version with an incompatible API; it was removed 2026-07-12. Do not
 recreate TypeScript client code under `sdks/` — extend `packages/sdk/`.
