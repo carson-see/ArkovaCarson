@@ -739,7 +739,7 @@ separately). Full verdicts, defects, and landing-order constraints:
   (wedge 120 / bulk 450 / spread 2430), 2 orgs. Scheduler: only `…-populate-confirmation-proofs`
   (`*/5`) is wired — `batch-anchors` deliberately absent, so **nothing broadcasts**.
 - **Driver:** `services/worker/scripts/pr2524-proof-txinclusion-driver.ts` on branch
-  `soak/proof-txincl-driver` (sha256 `2f9b13268be0537b87e475bc7177c93714d95836d657f46df3395377d480e1b6`);
+  `soak/proof-txincl-driver` (sha256 `6c5069c64e28e077a49c1c392cef8314ecbbf55153573b1d5610cc3a7996d3fe`);
   evidence rows land in `docs/staging/proof-txincl-0427/evidence/` (worktree, committed at close-out).
 - **Health read 2026-09-02T19:30Z:** 2,880 / 3,000 populated; the remaining 120 are the designed
   wedge cohort (1 shared txid, 120 distinct wrong block hashes); 0 half-pairs, 0 index-out-of-range.
@@ -1182,7 +1182,7 @@ from any GCP project as a platform user. Separately, `main` carries 95 pre-exist
 typecheck errors (express-types portability) unrelated to this incident; given the deploy-typecheck
 blackout behaviour they warrant their own ticket.
 
-_Last refreshed: 2026-09-02 by Claude (session for carson@arkova.io) — claims verified against gcloud run describe, Cloud Run /api/health, Supabase MCP execute_sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._
+_Last refreshed: 2026-09-02 (rev 2, driver sha256 after X-Serverless-Authorization fix) by Claude (session for carson@arkova.io) — claims verified against gcloud run describe, Cloud Run /api/health, Supabase MCP execute_sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._
 
 ### 2026-08-01/02 (CTO session) — pre-pentest PII/security hardening wave, DocuSign timeout investigation, soak findings F-1..F-10
 
