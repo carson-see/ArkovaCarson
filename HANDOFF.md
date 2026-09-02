@@ -745,7 +745,20 @@ separately). Full verdicts, defects, and landing-order constraints:
   wedge cohort (1 shared txid, 120 distinct wrong block hashes); 0 half-pairs, 0 index-out-of-range.
 - **Do not** touch this rig, its Scheduler job, or `feat/proof-tx-inclusion-branch`.
 
-**STANDING (not yet soaking) — RC batch rig for PRs #2525 / #2526 / #2527 (T2) + #2528 (T1).**
+**RUNNING — RC batch T2 soak for PRs #2525 / #2526 / #2527 (T2) + #2528 (T1 frontend, targeted evidence), started 2026-09-02.**
+- Supabase `rvdgwynxoapdzysoaayr` (`arkova-soak-rc-batch-0902`), ledger head **0419** = `main`, preflight
+  `clean_mirror` 7/7 (`docs/staging/rc-batch-0902/clean-mirror-preflight-rc-batch-0902.json`).
+- Cloud Run `arkova-worker-rc-batch-0902-staging` rev **arkova-worker-rc-batch-0902-staging-00001-p4l**, image digest
+  `sha256:55c34e1fdf0423562159569c31d775343ef73f13394ff084ce7e62471caf5ccf` (built by Cloud Build — the local Docker registry path was throttled), source head
+  `78621249595e37398170da9b298ae13cd753a801` = `rc/soak-batch-2026-09-02` (clean merge of all four CURRENT PR heads).
+- **Clock basis = Cloud Run worker uptime**; 12h T2 window **2026-09-02T19:49:27Z → 2026-09-03T07:49:27Z**.
+  Scheduler: `…-populate-confirmation-proofs` + `…-check-confirmations` (`*/5`); `batch-anchors` deliberately absent → nothing broadcasts.
+- Manifest: `docs/staging/rc-manifests/rc-batch-2026-09-02.json` (per-PR head SHA coverage, `approval_status: pending`).
+- RC seed fixture + driver (`soak/rc-batch-0902-driver`) land when the authoring agent finishes; until then the window
+  accrues worker-uptime + scheduler cycles only.
+- **Do not** touch this rig, its Scheduler jobs, `rc/soak-batch-2026-09-02`, or the four member PR branches.
+
+**(superseded above — RC batch rig was STANDING at the previous refresh.)**
 - Supabase `rvdgwynxoapdzysoaayr` (`arkova-soak-rc-batch-0902`), ledger head **0419** = `main`,
   preflight `clean_mirror` 7/7. RC tree `rc/soak-batch-2026-09-02` @ `78621249595e37398170da9b298ae13cd753a801`
   (all four CURRENT PR heads merged clean). Worker not yet deployed — image building; manifest draft
@@ -1182,7 +1195,7 @@ from any GCP project as a platform user. Separately, `main` carries 95 pre-exist
 typecheck errors (express-types portability) unrelated to this incident; given the deploy-typecheck
 blackout behaviour they warrant their own ticket.
 
-_Last refreshed: 2026-09-02 (rev 2, driver sha256 after X-Serverless-Authorization fix) by Claude (session for carson@arkova.io) — claims verified against gcloud run describe, Cloud Run /api/health, Supabase MCP execute_sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._
+_Last refreshed: 2026-09-02 (rev 3, RC batch window opened) by Claude (session for carson@arkova.io) — claims verified against gcloud run describe, Cloud Run /api/health, Supabase MCP execute_sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._
 
 ### 2026-08-01/02 (CTO session) — pre-pentest PII/security hardening wave, DocuSign timeout investigation, soak findings F-1..F-10
 
