@@ -57,6 +57,18 @@ const MALFORMED = 'INVALID!!!';
 
 export interface Probe { status: number; body: string; }
 
+/**
+ * Cloud Run rejects a request with 500 and this body when it cannot place it on
+ * an instance — the container never sees the request. On a rig at
+ * min-instances=0 a concurrent burst reliably triggers it, and counting it as an
+ * application 5xx makes the evidence wrong in BOTH directions: it fails a
+ * correct build, and it would mask a real application 5xx behind infra noise.
+ * Classified separately and reported, never silently dropped.
+ */
+export function isInfraAbort(p: Probe): boolean {
+  return p.status >= 500 && /no available instance|The request was aborted/i.test(p.body);
+}
+
 /** Pure classifier — the whole verdict, so it is testable without a network. */
 export function classify(wellFormed: Probe, malformed: Probe): {
   status: 'pass' | 'fail';
@@ -65,12 +77,15 @@ export function classify(wellFormed: Probe, malformed: Probe): {
 } {
   const blockers: string[] = [];
 
+  const wfInfra = isInfraAbort(wellFormed);
+  const mfInfra = isInfraAbort(malformed);
   const notFoundLeak = wellFormed.body.toLowerCase().includes('not found');
-  const anyFivexx = wellFormed.status >= 500 || malformed.status >= 500;
+  // Only APPLICATION 5xx counts. An infra abort is capacity, not behavior.
+  const anyFivexx = (wellFormed.status >= 500 && !wfInfra) || (malformed.status >= 500 && !mfInfra);
 
-  if (wellFormed.status !== 404) blockers.push(`well-formed id returned ${wellFormed.status}, expected 404`);
-  if (malformed.status !== 400) blockers.push(`malformed id returned ${malformed.status}, expected 400`);
-  if (anyFivexx) blockers.push('endpoint answered 5xx — this pages the on-call CRITICAL');
+  if (!wfInfra && wellFormed.status !== 404) blockers.push(`well-formed id returned ${wellFormed.status}, expected 404`);
+  if (!mfInfra && malformed.status !== 400) blockers.push(`malformed id returned ${malformed.status}, expected 400`);
+  if (anyFivexx) blockers.push('endpoint answered an APPLICATION 5xx — this pages the on-call CRITICAL');
   if (notFoundLeak) blockers.push('404 body still claims "not found" — implies a corpus lookup');
   if (!malformed.body.includes('ARK-ATT')) blockers.push('400 body lost the ARK-ATT routing hint');
 
@@ -80,8 +95,9 @@ export function classify(wellFormed: Probe, malformed: Probe): {
       wellFormedStatus: wellFormed.status,
       malformedStatus: malformed.status,
       anyFivexx,
+      infraAborts: (wfInfra ? 1 : 0) + (mfInfra ? 1 : 0),
       notFoundLeak,
-      routingHintPresent: malformed.body.includes('ARK-ATT'),
+      routingHintPresent: !mfInfra && malformed.body.includes('ARK-ATT'),
     },
     blockers,
   };
@@ -106,9 +122,16 @@ export async function runLive(args: Required<Pick<DriverArgs, 'targetUrl'>> & Dr
   const malformed = await probe(base, MALFORMED, args.bearerToken);
 
   const verdict = classify(wellFormed, malformed);
-  const burst5xx = bursts.filter((b) => b.status >= 500).length;
+  const burstInfra = bursts.filter(isInfraAbort).length;
+  const burst5xx = bursts.filter((b) => b.status >= 500 && !isInfraAbort(b)).length;
   if (burst5xx > 0) {
-    verdict.blockers.push(`${burst5xx}/${burst} burst requests answered 5xx`);
+    verdict.blockers.push(`${burst5xx}/${burst} burst requests answered an APPLICATION 5xx`);
+    verdict.status = 'fail';
+  }
+  // A burst that was ENTIRELY refused carries no signal about the endpoint.
+  // Say so rather than recording a silent pass over zero observations.
+  if (burstInfra === bursts.length) {
+    verdict.blockers.push(`all ${burst} burst requests were refused by Cloud Run (no available instance) — cycle observed nothing`);
     verdict.status = 'fail';
   }
 
@@ -120,7 +143,14 @@ export async function runLive(args: Required<Pick<DriverArgs, 'targetUrl'>> & Dr
     evidenceForSoak: true,
     changedBehavior: CHANGED_BEHAVIOR,
     status: verdict.status,
-    counts: { ...verdict.counts, burstSize: burst, burst5xx, burstAll404: bursts.every((b) => b.status === 404) },
+    counts: {
+      ...verdict.counts,
+      burstSize: burst,
+      burst5xx,
+      burstInfraAborts: burstInfra,
+      burstObserved: bursts.length - burstInfra,
+      burstAll404: bursts.filter((b) => !isInfraAbort(b)).every((b) => b.status === 404),
+    },
     targetUrl: base,
     blockers: verdict.blockers,
   };
@@ -145,11 +175,18 @@ async function main(): Promise<void> {
                         { status: 400, body: '{"error":"Invalid attestation ID format — expected ARK-ATT-* prefix"}' });
     const bad = classify({ status: 501, body: '{"error":"Attestation not found"}' },
                          { status: 501, body: '{}' });
+    // An infra abort must NOT be scored as the application regression.
+    const infra = classify({ status: 500, body: 'The request was aborted because there was no available instance.' },
+                           { status: 400, body: 'expected ARK-ATT-* prefix' });
     const row: DriverRow = {
       utc: new Date().toISOString(), pr: 2525, tier: 'T2', mode: 'self-test',
       evidenceForSoak: false, changedBehavior: CHANGED_BEHAVIOR,
-      status: ok.status === 'pass' && bad.status === 'fail' ? 'pass' : 'fail',
-      counts: { classifierAcceptsCorrect: ok.status === 'pass', classifierRejectsRegression: bad.status === 'fail' },
+      status: ok.status === 'pass' && bad.status === 'fail' && infra.counts.anyFivexx === false ? 'pass' : 'fail',
+      counts: {
+        classifierAcceptsCorrect: ok.status === 'pass',
+        classifierRejectsRegression: bad.status === 'fail',
+        classifierIgnoresInfraAbort: infra.counts.anyFivexx === false && infra.counts.infraAborts === 1,
+      },
     };
     console.log(JSON.stringify(row));
     process.exit(row.status === 'pass' ? 0 : 1);
