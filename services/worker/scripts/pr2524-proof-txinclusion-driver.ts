@@ -1304,7 +1304,10 @@ export async function runLive(args: DriverArgs, deps: LiveDeps = {}): Promise<Dr
   // ── Ticks ──
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (args.cronSecret) headers['x-cron-secret'] = args.cronSecret;
-  if (args.bearerToken) headers.authorization = `Bearer ${args.bearerToken}`;
+  // Cloud Run consumes X-Serverless-Authorization for IAM and strips it before the app sees the
+  // request, so the app's own Authorization (API-key) parsing on public /verify routes is never
+  // handed an identity token it would reject with 403. Plain Authorization is forwarded verbatim.
+  if (args.bearerToken) headers['x-serverless-authorization'] = `Bearer ${args.bearerToken}`;
 
   const maxTicks = Math.min(Math.max(args.maxTicks ?? 8, 2), 24);
   const tickDelayMs = Math.max(args.tickDelayMs ?? 0, 0);
