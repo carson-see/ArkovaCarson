@@ -14,6 +14,55 @@
 
 ## Now
 
+### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
+
+**711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
+`anchors.chain_block_height`. Every single disagreement is **low** (`proof_lower=711027`,
+`proof_higher=0`). Read-only against prod `vzwyaatejekddvltxyye` on 2026-09-02.
+
+**Which value is right:** `anchors.chain_block_height`. Checked all 44 block hashes that carry more
+than one recorded height against the chain (`getblockheader` over the worker's own GetBlock RPC): in
+34 of 44 groups **neither** recorded `anchor_proofs` height is the real one, and
+`anchors.chain_block_height` equals the chain's height in **44/44**. This is not "pick the majority"
+and not an off-by-one.
+
+**Mechanism.** `SignetChainClient.broadcastSignedTx` (`services/worker/src/chain/signet.ts:859-863`)
+returns `blockHeight = getBlockchainInfo().blocks` — the chain **tip at broadcast**, with an
+in-code comment saying the real height "is recovered at confirmation time". For `anchors` it is:
+`check-confirmations.ts` overwrites `chain_block_height` with the tx's actual `status.block_height`.
+For `anchor_proofs` it never is — `ConfirmationProof` carries no height field at all, and
+`populateConfirmationProofs` re-writes `blockHeight: anchor.blockHeight ?? null`, i.e. the stale
+value onto itself. So the delta is simply the number of blocks mined between broadcast and
+confirmation: 1 (45%), 2 (36%), 3 (12%), tail to 13, plus one 89-row cluster at 2747 from the
+2026-04-15→04-29 SECURED gap.
+
+**Published-surface impact — this is a proof-integrity issue, not untidy data.**
+`/api/v1/proof`, `audit-export.ts` and the JSON "download proof package" are all **clean**: they read
+height from `anchors`. The exposed path is the **certificate PDF**:
+`src/lib/sourceProofInput.ts:183` reads `proofRow.block_height ?? anchor.chain_block_height` —
+preferring the wrong column, and it is non-null on 713,949/713,950 rows so the correct fallback
+effectively never fires. `buildProofPacket` then prefers it again over the correct `data.blockHeight`
+that `RecordDetailPage` already passes. It lands in the certificate as "Network Record #…" **and** in
+`embeddedProofJson`, the machine-readable packet published so the certificate "can be re-verified
+offline". All three Arkova verifiers bind that field to the chain and hard-reject on mismatch
+(`arkova-py` `_height_binding_failure`, `packages/verifier/src/independent-node.ts:221`,
+`packages/verifier-cli`), so a customer verifying a genuine anchor with a node gets
+`ok:false, reason_code: HEIGHT_MISMATCH` plus a failed `timestamp_honesty`. A **false negative on a
+valid document**, matching the shape of the repo's own forgery fixture
+(`packages/verifier-cli/fixtures/author-adversarial.py:401`). Offline-only verification (no node)
+still passes — the chain steps are skipped.
+
+Found incidentally while sourcing real mainnet txids for the [PR #2524](https://github.com/carson-see/ArkovaCarson/pull/2524)
+soak fixture. **Not a regression from that PR** — the rows predate it — and it does not block that soak.
+
+**No fix applied. Prod was read-only for this investigation (SELECT only).** The code fix is small
+(prefer `anchors.chain_block_height`; thread the confirmed height through `ConfirmationProof`), but
+the 711k-row backfill is a T3 migration needing operator approval and its own soak.
+**Not yet logged in the Confluence Bug Tracker** — the Atlassian MCP connector is unauthenticated in
+this session and the `Atlassian` Secret Manager token returns 401. Paste-ready entry is in the
+session report; whoever has Atlassian auth should file it as BUG-2026-09-02-001.
+
+
 ### CI — dead `memory/` pointers were invisible to the gate built to catch them (2026-08-31)
 
 `memory/project_deploy_typecheck_blackout.md` was cited by six sites — `scripts/ci/check-deploy-build-parity.ts`, `scripts/ci/check-deploy-typecheck-parity.ts`, `scripts/ci/agents.md`, `.github/workflows/agents.md` (x2) and a `ci.yml` comment — and had **never existed in the repo**. It resolved only inside one session's private assistant memory, so any human or CI runner following it found nothing.
@@ -1917,4 +1966,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-31 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye` and `getblockheader` over the worker's GetBlock RPC._
