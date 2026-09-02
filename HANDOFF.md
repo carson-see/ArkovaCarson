@@ -14,6 +14,18 @@
 
 ## Now
 
+### CI — dead `memory/` pointers were invisible to the gate built to catch them (2026-08-31)
+
+`memory/project_deploy_typecheck_blackout.md` was cited by six sites — `scripts/ci/check-deploy-build-parity.ts`, `scripts/ci/check-deploy-typecheck-parity.ts`, `scripts/ci/agents.md`, `.github/workflows/agents.md` (x2) and a `ci.yml` comment — and had **never existed in the repo**. It resolved only inside one session's private assistant memory, so any human or CI runner following it found nothing.
+
+`scripts/ci/check-doc-pointers.ts` exists to fail CI on exactly this, but its scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. Nested `agents.md` files and `.github/workflows/*.yml` were not scanned, so all six sites were invisible to it.
+
+Fixed: the memory file now exists in the repo corpus (the failure class is real and has three live parity gates holding it shut), and the scan set covers every tracked nested `agents.md` plus the **comment lines** of workflow YAML. Resolution is now multi-base (doc dir -> package root -> repo root), which is what folder-local notes actually mean; repo-root-only resolution called 59 correctly-written references dead. Widening surfaced **five more** dead `memory/` pointers, each naming a rule that lived only in a session's local memory; those citations now state the fact inline instead. Deliberately-absent paths (negative examples, generated artifacts, named planned work) live in `scripts/ci/snapshots/doc-pointer-exemptions.json` with reasons, and a test fails on a stale one. Coverage went 1,310 -> 1,323 asserted references with the gate green.
+
+**The gate is not merge-blocking.** `Doc Pointer Resolution` is not in `.mergify.yml merge_conditions`, and `main` carries **no** `required_status_checks` at all (`gh api repos/carson-see/ArkovaCarson/branches/main/protection` returns no such block). It reports red without stopping a merge. Wiring it into the queue conditions is the same class of change as the `Orphaned Export Lint` / `Python SDK Tests` entries recorded in `.github/workflows/agents.md`, and was deliberately left out of this PR.
+
+Found incidentally while adding the third-party-notices freshness gate (PR #2530); deliberately kept out of that PR. T0 — no prod surface, no staging evidence required.
+
 ### Bug — Adobe Sign webhooks 500 on every delivery, never worked in prod (found 2026-08-30)
 
 `services/worker/src/api/v1/webhooks/adobe-sign.ts` `findIntegration()` queries
@@ -62,6 +74,32 @@ closing out.
 - **Staging-only:** `ENABLE_DOCUSIGN_INBOUND=true` on the rig. **Prod keeps inbound OFF** pending the SCRUM-3818 go-live gate.
 - **Evidence:** `docs/staging/docusign-bilateral-2026-08/evidence/` — E1/E2 guard behavior, E3 live adversarial matrix, E4 inbound envelopes anchored end-to-end (ARK-DOC-JFQ9QR, ARK-DOC-DGHFW2, `fingerprint_source=issuer_record_attestation`), zero PII leakage.
 - **Do not touch** this rig or the concurrent `credits-2442` / `cleanup-2335` soaks.
+
+### Soaks — consolidated-mm-2026-08 T3 (CLOSED — `pause_lift_obligation` still NOT satisfied, 2026-09-01)
+
+- **Ran:** `consolidated-mm-2026-08`, RC `RC-2026-08-22-deferred-basedrift-exit`, head
+  `b2a65edddff9a3bfb0bb6ec35729bbdd7558a678`, worker rev
+  `arkova-worker-consolidated-mm-2026-08-staging-00001-7n4`. Window
+  2026-08-30T15:46:33Z → 2026-09-01T15:46:33Z, 289/289 cycles clean across every named probe
+  (health/auth/rate-limit/cron/isolation). Sealed evidence:
+  `docs/staging/consolidated-mm-2026-08/cycles/window-summary.json`. Full write-up:
+  `docs/staging/consolidated-mm-2026-08/close-out-2026-09-01.md`.
+- **CTO ruling: this soak does NOT satisfy `pause_lift_obligation`.** The rig never seeded
+  `ENABLE_BATCH_ANCHORING` into `switchboard_flags`, so the batch-anchor/chain-signing path never
+  ran — `max_secured_observed=0` against 13,204 pending anchors from real injected load, and both
+  daily flush fires returned `{"processed":0,"batchId":null,"merkleRoot":null,"txId":null}`
+  (2026-08-31T03:04:55Z and 2026-09-01T03:05:35Z, captured verbatim in the window summary). Prod
+  (`ENABLE_BATCH_ANCHORING=true` since 2026-07-17) secured 13,711 anchors in the same window —
+  confirmed by direct SQL against prod `vzwyaatejekddvltxyye`, so this is a rig-provisioning gap,
+  not a `main` defect. Jira SCRUM-3861.
+- **Everything else this soak proves stands** (289/289 clean cycles is real evidence for the
+  surfaces it covered). It just isn't the one thing `pause_lift_obligation` requires: proof that
+  the anchoring/batch path is safe at the accumulated `main` head.
+  `docs/staging/rc-manifests/rc-deferred-2026-08-22.json` `pause_lift_obligation` updated in place
+  with this same ruling, same date.
+- **`DEPLOY_WORKER_PAUSED` stays `true`.** Lifting it needs a re-soak (or a targeted extension of
+  this rig) with `ENABLE_BATCH_ANCHORING` confirmed `true` via preflight *before* the clock starts.
+  Not scheduled yet — next action for whoever picks up the pause-lift gate.
 
 
 **State as of 2026-08-27T21:00Z, verified live this session.** This block is the only current-state
@@ -381,6 +419,39 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
   (`6860390a8`, by 6 h) renumbers. **Nobody has done it.** Whichever of the two merges second will
   land a duplicate prefix. This is the one open migration-numbering hazard on the board.
 
+### CI — new required check `Third-Party Notices Freshness` (added 2026-08-30)
+
+`src/data/thirdPartyNotices.generated.json` (the data behind the shipped `/legal/third-party-notices`
+page) is generated by `npm run license:notices:generate`, but **nothing ever ran that generator in
+CI** — a grep of `.github/workflows/*.yml` and `scripts/ci/*.ts` for `license:notices` returned zero
+hits. So it drifted silently: the committed file is stamped `generatedAt: 2026-07-28` and is out of
+sync for **81 package names**, including 13+ production dependencies that are installed and appear
+nowhere on the page (`xlsx`, `heic-decode`, `upng-js`, `utif2`, the SheetJS stack). `qrcode-generator@2.0.4`
+reached a branch undisclosed and was caught by hand, not by CI. The generator has also been failing
+closed the whole time (exits 1, writes nothing) on an allowlist-cleared `@img/sharp-libvips-*` with no
+pinned notice.
+
+`scripts/ci/check-third-party-notices-fresh.ts` closes the *detection* half. What other sessions need
+to know:
+
+- **It is now in all three `.mergify.yml` queue `merge_conditions`.** A ci.yml job absent from that
+  list gates nothing, so it was wired in the same change. The job runs unconditionally (no job-level
+  `if:`, no path filter, no `continue-on-error`) — pinned by `mergify-notices-freshness-gate.test.ts`,
+  because a `skipped` check never satisfies `check-success` and would deadlock the queue.
+- **It is a RATCHET, and green today.** The inherited drift above is recorded in
+  `scripts/ci/snapshots/third-party-notices-drift-baseline.json` with `expires: 2026-10-31`. New drift
+  fails immediately; inherited drift warns on every run; everything hard-fails past the expiry. This
+  is deliberate — failing on the inherited state would have red-ed every open PR at once.
+- **If your PR fails it:** run `npm run license:notices:generate` and commit the result. Note that this
+  currently exits 1 without writing, because of the pinned-notice gap above — that gap is owned by the
+  "Regenerate third-party notices (blocked by sharp)" task and is the blocker to retiring the baseline.
+- The comparison excludes platform-variant packages (detected from `os`/`cpu`/`libc` in
+  `package-lock.json`), so a file generated on darwin matches an ubuntu runner. Checked both ways
+  locally: darwin-arm64 excludes 3 names, a linux-x64 tree excludes 7, and both emit an identical
+  81-name drift set and exit 0.
+
+No prod state is asserted or changed by this; it is CI-only (T0).
+
 ### PR board
 
 #### Refreshed 2026-08-27 — the 2026-08-12/08-18 entries below are largely SUPERSEDED
@@ -606,31 +677,32 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
-> ### ⚠️ A SOAK WINDOW IS OPEN — PR #2461, until 2026-08-31T12:15:22Z
+> ### ✅ PR #2461 soak CLOSED and SEALED — rig torn down 2026-08-31
 >
-> **Do not tear down `arkova-soak-pii2461b` / `evkcynsqcmctugoscgeh`.** T2 soak for
-> [#2461](https://github.com/carson-see/ArkovaCarson/pull/2461) (server-side `EMAIL_PATTERN` ReDoS
-> fix), window **2026-08-31T00:15:22Z → 2026-08-31T12:15:22Z**, driven every 5 min.
+> T2 window **2026-08-31T00:15:22Z → 12:15:22Z**, full 12 h served, on isolated rig
+> `evkcynsqcmctugoscgeh` / `arkova-worker-pii2461b-staging-00003-gb4`, head
+> `5083fbba4e27121e6bd845361ccd7dda323e3183`.
 >
-> | | |
-> |---|---|
-> | Supabase project | `evkcynsqcmctugoscgeh` (`arkova-soak-pii2461b`), ledger head `0419` |
-> | Cloud Run | `arkova-worker-pii2461b-staging`, revision `…-00003-gb4` at 100 % |
-> | Preflight | `environment_type=clean_mirror`, 7/7, 2026-08-31T00:06:17Z (before the clock) |
-> | Head under soak | `5083fbba4e27121e6bd845361ccd7dda323e3183` (`/health` `git_sha` matches) |
-> | Image digest | `sha256:b3e4eb8901cbd1c8eaaa48cdd5cc4abd4ea07569679f4117d8657e4e11f8314a` |
+> **142 cycles, 142 pass, 0 fail.** 426 extraction jobs claimed and processed, 34,080,426 characters
+> of adversarial dotted evidence driven through `stripSensitiveString`, 426 CTDL projections probed,
+> 0 leaks, 0 under-redactions. Soak clock = Cloud Run worker uptime 43,647 s (12.12 h). Preflight
+> `clean_mirror` 7/7 at **both** ends (00:06:17Z and 12:21:56Z). Evidence is in the PR body; the
+> `Staging Soak Evidence Gate` passes in CI with `SOAK_GATE_DISABLED=false`.
 >
-> **This is the SECOND window for this PR; the first two attempts died and both causes are worth
-> knowing.** (1) Rig `pii2461` (`wqamcbwogupiuruhkllt`) was torn down by
-> `teardown-isolated-rig.sh` mid-setup — its provision had aborted at
-> `blocked_after_project_create`, so no admission artifact was persisted and it carried no lease
-> marker. This block is the lease that prevents a repeat. (2) The 2026-08-30T21:52:56Z window on
-> the replacement rig was invalidated at 25 clean cycles by BASE DRIFT: main edited
-> `services/worker/src/compliance/professional-education.ts`, a soaked file, and FD-GATE-3 forbids
-> covering same-file T2+ drift with a residual-risk note. Rebased, migrations `0418`/`0419` applied
-> to the rig, preflight re-confirmed, clock restarted.
+> **Rig reclaimed (§7):** Supabase project deleted, Cloud Run service deleted, per-rig secrets
+> deleted, plus the two orphaned `supabase-db-password-<ref>` secrets for this rig and its swept
+> predecessor — the teardown script does not remove those, which is why one had survived a prior
+> sweep as a dead credential.
+>
+> Two failures worth carrying forward, both already fixed in tooling:
+> 1. The first rig was swept mid-setup because its provision aborted before persisting an admission
+>    artifact, so it had no lease marker. A `### Soaks` entry is that lease — use one.
+> 2. `rollback-rehearsal.sh` selected `status.traffic[0]` as "the serving revision"; with a
+>    `rollback` tag present that is the **0%** entry, so it restored traffic to the prod image and
+>    reported success while the rig served the wrong code. Select on `percent == 100` and verify by
+>    reading `/health` `git_sha` back. STAGING_RIG.md pitfall 7, recurring inside our own tooling.
 
-**★ ONE SOAK WINDOW IS OPEN (PR #2461, above). The 2026-08-27 statement below is superseded.**
+**★ NO SOAK WINDOW IS OPEN as of 2026-08-31T12:30Z.**
 Every window described in the dated entries Every window described in the dated entries
 below has closed. This block — not any `## History` entry, and not the presence of a Cloud Run
 service — is the authoritative answer to "is a soak running" (CLAUDE.md §0.1). Three soaks closed

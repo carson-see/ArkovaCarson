@@ -31,8 +31,8 @@ describe('SEC-RECON: Security Hardening (Migrations 0160 + 0161)', () => {
   });
 
   afterAll(async () => {
-    await authClient.auth.signOut();
-    await nonAdminClient.auth.signOut();
+    await authClient.auth.signOut({ scope: 'local' });
+    await nonAdminClient.auth.signOut({ scope: 'local' });
   });
 
   // =========================================================================

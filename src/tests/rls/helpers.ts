@@ -133,10 +133,18 @@ export function createAnonClient(): TypedClient {
 }
 
 /**
- * Sign out and clean up a client
+ * Sign out and clean up a client.
+ *
+ * Scope MUST stay 'local': supabase-js signOut() defaults to scope 'global',
+ * which revokes EVERY session of that user server-side — and the demo users
+ * are shared by many RLS suites running in parallel workers. A global
+ * sign-out from one suite's afterAll poisons any other suite still holding a
+ * session for the same user (auth.getUser() starts failing with "Auth session
+ * missing!" and supabase-js then drops the local session, silently degrading
+ * the client to anon). That was the SCRUM-3618 / SCRUM-3577 cross-file flake.
  */
 export async function cleanupClient(client: TypedClient): Promise<void> {
-  await client.auth.signOut();
+  await client.auth.signOut({ scope: 'local' });
 }
 
 /**
