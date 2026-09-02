@@ -145,12 +145,14 @@ describe('scheduler manifest (SCRUM-2900 config-as-code)', () => {
   // R4: detect-reorgs is the control that protects SECURED integrity — it
   // reverts SECURED→SUBMITTED when a reorg displaces an anchor's block
   // (jobs/chain-maintenance.ts::detectReorgs, CRIT-2). It is declared in
-  // scripts/gcp-setup/cloud-scheduler.sh and routed at POST /jobs/detect-reorgs,
-  // but was ABSENT from this manifest, so nothing watched it for silence. The
-  // reorg-handling work originally shipped with NO detector running in prod at
-  // all (in-process node-cron is dormant under Cloud Run CPU throttling — see
-  // routes/scheduled.ts), which is the same untracked-stop failure mode this
-  // manifest exists to close, one layer up.
+  // scripts/gcp-setup/cloud-scheduler.sh, routed at POST /jobs/detect-reorgs,
+  // and LIVE-VERIFIED ENABLED in prod Cloud Scheduler on 2026-09-02 (see the
+  // entry's own comment for the gcloud read-back) — but was ABSENT from this
+  // manifest, so nothing watched it for silence. The prod trigger is Cloud
+  // Scheduler; routes/scheduled.ts also registers an in-process node-cron
+  // backup, which is NOT disabled in prod (DISABLE_IN_PROCESS_ANCHOR_CRON is
+  // unset, default false) but is serialised behind the same
+  // acquireLock(LOCK_REORG_DETECTION), so it changes nothing for this budget.
   describe('detect-reorgs (R4 — SECURED-integrity control)', () => {
     it('is registered, enabled, and on the 10-minute chain-maintenance cadence', () => {
       const job = getScheduledJob('detect-reorgs');
@@ -173,16 +175,39 @@ describe('scheduler manifest (SCRUM-2900 config-as-code)', () => {
       expect(getScheduledJob('detect-reorgs')?.maxSilenceMs).toBeGreaterThan(0);
     });
 
-    it('budgets silence at 1h — absorbs several missed 10-minute runs, still inside 6-block finality', () => {
+    // The budget is derived from THIS job's own coverage band, not from the
+    // cadence it shares with its peers. detectReorgs only inspects anchors with
+    // chain_block_height >= tip - REORG_CHECK_DEPTH_BLOCKS (=10,
+    // chain-maintenance.ts), and an anchor only reaches SECURED at
+    // getMinConfirmations() = 6 on mainnet (check-confirmations.ts), i.e. at
+    // height <= tip - 5. So any given anchor is reorg-checkable for a window of
+    // ~5 blocks — ~50 min at Bitcoin's 10-minute target. Silence LONGER than
+    // that band means anchors entered and left the checkable window without
+    // ever being examined, which is precisely the SECURED-integrity gap this
+    // entry exists to catch. A budget at or above the band can therefore only
+    // alarm AFTER coverage was already lost.
+    const BLOCK_TARGET_MS = 10 * 60 * 1000;
+    // tip-10 (query floor) .. tip-5 (earliest SECURED) = 5 block slots.
+    const REORG_COVERAGE_BAND_MS = 5 * BLOCK_TARGET_MS;
+
+    it('budgets silence BELOW its own reorg-check coverage band, not at peer cadence', () => {
       const job = getScheduledJob('detect-reorgs');
-      // 6 scheduled ticks per hour: a deploy or a transient chain-tip fetch
-      // failure (which returns early WITHOUT advancing a successful run) must
-      // not page, but ~1h of silence is already ~6 blocks — the depth the proof
-      // path treats as final — so beyond that the detector being dark matters.
-      expect(job?.maxSilenceMs).toBe(60 * 60 * 1000);
-      // Same budget as the other sub-hourly anchor-pipeline jobs.
-      expect(job?.maxSilenceMs).toBe(getScheduledJob('batch-anchors')?.maxSilenceMs);
-      expect(job?.maxSilenceMs).toBe(getScheduledJob('check-confirmations')?.maxSilenceMs);
+      expect(job?.maxSilenceMs).toBeLessThan(REORG_COVERAGE_BAND_MS);
+      // Still tolerant of two consecutive missed ticks (a deploy, a transient
+      // mempool.space failure) before it pages: 30 min = 3 scheduled runs.
+      expect(job?.maxSilenceMs).toBeGreaterThanOrEqual(3 * BLOCK_TARGET_MS);
+      expect(job?.maxSilenceMs).toBe(30 * 60 * 1000);
+    });
+
+    it('is TIGHTER than the peer anchor-pipeline budgets, which are cadence-derived', () => {
+      // batch-anchors / check-confirmations are */30 jobs whose 1h budget is
+      // "two missed runs". Reusing that number here would exceed the coverage
+      // band above, so this job deliberately does not match its peers.
+      const job = getScheduledJob('detect-reorgs');
+      expect(job?.maxSilenceMs).toBeLessThan(getScheduledJob('batch-anchors')?.maxSilenceMs ?? 0);
+      expect(job?.maxSilenceMs).toBeLessThan(
+        getScheduledJob('check-confirmations')?.maxSilenceMs ?? 0,
+      );
     });
 
     it('is included in enabledScheduledJobs()', () => {

@@ -72,7 +72,8 @@ export interface ScheduledJobSpec {
   pausedAt?: string;
 }
 
-const HOURS = 60 * 60 * 1000;
+const MINUTES = 60_000;
+const HOURS = 60 * MINUTES;
 
 /**
  * Critical-set manifest. Enabled entries are the anchoring pipeline + money /
@@ -125,36 +126,38 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
     enabled: true,
     maxSilenceMs: 3 * HOURS,
   },
-  // R4: reorg detection — the control that protects SECURED integrity. It
-  // reverts SECURED → SUBMITTED when a reorg displaces an anchor's block
-  // (chain-maintenance.ts::detectReorgs, CRIT-2 / BUG-A). It is declared in
-  // cloud-scheduler.sh (`detect-reorgs|*/10 * * * *|/jobs/detect-reorgs|
-  // NO_RETRY`) and routed at cron.ts `cronRouter.post('/detect-reorgs')`, but
-  // was ABSENT here — so a silent stop of the integrity control was watched by
-  // nothing. The reorg-handling work originally shipped with NO detector
-  // running in prod at all, because in-process node-cron is dormant under Cloud
-  // Run CPU throttling (routes/scheduled.ts); this is that same untracked-stop
-  // failure mode one layer up.
+  // R4: reorg detection — the control that protects SECURED integrity, reverting
+  // SECURED → SUBMITTED when a reorg displaces an anchor's block
+  // (chain-maintenance.ts::detectReorgs). Routed at cron.ts and declared in
+  // cloud-scheduler.sh, but ABSENT here — a silent stop was watched by nothing.
   //
-  // maxSilenceMs 1h = 6 scheduled ticks. A deploy, or a chain-tip fetch failure
-  // (detectReorgs returns early WITHOUT doing work when the tip probe fails),
-  // must not page. But ~1h of silence is already ~6 blocks — the depth the
-  // proof path treats as final — so past that, a dark detector is a real
-  // integrity gap. Same budget as the other sub-hourly anchor-pipeline jobs,
-  // and deliberately TIGHTER than anchor-public-records' 3h (also */10), whose
-  // width covers long feeder runs this short job does not have.
+  // enabled:true is a §1.5 read-back, not an intent claim: LIVE-VERIFIED via
+  // `gcloud scheduler jobs describe detect-reorgs --project=arkova1
+  // --location=us-central1` on 2026-09-02 — ENABLED, `*/10 * * * *`, POST
+  // /jobs/detect-reorgs, lastAttemptTime 2026-09-02T15:10:02Z. That read-back is
+  // the precondition scripts/gcp-setup/agents.md sets ("once the bindings are
+  // live in prod … not before"), and it is load-bearing: runSchedulerPauseAudit
+  // classifies a manifest job missing from the LIVE listing as `missing-job`,
+  // firing. It is also why only this job is added — its siblings from the same
+  // 2026-08-10 binding batch were NOT in that listing.
   //
-  // HONESTY NOTE (grep-verified at this head — do not assume it stays true):
-  // registering here makes detect-reorgs COVERED BY CONSTRUCTION the moment a
-  // dead-man audit runs, but neither consumer of this manifest has a live
-  // trigger today. `evaluateSchedulerDeadman` and `runSchedulerPauseAudit` have
-  // ZERO non-test callers, and the silence signal `JobRunSignal.lastRunAt` has
-  // NO producer anywhere in the repo — no job writes a last-successful-run
-  // record, detect-reorgs included. That gap is pre-existing and repo-wide (it
-  // affects all eleven entries identically), so this entry does NOT create a
-  // permanently-firing false alert: when the signal producer lands it has to be
-  // built for the whole manifest at once. Wiring it (run-telemetry storage +
-  // an audit route + its own Scheduler binding) is a separate story.
+  // maxSilenceMs 30m is derived from this control's own coverage band, NOT the
+  // peer cadence: detectReorgs only inspects anchors at height >= tip - 10
+  // (REORG_CHECK_DEPTH_BLOCKS) and SECURED starts at 6 confirmations, so an
+  // anchor is checkable for ~5 blocks ≈ 50 min. The peers' 1h would put the
+  // threshold OUTSIDE that band — alarming only after coverage was already lost.
+  // 30m = 3 ticks, still absorbing a deploy or a transient mempool.space failure.
+  //
+  // KNOWN LIMIT: detectReorgs returns {checked:0,…} with HTTP 200 when the tip
+  // probe fails, the anchors query errors, or the run lock is held. A silence
+  // budget bounds "not running"; bounding "running but checking nothing" needs a
+  // work-done signal and belongs to the wiring story.
+  //
+  // Neither consumer has a live trigger: evaluateSchedulerDeadman and
+  // runSchedulerPauseAudit both have ZERO non-test callers, so no deployed
+  // request path reads this array. Pre-existing and repo-wide — it affects all
+  // eleven entries identically, so this entry arms no false alert. Full
+  // reasoning and the consumer table: jobs/agents.md, the R4 section.
   {
     id: 'detect-reorgs',
     category: 'anchor-pipeline',
@@ -163,7 +166,7 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
     method: 'POST',
     owner: 'lane-1',
     enabled: true,
-    maxSilenceMs: 1 * HOURS,
+    maxSilenceMs: 30 * MINUTES,
   },
   // ── Money / integrity maintenance (enabled, critical) ─────────────────────
   {

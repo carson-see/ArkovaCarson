@@ -1376,31 +1376,62 @@ SECURED → SUBMITTED when a reorg displaces an anchor's block. It was declared 
 routed at `routes/cron.ts:1284`, but was **absent from `scheduler-manifest.ts`** — so a silent stop of the
 integrity control was monitored by nothing. Added as `category: 'anchor-pipeline'`, `schedule: '*/10 * * * *'`,
 `targetPath: '/jobs/detect-reorgs'`, `method: 'POST'`, `owner: 'lane-1'`, `enabled: true`,
-`maxSilenceMs: 1 * HOURS`.
+`maxSilenceMs: 30 * MINUTES`.
 
-**`maxSilenceMs` = 1h, chosen against the other entries, not by default.** 1h is 6 scheduled ticks: enough to
-absorb a deploy or a chain-tip fetch failure (`detectReorgs` returns early *without* doing work when the tip
-probe fails) without paging. It is the same budget the other sub-hourly anchor-pipeline jobs use
-(`batch-anchors`, `check-confirmations`, `recover-broadcasts` — all `1 * HOURS`), which is the right peer
-group: this job mutates anchor lifecycle state, it is not a feeder. It is deliberately **tighter** than
-`anchor-public-records`' `3 * HOURS` despite the identical `*/10` cadence — that width exists for long feeder
-runs this short job does not have, and 3h would leave the SECURED-integrity control dark for ~18 blocks, well
-past the ~6-block depth the proof path treats as final.
+**`enabled: true` is a read-back, not an intent claim.** `scripts/gcp-setup/agents.md` sets the precondition
+explicitly — a job joins the dead-man "once the new chain-critical bindings are live in prod … not before, or
+the dead-man would treat a not-yet-created job as a stall" — and that precondition is now met and was
+**verified, not inherited**: `gcloud scheduler jobs describe detect-reorgs --project=arkova1
+--location=us-central1` on 2026-09-02 returned `state: ENABLED`, `schedule: '*/10 * * * *'`, POST
+`https://arkova-worker-…/jobs/detect-reorgs`, `lastAttemptTime: 2026-09-02T15:10:02Z`. This matters because
+`runSchedulerPauseAudit` classifies a manifest job absent from the **live** `jobs.list` as `missing-job` with
+`firing: true` (`scheduler-pause-attribution.ts:213-223`) — registering off the script declaration alone would
+arm a false page. The same read-back is why **only** `detect-reorgs` is added here: of the 2026-08-10
+CTO-decision bindings, `monitor-stuck-txs`, `rebroadcast-txs`, `treasury-alert-check`, `smoke-test`,
+`reconcile-stripe`, `cleanup-retention`, `docusign-notarization-completed` and `ce-registry-drift-check` are
+declared in the script but were **not** in the live listing on that same read (10 of 70 declared jobs are not
+live; `chaindump-desk-daily` is live but undeclared). They must stay out of the manifest until each is
+individually verified live.
+
+**`maxSilenceMs` = 30m, derived from this control's own coverage band — NOT from the peer cadence.**
+`detectReorgs` only selects anchors with `chain_block_height >= tip - REORG_CHECK_DEPTH_BLOCKS` (`=10`,
+`chain-maintenance.ts:32`), and an anchor only reaches SECURED at `getMinConfirmations() = 6` on mainnet
+(`check-confirmations.ts:495`), i.e. `height <= tip - 5`. So an anchor is reorg-checkable across ~5 block slots
+≈ 50 min. The 1h budget the peers use (`batch-anchors`, `check-confirmations`, `recover-broadcasts`) is
+"two missed runs" arithmetic for `*/30` and `*/15` jobs; reusing it here would put the alarm threshold
+**outside** the coverage band, so it could only fire after anchors had already entered and aged out of the
+window unexamined. 30m = 3 scheduled ticks, which still absorbs a deploy or a transient `mempool.space`
+failure. This entry is therefore deliberately tighter than every other anchor-pipeline entry.
+
+**Known limit — a silence budget cannot bound this job's most likely failure.** `detectReorgs` returns
+`{checked: 0, reorgsDetected: 0, reverted: 0}` and the route answers **200** when the chain-tip probe fails
+(`chain-maintenance.ts:368-371`), when the anchors query errors or is empty (`:395-397`), and when
+`acquireLock(LOCK_REORG_DETECTION)` is already held (`:356-359`). A `lastRunAt` producer keyed on
+run-completed / HTTP 200 would keep advancing through a week-long `mempool.space` outage while nothing was
+ever checked. The budget above bounds *not running*; bounding *running but checking nothing* needs a work-done
+signal (`checked > 0`, or an explicit failure result) and belongs to the wiring story, not to this
+registration.
 
 **What the two manifest consumers actually read (grep-verified at this head — re-check, do not inherit):**
 
-| Consumer | Reads | Does `detect-reorgs` supply it? |
+| Consumer | Reads | Why it is inert today |
 |---|---|---|
-| `scheduler-deadman.ts:75` `evaluateSchedulerDeadman` | `JobRunSignal[] = {id, lastRunAt}` — "last SUCCESSFUL run" (`:35-39`), an **injected parameter** (`:77`) | **No — and neither does any other job.** `JobRunSignal` is constructed only in `scheduler-deadman.test.ts`; no table stores a per-scheduler-job last-successful-run timestamp (the `last_run_*` columns in `database.types.ts` belong to `bq_export_watermarks` and `organization_queue_run_state`). |
-| `scheduler-pause-attribution.ts:505` `runSchedulerPauseAudit` | the **live Cloud Scheduler `jobs.list` API** (`:354-394`) + the Cloud Logging `PauseJob` audit log (`:410-472`) | **Needs no worker-side emission** — its per-job signal is the Scheduler job's own existence/state, and `detect-reorgs` is declared in `cloud-scheduler.sh`. |
+| `scheduler-deadman.ts:75` `evaluateSchedulerDeadman` | `JobRunSignal[] = {id, lastRunAt}` — "last SUCCESSFUL run" (`:35-39`), an **injected parameter** (`:77`) | **No caller AND no signal producer.** `JobRunSignal` is constructed only in `scheduler-deadman.test.ts`; no table stores a per-scheduler-job last-successful-run timestamp (the `last_run_*` columns in `database.types.ts` belong to `bq_export_watermarks` and `organization_queue_run_state`). |
+| `scheduler-pause-attribution.ts:505` `runSchedulerPauseAudit` | the **live Cloud Scheduler `jobs.list` API** (`:354-394`) + the Cloud Logging `PauseJob` audit log (`:410-472`) | **No caller — but its signal exists.** Its per-job signal is the Scheduler job's own existence/state, so it needs no worker-side emission; it lacks only a trigger. This is why the `enabled: true` read-back above is load-bearing rather than cosmetic. |
 
-Both consumers still have **zero non-test callers**, so this registration does not create a permanently-firing
-false alert: the silence signal has no producer for *any* of the eleven entries, and when one lands it must be
-built for the whole manifest at once. This is the same COVERED-BY-CONSTRUCTION posture recorded for
-`drive-subscription-renewal` above. Wiring the audit (run-telemetry storage + an audit route + its own
-Scheduler binding) remains a separate story.
+Both consumers have **zero non-test callers**, so nothing in a deployed request path reads `SCHEDULER_MANIFEST`
+at all — no runtime probe against a staging worker can observe this change, and none should be invented. This
+registration is data-only until the audit is wired; it does not create a permanently-firing alert, because the
+pause audit is not running and the silence dead-man has no producer for *any* of the eleven entries. Same
+COVERED-BY-CONSTRUCTION posture as `drive-subscription-renewal` above.
 
-Parity with `cloud-scheduler.sh` is enforced, not assumed: `scripts/gcp-setup/cloud-scheduler.test.ts`
-`describe('cloud-scheduler.sh ↔ scheduler-manifest.ts parity (SCRUM-2900)')` fails on any schedule/path/pause
-mismatch — verified load-bearing by perturbing the schedule to `*/5` and watching it fail.
+**Parity is enforced in one direction only — the class gap is still open.**
+`scripts/gcp-setup/cloud-scheduler.test.ts` `describe('cloud-scheduler.sh ↔ scheduler-manifest.ts parity
+(SCRUM-2900)')` iterates `SCHEDULER_MANIFEST` and fails on any schedule/path/pause mismatch — verified
+load-bearing by perturbing the schedule to `*/5` and watching it fail. But it asserts manifest → JOBS **by
+design** (the manifest is a critical subset), so a job declared in `cloud-scheduler.sh` and never added here is
+invisible to it — which is exactly how `detect-reorgs` stayed unmonitored. The reverse ratchet (every JOBS
+entry must be in the manifest or in an explicit `NOT_MONITORED` list with a reason, mirroring the existing
+`JOBS` / `NOT_SCHEDULED` route ratchet in the same file) would close the class; it needs a judgement call on
+each of the 59 currently-unregistered jobs, so it is its own story, not a rider on this one.
 Tests: `scheduler-manifest.test.ts` `describe('detect-reorgs (R4 — SECURED-integrity control)')`.
