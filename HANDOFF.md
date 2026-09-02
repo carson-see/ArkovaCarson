@@ -753,6 +753,10 @@ the RC-batch and R1 close-outs below depend on it. Do not open another competing
   with `Soak end`, the cycle count and the rehearsal filled; human approver = Carson. The base must stay `4b3db0c0c` — **do not merge `main` into
   the branch again**: once the base passes `1b7d8601c` the migration-ledger carve-out fires and demands a re-soak. No `staging_deploy_log` row exists on
   either rig (manual standup); the provenance text in the blocks passes the parser, SCRUM-1803 intent unmet.
+- **Jira/Confluence (created 2026-09-02, all To Do):** #2524→SCRUM-3956 (epic SCRUM-2325, page 135036931) · #2525→SCRUM-3959 (SCRUM-1866, 135495682) ·
+  #2526→SCRUM-3962 (SCRUM-2895, 135528450) · #2527→SCRUM-3965 (SCRUM-2325, 134938627) · #2528→SCRUM-3968 (SCRUM-2325, 135561218); each has
+  `[Verify]` + `[Close-out]` subtasks. At close-out: add the key to each PR title/body, tick the page DoD lists, transition subtasks with the parent
+  only after merge + prod green. The #2525/#2526 PR bodies are stale (superseded rig, "501" now 404, "1 h" now 30 min) — replace, don't append.
 - **Then** tear both rigs down (`scripts/staging/teardown-isolated-rig.sh`, §7 cost sweep) and close the soak entries here.
 
 **RUNNING — PR #2524 T3 isolated soak (`feat/proof-tx-inclusion-branch`, migration `0427`), started 2026-09-02.**
