@@ -29,6 +29,221 @@
         "https://raw.githubusercontent.com/Stuk/jszip/main/LICENSE.markdown"
       ],
       "licenseTextNote": "Used under the MIT option of the MIT-or-GPLv3 dual license. The linked file contains both license texts as published by the project."
+    },
+    {
+      "name": "@img/sharp-libvips-darwin-arm64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (darwin-arm64 platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-darwin-x64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (darwin-x64 platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-arm",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (linux-arm platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-arm64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (linux-arm64 platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-ppc64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (linux-ppc64 platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-riscv64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-linux-riscv64/-/sharp-libvips-linux-riscv64-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (linux-riscv64 platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-s390x",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (linux-s390x platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-x64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (linux-x64 platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-linuxmusl-arm64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (linuxmusl-arm64 platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-libvips-linuxmusl-x64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp-libvips",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.2.4.tgz",
+      "status": "active",
+      "statusNote": "Prebuilt libvips image-processing binary for the `sharp` library (linuxmusl-x64 platform variant). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "@img/sharp-wasm32",
+      "version": "0.34.5",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
+      "repository": "https://github.com/lovell/sharp",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.34.5.tgz",
+      "status": "active",
+      "statusNote": "WebAssembly build of the `sharp` image library (multi-licensed; the LGPL component is the bundled libvips). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt",
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt",
+        "https://spdx.org/licenses/MIT.html"
+      ],
+      "licenseTextNote": "Multi-licensed artifact; the Apache-2.0, LGPL-3.0 (which incorporates the GNU GPL v3 by reference, LGPL-3.0 §2), and MIT texts are all linked."
+    },
+    {
+      "name": "@img/sharp-win32-arm64",
+      "version": "0.34.5",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.34.5.tgz",
+      "status": "active",
+      "statusNote": "Windows build of the `sharp` image library (win32-arm64 platform variant; the LGPL component is the bundled libvips). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt",
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "Multi-licensed artifact; the Apache-2.0 text and both GNU texts are linked (LGPL-3.0 incorporates the GNU GPL v3 by reference, LGPL-3.0 §2)."
+    },
+    {
+      "name": "@img/sharp-win32-ia32",
+      "version": "0.34.5",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.34.5.tgz",
+      "status": "active",
+      "statusNote": "Windows build of the `sharp` image library (win32-ia32 platform variant; the LGPL component is the bundled libvips). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt",
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "Multi-licensed artifact; the Apache-2.0 text and both GNU texts are linked (LGPL-3.0 incorporates the GNU GPL v3 by reference, LGPL-3.0 §2)."
+    },
+    {
+      "name": "@img/sharp-win32-x64",
+      "version": "0.34.5",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later",
+      "repository": "https://github.com/lovell/sharp",
+      "sourceUrl": "https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.34.5.tgz",
+      "status": "active",
+      "statusNote": "Windows build of the `sharp` image library (win32-x64 platform variant; the LGPL component is the bundled libvips). Present in Arkova's dependency lockfile only as an inert transitive dependency of @huggingface/transformers, whose browser build (the build Arkova ships) replaces `sharp` with an empty stub at publish time — this package is never imported, bundled, or executed by any shipped Arkova code, and a build of the distributed frontend artifact emits none of its code (verified by build-and-grep 2026-08-11; CTO review recorded in scripts/security/license-denylist.allowlist.json). Because Arkova does not distribute this component, no LGPL source-offer or relinking obligation is triggered by it; it is listed here for transparency.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt",
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "Multi-licensed artifact; the Apache-2.0 text and both GNU texts are linked (LGPL-3.0 incorporates the GNU GPL v3 by reference, LGPL-3.0 §2)."
     }
   ]
 }
