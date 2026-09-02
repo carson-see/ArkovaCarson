@@ -30,27 +30,29 @@ q() { psql "$PGURI" -At -c "$1" 2>/dev/null; }
 # A direct psql connection sets no request.jwt.* GUC, so get_caller_role()
 # returns NULL and the guard treats it as untrusted -- exactly the forgery path.
 guard_probe() {
-  local n="$1" fpA fpB fpC res
-  fpA="$(openssl rand -hex 32)"; fpB="$(openssl rand -hex 32)"; fpC="$(openssl rand -hex 32)"
-  q "SELECT set_config('request.jwt.claim.role','',false);" >/dev/null
-  q "INSERT INTO public.anchors (user_id,org_id,fingerprint,filename,metadata) VALUES
-      ('$USER_A','$ORG_A','$fpA','GUARDPROBE-A-$n','{\"connector_source\":\"docusign\",\"account_id\":\"FORGED\",\"envelope_id\":\"FORGED\",\"_signers\":[{\"recipient_id_guid\":\"x\"}],\"_docusign_env\":\"prod\",\"_direction\":\"inbound\",\"_sending_account_id\":\"FORGED\",\"connector_artifact_id\":\"FORGED\",\"benign\":\"KEEP\"}'::jsonb),
-      ('$USER_A','$ORG_A','$fpB','GUARDPROBE-B-$n','{\"account_id\":\"LEGIT\",\"envelope_id\":\"LEGIT\",\"benign\":\"KEEP\"}'::jsonb);" >/dev/null
-  q "SELECT set_config('request.jwt.claim.role','service_role',false);" >/dev/null
-  q "INSERT INTO public.anchors (user_id,org_id,fingerprint,filename,metadata) VALUES
-      ('$USER_A','$ORG_A','$fpC','GUARDPROBE-C-$n','{\"connector_source\":\"docusign\",\"account_id\":\"REAL\",\"envelope_id\":\"REAL\"}'::jsonb);" >/dev/null
-  q "SELECT set_config('request.jwt.claim.role','',false);" >/dev/null
-  q "UPDATE public.anchors SET metadata = metadata || '{\"account_id\":\"HIJACK\"}'::jsonb WHERE filename='GUARDPROBE-C-$n';" >/dev/null
-  # A: every guarded key stripped.  B: legit keys survive (conditional branch).
-  # C: service_role write intact.   D: untrusted UPDATE reverted to REAL.
-  # NOTE: Postgres has no `integer || integer`; each term must cast to text.
-  res="$(q "SELECT
-     (SELECT (NOT (metadata ?| ARRAY['connector_source','account_id','envelope_id','_signers','_docusign_env','_direction','_sending_account_id','connector_artifact_id']) AND metadata->>'benign'='KEEP')::int::text FROM public.anchors WHERE filename='GUARDPROBE-A-$n')
-   ||(SELECT (metadata->>'account_id'='LEGIT' AND metadata->>'envelope_id'='LEGIT')::int::text FROM public.anchors WHERE filename='GUARDPROBE-B-$n')
-   ||(SELECT (metadata->>'connector_source'='docusign')::int::text FROM public.anchors WHERE filename='GUARDPROBE-C-$n')
-   ||(SELECT (metadata->>'account_id'='REAL')::int::text FROM public.anchors WHERE filename='GUARDPROBE-C-$n');")"
-  q "DELETE FROM public.anchors WHERE filename LIKE 'GUARDPROBE-%-$n';" >/dev/null
-  echo "${res:-0000}"
+  # ONE psql session: set_config is session-scoped, so the role GUC and the
+  # INSERT it governs MUST share a connection. Splitting them across `psql -c`
+  # calls silently ran every branch as an untrusted caller (cycle 1: "0000").
+  local n="$1" out
+  out="$(psql "$PGURI" -At -v ON_ERROR_STOP=1 <<SQL 2>/dev/null | tail -1
+SELECT set_config('request.jwt.claim.role','',false);
+INSERT INTO public.anchors (user_id,org_id,fingerprint,filename,metadata) VALUES
+ ('$USER_A','$ORG_A',encode(gen_random_bytes(32),'hex'),'GUARDPROBE-A-$n','{"connector_source":"docusign","account_id":"FORGED","envelope_id":"FORGED","_signers":[{"recipient_id_guid":"x"}],"_docusign_env":"prod","_direction":"inbound","_sending_account_id":"F","connector_artifact_id":"F","benign":"KEEP"}'::jsonb),
+ ('$USER_A','$ORG_A',encode(gen_random_bytes(32),'hex'),'GUARDPROBE-B-$n','{"account_id":"LEGIT","envelope_id":"LEGIT","benign":"KEEP"}'::jsonb);
+SELECT set_config('request.jwt.claim.role','service_role',false);
+INSERT INTO public.anchors (user_id,org_id,fingerprint,filename,metadata) VALUES
+ ('$USER_A','$ORG_A',encode(gen_random_bytes(32),'hex'),'GUARDPROBE-C-$n','{"connector_source":"docusign","account_id":"REAL","envelope_id":"REAL"}'::jsonb);
+SELECT set_config('request.jwt.claim.role','',false);
+UPDATE public.anchors SET metadata = metadata || '{"account_id":"HIJACK"}'::jsonb WHERE filename='GUARDPROBE-C-$n';
+SELECT
+   (SELECT (NOT (metadata ?| ARRAY['connector_source','account_id','envelope_id','_signers','_docusign_env','_direction','_sending_account_id','connector_artifact_id']) AND metadata->>'benign'='KEEP')::int::text FROM public.anchors WHERE filename='GUARDPROBE-A-$n')
+||(SELECT (metadata->>'account_id'='LEGIT' AND metadata->>'envelope_id'='LEGIT')::int::text FROM public.anchors WHERE filename='GUARDPROBE-B-$n')
+||(SELECT (metadata->>'connector_source'='docusign')::int::text FROM public.anchors WHERE filename='GUARDPROBE-C-$n')
+||(SELECT (metadata->>'account_id'='REAL')::int::text FROM public.anchors WHERE filename='GUARDPROBE-C-$n');
+SQL
+)"
+  psql "$PGURI" -At -c "DELETE FROM public.anchors WHERE filename LIKE 'GUARDPROBE-%-$n';" >/dev/null 2>&1
+  echo "${out:-0000}"
 }
 
 post() { local sig
@@ -85,6 +87,21 @@ while [ "$(date -u +%s)" -lt "$END_EPOCH" ]; do
 
   GUARD="$(guard_probe "$CYCLE")"
 
+  # Anchor lifecycle load, both tenants, written as service_role exactly like
+  # the connector drain does -- so the guard's service_role-preserve branch and
+  # the batch/confirm lifecycle are exercised under real multi-tenant volume.
+  # Same single-session rule as guard_probe: the service_role GUC and the INSERTs
+  # it authorises must share one connection, or the guard strips connector_source
+  # off the load rows (observed: orgs_with_docusign=0 on the first attempt).
+  psql "$PGURI" -At -v ON_ERROR_STOP=1 <<SQL >/dev/null 2>&1
+SELECT set_config('request.jwt.claim.role','service_role',false);
+INSERT INTO public.anchors (user_id,org_id,fingerprint,filename,status,metadata) VALUES
+ ('$USER_A','$ORG_A',encode(gen_random_bytes(32),'hex'),'soak-c$CYCLE-a.pdf','PENDING',
+  jsonb_build_object('connector_source','docusign','account_id','$ACCT_A','envelope_id','env-a-$CYCLE-$TS','_direction','inbound','_sending_account_id','ffffffff-9999-4999-8999-ffffffffffff')),
+ ('$USER_A','$ORG_B',encode(gen_random_bytes(32),'hex'),'soak-c$CYCLE-b.pdf','PENDING',
+  jsonb_build_object('connector_source','docusign','account_id','$ACCT_B','envelope_id','env-b-$CYCLE-$TS','_direction','inbound','_sending_account_id','ffffffff-9999-4999-8999-ffffffffffff'));
+SQL
+
   DRAIN="$(curl -s -m 90 -X POST "$URL/jobs/drain-connector-artifacts" -H "Authorization: Bearer $TOKEN" -H "X-Cron-Secret: $CRON" -H "Content-Type: application/json" -d '{}')"
   TRIGA="$(curl -s -m 90 -X POST "$URL/jobs/batch-anchors" -H "Authorization: Bearer $TOKEN" -H "X-Cron-Secret: $CRON" -H "Content-Type: application/json" -d '{}')"
   FLUSH="$(curl -s -m 120 -X POST "$URL/jobs/batch-anchors?force=true" -H "Authorization: Bearer $TOKEN" -H "X-Cron-Secret: $CRON" -H "Content-Type: application/json" -d '{}')"
@@ -107,7 +124,7 @@ while [ "$(date -u +%s)" -lt "$END_EPOCH" ]; do
   [ "$C_IN_A" = "202" ] && OK=$((OK+1)); [ "$C_IN_B" = "202" ] && OK=$((OK+1))
   [ "$C_REPLAY" = "200" ] && OK=$((OK+1)); [ "$C_BADSIG" = "401" ] && OK=$((OK+1))
   [ "$GUARD" = "1111" ] && OK=$((OK+1))
-  [ "$ART_DELTA" -ge 2 ] && OK=$((OK+1))
+  [ "$ANC_DELTA" -ge 2 ] && OK=$((OK+1))
   FAIL=$((6-OK))
 
   printf '{"cycle":%d,"ts":"%s","ok":%d,"fail":%d,"guard":"%s","artifact_delta":%d,"anchor_delta":%d,"orgs_with_docusign":%s,"restarts":%d,"uptime":%s,"codes":{"inbound_A":"%s","inbound_B":"%s","replay":"%s","wrong_hmac":"%s"},"drain":%s,"drain2":%s,"triggerA":%s,"flush":%s,"triggerB":%s,"health":%s}\n' \
