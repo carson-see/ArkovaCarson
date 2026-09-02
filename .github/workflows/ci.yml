@@ -565,6 +565,19 @@ jobs:
           PR_COMMITS_MSGS_FILE: ${{ steps.commits.outputs.msgs_file }}
         run: node_modules/.bin/tsx scripts/ci/check-handoff-claims.ts
 
+      # A body-level "do not merge" is a prose hold Mergify never reads — only
+      # the do-not-merge LABEL blocks the queue, and #2240 auto-merged over its
+      # own author's written hold. Fails any NON-DRAFT PR whose body contains
+      # the phrase (case-insensitive) without the label. Draft + body + labels
+      # are refreshed live via gh when possible (frozen-payload fallback), so
+      # applying the label then re-running this job passes.
+      - name: Do-not-merge body/label parity (SCRUM-3804)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-do-not-merge-body.ts
+
       - name: Confluence page coverage
         if: github.event_name == 'pull_request'
         env:
