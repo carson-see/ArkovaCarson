@@ -87,6 +87,27 @@ separate, not-yet-performed manual step) and the schedule to bind it at once som
 `0 13 * * *`, matching `platform-health-digest`'s cadence right below it in `NOT_SCHEDULED`. Same
 follow-up instruction as that entry: move from `NOT_SCHEDULED` to `JOBS`, don't just delete the line.
 
+## 2026-08-23 — why the coverage contract exists, restated (SCRUM-3384)
+
+The COVERAGE CONTRACT header in `cloud-scheduler.sh` and the rationale in
+`cloud-scheduler.test.ts` used to justify themselves with the PROOF-03 reading
+that the in-process schedule is inert on Cloud Run, i.e. that an unbound route
+*never* runs. That reading is **retracted**: a node-cron timer stops firing only
+once its revision has scaled to ZERO, and prod `arkova-worker` deploys
+`--min-instances 2 --max-instances 10`, so the in-process schedule in
+`services/worker/src/routes/scheduled.ts` fires on every warm instance.
+
+The contract is unchanged and still correct, on its real reasons: a
+process-local timer has no retry, no attempt deadline and no run history, and
+disappears entirely at scale-to-zero. Two consequences for this folder:
+
+- An unbound cron route still fails the test. "It has an in-process backup" was
+  never an acceptable answer and is not one now.
+- A job you add to `JOBS` here that *also* has an in-process registration is
+  running on both triggers at once. Check
+  `services/worker/src/routes/in-process-cron-audit.ts` for what stops the
+  second copy before assuming the HTTP binding is the only caller.
+
 ## Conventions
 
 - Requires `gcloud auth login` with project-admin role on `arkova1`.
