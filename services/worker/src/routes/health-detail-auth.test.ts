@@ -190,9 +190,20 @@ describe('buildHealthResponse — denied detail degrades to compact', () => {
 
     // Compact liveness signal is preserved — probes must still work.
     expect(result.body.status).toBe('healthy');
+    // `anchoring: 'warning'` is the CORRECT verdict for this fixture, not a
+    // regression. `createMockDeps()` supplies no `getAnchoringRpcStatus` and
+    // sets `enableProdNetworkAnchoring: true`, i.e. prod anchoring is ON and
+    // the RPC cache has NEVER been probed (`checkedAtMs === null`).
+    // `evaluateAnchoringRpcHealth` fails that case closed (PR #2335 /
+    // `anchoring-rpc-probe.ts`): CLAUDE.md §1.5 forbids asserting health we
+    // have not measured, and a cold cache reading 'ok' is exactly the
+    // revoked-credential blind spot that probe exists to catch. This assertion
+    // still pins what this test is ABOUT — that the compact shape survives a
+    // denied detail request and leaks nothing — so it tracks the evaluator
+    // rather than freezing a value the evaluator no longer returns.
     expect(result.body.checks).toEqual({
       database: 'ok',
-      anchoring: 'ok',
+      anchoring: 'warning',
       kms: 'ok',
     });
   });
