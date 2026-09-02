@@ -85,6 +85,17 @@ queue_rules:
       # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
+      # Third-party notices freshness (ci.yml `notices-freshness`). The
+      # /legal/third-party-notices page is generated from the dependency set, but
+      # nothing ran its generator in CI: the data file drifted for over a month
+      # and `qrcode-generator@2.0.4` shipped undisclosed until a human caught it.
+      # Listed here because a ci.yml job absent from merge_conditions gates
+      # NOTHING — it can be red while Mergify merges anyway, which is the same
+      # hollowness that left Orphaned Export Lint inert for a month. The job runs
+      # unconditionally (no job-level `if:`, no path filter), so requiring it
+      # cannot deadlock a PR on a never-reported check — subject to the same
+      # ci.yml `paths-ignore` caveat noted above.
+      - check-success = Third-Party Notices Freshness
       - check-success = Staging Soak Evidence Gate
       - check-success = S3.3 Wave 2 Exact-Head Acceptance
     merge_method: merge
@@ -133,6 +144,9 @@ queue_rules:
       # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
+      # Third-party notices freshness — see the note on this check in the
+      # s33-wave2-corpus queue above.
+      - check-success = Third-Party Notices Freshness
       # Risk-tiered staging evidence gate (CLAUDE.md §1.11)
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
@@ -203,6 +217,9 @@ queue_rules:
       # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
+      # Third-party notices freshness — see the note on this check in the
+      # s33-wave2-corpus queue above.
+      - check-success = Third-Party Notices Freshness
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
     # Aug-10 release push: expand the default batch to 10 PRs so the CI-green

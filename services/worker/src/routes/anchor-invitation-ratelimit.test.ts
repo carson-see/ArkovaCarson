@@ -9,14 +9,22 @@
  * EVERY `/api/*` request — including `/api/invitations/*` — before
  * `anchorRouter` gets a chance to match.
  *
- * `rateLimit()` keys buckets as `scope ? scope + ':' + key : key`, so two
- * UNSCOPED limiters share one bucket per client IP. With the invitation routes
- * on the unscoped 5/min `rateLimiters.auth`, every invitation request
- * incremented that one bucket twice (guard + route) against a cap of 5 — two
- * requests per IP per minute. An invitee who reloaded `/accept-invite` once
- * before submitting got a 429 on submit, as did a second colleague accepting
- * from the same office NAT. index.ts:360 documents the same bug class biting
- * `/api/v1/identity`.
+ * HISTORY — the bug these tests were written against. `rateLimit()` used to key
+ * buckets as `scope ? scope + ':' + key : key`, so two UNSCOPED limiters shared
+ * one bucket per client IP. With the invitation routes on the unscoped 5/min
+ * `rateLimiters.auth`, every invitation request incremented that one bucket
+ * twice (guard + route) against a cap of 5 — two requests per IP per minute. An
+ * invitee who reloaded `/accept-invite` once before submitting got a 429 on
+ * submit, as did a second colleague accepting from the same office NAT.
+ *
+ * SCRUM-3418 removed that collision mechanism: buckets are now always keyed
+ * `${bucketScope}:${key}`, and a limiter that passes no `scope` gets a private
+ * per-instance namespace instead of the shared bare-IP entry. The explicit
+ * `scope: 'invitations'` these routes carry is therefore no longer what keeps
+ * them off the guard's counter — it is what gives the bucket a stable, readable
+ * name in the `Rate limit exceeded` log line. These tests still earn their keep:
+ * they run the REAL limiters, so they pin the end-to-end budget an invitee
+ * actually gets, whatever the keying rule underneath happens to be.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

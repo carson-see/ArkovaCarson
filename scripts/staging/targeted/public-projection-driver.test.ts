@@ -1,0 +1,284 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  assertOrgIsolation,
+  assertRestSuppressed,
+  assertSqlPublished,
+  assertSqlSuppressed,
+  assertSubType,
+  isDirectRun,
+  parsePublicProjectionArgs,
+  sanitizeLogToken,
+} from './public-projection-driver.js';
+
+// A fully-suppressed §99.37 projection, as 0415's body emits it.
+const SUPPRESSED = {
+  issued_date: null,
+  expiry_date: null,
+  issuer_public_id: null,
+  issuer_name: 'Unknown Issuer',
+  filename: 'credential.pdf',
+  directory_info_suppressed: true,
+};
+
+// A published projection, directory fields intact.
+const PUBLISHED = {
+  issued_date: '2026-05-01',
+  expiry_date: '2030-05-01',
+  issuer_public_id: 'ORG-TSOAK-A',
+  issuer_name: 'TSOAK-MPP Alpha University',
+  filename: 'degree.pdf',
+};
+
+describe('public-projection-driver: sanitizeLogToken (S5145)', () => {
+  it('strips the newline that would forge a second [mpp] transcript record', () => {
+    const forged = 'api_base=x\n[mpp] 2026-01-01T00:00:00.000Z done: allExpected=true';
+    const clean = sanitizeLogToken(forged);
+    expect(clean).not.toContain('\n');
+    // The text survives — only the control character is neutralised.
+    expect(clean).toContain('allExpected=true');
+  });
+
+  it('strips carriage returns, tabs and NUL', () => {
+    // Escapes, never literal control bytes: a raw NUL in this file would make
+    // git classify the source as binary (no diff in review).
+    expect(sanitizeLogToken('a\rb\tc\u0000d')).toBe('a b c d');
+  });
+
+  it('strips invisible Unicode format characters (\\p{Cf}), not just ASCII controls', () => {
+    // \u200B zero-width space and \u202E RTL override are \p{Cf}: invisible in
+    // a transcript, and \u202E is the Trojan Source vector. Written as escapes
+    // so the source stays plain ASCII and reviewable.
+    expect(sanitizeLogToken('rig\u200Bname\u202Eevil')).toBe('rig name evil');
+  });
+
+  it('leaves ordinary log content byte-for-byte alone', () => {
+    const line = 'api_base=https://x.a.run.app rig=https://abc.supabase.co head=0421';
+    expect(sanitizeLogToken(line)).toBe(line);
+  });
+
+  it('returns an empty string unchanged', () => {
+    expect(sanitizeLogToken('')).toBe('');
+  });
+});
+
+describe('public-projection-driver: parsePublicProjectionArgs', () => {
+  it('defaults to the 0421 head, a 15-minute window and a 30s cadence', () => {
+    expect(parsePublicProjectionArgs([])).toEqual({
+      durationMin: 15,
+      evidenceOut: undefined,
+      projectionHead: '0421',
+      seedOnly: false,
+      passIntervalMs: 30_000,
+    });
+  });
+
+  it('parses the exact argv the soak supervisor passes', () => {
+    const args = parsePublicProjectionArgs([
+      '--duration', '55',
+      '--pass-interval-sec', '30',
+      '--projection-head', '0421',
+      '--evidence-out', 'docs/staging/mig-public-projection/load-auto.json',
+    ]);
+    expect(args).toEqual({
+      durationMin: 55,
+      evidenceOut: 'docs/staging/mig-public-projection/load-auto.json',
+      projectionHead: '0421',
+      seedOnly: false,
+      passIntervalMs: 30_000,
+    });
+  });
+
+  it('accepts the 0415 head', () => {
+    expect(parsePublicProjectionArgs(['--projection-head', '0415']).projectionHead).toBe('0415');
+  });
+
+  it('converts --pass-interval-sec to milliseconds', () => {
+    expect(parsePublicProjectionArgs(['--pass-interval-sec', '5']).passIntervalMs).toBe(5_000);
+  });
+
+  it('treats --seed-only as a boolean flag', () => {
+    expect(parsePublicProjectionArgs(['--seed-only']).seedOnly).toBe(true);
+  });
+
+  it('rejects a projection head that is neither migration, naming the bad value', () => {
+    expect(() => parsePublicProjectionArgs(['--projection-head', '0422']))
+      .toThrow(/--projection-head must be 0415 or 0421; got '0422'/);
+  });
+});
+
+describe('public-projection-driver: isDirectRun (entry guard)', () => {
+  const SELF = import.meta.url;
+
+  it('is false when argv[1] is absent (imported, not executed)', () => {
+    expect(isDirectRun(SELF, undefined)).toBe(false);
+  });
+
+  it('is true when argv[1] is this module as an ABSOLUTE path', () => {
+    expect(isDirectRun(SELF, new URL(SELF).pathname)).toBe(true);
+  });
+
+  it('is true when argv[1] is this module as a RELATIVE path', () => {
+    // The soak supervisor launches via `npm exec tsx scripts/staging/...`,
+    // so argv[1] arrives relative to cwd. A bare `file://${argv[1]}` compare
+    // would fail here and main() would silently never run.
+    const abs = new URL(SELF).pathname;
+    const rel = abs.slice(process.cwd().length + 1);
+    expect(rel.startsWith('/')).toBe(false);
+    expect(isDirectRun(SELF, rel)).toBe(true);
+  });
+
+  it('is false when argv[1] is a different module in the same directory', () => {
+    const sibling = new URL('./ops-slo-driver.ts', SELF).pathname;
+    expect(isDirectRun(SELF, sibling)).toBe(false);
+  });
+
+  it('is false for a same-basename file in another directory', () => {
+    expect(isDirectRun(SELF, '/nonexistent/public-projection-driver.test.ts')).toBe(false);
+  });
+});
+
+describe('public-projection-driver: assertSqlSuppressed (#2314 / 0415)', () => {
+  it('passes on a fully suppressed projection', () => {
+    expect(assertSqlSuppressed(SUPPRESSED)).toBeNull();
+  });
+
+  it.each([
+    ['issued_date', { issued_date: '2026-05-01' }, /issued_date leaked/],
+    ['expiry_date', { expiry_date: '2030-05-01' }, /expiry_date leaked/],
+    ['issuer_public_id', { issuer_public_id: 'ORG-TSOAK-A' }, /issuer_public_id leaked/],
+    ['issuer_name', { issuer_name: 'TSOAK-MPP Alpha University' }, /issuer_name leaked/],
+  ])('catches a leaked %s', (_field, override, expected) => {
+    expect(assertSqlSuppressed({ ...SUPPRESSED, ...override })).toMatch(expected);
+  });
+
+  it('catches the learner name leaking through the filename', () => {
+    expect(assertSqlSuppressed({ ...SUPPRESSED, filename: 'Jordan Rivera - transcript.pdf' }))
+      .toMatch(/filename leaked learner name/);
+  });
+
+  it('catches a missing suppression marker — the clobbered-0415 signature', () => {
+    const { directory_info_suppressed: _omitted, ...noMarker } = SUPPRESSED;
+    expect(assertSqlSuppressed(noMarker)).toBe('directory_info_suppressed marker absent');
+  });
+
+  it('rejects a non-object body', () => {
+    expect(assertSqlSuppressed(null)).toBe('not an object');
+    expect(assertSqlSuppressed('boom')).toBe('not an object');
+    expect(assertSqlSuppressed([])).toBe('not an object');
+  });
+});
+
+describe('public-projection-driver: assertSqlPublished (#2314 / 0415)', () => {
+  it('passes on a published projection', () => {
+    expect(assertSqlPublished(PUBLISHED)).toBeNull();
+  });
+
+  it('catches over-suppression: issued_date withheld from a non-opted-out row', () => {
+    expect(assertSqlPublished({ ...PUBLISHED, issued_date: null }))
+      .toBe('issued_date withheld on a non-opted-out row');
+    const { issued_date: _omitted, ...missing } = PUBLISHED;
+    expect(assertSqlPublished(missing)).toBe('issued_date withheld on a non-opted-out row');
+  });
+
+  it('catches a withheld issuer_public_id', () => {
+    expect(assertSqlPublished({ ...PUBLISHED, issuer_public_id: null }))
+      .toBe('issuer_public_id withheld on a non-opted-out row');
+  });
+
+  it('catches a suppression marker on a row that should publish', () => {
+    expect(assertSqlPublished({ ...PUBLISHED, directory_info_suppressed: true }))
+      .toBe('suppression marker present on a published row');
+  });
+
+  it('rejects a non-object body', () => {
+    expect(assertSqlPublished(null)).toBe('not an object');
+  });
+});
+
+describe('public-projection-driver: assertSubType (#2440 / 0421)', () => {
+  it('passes when the column value is projected verbatim', () => {
+    expect(assertSubType({ sub_type: 'nursing_rn' }, 'nursing_rn')).toBeNull();
+  });
+
+  it('passes when a null column is projected as an explicit null', () => {
+    // Key PRESENT and null is what makes the renderer fall back to the parent
+    // type label instead of the meaningless "Other".
+    expect(assertSubType({ sub_type: null }, null)).toBeNull();
+  });
+
+  it('catches an ABSENT key — 0421 not live, or clobbered by 0415', () => {
+    expect(assertSubType({ credential_type: 'OTHER' }, null))
+      .toBe('sub_type key ABSENT (0421 not live / clobbered)');
+  });
+
+  it('distinguishes an absent key from an explicit null', () => {
+    expect(assertSubType({}, null)).toMatch(/ABSENT/);
+    expect(assertSubType({ sub_type: null }, null)).toBeNull();
+  });
+
+  it('reports both the actual and expected value on a mismatch', () => {
+    expect(assertSubType({ sub_type: 'Other' }, 'nursing_rn'))
+      .toBe('sub_type="Other" expected "nursing_rn"');
+  });
+
+  it('catches a value appearing where null was expected', () => {
+    expect(assertSubType({ sub_type: 'Other' }, null)).toBe('sub_type="Other" expected null');
+  });
+
+  it('rejects a non-object body', () => {
+    expect(assertSubType(null, null)).toBe('not an object');
+  });
+});
+
+describe('public-projection-driver: assertOrgIsolation', () => {
+  it('passes when the record carries its own org identity', () => {
+    expect(assertOrgIsolation(PUBLISHED, 'TSOAK-MPP Alpha University')).toBeNull();
+  });
+
+  it('catches cross-org issuer bleed (org B rendered with org A identity)', () => {
+    expect(assertOrgIsolation(PUBLISHED, 'TSOAK-MPP Bravo College'))
+      .toBe('cross-org issuer bleed: got "TSOAK-MPP Alpha University" expected "TSOAK-MPP Bravo College"');
+  });
+
+  it('rejects a non-object body', () => {
+    expect(assertOrgIsolation(null, 'TSOAK-MPP Alpha University')).toBe('not an object');
+  });
+});
+
+describe('public-projection-driver: assertRestSuppressed (0415 TS twin)', () => {
+  it('passes when every directory field is null on the flat body', () => {
+    expect(assertRestSuppressed({
+      issued_date: null, issued_at: null, expiry_date: null, expires_at: null, recipient_name: null,
+    })).toBeNull();
+  });
+
+  it('unwraps result.credential before asserting', () => {
+    expect(assertRestSuppressed({ result: { credential: { issued_date: null, recipient_name: null } } }))
+      .toBeNull();
+    expect(assertRestSuppressed({ result: { credential: { issued_date: '2026-05-01' } } }))
+      .toMatch(/directory fields present on REST: issued_date="2026-05-01"/);
+  });
+
+  it('unwraps a bare result envelope with no credential nesting', () => {
+    expect(assertRestSuppressed({ result: { recipient_name: 'Jordan Rivera' } }))
+      .toMatch(/recipient_name="Jordan Rivera"/);
+  });
+
+  it('reports EVERY leaked field, not just the first', () => {
+    const failure = assertRestSuppressed({
+      issued_date: '2026-05-01', expires_at: '2030-05-01', recipient_name: 'Jordan Rivera',
+    });
+    expect(failure).toContain('issued_date=');
+    expect(failure).toContain('expires_at=');
+    expect(failure).toContain('recipient_name=');
+  });
+
+  it('treats an absent key as suppressed (undefined is not a leak)', () => {
+    expect(assertRestSuppressed({})).toBeNull();
+  });
+
+  it('rejects a non-object body', () => {
+    expect(assertRestSuppressed(null)).toBe('not an object');
+  });
+});
