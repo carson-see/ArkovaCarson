@@ -141,13 +141,16 @@ export async function runCycle(
 
   // F1 — the platform-admin gate. Highest-value assertion: this endpoint mints
   // accounts, so an unauthorized 2xx here is a P0, not a test failure.
-  const forbidden = await call(targetUrl, '/api/admin/organizations', nonAdminToken, { display_name: `Should Not Exist ${stamp}` });
+  const forbidden = await call(targetUrl, '/api/admin/organizations', nonAdminToken, {
+    display_name: `Should Not Exist ${stamp}`, idempotency_key: randomUUID(),
+  });
   checks.non_admin_blocked = forbidden.status === 403 ? 'pass' : `FAIL got ${forbidden.status}`;
   counts.non_admin_blocked = forbidden.status === 403;
 
   // Happy path — org with an explicit quota and starting credits.
   const created = await call(targetUrl, '/api/admin/organizations', bearerToken, {
     display_name: orgName, anchor_quota: 10, credits: 2, is_test: true,
+    idempotency_key: randomUUID(),
   });
   const org = (created.json.organization ?? {}) as Record<string, unknown>;
   checks.org_created = created.status === 201 ? 'pass' : `FAIL got ${created.status}`;
@@ -158,13 +161,15 @@ export async function runCycle(
   checks.credits_echoed = org.credits_balance === 2 ? 'pass' : `FAIL got ${String(org.credits_balance)}`;
 
   // F3 — a second submit of the same name must 409, not create a twin.
-  const dup = await call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: orgName });
+  const dup = await call(targetUrl, '/api/admin/organizations', bearerToken, {
+    display_name: orgName, idempotency_key: randomUUID(),
+  });
   checks.duplicate_rejected = dup.status === 409 && dup.json.code === 'org_exists' ? 'pass' : `FAIL got ${dup.status}`;
   counts.duplicate_rejected = dup.status === 409;
 
   // ...and the explicit override must still work, or the 409 is a dead end.
   const dupOk = await call(targetUrl, '/api/admin/organizations', bearerToken, {
-    display_name: orgName, allow_duplicate_name: true,
+    display_name: orgName, allow_duplicate_name: true, idempotency_key: randomUUID(),
   });
   checks.duplicate_override = dupOk.status === 201 ? 'pass' : `FAIL got ${dupOk.status}`;
 
@@ -242,16 +247,25 @@ export async function runCycle(
   // ── Concurrency: the duplicate guard is SELECT-then-INSERT, so it is not
   // atomic. Two simultaneous identical submits must still yield exactly one
   // organization, not two orgs sharing a name by race.
+  // A double-submit is the SAME submission sent twice, so both requests carry
+  // the SAME idempotency key — that is what the partial unique index (0422)
+  // exists to collapse. Both may legitimately return 201; what must never
+  // happen is two distinct organizations.
   const raceName = `Race Org ${randomUUID().slice(0, 8)}`;
+  const raceKey = randomUUID();
   const [r1, r2] = await Promise.all([
-    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName }),
-    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName }),
+    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName, idempotency_key: raceKey }),
+    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName, idempotency_key: raceKey }),
   ]);
-  const created201 = [r1, r2].filter((r) => r.status === 201).length;
-  checks.concurrent_duplicate_guard = created201 === 1
+  const ids = new Set(
+    [r1, r2]
+      .filter((r) => r.status === 201)
+      .map((r) => String(((r.json.organization ?? {}) as Record<string, unknown>).org_id)),
+  );
+  checks.concurrent_duplicate_guard = ids.size === 1
     ? 'pass'
-    : `FAIL ${created201} of 2 concurrent identical submits created an org`;
-  counts.concurrent_created = created201;
+    : `FAIL ${ids.size} distinct orgs from one double-submit (statuses ${r1.status}/${r2.status})`;
+  counts.concurrent_distinct_orgs = ids.size;
 
   const ok = Object.values(checks).every((v) => v === 'pass');
   counts.checks_total = Object.keys(checks).length;
