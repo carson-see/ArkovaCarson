@@ -658,6 +658,7 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'anchor.secured': 'A document record was secured and its Anchor Receipt details are available.',
   'anchor.revoked': 'A secured document record was revoked by its issuer.',
   'anchor.expired': 'A secured document record passed its expiration date.',
+  'anchor.superseded': 'A secured document record was replaced by a newer version.',
   'anchor.batch_secured': 'A group of document records was secured together in one Network Receipt.',
   'credential.issued': 'A credential was issued by a verified organization.',
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
@@ -2764,10 +2765,51 @@ export const PAYMENT_LABELS = {
 
 export const EXTRACTION_RECOVERY_LABELS = {
   TITLE: 'Extraction Unsuccessful',
-  DESCRIPTION: 'We couldn\'t extract metadata from this document. This may be due to image quality or an unsupported format.',
+  /**
+   * GENERIC fallback only. Founder report 2026-08-27: this string used to be
+   * the ONLY thing the recovery step rendered, and it asserted a cause we did
+   * not know — "This may be due to image quality or an unsupported format."
+   * It was false for a timeout, a dropped session, or a supported-but-slow
+   * file (the reported case was a supported `.xml`). The specific causes now
+   * live in EXTRACTION_FAILURE_REASON_COPY, keyed by the orchestrator's
+   * `reasonCode`; this line is shown ONLY when no recognized code arrived, so
+   * it must not assert a cause.
+   */
+  DESCRIPTION: 'We couldn\'t extract metadata from this document. You can retry, enter the details yourself, or secure the document without metadata.',
   RETRY: 'Retry Extraction',
   ENTER_MANUALLY: 'Enter Manually',
   SKIP: 'Skip \u2014 Anchor Without Metadata',
+} as const;
+
+/**
+ * Why extraction failed, as user-facing copy keyed by the bounded
+ * `ExtractionFailureReason` code that `src/lib/aiExtraction.ts` reports through
+ * its progress callback.
+ *
+ * §1.6 CONTRACT — read before adding a key. Every value here is a FIXED string
+ * and this map is the ONLY thing the extraction-failed recovery step renders as
+ * a cause. The orchestrator's `progress.message` is deliberately NOT rendered:
+ * two of its branches carry text we do not control (a worker error-response
+ * body, and the `err instanceof Error ? err.message` catch-all, which can wrap
+ * an OCR-stage error whose `cause` references document-derived text). Routing
+ * through a code means an unrecognized or absent code degrades to the generic
+ * EXTRACTION_RECOVERY_LABELS.DESCRIPTION instead of printing arbitrary text
+ * into the DOM. Never add a value that interpolates anything read from the
+ * document, and never add a passthrough key.
+ */
+export const EXTRACTION_FAILURE_REASON_COPY = {
+  timeout:
+    'The analysis took longer than expected and was stopped. This is usually temporary \u2014 retrying often works. Your file never left your device.',
+  network:
+    'We couldn\'t reach the server. Check your connection and try again \u2014 your file never left your device.',
+  auth:
+    'Your session has expired. Sign in again to analyze this document \u2014 your file never left your device.',
+  no_text:
+    'No readable text was found in this document \u2014 it may be a scanned image. A clearer copy may work, or you can enter the details yourself. Your file never left your device.',
+  unsupported_format:
+    'This file format couldn\u2019t be read on your device. Supported formats: PDF, Word (.docx), OpenDocument (.odt/.odp), PowerPoint (.pptx), EPUB, RTF, SVG, images, and text files.',
+  server_error:
+    'The analysis service couldn\'t complete this request. This is usually temporary \u2014 retrying often works. Your file never left your device.',
 } as const;
 
 export const OCR_LABELS = {
@@ -3762,6 +3804,25 @@ export const CTDL_DATA_LINK_LABELS = {
   LINK_TEXT: 'CTDL data (JSON-LD)',
 } as const;
 
+// ─── DocuSign Record Deep Links (bilateral rollout, frontend-targeted T2) ────
+// Authenticated record-detail metadata section ONLY — the public
+// verification page is explicitly out of scope for this rollout and is not
+// touched by the consuming components. Account/envelope id metadata values
+// and dedicated signer rows link into DocuSign's own console — built by
+// accountUrl/envelopeUrl/signerUrl (src/lib/docusignLinks.ts), which
+// validate a candidate value as a strict UUID BEFORE composing any URL and
+// return null otherwise (falls back to the pre-existing plain-text render,
+// so a non-UUID value or a non-DocuSign anchor is completely unaffected).
+// Signer rows read ONLY `recipient_id_guid` for display and for the link —
+// never `user_id`, even when present on an entry — per the data-minimization
+// ruling (R6) this PR was scoped against.
+export const DOCUSIGN_RECORD_LINKS_LABELS = {
+  SIGNERS_SECTION_LABEL: 'Signers',
+  SIGNER_PREFIX: 'Signer',
+  VERIFIED_VIA_DOCUSIGN: 'Verified via DocuSign',
+  MORE_SIGNED_SUFFIX: 'more signed via DocuSign',
+} as const;
+
 // ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────
 
 export const LINKEDIN_SHARE_LABELS = {
@@ -4308,3 +4369,73 @@ export const SECURE_QUEUE_PAGE_LABELS = {
   OWNER_LABEL: 'Added by',
   ADMIN_REMOVE_UNAVAILABLE: "Removing another member's queued document isn't available yet.",
 } as const;
+
+// ─── R-7 / GEO-16 — public traction figures (/about, /developers) ───────────
+//
+// Append-only block (per the §6 EOF-append guidance used above). These four
+// tiles were duplicated as bare JSX literals across `AboutPage.tsx` and
+// `DevelopersPage.tsx`; the records-secured figure sat at a stale `1.39M+`
+// while prod held at least 3.3M SECURED records. An undated literal in two
+// files has no owner and no expiry, so it rots in whichever direction the
+// business moves — understating today, potentially overstating tomorrow.
+//
+// A public number is a CLAIM (CLAUDE.md §1.5 / R-7): it must say what it
+// measures and when it was measured. Hence one source of truth, a floor
+// marker (`+`) rather than a point estimate, and an explicit `asOf`.
+// `PlatformMetrics.claims.test.ts` is the ratchet.
+//
+// §1.3-clean: no banned terminology in any label.
+
+/**
+ * Public traction metrics, single-sourced for `/about` and `/developers`.
+ *
+ * `asOf` is `YYYY-MM` for a figure whose measurement date is known, and `null`
+ * for one carried forward from the original GEO-16 block whose provenance was
+ * never recorded. Do NOT give an unverified figure a date to make it look
+ * fresh — re-measure it, then date it.
+ *
+ * `shortLabel` exists only because the `/developers` metric row is a compact
+ * uppercase strip; it is the same claim in fewer words, never a different one.
+ */
+export const PLATFORM_METRICS = {
+  /**
+   * Floor, not a point estimate. Verified 2026-08-23 against the prod project
+   * with a bounded count that stops early and therefore PROVES a lower bound:
+   * `SELECT count(*) FROM (SELECT 1 FROM anchors WHERE status='SECURED'
+   * LIMIT 3300000) t;` returned 3300000. An exact `count(*)` times out at this
+   * table size, and the `pg_class.reltuples` planner estimate reads high, so a
+   * proven floor is the only honest shape for this claim. Re-measure the same
+   * way before raising it, and move `asOf` with it.
+   */
+  RECORDS_SECURED: {
+    value: '3.3M+',
+    label: 'Records Secured',
+    shortLabel: 'Records Secured',
+    asOf: '2026-08',
+  },
+  PUBLIC_RECORDS_INDEXED: {
+    value: '320K+',
+    label: 'Public Records Indexed',
+    shortLabel: 'Public Records',
+    asOf: null,
+  },
+  DOCUMENT_TYPES: {
+    value: '21',
+    label: 'Document Types',
+    shortLabel: 'Document Types',
+    asOf: null,
+  },
+  EXTRACTION_F1: {
+    value: '87.2%',
+    label: 'AI Extraction F1',
+    shortLabel: 'AI Extraction F1',
+    asOf: null,
+  },
+} as const;
+
+/**
+ * Rendered beneath the metric tiles. Only the records-secured figure carries a
+ * measurement date, so this qualifier names that claim specifically rather than
+ * implying the whole block was re-measured.
+ */
+export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';

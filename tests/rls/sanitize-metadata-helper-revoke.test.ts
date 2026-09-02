@@ -35,6 +35,8 @@ import {
   createServiceClient,
   withIndividualUser,
   cleanupClient,
+  DEMO_CREDENTIALS,
+  ORG_IDS,
   type TypedClient,
 } from '../../src/tests/rls/helpers';
 
@@ -147,16 +149,22 @@ describe('0388 — the deliberately-public verification surface still works for 
     anon = createAnonClient();
     service = createServiceClient();
 
+    // PINNED fixture identities (SCRUM-3618 hardening): an unpinned
+    // `.limit(1).single()` with no ORDER BY picks an arbitrary row, which
+    // under full-parallel runs can be another suite's sandbox org/profile —
+    // deleted by that suite's afterAll before the anchor insert below runs,
+    // failing the fixture with an FK error. The seeded Arkova org and admin
+    // profile are stable for the whole run (supabase/seed.sql).
     const { data: org, error: orgErr } = await service
       .from('organizations')
       .select('id')
-      .limit(1)
+      .eq('id', ORG_IDS.arkova)
       .single();
 
     const { data: profile, error: profileErr } = await service
       .from('profiles')
       .select('id')
-      .limit(1)
+      .eq('id', DEMO_CREDENTIALS.adminId)
       .single();
 
     // Fail LOUDLY on a bad fixture. An earlier cut of this suite omitted the
@@ -170,6 +178,11 @@ describe('0388 — the deliberately-public verification surface still works for 
     if (!org?.id || !profile?.id) {
       throw new Error('fixture: seed data missing (need one org + one profile)');
     }
+
+    // Idempotent, file-scoped setup: clear a leftover fixture anchor from a
+    // crashed prior run — this fingerprint is unique to this file, and
+    // idx_anchors_user_fingerprint_unique would otherwise reject the insert.
+    await service.from('anchors').delete().eq('fingerprint', FINGERPRINT);
 
     const { data: inserted, error: insertErr } = await service
       .from('anchors')

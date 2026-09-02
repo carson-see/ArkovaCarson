@@ -1,14 +1,13 @@
-# @arkova/verifier-cli — Arkova reference verifier (v0.1)
+# arkova-verifier-cli — Arkova reference verifier (v0.1)
 
 A **standalone, MIT-licensed** command-line verifier that proves a document's
 fingerprint is committed in an on-chain Merkle root **without trusting Arkova's
 servers**. It makes **zero Arkova network calls**: the on-chain fact is
 confirmed against an **independent node** that you choose.
 
-> Status: **S2 CLI v0.1** (recompute + independent receipt confirmation). The
-> public OSS repo is the S3 deliverable; this lives in-repo for now with **zero
-> Arkova-server runtime dependency**. See
-> `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
+> Status: **v0.1** — Merkle recompute plus independent receipt confirmation.
+> Developed in the Arkova monorepo and published from it; it has **zero
+> Arkova-server runtime dependency** and runs entirely on its own.
 
 ## What it proves (and what it does not)
 
@@ -20,17 +19,32 @@ It deliberately **ignores** the proof package's own `verified` field — that
 field is verdict-from-status on the server side. This verifier trusts only its
 own recomputation.
 
-## Install / build
+## Install
 
-The CLI consumes [`@arkova/verifier`](../verifier) (PROOF-07 / #1349) as a local
-`file:` dependency for the **shared** on-chain confirmation routine, so build it
-once first:
+The package is `arkova-verifier-cli`; the command it installs is
+`arkova-verify`. Node >= 18.
 
 ```bash
-cd ../verifier && npm install && npm run build   # build the shared verifier dep
-cd ../verifier-cli
-npm install
-npm run build      # compiles to dist/, exposes the `arkova-verify` bin
+npm install -g arkova-verifier-cli
+arkova-verify <proof.json>
+```
+
+Or run it without installing anything:
+
+```bash
+npx --package arkova-verifier-cli arkova-verify <proof.json>
+```
+
+### Build from source
+
+The CLI consumes
+[`arkova-verifier`](https://www.npmjs.com/package/arkova-verifier) for the
+**shared** on-chain confirmation routine. In a checkout of the monorepo that
+dependency is wired as a local `file:` path, so build it first:
+
+```bash
+cd packages/verifier   && npm install && npm run build   # shared verifier dep
+cd ../verifier-cli     && npm install && npm run build   # compiles to dist/
 ```
 
 ## Usage
@@ -56,7 +70,7 @@ Exit codes: `0` VERIFIED · `1` NOT VERIFIED · `2` usage/input error.
    with leaf/internal domain separation and the CVE-2012-2459 duplicate-leaf
    guard driven by `merkle_index` + `leaf_count`. (See "Shared recompute" below.)
 2 & 3. **Confirm the root on-chain and the receipt in a real block** by
-   delegating to [`@arkova/verifier`](../verifier)'s `confirmInclusion`. That ONE
+   delegating to [`arkova-verifier`](https://www.npmjs.com/package/arkova-verifier)'s `confirmInclusion`. That ONE
    shared routine owns the canonical `OP_RETURN` decode (`ARKV(4)‖root(32)`, no
    version byte, read at a **fixed byte offset** — never a substring match), the
    **txid-bound** inclusion proof (a proof for a *different* tx in the same block
@@ -89,7 +103,8 @@ its `merkle.ts` / `canonical-json.ts` deps) are **verbatim copies** of
 `services/worker/src/utils/`, and `test/sync-recompute.test.ts` fails the build
 the moment they drift byte-for-byte — plus a behavioral-parity test that imports
 the **actual** worker `verifyMerkleInclusion` and asserts identical verdicts
-across every fixture. To re-sync after an upstream change:
+across every fixture. To re-sync after an upstream change (monorepo maintainers,
+from `packages/verifier-cli/`):
 
 ```bash
 cp ../../services/worker/src/utils/{merkle-verify,merkle,canonical-json}.ts src/vendor/
@@ -110,7 +125,7 @@ when set (must be an absolute path), else probes `/usr/bin/python3`,
 `/usr/local/bin/python3`, `/opt/homebrew/bin/python3`.
 
 The conformance suite drives a fixture-backed independent node (an
-`@arkova/verifier` `IndependentNodeFetch` served from canned Esplora REST
+`arkova-verifier` `IndependentNodeFetch` served from canned Esplora REST
 responses), so it runs with **no network reachable** — see `fixtures/README.md`
 for the self-describing vector contract and `manifest.json`, the single
 versioned list of every fixture and its expected `{verdict, reason_code}`.

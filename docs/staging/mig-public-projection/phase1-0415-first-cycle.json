@@ -1,0 +1,499 @@
+{
+  "driver": "public-projection-driver@0415",
+  "pr": "2314,2440",
+  "apiBase": "https://arkova-worker-mig-public-projection-staging-270018525501.us-central1.run.app",
+  "startedAt": "2026-08-30T22:10:55.074Z",
+  "endedAt": "2026-08-30T22:11:56.098Z",
+  "durationSec": 61.024,
+  "totalRequests": 200,
+  "allExpected": false,
+  "byLabel": {
+    "sql:ferpa_suppressed": {
+      "expected": 24,
+      "unexpected": 0,
+      "p50Ms": 106,
+      "p95Ms": 340,
+      "p99Ms": 759,
+      "byStatus": {
+        "200": 24
+      }
+    },
+    "rest:ferpa_suppressed": {
+      "expected": 11,
+      "unexpected": 13,
+      "p50Ms": 126,
+      "p95Ms": 493,
+      "p99Ms": 1265,
+      "byStatus": {
+        "200": 11,
+        "429": 13
+      }
+    },
+    "sql:ferpa_published": {
+      "expected": 48,
+      "unexpected": 0,
+      "p50Ms": 77,
+      "p95Ms": 164,
+      "p99Ms": 327,
+      "byStatus": {
+        "200": 48
+      }
+    },
+    "sql:org_isolation": {
+      "expected": 48,
+      "unexpected": 0,
+      "p50Ms": 79,
+      "p95Ms": 123,
+      "p99Ms": 282,
+      "byStatus": {
+        "200": 48
+      }
+    },
+    "rest:ferpa_published": {
+      "expected": 19,
+      "unexpected": 29,
+      "p50Ms": 119,
+      "p95Ms": 347,
+      "p99Ms": 449,
+      "byStatus": {
+        "200": 19,
+        "429": 29
+      }
+    },
+    "sql:not_found_control": {
+      "expected": 8,
+      "unexpected": 0,
+      "p50Ms": 83,
+      "p95Ms": 297,
+      "p99Ms": 297,
+      "byStatus": {
+        "200": 8
+      }
+    }
+  },
+  "capturedBodies": [
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 35
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 35
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 34
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 34
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 34
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 34
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 27
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 27
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 26
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 26
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 26
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 25
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 25
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 25
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 25
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 19
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 19
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 19
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 18
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 18
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 18
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 17
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 17
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 17
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 11
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 11
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 10
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 10
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 10
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 9
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 9
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 9
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 9
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 3
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 3
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 2
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 2
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 2
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 1
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 1
+      }
+    },
+    {
+      "label": "rest:ferpa_suppressed",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 1
+      }
+    },
+    {
+      "label": "rest:ferpa_published",
+      "endpoint": "/api/v1/verify/:publicId",
+      "status": 429,
+      "body": {
+        "error": "Too many requests",
+        "retry_after": 1
+      }
+    }
+  ],
+  "projectionHead": "0415",
+  "rigSupabaseUrl": "https://uayovlvdhmuovuyfxrog.supabase.co",
+  "passes": 8,
+  "assertionFailures": [
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_suppressed /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429",
+    "rest:ferpa_published /api/v1/verify/:publicId -> http 429"
+  ]
+}

@@ -87,8 +87,16 @@ jobs:
       # whose body doesn't carry the original PR's staging evidence section.
       # The original PR already passed this gate before entering the queue,
       # so re-checking the speculative merge is redundant and always fails.
+      # SCRUM-3812: the skip requires BOTH the branch prefix AND the
+      # mergify[bot] PR author. `github.head_ref` alone is author-controlled —
+      # a PR opened from a branch literally named `mergify/merge-queue/<x>`
+      # skipped every step below and still posted SUCCESS, greening this
+      # required gate without the checker ever running. The PR author is
+      # assigned by GitHub and immutable (unlike `github.actor`, which becomes
+      # the human on a re-run and would deadlock a genuine queue PR), so only
+      # real Mergify speculative PRs skip.
       - name: Skip for Mergify merge queue
-        if: startsWith(github.head_ref, 'mergify/merge-queue/')
+        if: startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]'
         run: |
           echo "Mergify merge queue speculative check — skipping staging evidence gate."
           echo "The original PR passed this gate before entering the queue."
@@ -101,7 +109,7 @@ jobs:
       # evaluating against an unknown state.
       - name: Resolve live PR state
         id: live_pr
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -114,6 +122,17 @@ jobs:
           DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
           HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
           BASE_SHA="$(jq -r '.base.sha // empty' <<<"${DATA}")"
+          # SCRUM-3481: the PR author's login, so the evidence check can reject
+          # a residual-risk note whose `Approved by:` names the author. Read
+          # from the live API alongside the SHAs, never from the PR body — it
+          # must not be author-controlled. A GitHub login is
+          # `[A-Za-z0-9-]{1,39}`, so no shell-metacharacter sanitising is
+          # needed beyond pinning it to that shape; anything else is dropped.
+          AUTHOR_LOGIN="$(jq -r '.user.login // empty' <<<"${DATA}")"
+          if [[ ! "${AUTHOR_LOGIN}" =~ ^[A-Za-z0-9-]{1,39}$ ]]; then
+            echo "::warning::PR #${PR_NUMBER} author login did not match the expected GitHub login shape — the approver-vs-author cross-check will be skipped for this run."
+            AUTHOR_LOGIN=""
+          fi
           MERGE_SHA="$(jq -r '.merge_commit_sha // empty' <<<"${DATA}")"
           MERGEABLE_STATE="$(jq -r '.mergeable_state // empty' <<<"${DATA}")"
           if [[ -z "${HEAD_SHA}" || -z "${BASE_SHA}" ]]; then
@@ -141,6 +160,7 @@ jobs:
             echo "head_sha=${HEAD_SHA}"
             echo "base_sha=${BASE_SHA}"
             echo "checkout_sha=${CHECKOUT_SHA}"
+            echo "author_login=${AUTHOR_LOGIN}"
           } >> "${GITHUB_OUTPUT}"
           # SECURITY (adversarial review, 2026-07-28): the PR body is fully
           # author-controlled. A FIXED heredoc delimiter here would let an
@@ -161,29 +181,32 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         with:
           ref: ${{ steps.live_pr.outputs.checkout_sha }}
           fetch-depth: 0
 
       - name: Setup Node.js
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
 
       - name: Install root dependencies (typescript + tsx + supabase-js)
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 
       - name: Run staging-evidence check
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         env:
           # Live-resolved (SCRUM-3026) — supersede the frozen event payload
           # for exactly the fields that go stale on a bare rerun.
           PR_BODY: ${{ steps.live_pr.outputs.body }}
           HEAD_REF_SHA: ${{ steps.live_pr.outputs.head_sha }}
           BASE_REF_SHA: ${{ steps.live_pr.outputs.base_sha }}
+          # SCRUM-3481: live-resolved PR author login (never the PR body), used
+          # only to reject a residual-risk note that approves its own author.
+          PR_AUTHOR: ${{ steps.live_pr.outputs.author_login }}
           # CTO ruling 2026-07-28 (SCRUM-2980): hard precondition for the
           # deferred_consolidated_soak RC-manifest mode
           # (scripts/ci/check-staging-evidence.ts). `vars.*` is read fresh

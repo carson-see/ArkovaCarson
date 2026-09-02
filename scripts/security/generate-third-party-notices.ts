@@ -42,7 +42,7 @@ import { GPL_DENYLIST } from './license-denylist.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..');
-const OUTPUT_PATH = resolve(REPO_ROOT, 'src/data/thirdPartyNotices.generated.json');
+export const OUTPUT_PATH = resolve(REPO_ROOT, 'src/data/thirdPartyNotices.generated.json');
 const PINNED_PATH = resolve(__dirname, 'third-party-notices.pinned.json');
 const ALLOWLIST_PATH = resolve(__dirname, 'license-denylist.allowlist.json');
 
@@ -164,7 +164,37 @@ export function classifyEntries(
   return { general, unresolvedCopyleft, allowlistedCopyleft };
 }
 
-async function main() {
+export interface NoticesBuild {
+  output: {
+    generatedAt: string;
+    generalDependencies: NoticeEntry[];
+    copyleftDependencies: PinnedCopyleftEntry[];
+  };
+  /**
+   * Allowlist-cleared copyleft deps with NO pinned notice. Non-empty means the
+   * CLI below refuses to write — see main(). Returned rather than thrown so a
+   * caller that only needs to know whether the COMMITTED file still matches the
+   * dependency set (scripts/ci/check-third-party-notices-fresh.ts) can still
+   * compute that while this is outstanding, instead of being blinded by an
+   * unrelated compliance gap.
+   */
+  missingNotice: NoticeEntry[];
+  unresolvedCopyleft: NoticeEntry[];
+}
+
+/**
+ * Compose the notices payload. Pure of I/O apart from the license-checker scan
+ * and reading the two committed JSON inputs, so both the CLI and the freshness
+ * gate go through exactly one implementation — a second, re-derived copy in the
+ * checker would drift from this one and silently start comparing the wrong thing.
+ *
+ * `generatedAt` is injectable because it is the one field that legitimately
+ * changes on every run, and the freshness gate has to hold it constant to diff
+ * anything at all.
+ */
+export async function buildNotices(
+  generatedAt: string = new Date().toISOString(),
+): Promise<NoticesBuild> {
   const raw = await runLicenseChecker();
   const allowlist = loadAllowlist();
   const pinned = loadPinned();
@@ -179,6 +209,21 @@ async function main() {
   const missingNotice = allowlistedCopyleft.filter(
     (entry) => !pinnedNames.has(`${entry.name}@${entry.version}`),
   );
+
+  return {
+    output: {
+      generatedAt,
+      generalDependencies: general,
+      copyleftDependencies: pinned,
+    },
+    missingNotice,
+    unresolvedCopyleft,
+  };
+}
+
+async function main() {
+  const { output, missingNotice, unresolvedCopyleft } = await buildNotices();
+
   if (missingNotice.length > 0) {
     console.error(
       '[generate-third-party-notices] FATAL: allowlist-cleared copyleft dependencies have no entry in ' +
@@ -202,17 +247,11 @@ async function main() {
     }
   }
 
-  const output = {
-    generatedAt: new Date().toISOString(),
-    generalDependencies: general,
-    copyleftDependencies: pinned,
-  };
-
   mkdirSync(dirname(OUTPUT_PATH), { recursive: true });
   writeFileSync(OUTPUT_PATH, `${JSON.stringify(output, null, 2)}\n`);
   console.log(
-    `[generate-third-party-notices] Wrote ${general.length} general + ${pinned.length} copyleft ` +
-    `entries to ${OUTPUT_PATH}`,
+    `[generate-third-party-notices] Wrote ${output.generalDependencies.length} general + ` +
+    `${output.copyleftDependencies.length} copyleft entries to ${OUTPUT_PATH}`,
   );
 }
 

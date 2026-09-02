@@ -10,7 +10,7 @@
  * changes (the exact drift the three-way parity gate exists to catch).
  */
 
-import type { IndependentNodeFetch } from '@arkova/verifier';
+import type { IndependentNodeFetch } from 'arkova-verifier';
 import type { FixtureNodeResponses, MerkleProofEntry, ProofPacket } from '../types.js';
 
 /** One PROOF-08 corpus app-tree vector (proof-fixtures.json `valid`/`invalid[]`). */

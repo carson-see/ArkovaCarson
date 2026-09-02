@@ -1,0 +1,86 @@
+{
+  "rig_name": "cleanup-2335",
+  "pr": 2335,
+  "tier": "T3",
+  "status": "WIRED_AND_CLEAN_MIRROR — CLOCK NOT STARTED (driver cannot yet produce a clean cycle; see driver_blocker)",
+  "purpose": "48h T3 soak for migration 0417 (cleanup_expired_data singleton advisory lock, BUG-2026-08-22-001)",
+  "provenance_note": "Supabase project was created by an earlier session that exited before replaying any schema (ledger was EMPTY, 0 rows, and no Cloud Run service existed). This session finished the wiring on that same project rather than provisioning an 11th — net Supabase project count unchanged.",
+
+  "corrected_premise": {
+    "claim": "PR #2335's branch is ~162 commits behind main and lacks 0410-0413 including 0411",
+    "finding": "FALSE as of 2026-08-29. `git merge-base --is-ancestor origin/main 663a3ad9` succeeds and `git rev-list --count 663a3ad9..origin/main` is 0. The branch contains 0410, 0411, 0412, 0413 and 0414. No merge of main was required and none was performed.",
+    "verified_against": "origin/main f576e2f64ccbca93bdd39fd0764f7690532c69ad"
+  },
+
+  "supabase": {
+    "project_name": "arkova-soak-cleanup-2335",
+    "project_ref": "bxgybbxkhuxwtgkgkwpe",
+    "created_at": "2026-08-29T14:46:21Z",
+    "region": "us-east-2",
+    "ledger_head": "0417",
+    "ledger_rows": 117,
+    "non_numeric_rows": 1,
+    "non_numeric_row_note": "canonical squashed baseline 00000000000000_baseline_at_main_HEAD only",
+    "schema_replay": "npx supabase db push --linked --include-all from a worktree at PR head 663a3ad9 — all 117 migrations applied in one pass, including 0381 (no CREATE INDEX CONCURRENTLY pipeline break on this rig)",
+    "ledger_writes_by_hand": "NONE — no insert, delete, repair or reset. Every row was written by db push."
+  },
+
+  "cloud_run": {
+    "service": "arkova-worker-cleanup-2335-staging",
+    "region": "us-central1",
+    "gcp_project": "arkova1",
+    "revision_at_deploy": "arkova-worker-cleanup-2335-staging-00001-hw6",
+    "current_revision": "arkova-worker-cleanup-2335-staging-00002-lwh",
+    "current_revision_note": "min-instances dropped 1 -> 0 to stop the burn while the clock is NOT running. MUST be set back to min-instances=1 and a fresh revision recorded before any soak clock starts.",
+    "url": "https://arkova-worker-cleanup-2335-staging-kvojbeutfa-uc.a.run.app",
+    "image_digest": "sha256:7df2cf2a0b9c1381947213b4c585a28f59dd9e240ca9e54fae38c2f489875c37",
+    "image_tag": "663a3ad91efca202190840302256b6cae539852f",
+    "build_sha": "663a3ad91efca202190840302256b6cae539852f",
+    "health_git_sha_verified": "663a3ad91efca202190840302256b6cae539852f",
+    "ingress_auth": "no-allow-unauthenticated",
+    "env_notes": {
+      "ENABLE_VERIFICATION_API": "true",
+      "MEMPOOL_API_URL": "NOT SET",
+      "IP_HASH_PEPPER": "ip-hash-pepper-cleanup-2335-staging"
+    }
+  },
+
+  "preflight": {
+    "script": "scripts/ci/staging-honesty-preflight.ts",
+    "project_ref": "bxgybbxkhuxwtgkgkwpe",
+    "prod_project_ref": "vzwyaatejekddvltxyye",
+    "environment_type": "clean_mirror",
+    "exit_code": 0,
+    "checks_passed": "8/8",
+    "run_at": "2026-08-29T15:20:08.062Z",
+    "artifact": "docs/staging/cleanup-2335-2026-08-29/clean-mirror-preflight-cleanup-2335.json",
+    "missing_vs_prod": ["0418", "0419"],
+    "extra_vs_prod": ["0417"]
+  },
+
+  "driver_findings": {
+    "singleton_invariant_HOLDS": "With --seed-rows 6000 --concurrency 8 the driver reported triggerAWorkPerformingRuns=1, triggerASkippedConcurrentRuns=7, triggerACleanupAuditRowsWritten=1, triggerADeadlock40P01=0, triggerASingletonHeld=true. 0417 does what it claims.",
+    "harness_artifact_do_not_misread": "At the driver's DEFAULT --seed-rows 200 the same volley reports 2-4 work-performing runs and triggerASingletonHeld=false. That is NOT a 0417 defect. cleanup_expired_data() completes in ~200-350ms on a lightly-seeded rig, which is shorter than the spread of lock ATTEMPTS across 8 calls, so late arrivals legitimately acquire the lock after the holder committed. Reproduced independently of the driver: 8 synchronised psql sessions (no PostgREST in the path) also yield 3 workers / 5 skipped. Seeding enough rows to make the critical section outlast the arrival spread is what makes the volley genuinely overlap.",
+    "driver_blocker": {
+      "summary": "The per-org and audit-purge phases seed audit_events 'past-boundary' rows at a date that is not past audit_events' retention boundary.",
+      "evidence": "cleanup_expired_data() uses INTERVAL '90 days' for webhook_delivery_logs, INTERVAL '1 year' for verification_events and ai_usage_events, and INTERVAL '2 years' for audit_events. The driver's seeded audit rows are dated 2024-09-28 — past the 1-year boundary but ~13 months short of the 2-year one. Result: 12,803 SOAK_PR2335_PROBE audit rows sit on the rig that four consecutive cleanup_expired_data() calls each report deleting 0 of.",
+      "consequence": "triggerBAuditSeededPastRowsRemaining never reaches 0, so triggerBAuditPurgeContractHeld=false; perOrgAuditEventsOrgAPastRemoved under-counts and perOrgCrossOrgKeepRowsRemoved stays at the -1 sentinel, so perOrgIsolationHeld=false. Two of the four T3 requirements cannot pass, on every cycle, for a reason that has nothing to do with 0417.",
+      "fix": "use the per-table retention interval when computing each table's past-boundary seed date (audit_events = 2 years). Code change to services/worker/scripts/pr2335-cleanup-singleton-driver.ts, which moves the PR head SHA and therefore needs an image rebuild + redeploy before the clock starts.",
+      "also_needed": "the driver's /health probe is unauthenticated and gets 403 against a no-allow-unauthenticated rig. Worked around here with the batch-A local auth-injecting proxy (authproxy.mjs) on 127.0.0.1:8791 and --target-url pointed at it; the driver accepts localhost."
+    },
+    "window_counters_pending_by_design": "dailyFlushWindowSatisfied / soakVerdictHeld require 24h of elapsed window and cannot pass in a validation cycle. They are not part of the blocker."
+  },
+
+  "fixture": {
+    "baseline": "scripts/staging/seed-baseline-fixture.sql applied — 1 SUBMITTED anchor, legal_hold true (preflight Check 5)",
+    "second_org": "organizations row pr2335-soak-b (c2335000-0000-4000-8000-00000000000b) added because the driver's per-org isolation phase requires >= 2 organizations",
+    "litter": "12,803 SOAK_PR2335_PROBE audit_events rows from validation cycles. They are inert (event_category SYSTEM, synthetic event_type) but must be purged before the real soak or they will keep the trigger-B contract red."
+  },
+
+  "clock": {
+    "started": false,
+    "reason": "CLAUDE.md §1.12 / Carson 2026-08-27: no clock until the driver produces a CLEAN cycle. It does not."
+  },
+
+  "approver": "Claude Opus 5, acting CTO under delegated technical authority (Carson, 2026-08-28)"
+}

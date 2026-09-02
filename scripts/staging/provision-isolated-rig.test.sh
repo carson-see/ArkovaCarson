@@ -201,6 +201,14 @@ else
 fi
 
 assert_file_not_contains "base SHA resolver does not fall back to HEAD~1" "$PROVISION" "HEAD~1"
+# 2026-08-30 stand-up finding 1: config.ts requires IP_HASH_PEPPER whenever
+# NODE_ENV=production, so a rig deployed exactly as scripted crash-loops at boot
+# without a per-rig pepper binding on EVERY profile.
+assert_contains "dry-run wires a per-rig IP_HASH_PEPPER secret" "$out" \
+  "IP_HASH_PEPPER=ip-hash-pepper-s0e4-lane-a-staging:latest"
+# Finding 2: Cloud Scheduler calendar-validates day-of-month, so `0 0 31 2 *` is
+# rejected INVALID_ARGUMENT and Step 4 cannot execute as written.
+assert_file_not_contains "no API-rejected Feb-31 hold schedule" "$PROVISION" "0 0 31 2 *"
 
 tmp_bin="$(mktemp -d)"
 head_sha="$(git rev-parse HEAD)"
@@ -222,6 +230,13 @@ cat >"$tmp_bin/npx" <<'EOF'
 set -euo pipefail
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
   echo '{"id":"abcdefghijklmnopqrst"}'
+  exit 0
+fi
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "list" ]]; then
+  # The provisioner must not link until the new project reports ACTIVE_HEALTHY
+  # (a COMING_UP project stores the legacy IPv6 direct-db config and the push
+  # then dies on LegacyDbConfigIpv6Error).
+  echo '[{"id":"abcdefghijklmnopqrst","name":"stub","status":"ACTIVE_HEALTHY"}]'
   exit 0
 fi
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "api-keys" ]]; then
@@ -257,7 +272,7 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
 fi
 if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
   cat <<JSON
-{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"},{"name":"SUPABASE_URL","valueSource":{}},{"name":"SUPABASE_SERVICE_ROLE_KEY","valueSource":{}},{"name":"STRIPE_SECRET_KEY","valueSource":{}},{"name":"STRIPE_WEBHOOK_SECRET","valueSource":{}},{"name":"API_KEY_HMAC_SECRET","valueSource":{}},{"name":"CRON_SECRET","valueSource":{}}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
+{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"},{"name":"SUPABASE_URL","valueSource":{}},{"name":"SUPABASE_SERVICE_ROLE_KEY","valueSource":{}},{"name":"STRIPE_SECRET_KEY","valueSource":{}},{"name":"STRIPE_WEBHOOK_SECRET","valueSource":{}},{"name":"API_KEY_HMAC_SECRET","valueSource":{}},{"name":"CRON_SECRET","valueSource":{}},{"name":"IP_HASH_PEPPER","valueSource":{}}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
 JSON
   exit 0
 fi
