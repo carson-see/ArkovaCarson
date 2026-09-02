@@ -735,6 +735,11 @@ with `height_mismatch`. Not a regression (since PR #761, 2026-05-11); the curren
 public-records org only. Finding, 476-row chain check and T3 fix design: `docs/staging/findings/prod-block-height-2026-09-02/finding.md`.
 Supersedes the "44 block hashes at more than one height" thread — same mechanism.
 
+**MAIN `Tests` RED SINCE 2026-09-02T13:58Z — fix PR #2623 (T0) open, SCRUM-3954.** Three merges combined: #2573 hardened anchoring health and
+left `health-detail-auth.test.ts`'s unprobed fixture asserting `ok`; #2584 and #2587 (merged 9 s apart) fix it in contradictory ways; dependabot #2606
+busted the zk artifact cache and the pinned ptau hosts answer 403 (durable mirror: SCRUM-3955). Nothing merges through Mergify until #2623 lands;
+the RC-batch and R1 close-outs below depend on it. Do not open another competing fix.
+
 **CLOSE-OUT RUNBOOK (drafted 2026-09-02; gate dry-runs in `docs/staging/rc-batch-0902/closeout/gate-dry-run.md`).**
 - **RC batch, window closes 2026-09-03T07:49:27Z.** (1) Stop the loop, confirm every `rc-live-NN.jsonl` is `pass`. (2) Open a separate `docs(rc):` PR
   replacing `docs/staging/rc-manifests/rc-batch-2026-09-02.json` with `docs/staging/rc-batch-0902/closeout/rc-batch-2026-09-02.CLOSEOUT-DRAFT.json`
