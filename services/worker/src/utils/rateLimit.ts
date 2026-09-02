@@ -65,7 +65,12 @@ export interface IRateLimitStore {
   decrement?(key: string): void | Promise<void>;
 }
 
-const RATE_LIMIT_MAX_SIZE = 50_000; // cap to prevent unbounded growth (reduced from 500K — 50K covers ~800 unique IPs * ~60 paths)
+// Cap to prevent unbounded growth. Keys are `${bucketScope}:${key}` — paths are
+// NOT part of the key (bug-bounty F5), so the store holds one entry per
+// (limiter, caller) pair per window, not one per URL. A handful of limiters see
+// any given anonymous IP, so 50K comfortably covers thousands of concurrent
+// callers; the 60s sweep evicts the rest.
+const RATE_LIMIT_MAX_SIZE = 50_000;
 
 /**
  * Per-request record of which limiter INSTANCES have already counted this
@@ -130,12 +135,15 @@ interface RateLimitOptions {
   keyGenerator?: (req: Request) => string; // Custom key generator
   skipFailedRequests?: boolean; // Don't count failed requests
   /**
-   * Bucket scope namespace. Defaults to '' (no scope), meaning every
-   * limiter instance shares one bucket per `keyGenerator(req)` value
-   * within its mount point. Set this to e.g. 'verify' or 'batch' when
-   * you want a limiter to be scoped separately from other limiters
-   * sharing the same key (e.g. same IP). DO NOT include `req.path` in
-   * the bucket scope — that re-introduces the F5 bug below.
+   * Bucket scope namespace — the stable, readable name of this limiter's
+   * bucket family. Omitting it no longer means "share everyone else's
+   * bucket": a limiter without an explicit scope falls back to a private
+   * per-instance namespace (see SCRUM-3418 below), so limiters can never
+   * collide by accident. Name it anyway — every production limiter does,
+   * because the name is what appears in the `Rate limit exceeded` log line
+   * and what keeps the bucket stable across process restarts. DO NOT
+   * include `req.path` in the bucket scope — that re-introduces the F5 bug
+   * below.
    */
   scope?: string;
   /**
@@ -148,6 +156,46 @@ interface RateLimitOptions {
    */
   skip?: (req: Request) => boolean;
 }
+
+/**
+ * SCRUM-3418 — per-limiter default bucket scope.
+ *
+ * Buckets are keyed `${bucketScope}:${keyGenerator(req)}`. `scope` used to
+ * default to '' and the key was the bare keyGenerator output, so EVERY limiter
+ * that kept the default `req.ip` keyGenerator read and wrote ONE Map entry per
+ * IP: the 60/min `apiIpShadowGuard`, the 10/min checkout limiter, the 5/min
+ * auth limiter and the 100/min v1 anon limiter all shared one counter. Two
+ * Constitution 1.10 violations fell out of that:
+ *
+ *   1. the LOWEST cap in the chain bound every surface that shared an IP with
+ *      it — the checkout limiter logged `count: 60, maxRequests: 10` against
+ *      callers who had never touched a checkout route; and
+ *   2. one request that traversed N such limiters advanced the shared counter
+ *      N times, so the effective budget was min(caps) / N rather than the
+ *      documented per-tier cap.
+ *
+ * Each limiter instance now gets its own namespace. Every production limiter
+ * passes an explicit `scope`, which is what makes the bucket name stable and
+ * makes the `Rate limit exceeded` log line self-attributing. The fallback for a
+ * limiter that omits one is a private per-instance id — a collision floor, not
+ * a naming scheme: it is derived from construction order, so it is stable
+ * within a process but not across a code change that reorders module imports.
+ * Nothing in production relies on it; keep it that way. Since RC #2269 the
+ * store CAN be shared across processes (`initUpstashRateLimiting()` installs an
+ * Upstash-backed `IRateLimitStore`), so two Cloud Run instances that construct
+ * their limiters in different orders would disagree about which limiter owns
+ * `rl-3` and silently share a bucket. That hazard is theoretical only while
+ * every production limiter names its scope.
+ *
+ * The double-mount case is a DIFFERENT problem with a different fix: one
+ * limiter instance mounted twice is counted once per request (COUNTED_LIMITERS
+ * above, RC #2269 / `rateLimitDoubleMount.test.ts`). Bucket scoping separates
+ * DISTINCT limiters; COUNTED_LIMITERS de-duplicates ONE limiter's mounts.
+ *
+ * A single limiter instance still shares ONE bucket across all of its mount
+ * points and paths — that is the F5 behaviour below and is deliberate.
+ */
+let limiterInstanceCount = 0;
 
 /**
  * Create a rate limiter middleware
@@ -166,9 +214,20 @@ export function rateLimit(options: RateLimitOptions) {
     maxRequests,
     keyGenerator = (req) => req.ip || 'unknown',
     skipFailedRequests = false,
-    scope = '',
+    scope,
     skip,
   } = options;
+
+  // SCRUM-3418: an unnamed limiter gets its OWN namespace, never the shared
+  // bare-key bucket. Computed once per instance, not per request.
+  //
+  // NOTE (post-RC #2269): the fallback id is derived from module construction
+  // order, so it is stable within ONE process but NOT across processes. With
+  // the Upstash store installed (`initUpstashRateLimiting()`), buckets are
+  // shared across Cloud Run instances — two instances could then disagree about
+  // which limiter owns `rl-3`. Every production limiter passes an explicit
+  // `scope`, which is what keeps that hazard theoretical. Keep it that way.
+  const bucketScope = scope || `rl-${++limiterInstanceCount}`;
 
   /** 429 response. Identical on both paths so the contract can't drift. */
   const reject = (res: Response, key: string, entry: RateLimitEntry, now: number): void => {
@@ -284,7 +343,7 @@ export function rateLimit(options: RateLimitOptions) {
     }
     countedBy.add(limiterId);
 
-    const key = scope ? `${scope}:${keyGenerator(req)}` : keyGenerator(req);
+    const key = `${bucketScope}:${keyGenerator(req)}`;
     const now = Date.now();
 
     // Read the store per-request: setRateLimitStore() swaps it at startup.
@@ -348,12 +407,18 @@ export function rateLimit(options: RateLimitOptions) {
 
 /**
  * Pre-configured rate limiters
+ *
+ * Each carries an explicit `scope`, so the tiers below are independent budgets
+ * rather than five views of one per-IP counter (SCRUM-3418). Two of them —
+ * `checkout` and `quotaCheck` — are configured identically (10 req / 60s), which
+ * is exactly why the scope has to name the limiter and not its config.
  */
 export const rateLimiters = {
   // Stripe webhooks: 100 req/min
   stripeWebhook: rateLimit({
     windowMs: 60000,
     maxRequests: 100,
+    scope: 'stripe-webhook',
     keyGenerator: () => 'stripe', // Global limit
   }),
 
@@ -361,18 +426,21 @@ export const rateLimiters = {
   checkout: rateLimit({
     windowMs: 60000,
     maxRequests: 10,
+    scope: 'checkout',
   }),
 
   // API: 60 req/min per IP
   api: rateLimit({
     windowMs: 60000,
     maxRequests: 60,
+    scope: 'api',
   }),
 
   // Auth: 5 req/min per IP (for failed attempts)
   auth: rateLimit({
     windowMs: 60000,
     maxRequests: 5,
+    scope: 'auth',
     skipFailedRequests: true,
   }),
 
@@ -380,5 +448,6 @@ export const rateLimiters = {
   quotaCheck: rateLimit({
     windowMs: 60000,
     maxRequests: 10,
+    scope: 'quota-check',
   }),
 };

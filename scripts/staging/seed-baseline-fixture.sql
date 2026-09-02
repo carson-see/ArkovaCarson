@@ -198,6 +198,28 @@ INSERT INTO public.profiles (
 ON CONFLICT (id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
+-- 4b. ORG MEMBERSHIP — required by the connector-artifact drain's actor lookup.
+--     `profiles.role` ('ORG_ADMIN', set above) is a DIFFERENT axis from
+--     `org_members.role`, whose enum `org_member_role` is lowercase
+--     (owner | admin | member | compliance_officer).
+--     `resolveOrgActor()` in services/worker/src/jobs/connector-artifact-drain.ts
+--     queries `org_members` for role IN ('owner','admin') to supply the anchor's
+--     required user_id. Without this row every connector artifact fails to
+--     materialize with "no org owner/admin actor for connector artifact" — the
+--     artifacts stall at `failed` and any connector soak silently degenerates
+--     into a webhook-liveness test with zero anchors (observed on the
+--     docusign-bilateral rig, 2026-08-30).
+-- ---------------------------------------------------------------------------
+INSERT INTO public.org_members (
+  user_id, org_id, role
+) VALUES (
+  '5eed0000-0000-4000-8000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000b1',
+  'owner'
+)
+ON CONFLICT (user_id, org_id) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
 -- 5. ANCHOR — the SUBMITTED fixture row (Check 5 satisfied)
 --    Minimal required columns only:
 --      user_id   NOT NULL  -> profile above

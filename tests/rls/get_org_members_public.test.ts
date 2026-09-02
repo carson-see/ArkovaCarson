@@ -36,8 +36,8 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
   });
 
   afterAll(async () => {
-    await anonClient.auth.signOut();
-    await serviceClient.auth.signOut();
+    await anonClient.auth.signOut({ scope: 'local' });
+    await serviceClient.auth.signOut({ scope: 'local' });
   });
 
   it('anon caller can fetch members for a public org', async () => {
