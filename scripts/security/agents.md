@@ -2,6 +2,51 @@
 
 Security scanning scripts for dependency and license compliance.
 
+## 2026-08-31 — `thirdPartyNotices.generated.json` carries ONE hand-inserted entry, because the generator cannot run
+
+`npm run license:notices:generate` currently **fails closed**:
+
+```
+FATAL: allowlist-cleared copyleft dependencies have no entry in third-party-notices.pinned.json,
+so they would receive NO attribution on /legal/third-party-notices.
+  - @img/sharp-libvips-darwin-arm64@1.2.4 (LGPL-3.0-or-later)
+```
+
+That package arrives via the **production** dependency
+`@huggingface/transformers -> sharp -> @img/sharp-darwin-arm64` (and again, dev-only,
+via `wrangler -> miniflare -> sharp`). It is a **pre-existing** gap — the committed
+file is dated `2026-07-28` and nothing in `.github/workflows` or `scripts/ci/`
+runs this generator, so nobody noticed it had stopped producing output.
+
+The consequence is not just that the LGPL component is undisclosed: **no new
+dependency can be disclosed either**, because the FATAL returns before the file
+is written. `qrcode-generator@2.0.4` (MIT, added for the certificate QR, imported
+only by `src/lib/certificateQr.ts`) hit exactly that, and MIT attribution is not
+optional.
+
+So its entry was inserted **by hand** into `generalDependencies`, using the exact
+values `license-checker` reports and the exact sort position the generator would
+choose (`'qrcode-generator'.localeCompare('qrcode.react') === -1`). The patch
+asserted `json.dumps(indent=2) + '\n'` round-trips the existing file byte-for-byte
+first, so the diff is the six inserted lines and nothing else. **The next
+successful regeneration reproduces the identical entry** — this is idempotent,
+not a fork.
+
+Rules if you touch this:
+
+- **Do not bypass the FATAL.** It exists because `jszip` — a dependency whose
+  allowlist entry records a license *election*, making MIT attribution
+  load-bearing — once fell into no bucket and got zero attribution. Silencing it
+  recreates that.
+- **Do not hand-edit this file as a habit.** One permissive entry with a
+  reproducible value is the narrow case. Anything requiring a judgement call
+  about a copyleft license belongs in `third-party-notices.pinned.json` after
+  counsel review, not here — and note that the pinned file's shape
+  (`PinnedCopyleftEntry`: `status`, `unmodified`, `licenseTextUrls`) renders into
+  `copyleftDependencies`, so it is the wrong home for an MIT dep regardless.
+- **Fixing the sharp gap unblocks everything.** Resolve that, run the generator,
+  and this note can go.
+
 ## Files
 - **`license-denylist.ts`** — scans all `package-lock.json` files for AGPL/GPL/LGPL/SSPL-licensed dependencies. Returns denied matches with package name, version, and license.
 - **`license-denylist.test.ts`** — colocated tests for the license scanner.

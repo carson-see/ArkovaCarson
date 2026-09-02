@@ -11,6 +11,13 @@
  * stored verbatim in the PDF document properties so automated tooling can
  * extract it.
  *
+ * It also carries a "Verify Online" block: a QR plus the same link in text,
+ * both encoding `canonicalVerifyUrl(publicId)` — NOT `verifyUrl()`, which
+ * honours `VITE_APP_URL` and would bake a localhost or ephemeral-preview host
+ * into a permanent archived document. Both are omitted entirely when the record
+ * has no `publicId`; the QR alone is omitted (link kept) when it cannot be
+ * produced. See `certificateQr.ts` and `routes.ts`.
+ *
  * §1.6 BOUNDARY: this generator is CLIENT-SIDE only and stays that way. It
  * embeds ONLY the proof packet — fingerprint, merkle root/proof/index,
  * tx/block fields, op_return payload, schema version, signature metadata. It
@@ -26,8 +33,15 @@
  */
 
 import { jsPDF } from 'jspdf';
+import { buildQrMatrix, type QrMatrix } from './certificateQr';
 import { CERTIFICATE_COPY } from './copy';
+import { canonicalVerifyUrl } from './routes';
 import { getStatusDisplay, isProofDownloadable } from './statusDisplay';
+
+/** Drawn width/height of the QR module grid, in mm (quiet zone added around it). */
+const QR_SIDE_MM = 26;
+/** Quiet zone required by the QR spec, in modules, on every side. */
+const QR_QUIET_MODULES = 4;
 
 /**
  * One sibling along the Merkle inclusion branch. Matches the stored
@@ -137,6 +151,24 @@ export interface AuditReportResult {
   /** The embedded proof JSON string, or null when the record is not SECURED /
    *  has no proof. Exposed so callers and tests can inspect it. */
   embeddedProofJson: string | null;
+  /**
+   * The verification URL printed on the certificate and encoded in its QR —
+   * always `canonicalVerifyUrl(publicId)`, which is pinned to the production
+   * origin and reads NO environment. This deliberately differs from the in-app
+   * QR, which uses `verifyUrl()` and honours `VITE_APP_URL`: a certificate is
+   * an archived artifact that outlives the build that produced it, so a
+   * preview or dev host baked into it would resolve nowhere forever. Do not
+   * "simplify" the two back together. `null` when the record carries no
+   * `publicId`: a certificate NEVER fabricates or defaults a verification URL.
+   */
+  verificationUrl: string | null;
+  /**
+   * The QR module matrix actually drawn, or `null` when no URL was available or
+   * the code could not be produced (see `certificateQr.ts`). Exposed so a test
+   * can assert the drawn code is the code for `verificationUrl` — not a
+   * re-derived or near-miss value.
+   */
+  qr: QrMatrix | null;
 }
 
 function formatDate(dateStr: string): string {
@@ -219,7 +251,13 @@ function isMerkleProofEntry(v: unknown): v is MerkleProofEntry {
  * can inspect the result. Use `generateAuditReport` to also trigger download.
  */
 export function buildAuditReport(data: AuditReportData): AuditReportResult {
-  const doc = new jsPDF();
+  // `floatPrecision: 'smart'` (5 decimals on values ≥ 1, full precision below —
+  // jsPDF's own documented option) instead of the 16-decimal default. At 5
+  // decimals a point is resolved to 3.5 nanometres, so nothing renders
+  // differently, but the QR block is ~230 filled rectangles and each 16-digit
+  // coordinate is pure padding: measured on the reference certificate, the QR
+  // costs 19.4 KB at the default and 9.4 KB here. Scoped to this document only.
+  const doc = new jsPDF({ floatPrecision: 'smart' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
@@ -384,6 +422,88 @@ export function buildAuditReport(data: AuditReportData): AuditReportResult {
   }
   y += 8;
 
+  // ── Verify online (scannable pointer to the live verification page) ─────
+  //
+  // The certificate is what gets handed to an auditor, so it carries a
+  // CANONICAL pointer: `canonicalVerifyUrl(publicId)`, pinned to the production
+  // origin. The on-screen QR uses `verifyUrl()`, which follows `VITE_APP_URL` —
+  // correct for a share sheet, catastrophic here: `.env.example` ships
+  // `VITE_APP_URL=http://localhost:5173`, so a dev or preview build would emit
+  // certificates whose QR and printed link point at localhost forever, in a
+  // document that cannot be reissued. No publicId means no QR and no link — a
+  // certificate never fabricates or defaults a URL.
+  //
+  // The URL is always printed as text, whether or not the QR renders: that is
+  // the graceful-degradation path (an unscannable certificate is a cosmetic
+  // loss; a certificate that fails to generate is a broken feature) and it is
+  // what makes a photocopied or faxed certificate still usable.
+  //
+  // This block is placed after Lifecycle and BEFORE the offline-verify /
+  // machine-proof sections, which are appended sequentially with `ensureSpace`
+  // — so the QR can neither overlap the proof packet nor push it off the page.
+  const verificationUrl = data.publicId ? canonicalVerifyUrl(data.publicId) : null;
+  const qr = verificationUrl ? buildQrMatrix(verificationUrl) : null;
+
+  if (verificationUrl) {
+    // Reserve the QR box INCLUDING its quiet zone before drawing anything, so
+    // a page break happens above the block rather than through it.
+    const moduleMm = qr ? QR_SIDE_MM / qr.moduleCount : 0;
+    const qrBox = qr ? QR_SIDE_MM + moduleMm * QR_QUIET_MODULES * 2 : 0;
+    const textLeft = margin + 4 + qrBox + (qr ? 4 : 0);
+    const textWidth = pageWidth - margin - textLeft;
+
+    // Measure each block in the font it is RENDERED in. `splitTextToSize` wraps
+    // against the currently-selected font, and courier-8 is far wider per
+    // character than helvetica-9 — measuring the URL in helvetica under-counts
+    // its width by ~19 %, which silently overflows the column once an id is
+    // long enough (and the column is at its widest in the no-QR branch).
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    const introLines = doc.splitTextToSize(CERTIFICATE_COPY.VERIFY_ONLINE_INTRO, textWidth);
+
+    doc.setFont('courier', 'normal');
+    doc.setFontSize(8);
+    const urlLines = doc.splitTextToSize(verificationUrl, textWidth);
+
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
+    const noteLines = doc.splitTextToSize(
+      CERTIFICATE_COPY.VERIFY_ONLINE_INDEPENDENCE_NOTE,
+      textWidth,
+    );
+
+    const textHeight = introLines.length * 5 + 3 + urlLines.length * 5 + 3 + noteLines.length * 4;
+
+    ensureSpace(7 + Math.max(qrBox, textHeight) + 6);
+    y = addSection(doc, CERTIFICATE_COPY.SECTION_VERIFY_ONLINE, y, margin);
+
+    if (qr) {
+      drawQrMatrix(doc, qr, margin + 4 + moduleMm * QR_QUIET_MODULES, y + moduleMm * QR_QUIET_MODULES, QR_SIDE_MM);
+    }
+
+    let textY = y + 4;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(40, 40, 40);
+    doc.text(introLines, textLeft, textY);
+    textY += introLines.length * 5 + 3;
+
+    doc.setFont('courier', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
+    doc.text(urlLines, textLeft, textY);
+    textY += urlLines.length * 5 + 3;
+
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    doc.text(noteLines, textLeft, textY);
+    textY += noteLines.length * 4;
+
+    doc.setTextColor(0, 0, 0);
+    y = Math.max(y + qrBox, textY) + 6;
+  }
+
   // ── Offline-verify block + embedded machine-readable proof ──────────
   let embeddedProofJson: string | null = null;
   if (packet) {
@@ -463,7 +583,24 @@ export function buildAuditReport(data: AuditReportData): AuditReportResult {
   const safeName = data.filename.replace(/[^a-zA-Z0-9.-]/g, '_').substring(0, 50);
   const filename = `arkova-certificate-${safeName}.pdf`;
 
-  return { doc, filename, embeddedProofJson };
+  return { doc, filename, embeddedProofJson, verificationUrl, qr };
+}
+
+/**
+ * Paint a QR module matrix as filled rectangles at (`x`, `y`), `sideMm` square.
+ *
+ * One `rect()` per horizontal run rather than per module — see
+ * `certificateQr.ts` for why the matrix arrives run-length packed. Callers are
+ * responsible for the quiet zone; this draws the modules only. The fill colour
+ * is restored afterwards so no later drawing inherits black.
+ */
+function drawQrMatrix(doc: jsPDF, qr: QrMatrix, x: number, y: number, sideMm: number): void {
+  const m = sideMm / qr.moduleCount;
+  doc.setFillColor(0, 0, 0);
+  for (const run of qr.runs) {
+    doc.rect(x + run.col * m, y + run.row * m, run.width * m, m, 'F');
+  }
+  doc.setFillColor(255, 255, 255);
 }
 
 /**

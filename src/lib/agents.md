@@ -1,5 +1,96 @@
 # agents.md — lib
 
+_Last updated: 2026-08-31_
+
+## 2026-08-31 — every certificate pointed at a URL that does not work; `certificateQr.ts` is new
+
+`CERTIFICATE_COPY.OFFLINE_VERIFY_TOOL` read *"Reference verifier:
+https://arkova.ai/verify — paste the proof packet to run all checks in your
+browser."* Both halves were false. That host **302s to the marketing homepage**
+(control: `arkova.ai/nonsense-xyz` 404s, so the redirect is deliberate, not a
+fallthrough), and **no page in this app has ever accepted a pasted proof
+packet**. It printed onto every audit certificate ever generated, via
+`generateAuditReport.ts`. It now names `https://app.arkova.ai/verify/independent`
+— the page that actually exists — and promises only what that page does (§1.5).
+
+**Two rules when you touch a published verification pointer:**
+
+- **Execute it before you write it.** The dead URL survived because it read
+  plausibly. `src/lib/publishedVerificationPointers.test.ts` is the ratchet. It
+  walks **every export of `copy.ts`** — not a hand-listed pair of blocks, which
+  could never catch the next dead pointer in a constant nobody thought to add —
+  and fails on: any `arkova.ai/verify` host lacking the `app.` prefix; any
+  non-`app.` arkova origin inside a string that mentions verifying (the pathless
+  variant); the word "paste" in the tool line; any mention of `verify.sh`; and
+  any `npm install @arkova/…`, since neither verifier package is published (R-7).
+  Two guard-the-guard tests keep it honest — one asserts the walk actually
+  reaches the constants it claims to cover, the other that each regex still
+  matches the exact string that shipped.
+- **An archived artifact never carries a build-time host.** The certificate uses
+  `canonicalVerifyUrl(publicId)` (`routes.ts`), pinned to `app.arkova.ai`. The
+  on-screen QR uses `verifyUrl()`, which follows `VITE_APP_URL` — correct for a
+  share sheet, catastrophic in a PDF: `.env.example` ships
+  `VITE_APP_URL=http://localhost:5173`, so a dev or preview build would emit
+  certificates whose QR **and** printed link resolve to localhost forever, in a
+  document that cannot be reissued once an auditor has it. The two helpers agree
+  in production and diverge exactly where they should. `buildAuditReport` returns
+  `verificationUrl` and `qr` so a test can assert the drawn matrix IS the matrix
+  for that URL rather than trusting two call sites to agree, and a stubbed-env
+  test pins the divergence.
+
+`certificateQr.ts` (new) is the only importer of `qrcode-generator` (MIT, zero
+deps). It exists because **`qrcode.react` cannot be reached from jsPDF**: it
+exports React components only, its bundled encoder is not exported, and both
+components call hooks — so the only route to it is `react-dom/server`, and
+`vite.config.ts`'s `manualChunks` sends every `/react-dom/` module to the
+`vendor-react-dom` chunk that ships in the **initial** bundle. That trade
+(~500 KB of server renderer at first paint, or an edit to that deliberately
+commented chunking rule) is far worse than a 52 KB encoder in the already-lazy
+certificate chunk. Read `certificateQr.ts`'s header before proposing to remove
+the dependency.
+
+Two non-obvious properties of that module, both deliberate:
+
+- **It returns `null`, never throws.** Over-capacity payloads, empty values and
+  non-ASCII values all degrade to "no QR" and the certificate still renders the
+  URL as text. An unscannable certificate is cosmetic; one that fails to
+  generate is a broken feature.
+- **Non-ASCII is refused on purpose.** `qrcode-generator`'s default byte
+  conversion is Latin-1 (`stringToBytes('é') → [233]`, not UTF-8 `[195,169]`),
+  so a non-ASCII URL would encode to a *different* string than the one printed
+  beside it. A QR that resolves somewhere other than its printed link is worse
+  than no QR.
+
+The `certificateQr.test.ts` golden digest was verified **out of band** by
+rasterising the matrix and decoding it with jsQR 1.4.0, which read back exactly
+`https://app.arkova.ai/verify/ARK-2026-001` — payload, packing and orientation
+proven end to end. No decoder ships in this repo, so if you flip that digest you
+must re-run that decode; do not just paste a new hash.
+
+**The digest is not the orientation guard, though — a hash tells you nothing
+about what broke and invites re-pinning.** Every structural test in that file
+(finder patterns at the three corners) is symmetric under transposition, and so
+is the spec's permanently-dark module here: for this code both `(21,8)` and
+`(8,21)` are dark, because `(8,21)` lands in the second format-information
+strip. Measured, not assumed. The named test `is oriented row-major` asserts
+eight module coordinates sampled from the 138 (of 406) pairs where this matrix
+disagrees with its own transpose, so mirroring the encoder fails a readable
+assertion instead of only a hash.
+
+**Assert what is PAINTED, not what is returned.** `buildAuditReport`'s return
+value is convenient to test and proves nothing about the draw call. Three real
+breakages — transposing `doc.rect`, `QR_QUIET_MODULES = 0`, and `QR_SIDE_MM = 5`
+(0.17 mm modules, unscannable) — all left the suite green until
+`generateAuditReport.test.ts` grew a content-stream parser. It reads the `re`
+ops back out of `doc.output()`, converts points to mm (jsPDF's COMPAT mode
+negates the height and flips the origin), and checks the full geometry against
+the matrix. All four mutations, plus reverting to `verifyUrl()`, now fail it.
+
+Measured cost: the QR is ~230 filled rectangles. `buildAuditReport` now
+constructs jsPDF with `floatPrecision: 'smart'` (5 decimals at ≥1 instead of the
+16-decimal default — 3.5 nm on a point, so nothing renders differently), which
+takes the QR block from 19.4 KB to 9.4 KB. Reference SECURED certificate: 2
+pages before and after.
 _Last updated: 2026-08-29_
 
 ## 2026-08-29 — `docusignLinks.ts` (DocuSign record deep links, bilateral rollout, frontend-targeted T2)
