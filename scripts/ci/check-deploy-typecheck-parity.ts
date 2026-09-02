@@ -78,8 +78,49 @@ interface WorkerTypecheckStep {
   nameLine: string;
   /** The step's `run:` command, trimmed. */
   command: string;
-  /** Whether an `if:` guard sits between the name and the run. */
+  /** Whether the step carries an `if:` guard anywhere in its key block. */
   hasIf: boolean;
+}
+
+/**
+ * Whether the step anchored at `nameIdx` carries a step-level `if:` guard —
+ * ANYWHERE in its key block. GitHub Actions step keys are an unordered YAML
+ * mapping, so `if:` placed after `run:` (or opening the item as `- if:`,
+ * ahead of the `name:`) guards the step exactly as well as one between the
+ * name and the run. The original scan stopped at the `run:` line and missed
+ * both orderings — a path-filter guard could ride back in by key order alone
+ * (post-merge audit finding on PR #2427).
+ *
+ * A YAML mapping's keys all sit at the column of its first key, so the
+ * `name:` line fixes the step's key column. The scan runs from the item's
+ * `- ` line to the first dedent past that column (the next step, the next
+ * job, or the end of the block), and matches `if:` only at the key column —
+ * an `if:`-shaped line inside a nested block or a `run: |` script sits
+ * deeper and does not false-positive.
+ */
+function stepHasIfGuard(lines: string[], nameIdx: number): boolean {
+  const keyCol = lines[nameIdx].indexOf('name:');
+
+  // The item's `- ` line: the name line itself, or the nearest one above it
+  // when another key (e.g. `- if:`) opens the item.
+  let start = nameIdx;
+  while (start > 0 && !/^\s*-\s/.test(lines[start])) start--;
+
+  for (let k = start; k < lines.length; k++) {
+    const line = lines[k];
+    if (line.trim() === '') continue;
+    // YAML ignores comments at ANY indentation — a dedented comment between
+    // step keys does not end the step, so it must not end the scan either.
+    if (line.trimStart().startsWith('#')) continue;
+    if (k === start) {
+      if (/^\s*-\s+if:\s*\S/.test(line)) return true;
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    if (indent < keyCol) break; // dedent: next step / next job / end of block
+    if (indent === keyCol && /^if:\s*\S/.test(line.trimStart())) return true;
+  }
+  return false;
 }
 
 /**
@@ -125,12 +166,7 @@ function findWorkerTypecheckSteps(yaml: string): WorkerTypecheckStep[] {
     }
     if (runIdx === -1) continue;
 
-    let hasIf = false;
-    for (let k = nameIdx; k < runIdx; k++) {
-      if (/^\s*if:\s*\S/.test(lines[k])) hasIf = true;
-    }
-
-    steps.push({ nameLine: lines[nameIdx].trim(), command, hasIf });
+    steps.push({ nameLine: lines[nameIdx].trim(), command, hasIf: stepHasIfGuard(lines, nameIdx) });
   }
 
   return steps;
