@@ -726,6 +726,36 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
+**RUNNING — PR #2524 T3 isolated soak (`feat/proof-tx-inclusion-branch`, migration `0427`), started 2026-09-02.**
+- **Rig:** isolated Supabase `uqobkjhlnqmcpjidngxr` (`arkova-soak-proof-txincl-0427`, us-east-2),
+  ledger head **0427** (119 rows; `0381` applied via session-pooler psql + ledger row per
+  STAGING_RIG.md item 3). Cloud Run `arkova-worker-proof-txincl-0427-staging` rev **00001-f8j**,
+  image digest `sha256:daa5e4112f280b8aa5ff65c4e24b9c4afe569a69257630ed2a2e91ecb069a956`, source head
+  `a3f1d6b36b513d2fd9d65e2d1e6f6f5f2b6cf20c` (frozen — do not push to that branch).
+- **Preflight:** `environment_type=clean_mirror` 7/7 —
+  `docs/staging/proof-txincl-0427/clean-mirror-preflight-proof-txincl-0427.json`.
+- **Clock basis = Cloud Run worker uptime**, revision ready **2026-09-02T13:38:43Z**;
+  T3 window closes **2026-09-04T13:38:43Z**. Fixture: 3000 SECURED real-mainnet-txid anchors
+  (wedge 120 / bulk 450 / spread 2430), 2 orgs. Scheduler: only `…-populate-confirmation-proofs`
+  (`*/5`) is wired — `batch-anchors` deliberately absent, so **nothing broadcasts**.
+- **Driver:** `services/worker/scripts/pr2524-proof-txinclusion-driver.ts` on branch
+  `soak/proof-txincl-driver` (sha256 `2f9b13268be0537b87e475bc7177c93714d95836d657f46df3395377d480e1b6`);
+  evidence rows land in `docs/staging/proof-txincl-0427/evidence/` (worktree, committed at close-out).
+- **Health read 2026-09-02T19:30Z:** 2,880 / 3,000 populated; the remaining 120 are the designed
+  wedge cohort (1 shared txid, 120 distinct wrong block hashes); 0 half-pairs, 0 index-out-of-range.
+- **Do not** touch this rig, its Scheduler job, or `feat/proof-tx-inclusion-branch`.
+
+**STANDING (not yet soaking) — RC batch rig for PRs #2525 / #2526 / #2527 (T2) + #2528 (T1).**
+- Supabase `rvdgwynxoapdzysoaayr` (`arkova-soak-rc-batch-0902`), ledger head **0419** = `main`,
+  preflight `clean_mirror` 7/7. RC tree `rc/soak-batch-2026-09-02` @ `78621249595e37398170da9b298ae13cd753a801`
+  (all four CURRENT PR heads merged clean). Worker not yet deployed — image building; manifest draft
+  `docs/staging/rc-manifests/rc-batch-2026-09-02.json`. Window opens when the worker is up.
+
+**CLOSED (declared window passed 2026-09-01T16:23:20Z) — DocuSign bilateral T3 RC soak.** Its
+close-out status is whatever its own docs say (`docs/staging/docusign-bilateral-2026-08/`); this
+block no longer asserts it as RUNNING. Original entry retained below for the record.
+
+
 > ### ✅ PR #2461 soak CLOSED and SEALED — rig torn down 2026-08-31
 >
 > T2 window **2026-08-31T00:15:22Z → 12:15:22Z**, full 12 h served, on isolated rig
@@ -1152,7 +1182,7 @@ from any GCP project as a platform user. Separately, `main` carries 95 pre-exist
 typecheck errors (express-types portability) unrelated to this incident; given the deploy-typecheck
 blackout behaviour they warrant their own ticket.
 
-_Last refreshed: 2026-08-11 by carson — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-02 by Claude (session for carson@arkova.io) — claims verified against gcloud run describe, Cloud Run /api/health, Supabase MCP execute_sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._
 
 ### 2026-08-01/02 (CTO session) — pre-pentest PII/security hardening wave, DocuSign timeout investigation, soak findings F-1..F-10
 
