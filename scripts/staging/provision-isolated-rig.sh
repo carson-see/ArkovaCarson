@@ -2002,9 +2002,23 @@ if [[ $APPLY -eq 1 ]]; then
     --project-ref "$NEW_PROJECT_REF" \
     --format json
   echo "executing: npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref $NEW_PROJECT_REF --format json" >&2
-  PREFLIGHT_JSON="$(npx tsx scripts/ci/staging-honesty-preflight.ts \
+  # The preflight needs the rig's service-role key. Step 2b created it as a
+  # Secret Manager secret but held the value only in a function-local, so this
+  # step used to run with SUPABASE_SERVICE_ROLE_KEY unset and ALWAYS failed with
+  # "Missing --service-role-key" — after the project, schema, secrets, worker and
+  # fixture were already created. Every live provision died at the last step and
+  # left an un-preflighted rig behind. Read it back by name, never echo it.
+  PREFLIGHT_SRK="$(gcloud secrets versions access latest \
+    --secret="$SUPABASE_SERVICE_ROLE_SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null || true)"
+  if [[ -z "$PREFLIGHT_SRK" ]]; then
+    echo "ERROR: could not read '$SUPABASE_SERVICE_ROLE_SECRET_NAME' for the Step 6 preflight." >&2
+    echo "       The rig exists but is UN-PREFLIGHTED; re-run the preflight by hand before soaking." >&2
+    exit 1
+  fi
+  PREFLIGHT_JSON="$(SUPABASE_SERVICE_ROLE_KEY="$PREFLIGHT_SRK" npx tsx scripts/ci/staging-honesty-preflight.ts \
     --project-ref "$NEW_PROJECT_REF" \
     --format json)"
+  unset PREFLIGHT_SRK
   # Accept only the report contract emitted by staging-honesty-preflight.ts.
   # Unknown keys (including secret-bearing additions), mismatched refs, malformed
   # timestamps, failed checks, and malformed nested rows all fail closed. Raw
