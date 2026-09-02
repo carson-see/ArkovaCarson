@@ -139,14 +139,33 @@ function getStoredRebroadcastAttempts(metadata: Record<string, unknown> | null):
   return typeof attempts === 'number' && Number.isInteger(attempts) && attempts >= 0 ? attempts : null;
 }
 
+/**
+ * NOT A LOCK (SCRUM-3384). This returns `true` unconditionally, so every
+ * `if (!(await acquireLock(...)))` guard below is dead code and the
+ * "another worker holds the lock" log line in `detectReorgs` is unreachable.
+ *
+ * The original reasoning — advisory locks don't survive Supabase connection
+ * pooling, and this is a "single-worker process" so one isn't needed — was half
+ * right. The pooling half holds (see `jobs/run-lease.ts`, which rejects the
+ * session-scoped advisory lock for exactly that reason and uses a TTL lease
+ * row instead). The single-worker half never held: prod `arkova-worker` runs
+ * `--min-instances 2 --max-instances 10`, so all five jobs in this file run on
+ * 2-10 instances at once.
+ *
+ * Where those jobs are safe, they are safe because of a per-row compare-and-set
+ * — `detectReorgs` and `monitorStuckTransactions` only act on rows their own
+ * UPDATE matched — never because of this call. Where they are not,
+ * `routes/in-process-cron-audit.ts` records it: `rebroadcast-dropped-
+ * transactions` loses attempt-counter increments, and `monitor-fee-rates`
+ * inflates its own sample table. Do not read these call sites as protection.
+ */
 async function acquireLock(_lockId: number): Promise<boolean> {
-  // Advisory locks don't work with Supabase connection pooling.
-  // Single-worker process — always proceed.
   return true;
 }
 
+/** No-op counterpart to the no-op `acquireLock` above. */
 async function releaseLock(_lockId: number): Promise<void> {
-  // No-op — in-process mutex handled at caller level
+  // Intentionally empty — there is nothing to release.
 }
 
 // ─── CRIT-2: Reorg Detection ────────────────────────────────────────────

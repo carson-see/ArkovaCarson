@@ -6,8 +6,8 @@
  * rather than renewing it.
  *
  * NO cron here — `renewDriveWatchChannels` is a pure function invoked by the
- * Lane-2 Cloud Scheduler → HTTP /jobs/* path (node-cron does not fire on a
- * throttled Cloud Run). These tests drive it directly.
+ * Lane-2 Cloud Scheduler → HTTP /jobs/* path, the trigger with retries and an
+ * attempt deadline (SCRUM-3384). These tests drive it directly.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {

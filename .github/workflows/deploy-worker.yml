@@ -431,9 +431,11 @@ jobs:
       # `drive-subscription-renewal`) is declared but NOT applied to prod — that
       # is a separate, manual `gcloud scheduler jobs create` step (see the PR
       # body) that this workflow cannot perform. Until it runs, renewal relies
-      # solely on the hourly in-process backup, which is not reliable under
-      # Cloud Run CPU throttling (node-cron does not fire on a throttled
-      # instance) — see the PR's Premortem.
+      # solely on the hourly in-process backup, which is not a reliable
+      # substitute: a process-local timer has no retry, no attempt deadline and
+      # no run history, and it stops entirely on a revision scaled to zero
+      # (SCRUM-3384 narrows the older CPU-throttling reading — on a warm
+      # instance node-cron fires normally) — see the PR's Premortem.
       #
       # QUEUE-07 activation (CTO decision): ENABLE_QUEUE_DIGEST was previously
       # absent here entirely, so `config.enableQueueDigest` fell back to its
