@@ -45,6 +45,27 @@ function createMockDeps(): HealthCheckDeps {
     getLastBatchAnchor: async () => ({ data: [{ updated_at: '2026-08-01T01:00:00Z' }], error: null }),
     getPendingAnchorCount: async () => ({ count: 42, error: null }),
     getCurrentFeeRate: async () => 3,
+    // SCRUM-3374 (added 2026-09-02): a GENUINELY-PROBED healthy snapshot —
+    // `state: 'ok'` with a non-null `checkedAtMs`.
+    //
+    // These tests are about DETAIL REDACTION (SCRUM-2653), not about RPC
+    // cold-start. Omitting this dep made `buildHealthResponse` fall back to its
+    // module-local UNPROBED constant (`state: 'unknown'`, `checkedAtMs: null`),
+    // and because this mock sets `enableProdNetworkAnchoring: true`, the
+    // never-probed fail-closed carve-out added by 8a3629e64 correctly degraded
+    // `anchoring` to 'warning'. That is the RIGHT production behaviour — a cold
+    // cache is the absence of a measurement, not a measured 'ok' (§1.5) — so the
+    // fix is to stop this suite from accidentally exercising the cold path, not
+    // to relax the assertion. The cold-cache verdict itself is pinned in
+    // `anchoring-rpc-probe.test.ts`, and its wiring through `buildHealthResponse`
+    // in `health.test.ts`.
+    getAnchoringRpcStatus: () => ({
+      state: 'ok',
+      endpoint: 'https://go.getblock.io',
+      checkedAtMs: 1_700_000_000_000,
+      httpStatus: 200,
+      blockHeight: 913_244,
+    }),
   };
 }
 
