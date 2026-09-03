@@ -25,6 +25,11 @@
       "doc": "services/worker/src/api/v1/agents.md",
       "path": "scripts/ci/check-verification-status-writers.ts",
       "reason": "Named planned work. The line itself says the census rule is prose-only until this lint exists; deleting the pointer would delete the TODO."
+    },
+    {
+      "doc": "e2e/agents.md",
+      "path": "src/lib/mfaPolicy.ts",
+      "reason": "SCRUM-3167/3584: named twice (login-challenge spec + auth.setup.ts override sections) as the sibling branch security/mfa-enforcement-3167's date-policy module. That branch had not merged when this doc was written, so the path is genuinely absent here on purpose — remove this entry once mfaPolicy.ts lands on main and the pointer resolves for real."
     }
   ]
 }
