@@ -1,0 +1,237 @@
+/**
+ * MFA enrollment + login challenge — SCRUM-3167 / SCRUM-3584
+ *
+ * NOT VERIFIED IN THIS SESSION — Playwright cannot run here (no dev
+ * server / local Supabase stack available to this agent; another session
+ * owns the local stack per CLAUDE.md). Written TDD-style against the agreed
+ * contract with the sibling branch `security/mfa-enforcement-3167`
+ * (AuthGuard / MfaChallenge / MfaEnrollmentRequired / MfaGraceNudge /
+ * mfaPolicy) — test ids `mfa-challenge*`, `mfa-enrollment-required`,
+ * `mfa-enrollment-qr/secret/code/submit`, `mfa-grace-nudge*`, and the
+ * `arkova_mfa_enforce_from_override` localStorage override key. The CTO runs
+ * this at integration once both branches land.
+ *
+ * Covers:
+ *  (a) an INDIVIDUAL enrolls TOTP in Settings, then completes the SAME
+ *      factor as a login challenge on the next sign-in;
+ *  (b) the seeded orgAdmin (no factor) sees the dismissible grace nudge
+ *      before the enforcement date and still reaches the app;
+ *  (c) a disposable ORG_ADMIN past the enforcement date hits the hard
+ *      `MfaEnrollmentRequired` screen and can complete it — proves the
+ *      block is a real onboarding step, not a dead end;
+ *  (d) a user with one verified factor adds a second "backup" factor and
+ *      removes it again, handling the AAL2 step-up prompt if GoTrue asks
+ *      for one.
+ *
+ * Every test creates and tears down its own disposable user (`finally` per
+ * `e2e/helpers/profile-session.ts`'s `withProfileSession` idiom) except (b),
+ * which drives the existing seeded orgAdmin read-only (UI login only — never
+ * touches its factors).
+ */
+
+import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import { acceptDisclaimerIfVisible } from './helpers/dashboard';
+import { totp, base32Decode } from './helpers/totp';
+import {
+  createDisposableUser,
+  deleteDisposableUser,
+  loginViaUi,
+  setEnforceDateOverride,
+  readSecretFromSettings,
+} from './helpers/mfa';
+import { TWO_FACTOR_SETUP_LABELS } from '../src/lib/copy';
+
+// These specs drive multiple real logins as different (and disposable)
+// users. The project-level seed-user storageState would otherwise redirect
+// an already-authenticated context away from /login before the form even
+// renders — see auth.spec.ts for the same override.
+test.use({ storageState: { cookies: [], origins: [] } });
+
+// Runs each scenario in a fixed order — easier to debug at integration than
+// interleaved output, and there is no correctness reason for them to race.
+test.describe.configure({ mode: 'serial' });
+
+const APP_URL_PATTERN = /\/(dashboard|onboarding|vault)/;
+
+test.describe('totp helper (RFC 6238 vectors)', () => {
+  // RFC 6238 Appendix B, SHA-1 row. Secret is ASCII "12345678901234567890",
+  // base32-encoded. Proven once against the reference scratchpad helper
+  // before e2e/helpers/totp.ts was ported from it; re-asserted here so a
+  // future edit to the helper cannot silently break every MFA spec that
+  // depends on it computing a real code.
+  const RFC_SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'; // gitleaks:allow — public RFC 6238 Appendix B test vector, not a credential
+
+  test('matches the RFC 6238 Appendix B SHA-1 test vectors', () => {
+    expect(totp(RFC_SECRET, { now: 59 * 1000 })).toBe('287082');
+    expect(totp(RFC_SECRET, { now: 59 * 1000, digits: 8 })).toBe('94287082');
+    expect(totp(RFC_SECRET, { now: 1_111_111_109 * 1000, digits: 8 })).toBe('07081804');
+  });
+
+  test('base32Decode round-trips the RFC secret to its ASCII bytes', () => {
+    expect(base32Decode(RFC_SECRET).toString('ascii')).toBe('12345678901234567890');
+  });
+});
+
+test.describe('MFA enrollment and login challenge', () => {
+  test('individual enrolls TOTP in Settings, then completes it again at the next login', async ({ page }) => {
+    const serviceClient = getServiceClient();
+    const fullName = 'E2E MFA Individual';
+    let userId: string | null = null;
+
+    try {
+      const user = await createDisposableUser(serviceClient, {
+        role: 'INDIVIDUAL',
+        emailPrefix: 'e2e-mfa-individual',
+        fullName,
+      });
+      userId = user.userId;
+
+      await loginViaUi(page, user.email, user.password);
+      await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
+      await acceptDisclaimerIfVisible(page);
+
+      await page.goto('/settings');
+      await page.getByTestId('twofactor-enable').click();
+
+      const secret = await readSecretFromSettings(page);
+      await page.getByTestId('twofactor-verify-code').fill(totp(secret));
+      await page.getByTestId('twofactor-verify-submit').click();
+
+      await expect(page.getByText(TWO_FACTOR_SETUP_LABELS.STATUS_ENABLED)).toBeVisible({ timeout: 10_000 });
+
+      // Sign out (disposable user — safe to end its own session) and sign
+      // back in: the fresh aal1 session must now be challenged.
+      await page.getByRole('button', { name: new RegExp(fullName, 'i') }).click();
+      await page
+        .getByRole('menuitem', { name: 'Sign out' })
+        .or(page.getByRole('button', { name: 'Sign out' }))
+        .click();
+      await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
+
+      await loginViaUi(page, user.email, user.password);
+
+      await expect(page.getByTestId('mfa-challenge')).toBeVisible({ timeout: 15_000 });
+      await page.getByTestId('mfa-challenge-code').fill(totp(secret));
+      await page.getByTestId('mfa-challenge-submit').click();
+
+      await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
+      await acceptDisclaimerIfVisible(page);
+      await expect(page.getByTestId('mfa-challenge')).toBeHidden();
+    } finally {
+      await deleteDisposableUser(serviceClient, userId);
+    }
+  });
+
+  test('seeded orgAdmin sees the dismissible grace nudge before the enforcement date and still reaches the app', async ({ page }) => {
+    // Far-future override: this must hold regardless of the real wall-clock
+    // date relative to the 2026-09-21 default, and independent of whatever
+    // date e2e/auth.setup.ts bakes into the shared storageState files (this
+    // spec never touches those files — it logs in fresh).
+    await setEnforceDateOverride(page, '2099-01-01T00:00:00Z');
+
+    await loginViaUi(page, SEED_USERS.orgAdmin.email, SEED_USERS.orgAdmin.password);
+    await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
+    await acceptDisclaimerIfVisible(page);
+
+    // Grace, not a block: the nudge shows AND the app content is reachable.
+    await expect(page.getByTestId('mfa-grace-nudge')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#main-content')).toBeVisible();
+
+    await page.getByTestId('mfa-grace-nudge-dismiss').click();
+    await expect(page.getByTestId('mfa-grace-nudge')).toBeHidden();
+
+    // Dismissal is sessionStorage-backed (per-session, not per-visit) — it
+    // must survive a reload of the same tab.
+    await page.reload();
+    await expect(page.getByTestId('mfa-grace-nudge')).toBeHidden();
+  });
+
+  test('a disposable ORG_ADMIN past the enforcement date must enroll before entering, and can', async ({ page }) => {
+    const serviceClient = getServiceClient();
+    let userId: string | null = null;
+
+    try {
+      const user = await createDisposableUser(serviceClient, {
+        role: 'ORG_ADMIN',
+        emailPrefix: 'e2e-mfa-required',
+      });
+      userId = user.userId;
+
+      // Past override: proves the hard-block screen, not just the grace path.
+      await setEnforceDateOverride(page, '2020-01-01T00:00:00Z');
+      await loginViaUi(page, user.email, user.password);
+
+      await expect(page.getByTestId('mfa-enrollment-required')).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId('mfa-enrollment-qr')).toBeVisible();
+
+      const secret = (await page.getByTestId('mfa-enrollment-secret').innerText()).trim();
+      await page.getByTestId('mfa-enrollment-code').fill(totp(secret));
+      await page.getByTestId('mfa-enrollment-submit').click();
+
+      // The block is completable — it must release into the real app, not
+      // just accept the code and stay parked.
+      await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
+      await acceptDisclaimerIfVisible(page);
+      await expect(page.getByTestId('mfa-enrollment-required')).toBeHidden();
+    } finally {
+      await deleteDisposableUser(serviceClient, userId);
+    }
+  });
+
+  test('a user with one verified factor can add and remove a backup authenticator', async ({ page }) => {
+    const serviceClient = getServiceClient();
+    let userId: string | null = null;
+
+    try {
+      const user = await createDisposableUser(serviceClient, {
+        role: 'INDIVIDUAL',
+        emailPrefix: 'e2e-mfa-backup',
+      });
+      userId = user.userId;
+
+      await loginViaUi(page, user.email, user.password);
+      await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
+      await acceptDisclaimerIfVisible(page);
+
+      await page.goto('/settings');
+      await page.getByTestId('twofactor-enable').click();
+      const firstSecret = await readSecretFromSettings(page);
+      await page.getByTestId('twofactor-verify-code').fill(totp(firstSecret));
+      await page.getByTestId('twofactor-verify-submit').click();
+      await expect(page.getByTestId('twofactor-add-backup')).toBeVisible({ timeout: 10_000 });
+
+      // Verifying a newly-enrolled factor elevates THIS session to aal2
+      // immediately (GoTrue behaviour), so add-backup should not need a
+      // step-up here — but handle it anyway rather than coupling the spec
+      // to that internal timing (Amendment A3: insufficient_aal on enroll
+      // shows the inline step-up form).
+      await page.getByTestId('twofactor-add-backup').click();
+      if (await page.getByTestId('twofactor-stepup').isVisible({ timeout: 2_000 }).catch(() => false)) {
+        await page.getByTestId('twofactor-stepup-code').fill(totp(firstSecret));
+        await page.getByTestId('twofactor-stepup-submit').click();
+      }
+
+      await expect(page.getByTestId('twofactor-qr')).toBeVisible({ timeout: 10_000 });
+      const backupFriendlyName = await page.getByTestId('twofactor-friendly-name').inputValue();
+      const backupSecret = await readSecretFromSettings(page);
+      await page.getByTestId('twofactor-verify-code').fill(totp(backupSecret));
+      await page.getByTestId('twofactor-verify-submit').click();
+
+      await expect(page.locator('[data-testid^="twofactor-factor-"]')).toHaveCount(2, { timeout: 10_000 });
+
+      const backupRow = page
+        .locator('[data-testid^="twofactor-factor-"]')
+        .filter({ hasText: backupFriendlyName });
+      await backupRow.getByRole('button', { name: TWO_FACTOR_SETUP_LABELS.REMOVE_ACTION }).click();
+
+      if (await page.getByTestId('twofactor-stepup').isVisible({ timeout: 2_000 }).catch(() => false)) {
+        await page.getByTestId('twofactor-stepup-code').fill(totp(firstSecret));
+        await page.getByTestId('twofactor-stepup-submit').click();
+      }
+
+      await expect(page.locator('[data-testid^="twofactor-factor-"]')).toHaveCount(1, { timeout: 10_000 });
+    } finally {
+      await deleteDisposableUser(serviceClient, userId);
+    }
+  });
+});
