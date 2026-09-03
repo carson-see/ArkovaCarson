@@ -17,14 +17,14 @@ const pyClientSource = readRepoFile('packages/arkova-py/src/arkova/client.py');
 const pyModelsSource = readRepoFile('packages/arkova-py/src/arkova/models.py');
 
 const canonicalSurface = [
-  ['/api/v2/search', '/search', 'arkova_search', 'arkova_search', 'arkova_search', 'arkova_search'],
-  ['/api/v2/orgs', '/orgs', 'arkova_list_orgs', 'arkova_list_orgs', 'listOrgs', 'arkova_list_orgs'],
-  ['/api/v2/organizations/{public_id}', '/organizations/{public_id}', 'arkova_get_organization', 'arkova_get_organization', 'getOrganization', 'arkova_get_organization'],
-  ['/api/v2/records/{public_id}', '/records/{public_id}', 'arkova_get_record', 'arkova_get_record', 'getRecord', 'arkova_get_record'],
-  ['/api/v2/fingerprints/{fingerprint}', '/fingerprints/{fingerprint}', 'arkova_get_fingerprint', 'arkova_get_fingerprint', 'getFingerprint', 'arkova_get_fingerprint'],
-  ['/api/v2/documents/{public_id}', '/documents/{public_id}', 'arkova_get_document', 'arkova_get_document', 'getDocument', 'arkova_get_document'],
-  ['/api/v2/verify/{fingerprint}', '/verify/{fingerprint}', 'arkova_verify', 'arkova_verify', 'verifyFingerprint', 'verify_fingerprint'],
-  ['/api/v2/anchors/{public_id}', '/anchors/{public_id}', 'arkova_get_anchor', 'arkova_get_anchor', 'getAnchor', 'arkova_get_anchor'],
+  ['/api/v2/search', '/search', 'search', 'arkova_search', 'search', 'search'],
+  ['/api/v2/orgs', '/orgs', 'list_orgs', 'arkova_list_orgs', 'listOrgs', 'list_orgs'],
+  ['/api/v2/organizations/{public_id}', '/organizations/{public_id}', 'get_organization', 'arkova_get_organization', 'getOrganization', 'get_organization'],
+  ['/api/v2/records/{public_id}', '/records/{public_id}', 'get_record', 'arkova_get_record', 'getRecord', 'get_record'],
+  ['/api/v2/fingerprints/{fingerprint}', '/fingerprints/{fingerprint}', 'get_fingerprint', 'arkova_get_fingerprint', 'getFingerprint', 'get_fingerprint'],
+  ['/api/v2/documents/{public_id}', '/documents/{public_id}', 'get_document', 'arkova_get_document', 'getDocument', 'get_document'],
+  ['/api/v2/verify/{fingerprint}', '/verify/{fingerprint}', 'verify', 'arkova_verify', 'verifyFingerprint', 'verify_fingerprint'],
+  ['/api/v2/anchors/{public_id}', '/anchors/{public_id}', 'get_anchor', 'arkova_get_anchor', 'getAnchor', 'get_anchor'],
 ] as const;
 
 const validMcpArgs: Record<string, Record<string, unknown>> = {
@@ -88,8 +88,8 @@ describe('canonical agent workflow documentation', () => {
       expect(workflowDoc).toContain(endpoint);
       expect(workflowDoc).toContain(operationId);
       expect(workflowDoc).toContain(mcpTool);
-      expect(workflowDoc).toContain(`arkova.${tsMethod.replace(/^arkova_/, "")}()`);
-      expect(workflowDoc).toContain(`arkova.${pyMethod.replace(/^arkova_/, "")}()`);
+      expect(workflowDoc).toContain(`arkova.${tsMethod}()`);
+      expect(workflowDoc).toContain(`arkova.${pyMethod}()`);
 
       expect(openApiV2Spec.paths[specPath].get.operationId).toBe(operationId);
       expect(mcpToolsSource).toContain(`name: '${mcpTool}'`);
