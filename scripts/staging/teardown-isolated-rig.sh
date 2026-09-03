@@ -151,6 +151,55 @@ run_cmd() {
   fi
 }
 
+# Reclaim the isolated project, and VERIFY it actually went away.
+#
+# `npx supabase projects delete` fails on these projects with
+#   {"_tag":"Error","error":{"code":"LegacyProjectsDeleteCancelledError",
+#    "message":"context canceled"}}
+# and — because that is the CLI's own error object rather than a non-zero exit
+# in every case — a teardown could report success while the project stayed
+# ACTIVE_HEALTHY and billing. That is why 17 arkova-soak-* projects were still
+# alive on 2026-09-02 despite their soaks being long finished.
+#
+# The Management API DELETE /v1/projects/<ref> works where the CLI does not
+# (verified 2026-09-02 on aqikotdkmhxmznonwmwk: CLI failed twice, API returned
+# 200 and the project disappeared). Try the CLI first so behaviour is unchanged
+# where it works, then fall back, then VERIFY — never claim reclaimed without
+# confirming absence.
+reclaim_project() {
+  local ref="$1" code
+  print_cmd npx supabase projects delete "$ref"
+  [[ $APPLY -eq 1 ]] || return 0
+  npx supabase projects delete "$ref" 2>&1 | grep -vE '^npm warn' || true
+  sleep 5
+  if ! project_still_exists "$ref"; then
+    echo "# project $ref reclaimed (CLI)." >&2
+    return 0
+  fi
+  echo "WARN: CLI delete left $ref alive; falling back to the Management API." >&2
+  : "${SUPABASE_ACCESS_TOKEN:?required for the Management API delete fallback}"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+    "https://api.supabase.com/v1/projects/${ref}" \
+    -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+    -H 'Content-Type: application/json')"
+  sleep 10
+  if project_still_exists "$ref"; then
+    echo "ERROR: $ref is STILL ACTIVE after CLI and API delete (api_http=${code})." >&2
+    echo "       It is billing. Delete it from the Supabase dashboard." >&2
+    return 1
+  fi
+  echo "# project $ref reclaimed (Management API, http=${code})." >&2
+}
+
+project_still_exists() {
+  local ref="$1"
+  [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]] || return 0   # cannot verify -> assume alive
+  curl -s "https://api.supabase.com/v1/projects" \
+    -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" 2>/dev/null \
+    | grep -q "\"$ref\""
+}
+
+
 RECLAIM_LABEL="delete Supabase project"
 if [[ $FLAG_ONLY -eq 1 ]]; then
   RECLAIM_LABEL="FLAG for Carson dashboard action (no delete)"
@@ -284,7 +333,7 @@ if [[ $FLAG_ONLY -eq 1 ]]; then
 else
   echo "#   default reclaim: delete the project (MCP-equivalent: delete project)."
   echo "#   MCP pause_project will NOT work on a paid project (CLAUDE.md §7) — delete or use --flag-only."
-  run_cmd npx supabase projects delete "$PROJECT_REF"
+  reclaim_project "$PROJECT_REF"
 fi
 echo
 
