@@ -15,7 +15,7 @@ Authentication and identity components: login, signup, route guards, identity ve
 - `RouteGuard.tsx` — Route-level guard component
 - `PlatformAdminRoute.tsx` — Route guard restricting platform-only admin routes to platform admins (see 2026-07-22 entry below)
 - `IdentityVerification.tsx` — Stripe Identity verification card (dev mode auto-verifies via bypass)
-- `TwoFactorSetup.tsx` — 2FA configuration UI (opt-in enroll/verify/unenroll card; a sibling SCRUM-3167 stream is rewriting this — see `security/mfa-settings-e2e-3167`, out of scope for this file's dated entry below)
+- `TwoFactorSetup.tsx` — 2FA configuration UI (opt-in multi-factor list, enroll/verify/unenroll + AAL2 step-up card; rewritten — see the "TwoFactorSetup.tsx rewrite" dated entry below)
 - `DataCorrectionForm.tsx` — GDPR/privacy data correction request form
 - `DeleteAccountDialog.tsx` — Account deletion confirmation dialog
 - `ExportDataButton.tsx` — GDPR data export trigger
@@ -55,22 +55,25 @@ Note: `eslint-rules/no-unscoped-service-test.cjs` flags any test-file variable w
 
 Restores the MFA gate PR #1973 shipped (`3572fcd6e`) and reverted 9 minutes later (`6d10032b4`) after it walled out every ORG_ADMIN and platform admin — root cause was prod Supabase Auth having `mfa_totp_enroll_enabled=false` while the enrollment screen had no escape hatch on an `enroll()` failure. Prod TOTP is enabled now (2026-09-03, verified round-trip); the design below adds the fail-open contract PR #1973 was missing so a platform misconfiguration can never repeat that incident.
 
-**AuthGuard.tsx decision order (first match wins)** — see `AuthGuard.mfaGate.test.tsx` for one named test per row:
+**AuthGuard.tsx decision order (first match wins)** — see `AuthGuard.mfaGate.test.tsx` for one named test per row. **REVISED 2026-09-03 by the R17-R21 CTO ruling below — this replaces the original PR #1973-lineage design (rows 5/6 used to be swapped, with a single top-level `mfaCapabilityUnavailable` flag checked BEFORE the challenge row).**
 1. `authLoading` → spinner
 2. `!user` → login redirect/fallback
 3. `mfaStatus === 'loading'` (from `useMfaAssurance`) → spinner
 4. policy loading (from `useMfaEnrollmentRequirement`) → spinner
-5. `mfaCapabilityUnavailable` → **children**, unconditionally, for the rest of this AuthGuard instance's life
-6. `mfaStatus === 'challenge_required'` → `<MfaChallenge>`
-7. `!hasVerifiedFactor && mfaRequired` → `<MfaEnrollmentRequired>`
-8. `mfaGraceActive` → `<MfaGraceNudge/>` rendered ABOVE children (children still render — this is a heads-up, not a gate)
-9. else → children
+5. `mfaStatus === 'challenge_required'` → `<MfaChallenge onVerified={markVerified} />`, **UNCONDITIONALLY** — no cooldown or capability-unavailable state is consulted here at all
+6. `!hasVerifiedFactor && mfaRequired` → the userId-scoped capability cooldown is active for the current user? **children** : `<MfaEnrollmentRequired onEnrolled={markVerified} onCapabilityUnavailable={handleCapabilityUnavailable} />`
+7. `mfaGraceActive` → `<MfaGraceNudge/>` rendered ABOVE children (children still render — this is a heads-up, not a gate)
+8. else → children
 
-**FAIL-OPEN CONTRACT — read before touching any of these four files:**
-- `MfaChallenge`: `listFactors()` erroring calls `onVerified()` directly (changed from PR #1973, which showed an unrecoverable error screen instead). `challenge()`/`verify()` errors split into wrong-code (`mfa_verification_failed`, `mfa_verification_rejected`, `mfa_challenge_expired`, `validation_failed` → retryable inline error, the user's own mistake) versus everything else (unknown code, no code, thrown exception → `onCapabilityUnavailable(code)`).
-- `MfaEnrollmentRequired`: **CTO ruling A4-2 — no allowlist.** `enroll()` returning ANY error (known code, unknown code, missing data), a thrown exception, or a request that hangs past an 8s circuit breaker ALL call `onCapabilityUnavailable(code)`. Every existing ORG_ADMIN/platform admin has zero verified factors today, so a design that could wall one of them out on ANY enroll failure mode would repeat the PR #1973 incident exactly. Also sends a unique `friendlyName` per enrollment attempt (Amendment A2) to avoid `mfa_factor_name_conflict` against the one stale unverified factor already on prod.
-- `AuthGuard`: `onCapabilityUnavailable` is wired identically from both screens into one `mfaCapabilityUnavailable` state — once set, renders children for good, fires a Sentry `mfa_capability_unavailable` message (`{code, path}` tags only, never PII, via the same lazy `import('@/lib/sentry')` pattern as `src/components/layout/RouteErrorBoundary.tsx`) and a ONE-SHOT `toast.warning(MFA_CAPABILITY_LABELS.UNAVAILABLE_NOTICE)` (ref-guarded — fires at most once per AuthGuard mount even if the callback somehow fires twice).
-- **This fail-open bypass is an ACCEPTED PHASE-1 TRADE-OFF (CTO ruling A4-7).** An enrolled user hitting a blocked MFA endpoint falls back to aal1 pass-through rather than being locked out. The Sentry emission makes a sustained or targeted bypass observable; **SCRUM-3593 (aal2-aware RLS on platform-admin surfaces)** is the phase-2 control that closes it server-side, planned to land only after this gate has soaked in prod past the enforcement date.
+**FAIL-CLOSED CHALLENGE / FAIL-OPEN ENROLLMENT (CTO ruling, PR #2637 review round 2, R17-R21) — read before touching any of these four files:**
+
+Supersedes the original "fail open on any platform error" design. Fail-open is allowed **ONLY on the enrollment path** (row 6 — a user with NO verified factor who cannot enrol because the platform cannot issue one). The **challenge path** (row 5 — a session at aal1 whose user HAS a verified factor) **fails CLOSED**: any error shows a retry screen, never renders children. Rationale: a client-detected "platform error" is trivially attacker-triggerable (block one request in DevTools), so fail-open on the challenge path made MFA optional for anyone holding a password — this is what the round-2 review confirmed as a live bypass (below).
+
+- `MfaChallenge`: **no `onBypassed`/`onCapabilityUnavailable` props left at all** — `onVerified` is the only prop, and it fires ONLY after a real, successful `challenge()`+`verify()` round trip. Every other outcome enters a `'retry'` state (a full screen with "Try again" + "Sign out", never the code form): `listFactors()` erroring/throwing/timing out or defensively finding no verified factor; a `challenge()`/`verify()` error classified `'platform'` by `@/lib/mfaErrors`' `classifyMfaError` (the explicit MFA-disabled capability codes, an unrecognized/absent error code, a thrown exception, or a `withTimeout` race firing); a wrong-code (`mfa_verification_failed`, `mfa_verification_rejected`, `mfa_challenge_expired`) or an explicit backend **rejection** (`over_request_rate_limit`, `mfa_ip_address_mismatch`, `validation_failed`, or any other code — classified `'rejected'`) both show an inline retryable error and leave the form usable; neither ever calls `onVerified`. The `'retry'` state re-checks automatically on the same `useVisibilityPolling` cadence as the rest of the gate.
+- `MfaEnrollmentRequired`: **CTO ruling A4-2 — no allowlist, unchanged.** `enroll()` returning ANY error, a thrown exception, or a request that hangs past its timeout ALL call `onCapabilityUnavailable(code)` — this is the ONE place fail-open still applies, since every existing ORG_ADMIN/platform admin has zero verified factors today and a design that could wall one of them out on ANY enroll failure mode would repeat the PR #1973 incident exactly. **R20 (round 2):** the orphan-factor cleanup for a late-resolving `enroll()` now fires on ANY unmount (navigating away), not just the original 8s→15s timeout race — a user who simply leaves this screen before `enroll()` resolves left the same kind of invisible, unverified orphan factor if the original call later succeeded server-side. **R3:** that cleanup `unenroll()` call is itself now timeout-bounded like every other call in the file.
+- `AuthGuard`: `handleCapabilityUnavailable` (renamed in spirit, not in code, from the old shared callback) is wired ONLY from `MfaEnrollmentRequired`, and ONLY affects row 6. It arms a **userId-scoped** cooldown (`src/lib/mfaCapabilityCooldown.ts`, keyed by `sessionStorage` + a module map, one entry per user) and a local `mfaCapabilityUnavailable` flag consulted ONLY inside row 6, calls `markBypassed()` (see `useMfaAssurance`'s doc comment — enrollment-path-only now), fires a Sentry `mfa_capability_unavailable` message (`{code, path}` tags only, never PII) and a ONE-SHOT `toast.warning`. **CONFIRMED bypass fixed by R17:** the cooldown used to be a single global flag checked BEFORE the challenge row, so on a shared browser the NEXT user to sign in — a DIFFERENT person, with their OWN verified factor — could inherit a still-active cooldown from the PREVIOUS user's enrollment-path outage trip and skip `MfaChallenge` entirely. Per-userId keying plus row 6 never gating row 5 closes this two ways at once. `useAuth.ts`'s `signOut()` also clears the current user's cooldown before the redirect (R17c), and `AuthGuard` re-derives the cooldown flag on any user change within the same mounted instance (R17d).
+- **The row-6 fail-open bypass remains an ACCEPTED PHASE-1 TRADE-OFF (CTO ruling A4-7)**, now scoped correctly to enrollment only. The Sentry emission makes a sustained or targeted bypass observable; **SCRUM-3593 (aal2-aware RLS on platform-admin surfaces)** is the phase-2 control that closes it server-side.
+- **R11 (efficiency, not security):** `useMfaAssurance` also gained an optional module-scope cache (keyed by `userId` + a caller-supplied `sessionKey`, which `AuthGuard` populates from `session.access_token`) so a route change that remounts `AuthGuard` renders synchronously from the last known result instead of re-awaiting `getAuthenticatorAssuranceLevel()` and flashing the spinner. Inert whenever no `sessionKey` is supplied — see that hook's own doc comment for why this can never weaken the EVERY-LOGIN ENFORCEMENT guarantee.
 
 **Role tier is phase-1 ONLY** (CTO ruling A4-3): ORG_ADMIN and platform admins, from `src/lib/mfaPolicy.ts`'s `isMfaRequiredRole`. `organizations.hipaa_mfa_required` (org-level enforcement) is **deliberately not read anywhere in this gate** — that column is writable by any org owner/admin via PostgREST with zero audit trail, so it cannot back a security control yet. Phase 2 needs an audited service-role RPC + a column `REVOKE` migration (T3) before org-level enforcement can safely re-enable (this is what delivers the still-open SCRUM-564 HIPAA REG-05 story).
 
@@ -108,21 +111,50 @@ rendered — every branch maps a GoTrue error `code` to one of our own copy stri
   never wall a user the way the pre-revert PR #1973 architecture did platform-wide.
 - After a successful verify (new or backup factor) or a successful unenroll, calls
   `supabase.auth.refreshSession()` (Amendment A4-8) so the JWT `aal` claim other code in the app
-  reads (e.g. the sibling `useMfaAssurance` hook on `security/mfa-enforcement-3167`) is current
-  in this session without waiting for a natural token refresh.
+  reads (`useMfaAssurance`, in this same file's AuthGuard entry above) is current in this session
+  without waiting for a natural token refresh.
 
-**Test ids:** `twofactor-factor-list`, `twofactor-factor-<id>`, `twofactor-remove-<id>`,
-`twofactor-enable`, `twofactor-add-backup`, `twofactor-friendly-name` (read-only display of the
-name actually sent to `enroll()` — editing it does nothing; the name is fixed at enroll time),
-`twofactor-qr`, `twofactor-secret`, `twofactor-verify-code`, `twofactor-verify-submit`,
-`twofactor-error`, `twofactor-unavailable`, `twofactor-stepup`, `twofactor-stepup-code`,
-`twofactor-stepup-submit`, `twofactor-stepup-cancel`. Consumed by
-`e2e/mfa-enrollment-and-challenge.spec.ts` (`e2e/agents.md`) via `e2e/helpers/mfa.ts`'s
-`readSecretFromSettings` + `e2e/helpers/totp.ts`.
+**R1/R2/R3/R4/R9/R20 (PR #2637 review round 2 — this component and `MfaEnrollmentRequired.tsx`
+were hardened in the SAME batch as the fail-closed `AuthGuard`/`MfaChallenge` rewrite above, not
+by a separate stream):**
+- **R2:** all six `supabase.auth.mfa.*` calls (`listFactors`, `enroll`, `unenroll`, `challenge`,
+  `verify`, `challengeAndVerify`) now race against `withTimeout`, matching `MfaChallenge.tsx`/
+  `MfaEnrollmentRequired.tsx`. `handleVerify`/`handleStepUpSubmit` route their outcomes through
+  the shared `classifyMfaError` (`@/lib/mfaErrors`): a wrong-code rejection keeps
+  `ERROR_STEP_UP_FAILED` ("that code did not match"); anything else (a platform failure, rate
+  limit, thrown exception, timeout) shows `ERROR_GENERIC` instead of misleadingly implying the
+  user mistyped their code. `performEnroll`/`performUnenroll` keep the private `authErrorCode()`
+  helper directly — `insufficient_aal`/`mfa_factor_name_conflict`/`mfa_verified_factor_exists`
+  are enrollment-management codes `classifyMfaError` deliberately does not cover.
+- **R1 (real bug):** `refreshFactors()` had no try/catch and no timeout at all — a rejected or
+  hung `listFactors()` left the card stuck on its loading spinner forever. A new `'error'` view
+  state (`twofactor-load-error` + `twofactor-load-retry`) now covers that case.
+- **R4 (live E2E rig failure):** the factor-list container's testid was renamed from
+  `twofactor-factor-list` to **`twofactor-factors`** — it collided with
+  `e2e/mfa-enrollment-and-challenge.spec.ts`'s prefix locator
+  `[data-testid^="twofactor-factor-"]` (meant to match only the per-row `twofactor-factor-<id>`
+  testids), inflating a `toHaveCount(2)` assertion to 3.
+- **R9:** the default friendly name's random suffix comes from `crypto.randomUUID().slice(0, 8)`
+  (computed on its own statement, not inlined into the template literal —
+  `npm run lint:copy`'s scanner treats a whole backtick template as user-facing copy and would
+  otherwise false-positive on the API name). The old `randomSuffixHex()` helper module under
+  `src/lib/` is deleted.
+- **R20 (in `MfaEnrollmentRequired.tsx`, not this file):** the orphan-factor cleanup for a
+  late-resolving `enroll()` fires on ANY unmount now, not just its original timeout race — see
+  the AuthGuard entry above.
+
+**Test ids:** `twofactor-factors` (renamed from `twofactor-factor-list`, R4), `twofactor-factor-<id>`,
+`twofactor-remove-<id>`, `twofactor-enable`, `twofactor-add-backup`, `twofactor-friendly-name`
+(read-only display of the name actually sent to `enroll()` — editing it does nothing; the name is
+fixed at enroll time), `twofactor-qr`, `twofactor-secret`, `twofactor-verify-code`,
+`twofactor-verify-submit`, `twofactor-error`, `twofactor-load-error`, `twofactor-load-retry`,
+`twofactor-unavailable`, `twofactor-stepup`, `twofactor-stepup-code`, `twofactor-stepup-submit`,
+`twofactor-stepup-cancel`. Consumed by `e2e/mfa-enrollment-and-challenge.spec.ts` (`e2e/agents.md`)
+via `e2e/helpers/mfa.ts`'s `readSecretFromSettings` + `e2e/helpers/totp.ts`.
 
 **Do NOT** assume `factor.friendly_name` is always present — it's optional in the SDK type
 (prod has at least one legacy factor without one); the list falls back to
 `TWO_FACTOR_SETUP_LABELS.UNNAMED_FACTOR`. **Do NOT** re-add an `organizations.hipaa_mfa_required`
 query here — Amendment A4-3 dropped org-level enforcement from Phase 1 entirely; that lives only
-in the sibling branch's `useMfaEnrollmentRequirement` hook, and even there it's currently unused
-pending a Phase 2 audited RPC.
+in `useMfaEnrollmentRequirement` (this same folder's AuthGuard entry above), and even there it's
+currently unused pending a Phase 2 audited RPC.

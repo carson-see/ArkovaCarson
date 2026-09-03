@@ -234,12 +234,25 @@ describe('COMPLIANCE_CONTROLS', () => {
     );
     expect(mfa).toContain('not yet required for other roles');
     // Item 11/C3 (R-7 / §1.5 measured vs asserted): the claim must disclose
-    // what kind of "required" this is — an application-level sign-in gate
-    // that fails open on a platform error, not a database-level control —
-    // and that the stronger control is only PLANNED, under SCRUM-3593.
+    // what kind of "required" this is — an application-level sign-in gate,
+    // not a database-level control — and that the stronger control is only
+    // PLANNED, under SCRUM-3593.
     expect(mfa).toMatch(/application-level sign-in gate/i);
-    expect(mfa).toMatch(/fails open on platform errors/i);
     expect(mfa).toContain('SCRUM-3593');
+  });
+
+  it('R21 (PR #2637 review round 2, CTO ruling R17-R21): the fail-open/fail-closed split is asymmetric — the login challenge fails CLOSED, only first-time enrollment fails open — not a blanket "fails open" claim', () => {
+    const mfa = COMPLIANCE_CONTROLS['HIPAA-164.312-MFA'].description;
+    // The OLD wording ("fails open on platform errors", no qualifier) is no
+    // longer true and must never silently come back — the login challenge
+    // now fails closed on every error (MfaChallenge.tsx has no fail-open
+    // branch left at all).
+    expect(mfa).not.toMatch(/fails open on (a )?platform error/i);
+    expect(mfa).toMatch(/login challenge fails closed/i);
+    expect(mfa).toMatch(/enrollment fails open/i);
+    // The remaining fail-open is explicitly bounded to "until the platform
+    // can issue a factor" — not an unqualified escape hatch.
+    expect(mfa).toMatch(/enrollment fails open only until the platform can issue a factor/i);
   });
 
   it('no control description claims enforcement language we cannot evidence', () => {

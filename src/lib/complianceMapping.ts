@@ -113,12 +113,26 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   // `resolveMfaEnforceFrom()`), NOT a hardcoded literal — it moves
   // automatically if `VITE_MFA_ENFORCE_FROM` does. Item 11/C3: the
   // description also discloses that this is an APPLICATION-LEVEL sign-in
-  // gate that fails open on a platform error, not a database-level
-  // control — the stronger control is a phase-2 SCRUM-3593 RLS ticket.
+  // gate, not a database-level control — the stronger control is a phase-2
+  // SCRUM-3593 RLS ticket.
+  //
+  // R21 (PR #2637 review round 2, CTO ruling R17-R21 — SUPERSEDES the
+  // original "fails open on a platform error" wording): fail-open is now
+  // asymmetric, not a blanket property of the gate. The LOGIN CHALLENGE
+  // (a session whose user already has a verified factor) fails CLOSED on
+  // every error — a retry screen, never access — because a client-detected
+  // "platform error" is trivially attacker-triggerable and fail-open there
+  // would have made MFA optional for anyone holding a password. Only
+  // FIRST-TIME ENROLLMENT (no verified factor yet) still fails open, and
+  // only until the platform can issue a factor — the original CTO ruling
+  // A4-2/A4-7 rationale (an admin with zero factors must never be
+  // permanently walled out by a broken enrollment backend) still applies
+  // there, just nowhere else. See `src/components/auth/agents.md`'s dated
+  // entry for the full design.
   //
   // NEVER RENAME THIS KEY — a worker mirror gate compares the compliance
   // control ID set (SCRUM-3167 Amendment A5 item 7). Description edits only.
-  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', `Person or entity authentication — multi-factor authentication (authenticator app) is available to every account; it is required for organization administrators and platform administrators from ${MFA_ENFORCE_FROM_DATE} and is not yet required for other roles (application-level sign-in gate that fails open on platform errors; database-level enforcement is planned under SCRUM-3593)`),
+  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', `Person or entity authentication — multi-factor authentication (authenticator app) is available to every account; it is required for organization administrators and platform administrators from ${MFA_ENFORCE_FROM_DATE} and is not yet required for other roles (application-level sign-in gate: the login challenge fails closed on any error and never grants access without a real verified code, while first-time enrollment fails open only until the platform can issue a factor; database-level enforcement is planned under SCRUM-3593)`),
   'HIPAA-164.312-AUDIT': ctrl('HIPAA-164.312-AUDIT', 'HIPAA', 'HIPAA §164.312(b) Audit', 'Audit controls — hardware, software, and procedural mechanisms to record PHI access'),
   'HIPAA-164.312-SESSION': ctrl('HIPAA-164.312-SESSION', 'HIPAA', 'HIPAA §164.312(a)(2)(iii) Session', 'Automatic logoff — session timeout is configurable per organization but is not currently applied to active sessions'),
   // International frameworks (REG-27)
