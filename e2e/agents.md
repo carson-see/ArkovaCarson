@@ -1,6 +1,53 @@
 # agents.md — e2e/
 
-_Last updated: 2026-08-29 (DocuSign record deep links spec added to record-detail.spec.ts)._
+_Last updated: 2026-09-03 (MFA enrollment + login-challenge spec added; auth.setup.ts now injects an enforcement-date override)._
+
+## 2026-09-03 — MFA enrollment/challenge spec + `helpers/totp.ts` + `helpers/mfa.ts` (SCRUM-3167 / SCRUM-3584)
+
+New `e2e/mfa-enrollment-and-challenge.spec.ts`, plus two new helper modules, covering the
+Settings-page 2FA rewrite (`TwoFactorSetup.tsx`, `src/components/auth/agents.md`) and the
+login-time MFA gate being built in parallel on the sibling branch
+`security/mfa-enforcement-3167` (`AuthGuard` / `MfaChallenge` / `MfaEnrollmentRequired` /
+`MfaGraceNudge` / `src/lib/mfaPolicy.ts`). **Written against that branch's agreed test-id
+contract before it merged — not executed against a live stack this session** (no dev server /
+local Supabase reachable here; another session owns the shared local stack per
+`project_local_supabase_shared_project_id`). Run it for real at integration once both branches
+land, before citing it as merge-grade evidence.
+
+- **`helpers/totp.ts`** — dependency-free RFC 6238 TOTP (`base32Decode`, `totp`; SHA-1, 6 or
+  8 digits, 30s step; only `node:crypto`, no new npm dependency). Ported from a CTO-session
+  scratchpad script proven against the RFC 6238 Appendix B vectors. `e2e/` is **not** in
+  `vitest.config.ts`'s `include` globs, so the vector re-assertions live as a Playwright
+  `test.describe('totp helper')` block inside the new spec, not a `.test.ts` file — that block
+  needs no `page` fixture and no live stack, so it is the one part of the spec that genuinely
+  could run standalone.
+- **`helpers/mfa.ts`** — `createDisposableUser`/`deleteDisposableUser` (same idiom as
+  `withProfileSession` in `helpers/profile-session.ts`: `auth.admin.createUser()` then an
+  **explicit** `profiles` upsert — never assume an `auth.users` trigger populates it),
+  `loginViaUi` (drives the real `/login` form via the `#email`/`#password` locators from
+  `auth.setup.ts` — unlike `createProfileSession`'s storageState injection, these specs need a
+  real login because that's what the AuthGuard MFA gate runs on), `setEnforceDateOverride`
+  (writes `arkova_mfa_enforce_from_override` via `page.addInitScript` so it's present before the
+  app's first script runs), `readSecretFromSettings` (reads `twofactor-secret` on `/settings`).
+- **The spec** covers: (a) an INDIVIDUAL enrolling TOTP in Settings then completing the SAME
+  factor as a login challenge (`mfa-challenge*` test ids) on the next sign-in; (b) the seeded
+  `orgAdmin` seeing the dismissible `mfa-grace-nudge` before the enforcement date (future
+  override) while still reaching the app, and the dismissal surviving a reload (sessionStorage);
+  (c) a disposable `ORG_ADMIN` past the enforcement date (past override) hitting the hard
+  `mfa-enrollment-required` block and completing it — proves the block is a real onboarding
+  step, not a dead end; (d) adding and removing a second "backup" `TwoFactorSetup` factor,
+  handling the optional AAL2 `twofactor-stepup` prompt.
+- **`auth.setup.ts`** now patches `arkova_mfa_enforce_from_override=2099-01-01T00:00:00Z` into
+  every seed user's saved `storageState` file after login (under
+  `resolveE2EFrontendOrigin()` — Playwright matches storageState by origin, same reasoning as
+  `createProfileSession`), then verifies the entry landed the same way it already verifies the
+  Supabase session token. Without this, the ~100 existing specs that reuse `.auth/*.json` would
+  start seeing the grace nudge / hard block for `orgAdmin`/`orgBAdmin` sessions once the
+  2026-09-21 default enforcement date (`src/lib/mfaPolicy.ts`) passes. A plain UI login never
+  writes this key on its own — it has to be patched into the file, not read back from the page.
+- **Do not widen `AnchorUpdateSchema` or any other spec's fixtures for this feature** — MFA
+  state lives entirely in `auth.mfa_factors` / `auth.sessions` and the disposable users' own
+  `profiles` rows, never on `anchors`.
 
 ## 2026-08-29 — DocuSign Record case added to `record-detail.spec.ts` (bilateral rollout, frontend-targeted T2)
 

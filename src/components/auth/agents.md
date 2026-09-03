@@ -76,6 +76,53 @@ Restores the MFA gate PR #1973 shipped (`3572fcd6e`) and reverted 9 minutes late
 
 **Date override rules** (`src/lib/mfaPolicy.ts`, CTO ruling A4-1/A4-9): the enforcement date defaults to `2026-09-21T00:00:00Z`, overridable by `VITE_MFA_ENFORCE_FROM` (Carson can move the deadline via a Vercel env change + redeploy, no code change), further overridable by `localStorage['arkova_mfa_enforce_from_override']` ONLY when `import.meta.env.DEV === true` OR `VITE_MFA_ALLOW_DATE_OVERRIDE === 'true'`. **Never set `VITE_MFA_ALLOW_DATE_OVERRIDE` on Vercel prod** — see `docs/reference/ENV.md`. Every candidate string must match a strict UTC regex or it is ignored (falls through, never treated as "never enforce").
 
-**Deleted:** `src/hooks/useHipaaMfaGate.ts` (zero non-test importers, superseded by `useMfaEnrollmentRequirement.ts`).
+**Deleted:** the former src/hooks/useHipaaMfaGate hook (deleted in this PR) (zero non-test importers, superseded by `useMfaEnrollmentRequirement.ts`).
 
 **Founder-reserved go-live checklist items** (tracked, not this PR's job): enroll or demote the shared UAT demo account (`demo@arkova-uat.dev`, ORG_ADMIN) before 2026-09-21; `password_hibp_enabled` + `password_min_length=8` in Supabase Auth config; WebAuthn (SCRUM-1194) later.
+## 2026-09-03 — `TwoFactorSetup.tsx` rewrite: multi-factor list + AAL2 step-up (SCRUM-3167 / SCRUM-3584)
+
+Rewritten from a single verified/unverified boolean into a real factor **list**. Mounted
+unconditionally (no props) at `src/pages/SettingsPage.tsx:434` — unchanged from before. All
+copy lives in `TWO_FACTOR_SETUP_LABELS` (`src/lib/copy.ts`, EOF section
+`// ── Two-factor settings (SCRUM-3167 / SCRUM-3584) ──`); no raw provider error text is ever
+rendered — every branch maps a GoTrue error `code` to one of our own copy strings.
+
+**Behaviour:**
+- Lists **every** TOTP factor from `listFactors()`, verified AND unverified (Amendment A2: a
+  stale unverified factor — e.g. prod's 2026-03-23 row on a platform admin — must render as
+  "Setup incomplete" with a working Remove action, never be hidden).
+- `twofactor-enable` shows when there is no verified factor; `twofactor-add-backup` shows once
+  one exists and total factors are below the GoTrue cap of 10 (`MAX_TOTAL_FACTORS`).
+- The default friendly name (`Authenticator <YYYY-MM-DD>`) is de-duplicated **client-side**
+  against the current factor list before `enroll()` is called (appends ` (2)`, ` (3)`, …) — a
+  server-side `mfa_factor_name_conflict` is therefore a race, not the common case, and is
+  handled by asking the user to retry rather than by an inline rename form.
+- **GoTrue v2.196.0 AAL2 rule (Amendment A3):** enrolling a NEW factor while a verified one
+  already exists, or unenrolling a VERIFIED factor, requires an `aal2` session. On
+  `insufficient_aal` from either `enroll()` or `unenroll()`, the component shows an inline
+  step-up form (`twofactor-stepup`) that runs `challengeAndVerify()` against the user's existing
+  verified factor, then **automatically retries the original action** — never a dead end.
+  Unverified factors need no step-up to remove.
+- `mfa_totp_enroll_not_enabled` (the platform not having TOTP turned on) renders
+  `TWO_FACTOR_SETUP_LABELS.UNAVAILABLE` as a non-blocking notice, not an error — this card must
+  never wall a user the way the pre-revert PR #1973 architecture did platform-wide.
+- After a successful verify (new or backup factor) or a successful unenroll, calls
+  `supabase.auth.refreshSession()` (Amendment A4-8) so the JWT `aal` claim other code in the app
+  reads (e.g. the sibling `useMfaAssurance` hook on `security/mfa-enforcement-3167`) is current
+  in this session without waiting for a natural token refresh.
+
+**Test ids:** `twofactor-factor-list`, `twofactor-factor-<id>`, `twofactor-remove-<id>`,
+`twofactor-enable`, `twofactor-add-backup`, `twofactor-friendly-name` (read-only display of the
+name actually sent to `enroll()` — editing it does nothing; the name is fixed at enroll time),
+`twofactor-qr`, `twofactor-secret`, `twofactor-verify-code`, `twofactor-verify-submit`,
+`twofactor-error`, `twofactor-unavailable`, `twofactor-stepup`, `twofactor-stepup-code`,
+`twofactor-stepup-submit`, `twofactor-stepup-cancel`. Consumed by
+`e2e/mfa-enrollment-and-challenge.spec.ts` (`e2e/agents.md`) via `e2e/helpers/mfa.ts`'s
+`readSecretFromSettings` + `e2e/helpers/totp.ts`.
+
+**Do NOT** assume `factor.friendly_name` is always present — it's optional in the SDK type
+(prod has at least one legacy factor without one); the list falls back to
+`TWO_FACTOR_SETUP_LABELS.UNNAMED_FACTOR`. **Do NOT** re-add an `organizations.hipaa_mfa_required`
+query here — Amendment A4-3 dropped org-level enforcement from Phase 1 entirely; that lives only
+in the sibling branch's `useMfaEnrollmentRequirement` hook, and even there it's currently unused
+pending a Phase 2 audited RPC.

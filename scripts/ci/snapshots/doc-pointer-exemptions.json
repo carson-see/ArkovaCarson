@@ -25,11 +25,6 @@
       "doc": "services/worker/src/api/v1/agents.md",
       "path": "scripts/ci/check-verification-status-writers.ts",
       "reason": "Named planned work. The line itself says the census rule is prose-only until this lint exists; deleting the pointer would delete the TODO."
-    },
-    {
-      "doc": "src/components/auth/agents.md",
-      "path": "src/hooks/useHipaaMfaGate.ts",
-      "reason": "Deletion record (SCRUM-3167). The entry documents that this dead hook (zero non-test importers) was deleted and superseded by useMfaEnrollmentRequirement.ts; the path is cited specifically because it no longer resolves."
     }
   ]
 }
