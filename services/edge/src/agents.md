@@ -180,6 +180,16 @@ pins `isError` falsy for that case on purpose — flipping it back to a batch-wi
 re-create the DI-038 collapse by a different route. The suite also pins the fix at the tool's
 documented max (25 ids, one timeout → 24 rows survive), which is the bulk workflow the tool is sold on.
 
+**Post-review cleanup (same PR):** `handleVerifyCredential` and `verifyCredentialRecord` both used to
+inline their own copy of the `supabaseFetch` → `response.ok` check → `response.json()` sequence — real
+duplication, flagged independently by a `/code-review` altitude pass and a `/simplify` pass. The fetch
+mechanics are now shared via a private `fetchAnchorRow(id, config)` helper; each caller still does its
+OWN error shaping on top (unchanged): `handleVerifyCredential` still returns MCP-level `errorResult`s
+and still interpolates `error.message` on generic failures, `verifyCredentialRecord` still returns a
+data row and still scrubs to fixed prose. `fetchAnchorRow` throws the raw error rather than swallowing
+it — that's what lets the two callers keep diverging on purpose. Zero behavior change; both test files
+pass unmodified (60/60).
+
 ## Open work
 - SCRUM-1793 (PR #741 NEW) — `validate_api_key` RPC migration committed to repo; already applied to prod + staging via Supabase MCP.
 - HakiChain sandbox key (`api_key_id=c75d84b9-…`) has wildcard CIDR allowlist entry written 2026-05-08.

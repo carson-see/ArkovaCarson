@@ -645,6 +645,30 @@ export function shapeAnchorRow(
 }
 
 /**
+ * Shared RPC mechanics for `get_public_anchor`, used by both
+ * `handleVerifyCredential` and `verifyCredentialRecord` (simplify pass,
+ * DI-038 follow-up). Only the fetch/ok-check/json-parse is shared here —
+ * each caller keeps its OWN error shaping deliberately: `handleVerifyCredential`
+ * still surfaces `error.message` (see the note on `verifyCredentialRecord`
+ * below for why the batch seam does not), so this helper throws the raw
+ * error rather than swallowing it.
+ */
+async function fetchAnchorRow(
+  id: string,
+  config: SupabaseConfig,
+): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false }> {
+  const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
+    method: 'POST',
+    body: JSON.stringify({ p_public_id: id }),
+  });
+  if (!response.ok) {
+    return { ok: false };
+  }
+  const data = (await response.json()) as Record<string, unknown>;
+  return { ok: true, data };
+}
+
+/**
  * Verify a credential by its public ID. Catastrophic failures (abort,
  * network) return an MCP error result; a 404 returns a normal textResult
  * with `verified: false` — matching the pre-INT-02 contract.
@@ -658,17 +682,13 @@ export async function handleVerifyCredential(
   }
 
   try {
-    const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
-      method: 'POST',
-      body: JSON.stringify({ p_public_id: input.public_id }),
-    });
+    const result = await fetchAnchorRow(input.public_id, config);
 
-    if (!response.ok) {
+    if (!result.ok) {
       return textResult({ verified: false, error: `Credential "${input.public_id}" not found.` });
     }
 
-    const data = (await response.json()) as Record<string, unknown>;
-    return textResult(shapeAnchorRow(data));
+    return textResult(shapeAnchorRow(result.data));
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Verification lookup timed out'
@@ -706,15 +726,11 @@ export async function verifyCredentialRecord(
   }
 
   try {
-    const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
-      method: 'POST',
-      body: JSON.stringify({ p_public_id: id }),
-    });
-    if (!response.ok) {
+    const result = await fetchAnchorRow(id, config);
+    if (!result.ok) {
       return { public_id: id, verified: false, error: `Credential "${id}" not found.` };
     }
-    const data = (await response.json()) as Record<string, unknown>;
-    return shapeAnchorRow(data, id);
+    return shapeAnchorRow(result.data, id);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       return { public_id: id, verified: false, error: 'Verification lookup timed out' };
