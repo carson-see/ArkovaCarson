@@ -18,6 +18,7 @@
  *  - the generator stays pure / client-side (returns a jsPDF instance for
  *    inspection, no DOM, no network).
  */
+import type { jsPDF } from 'jspdf';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildQrMatrix, type QrMatrix } from './certificateQr';
 import { CERTIFICATE_COPY } from './copy';
@@ -447,5 +448,133 @@ describe('audit certificate — QR as painted in the content stream', () => {
 
   it('paints no QR at all when there is no publicId', () => {
     expect(paintedRects(buildAuditReport(securedData({ publicId: '' })).doc)).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Field label / value spacing as painted.
+//
+// `addField` paints the label in helvetica-bold 9 pt, then starts the value at
+// `x + measured label width + gap`. jsPDF's `getTextWidth` measures with the
+// CURRENTLY selected font, so measuring the label after switching to the value
+// face (helvetica regular) under-counts it: Helvetica-Bold advance widths are
+// wider than regular ones ('i' 278 vs 222, 'm' 889 vs 833, 't' 333 vs 278 per
+// mille), by an amount that grows with label length. From roughly 13
+// characters the value overprinted the label in every renderer (pdf.js
+// 6.2.108, macOS QuickLook): "Document TypeDOCUMENT", "Record Position#3",
+// "Network Observed TimeJun 2, 2026, 3:00 AM UTC".
+//
+// These tests read the content stream, not the helper's arithmetic. The `Td` x
+// of each value run must sit a real gap past the label's PAINTED width — its
+// width in the bold face using advance widths only, because a plain `Tj`
+// string is painted with the font's advance widths and never applies kerning
+// pairs. Short labels passing while long ones fail is exactly the signature of
+// measuring in the wrong face, so the gap must also be uniform across labels.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Every single-line text run in the content stream, in paint order: the
+ *  `Td` origin in mm (top-left page origin) plus the unescaped string. */
+function textRuns(doc: {
+  output: () => string;
+  internal: { pageSize: { getHeight: () => number } };
+}): { x: number; y: number; text: string }[] {
+  const pageHeightMm = doc.internal.pageSize.getHeight();
+  return [
+    ...doc.output().matchAll(/(-?[\d.]+) (-?[\d.]+) Td\s*\(((?:\\.|[^\\)])*)\) Tj/g),
+  ].map(m => ({
+    x: Number(m[1]) / PT_PER_MM,
+    y: pageHeightMm - Number(m[2]) / PT_PER_MM,
+    text: m[3].replace(/\\([()\\])/g, '$1'),
+  }));
+}
+
+/**
+ * Width of `text` in mm as a PDF viewer paints it in the given face at
+ * `sizePt`: the font's advance widths summed, no kerning. Measured through
+ * jsPDF's own AFM tables for the standard-14 faces (Helvetica and
+ * Helvetica-Bold are separate entries), which is what any metric-compatible
+ * substitute (Arial, Liberation Sans, Nimbus Sans) reproduces.
+ */
+function paintedWidthMm(doc: jsPDF, text: string, style: 'bold' | 'normal', sizePt: number): number {
+  doc.setFont('helvetica', style);
+  doc.setFontSize(sizePt);
+  return (doc.getStringUnitWidth(text, { doKerning: false }) * sizePt) / doc.internal.scaleFactor;
+}
+
+describe('audit certificate — field label / value spacing as painted', () => {
+  /** Mirrors the module-scope constant in generateAuditReport.ts. */
+  const FIELD_LABEL_GAP_MM = 2;
+  const FIELD_FONT_PT = 9;
+  const EPS = 0.05;
+
+  const FIELD_LABELS = new Set(
+    Object.entries(CERTIFICATE_COPY)
+      .filter(([k]) => k.startsWith('FIELD_'))
+      .map(([, v]) => v as string),
+  );
+
+  /** Each painted `FIELD_*` label that has a value run on the same baseline,
+   *  with the gap between the label's painted right edge and the value's x. */
+  function labelValueGaps(doc: jsPDF) {
+    const runs = textRuns(doc);
+    const out: { label: string; value: string; gap: number }[] = [];
+    runs.forEach((run, i) => {
+      const next = runs[i + 1];
+      if (!FIELD_LABELS.has(run.text) || !next || Math.abs(next.y - run.y) > 1e-3) return;
+      const paintedLabel = paintedWidthMm(doc, run.text, 'bold', FIELD_FONT_PT);
+      out.push({ label: run.text, value: next.text, gap: next.x - (run.x + paintedLabel) });
+    });
+    return out;
+  }
+
+  it('paints the long labels the report named, each followed by its value on the same baseline', () => {
+    const gaps = labelValueGaps(buildAuditReport(securedData()).doc);
+    const byLabel = new Map(gaps.map(g => [g.label, g.value]));
+    expect(byLabel.get(CERTIFICATE_COPY.FIELD_CREDENTIAL_TYPE)).toBe('DIPLOMA');
+    expect(byLabel.get(CERTIFICATE_COPY.FIELD_VERIFICATION_PATH)).toBe('2 step(s)');
+    expect(byLabel.get(CERTIFICATE_COPY.FIELD_RECORD_POSITION)).toBe('#3');
+    expect(byLabel.get(CERTIFICATE_COPY.FIELD_LEAF_COUNT)).toBe('8');
+    expect(byLabel.get(CERTIFICATE_COPY.FIELD_NETWORK_RECORD)).toBe('#850,123');
+    expect(byLabel.get(CERTIFICATE_COPY.FIELD_PROOF_SCHEMA)).toBe('1');
+    expect(byLabel.get(CERTIFICATE_COPY.FIELD_OBSERVED_TIME)).toMatch(/^Jun 2, 2026, 3:00/);
+    // A short label the report said rendered fine — it is held to the same gap.
+    expect(byLabel.get(CERTIFICATE_COPY.FIELD_FILENAME)).toBe('diploma.pdf');
+    expect(gaps.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('starts every value at least FIELD_LABEL_GAP_MM past the painted (bold) label', () => {
+    const gaps = labelValueGaps(buildAuditReport(securedData()).doc);
+    for (const g of gaps) {
+      expect(
+        g.gap,
+        `"${g.label}" → "${g.value}": value starts ${g.gap.toFixed(2)} mm after the painted label`,
+      ).toBeGreaterThanOrEqual(FIELD_LABEL_GAP_MM - EPS);
+    }
+  });
+
+  it('uses one gap for every label — no drift with label length (the wrong-face signature)', () => {
+    const gaps = labelValueGaps(buildAuditReport(securedData()).doc).map(g => g.gap);
+    expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(EPS);
+  });
+
+  it('holds the same gap in the non-SECURED fallback path', () => {
+    const gaps = labelValueGaps(
+      buildAuditReport(securedData({ status: 'PENDING', proof: undefined })).doc,
+    );
+    expect(gaps.map(g => g.label)).toContain(CERTIFICATE_COPY.FIELD_OBSERVED_TIME);
+    for (const g of gaps) expect(g.gap).toBeGreaterThanOrEqual(FIELD_LABEL_GAP_MM - EPS);
+  });
+
+  it('jsPDF measures Helvetica-Bold with its own AFM widths, wider than regular (guards the fix)', () => {
+    // jsPDF's standard-14 tables carry the Adobe AFM advance widths at 10 per
+    // mille resolution. Summed for "Network Observed Time": Helvetica-Bold
+    // 11,410 and Helvetica 10,730 — 36.23 mm vs 34.07 mm at 9 pt. The old
+    // helper measured the regular face plus two spaces with kerning on, which
+    // came to 35.85 mm: 0.38 mm SHORTER than the bold label it had painted.
+    const { doc } = buildAuditReport(securedData());
+    const label = CERTIFICATE_COPY.FIELD_OBSERVED_TIME;
+    expect(paintedWidthMm(doc, label, 'bold', 9)).toBeCloseTo(36.23, 1);
+    expect(paintedWidthMm(doc, label, 'normal', 9)).toBeCloseTo(34.07, 1);
+    expect(paintedWidthMm(doc, label, 'bold', 9) - paintedWidthMm(doc, label, 'normal', 9)).toBeGreaterThan(2);
   });
 });
