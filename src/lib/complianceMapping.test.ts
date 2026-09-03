@@ -195,32 +195,51 @@ describe('COMPLIANCE_CONTROLS', () => {
    * attestation. So a description may describe the control's subject matter, but
    * it may not assert that we operate the control unless we actually do.
    *
-   * MFA is NOT enforced: the login-challenge enforcement shipped in PR #1973 was
-   * reverted in 6d10032b4 after an MFA lockout incident, there is no `aal2` check
-   * anywhere in the app or worker, and `useHipaaMfaGate` has zero non-test
-   * importers. Enrollment is *available* (TwoFactorSetup is wired into
-   * SettingsPage) but opt-in and unenforced.
+   * MFA is no longer a blanket "not enforced" story (SCRUM-3167): AuthGuard +
+   * mfaPolicy.ts + useMfaEnrollmentRequirement enforce a real login challenge
+   * and mandatory enrollment, ROLE-GATED to ORG_ADMIN/platform admins, from the
+   * resolved enforcement date (2026-09-21T00:00:00Z by default). The claim this
+   * control's description may make is therefore narrower than "enforced" and
+   * narrower than the old "not enforced" too — it must name exactly who it is
+   * required for and from when, and say plainly that it is NOT YET required for
+   * everyone else. Org-level enforcement remains out of scope on purpose (CTO
+   * ruling A4-3) — no description may imply an org can mandate this today.
    *
-   * Automatic logoff is NOT enforced either: `useIdleTimeout` has zero non-test
+   * Automatic logoff is still NOT enforced: `useIdleTimeout` has zero non-test
    * importers, so `organizations.session_timeout_minutes` is stored and never
    * acted on.
    *
-   * This pins the wording so a future edit cannot silently reintroduce the claim.
+   * This pins the wording so a future edit cannot silently overclaim.
    */
   it('does not assert unimplemented controls as enforced (R-7 claims gate)', () => {
     const mfa = COMPLIANCE_CONTROLS['HIPAA-164.312-MFA'].description;
-    expect(mfa).not.toMatch(/enforced/i);
-    expect(mfa).toMatch(/not enforced|available|opt-in/i);
+    expect(mfa).not.toMatch(/\benforced\b/i);
+    expect(mfa).toMatch(/available/i);
 
     const session = COMPLIANCE_CONTROLS['HIPAA-164.312-SESSION'].description;
     expect(session).not.toMatch(/\benforced\b/i);
     expect(session).toMatch(/not enforced|configurable|not currently/i);
   });
 
+  it('HIPAA-164.312-MFA states the real, narrow enforcement boundary — required for two roles from a date, not yet required for anyone else (SCRUM-3167)', () => {
+    const mfa = COMPLIANCE_CONTROLS['HIPAA-164.312-MFA'].description;
+    expect(mfa).toMatch(/required for organization administrators and platform administrators/i);
+    expect(mfa).toContain('2026-09-21');
+    expect(mfa).toContain('not yet required for other roles');
+  });
+
   it('no control description claims enforcement language we cannot evidence', () => {
     // Blanket ratchet: a detector beats a human census (memory: lint-rule-beats-
-    // human-census). Any NEW control added with "enforced"/"guaranteed" wording
-    // must be justified here deliberately rather than slipping in unreviewed.
+    // human-census). Any NEW control added with "enforced"/"guaranteed"/
+    // "certified"/"accredited" wording must be justified here deliberately
+    // rather than slipping in unreviewed. Deliberately NOT extended to
+    // "required": several international-framework controls (POPIA-72,
+    // LFPDPPP-36, ...) legitimately use it to describe what the REGULATION
+    // requires of a transfer, which is a citation of external law, not an
+    // Arkova self-claim needing evidence — a blanket ban would flag those as
+    // false positives. HIPAA-164.312-MFA's specific "required" self-claim (it
+    // IS a claim that Arkova enforces something, unlike the framework
+    // citations) is pinned precisely by the dedicated test above instead.
     const offenders = Object.values(COMPLIANCE_CONTROLS)
       .filter((c) => /\b(enforced|guaranteed|certified|accredited)\b/i.test(c.description))
       .map((c) => c.id);

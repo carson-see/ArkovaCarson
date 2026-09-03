@@ -71,17 +71,35 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   'eIDAS-25': ctrl('eIDAS-25', 'eIDAS', 'eIDAS Art. 25', 'Electronic signatures and seals — timestamped cryptographic proof of document state'),
   'eIDAS-35': ctrl('eIDAS-35', 'eIDAS', 'eIDAS Art. 35', 'Qualified electronic time stamps — network-observed timestamp via public anchoring'),
   'HIPAA-164.312': ctrl('HIPAA-164.312', 'HIPAA', 'HIPAA §164.312', 'Technical safeguards — integrity controls and audit controls for electronic PHI'),
-  // SCRUM/R-7 claims gate: these two descriptions previously asserted that MFA
-  // and automatic logoff were ENFORCED. Neither is. MFA login enforcement shipped
-  // in PR #1973 and was reverted in 6d10032b4 after a lockout incident; there is
-  // no `aal2` check anywhere in the app or worker, and `useHipaaMfaGate` has zero
-  // non-test importers. Enrollment is available via TwoFactorSetup (wired into
-  // SettingsPage) but is opt-in. Likewise `useIdleTimeout` has zero non-test
-  // importers, so `organizations.session_timeout_minutes` is stored and never
-  // acted on. Asserting either as enforced is a false control claim on a
-  // regulated surface — the same defect class as the SCRUM-2283 DPF removal
-  // above. Do not restore "enforced" wording without a wired, tested control.
-  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', 'Person or entity authentication — multi-factor authentication is available as an opt-in account setting; it is not required for access to this record'),
+  // SCRUM/R-7 claims gate history: these two descriptions once asserted that
+  // MFA and automatic logoff were ENFORCED when neither was — the login-
+  // challenge enforcement shipped in PR #1973 was reverted in 6d10032b4 after
+  // a lockout incident, and `useHipaaMfaGate` (deleted, SCRUM-3167) had zero
+  // non-test importers. Asserting a control as enforced with nothing wired up
+  // is a false claim on a regulated surface — the same defect class as the
+  // SCRUM-2283 DPF removal above.
+  //
+  // SCRUM-3167 changed the underlying fact for MFA: AuthGuard + mfaPolicy.ts +
+  // useMfaEnrollmentRequirement now enforce a real login challenge (every
+  // session, for anyone with a verified factor) and mandatory enrollment,
+  // ROLE-GATED to ORG_ADMIN / platform admins, effective from the resolved
+  // MFA_ADMIN_ENFORCE_FROM_DEFAULT date (2026-09-21T00:00:00Z, overridable via
+  // VITE_MFA_ENFORCE_FROM). Org-level enforcement
+  // (`organizations.hipaa_mfa_required`) is DELIBERATELY NOT part of this —
+  // CTO ruling A4-3 dropped it from phase 1 because that column is writable
+  // by any org owner/admin via PostgREST with no audit trail, so it cannot
+  // back a security claim yet (phase 2: an audited service-role RPC + column
+  // REVOKE migration, SCRUM-3593 lineage). The description below states
+  // exactly this boundary — available to everyone, required for two specific
+  // roles from a specific date, not yet required for anyone else — rather
+  // than a blanket "enforced" claim this control still cannot support.
+  // Automatic logoff remains genuinely unenforced: `useIdleTimeout` has zero
+  // non-test importers, so `organizations.session_timeout_minutes` is stored
+  // and never acted on.
+  //
+  // NEVER RENAME THIS KEY — a worker mirror gate compares the compliance
+  // control ID set (SCRUM-3167 Amendment A5 item 7). Description edits only.
+  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', 'Person or entity authentication — multi-factor authentication (authenticator app) is available to every account; it is required for organization administrators and platform administrators from 2026-09-21 and is not yet required for other roles'),
   'HIPAA-164.312-AUDIT': ctrl('HIPAA-164.312-AUDIT', 'HIPAA', 'HIPAA §164.312(b) Audit', 'Audit controls — hardware, software, and procedural mechanisms to record PHI access'),
   'HIPAA-164.312-SESSION': ctrl('HIPAA-164.312-SESSION', 'HIPAA', 'HIPAA §164.312(a)(2)(iii) Session', 'Automatic logoff — session timeout is configurable per organization but is not currently applied to active sessions'),
   // International frameworks (REG-27)
