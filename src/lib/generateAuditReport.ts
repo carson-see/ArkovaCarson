@@ -38,6 +38,16 @@ import { CERTIFICATE_COPY } from './copy';
 import { canonicalVerifyUrl } from './routes';
 import { getStatusDisplay, isProofDownloadable } from './statusDisplay';
 
+/**
+ * Gap between a field label's painted right edge and the start of its value,
+ * in mm. Fixed, and measured against the label in the face it is PAINTED in —
+ * see `addField` for why measuring in the value face put long labels under
+ * their values.
+ */
+const FIELD_LABEL_GAP_MM = 2;
+/** Inset of field labels/values from the page margin, in mm. */
+const FIELD_INSET_MM = 4;
+
 /** Drawn width/height of the QR module grid, in mm (quiet zone added around it). */
 const QR_SIDE_MM = 26;
 /** Quiet zone required by the QR spec, in modules, on every side. */
@@ -620,6 +630,23 @@ function addSection(doc: jsPDF, title: string, y: number, margin: number): numbe
   return y + 7;
 }
 
+/**
+ * Paint a bold label and, on the same baseline, its value.
+ *
+ * The value starts `FIELD_LABEL_GAP_MM` past the label's PAINTED width. That
+ * width is measured while the bold face is still selected and with kerning
+ * off: jsPDF's `getTextWidth` reads the metrics of whichever font is current,
+ * and a plain `Tj` string is painted with the font's advance widths alone
+ * (jsPDF's own `text()` measures the same way for alignment). The previous
+ * version switched to the value face first and measured `label + '  '` in
+ * helvetica-regular with kerning on. Helvetica-Bold advance widths are wider
+ * ('i' 280 vs 220, 'm' 890 vs 830, 't' 330 vs 280 per mille in jsPDF's table),
+ * so the shortfall grew with label length and, from about 13 characters, the
+ * value overprinted the label in every renderer: "Document TypeDOCUMENT",
+ * "Record Position#3", "Network Observed TimeJun 2, 2026, 3:00 AM UTC". Short
+ * labels merely looked fine because the two-space allowance still covered the
+ * error. `generateAuditReport.test.ts` measures the content stream for this.
+ */
 function addField(
   doc: jsPDF,
   label: string,
@@ -628,16 +655,25 @@ function addField(
   margin: number,
   contentWidth: number,
 ): number {
+  const labelX = margin + FIELD_INSET_MM;
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(80, 80, 80);
-  doc.text(label, margin + 4, y);
+  doc.text(label, labelX, y);
 
   if (value) {
+    // Measure BEFORE switching faces, advance widths only — the width the
+    // label just painted at.
+    const paintedLabelWidth =
+      (doc.getStringUnitWidth(label, { doKerning: false }) * doc.getFontSize()) /
+      doc.internal.scaleFactor;
+    const valueX = labelX + paintedLabelWidth + FIELD_LABEL_GAP_MM;
+    // Same right-hand inset as the label's left-hand one.
+    const valueMaxWidth = margin + contentWidth - FIELD_INSET_MM - valueX;
+
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(0, 0, 0);
-    const labelWidth = doc.getTextWidth(label + '  ');
-    doc.text(value, margin + 4 + labelWidth, y, { maxWidth: contentWidth - labelWidth - 8 });
+    doc.text(value, valueX, y, { maxWidth: valueMaxWidth });
   }
 
   return y + 5;

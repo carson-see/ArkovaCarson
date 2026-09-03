@@ -1,6 +1,48 @@
 # agents.md — lib
 
-_Last updated: 2026-08-31_
+_Last updated: 2026-09-02_
+
+## 2026-09-02 — certificate field values overprinted their labels; `addField` now measures the face it paints
+
+Every audit certificate rendered "Document TypeDOCUMENT", "Record Position#3",
+"Network Observed TimeJun 2, 2026, 3:00 AM UTC" — the value started on top of
+the label for any label of roughly 13 characters or more, in every renderer
+(pdf.js 6.2.108, macOS QuickLook, poppler). Present since PR #761 (2026-05-11);
+nothing to do with the QR work in PR #2528.
+
+**Root cause.** jsPDF's `getTextWidth` measures with whichever font is CURRENT.
+`addField` painted the label in helvetica-bold, switched to helvetica-regular
+for the value, and only then measured `label + '  '` — regular metrics with
+kerning on, for a label painted in bold advance widths. jsPDF 4.2.1 carries a
+separate Helvetica-Bold table ('i' 280 vs 220, 'm' 890 vs 830, 't' 330 vs 280
+per mille), so the shortfall grew with label length: the two-space allowance
+covered it for "Filename" (+1.02 mm gap) and ran out at "Document Type"
+(−0.03 mm), "Verification Path" (−0.44), "Proof Schema Version" (−0.67),
+"Network Observed Time" (−0.38).
+
+**Rules this leaves behind:**
+
+- **Measure text in the face it is painted in, before you switch faces, with
+  `doKerning: false`.** A plain `Tj` string is painted with the font's advance
+  widths only — jsPDF's own `text()` measures exactly that way for alignment —
+  so a kerned `getTextWidth` under-reads even in the right face (0.32 mm on the
+  longest label). `addField` now measures the bold label with
+  `getStringUnitWidth(label, { doKerning: false })` and starts the value a fixed
+  `FIELD_LABEL_GAP_MM` (2 mm) past it; the right-hand inset stays
+  `FIELD_INSET_MM` (4 mm), mirroring the left.
+- **Test what is painted, not what the helper computed.** The
+  `generateAuditReport.test.ts` block "field label / value spacing as painted"
+  parses every `Td … Tj` run out of the content stream, pairs each `FIELD_*`
+  label with the run on the same baseline, and holds the gap to
+  `FIELD_LABEL_GAP_MM` for all of them — and, separately, holds the gap
+  *uniform* across labels, because gap drift with label length is the exact
+  signature of measuring in the wrong face. A pin test asserts jsPDF's
+  Helvetica-Bold table is wider than its Helvetica table for a real label, so a
+  jsPDF upgrade that collapsed the two would fail loudly instead of quietly
+  re-introducing the overprint.
+
+UAT rasters (QuickLook + poppler, before/after side by side) and the two PDFs:
+`docs/uat/2026-09-02-certificate-field-label-gap/`.
 
 ## 2026-08-31 — every certificate pointed at a URL that does not work; `certificateQr.ts` is new
 
