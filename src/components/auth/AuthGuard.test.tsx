@@ -33,6 +33,20 @@ vi.mock('../../hooks/useAuth', () => ({
   useAuth: () => authState,
 }));
 
+// AuthGuard also runs the SCRUM-3167 MFA gate on every render (unconditional
+// hook calls). `useMfaEnrollmentRequirement` calls the real `useProfile()`,
+// which THROWS outside `<ProfileProvider>` — this file tests the pre-existing
+// toast-suppression behavior only, so the MFA hooks are mocked to their
+// steady-state ("nothing to do") shape rather than wrapping every render in a
+// provider. `AuthGuard.mfaGate.test.tsx` is the dedicated coverage for the
+// MFA branching itself.
+vi.mock('../../hooks/useMfaAssurance', () => ({
+  useMfaAssurance: () => ({ status: 'satisfied', hasVerifiedFactor: false, markVerified: vi.fn() }),
+}));
+vi.mock('../../hooks/useMfaEnrollmentRequirement', () => ({
+  useMfaEnrollmentRequirement: () => ({ loading: false, mfaRequired: false, mfaGraceActive: false }),
+}));
+
 // Neutralize Navigate + useLocation — we're testing the effect, not router plumbing.
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
