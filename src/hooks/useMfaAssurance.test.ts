@@ -211,6 +211,90 @@ describe('useMfaAssurance', () => {
     expect(mockGetAAL.mock.calls.length).toBe(callsBeforeVerify);
   });
 
+  // ---------------------------------------------------------------------
+  // markBypassed() — item 32 (PR #2637 review). MfaChallenge's fail-open
+  // branches (listFactors() erroring/timing out, or defensively finding no
+  // verified factor) are NOT a real verify() — calling markVerified() from
+  // those branches would set hasVerifiedFactor=true UNTRUTHFULLY for up to
+  // 60s (until the next live re-evaluation tick corrects it), which is
+  // exactly the kind of claim §1.5 exists to prevent. markBypassed() clears
+  // the challenge (status -> 'satisfied') WITHOUT asserting anything about
+  // hasVerifiedFactor.
+  // ---------------------------------------------------------------------
+
+  it('markBypassed() flips status to satisfied but does NOT force hasVerifiedFactor to true', async () => {
+    mockGetAAL.mockResolvedValue({
+      data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+      error: null,
+    });
+
+    const { useMfaAssurance } = await import('./useMfaAssurance');
+    const { result } = renderHook(() => useMfaAssurance('user-bypassed'));
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('challenge_required');
+    });
+    expect(result.current.hasVerifiedFactor).toBe(true);
+
+    const callsBeforeBypass = mockGetAAL.mock.calls.length;
+
+    act(() => {
+      result.current.markBypassed();
+    });
+
+    expect(result.current.status).toBe('satisfied');
+    // Preserves the truthful "this user DOES have a verified factor" fact —
+    // markBypassed only clears the challenge, it doesn't rewrite history.
+    expect(result.current.hasVerifiedFactor).toBe(true);
+    // Also a pure local transition — no extra network round-trip.
+    expect(mockGetAAL.mock.calls.length).toBe(callsBeforeBypass);
+  });
+
+  it('markBypassed() on a user with no verified factor stays false — never claims a factor exists', async () => {
+    mockGetAAL.mockResolvedValue({
+      data: { currentLevel: 'aal1', nextLevel: 'aal1', currentAuthenticationMethods: [] },
+      error: null,
+    });
+
+    const { useMfaAssurance } = await import('./useMfaAssurance');
+    const { result } = renderHook(() => useMfaAssurance('user-no-factor'));
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('satisfied');
+    });
+    expect(result.current.hasVerifiedFactor).toBe(false);
+
+    act(() => {
+      result.current.markBypassed();
+    });
+
+    expect(result.current.status).toBe('satisfied');
+    expect(result.current.hasVerifiedFactor).toBe(false);
+  });
+
+  it('markBypassed() is distinct from markVerified() — calling it never sets hasVerifiedFactor for a userId whose check has not resolved at all yet', async () => {
+    const gate = deferred<{ data: { currentLevel: string; nextLevel: string; currentAuthenticationMethods: never[] } | null; error: null }>();
+    mockGetAAL.mockReturnValue(gate.promise);
+
+    const { useMfaAssurance } = await import('./useMfaAssurance');
+    const { result } = renderHook(() => useMfaAssurance('user-pending-bypass'));
+
+    expect(result.current.status).toBe('loading');
+
+    act(() => {
+      result.current.markBypassed();
+    });
+
+    expect(result.current.status).toBe('satisfied');
+    expect(result.current.hasVerifiedFactor).toBe(false);
+
+    // Clean up the still-pending mock so it doesn't leak into later tests.
+    await act(async () => {
+      gate.resolve({ data: { currentLevel: 'aal1', nextLevel: 'aal1', currentAuthenticationMethods: [] }, error: null });
+      await gate.promise;
+    });
+  });
+
   it('re-runs the check when userId changes (user switch) instead of keeping stale state', async () => {
     mockGetAAL.mockResolvedValueOnce({
       data: { currentLevel: 'aal1', nextLevel: 'aal1', currentAuthenticationMethods: [] },

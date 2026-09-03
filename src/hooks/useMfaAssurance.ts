@@ -41,13 +41,14 @@
  * LIVE RE-EVALUATION (SCRUM-3167, CTO ruling A4-11): beyond the initial
  * per-mount/per-userId check above, this hook also re-runs the SAME check
  * on `visibilitychange` (when the tab returns to foreground) and on a 60s
- * interval while mounted. This catches a session whose factor state
- * changes server-side mid-session (e.g. the user unenrolled their only
- * TOTP factor from another device, or an operator revoked a factor via the
- * break-glass runbook) without requiring a full page reload. Re-checks
- * reuse the exact same fail-open logic as the initial check — they can
- * only ever ADD a challenge for a session that newly needs one, never
- * remove access outside of that same fail-open contract.
+ * interval while mounted (via the shared `useForegroundInterval`). This
+ * catches a session whose factor state changes server-side mid-session
+ * (e.g. the user unenrolled their only TOTP factor from another device, or
+ * an operator revoked a factor via the break-glass runbook) without
+ * requiring a full page reload. Re-checks reuse the exact same fail-open
+ * logic as the initial check — they can only ever ADD a challenge for a
+ * session that newly needs one, never remove access outside of that same
+ * fail-open contract.
  *
  * SAFETY CONTRACT — read before changing this file:
  * Every ambiguous/error/timeout outcome below resolves to `'satisfied'`
@@ -57,10 +58,24 @@
  * asymmetry is deliberate: an availability incident that locks out every
  * user (including the ~100% of users who have never enrolled MFA) is a far
  * worse outcome than a rare missed MFA challenge.
+ *
+ * markVerified() vs markBypassed() (PR #2637 review, item 32): `MfaChallenge`
+ * calls `markVerified()` ONLY after a real, successful `challenge()`+
+ * `verify()` round trip — it is the one place this hook is told
+ * `hasVerifiedFactor` is now truthfully `true`. `MfaChallenge`'s FAIL-OPEN
+ * branches (a `listFactors()` read failing/timing out, or defensively
+ * finding no verified factor) are not a real verify — they call
+ * `markBypassed()` instead, which clears the challenge (`status` ->
+ * `'satisfied'`) WITHOUT asserting anything new about `hasVerifiedFactor`.
+ * Conflating the two would have `hasVerifiedFactor` claim `true` on a
+ * platform read failure alone, for up to the 60s live-re-evaluation window
+ * — exactly the kind of unevidenced claim §1.5 exists to prevent.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { withTimeout } from '@/lib/async';
+import { useForegroundInterval } from './useForegroundInterval';
 
 export type MfaAssuranceStatus = 'loading' | 'satisfied' | 'challenge_required';
 
@@ -76,6 +91,8 @@ interface UseMfaAssuranceResult {
   hasVerifiedFactor: boolean;
   /** Call after a successful mfa.challenge()+mfa.verify() round trip. */
   markVerified: () => void;
+  /** Call to fail OPEN (clear the challenge) WITHOUT asserting a real verify happened — see module doc comment. */
+  markBypassed: () => void;
 }
 
 interface AssuranceState {
@@ -102,21 +119,13 @@ const ASSURANCE_CHECK_TIMEOUT_MS = 8_000;
 // change is caught well within one work session.
 const REASSURANCE_INTERVAL_MS = 60_000;
 
-function timeout(ms: number): Promise<never> {
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('mfa-assurance-check-timeout')), ms);
-  });
-}
-
 export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
   const [state, setState] = useState<AssuranceState>({ userId: null, ...SATISFIED_NO_FACTOR });
 
   // `check()` is called from three places (initial mount / userId change,
   // the 60s interval, and the visibilitychange handler) and must always act
   // on the LATEST userId, not whatever userId it closed over when it was
-  // created — a ref (rather than re-deriving useCallback on every userId
-  // change) also lets the interval/listener effect below skip re-arming on
-  // every render. Synced in an effect (never assigned during render —
+  // created. Synced in an effect (never assigned during render —
   // react-hooks/refs) declared BEFORE the userId-change effect further
   // down, so by the time that effect's `check()` call reads the ref on a
   // userId change, it already holds the new value (React runs a
@@ -144,10 +153,11 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
     if (!checkedUserId) return;
 
     try {
-      const { data, error } = await Promise.race([
+      const { data, error } = await withTimeout(
         supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
-        timeout(ASSURANCE_CHECK_TIMEOUT_MS),
-      ]);
+        ASSURANCE_CHECK_TIMEOUT_MS,
+        'mfa-assurance-check',
+      );
 
       // Stale-response guard: userId moved on (user switch) or this
       // instance unmounted while the call was in flight — never apply a
@@ -186,36 +196,26 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
   }, [userId, check]);
 
   // LIVE RE-EVALUATION (A4-11): re-run the same check on a 60s interval and
-  // whenever the tab regains foreground. Both call the exact same `check`,
-  // so they inherit its fail-open contract and its stale-response guard —
-  // there is no separate "polling" code path to keep in sync.
-  useEffect(() => {
-    if (!userId) return;
-
-    const intervalId = setInterval(() => {
-      void check();
-    }, REASSURANCE_INTERVAL_MS);
-
-    const onVisibilityChange = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        void check();
-      }
-    };
-
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibilityChange);
-    }
-
-    return () => {
-      clearInterval(intervalId);
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onVisibilityChange);
-      }
-    };
-  }, [userId, check]);
+  // whenever the tab regains foreground, via the shared hook both MFA
+  // policy consumers use. Inherits `check`'s fail-open contract and its
+  // stale-response guard — there is no separate "polling" code path.
+  useForegroundInterval(check, REASSURANCE_INTERVAL_MS, Boolean(userId));
 
   const markVerified = useCallback(() => {
     setState({ userId, status: 'satisfied', hasVerifiedFactor: true });
+  }, [userId]);
+
+  const markBypassed = useCallback(() => {
+    // Preserves whatever `hasVerifiedFactor` already reflected for THIS
+    // userId — a bypass clears the challenge without rewriting the factor
+    // truth either way. For a stale/never-resolved userId there is nothing
+    // truthful to preserve, so it defaults to `false` (the same fail-open
+    // default every other ambiguous outcome in this hook uses).
+    setState((prev) => ({
+      userId,
+      status: 'satisfied',
+      hasVerifiedFactor: prev.userId === userId ? prev.hasVerifiedFactor : false,
+    }));
   }, [userId]);
 
   // `state` only reflects a completed check for `state.userId`. If `userId`
@@ -229,6 +229,7 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
       status: userId ? 'loading' : 'satisfied',
       hasVerifiedFactor: false,
       markVerified,
+      markBypassed,
     };
   }
 
@@ -236,5 +237,6 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
     status: state.status,
     hasVerifiedFactor: state.hasVerifiedFactor,
     markVerified,
+    markBypassed,
   };
 }
