@@ -184,10 +184,18 @@ echo "Migration filenames fixed."
 # for prod's zero-downtime apply. The CI stack is an empty throwaway database, so
 # a blocking index build is equivalent here. This rewrite is applied to the CI
 # checkout only and is never committed.
+# Gated: the root vitest suite asserts that these migration files still contain
+# CONCURRENTLY (they are prod migrations), and the test/types-check jobs run this
+# wrapper on CLI 1.123.0 where the rewrite is unnecessary. Only the e2e job (CLI
+# 2.x) opts in via CI_SUPABASE_STRIP_CONCURRENTLY=1.
+if [ "${CI_SUPABASE_STRIP_CONCURRENTLY:-0}" = "1" ]; then
 echo "Stripping CONCURRENTLY from index DDL for the CI stack..."
 concurrently_count=$(grep -l -iE 'INDEX CONCURRENTLY' "$MIGRATIONS_DIR"/*.sql 2>/dev/null | wc -l | tr -d ' ')
 perl -pi -e 's/\b(CREATE\s+(?:UNIQUE\s+)?INDEX)\s+CONCURRENTLY\b/$1/ig; s/\b(DROP\s+INDEX)\s+CONCURRENTLY\b/$1/ig; s/\b(REINDEX\s+(?:INDEX|TABLE|SCHEMA))\s+CONCURRENTLY\b/$1/ig' "$MIGRATIONS_DIR"/*.sql
 echo "  Rewrote CONCURRENTLY index DDL in ${concurrently_count} migration file(s) (CI checkout only)"
+else
+  echo "CONCURRENTLY rewrite skipped (CI_SUPABASE_STRIP_CONCURRENTLY is not 1)."
+fi
 
 
 # --- Escape Docker Hub anonymous rate limits (TOOMANYREQUESTS) in CI ---

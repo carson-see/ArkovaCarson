@@ -1616,6 +1616,10 @@ jobs:
 
       - name: Start Supabase
         if: steps.e2e-changed.outputs.changed == 'true'
+        env:
+          # CLI 2.x pipelines migrations; the wrapper strips CREATE INDEX CONCURRENTLY
+          # in this job's throwaway checkout only (see scripts/ci-supabase-start.sh).
+          CI_SUPABASE_STRIP_CONCURRENTLY: '1'
         run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
