@@ -223,9 +223,23 @@ describe('COMPLIANCE_CONTROLS', () => {
 
   it('HIPAA-164.312-MFA states the real, narrow enforcement boundary — required for two roles from a date, not yet required for anyone else (SCRUM-3167)', () => {
     const mfa = COMPLIANCE_CONTROLS['HIPAA-164.312-MFA'].description;
-    expect(mfa).toMatch(/required for organization administrators and platform administrators/i);
-    expect(mfa).toContain('2026-09-21');
+    // Item 34 (PR #2637 review): the date is no longer a hardcoded literal
+    // — it's built from mfaPolicy.ts's resolveMfaEnforceFrom() at module
+    // evaluation, so this can never drift from the ACTUAL enforcement date
+    // if VITE_MFA_ENFORCE_FROM moves it. Matched by pattern, not a literal
+    // "2026-09-21", so the test does not itself go stale the day the
+    // baked default is superseded by an env override.
+    expect(mfa).toMatch(
+      /required for organization administrators and platform administrators from \d{4}-\d{2}-\d{2}/i,
+    );
     expect(mfa).toContain('not yet required for other roles');
+    // Item 11/C3 (R-7 / §1.5 measured vs asserted): the claim must disclose
+    // what kind of "required" this is — an application-level sign-in gate
+    // that fails open on a platform error, not a database-level control —
+    // and that the stronger control is only PLANNED, under SCRUM-3593.
+    expect(mfa).toMatch(/application-level sign-in gate/i);
+    expect(mfa).toMatch(/fails open on platform errors/i);
+    expect(mfa).toContain('SCRUM-3593');
   });
 
   it('no control description claims enforcement language we cannot evidence', () => {
@@ -240,8 +254,15 @@ describe('COMPLIANCE_CONTROLS', () => {
     // false positives. HIPAA-164.312-MFA's specific "required" self-claim (it
     // IS a claim that Arkova enforces something, unlike the framework
     // citations) is pinned precisely by the dedicated test above instead.
+    //
+    // Item 16/B3 (PR #2637 review): restored to the BARE substring
+    // `/enforced/i` (not `/\benforced\b/i`) — the narrower word-boundary
+    // form would let a future description slip in a word like "unenforced"
+    // undetected. HIPAA-164.312-MFA's own text (with the item 34/11
+    // additions above) contains "enforcement" but never the substring
+    // "enforced", so the bare form still passes today.
     const offenders = Object.values(COMPLIANCE_CONTROLS)
-      .filter((c) => /\b(enforced|guaranteed|certified|accredited)\b/i.test(c.description))
+      .filter((c) => /(enforced|guaranteed|certified|accredited)/i.test(c.description))
       .map((c) => c.id);
     expect(offenders).toEqual([]);
   });

@@ -13,6 +13,17 @@
  *   - HIPAA (§164.312)
  */
 
+import { resolveMfaEnforceFrom } from './mfaPolicy';
+
+/**
+ * Item 34 (PR #2637 review): computed at module evaluation from
+ * `mfaPolicy.ts`'s own date-resolution logic, rather than a hardcoded
+ * literal — the HIPAA-164.312-MFA description below can never drift from
+ * the ACTUAL effective enforcement date if `VITE_MFA_ENFORCE_FROM` moves
+ * it. No circular import: `mfaPolicy.ts` has no import of this module.
+ */
+const MFA_ENFORCE_FROM_DATE = resolveMfaEnforceFrom().slice(0, 10);
+
 /** A single regulatory control reference */
 export interface ComplianceControl {
   /** Short identifier (e.g., "SOC2-CC6.7") */
@@ -97,9 +108,17 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   // non-test importers, so `organizations.session_timeout_minutes` is stored
   // and never acted on.
   //
+  // Item 34 (PR #2637 review): the date in the description below is
+  // `MFA_ENFORCE_FROM_DATE` (computed at module top from
+  // `resolveMfaEnforceFrom()`), NOT a hardcoded literal — it moves
+  // automatically if `VITE_MFA_ENFORCE_FROM` does. Item 11/C3: the
+  // description also discloses that this is an APPLICATION-LEVEL sign-in
+  // gate that fails open on a platform error, not a database-level
+  // control — the stronger control is a phase-2 SCRUM-3593 RLS ticket.
+  //
   // NEVER RENAME THIS KEY — a worker mirror gate compares the compliance
   // control ID set (SCRUM-3167 Amendment A5 item 7). Description edits only.
-  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', 'Person or entity authentication — multi-factor authentication (authenticator app) is available to every account; it is required for organization administrators and platform administrators from 2026-09-21 and is not yet required for other roles'),
+  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', `Person or entity authentication — multi-factor authentication (authenticator app) is available to every account; it is required for organization administrators and platform administrators from ${MFA_ENFORCE_FROM_DATE} and is not yet required for other roles (application-level sign-in gate that fails open on platform errors; database-level enforcement is planned under SCRUM-3593)`),
   'HIPAA-164.312-AUDIT': ctrl('HIPAA-164.312-AUDIT', 'HIPAA', 'HIPAA §164.312(b) Audit', 'Audit controls — hardware, software, and procedural mechanisms to record PHI access'),
   'HIPAA-164.312-SESSION': ctrl('HIPAA-164.312-SESSION', 'HIPAA', 'HIPAA §164.312(a)(2)(iii) Session', 'Automatic logoff — session timeout is configurable per organization but is not currently applied to active sessions'),
   // International frameworks (REG-27)
