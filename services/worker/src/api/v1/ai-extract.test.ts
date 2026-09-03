@@ -295,6 +295,61 @@ describe('AI Extraction Endpoint', () => {
     );
   });
 
+  // The other half of the same defect class: NO `ai_credits` row at all.
+  // `check_ai_credits` returns zero rows (not an error) for a caller with no
+  // row, so `checkAICredits` resolves null; `deduct_ai_credits` sees the same
+  // missing row and cleanly returns false. Before this fix the guard required
+  // `creditBalance` to be truthy, so `!deducted && creditBalance` was
+  // `true && null` — falsy — and execution fell through to a FREE extraction
+  // with no credit accounting at all. This is the exact "missing row means no
+  // entitlement, not free" bug SCRUM-2538 fixes for check_unified_credits;
+  // ai-extract's sibling ai_credits path must fail CLOSED the same way.
+  it('fails CLOSED with 503 and never calls the provider when there is no ai_credits row', async () => {
+    const handler = getPostHandler();
+    const { req, res } = createMockReqRes(validBody, 'user-123');
+
+    mockExtractionDatabase();
+
+    // No ai_credits row for this org/user: check_ai_credits returns zero rows,
+    // so checkAICredits resolves null (not an object with hasCredits: false).
+    (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const extractMetadata = vi.fn().mockResolvedValue({
+      fields: { credentialType: 'DEGREE' },
+      confidence: 0.9,
+      provider: 'gemini',
+      tokensUsed: 100,
+    });
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({ extractMetadata });
+
+    // deduct_ai_credits sees the same missing row and cleanly returns false —
+    // no RPC error, just a definitive "nothing to debit".
+    (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+    await handler!(req, res);
+
+    // The paid work must NOT happen — this is the whole point of fail-closed.
+    expect(extractMetadata).not.toHaveBeenCalled();
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(responseJson).toEqual(
+      expect.objectContaining({ error: 'credit_system_unavailable' }),
+    );
+    expect(responseJson.error).not.toBe('insufficient_credits');
+
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'deduct_ai_credits',
+        operation: 'ai-extract.deductAICredits',
+        failMode: 'closed',
+        orgId: 'org-456',
+        userId: 'user-123',
+      }),
+    );
+  });
+
   // API-RICH-02 (SCRUM-895): description completes the trio (confidenceScores +
   // subType + description) the public AC promises.
   it('surfaces description top-level when extracted (SCRUM-895)', async () => {

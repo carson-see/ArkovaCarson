@@ -68,6 +68,22 @@ function getCreditCost(path: string): number {
   return 1; // default 1 credit
 }
 
+/**
+ * Run `fn` for its side effect only, swallowing anything it throws.
+ *
+ * Used to isolate independent best-effort reporting calls (log + Sentry
+ * alert) from each other and from the caller: each call gets its own `try`,
+ * so one throwing cannot suppress the other or bubble up into a `catch` that
+ * would silently re-open whatever fail-closed path is reporting the failure.
+ */
+function bestEffort(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // Best-effort only — see call site for why isolation matters here.
+  }
+}
+
 // ─── Tier 1: Prepaid Credits ────────────────────────────────────────────
 
 async function tryCredits(orgId: string, userId: string, cost: number): Promise<PaymentResolution | null> {
@@ -126,12 +142,10 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
       // `error` — see utils/sentry.ts) would be caught out there and silently
       // reopen the leak. Losing the page is bad; losing the fail-closed is a
       // double-charge.
-      try {
-        logger.error({ error: deductError, orgId, userId }, 'Credit deduction failed — failing closed');
-      } catch {
-        // Best-effort only.
-      }
-      try {
+      bestEffort(() =>
+        logger.error({ error: deductError, orgId, userId }, 'Credit deduction failed — failing closed'),
+      );
+      bestEffort(() =>
         captureCreditRpcFailureAlert({
           rpc: 'deduct_unified_credits',
           operation: 'paymentTierRouter.tryCredits',
@@ -140,10 +154,8 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
           orgId,
           userId,
           extra: { amount: cost },
-        });
-      } catch {
-        // Best-effort only.
-      }
+        }),
+      );
       return { tier: 'credits', authorized: false, reason: 'credit_deduction_failed' };
     }
 

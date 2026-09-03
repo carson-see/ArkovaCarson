@@ -402,6 +402,26 @@ async function perOrgIsolation(db: SupabaseClient, fx: Fixture): Promise<ProbeRe
   });
   const otherAfter = await checkCredits(db, fx.otherOrgId, null);
 
+  // Refund the isolation-check debit immediately. This probe runs every
+  // cycle — the documented usage is `--interval-sec 300` over a 48h T3 soak,
+  // ~288 cycles/day — and the fixture org's monthly allocation is 50 (0420
+  // STEP 1's backfill). An un-refunded 1-credit debit every 5 minutes drains
+  // it in ~4.2 hours, after which `check_unified_credits` correctly reports
+  // has_credits=false for the rest of each day and TRIGGER_A's
+  // `covered_org_still_served` probe (which asserts a real balance must never
+  // be denied) fails on the large majority of cycles — a self-inflicted
+  // soak-evidence failure stream that is not a regression in 0420 or the
+  // worker fix but reads as one. Refunding keeps net balance change at zero
+  // per cycle while still exercising the real deduct RPC and the cross-org
+  // isolation it must preserve. Checked, not fire-and-forget: a silently
+  // failing refund reproduces the exact same slow-drain problem this fix
+  // closes, just delayed — better to surface it by name immediately.
+  const { error: refundError } = await db.rpc('deduct_unified_credits', {
+    p_org_id: fx.coveredOrgId,
+    p_user_id: undefined,
+    p_amount: -1,
+  });
+
   out.push(
     probe(
       `${ORG_ISOLATION}_neighbour_untouched`,
@@ -409,6 +429,14 @@ async function perOrgIsolation(db: SupabaseClient, fx: Fixture): Promise<ProbeRe
         otherBefore.check?.used_this_month === otherAfter.check?.used_this_month &&
         otherBefore.check?.remaining === otherAfter.check?.remaining,
       `neighbour org ${otherBefore.check?.used_this_month}/${otherBefore.check?.remaining} -> ${otherAfter.check?.used_this_month}/${otherAfter.check?.remaining}`,
+    ),
+  );
+
+  out.push(
+    probe(
+      `${ORG_ISOLATION}_debit_refunded`,
+      refundError === null,
+      `refund of the isolation-check debit => error=${JSON.stringify(refundError)} (keeps the fixture org's budget from self-exhausting across the soak)`,
     ),
   );
 
