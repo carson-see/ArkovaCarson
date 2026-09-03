@@ -206,6 +206,25 @@ describe('Chain Maintenance Jobs', () => {
       expect(mockLogger.error).toHaveBeenCalled();
     });
 
+    // Soak finding (cron-chain-batch, 2026-08-30): the tip fetch's own
+    // AbortSignal.timeout(10000) REJECTS rather than resolving with a
+    // non-ok Response, and detectReorgs is a bare try/finally with no catch
+    // — so this used to propagate out of the function instead of hitting the
+    // `!tipResp.ok` branch above, bypassing the completed/reason contract
+    // entirely. Observed 3 times in a 30-minute window on the soak rig.
+    it('reports NOT completed (tip_unavailable) when the tip fetch throws (timeout/network error)', async () => {
+      global.fetch = vi.fn().mockRejectedValue(
+        new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      );
+
+      const result = await detectReorgs();
+      expect(result).toEqual({
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'tip_unavailable',
+      });
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
     it('returns zero when no recently SECURED anchors', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true, text: async () => '100',

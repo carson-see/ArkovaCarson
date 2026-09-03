@@ -397,10 +397,38 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
   try {
     const baseUrl = getMempoolBaseUrl();
 
-    // Get current chain tip
-    const tipResp = await fetch(`${baseUrl}/api/blocks/tip/height`, {
-      signal: AbortSignal.timeout(10000),
-    });
+    // Get current chain tip.
+    //
+    // Soak finding (cron-chain-batch, 2026-08-30): this fetch's own
+    // AbortSignal.timeout(10000) rejects the promise (DOMException /
+    // TimeoutError) rather than resolving with a non-ok Response, and — since
+    // this whole function is a bare try/finally with no catch — that
+    // rejection used to propagate out of detectReorgs() instead of hitting
+    // the `!tipResp.ok` branch below. It never reintroduced the original
+    // false-200 (routes/cron.ts's own try/catch turns an uncaught rejection
+    // into a 500, never a 200), but it bypassed the completed/reason
+    // taxonomy this PR exists to guarantee: "Any new early return MUST set
+    // completed: false and a reason" (see the ReorgCheckResult doc comment
+    // above) — an aborted tip fetch was falling through that contract
+    // entirely. Observed 3 times in a 30-minute window on that rig, logged
+    // only as an unstructured "Reorg detection cron failed" 500. Catching it
+    // here makes a timed-out tip fetch indistinguishable, in outcome shape,
+    // from a non-ok tip response: both are tip_unavailable.
+    let tipResp: Response;
+    try {
+      tipResp = await fetch(`${baseUrl}/api/blocks/tip/height`, {
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (err) {
+      logger.error(
+        { error: err },
+        'Reorg detection could not run — chain tip fetch threw (network error or timeout)',
+      );
+      return {
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'tip_unavailable',
+      };
+    }
     if (!tipResp.ok) {
       logger.error(
         { status: tipResp.status },
