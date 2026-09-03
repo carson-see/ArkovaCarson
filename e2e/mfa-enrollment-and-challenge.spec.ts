@@ -132,6 +132,14 @@ test.describe('MFA enrollment and login challenge', () => {
         .or(page.getByRole('button', { name: 'Sign out' }))
         .click();
       await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
+      // R26 (soak flake, 1-in-8 runs): signOut() hard-redirects via
+      // `window.location.href = '/login'` — the URL-string assertion above
+      // can pass while that navigation is still in flight, so the very
+      // next loginViaUi's own page.goto('/login') can race it and throw
+      // "Navigation to /login is interrupted by another navigation to
+      // /login". page.waitForURL waits for the navigation itself to
+      // settle, not just the URL string to match.
+      await page.waitForURL(/\/login/, { timeout: 15_000 });
 
       await loginViaUi(page, user.email, user.password);
 

@@ -163,9 +163,33 @@ export async function deleteDisposableUser(
  * Does not assert on the post-submit destination: depending on the scenario
  * under test, that may be the app, the `mfa-challenge` screen, or the
  * `mfa-enrollment-required` screen. The caller asserts the expected outcome.
+ *
+ * R26 (soak flake, 1-in-8 runs): `useAuth.ts`'s `signOut()` hard-redirects
+ * via `window.location.href = '/login'`. A caller that just clicked sign-out
+ * and is about to call this can still have that redirect in flight — a
+ * second `page.goto('/login')` racing it throws "Navigation to /login is
+ * interrupted by another navigation to /login" (harness race, not an app
+ * defect: `AuthGuard`'s only reachable outcome here is the login page
+ * either way). Guarded three ways: skip the redundant `goto` if the page is
+ * already there; navigate with `waitUntil: 'commit'` (wait only for THIS
+ * navigation to win the race, not the full page load) otherwise; retry
+ * exactly once if that specific interrupted-navigation error fires, since a
+ * second attempt after the first redirect has already landed cannot race
+ * anything. Callers that just signed out should still `page.waitForURL`
+ * themselves first (see the spec) — this is a second, independent guard,
+ * not a replacement for waiting at the call site.
  */
 export async function loginViaUi(page: Page, email: string, password: string): Promise<void> {
-  await page.goto('/login');
+  if (!page.url().endsWith('/login')) {
+    try {
+      await page.goto('/login', { waitUntil: 'commit' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes('interrupted by another navigation')) throw err;
+      await page.goto('/login', { waitUntil: 'commit' });
+    }
+  }
+  await page.locator('#email').waitFor();
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
