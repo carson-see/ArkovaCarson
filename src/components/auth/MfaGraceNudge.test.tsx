@@ -18,10 +18,10 @@ import { ROUTES } from '@/lib/routes';
 
 const ENFORCE_FROM = '2026-09-21T00:00:00Z';
 
-function renderNudge() {
+function renderNudge(props: { enforceFrom?: string } = {}) {
   return render(
     <MemoryRouter>
-      <MfaGraceNudge />
+      <MfaGraceNudge {...props} />
     </MemoryRouter>
   );
 }
@@ -128,5 +128,70 @@ describe('MfaGraceNudge', () => {
 
     getItemSpy.mockRestore();
     setItemSpy.mockRestore();
+  });
+
+  // ---------------------------------------------------------------------
+  // Item 18/EA4 (PR #2637 review): AuthGuard resolves the enforcement date
+  // once per render and threads it down, instead of this component
+  // re-resolving the same env/localStorage inputs a second/third time.
+  // ---------------------------------------------------------------------
+
+  it('ITEM 18/EA4: uses the explicitly passed enforceFrom prop instead of re-resolving from env', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-11T00:00:00Z'));
+    // The env says 2026-09-21 (10 days from "now"); the prop says a FAR
+    // later date whose day-count would obviously differ if honoured.
+    renderNudge({ enforceFrom: '2026-12-01T00:00:00Z' });
+
+    expect(screen.getByTestId('mfa-grace-nudge')).not.toHaveTextContent('10 days');
+  });
+
+  it('ITEM 18/EA4: falls back to resolving its own date when no prop is passed (standalone use / backward compatible)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-11T00:00:00Z'));
+    renderNudge();
+
+    expect(screen.getByTestId('mfa-grace-nudge')).toHaveTextContent('10 days');
+  });
+
+  it('ITEM 18/EA4: the dismissal key is keyed off the passed enforceFrom prop, not a re-resolved value', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-11T00:00:00Z'));
+    const { unmount } = renderNudge({ enforceFrom: '2026-12-01T00:00:00Z' });
+    fireEvent.click(screen.getByTestId('mfa-grace-nudge-dismiss'));
+    unmount();
+
+    // Same prop value again -> stays dismissed.
+    renderNudge({ enforceFrom: '2026-12-01T00:00:00Z' });
+    expect(screen.queryByTestId('mfa-grace-nudge')).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------
+  // Item 27 (SonarCloud typescript:S6819): role="status" replaced with a
+  // semantic <output> (or aria-live="polite"), per the rule's guidance.
+  // ---------------------------------------------------------------------
+
+  it('ITEM 27/S6819: uses aria-live="polite" instead of role="status"', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-11T00:00:00Z'));
+    renderNudge();
+
+    const nudge = screen.getByTestId('mfa-grace-nudge');
+    expect(nudge).toHaveAttribute('aria-live', 'polite');
+    expect(nudge).not.toHaveAttribute('role', 'status');
+  });
+
+  // ---------------------------------------------------------------------
+  // Item 35: MFA_GRACE_NUDGE_LABELS.BODY was defined but never rendered —
+  // prefer rendering it over deleting it.
+  // ---------------------------------------------------------------------
+
+  it('ITEM 35: renders the BODY copy, not just the title and days-remaining line', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-11T00:00:00Z'));
+    renderNudge();
+
+    const { MFA_GRACE_NUDGE_LABELS } = await import('@/lib/copy');
+    expect(screen.getByTestId('mfa-grace-nudge')).toHaveTextContent(MFA_GRACE_NUDGE_LABELS.BODY);
   });
 });

@@ -16,6 +16,18 @@
  * access is wrapped in try/catch: a private-browsing or storage-disabled
  * environment must degrade to "always show" (the nudge reappearing every
  * load), never to a crash.
+ *
+ * `enforceFrom` prop (PR #2637 review, item 18/EA4): `AuthGuard` resolves
+ * the enforcement date once per render (via `useMfaEnrollmentRequirement`'s
+ * `enforceFromIso`) and passes it here, so this component doesn't
+ * re-resolve the same env/localStorage inputs a second/third time in the
+ * same render. Optional and defaults to resolving it itself, so standalone
+ * rendering (and this file's own tests) still works without a caller.
+ *
+ * Root element uses `aria-live="polite"` (SonarCloud typescript:S6819, item
+ * 27) rather than `role="status"` — the rule's own suggested alternative
+ * for a container whose content model (nested block-level layout, a link,
+ * a button) doesn't fit the phrasing-content-only `<output>` element.
  */
 
 import { useCallback, useState } from 'react';
@@ -25,6 +37,10 @@ import { Button } from '@/components/ui/button';
 import { ROUTES } from '@/lib/routes';
 import { MFA_GRACE_NUDGE_LABELS } from '@/lib/copy';
 import { resolveMfaEnforceFrom, getMfaGraceDaysRemaining } from '@/lib/mfaPolicy';
+
+interface MfaGraceNudgeProps {
+  enforceFrom?: string;
+}
 
 function dismissalStorageKey(enforceFromIso: string): string {
   return `arkova_mfa_grace_dismissed:${enforceFromIso}`;
@@ -47,8 +63,8 @@ function writeDismissed(key: string): void {
   }
 }
 
-export function MfaGraceNudge() {
-  const enforceFromIso = resolveMfaEnforceFrom();
+export function MfaGraceNudge({ enforceFrom }: Readonly<MfaGraceNudgeProps> = {}) {
+  const enforceFromIso = enforceFrom ?? resolveMfaEnforceFrom();
   const storageKey = dismissalStorageKey(enforceFromIso);
   const [dismissed, setDismissed] = useState(() => readDismissed(storageKey));
 
@@ -59,11 +75,11 @@ export function MfaGraceNudge() {
 
   if (dismissed) return null;
 
-  const daysRemaining = getMfaGraceDaysRemaining();
+  const daysRemaining = getMfaGraceDaysRemaining(undefined, enforceFromIso);
 
   return (
     <div
-      role="status"
+      aria-live="polite"
       data-testid="mfa-grace-nudge"
       className="flex flex-col gap-3 border-b border-amber-500/20 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
     >
@@ -74,6 +90,7 @@ export function MfaGraceNudge() {
           <p className="text-sm text-muted-foreground">
             {MFA_GRACE_NUDGE_LABELS.DAYS_REMAINING(daysRemaining)}
           </p>
+          <p className="text-sm text-muted-foreground">{MFA_GRACE_NUDGE_LABELS.BODY}</p>
         </div>
       </div>
       <div className="flex items-center gap-2">

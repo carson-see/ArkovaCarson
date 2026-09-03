@@ -31,6 +31,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AuthGuard } from './AuthGuard';
+import { __resetMfaCapabilityCooldownForTests } from '@/lib/mfaCapabilityCooldown';
 
 const toastWarning = vi.fn();
 const toastInfo = vi.fn();
@@ -59,14 +60,21 @@ const mfaState: {
   hasVerifiedFactor: false,
 };
 const markVerified = vi.fn();
+const markBypassed = vi.fn();
 vi.mock('../../hooks/useMfaAssurance', () => ({
-  useMfaAssurance: () => ({ ...mfaState, markVerified }),
+  useMfaAssurance: () => ({ ...mfaState, markVerified, markBypassed }),
 }));
 
-const requirementState: { loading: boolean; mfaRequired: boolean; mfaGraceActive: boolean } = {
+const requirementState: {
+  loading: boolean;
+  mfaRequired: boolean;
+  mfaGraceActive: boolean;
+  enforceFromIso: string;
+} = {
   loading: false,
   mfaRequired: false,
   mfaGraceActive: false,
+  enforceFromIso: '2026-09-21T00:00:00Z',
 };
 vi.mock('../../hooks/useMfaEnrollmentRequirement', () => ({
   useMfaEnrollmentRequirement: () => requirementState,
@@ -75,13 +83,16 @@ vi.mock('../../hooks/useMfaEnrollmentRequirement', () => ({
 vi.mock('./MfaChallenge', () => ({
   MfaChallenge: ({
     onVerified,
+    onBypassed,
     onCapabilityUnavailable,
   }: {
     onVerified: () => void;
+    onBypassed: () => void;
     onCapabilityUnavailable: (code: string) => void;
   }) => (
     <div>
       <button onClick={onVerified}>stub-mfa-challenge</button>
+      <button onClick={onBypassed}>stub-mfa-challenge-bypassed</button>
       <button onClick={() => onCapabilityUnavailable('mfa_totp_verify_not_enabled')}>
         stub-mfa-challenge-capability-fail
       </button>
@@ -107,7 +118,9 @@ vi.mock('./MfaEnrollmentRequired', () => ({
 }));
 
 vi.mock('./MfaGraceNudge', () => ({
-  MfaGraceNudge: () => <div>stub-mfa-grace-nudge</div>,
+  MfaGraceNudge: ({ enforceFrom }: { enforceFrom?: string }) => (
+    <div>stub-mfa-grace-nudge:{enforceFrom}</div>
+  ),
 }));
 
 // Spy on Navigate so the "no redirect loop" test can assert it was never
@@ -134,12 +147,17 @@ function resetToDefaults() {
   requirementState.loading = false;
   requirementState.mfaRequired = false;
   requirementState.mfaGraceActive = false;
+  requirementState.enforceFromIso = '2026-09-21T00:00:00Z';
 }
 
 describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetToDefaults();
+    // The capability cooldown (item 5/D1) is a REAL module-level singleton,
+    // not mocked — reset it so one test's fail-open trip doesn't leak a
+    // cooldown window into the next test in this file.
+    __resetMfaCapabilityCooldownForTests();
   });
 
   it('LOCKOUT-PREVENTION GUARD: renders children for a user with no MFA enrolled on a role that does not require it — this must never regress', () => {
@@ -308,6 +326,70 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Item 5/D1 (CONFIRMED by the verifier) + item 24: the cooldown is
+  // CROSS-INSTANCE, not per-AuthGuard-mount. A fresh AuthGuard mounted
+  // while the cooldown is active (simulating the next of ~52 routes the
+  // user navigates to during an outage) must render children directly —
+  // WITHOUT ever mounting MfaChallenge/MfaEnrollmentRequired again — and
+  // must NOT fire a second toast/Sentry event.
+  // -----------------------------------------------------------------------
+  it('ROW 5/D1: a FRESH AuthGuard instance mounted after another instance already failed open renders children immediately, with no second enroll()/challenge() attempt and no second toast/Sentry', async () => {
+    mfaState.status = 'challenge_required';
+    const first = render(
+      <AuthGuard>
+        <div>first-route content</div>
+      </AuthGuard>
+    );
+    first.getByText('stub-mfa-challenge-capability-fail').click();
+    await first.findByText('first-route content');
+    expect(toastWarning).toHaveBeenCalledTimes(1);
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+    first.unmount();
+
+    // Simulate navigating to a DIFFERENT route — a brand new AuthGuard
+    // instance, same as every one of the ~52 routes in App.tsx.
+    mfaState.status = 'challenge_required'; // still required, if the gate were naive it would re-mount MfaChallenge
+    const second = render(
+      <AuthGuard>
+        <div>second-route content</div>
+      </AuthGuard>
+    );
+
+    // Renders children directly — MfaChallenge is never even mounted, so
+    // enroll()/challenge() cannot be re-attempted within the window.
+    expect(second.queryByText('stub-mfa-challenge')).not.toBeInTheDocument();
+    expect(second.getByText('second-route content')).toBeInTheDocument();
+    // No additional toast/Sentry beyond the first instance's one-shot.
+    expect(toastWarning).toHaveBeenCalledTimes(1);
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('ROW 5/D1: the gate RE-ARMS once the cooldown window has expired — a fresh mount after the window sees the real MFA gate again', async () => {
+    vi.useFakeTimers();
+    mfaState.status = 'challenge_required';
+    const first = render(
+      <AuthGuard>
+        <div>first-route content</div>
+      </AuthGuard>
+    );
+    first.getByText('stub-mfa-challenge-capability-fail').click();
+    await vi.advanceTimersByTimeAsync(0);
+    first.unmount();
+
+    // Well past the 5-minute cooldown window.
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+
+    const second = render(
+      <AuthGuard>
+        <div>second-route content</div>
+      </AuthGuard>
+    );
+    expect(second.getByText('stub-mfa-challenge')).toBeInTheDocument();
+    expect(second.queryByText('second-route content')).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  // -----------------------------------------------------------------------
   // Row 6: challenge_required -> <MfaChallenge>
   // -----------------------------------------------------------------------
   it('ROW 6: renders MfaChallenge instead of children when a challenge is required, regardless of role tier', () => {
@@ -331,6 +413,18 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
     );
     screen.getByText('stub-mfa-challenge').click();
     expect(markVerified).toHaveBeenCalledTimes(1);
+  });
+
+  it('ROW 6 (item 32): wires MfaChallenge\'s onBypassed to markBypassed, NOT markVerified — a fail-open bypass must never falsely claim a real verify happened', () => {
+    mfaState.status = 'challenge_required';
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    screen.getByText('stub-mfa-challenge-bypassed').click();
+    expect(markBypassed).toHaveBeenCalledTimes(1);
+    expect(markVerified).not.toHaveBeenCalled();
   });
 
   it('ROW 6 (priority over row 7): challenge takes priority over forced enrollment — a required-role user who has a factor but has not verified THIS session sees the challenge', () => {
@@ -414,8 +508,22 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
         <div>protected content</div>
       </AuthGuard>
     );
-    expect(screen.getByText('stub-mfa-grace-nudge')).toBeInTheDocument();
+    expect(screen.getByText(/^stub-mfa-grace-nudge:/)).toBeInTheDocument();
     expect(screen.getByText('protected content')).toBeInTheDocument();
+  });
+
+  it('ROW 8 (item 18/EA4): threads the already-resolved enforceFromIso into MfaGraceNudge instead of letting it re-resolve', () => {
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = false;
+    requirementState.mfaRequired = false;
+    requirementState.mfaGraceActive = true;
+    requirementState.enforceFromIso = '2027-03-01T00:00:00Z';
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    expect(screen.getByText('stub-mfa-grace-nudge:2027-03-01T00:00:00Z')).toBeInTheDocument();
   });
 
   it('ROW 8 (priority under row 7): a required role with no factor sees the forced enrollment screen, NOT the grace nudge, even if mfaGraceActive is somehow also true', () => {

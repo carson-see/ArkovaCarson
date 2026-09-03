@@ -41,10 +41,20 @@ vi.mock('../../hooks/useAuth', () => ({
 // provider. `AuthGuard.mfaGate.test.tsx` is the dedicated coverage for the
 // MFA branching itself.
 vi.mock('../../hooks/useMfaAssurance', () => ({
-  useMfaAssurance: () => ({ status: 'satisfied', hasVerifiedFactor: false, markVerified: vi.fn() }),
+  useMfaAssurance: () => ({
+    status: 'satisfied',
+    hasVerifiedFactor: false,
+    markVerified: vi.fn(),
+    markBypassed: vi.fn(),
+  }),
 }));
 vi.mock('../../hooks/useMfaEnrollmentRequirement', () => ({
-  useMfaEnrollmentRequirement: () => ({ loading: false, mfaRequired: false, mfaGraceActive: false }),
+  useMfaEnrollmentRequirement: () => ({
+    loading: false,
+    mfaRequired: false,
+    mfaGraceActive: false,
+    enforceFromIso: '2026-09-21T00:00:00Z',
+  }),
 }));
 
 // Neutralize Navigate + useLocation — we're testing the effect, not router plumbing.

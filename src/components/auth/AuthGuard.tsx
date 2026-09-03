@@ -21,17 +21,34 @@
  *   8 mfaGraceActive                 -> <MfaGraceNudge/> ABOVE children
  *   9 (else)                         -> children
  *
- * FAIL-OPEN CAPABILITY GATE (CTO ruling A4-7, accepted phase-1 trade-off):
- * `onCapabilityUnavailable` is the shared escape hatch both `MfaChallenge`
- * and `MfaEnrollmentRequired` call when the MFA PLATFORM itself (not the
- * user's code) is the reason verification/enrollment cannot complete. This
- * is deliberately prioritized ABOVE the challenge/enrollment branches: once
- * set, it renders `children` for the rest of this AuthGuard instance's
- * life, so an authenticated user is never permanently walled out by a
- * broken MFA backend. Every fail-open emits a Sentry `mfa_capability_
- * unavailable` message with `{code, path}` tags (never PII) so a targeted
- * or sustained bypass is visible to the team — SCRUM-3593 (aal2-aware RLS)
- * is the phase-2 control that closes this gap server-side.
+ * FAIL-OPEN CAPABILITY GATE (CTO ruling A4-7, accepted phase-1 trade-off,
+ * hardened per PR #2637 review item 5/D1): `onCapabilityUnavailable` is the
+ * shared escape hatch both `MfaChallenge` and `MfaEnrollmentRequired` call
+ * when the MFA PLATFORM itself (not the user's code) is the reason
+ * verification/enrollment cannot complete. This is deliberately prioritized
+ * ABOVE the challenge/enrollment branches: once set, it renders `children`
+ * for the rest of this AuthGuard instance's life, so an authenticated user
+ * is never permanently walled out by a broken MFA backend.
+ *
+ * CROSS-INSTANCE COOLDOWN (item 5/D1, CONFIRMED by the verifier; item 24):
+ * every one of the ~52 routes in `App.tsx` mounts its OWN `AuthGuard`. A
+ * naive per-instance one-shot ref meant a required-role admin who kept
+ * navigating during an MFA-platform outage got a FRESH `enroll()`/
+ * `challenge()` attempt, plus a toast, plus a Sentry event, on EVERY route
+ * change. `src/lib/mfaCapabilityCooldown.ts` is the fix: a cross-instance,
+ * time-bounded cooldown. This component's local `mfaCapabilityUnavailable`
+ * state is seeded from the cooldown at mount (so a FRESH instance mounted
+ * mid-outage renders children immediately, without ever mounting
+ * `MfaChallenge`/`MfaEnrollmentRequired` — the operation is not
+ * re-attempted, not just "the toast is suppressed"), and the toast/Sentry
+ * emission is gated on the cooldown's own `alreadyArmed` result rather than
+ * a per-instance ref, so they fire at most once per cooldown window across
+ * every route, not once per route.
+ *
+ * Every fail-open emits a Sentry `mfa_capability_unavailable` message with
+ * `{code, path}` tags (never PII) so a targeted or sustained bypass is
+ * visible to the team — SCRUM-3593 (aal2-aware RLS) is the phase-2 control
+ * that closes this gap server-side.
  */
 
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
@@ -43,6 +60,7 @@ import { useMfaAssurance } from '../../hooks/useMfaAssurance';
 import { useMfaEnrollmentRequirement } from '../../hooks/useMfaEnrollmentRequirement';
 import { ROUTES } from '../../lib/routes';
 import { NAV_POLISH_LABELS, MFA_CAPABILITY_LABELS } from '../../lib/copy';
+import { armMfaCapabilityCooldown, isMfaCapabilityCooldownActive } from '../../lib/mfaCapabilityCooldown';
 import { MfaChallenge } from './MfaChallenge';
 import { MfaEnrollmentRequired } from './MfaEnrollmentRequired';
 import { MfaGraceNudge } from './MfaGraceNudge';
@@ -65,7 +83,6 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   const location = useLocation();
   const toastShown = useRef(false);
   const hadUser = useRef(false);
-  const capabilityToastShown = useRef(false);
 
   // SECURITY (pre-pentest hardening, founder directive 2026-08-03 "MFA
   // needs to be mandatory" + "enforced everytime you login"; phase-1
@@ -80,33 +97,46 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   // enrolled factor, on a role that does NOT (yet) require MFA, are
   // completely unaffected — see useMfaAssurance's and
   // useMfaEnrollmentRequirement's fail-open safety contracts.
-  const { status: mfaStatus, hasVerifiedFactor, markVerified } = useMfaAssurance(user?.id ?? null);
-  const { loading: mfaRequirementLoading, mfaRequired, mfaGraceActive } = useMfaEnrollmentRequirement();
+  const { status: mfaStatus, hasVerifiedFactor, markVerified, markBypassed } = useMfaAssurance(user?.id ?? null);
+  const {
+    loading: mfaRequirementLoading,
+    mfaRequired,
+    mfaGraceActive,
+    enforceFromIso,
+  } = useMfaEnrollmentRequirement();
 
-  const [mfaCapabilityUnavailable, setMfaCapabilityUnavailable] = useState(false);
+  // Seeded from the CROSS-INSTANCE cooldown (item 5/D1) so a fresh mount
+  // during an active cooldown window starts already in the fail-open state
+  // — MfaChallenge/MfaEnrollmentRequired are never mounted, so the failing
+  // operation is never re-attempted within the window.
+  const [mfaCapabilityUnavailable, setMfaCapabilityUnavailable] = useState(() => isMfaCapabilityCooldownActive());
 
   const handleCapabilityUnavailable = useCallback(
     (code: string) => {
+      const { alreadyArmed } = armMfaCapabilityCooldown();
       setMfaCapabilityUnavailable(true);
 
-      if (!capabilityToastShown.current) {
-        capabilityToastShown.current = true;
+      // One-shot ACROSS every AuthGuard instance, not per-instance: only
+      // the trip that actually opens a new cooldown window fires the
+      // toast/Sentry — a repeat trip while the window is already active
+      // (this instance or any other route's instance) does not.
+      if (!alreadyArmed) {
         toast.warning(MFA_CAPABILITY_LABELS.UNAVAILABLE_NOTICE);
-      }
 
-      // Lazy-load Sentry to keep it out of the initial bundle — same
-      // pattern as RouteErrorBoundary.tsx. Tags only: code + path, never a
-      // user id/email or any MFA code the user typed.
-      import('@/lib/sentry')
-        .then(({ Sentry: S }) => {
-          S.captureMessage('mfa_capability_unavailable', {
-            level: 'warning',
-            tags: { code, path: location.pathname },
+        // Lazy-load Sentry to keep it out of the initial bundle — same
+        // pattern as RouteErrorBoundary.tsx. Tags only: code + path, never
+        // a user id/email or any MFA code the user typed.
+        import('@/lib/sentry')
+          .then(({ Sentry: S }) => {
+            S.captureMessage('mfa_capability_unavailable', {
+              level: 'warning',
+              tags: { code, path: location.pathname },
+            });
+          })
+          .catch(() => {
+            /* Sentry unavailable */
           });
-        })
-        .catch(() => {
-          /* Sentry unavailable */
-        });
+      }
     },
     [location.pathname]
   );
@@ -162,9 +192,11 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
     return <Spinner />;
   }
 
-  // Row 5: the MFA platform itself failed (not the user's code). Render
-  // children unconditionally for the rest of this instance's life — see
-  // the module doc comment's FAIL-OPEN CAPABILITY GATE section.
+  // Row 5: the MFA platform itself failed (not the user's code) — either
+  // in THIS instance, or in another route's AuthGuard instance within the
+  // cross-instance cooldown window (item 5/D1). Render children
+  // unconditionally for the rest of this instance's life — see the module
+  // doc comment's FAIL-OPEN CAPABILITY GATE section.
   if (mfaCapabilityUnavailable) {
     return <>{children}</>;
   }
@@ -174,7 +206,13 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   // of role/tier — voluntary enrollment is honored the same as mandated
   // enrollment). Only a user with NO factor at all can reach row 7.
   if (mfaStatus === 'challenge_required') {
-    return <MfaChallenge onVerified={markVerified} onCapabilityUnavailable={handleCapabilityUnavailable} />;
+    return (
+      <MfaChallenge
+        onVerified={markVerified}
+        onBypassed={markBypassed}
+        onCapabilityUnavailable={handleCapabilityUnavailable}
+      />
+    );
   }
 
   // Row 7: FORCED ENROLLMENT, NOT A LOCKOUT. `mfaStatus` is 'satisfied'
@@ -194,11 +232,13 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
 
   // Row 8: the enforcement date has not arrived yet for this required-role
   // user — nudge them ABOVE children (children still render; this is a
-  // heads-up, not a gate).
+  // heads-up, not a gate). `enforceFromIso` was already resolved once by
+  // useMfaEnrollmentRequirement (item 18/EA4) — passed straight through so
+  // MfaGraceNudge doesn't re-resolve the same env/localStorage inputs.
   if (mfaGraceActive) {
     return (
       <>
-        <MfaGraceNudge />
+        <MfaGraceNudge enforceFrom={enforceFromIso} />
         {children}
       </>
     );
