@@ -115,7 +115,12 @@ export function MfaChallenge({ onVerified, onBypassed, onCapabilityUnavailable }
           return;
         }
 
-        const verified = data.totp.find((f: { status: string }) => f.status === 'verified');
+        // Item 15/S5: no local factor type needed here — `data.totp` is
+        // already correctly typed by @supabase/supabase-js's listFactors()
+        // return type; the inline `{ status: string }` annotation this
+        // used to carry had already drifted from TwoFactorSetup.tsx's
+        // separate TotpFactor interface (now unified in `@/lib/mfaTypes`).
+        const verified = data.totp.find((f) => f.status === 'verified');
         if (!verified) {
           // Defensive only: AuthGuard should never render this component
           // unless useMfaAssurance already confirmed a verified factor

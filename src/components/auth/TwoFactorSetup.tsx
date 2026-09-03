@@ -12,18 +12,40 @@
  * factor) and retries the original action, rather than dead-ending the user.
  *
  * `mfa_factor_name_conflict` is handled by suggesting a retry (the default
- * friendly name is already de-duplicated client-side against the current
- * factor list, so a server-side conflict is a race, not the common case).
+ * friendly name always carries a random suffix — item 20/A2-3, PR #2637
+ * review — so a server-side conflict is a genuine race, not the common
+ * case a deterministic per-day name used to create). `mfa_verified_factor_exists`
+ * (item 19/A2-2) means a verified factor now exists that this component's
+ * stale local list didn't know about (e.g. verified from another tab, or a
+ * racing session) — refresh and show it rather than erroring.
  * `mfa_totp_enroll_not_enabled` — the platform not having TOTP enabled — is
  * a non-blocking notice, never an error wall (Amendment A4-2's fail-open
  * principle applied to this settings card).
  *
- * After a successful verify or unenroll, `supabase.auth.refreshSession()` is
- * called so the JWT `aal` claim used elsewhere in the app is current in this
- * session (Amendment A4-8).
+ * FACTOR SOURCE (item 1/E1, PR #2637 review — CONFIRMED against auth-js
+ * 2.110.8 GoTrueClient.js:4899-4907): `listFactors().data.totp` contains
+ * VERIFIED TOTP factors ONLY; unverified factors exist ONLY in `data.all`.
+ * This component reads `data.all` filtered to `factor_type === 'totp'` so
+ * an incomplete (unverified) setup renders and stays removable — reading
+ * `data.totp` would have silently hidden it.
+ *
+ * ALL FOUR MUTATING HANDLERS ARE TRY/CAUGHT (item 3/E3): a thrown
+ * exception (network failure) resets `busy` and shows `ERROR_GENERIC`
+ * instead of leaving the UI stuck on a spinner forever.
+ *
+ * CANCELLING AN IN-PROGRESS ENROLLMENT (item 21/A2-4): the enrolling view
+ * has a Cancel control that unenrolls the just-created factor — always
+ * legal at aal1 because it is still unverified (Amendment A3) — instead of
+ * abandoning it as an invisible orphan on the server.
+ *
+ * After a successful verify, unenroll, OR step-up (item 22/A2-5 — the
+ * refresh now happens immediately after the step-up itself succeeds, not
+ * only via the retried action's own eventual success path),
+ * `supabase.auth.refreshSession()` is called so the JWT `aal` claim used
+ * elsewhere in the app is current in this session (Amendment A4-8).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, FormEvent } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Loader2, AlertCircle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -32,14 +54,9 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/lib/supabase';
+import { randomSuffixHex } from '@/lib/random';
+import type { TotpFactor } from '@/lib/mfaTypes';
 import { TWO_FACTOR_SETUP_LABELS as LABELS } from '@/lib/copy';
-
-interface TotpFactor {
-  id: string;
-  friendly_name?: string;
-  status: 'verified' | 'unverified';
-  created_at: string;
-}
 
 interface EnrollmentData {
   factorId: string;
@@ -64,18 +81,19 @@ function authErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
-function defaultFriendlyName(existingNames: string[]): string {
+/**
+ * Item 20/A2-3: ALWAYS carries a random suffix (not just on a detected
+ * collision) so a deterministic per-day name can never collide with a
+ * same-day re-enrollment attempt — including a factor that was deleted
+ * and is therefore no longer in the currently-visible list, and a race
+ * between two enrollment attempts computing the same base name at once.
+ * A genuine server-side collision is still handled (mfa_factor_name_conflict
+ * -> ERROR_NAME_CONFLICT, suggesting retry — which generates a fresh
+ * random suffix).
+ */
+function defaultFriendlyName(): string {
   const dateStr = new Date().toISOString().slice(0, 10);
-  const base = LABELS.DEFAULT_FACTOR_NAME(dateStr);
-  if (!existingNames.includes(base)) return base;
-
-  let suffix = 2;
-  let candidate = `${base} (${suffix})`;
-  while (existingNames.includes(candidate)) {
-    suffix += 1;
-    candidate = `${base} (${suffix})`;
-  }
-  return candidate;
+  return `${LABELS.DEFAULT_FACTOR_NAME(dateStr)}-${randomSuffixHex()}`;
 }
 
 function formatCreatedDate(iso: string): string {
@@ -111,7 +129,13 @@ export function TwoFactorSetup() {
       setView('list');
       return [];
     }
-    const list = (data.totp ?? []) as TotpFactor[];
+    // Item 1/E1: `data.totp` is VERIFIED-ONLY (auth-js pushes to it only
+    // when status === 'verified'); unverified factors exist ONLY in
+    // `data.all`. Read `data.all` filtered to this component's factor type
+    // so an incomplete setup still renders and stays removable.
+    const list = (data.all ?? []).filter(
+      (f): f is TotpFactor => f.factor_type === 'totp',
+    );
     setFactors(list);
     setView('list');
     return list;
@@ -124,75 +148,99 @@ export function TwoFactorSetup() {
     void run();
   }, [refreshFactors]);
 
-  const performEnroll = useCallback(async (name: string) => {
-    setBusy(true);
-    const { data, error: enrollError } = await supabase.auth.mfa.enroll({
-      factorType: 'totp',
-      friendlyName: name,
-    });
-    setBusy(false);
+  const performEnroll = useCallback(
+    async (name: string) => {
+      setBusy(true);
+      try {
+        const { data, error: enrollError } = await supabase.auth.mfa.enroll({
+          factorType: 'totp',
+          friendlyName: name,
+        });
+        setBusy(false);
 
-    if (enrollError || !data) {
-      const code = authErrorCode(enrollError);
-      if (code === 'insufficient_aal') {
-        setPendingAction({ type: 'enroll', friendlyName: name });
-        setView('stepUp');
-        return;
-      }
-      if (code === 'mfa_factor_name_conflict') {
-        setError(LABELS.ERROR_NAME_CONFLICT);
-        setView('list');
-        return;
-      }
-      if (code === 'mfa_totp_enroll_not_enabled') {
-        setNotice(LABELS.UNAVAILABLE);
-        setView('list');
-        return;
-      }
-      setError(LABELS.ERROR_GENERIC);
-      setView('list');
-      return;
-    }
+        if (enrollError || !data) {
+          const code = authErrorCode(enrollError);
+          if (code === 'insufficient_aal') {
+            setPendingAction({ type: 'enroll', friendlyName: name });
+            setView('stepUp');
+            return;
+          }
+          if (code === 'mfa_factor_name_conflict') {
+            setError(LABELS.ERROR_NAME_CONFLICT);
+            setView('list');
+            return;
+          }
+          if (code === 'mfa_totp_enroll_not_enabled') {
+            setNotice(LABELS.UNAVAILABLE);
+            setView('list');
+            return;
+          }
+          if (code === 'mfa_verified_factor_exists') {
+            // Item 19/A2-2 (Amendment A2 ruling c): a verified factor now
+            // exists that this component's stale local state didn't know
+            // about — refresh and show it rather than a raw error.
+            await refreshFactors();
+            return;
+          }
+          setError(LABELS.ERROR_GENERIC);
+          setView('list');
+          return;
+        }
 
-    setEnrollment({
-      factorId: data.id,
-      qrCode: data.totp.qr_code,
-      secret: data.totp.secret,
-      friendlyName: name,
-    });
-    setVerifyCode('');
-    setView('enrolling');
-  }, []);
+        setEnrollment({
+          factorId: data.id,
+          qrCode: data.totp.qr_code,
+          secret: data.totp.secret,
+          friendlyName: name,
+        });
+        setVerifyCode('');
+        setView('enrolling');
+      } catch {
+        // Item 3/E3: a thrown exception (network failure) must not leave
+        // `busy` stuck true forever.
+        setBusy(false);
+        setError(LABELS.ERROR_GENERIC);
+        setView('list');
+      }
+    },
+    [refreshFactors]
+  );
 
   const startEnroll = useCallback(() => {
     setError(null);
     setNotice(null);
-    const name = defaultFriendlyName(
-      factors.map((f) => f.friendly_name).filter((n): n is string => Boolean(n)),
-    );
-    void performEnroll(name);
-  }, [factors, performEnroll]);
+    void performEnroll(defaultFriendlyName());
+  }, [performEnroll]);
 
-  const performUnenroll = useCallback(async (factorId: string) => {
-    setBusy(true);
-    const { error: unenrollError } = await supabase.auth.mfa.unenroll({ factorId });
-    setBusy(false);
+  const performUnenroll = useCallback(
+    async (factorId: string) => {
+      setBusy(true);
+      try {
+        const { error: unenrollError } = await supabase.auth.mfa.unenroll({ factorId });
+        setBusy(false);
 
-    if (unenrollError) {
-      const code = authErrorCode(unenrollError);
-      if (code === 'insufficient_aal') {
-        setPendingAction({ type: 'unenroll', factorId });
-        setView('stepUp');
-        return;
+        if (unenrollError) {
+          const code = authErrorCode(unenrollError);
+          if (code === 'insufficient_aal') {
+            setPendingAction({ type: 'unenroll', factorId });
+            setView('stepUp');
+            return;
+          }
+          setError(LABELS.ERROR_GENERIC);
+          setView('list');
+          return;
+        }
+
+        await safeRefreshSession();
+        await refreshFactors();
+      } catch {
+        setBusy(false);
+        setError(LABELS.ERROR_GENERIC);
+        setView('list');
       }
-      setError(LABELS.ERROR_GENERIC);
-      setView('list');
-      return;
-    }
-
-    await safeRefreshSession();
-    await refreshFactors();
-  }, [refreshFactors]);
+    },
+    [refreshFactors]
+  );
 
   const handleRemove = useCallback((factor: TotpFactor) => {
     setError(null);
@@ -200,40 +248,65 @@ export function TwoFactorSetup() {
     void performUnenroll(factor.id);
   }, [performUnenroll]);
 
-  const handleVerify = useCallback(async () => {
-    if (!enrollment || verifyCode.length !== 6) return;
-
-    setBusy(true);
+  // Item 21/A2-4: Cancel during enrollment unenrolls the just-created
+  // factor. Always legal at aal1 — it is still unverified — so it never
+  // needs the step-up flow, and never leaves an invisible orphan behind.
+  // Deliberately does NOT clear `enrollment` up front: `view` stays
+  // 'enrolling' until `performUnenroll`'s own success path calls
+  // `refreshFactors()` (which sets `view` to 'list'), so the QR/Cancel
+  // button stay visible — merely disabled via `busy` — instead of the
+  // screen going blank for the 'enrolling'-view-with-no-enrollment-data gap
+  // that clearing it early would create.
+  const cancelEnrollment = useCallback(() => {
+    if (!enrollment) return;
     setError(null);
+    setNotice(null);
+    void performUnenroll(enrollment.factorId);
+  }, [enrollment, performUnenroll]);
 
-    const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-      factorId: enrollment.factorId,
-    });
+  const handleVerify = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      if (!enrollment || verifyCode.length !== 6) return;
 
-    if (challengeError || !challengeData) {
-      setBusy(false);
-      setError(LABELS.ERROR_GENERIC);
-      return;
-    }
+      setBusy(true);
+      setError(null);
 
-    const { error: verifyError } = await supabase.auth.mfa.verify({
-      factorId: enrollment.factorId,
-      challengeId: challengeData.id,
-      code: verifyCode,
-    });
+      try {
+        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+          factorId: enrollment.factorId,
+        });
 
-    setBusy(false);
+        if (challengeError || !challengeData) {
+          setBusy(false);
+          setError(LABELS.ERROR_GENERIC);
+          return;
+        }
 
-    if (verifyError) {
-      setError(LABELS.ERROR_STEP_UP_FAILED);
-      return;
-    }
+        const { error: verifyError } = await supabase.auth.mfa.verify({
+          factorId: enrollment.factorId,
+          challengeId: challengeData.id,
+          code: verifyCode,
+        });
 
-    await safeRefreshSession();
-    setEnrollment(null);
-    setVerifyCode('');
-    await refreshFactors();
-  }, [enrollment, verifyCode, refreshFactors]);
+        setBusy(false);
+
+        if (verifyError) {
+          setError(LABELS.ERROR_STEP_UP_FAILED);
+          return;
+        }
+
+        await safeRefreshSession();
+        setEnrollment(null);
+        setVerifyCode('');
+        await refreshFactors();
+      } catch {
+        setBusy(false);
+        setError(LABELS.ERROR_GENERIC);
+      }
+    },
+    [enrollment, verifyCode, refreshFactors]
+  );
 
   const cancelStepUp = useCallback(() => {
     setPendingAction(null);
@@ -242,43 +315,58 @@ export function TwoFactorSetup() {
     setView('list');
   }, []);
 
-  const handleStepUpSubmit = useCallback(async () => {
-    if (!pendingAction || stepUpCode.length !== 6) return;
+  const handleStepUpSubmit = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      if (!pendingAction || stepUpCode.length !== 6) return;
 
-    const verifiedFactorForStepUp = factors.find((f) => f.status === 'verified');
-    if (!verifiedFactorForStepUp) {
-      // Should not happen — insufficient_aal only occurs when a verified factor exists.
-      setError(LABELS.ERROR_GENERIC);
-      setPendingAction(null);
-      setView('list');
-      return;
-    }
+      const verifiedFactorForStepUp = factors.find((f) => f.status === 'verified');
+      if (!verifiedFactorForStepUp) {
+        // Should not happen — insufficient_aal only occurs when a verified factor exists.
+        setError(LABELS.ERROR_GENERIC);
+        setPendingAction(null);
+        setView('list');
+        return;
+      }
 
-    setBusy(true);
-    setError(null);
+      setBusy(true);
+      setError(null);
 
-    const { error: stepUpError } = await supabase.auth.mfa.challengeAndVerify({
-      factorId: verifiedFactorForStepUp.id,
-      code: stepUpCode,
-    });
+      try {
+        const { error: stepUpError } = await supabase.auth.mfa.challengeAndVerify({
+          factorId: verifiedFactorForStepUp.id,
+          code: stepUpCode,
+        });
 
-    setBusy(false);
+        setBusy(false);
 
-    if (stepUpError) {
-      setError(LABELS.ERROR_STEP_UP_FAILED);
-      return;
-    }
+        if (stepUpError) {
+          setError(LABELS.ERROR_STEP_UP_FAILED);
+          return;
+        }
 
-    setStepUpCode('');
-    const action = pendingAction;
-    setPendingAction(null);
+        // Item 22/A2-5 (Amendment A4-8): refresh the JWT aal claim to aal2
+        // IMMEDIATELY — do not rely solely on the retried action's own
+        // eventual safeRefreshSession() call, which never runs if that
+        // retry short-circuits on a DIFFERENT error before reaching it.
+        await safeRefreshSession();
 
-    if (action.type === 'enroll') {
-      await performEnroll(action.friendlyName);
-    } else {
-      await performUnenroll(action.factorId);
-    }
-  }, [pendingAction, stepUpCode, factors, performEnroll, performUnenroll]);
+        setStepUpCode('');
+        const action = pendingAction;
+        setPendingAction(null);
+
+        if (action.type === 'enroll') {
+          await performEnroll(action.friendlyName);
+        } else {
+          await performUnenroll(action.factorId);
+        }
+      } catch {
+        setBusy(false);
+        setError(LABELS.ERROR_GENERIC);
+      }
+    },
+    [pendingAction, stepUpCode, factors, performEnroll, performUnenroll]
+  );
 
   const hasVerifiedFactor = factors.some((f) => f.status === 'verified');
   const canAddMoreFactors = factors.length < MAX_TOTAL_FACTORS;
@@ -380,7 +468,7 @@ export function TwoFactorSetup() {
         )}
 
         {view === 'enrolling' && enrollment && (
-          <div className="space-y-4">
+          <form onSubmit={handleVerify} className="space-y-4">
             <div className="space-y-1">
               <Label htmlFor="twofactor-friendly-name">{LABELS.FRIENDLY_NAME_LABEL}</Label>
               <Input
@@ -419,25 +507,40 @@ export function TwoFactorSetup() {
                 value={verifyCode}
                 onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder={LABELS.VERIFY_CODE_PLACEHOLDER}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]*"
                 maxLength={6}
+                disabled={busy}
                 className="font-mono text-center text-lg tracking-widest"
               />
             </div>
 
-            <Button
-              data-testid="twofactor-verify-submit"
-              onClick={handleVerify}
-              disabled={busy || verifyCode.length !== 6}
-              className="w-full"
-            >
-              {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {LABELS.VERIFY_SUBMIT}
-            </Button>
-          </div>
+            <div className="flex gap-2">
+              <Button
+                type="submit"
+                data-testid="twofactor-verify-submit"
+                disabled={busy || verifyCode.length !== 6}
+                className="flex-1"
+              >
+                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {LABELS.VERIFY_SUBMIT}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                data-testid="twofactor-cancel-enrollment"
+                onClick={cancelEnrollment}
+                disabled={busy}
+              >
+                {LABELS.STEP_UP_CANCEL}
+              </Button>
+            </div>
+          </form>
         )}
 
         {view === 'stepUp' && (
-          <div data-testid="twofactor-stepup" className="space-y-4">
+          <form onSubmit={handleStepUpSubmit} data-testid="twofactor-stepup" className="space-y-4">
             <p className="text-sm font-medium">{LABELS.STEP_UP_TITLE}</p>
             <p className="text-sm text-muted-foreground">{LABELS.STEP_UP_DESCRIPTION}</p>
             <div className="space-y-2">
@@ -448,14 +551,17 @@ export function TwoFactorSetup() {
                 value={stepUpCode}
                 onChange={(e) => setStepUpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder={LABELS.VERIFY_CODE_PLACEHOLDER}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]*"
                 maxLength={6}
                 className="font-mono text-center text-lg tracking-widest"
               />
             </div>
             <div className="flex gap-2">
               <Button
+                type="submit"
                 data-testid="twofactor-stepup-submit"
-                onClick={handleStepUpSubmit}
                 disabled={busy || stepUpCode.length !== 6}
                 className="flex-1"
               >
@@ -472,7 +578,7 @@ export function TwoFactorSetup() {
                 {LABELS.STEP_UP_CANCEL}
               </Button>
             </div>
-          </div>
+          </form>
         )}
       </CardContent>
     </Card>

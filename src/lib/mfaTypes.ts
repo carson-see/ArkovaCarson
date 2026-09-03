@@ -15,4 +15,5 @@ export interface TotpFactor {
   friendly_name?: string;
   status: 'verified' | 'unverified';
   created_at: string;
+  updated_at: string;
 }
