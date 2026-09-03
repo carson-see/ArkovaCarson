@@ -175,6 +175,21 @@ done
 
 echo "Migration filenames fixed."
 
+# --- CI-only: strip CONCURRENTLY from index DDL ---
+# Supabase CLI 2.x applies each migration through a pgx pipeline, and Postgres
+# refuses `CREATE/DROP INDEX CONCURRENTLY` inside a pipeline/transaction
+# (SQLSTATE 25001: "cannot be executed within a pipeline"). CLI 1.123.0 sent the
+# statements one by one, which is why twelve migrations (0313, 0330, 0335, 0342,
+# 0346, 0350, 0354, 0365, 0366, 0381, 0389 + the baseline) carry CONCURRENTLY
+# for prod's zero-downtime apply. The CI stack is an empty throwaway database, so
+# a blocking index build is equivalent here. This rewrite is applied to the CI
+# checkout only and is never committed.
+echo "Stripping CONCURRENTLY from index DDL for the CI stack..."
+concurrently_count=$(grep -l -iE 'INDEX CONCURRENTLY' "$MIGRATIONS_DIR"/*.sql 2>/dev/null | wc -l | tr -d ' ')
+perl -pi -e 's/\b(CREATE\s+(?:UNIQUE\s+)?INDEX)\s+CONCURRENTLY\b/$1/ig; s/\b(DROP\s+INDEX)\s+CONCURRENTLY\b/$1/ig; s/\b(REINDEX\s+(?:INDEX|TABLE|SCHEMA))\s+CONCURRENTLY\b/$1/ig' "$MIGRATIONS_DIR"/*.sql
+echo "  Rewrote CONCURRENTLY index DDL in ${concurrently_count} migration file(s) (CI checkout only)"
+
+
 # --- Escape Docker Hub anonymous rate limits (TOOMANYREQUESTS) in CI ---
 # The Supabase stack (`supabase start`) AND `supabase gen types --local` pull
 # images from docker.io. The shared GitHub-runner IP pool routinely trips the
