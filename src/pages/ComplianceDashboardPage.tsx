@@ -41,6 +41,19 @@ import { RecommendationsCard } from '@/components/compliance/RecommendationsCard
 import { ProfessionalEducationExportPanel } from '@/components/compliance/ProfessionalEducationExportPanel';
 import { OrgCpeMemberDashboard } from '@/components/compliance/OrgCpeMemberDashboard';
 import { useComplianceScore, useJurisdictionRules } from '@/hooks/useComplianceScore';
+import { DataErrorBanner } from '@/components/DataErrorBanner';
+
+/**
+ * SCRUM-3670 — local copy constants for the jurisdiction-rules load-error
+ * state. `src/lib/copy.ts` is the canonical home (CLAUDE.md §1.3) but is
+ * locked under concurrent PRs for this change (same precedent as
+ * `ReportsList.tsx`'s REPORTS_STATE_COPY); these strings are free of banned
+ * terms. Generic copy only — the hook's raw fetch error is never rendered.
+ */
+const RULES_ERROR_COPY = {
+  TITLE: "Couldn't load compliance options",
+  BODY: 'Jurisdiction and industry options could not be loaded. Please try again.',
+} as const;
 
 type Attestation = Database['public']['Tables']['attestations']['Row'];
 
@@ -362,7 +375,7 @@ export function ComplianceDashboardPage() {
   // NCE: Compliance scoring state
   const [selectedJurisdiction, setSelectedJurisdiction] = useState('US-CA');
   const [selectedIndustry, setSelectedIndustry] = useState('accounting');
-  const { jurisdictions, industries } = useJurisdictionRules();
+  const { jurisdictions, industries, error: rulesError, refetch: refetchRules } = useJurisdictionRules();
   const { scoreData, gapData, loading: scoreLoading } = useComplianceScore(selectedJurisdiction, selectedIndustry);
 
   const fetchData = useCallback(async () => {
@@ -702,6 +715,19 @@ export function ComplianceDashboardPage() {
                   <p className="text-sm text-muted-foreground">
                     {scoreData.total_present} of {scoreData.total_required} required documents present
                   </p>
+                )}
+
+                {/* SCRUM-3670 — surface a failed rules fetch instead of
+                    silently empty pickers. The selects stay mounted: their
+                    US-CA / accounting fallback options still drive the score
+                    card while the failure is being retried. */}
+                {rulesError && (
+                  <DataErrorBanner
+                    data-testid="compliance-rules-error-banner"
+                    title={RULES_ERROR_COPY.TITLE}
+                    message={RULES_ERROR_COPY.BODY}
+                    onRetry={() => void refetchRules()}
+                  />
                 )}
 
                 {/* Jurisdiction + Industry selectors */}
