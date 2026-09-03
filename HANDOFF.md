@@ -241,6 +241,23 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
 > head is a §1.12 residual-risk call and is NOT decided here — do not claim the soak for
 > `99ea75fbf`.**
 
+### Auth — MFA (2026-09-03, verified live)
+
+- **Production Supabase Auth TOTP MFA is ENABLED as of 2026-09-03T01:28:39Z** — `mfa_totp_enroll_enabled=true`,
+  `mfa_totp_verify_enabled=true`, factor enrolled/unenrolled notification mails on. Set by Management API
+  `PATCH /v1/projects/vzwyaatejekddvltxyye/config/auth` (HTTP 200) and re-read by GET; before the PATCH both TOTP
+  flags read `false`, which is why the opt-in Settings card never worked in prod and why PR #1973 locked admins out
+  on 2026-08-03. Verified by a real enroll → challenge → verify → aal2 → unenroll round trip on the UAT demo account
+  at 2026-09-03T01:29:07Z (10/10 steps PASS, account left with 0 factors). Evidence and config before/after tables:
+  [SCRUM-3167 comment 19082](https://arkova.atlassian.net/browse/SCRUM-3167?focusedCommentId=19082).
+  Still off (founder-reserved): leaked-password protection, `password_min_length` (6). Rollback: PATCH the four
+  fields back to `false`.
+- **Nothing is enforced yet.** 0 verified factors, 0 aal2 sessions in prod. Enforcement (role-based gate for
+  ORG_ADMIN + platform admins, grace window to 2026-09-21, fail-open on any platform error, backup factor UX,
+  operator break-glass) is in progress on `security/mfa-enforcement-3167` (SCRUM-3167 / SCRUM-3584, both In Progress).
+  Docs corrected to production truth in `d6cda8cd7`; local/CI `supabase/config.toml` TOTP on in `010666caf`;
+  CI e2e job needs Supabase CLI 2.x (PR #2631) because CLI 1.123.0 ignores `[auth.mfa]`.
+
 ### Prod
 
 - **Worker `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`, revision `arkova-worker-01322-tol`
@@ -1096,7 +1113,7 @@ the path is `/health` only" was true before that alias landed and is false now. 
 answer (prod runs `minScale=2`), so the `uptime` field differs between calls to the two paths — that
 is two containers, not two services.
 
-_Last refreshed: 2026-08-30 by Claude Sonnet 5 — claims verified against gcloud/MCP/CI output.
+_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against Supabase Management API GET, MCP SQL, and the recorded prod round trip._
 Scope: the "Bug — Adobe Sign webhooks" addendum only — earlier readings keep their own dates.
 `org_integrations.webhook_id` absence on prod confirmed via the Supabase Management API,
 `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name
