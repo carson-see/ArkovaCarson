@@ -29,6 +29,21 @@ const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as {
   repository?: { type: string; url: string; directory: string };
 };
 
+// Sibling package this monorepo publishes in lockstep (see the version
+// test below) — read its declared version rather than re-hardcoding it,
+// so the two package.json files stay the single source of truth instead
+// of a third copy of the number drifting out of sync with both.
+const mcpServerPkgPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  'sdks',
+  'mcp-server',
+  'package.json',
+);
+const mcpServerPkg = JSON.parse(readFileSync(mcpServerPkgPath, 'utf-8')) as { version: string };
+
 const BANNED_TERMS = /\b(wallet|gas|hash|block|transaction|crypto|blockchain|bitcoin|testnet|mainnet|utxo|broadcast)\b/i;
 
 describe('packages/sdk package.json metadata', () => {
@@ -42,8 +57,12 @@ describe('packages/sdk package.json metadata', () => {
     expect(pkg.description).not.toMatch(BANNED_TERMS);
   });
 
-  it('is version 2.2.0, matching the published arkova-mcp-server and PyPI arkova packages', () => {
-    expect(pkg.version).toBe('2.2.0');
+  it('has a version matching the published sibling arkova-mcp-server package', () => {
+    // PyPI's `arkova` is a separate package outside this repo and can't be
+    // read here, so this checks the one sibling version we can — the two
+    // npm packages published from this monorepo — rather than pinning a
+    // literal that has to be bumped by hand in three places in lockstep.
+    expect(pkg.version).toBe(mcpServerPkg.version);
   });
 
   it('has a repository field pointing at the monorepo, matching the sibling mcp-server package', () => {
