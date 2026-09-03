@@ -1,6 +1,6 @@
 # packages/verifier/agents.md
 
-`@arkova/verifier` — standalone, **zero-Arkova-dependency** Bitcoin anchor verifier (PROOF-07, PI-0 Sprint 2 / Lane 1).
+`arkova-verifier` — standalone, **zero-Arkova-dependency** Bitcoin anchor verifier (PROOF-07, PI-0 Sprint 2 / Lane 1).
 
 ## Purpose
 The PROOF-07 verifier CLI imports `confirmInclusion()` from here to confirm an
@@ -60,3 +60,17 @@ timestamp (§1.5 — measured vs asserted).
 
 ## Licensing
 - **`LICENSE`** (2026-07-28, engineering-counsel review): MIT text copied verbatim from `packages/verifier-cli/LICENSE`. Listed in `package.json` `files` so it actually ships in the published tarball. See `scripts/security/package-license-files.test.ts`.
+
+## Publishing
+- npm name is the **unscoped `arkova-verifier`**. The `@arkova` scope does not
+  exist and is not being created — matching `arkova` / `arkova-mcp-server`,
+  already published unscoped under the same account (and the founder ruling
+  recorded in `scripts/publish-packages.sh`). Unscoped public is the default, so
+  **no `--access public` and no `publishConfig`** are needed.
+- **`README.md` must stay in `package.json` `files`.** It is not implicit: with
+  `files: ["dist", "LICENSE"]` the tarball shipped 6 files and no README, and the
+  npm page rendered blank — for a package whose whole purpose is independent
+  verifiability. Same rule as `LICENSE` above.
+- This package publishes **first**; `arkova-verifier-cli` depends on it and
+  publishes second. Ordered runbook: [`../verifier-cli/PUBLISHING.md`](../verifier-cli/PUBLISHING.md).
+- `prepack` runs the build, so `npm publish` cannot ship a stale `dist/`.

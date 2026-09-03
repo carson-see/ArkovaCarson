@@ -38,3 +38,20 @@ Developer-facing API documentation. Engineering mirrors and guides for the Arkov
   `public/.well-known/mcp/server-card.json` mirrors them again. **Nothing checks the three for text
   parity** (`tests/infra/mcp-manifest-parity.test.ts` covers names and schemas only), so edit them
   together, by hand, in the same change.
+
+## DI-775 / SCRUM-3538 — `webhooks.md` event tables are CI-checked against the worker
+
+The event-type tables in `webhooks.md` are a registration surface, not just prose: an event Arkova
+dispatches but does not document is the same defect class as one it does not offer in the picker.
+`scripts/ci/check-webhook-event-registration-drift.ts` now parses the first cell of every event-table
+row and compares that set against `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in
+`services/worker/src/webhooks/payload-schemas.ts`, in the required root `Tests` job.
+
+Two consequences for edits here. A **prose mention** of an event does not satisfy the check — only a
+table row does, deliberately, since the tables cross-reference sibling events inside their own
+cells. And a per-event payload `data` paragraph belongs under the family heading whose table lists
+it (`anchor.superseded` sits under Anchor Lifecycle, not Compliance).
+
+When wording a row, keep "subscribable since <story>" honest: the CRUD allowlist is derived from the
+worker schema map, so an event is API-subscribable from the moment its schema is registered, which
+may be long before any UI or SDK lists it.

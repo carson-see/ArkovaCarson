@@ -44,7 +44,7 @@ Domain-specific React components organized by feature area. Each subfolder has a
 | `vault/` | Vault dashboard | VaultDashboard |
 | `verification/` | Public verification | PublicVerification (5-section result display) |
 | `verify/` | Verification form | VerificationForm |
-| `webhooks/` | Webhook config | WebhookSettings — `AVAILABLE_EVENTS` mirrors `services/worker/src/api/v1/webhooks-schemas.ts` `VALID_WEBHOOK_EVENTS`. Anchor.* are stable; credential.* are SCRUM-1743 contract-defined with "(coming soon)" labels until Phase-2 emit-points wire. Keep the two arrays in sync when shipping new event types. |
+| `webhooks/` | Webhook config | WebhookSettings — `AVAILABLE_EVENTS` mirrors `services/worker/src/api/v1/webhooks-schemas.ts` `VALID_WEBHOOK_EVENTS`. Anchor.* are stable; credential.issued + credential.status_changed emit live (SCRUM-1798/1800 — no "(coming soon)"); credential.verified alone keeps the "(coming soon)" label while `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` stays off in prod. Liveness source of truth: `webhooks/WebhookEventCatalog.tsx` `CATALOG_DATA` (test-pinned). Keep the two arrays in sync when shipping new event types. |
 | `ui/` | shadcn/ui primitives | Do not edit — managed by shadcn CLI |
 
 ## Do / Don't Rules

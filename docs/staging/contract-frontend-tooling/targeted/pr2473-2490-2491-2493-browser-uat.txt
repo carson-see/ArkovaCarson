@@ -1,0 +1,50 @@
+### Browser UAT (CLAUDE.md §0 rule 6) — 1280px + 375px, Playwright against a LOCAL vite build
+### backed by the ISOLATED RIG's Supabase project (udpzylbccncnwvhbfjsu), not a local stack.
+### The shared local Supabase containers were left untouched (another session owns them).
+captured_at: 2026-08-30T22:40:11Z
+
+── PR #2473 — DocuSign record deep links (uat/pr2473-record-detail-docusign-{1280,375}.png)
+Fixture anchor cf700000-0000-4000-8000-0000000000d5 (ARK-CFT-DOCUSIGN), metadata written
+service-role with connector_source=docusign, a real account_id/envelope_id and TWO _signers.
+Read from the DOM at /records/<id>, viewport 1280x900:
+  docusign-account-link   href=https://apps.docusign.com/send/home?account=11111111-2222-4333-8444-555555555555
+                          target=_blank  rel="noopener noreferrer"
+  docusign-envelope-link  href=https://apps.docusign.com/send/documents/details/66666666-7777-4888-8999-aaaaaaaaaaaa
+                          target=_blank  rel="noopener noreferrer"
+  docusign-signer-row     count=2  ("Signer 1 · Verified via DocuSign", "Signer 2 · Verified via DocuSign")
+  docusign-signer-link-0  href=.../details/bbbbbbbb-cccc-4ddd-8eee-ffffffffffff
+  docusign-signer-link-1  href=.../details/cccccccc-dddd-4eee-8fff-000000000000
+At 375x812: account link visible, both signer rows visible, horizontal overflow: none.
+
+── PR #2493 — /legal/third-party-notices (uat/pr2493-third-party-notices-{1280,375}.png)
+  14 @img/sharp-* copyleft entries render, each with its LGPL-3.0-or-later declaration, the
+  statusNote, the repository + npm sourceUrl, and BOTH canonical GNU texts linked
+  (https://www.gnu.org/licenses/lgpl-3.0.txt , https://www.gnu.org/licenses/gpl-3.0.txt).
+  licenseTextNote rendered verbatim: "LGPL-3.0 incorporates the GNU General Public License v3
+  by reference (LGPL-3.0 §2); both texts are linked."
+  jszip@3.10.1 renders its copyright line AND, inside a "View license text" <details>, 33,768
+  characters of verbatim license body including the full GNU GENERAL PUBLIC LICENSE text.
+  214 collapsible license-text blocks on the page in total. No horizontal overflow at 375px.
+  SCOPE (see pr2493-third-party-notices.txt §c): the @img/sharp-* tarballs ship NO LICENSE file,
+  so there is no verbatim sharp text to embed — the page serves the declaration + note + links
+  for those, and verbatim text only where a LICENSE file exists.
+
+── PR #2491 — forced fetch failure (uat/pr2491-dashboard-fetch-error-{1280,375}.png)
+  window.fetch patched to reject every /rest/v1/anchors call with TypeError('Failed to fetch').
+  21 anchors requests were rejected. At /dashboard the page rendered:
+    [data-testid="records-fetch-error-banner"]  role="alert"
+    "Records fetch failed / Failed to load records. Please try again. / Retry"
+  showsOnboardingEmptyState: false   leaksRawPostgrestText: false
+  At 375x812 the banner is present (293px wide) with no horizontal overflow.
+  On /records the same forced failure surfaced "Failed to load records. Please try again."
+  rather than an empty list.
+
+── PR #2490 — invite against a failing backend (uat/pr2490-invite-failure-1280.png)
+  window.fetch patched so /rest/v1/rpc/invite_member returns HTTP 403
+  {"code":"42501","message":"permission denied for function invite_member"} (1 call intercepted).
+  Signed in as demo-admin@arkova.local (ORG_ADMIN, Acme Corporation), People tab ->
+  Invite Member -> cft-soak-invitee@arkova-uat.dev -> Send Invitation. Result:
+    modal STAYS OPEN
+    role="alert" inside the modal: "Failed to send invitation. Please try again."
+    body mentions success: FALSE
+  i.e. the modal surfaces the failure instead of reporting success and closing.

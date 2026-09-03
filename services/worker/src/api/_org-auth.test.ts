@@ -23,6 +23,7 @@ import {
   isUserMemberOfOrg,
   isCallerOrgAdmin,
   getCallerOrgId,
+  getCallerProfileResult,
   getCallerOrgIdResult,
   isCallerOrgAdminResult,
   isUserMemberOfOrgResult,
@@ -165,6 +166,27 @@ describe('getCallerOrgId', () => {
 });
 
 // ─── *Result variants: 403-vs-500 signal (PR #1045 review) ───
+describe('getCallerProfileResult', () => {
+  it('returns the whole profile row with error:false on success', async () => {
+    const profile = { org_id: 'org-A', role: 'ORG_ADMIN', is_platform_admin: false };
+    routeTables({ profiles: { data: profile, error: null } });
+    expect(await getCallerProfileResult('admin')).toEqual({ value: profile, error: false });
+  });
+
+  it('reports a true negative (no profile row) WITHOUT an error', async () => {
+    routeTables({ profiles: { data: null, error: null } });
+    expect(await getCallerProfileResult('ghost')).toEqual({ value: null, error: false });
+  });
+
+  it('reports error:true (operational) when the profile lookup errors', async () => {
+    // requireScopeAnyAuth maps this to 500 — a transient lookup failure must
+    // never be read as "this caller holds no scopes".
+    routeTables({ profiles: { data: null, error: { message: 'boom' } } });
+    expect(await getCallerProfileResult('admin')).toEqual({ value: null, error: true });
+    expect(logger.warn).toHaveBeenCalled();
+  });
+});
+
 describe('getCallerOrgIdResult', () => {
   it('reports a true negative (no org) WITHOUT an error', async () => {
     routeTables({ profiles: { data: { org_id: null, role: 'INDIVIDUAL', is_platform_admin: false }, error: null } });

@@ -20,9 +20,11 @@ import {
   findViolations,
   loadBaseline,
   realMigrations,
+  findMissingReplayParityRevokes,
   SQUASHED_BASELINE,
   DELIBERATELY_PUBLIC,
   DELIBERATELY_AUTHENTICATED,
+  REPLAY_PARITY_REVOKES,
 } from './secdef-function-grants.js';
 
 const SECDEF = `
@@ -484,5 +486,125 @@ describe('repo-wide ratchet', () => {
     const live = new Set(violations.map((v) => v.key));
     const stale = [...baseline].filter((k) => !live.has(k));
     expect(stale, 'baseline entries that no longer violate — delete them').toEqual([]);
+  });
+});
+
+/**
+ * REPLAY-PARITY REVOKES (FD-17 class, second instance).
+ *
+ * The same-file requirement above is right for the ordinary case, but there is
+ * a family of functions it structurally cannot cover: those whose LAST
+ * definition sits in a file nobody is allowed to edit — the generated squashed
+ * baseline, or an already-merged numbered migration. For those the closing
+ * REVOKE has to live in a LATER migration, and the only meaningful question is
+ * whether an ordered replay ENDS with the function closed.
+ *
+ * `hasReplayPathRevoke` already CREDITS such a revoke while scanning the file
+ * that declares the function. What it cannot do is ASSERT the revoke is still
+ * there: the compensating migration declares nothing, so the per-file rule never
+ * looks at it, and deleting it would keep the suite green while every rebuilt
+ * environment silently reopened the hole. Pinning is what closes that gap.
+ */
+describe('replay-parity revokes', () => {
+  const DEF = '00000000000000_baseline_at_main_HEAD.sql';
+  const PINNED = new Map([['public.widget_count', 'test fixture']]);
+
+  const baselineFile = { file: DEF, sql: SECDEF };
+  const revokeFile = (name: string) => ({
+    file: name,
+    sql: 'REVOKE ALL ON FUNCTION public.widget_count(integer) FROM PUBLIC, anon, authenticated;\n' +
+      'GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO service_role;\n',
+  });
+
+  it('flags a pinned function that no later migration revokes', () => {
+    const v = findMissingReplayParityRevokes([baselineFile], PINNED);
+    expect(v.map((x) => x.fn)).toEqual(['public.widget_count']);
+  });
+
+  it('accepts a compliant revoke in a later migration', () => {
+    const v = findMissingReplayParityRevokes([baselineFile, revokeFile('0418_x.sql')], PINNED);
+    expect(v).toEqual([]);
+  });
+
+  it('rejects a revoke that names only PUBLIC — the direct grants survive it', () => {
+    const publicOnly = {
+      file: '0418_x.sql',
+      sql: 'REVOKE ALL ON FUNCTION public.widget_count(integer) FROM PUBLIC;',
+    };
+    expect(findMissingReplayParityRevokes([baselineFile, publicOnly], PINNED)).toHaveLength(1);
+  });
+
+  it('rejects a revoke that sorts BEFORE the last definition of the function', () => {
+    // 0335-style: a merged migration re-defines the function after the revoke,
+    // and CREATE OR REPLACE re-runs ALTER DEFAULT PRIVILEGES.
+    const v = findMissingReplayParityRevokes(
+      [baselineFile, revokeFile('0100_early.sql'), { file: '0335_redefine.sql', sql: SECDEF }],
+      PINNED,
+    );
+    expect(v).toHaveLength(1);
+  });
+
+  it('rejects a later migration that grants EXECUTE back to anon', () => {
+    const regrant = {
+      file: '0418_regrant.sql',
+      sql: 'GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO anon;',
+    };
+    const v = findMissingReplayParityRevokes(
+      [baselineFile, revokeFile('0418_x.sql'), regrant],
+      PINNED,
+    );
+    expect(v).toHaveLength(1);
+  });
+
+  it('does not credit a revoke aimed at a DIFFERENT function', () => {
+    const other = {
+      file: '0418_x.sql',
+      sql: 'REVOKE ALL ON FUNCTION public.widget_count_fast(integer) FROM PUBLIC, anon, authenticated;',
+    };
+    expect(findMissingReplayParityRevokes([baselineFile, other], PINNED)).toHaveLength(1);
+  });
+
+  it('suppresses only the squashed-baseline key, never a numbered migration key', () => {
+    // The numbered migration that re-defines the function keeps its own
+    // violation: the NEXT re-definition would reopen what the later revoke
+    // closed, so its author still has to write the revoke inline.
+    const files = [
+      baselineFile,
+      { file: '0335_redefine.sql', sql: SECDEF },
+      revokeFile('0418_x.sql'),
+    ];
+    // Suppression of the baseline key is `hasReplayPathRevoke`'s job (it credits
+    // the later revoke for any baseline-defined function), not the pin's. The pin
+    // is what makes DELETING that later revoke fail — see the ratchet block below.
+    const keys = findViolations(files).map((v) => v.key);
+    expect(keys).toEqual(['0335_redefine.sql::public.widget_count']);
+  });
+});
+
+describe('repo-wide replay-parity ratchet', () => {
+  const files = realMigrations();
+  const baseline = loadBaseline();
+
+  it('the pinned set is non-empty — an emptied map would pass vacuously', () => {
+    expect(REPLAY_PARITY_REVOKES.size).toBeGreaterThan(0);
+  });
+
+  it('every pinned function is closed to anon at the end of an ordered replay', () => {
+    const missing = findMissingReplayParityRevokes(files);
+    expect(
+      missing.map((m) => m.fn),
+      'A pinned replay-parity REVOKE is missing from supabase/migrations/. ' +
+        'A rebuilt environment would carry these SECURITY DEFINER functions ' +
+        'anon-callable while prod does not — the FD-17 divergence class.',
+    ).toEqual([]);
+  });
+
+  it('the squashed-baseline key of every pinned function is burned down, not grandfathered', () => {
+    // Once the replay-path revoke exists, keeping the key in the burn-down list
+    // would re-authorise its removal: delete the migration and CI stays green.
+    const stillGrandfathered = [...REPLAY_PARITY_REVOKES.keys()]
+      .map((fn) => `${SQUASHED_BASELINE}::${fn}`)
+      .filter((key) => baseline.has(key));
+    expect(stillGrandfathered).toEqual([]);
   });
 });

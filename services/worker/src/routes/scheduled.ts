@@ -229,13 +229,31 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     }
   });
 
-  // PII-03: GDPR data retention cleanup — daily at 2:00 AM UTC
+  // PII-03: GDPR data retention cleanup — daily at 2:00 AM UTC.
+  //
+  // BUG-2026-08-22-001: this runs on EVERY instance, and `arkova-worker` is
+  // deployed with `minScale = 2`, so two callers reach the RPC within
+  // milliseconds every night (prod Cloud Logging, 2026-08-17..22, two distinct
+  // `instanceId`s per tick). Migration 0417 makes the losing caller return
+  // `skipped_concurrent_run: true` rather than deadlock on `audit_events`.
+  //
+  // That skip is reported separately on purpose. Logging it as "complete" —
+  // which is what this handler did before 0417 — is precisely why six nights
+  // of double-runs and four 40P01 deadlocks read as healthy in the logs.
   scheduleInProcess('cleanup-expired-data', '0 2 * * *', async () => {
     logger.info('Running GDPR data retention cleanup');
     try {
       const { data: result, error } = await callRpc(db, 'cleanup_expired_data');
       if (error) {
         logger.error({ error }, 'Data retention cleanup RPC failed');
+      } else if ((result as { skipped_concurrent_run?: boolean } | null)?.skipped_concurrent_run) {
+        // Not an error: the singleton guard did its job. Info, not warn — on a
+        // 2-instance service exactly one skip per tick is the healthy steady
+        // state, and a nightly warn would train the reader to ignore it.
+        logger.info(
+          { result },
+          'Data retention cleanup skipped — another instance holds the singleton lock',
+        );
       } else {
         logger.info({ result }, 'Data retention cleanup complete');
       }

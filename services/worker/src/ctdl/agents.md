@@ -124,3 +124,42 @@ So the shipped design does **not** look for names. For ACADEMIC-RECORD types it 
 
 - `EDUCATION_CREDENTIAL_TYPES` = `DEGREE`/`CERTIFICATE`/`TRANSCRIPT`. `CPE`/`CLE` are deliberately EXCLUDED — practitioner records, not FERPA academic records, and their descriptive title plus the CE ContactHour projection are the partner-facing value. CE Registry snapshot anchors are created as `OTHER`, so they are outside the set by construction (correct: their content is already-public CE Registry data). **Every addition to this set silently replaces real credential titles with generic ones.**
 - Fixtures: `ctdl-pii-guard.adversarial.test.ts` runs each case through the REAL serializer asserting "scrubbed OR fail-closed, never emitted", plus precision blocks pinning that institution names, ordinary titles, and numeric issuer URLs still publish, plus a serialization-time budget. The story text named `src/lib/piiStripper.adversarial.test.ts`; these live here because the CTDL projection is built server-side from `anchors` rows and never passes through the browser stripper.
+
+## 2026-08-23 EMAIL_PATTERN bounded — and why the leading `\b` had to go with it
+
+`EMAIL_PATTERN`'s local-part quantifier is now bounded to RFC 5321 §4.5.3.1's 64
+octets, and the leading `\b` is **deliberately gone**. Both halves are
+load-bearing; changing either one alone reintroduces a defect.
+
+- **The bound** is the ReDoS fix (Sonar `typescript:S8786`), porting the fix made
+  to the browser's `src/lib/piiStripper.ts` in PR #2346. The adversarial input is
+  a **dotted** run, not the plain run #2346 used: `.`, `-`, `%` and `+` are
+  local-part characters but NOT word characters, so the old pattern's `\b` held
+  before every token. A plain alphanumeric run collapses to one start offset and
+  is fast even unbounded — reusing #2346's input here would have produced a test
+  that was **green on the bug**.
+- **Dropping the `\b`** is what stops the bound from UNDER-DETECTING. With it, a
+  local-part run longer than 64 characters cannot reach the `@` from the only
+  offset `\b` permits, so the pattern matches nothing and a real address stops
+  being detected. On a fail-closed gate that is a silent miss — the one direction
+  that is never acceptable. 842,100-case differential fuzz: zero inputs detected
+  by the old pattern and missed by this one.
+- **The domain quantifier stays unbounded**, for the reason recorded in
+  `src/lib/piiStripper.ts`: bounding it was tried in #2346 and reverted, because
+  a domain run longer than the bound cannot reach the `\.` that must follow it,
+  so the whole address survives. **Do not "symmetrise" these two bounds.**
+
+**The live exposure here was already capped**, and the note matters for anyone
+sizing a regression test: `containsHighConfidencePii` normalises through
+`normalizePublicText` first, so no caller reaches the pattern with more than
+`MAX_SCAN_CHARS`. At that cap the quadratic pattern cost ~9 ms, not the ~4,000 ms
+it costs on an uncapped 40k input. An absolute wall-clock ceiling is therefore
+**green on the unbounded pattern** — verified, a 2 s ceiling did exactly that.
+The ratchet in `ctdl-pii-guard.adversarial.test.ts` asserts **scaling** instead
+(14.2x unbounded vs 3.9x bounded for a 4x input), which is red on the bug and
+independent of machine load.
+
+Beyond `MAX_SCAN_CHARS` the cap truncates the input before the `@` is reached and
+nothing is detected. That is pre-existing (the old pattern misses the same
+input), is the documented trade for bounding work on a public unauthenticated
+route, and is why the detection pins stop at 3,000 characters.

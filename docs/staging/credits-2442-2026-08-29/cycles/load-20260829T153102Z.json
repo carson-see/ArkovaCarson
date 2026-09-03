@@ -1,0 +1,251 @@
+{
+ "pr": 2442,
+ "tier": "T3",
+ "cycle_start": "2026-08-29T15:31:02Z",
+ "cycle_end": "2026-08-29T15:31:10Z",
+ "head_sha": "19b278de765e8d40e2ae02578c2d73db34a47a5e",
+ "status": "pass",
+ "worker_revision": "arkova-worker-credits-2442-staging-00002-wof",
+ "counts": {
+  "http_probes": 6,
+  "http_probes_failed": 0,
+  "db_probes": 11,
+  "db_probes_failed": 0,
+  "triggerA_ran": 3,
+  "triggerA_passed": 3,
+  "triggerB_ran": 4,
+  "triggerB_passed": 4,
+  "dailyFlush_ran": 2,
+  "dailyFlush_passed": 2,
+  "isolation_ran": 2,
+  "isolation_passed": 2
+ },
+ "deviations": "",
+ "http_probes": [
+  {
+   "name": "worker_health_200",
+   "status": "pass",
+   "detail": "HTTP 200"
+  },
+  {
+   "name": "worker_git_sha_is_exact_head",
+   "status": "pass",
+   "detail": "/health git_sha=19b278de765e8d40e2ae02578c2d73db34a47a5e expected=19b278de765e8d40e2ae02578c2d73db34a47a5e"
+  },
+  {
+   "name": "worker_db_check_ok",
+   "status": "pass",
+   "detail": "checks={'database': 'ok', 'anchoring': 'ok', 'kms': 'warning'}"
+  },
+  {
+   "name": "http_covered_org_served",
+   "status": "pass",
+   "detail": "HTTP 200 body={\"balance\": 100050, \"monthly_allocation\": 100000, \"used_this_month\": 0, \"packs\": [{\"id\": \"pack_1k\", \"credits\": 1000, \"price_usd\": 10, \"label\": \"1,000 credits\"},"
+  },
+  {
+   "name": "http_uncovered_org_fails_closed",
+   "status": "pass",
+   "detail": "HTTP 200 balance/alloc/used=0/0/0 (a phantom 50 here is the SCRUM-2538 defect)"
+  },
+  {
+   "name": "http_unauthenticated_refused",
+   "status": "pass",
+   "detail": "HTTP 401 (expected 401)"
+  },
+  {
+   "name": "db_driver_cycle_clean",
+   "status": "pass",
+   "detail": "driver rc=0 status=pass"
+  }
+ ],
+ "db_driver": {
+  "utc": "2026-08-29T15:31:05.489Z",
+  "pr": 2442,
+  "tier": "T3",
+  "mode": "live",
+  "evidenceForSoak": true,
+  "changedBehavior": "PR #2442 unified-credit fail-CLOSED: check_unified_credits answers (0,0,0,false) instead of a phantom 50 for a caller with no unified_credits row (SCRUM-2538); deduct_unified_credits returning FALSE is no longer read as success, so an RPC error fails CLOSED and a definitive false falls through to the next PAID tier instead of serving the request free (SCRUM-3502).",
+  "status": "pass",
+  "cycle": 1,
+  "counts": {
+   "triggerA_missing_row_fails_closed_ran": 3,
+   "triggerA_missing_row_fails_closed_passed": 3,
+   "triggerA_missing_row_fails_closed_fired": true,
+   "triggerB_deduct_false_not_read_as_success_ran": 4,
+   "triggerB_deduct_false_not_read_as_success_passed": 4,
+   "triggerB_deduct_false_not_read_as_success_fired": true,
+   "dailyFlush_billing_cycle_rollover_ran": 2,
+   "dailyFlush_billing_cycle_rollover_passed": 2,
+   "dailyFlush_billing_cycle_rollover_fired": true,
+   "perOrgIsolation_debit_does_not_cross_orgs_ran": 2,
+   "perOrgIsolation_debit_does_not_cross_orgs_passed": 2,
+   "perOrgIsolation_debit_does_not_cross_orgs_fired": true,
+   "probes_total": 11,
+   "probes_failed": 0
+  },
+  "probes": [
+   {
+    "name": "triggerA_missing_row_fails_closed_uncovered_org",
+    "status": "pass",
+    "detail": "uncovered org check => {\"monthly_allocation\":0,\"used_this_month\":0,\"remaining\":0,\"has_credits\":false} (expected 0/0/0/false, no phantom 50)"
+   },
+   {
+    "name": "triggerA_missing_row_fails_closed_covered_org_still_served",
+    "status": "pass",
+    "detail": "covered org check => {\"monthly_allocation\":100000,\"used_this_month\":0,\"remaining\":100050,\"has_credits\":true} (fail-closed must not deny a real balance)"
+   },
+   {
+    "name": "triggerA_missing_row_fails_closed_backfill_invariant",
+    "status": "pass",
+    "detail": "orgs with no unified_credits row: 1 (expected exactly 1, the deliberate fixture)"
+   },
+   {
+    "name": "triggerB_deduct_false_not_read_as_success_no_row_returns_false",
+    "status": "pass",
+    "detail": "deduct on org with no unified_credits row => false (expected literal false, not error, not true)"
+   },
+   {
+    "name": "triggerB_deduct_false_not_read_as_success_overdraw_returns_false",
+    "status": "pass",
+    "detail": "deduct 101050 against remaining 100050 => false (expected false)"
+   },
+   {
+    "name": "triggerB_deduct_false_not_read_as_success_refused_debit_left_balance_intact",
+    "status": "pass",
+    "detail": "used_this_month 0 -> 0 (a refusal must not move the balance)"
+   },
+   {
+    "name": "triggerB_deduct_false_not_read_as_success_dev_grant_refused_not_completed",
+    "status": "pass",
+    "detail": "negative-amount grant on uncovered org => false (expected false; credits.ts must not report status=completed)"
+   },
+   {
+    "name": "perOrgIsolation_debit_does_not_cross_orgs_neighbour_untouched",
+    "status": "pass",
+    "detail": "neighbour org 5/45 -> 5/45"
+   },
+   {
+    "name": "perOrgIsolation_debit_does_not_cross_orgs_distinct_rows",
+    "status": "pass",
+    "detail": "each fixture org resolves its own unified_credits row under the 0420 ORDER BY"
+   },
+   {
+    "name": "dailyFlush_billing_cycle_rollover_used_reset",
+    "status": "pass",
+    "detail": "used_this_month after rollover => 0 (expected 0)"
+   },
+   {
+    "name": "dailyFlush_billing_cycle_rollover_carry_over_capped",
+    "status": "pass",
+    "detail": "remaining 100050 vs allocation 100000 + carry_over LEAST(alloc-used,50)=50"
+   }
+  ],
+  "admission": {
+   "rig_name": "credits-2442",
+   "pr": 2442,
+   "jira": [
+    "SCRUM-2538",
+    "SCRUM-3502"
+   ],
+   "tier": "T3",
+   "status": "READY_FOR_SOAK",
+   "purpose": "48h T3 soak for migration 0420 (unified-credit fail-CLOSED) and the three worker call sites it fixes",
+   "provenance_note": "Rig was provisioned by an earlier session that exited mid-task; this record was assembled by re-verifying every field live (gcloud / Supabase MCP / authenticated HTTP) rather than copied from that session.",
+   "supabase": {
+    "project_name": "arkova-soak-credits-2442",
+    "project_ref": "gsluatcqhwwynxpsidjy",
+    "created_at": "2026-08-29T14:26:26Z",
+    "status": "ACTIVE_HEALTHY",
+    "ledger_head": "0420",
+    "ledger_note": "0420 present with a reconciled NUMERIC version per CLAUDE.md \u00a70 rule 10; verified via Supabase MCP list_migrations",
+    "prod_ledger_head_at_provision": "0419",
+    "missing_vs_prod": [
+     "0418",
+     "0419"
+    ],
+    "extra_vs_prod": [
+     "0420"
+    ],
+    "divergence_verdict": "explained \u2014 0420 is this PR's own migration file; 0418/0419 are prod-ahead rows owned by unmerged PRs #2336/#2355"
+   },
+   "cloud_run": {
+    "service": "arkova-worker-credits-2442-staging",
+    "region": "us-central1",
+    "gcp_project": "arkova1",
+    "revision": "arkova-worker-credits-2442-staging-00002-wof",
+    "revision_created": "2026-08-29T14:50:48Z",
+    "url": "https://arkova-worker-credits-2442-staging-kvojbeutfa-uc.a.run.app",
+    "image_digest": "sha256:9da9dae817ce722dface2b050290cf1336f01372a54dc4ab2dc3c97455ee0a70",
+    "build_sha": "19b278de765e8d40e2ae02578c2d73db34a47a5e",
+    "health_git_sha_verified": "19b278de765e8d40e2ae02578c2d73db34a47a5e",
+    "sizing": "min-instances=1, max-instances=2",
+    "ingress_auth": "no-allow-unauthenticated (OIDC; app calls use X-Serverless-Authorization for ingress + Authorization for the Supabase JWT)",
+    "env_notes": {
+     "ENABLE_VERIFICATION_API": "true \u2014 /api/v1 is live, not dark",
+     "ENABLE_ORG_CREDIT_ENFORCEMENT": "true",
+     "MEMPOOL_API_URL": "NOT SET (never set on a rig)",
+     "IP_HASH_PEPPER": "wired to ip-hash-pepper-credits-2442-staging"
+    }
+   },
+   "preflight": {
+    "script": "scripts/ci/staging-honesty-preflight.ts",
+    "run_from": "worktree at PR head 19b278de765e8d40e2ae02578c2d73db34a47a5e (the repo migration set must contain 0420 for the divergence check to resolve it)",
+    "project_ref": "gsluatcqhwwynxpsidjy",
+    "prod_project_ref": "vzwyaatejekddvltxyye",
+    "environment_type": "clean_mirror",
+    "exit_code": 0,
+    "checks_passed": "8/8",
+    "run_at": "2026-08-29T15:06:03.620Z",
+    "artifact": "docs/staging/credits-2442-2026-08-29/clean-mirror-preflight-credits-2442.json",
+    "ledger_read_path": "Supabase Management API (PostgREST does not expose supabase_migrations on this rig OR on prod)"
+   },
+   "fixture": {
+    "orgs": [
+     {
+      "display_name": "pr2442-soak-a-covered",
+      "id": "c2442000-0000-4000-8000-00000000000a",
+      "unified_credits_row": true,
+      "monthly_allocation": 100000
+     },
+     {
+      "display_name": "pr2442-soak-b-uncovered",
+      "id": "c2442000-0000-4000-8000-00000000000b",
+      "unified_credits_row": false,
+      "note": "the deliberate miss that drives the SCRUM-2538 fail-CLOSED path"
+     },
+     {
+      "display_name": "pr2442-soak-c-other",
+      "id": "c2442000-0000-4000-8000-00000000000c",
+      "unified_credits_row": true,
+      "monthly_allocation": 50,
+      "note": "isolation neighbour, read-only"
+     }
+    ],
+    "users": [
+     {
+      "email": "pr2442-covered@arkova.local",
+      "id": "9973cd72-c1c0-492f-b1b5-253e29849117",
+      "org": "pr2442-soak-a-covered"
+     },
+     {
+      "email": "pr2442-uncovered@arkova.local",
+      "id": "782d220a-a513-4ba9-8611-b8fed2602e0c",
+      "org": "pr2442-soak-b-uncovered"
+     }
+    ],
+    "changes_made_this_session": [
+     "monthly_allocation on the covered org raised 50 -> 100000 so a 10-minute cadence cannot exhaust it and turn a healthy cycle into a false FAIL (the isolation probe debits 1 credit per cycle)",
+     "two auth users + profiles created so the credits.ts HTTP call site can be exercised end-to-end, not only the SQL predicate",
+     "PostgREST was briefly configured to expose supabase_migrations while an access token was being located; it was REVERTED before the recorded preflight run, which read the ledger through the Management API instead. Verified reverted (PGRST106 again)."
+    ],
+    "not_touched": "no migration ledger row was inserted, deleted or repaired; no db push; no rig reset"
+   },
+   "soak_surfaces": {
+    "db_predicate": "services/worker/scripts/pr2442-unified-credits-failclosed-driver.ts at the PR head \u2014 Trigger A, Trigger B, per-org isolation, daily flush",
+    "worker_http": "GET /api/v1/credits through the isolated Cloud Run rig \u2014 the credits.ts call site this PR fixes; covered org served, uncovered org 0/0/0 (no phantom 50), unauthenticated refused, /health git_sha pinned to the exact head"
+   },
+   "approver": "Claude Opus 5, acting CTO under delegated technical authority (Carson, 2026-08-28)"
+  }
+ },
+ "db_driver_stderr": ""
+}

@@ -73,21 +73,26 @@ interface WebhookSettingsProps {
 // `VALID_WEBHOOK_EVENTS`. This array is the UI-facing list — keep it in sync
 // when new event types ship there. The previous `anchor.created` entry was
 // stale (never accepted by the CRUD allowlist) and was removed.
-//
-// Credential.* events are contract-defined today; per-event emit points
-// land in Phase-2 follow-ups, so the UI shows them with a "Coming soon"
-// hint to set the right expectation.
 export const AVAILABLE_EVENTS = [
   { id: 'anchor.submitted', label: 'Anchor Submitted' },
   { id: 'anchor.secured', label: 'Anchor Secured' },
   { id: 'anchor.revoked', label: 'Anchor Revoked' },
   { id: 'anchor.expired', label: 'Anchor Expired' },
+  // DI-775 (SCRUM-3538): the worker has dispatched this since SCRUM-2937
+  // (POST /api/anchor/:id/supersede → services/worker/src/api/anchor-lineage.ts)
+  // and the CRUD allowlist accepted it, but it was never offered here — so an
+  // org could be sent an event it had no way to subscribe to.
+  { id: 'anchor.superseded', label: 'Anchor Superseded' },
   { id: 'anchor.batch_secured', label: 'Anchor Batch Secured' },
-  // Credential.* are contract-defined today but emit points land in Phase-2
-  // follow-ups; the "coming soon" suffix sets the right expectation.
-  { id: 'credential.issued', label: 'Credential Issued (coming soon)' },
+  // credential.issued + credential.status_changed have live, unflagged emit
+  // points (SCRUM-1798 Phase 2a / SCRUM-1800). credential.verified is wired
+  // but flag-gated dark in prod (ENABLE_CREDENTIAL_VERIFIED_WEBHOOK, default
+  // false) — only IT keeps the "coming soon" suffix. Liveness truth lives in
+  // WebhookEventCatalog.tsx CATALOG_DATA (test-pinned); keep these labels
+  // consistent with it.
+  { id: 'credential.issued', label: 'Credential Issued' },
   { id: 'credential.verified', label: 'Record Verified (coming soon)' },
-  { id: 'credential.status_changed', label: 'Record Status Changed (coming soon)' },
+  { id: 'credential.status_changed', label: 'Record Status Changed' },
   // BUG-002: the emit point (POST /cron/check-credential-expiry, gated on
   // ENABLE_EXPIRY_ALERTS) has existed since SCRUM-600, but the event type was
   // never registered in the worker allowlist, so this option could not be

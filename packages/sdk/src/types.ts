@@ -11,6 +11,11 @@ export type WebhookEventType =
   | 'anchor.secured'
   | 'anchor.revoked'
   | 'anchor.expired'
+  // A SECURED record was atomically replaced by a re-issued child record
+  // (SECURED -> SUPERSEDED). Carries `superseded_by_public_id`, the public slug
+  // of the replacement, so a headless consumer can follow the version chain
+  // without the dashboard (SCRUM-2937).
+  | 'anchor.superseded'
   | 'anchor.batch_secured'
   | 'credential.issued'
   | 'credential.verified'
