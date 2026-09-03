@@ -771,3 +771,15 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+
+## Recent migrations (PR #2571)
+
+| `0422` | `feat/platform-admin-provisioning` (PR #2571) | SCRUM-3873 | `0422_scrum3873_org_creation_idempotency_key.sql` | Applied to isolated rig `owieixqcnigfpiowptop` only (via `supabase db push --linked`, numeric ledger row `0422`); **NOT applied to prod or shared staging**. T3 (touches `supabase/migrations/`; confirmed by running the real detector against the changeset). **Prefix derivation:** `origin/main` head file is `0419`; `gh pr list --json files` across every open PR shows `0420`→#2442, `0421`→#2440, `0422`→#2571 (this), `0423`→#2472, `0424`→#2476 **and** #2518 (a pre-existing double-claim, not this PR's), `0425`→#2495, `0426`→#2519, `0427`→#2524, `0428`→#2564, `0429`–`0432`→#2572. **Next author re-derives from that scan — do not trust this line.** |
+
+- **0422_scrum3873_org_creation_idempotency_key.sql** (RIG-ONLY / NOT ON PROD): adds nullable `organizations.creation_idempotency_key uuid` with a **partial** unique index (`WHERE creation_idempotency_key IS NOT NULL`). Makes `POST /api/admin/organizations` atomic against a double-submit: the client sends one key per submission, a repeat collides on the index, and the handler returns the organization the first request created.
+
+  **Why it exists:** the SCRUM-3873 soak reproduced the race on **110 of 172 cycles (~64%)** — two simultaneous identical submits, two 201s, two distinct organizations with one name. The display_name pre-check in the handler is SELECT-then-INSERT and cannot be atomic. Re-verified fixed on the rig: same key twice → same `org_id`, one row.
+
+  **Why NOT a unique index on `display_name`:** two unrelated legal entities can legitimately share a name. The hazard is a repeated *submission*, not a shared name, so the key is scoped to the submission — the same mechanism `admin_adjust_org_credit` (0375) already uses. Nullable column + partial index means every other org-creation path (self-signup, sub-org, seed flows) keeps writing NULL and is untouched. Rollback block in the file header.
+
+  **Gotcha worth recording — and it is why SCRUM-3884 exists:** this file originally used a bare `SET LOCAL lock_timeout = '5s'`. `supabase db push` executes migration files **outside a transaction**, so Postgres raised `WARNING 25P01: SET LOCAL can only be used in transaction blocks` and **silently discarded it** — the hot-table DDL ran with no timeout at all. `scripts/ci/check-hot-table-ddl-lock-timeout.ts` matches the clause by regex and passed the no-op. Now wrapped in `BEGIN … COMMIT`, which makes the timeout real and the two DDL statements atomic. Any other migration carrying a bare `SET LOCAL lock_timeout` is very likely a no-op too.

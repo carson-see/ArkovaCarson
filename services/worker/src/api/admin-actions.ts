@@ -4,22 +4,13 @@
  * POST /api/admin/users/:id/promote-admin           — Toggle platform admin flag
  * POST /api/admin/users/:id/change-role             — Change user role (INDIVIDUAL/ORG_ADMIN)
  * POST /api/admin/users/:id/set-org                 — Assign user to an organization
+ * POST /api/admin/organizations                    — Create an organization (SCRUM-3873)
+ * POST /api/admin/users                             — Create an account (SCRUM-3873)
  * POST /api/admin/organizations/:id/quota           — Set an org's free-tier testing cap (SCRUM-2225)
  * POST /api/admin/organizations/:id/credits/adjust  — Add/remove org credits (L2-A5)
  *
- * POST /api/admin/organizations                    — Create an organization (SCRUM-3873)
- * POST /api/admin/users                             — Create an account (SCRUM-3873)
- *
- * All endpoints gated behind a platform admin check, both per-handler and
- * structurally at the router ('/admin' in routes/admin.ts).
- *
- * The five original handlers dispatch to SECURITY DEFINER RPCs that use
- * service_role to bypass protective triggers — and two of those RPCs do it via
- * `ALTER TABLE … DISABLE TRIGGER`, which takes an ACCESS EXCLUSIVE lock on the
- * hot `profiles` table with no lock_timeout (CLAUDE.md §1.2). The two
- * provisioning handlers deliberately do NOT follow that shape: their logic
- * lives in the dependency-injected `admin-provisioning.ts`, is unit-testable
- * without a database, and takes zero DDL. Prefer that shape for new handlers.
+ * All endpoints gated behind platform admin check.
+ * Uses service_role to bypass protective triggers.
  */
 
 /** Loose UUID-shape check — the RPC also validates via its `uuid` column type, but a
@@ -395,6 +386,14 @@ export async function handleAdjustOrgCredit(
 // Business logic lives in admin-provisioning.ts (dependency-injected, unit
 // tested). These handlers own only the platform-admin gate, body validation,
 // and the error-code -> HTTP mapping.
+//
+// Gating is both per-handler (here) and structural: routes/admin.ts mounts a
+// platform-admin middleware on '/admin', so a future handler that forgets the
+// check is still not reachable unauthenticated.
+//
+// Shape note for the next handler author: unlike the five RPC-dispatching
+// handlers above, these take zero DDL and no `(db as any).rpc(...)` — the logic
+// is a pure module that is unit-testable without a database. Prefer this shape.
 
 /**
  * POST /api/admin/organizations
