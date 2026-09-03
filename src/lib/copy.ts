@@ -4439,3 +4439,59 @@ export const PLATFORM_METRICS = {
  * implying the whole block was re-measured.
  */
 export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
+
+// ── MFA enforcement (SCRUM-3167) ──
+//
+// Phase 1, role-based only (CTO ruling A4-3 — org-level enforcement is
+// dropped for now, see src/hooks/useMfaEnrollmentRequirement.ts). Four
+// blocks, one per surface AuthGuard can render in place of protected
+// children: the every-login challenge for anyone with a verified factor,
+// the non-skippable forced-enrollment screen for ORG_ADMIN/platform-admin
+// once enforcement is active, the fail-open capability-unavailable notice
+// (a platform misconfiguration must never wall anyone out — see
+// AuthGuard.tsx), and the dismissible grace-period nudge shown before the
+// enforcement date. §1.3-clean: no Wallet/Gas/Hash/Block/Transaction/
+// Crypto/Blockchain/Bitcoin/Testnet/Mainnet/UTXO/Broadcast/token.
+
+export const MFA_CHALLENGE_LABELS = {
+  TITLE: 'Enter your verification code',
+  DESCRIPTION: 'Your account has two-factor authentication enabled. Enter the 6-digit code from your authenticator app to continue.',
+  CODE_LABEL: 'Verification code',
+  SUBMIT: 'Verify',
+  VERIFYING: 'Verifying...',
+  SIGN_OUT: 'Sign out',
+  LOADING_FACTOR_ERROR: 'Unable to load your two-factor authentication settings. Please sign in again.',
+  GENERIC_ERROR: 'Verification failed. Please check the code and try again.',
+} as const;
+
+export const MFA_ENROLLMENT_REQUIRED_LABELS = {
+  TITLE: 'Two-factor authentication required',
+  DESCRIPTION: 'Your role has elevated access to organization data, so two-factor authentication is required before you can continue. Scan the QR code below with an authenticator app, then enter the 6-digit code it generates.',
+  SCAN_INSTRUCTION: 'Scan this QR code with your authenticator app',
+  MANUAL_ENTRY_LABEL: 'Manual entry code',
+  CODE_LABEL: 'Verification code',
+  SUBMIT: 'Verify & continue',
+  VERIFYING: 'Verifying...',
+  SIGN_OUT: 'Sign out',
+  START_ERROR: 'Unable to start two-factor authentication setup. Please sign out and sign in again.',
+  GENERIC_ERROR: 'Verification failed. Please check the code and try again.',
+} as const;
+
+// Shown when AuthGuard has to fail OPEN because the two-factor authentication
+// platform capability itself is unavailable (e.g. the identity provider has
+// TOTP enrollment turned off) — never a wall, always children + this one-shot
+// notice. See AuthGuard.tsx's `onCapabilityUnavailable` contract.
+export const MFA_CAPABILITY_LABELS = {
+  UNAVAILABLE_NOTICE: "Two-factor authentication setup isn't available right now. Your account isn't affected — we've been notified and are looking into it.",
+} as const;
+
+export const MFA_GRACE_NUDGE_LABELS = {
+  TITLE: 'Two-factor authentication will be required soon',
+  DAYS_REMAINING: (days: number) =>
+    days <= 1
+      ? "You'll need to set up two-factor authentication by tomorrow."
+      : `You'll need to set up two-factor authentication within ${days} days.`,
+  BODY: 'Your role has elevated access to organization data. Set it up now in Settings so you are not interrupted later.',
+  CTA: 'Set up now',
+  DISMISS: 'Dismiss',
+} as const;
