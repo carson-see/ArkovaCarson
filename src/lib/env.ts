@@ -23,12 +23,17 @@
  * │ VITE_STRIPE_PUBLISHABLE_KEY  │ Stripe publishable key (pk_, not sk_)     │ Yes    │
  * │ VITE_BETA_INVITE_CODE        │ Beta gate code (low-risk, UX gate only)   │ Yes    │
  * │ VITE_ENABLE_DSAR_UI          │ Feature flag for DSAR UI                  │ Yes    │
+ * │ VITE_MFA_ENFORCE_FROM        │ MFA enforcement rollout date (SCRUM-3167) │ Yes    │
+ * │ VITE_MFA_ALLOW_DATE_OVERRIDE │ Dev/E2E-only date-override escape hatch   │ Yes    │
  * └──────────────────────────────┴───────────────────────────────────────────┴────────┘
  *
  * Verdict: All VITE_* vars are public-safe. No secrets found.
  *
  * VITE_BETA_INVITE_CODE is a soft UX gate (not a security boundary).
  * If hardened auth-gating is needed, move to a server-side check.
+ *
+ * VITE_MFA_ALLOW_DATE_OVERRIDE MUST NEVER be set on Vercel prod — see
+ * docs/reference/ENV.md and src/lib/mfaPolicy.ts's module doc comment.
  */
 
 export const ENV = {
@@ -51,6 +56,14 @@ export const ENV = {
   // OFF in prod until the staging round-trip E2E (download -> re-verify with @arkova/verifier)
   // is green; the public-API proof_bundle field lands with Lane-1 #1354.
   ENABLE_PROOF_PDF_DOWNLOAD: import.meta.env.VITE_ENABLE_PROOF_PDF_DOWNLOAD === 'true',
+  // SCRUM-3167: registered here for documentation/discoverability. The live
+  // resolution logic in `mfaPolicy.ts` reads `import.meta.env` directly
+  // (not this cached object) so `vi.stubEnv` works in tests without a
+  // module reset — see that file's module doc comment. Do not read these
+  // two fields from ENV for enforcement decisions; read mfaPolicy.ts's
+  // exported functions instead.
+  MFA_ENFORCE_FROM: import.meta.env.VITE_MFA_ENFORCE_FROM as string | undefined,
+  MFA_ALLOW_DATE_OVERRIDE: import.meta.env.VITE_MFA_ALLOW_DATE_OVERRIDE === 'true',
   IS_DEV: import.meta.env.DEV,
   IS_PROD: import.meta.env.PROD,
   MODE: import.meta.env.MODE || 'development',
