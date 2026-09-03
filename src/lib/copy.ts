@@ -4494,6 +4494,8 @@ export const MFA_GRACE_NUDGE_LABELS = {
   BODY: 'Your role has elevated access to organization data. Set it up now in Settings so you are not interrupted later.',
   CTA: 'Set up now',
   DISMISS: 'Dismiss',
+} as const;
+
 // ── Two-factor settings (SCRUM-3167 / SCRUM-3584) ──
 //
 // TwoFactorSetup.tsx rewrite. Lists ALL TOTP factors from listFactors()
