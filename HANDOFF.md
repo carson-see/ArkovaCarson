@@ -128,8 +128,12 @@ closing out.
   negative probes (CONFIRM mismatch, foreign factor id, `--all` without `CONFIRM_MFA_BREAK_GLASS_ALL`) → apply → factor gone →
   both audit rows → re-enrol → cleanup. Per-cycle JSON `~/arkova-soak/mfa-3167/bg-evidence/`; pre-clock validation cycle
   (ok=34 fail=0 on each head) quarantined under `bg-validation-2026-09-03/`, not evidence. PR stays **draft**; `Human approver:` is Carson's.
-- **PR #2637 (enforcement, frontend-only T2, 12 h):** not started — waiting on the post-review fix batch; will run on the same
-  rig from a frozen checkout `~/arkova-soak/mfa-3167/checkouts/wt-pr-a` (vite preview :4173 + `driver.mjs` + Playwright legs).
+- **PR #2637 (enforcement, frontend-only T2, 12 h):** head **`7bef48bbcc214802313153205695b854a16a04ed`** (post-review:
+  fail-closed challenge path, R1–R25), frozen checkout `~/arkova-soak/mfa-3167/checkouts/wt-pr-a`. Clock
+  **2026-09-03T09:08:33Z → 21:08:33Z**: API-leg driver `supervisor.sh` (10-min cycles, evidence `evidence/load-*.json`,
+  each bound to `pr_head`) + continuous UI leg `ui-soak-supervisor.sh` (one `vite preview` of the head on :4173 for the
+  window, Playwright spec every 30 min, `evidence/ui/run-*.json`, window `20260903T090835Z`). Pre-clock validation on
+  this head: spec 6/6 (quarantined). PR stays **draft**; `RM-approved targeted evidence:` and Ready are Carson's.
 - **Teardown:** delete `nesuwjlscilzzbhpvbkt` when BOTH soaks close (§7 sweep). It appears in the Supabase project list; do not
   sweep it before then.
 
