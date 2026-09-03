@@ -90,8 +90,8 @@ describe('AGENTS.md validation', () => {
   });
 
   it('documents available MCP tools', () => {
-    expect(agentsMd).toContain('verify_anchor');
-    expect(agentsMd).toContain('search_anchors');
+    expect(agentsMd).toContain('arkova_verify_anchor');
+    expect(agentsMd).toContain('arkova_search_anchors');
   });
 
   it('includes authentication instructions', () => {

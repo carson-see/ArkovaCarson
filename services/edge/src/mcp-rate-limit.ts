@@ -16,8 +16,8 @@ import type { Env } from './env';
 const TOOL_LIMITS_RPM: Record<string, number> = {
   default: 1000,
   nessie_query: 100,        // Gemini budget protection
-  oracle_batch_verify: 10,  // 25× verify multiplier per call
-  anchor_document: 60,      // write path
+  arkova_oracle_batch_verify: 10,  // 25× verify multiplier per call
+  arkova_anchor_document: 60,      // write path
 };
 
 export type RateLimitDecision =

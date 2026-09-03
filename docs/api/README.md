@@ -41,7 +41,7 @@ The rich v1 verification response includes shipped API-RICH-02 fields `descripti
 | API key management | `POST/GET/PATCH/DELETE /keys` | Supabase JWT | [OpenAPI](./openapi.yaml) |
 | Nessie RAG — **DISABLED** (R-1) | `POST /nessie/query` | n/a — returns 503 `nessie_disabled` | [OpenAPI](./openapi.yaml) |
 | CLE compliance | `GET /cle/verify`, `GET /cle/credits`, `POST /cle/submit` | API key + x402 gate at `/api/v1/cle` | [OpenAPI](./openapi.yaml) |
-| Attestations | `POST/GET/PATCH /attestations` | Supabase JWT | [OpenAPI](./openapi.yaml) |
+| Attestations | `POST/GET/PATCH /attestations` | GET: public, no auth (attestations are a public verification registry; list filters: `anchor_id`, `subject_identifier` substring, `attestation_type`, `status`). POST/PATCH: API key | [OpenAPI](./openapi.yaml) |
 
 ### 2. API v2 — `https://api.arkova.ai/v2`
 
@@ -106,7 +106,7 @@ A vanilla-JS, zero-dependency, CSP-safe `<script>` tag that drops a verification
 
 ```html
 <div data-arkova-credential="ARK-2026-001"></div>
-<script src="https://cdn.arkova.ai/embed.js"></script>
+<script src="https://app.arkova.ai/embed.js"></script>
 ```
 
 📖 [Full embed reference](../../packages/embed/README.md)

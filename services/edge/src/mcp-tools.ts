@@ -5,14 +5,14 @@
  * MCP endpoint and tests.
  *
  * Tools:
- *   - verify_anchor: Verify a credential by public ID
- *   - search_anchors: Lexical substring search across credentials; vector
+ *   - arkova_verify_anchor: Verify a credential by public ID
+ *   - arkova_search_anchors: Lexical substring search across credentials; vector
  *     search only when the deployment enables it (BUG-026)
  *   - nessie_query:      DISABLED — returns an explicit `nessie_disabled`
  *     error, never results (BUG-008/027, CTO ruling R-1)
- *   - anchor_document:   Anchor a document hash (PH1-SDK-03)
- *   - verify_document:   Verify a document by content hash (PH1-SDK-03)
- *   - verify_batch:      Verify up to 100 credentials in one call (INT-02)
+ *   - arkova_anchor_document:   Anchor a document hash (PH1-SDK-03)
+ *   - arkova_verify_document:   Verify a document by content hash (PH1-SDK-03)
+ *   - arkova_verify_batch:      Verify up to 100 credentials in one call (INT-02)
  *
  * Constitution 1.4: No raw PII in responses. Only hashed identifiers.
  * Constitution 1.3: No banned UI terms in tool descriptions.
@@ -24,6 +24,8 @@
  * edge handler context. Tracked as follow-up story INT-02b.
  */
 
+import { safeErrorText } from './mcp-error-utils';
+
 /** Request timeout for Supabase fetch calls (ms). */
 const SUPABASE_FETCH_TIMEOUT_MS = 10_000;
 
@@ -34,7 +36,7 @@ const NESSIE_WORKER_FETCH_TIMEOUT_MS = 30_000;
 const SEARCH_WORKER_FETCH_TIMEOUT_MS = 15_000;
 
 /**
- * Search mode reported on every `search_anchors` result payload.
+ * Search mode reported on every `arkova_search_anchors` result payload.
  *
  * The tool historically advertised "semantic similarity matching" while the
  * only code path was an ILIKE substring scan (`search_public_credentials`
@@ -290,7 +292,7 @@ const API_ONLY_NOTE =
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
-    name: 'verify_anchor',
+    name: 'arkova_verify_anchor',
     description:
       'Verify an anchored record\'s authenticity and current status by its public identifier. ' +
       'Returns verification status, issuer information, record type, dates, and network anchoring proof. ' +
@@ -307,7 +309,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'search_anchors',
+    name: 'arkova_search_anchors',
     // BUG-026: this description used to LEAD with "Uses semantic (vector)
     // similarity matching". In practice the vector path requires a configured
     // worker AND an open ENABLE_SEMANTIC_SEARCH gate; with the gate closed the
@@ -357,7 +359,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       'DISABLED. Arkova\'s Nessie intelligence engine is not currently served: this tool ' +
       'returns an explicit `nessie_disabled` error, never results. It does not search, and ' +
       'an empty answer from it must not be read as "no matching documents". ' +
-      'Use `search` or `search_anchors` for record lookup instead.',
+      'Use `arkova_search` or `arkova_search_anchors` for record lookup instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -378,18 +380,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'anchor_document',
+    name: 'arkova_anchor_document',
     // BUG-028: this used to end "Returns an anchor receipt with a public
     // identifier for later verification." No public identifier is returned,
     // and none exists at submission time — a public_id is minted when the
     // batch pipeline anchors the record. The fingerprint is the handle, and
-    // it is what verify_document accepts. Describe the contract that holds.
+    // it is what arkova_verify_document accepts. Describe the contract that holds.
     description:
       'Submit a document fingerprint for anchoring to the public ledger. ' +
       'The document itself is never sent — only its SHA-256 fingerprint. ' +
       'Anchoring is asynchronous (batched), so this returns a submission receipt, ' +
       'NOT a completed anchor: public_id is null and no network receipt exists yet. ' +
-      'Follow up with verify_document using the SAME content_hash — it reports ' +
+      'Follow up with arkova_verify_document using the SAME content_hash — it reports ' +
       'status UNKNOWN until anchoring completes, then returns the public_id and proof.',
     inputSchema: {
       type: 'object',
@@ -424,7 +426,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'verify_document',
+    name: 'arkova_verify_document',
     description:
       'Verify a document by its SHA-256 fingerprint. Checks if the document has been ' +
       'anchored and returns the anchor proof including the network receipt and timestamp.',
@@ -440,7 +442,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'verify_batch',
+    name: 'arkova_verify_batch',
     description:
       'Verify multiple credentials in a single call. Accepts up to 100 public IDs ' +
       'and returns each result in input order. Use this when an agent needs to validate ' +
@@ -460,7 +462,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'search',
+    name: 'arkova_search',
     description:
       'Agent-friendly v2 search tool. Search organizations, anchored records, fingerprints, and documents by natural language query or exact fingerprint.',
     inputSchema: {
@@ -487,7 +489,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'verify',
+    name: 'arkova_verify',
     description:
       'Agent-friendly v2 verification tool. Verify whether a SHA-256 document fingerprint has been anchored.',
     inputSchema: {
@@ -502,7 +504,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'list_orgs',
+    name: 'arkova_list_orgs',
     description:
       'List the organizations available to the authenticated caller. Use to establish org context before scoped searches.',
     inputSchema: {
@@ -512,7 +514,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'get_anchor',
+    name: 'arkova_get_anchor',
     description:
       'Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id.',
     inputSchema: {
@@ -527,7 +529,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'get_organization',
+    name: 'arkova_get_organization',
     description:
       'Get organization profile details by organization public_id. Use after search returns an organization public_id.',
     inputSchema: {
@@ -539,7 +541,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'get_record',
+    name: 'arkova_get_record',
     description:
       'Get public-safe record metadata by Arkova public ID. Use after search returns a record public_id.',
     inputSchema: {
@@ -551,7 +553,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'get_fingerprint',
+    name: 'arkova_get_fingerprint',
     description:
       'Get public-safe record metadata by SHA-256 fingerprint. Use after search returns a fingerprint result.',
     inputSchema: {
@@ -563,7 +565,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'get_document',
+    name: 'arkova_get_document',
     description:
       'Get public-safe document metadata by Arkova public ID. Use after search returns a document public_id.',
     inputSchema: {
@@ -575,7 +577,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'oracle_batch_verify',
+    name: 'arkova_oracle_batch_verify',
     description:
       'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
     inputSchema: {
@@ -593,7 +595,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'list_agents',
+    name: 'arkova_list_agents',
     description:
       'List AI agents registered to the authenticated caller organization. Returns agent names, types, scopes, and status.',
     inputSchema: {
@@ -684,10 +686,10 @@ export async function handleVerifyCredential(
     const data = (await response.json()) as Record<string, unknown>;
     return textResult(shapeAnchorRow(data));
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Verification lookup timed out'
-      : `Verification lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return errorResult('Verification lookup timed out');
+    }
+    return errorResult(safeErrorText(error, 'arkova_verify_anchor'));
   }
 }
 
@@ -743,7 +745,7 @@ export async function handleSearchCredentials(
       // the ILIKE pattern scan in large tables).
       const errBody = await response.text().catch(() => '');
       console.error(
-        `[search_anchors] RPC returned HTTP ${response.status}: ${errBody}`,
+        `[arkova_search_anchors] RPC returned HTTP ${response.status}: ${errBody}`,
       );
       return searchCredentialsFallback(input.query, maxResults, config);
     }
@@ -774,10 +776,10 @@ export async function handleSearchCredentials(
       })),
     });
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Search timed out'
-      : `Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return errorResult('Search timed out');
+    }
+    return errorResult(safeErrorText(error, 'arkova_search_anchors'));
   }
 }
 
@@ -838,8 +840,7 @@ async function searchCredentialsFallback(
       })),
     });
   } catch (err) {
-    console.error('[search_anchors] fallback failed:', err);
-    return errorResult(`Search failed: both RPC and fallback query failed — ${err instanceof Error ? err.message : 'unknown'}`);
+    return errorResult(safeErrorText(err, 'arkova_search_anchors_fallback'));
   }
 }
 
@@ -909,7 +910,7 @@ async function searchCredentialsWorkerSemantic(
       // 503 = ENABLE_SEMANTIC_SEARCH gate closed. Status only — never the key
       // or the full URL with params.
       console.warn(
-        `[search_anchors] worker semantic proxy HTTP ${response.status}; falling back to lexical search`,
+        `[arkova_search_anchors] worker semantic proxy HTTP ${response.status}; falling back to lexical search`,
       );
       return null;
     }
@@ -922,7 +923,7 @@ async function searchCredentialsWorkerSemantic(
     // Unrecognised shape — treat as "semantic did not run" rather than
     // reporting a misleading total:0 under a semantic label.
     if (!Array.isArray(body.results)) {
-      console.warn('[search_anchors] worker semantic proxy returned an unexpected shape; falling back to lexical search');
+      console.warn('[arkova_search_anchors] worker semantic proxy returned an unexpected shape; falling back to lexical search');
       return null;
     }
 
@@ -947,7 +948,7 @@ async function searchCredentialsWorkerSemantic(
   } catch (err) {
     const reason = err instanceof Error ? err.name : 'unknown';
     console.warn(
-      `[search_anchors] worker semantic proxy failed (${reason}); falling back to lexical search`,
+      `[arkova_search_anchors] worker semantic proxy failed (${reason}); falling back to lexical search`,
     );
     return null;
   } finally {
@@ -1062,7 +1063,7 @@ async function searchAgentRecords(
 
 /**
  * Agent-friendly alias for API v2 `search(q,type?)`. The legacy
- * `search_anchors` tool remains for backwards compatibility; this shape
+ * `arkova_search_anchors` tool remains for backwards compatibility; this shape
  * matches the OpenAPI 3.1 operationId consumed by function-call importers.
  */
 export async function handleAgentSearch(
@@ -1115,10 +1116,10 @@ export async function handleAgentSearch(
     const results = [...orgs, ...records].slice(0, maxResults);
     return textResult({ results, next_cursor: null });
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Agent search timed out'
-      : `Agent search failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return errorResult('Agent search timed out');
+    }
+    return errorResult(safeErrorText(error, 'arkova_search'));
   }
 }
 
@@ -1176,11 +1177,10 @@ export async function handleNessieQuery(
     // (already PR-1-fixed to lowercase sources) instead of throwing.
     return await nessieTextFallback(input.query, matchCount, config);
   } catch (error) {
-    const msg =
-      error instanceof Error && error.name === 'AbortError'
-        ? 'Nessie query timed out'
-        : `Nessie query failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return errorResult('Nessie query timed out');
+    }
+    return errorResult(safeErrorText(error, 'nessie_query'));
   }
 }
 
@@ -1439,10 +1439,7 @@ async function nessieTextFallback(
       results: Array.isArray(rows) ? rows : [],
     });
   } catch (err) {
-    console.error('[nessie_query] text fallback failed:', err);
-    return errorResult(
-      `Nessie text search failed: ${err instanceof Error ? err.message : 'unknown'}`,
-    );
+    return errorResult(safeErrorText(err, 'nessie_query_text_fallback'));
   }
 }
 
@@ -1471,7 +1468,7 @@ async function nessieTextFallback(
  * identifier, the second leaks an internal row id (CLAUDE.md §6).
  *
  * The handle that IS durable and IS accepted by the documented follow-up is the
- * fingerprint: `verify_document` takes `content_hash`, never a public_id. So
+ * fingerprint: `arkova_verify_document` takes `content_hash`, never a public_id. So
  * the receipt states the fingerprint as the handle, states `public_id: null`
  * explicitly rather than omitting the key (an agent gets a decidable answer
  * instead of a missing field), and says plainly that verification resolves only
@@ -1489,13 +1486,13 @@ function anchorSubmittedResult(
     public_id: null,
     content_hash: contentHash,
     // The handle the documented follow-up actually accepts.
-    verify_with: { tool: 'verify_document', content_hash: contentHash },
+    verify_with: { tool: 'arkova_verify_document', content_hash: contentHash },
     message: status === 'already_submitted'
       ? 'Document was already submitted within the last 5 minutes; returning the existing '
-        + 'submission. Call verify_document with this content_hash. It reports '
+        + 'submission. Call arkova_verify_document with this content_hash. It reports '
         + 'verified:false / status:UNKNOWN until batch anchoring completes and the '
         + 'record is secured; a public_id is assigned at that point, not now.'
-      : 'Document fingerprint submitted for batch anchoring. Call verify_document with '
+      : 'Document fingerprint submitted for batch anchoring. Call arkova_verify_document with '
         + 'this content_hash to check status. It reports verified:false / status:UNKNOWN '
         + 'until batch anchoring completes and the record is secured; a public_id is '
         + 'assigned at that point, not now.',
@@ -1601,10 +1598,10 @@ export async function handleAnchorDocument(
     // Fallback: direct INSERT (pre-migration-0223 compat)
     return submitAnchorDirect(input, config);
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Anchor submission timed out'
-      : `Anchor submission failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return errorResult('Anchor submission timed out');
+    }
+    return errorResult(safeErrorText(error, 'arkova_anchor_document'));
   }
 }
 
@@ -1613,8 +1610,8 @@ export async function handleAnchorDocument(
  *
  * Calls the `get_public_anchor_by_fingerprint` SECURITY DEFINER RPC
  * (migration 0339) and maps SECURED results through `shapeAnchorRow`, so verify
- * returns the SAME truthful, redacted anchor shape as `get_anchor` /
- * `verify_anchor` once a document is actually anchored. The prior implementation hit
+ * returns the SAME truthful, redacted anchor shape as `arkova_get_anchor` /
+ * `arkova_verify_anchor` once a document is actually anchored. The prior implementation hit
  * `/rest/v1/public_records?...&select=...public_id...` with a column set that
  * does not match the table shape — it returned HTTP 400 universally and the
  * tool was 100% broken.
@@ -1677,10 +1674,10 @@ export async function handleVerifyDocument(
     // public_id; the public verify URL is derived from it).
     return textResult(shapeAnchorRow(data, publicId));
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Document verification timed out'
-      : `Document verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return errorResult('Document verification timed out');
+    }
+    return errorResult(safeErrorText(error, 'arkova_verify_document'));
   }
 }
 
@@ -1691,7 +1688,7 @@ export async function handleVerifyDocument(
  * `shapeAnchorRow` envelope, which never carries an internal `record_id` /
  * `id`. The `record_id` strip is retained as defense-in-depth: if any future
  * change to the verify path reintroduces an internal id key, this guarantees
- * the agent-facing `get_fingerprint` contract stays public-safe.
+ * the agent-facing `arkova_get_fingerprint` contract stays public-safe.
  */
 export async function handleAgentVerify(
   input: AgentVerifyInput,
@@ -1709,7 +1706,7 @@ export async function handleAgentVerify(
   return textResult(publicSafe);
 }
 
-/** Agent-friendly alias for API v2 `get_anchor(public_id)`. */
+/** Agent-friendly alias for API v2 `arkova_get_anchor(public_id)`. */
 export async function handleAgentGetAnchor(
   input: AgentGetAnchorInput,
   config: SupabaseConfig,
@@ -1720,7 +1717,7 @@ export async function handleAgentGetAnchor(
 /**
  * Public-safe organization detail. Mirrors the worker's
  * GET /api/v2/organizations/{public_id} contract by issuing a dedicated
- * org_members→organizations lookup (NOT a filter over list_orgs), so the
+ * org_members→organizations lookup (NOT a filter over arkova_list_orgs), so the
  * response:
  *   - never inherits the list endpoint's 50-row cap;
  *   - never leaks the internal `organizations.id` column;
@@ -1770,10 +1767,10 @@ export async function handleAgentGetOrganization(
       verification_status: stringOrNull(org.verification_status),
     });
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Organization detail lookup timed out'
-      : `Organization detail lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return errorResult('Organization detail lookup timed out');
+    }
+    return errorResult(safeErrorText(error, 'arkova_get_organization'));
   }
 }
 
@@ -1810,10 +1807,10 @@ export async function handleAgentListOrgs(config: SupabaseConfig): Promise<ToolR
 
     return textResult({ organizations });
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'List organizations timed out'
-      : `List organizations failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      return errorResult('List organizations timed out');
+    }
+    return errorResult(safeErrorText(error, 'arkova_list_orgs'));
   }
 }
 
@@ -1833,7 +1830,7 @@ export async function handleVerifyBatch(
   }
 
   if (input.public_ids.length > 100) {
-    return errorResult('Error: verify_batch accepts at most 100 public_ids per call');
+    return errorResult('Error: arkova_verify_batch accepts at most 100 public_ids per call');
   }
 
   const sanitized = input.public_ids.map((id) => (typeof id === 'string' ? id.trim() : ''));

@@ -148,3 +148,12 @@ names/schemas only. Update both by hand, together.
 - No CI check enforces text parity across the five published MCP claim surfaces (`mcp-tools.ts`,
   `server-card.json`, `public/AGENTS.md`, `public/llms*.txt`, `docs/api/mcp-tools.md`). They can drift
   freely today; a parity script is the durable fix for the BUG-026 class.
+
+## 2026-09-02 — tool rename, D3, ES256 Bearer, safeErrorText (SCRUM-3894)
+
+See `services/edge/agents.md` (same date) for the full entry. File-level notes:
+- **`mcp-tools.ts`** — all `TOOL_DEFINITIONS` names `arkova_`-prefixed except `nessie_query`; `API_ONLY_NOTE` appended to `arkova_verify_anchor` / `arkova_search_anchors` (do not drop it); every catch block returns `safeErrorText(...)`.
+- **`mcp-tool-schemas.ts`** — registry keys follow the new names.
+- **`mcp-server.ts`** — `TOOL_DESC` keys renamed; `handleProtectedResourceMetadata` has no `authorization_servers` (D3); `validateBearer` tolerates a missing `SUPABASE_JWT_SECRET` (ES256 path needs none).
+- **`mcp-jwt-verify.ts`** — ES256 via JWKS + HS256 fallback; exports `jwksUrlFor`, `resetJwksCacheForTests`, `JwksFetcher`. `supabase-jwt.ts` still pins HS256 and has no non-test importer — candidate for removal, not touched here.
+- **`mcp-error-utils.ts`** — `safeErrorText` home (was in `mcp-server.ts`; moved to avoid an import cycle).

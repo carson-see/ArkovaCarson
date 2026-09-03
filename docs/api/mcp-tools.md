@@ -2,9 +2,9 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes fifteen read-oriented launch tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials and query verified public records — all without writing HTTP requests. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`, `get_organization`, `get_record`, `get_fingerprint`, `get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes fifteen read-oriented launch tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials and query verified public records — all without writing HTTP requests. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`arkova_search`, `arkova_verify`, `arkova_list_orgs`, `arkova_get_anchor`, `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
 
-`anchor_document` is intentionally outside the default MCP launch surface. It is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write-capable scope (`write:anchors` or `anchor:write`). `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. Until that evidence is attached, public MCP launch is read-only.
+`arkova_anchor_document` is intentionally outside the default MCP launch surface. It is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write-capable scope (`write:anchors` or `anchor:write`). `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. Until that evidence is attached, public MCP launch is read-only.
 
 This is the verification layer for the agentic economy. Same infrastructure as the REST API; just exposed through the MCP transport so any tool-using LLM can call it natively.
 
@@ -16,7 +16,7 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 
 **Endpoint:** `https://edge.arkova.ai/mcp`
 
-**Discovery:** `https://edge.arkova.ai/.well-known/mcp.json`
+**Discovery:** `https://app.arkova.ai/.well-known/mcp/server-card.json` (the only discovery document that resolves; `edge.arkova.ai/.well-known/mcp.json` does not exist)
 
 **Authentication:** `X-API-Key: ak_live_...` or `Authorization: Bearer ak_live_...`
 
@@ -40,21 +40,21 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 
 | # | Tool | Purpose | Story |
 |---|---|---|---|
-| 1 | **`search`** | **Agent-friendly v2 search across orgs, records, fingerprints, and documents** | **SCRUM-1107** |
-| 2 | **`verify`** | **Verify a SHA-256 document fingerprint** | **SCRUM-1107** |
-| 3 | **`list_orgs`** | **List org context for the authenticated caller** | **SCRUM-1107** |
-| 4 | **`get_anchor`** | **Fetch redacted public anchor metadata by public ID** | **SCRUM-1107** |
-| 5 | **`get_organization`** | **Public-safe organization detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
-| 6 | **`get_record`** | **Public-safe record detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
-| 7 | **`get_fingerprint`** | **Public-safe latest-anchor lookup by SHA-256 fingerprint** | **SCRUM-1132 / SCRUM-1584** |
-| 8 | **`get_document`** | **Public-safe document detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
-| 9 | `verify_anchor` | Verify a single credential by public ID | P8-S19 |
-| 10 | `search_anchors` | Keyword (lexical substring) search across credentials | P8-S19 |
+| 1 | **`arkova_search`** | **Agent-friendly v2 search across orgs, records, fingerprints, and documents** | **SCRUM-1107** |
+| 2 | **`arkova_verify`** | **Verify a SHA-256 document fingerprint** | **SCRUM-1107** |
+| 3 | **`arkova_list_orgs`** | **List org context for the authenticated caller** | **SCRUM-1107** |
+| 4 | **`arkova_get_anchor`** | **Fetch redacted public anchor metadata by public ID** | **SCRUM-1107** |
+| 5 | **`arkova_get_organization`** | **Public-safe organization detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 6 | **`arkova_get_record`** | **Public-safe record detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 7 | **`arkova_get_fingerprint`** | **Public-safe latest-anchor lookup by SHA-256 fingerprint** | **SCRUM-1132 / SCRUM-1584** |
+| 8 | **`arkova_get_document`** | **Public-safe document detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 9 | `arkova_verify_anchor` | Verify a single credential by public ID | P8-S19 |
+| 10 | `arkova_search_anchors` | Keyword (lexical substring) search across credentials | P8-S19 |
 | 11 | `nessie_query` | **DISABLED** — returns `nessie_disabled`, never results | PH1-SDK-03 |
-| 12 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
-| 13 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
-| 14 | `oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
-| 15 | `list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
+| 12 | `arkova_verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
+| 13 | **`arkova_verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
+| 14 | `arkova_oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
+| 15 | `arkova_list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `@carsonarkova/sdk`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 
@@ -72,7 +72,7 @@ When an error occurs, the response also includes `"isError": true`.
 
 The aliases below are intentionally named like OpenAPI function-call operations. Prefer them for new agent integrations; the legacy tool names remain stable for existing clients.
 
-### `search`
+### `arkova_search`
 
 Input:
 
@@ -89,7 +89,7 @@ Example:
 { "q": "Acme compliance certificate", "type": "document", "limit": 5 }
 ```
 
-### `verify`
+### `arkova_verify`
 
 Input:
 
@@ -97,11 +97,11 @@ Input:
 |---|---|:---:|---|
 | `fingerprint` | string | yes | 64-character SHA-256 document fingerprint |
 
-### `list_orgs`
+### `arkova_list_orgs`
 
 No input fields. Returns the caller's organization context as derived from the authenticated user and `org_members`.
 
-### `get_anchor`
+### `arkova_get_anchor`
 
 Input:
 
@@ -111,7 +111,7 @@ Input:
 
 ---
 
-## 1. `verify_anchor`
+## 1. `arkova_verify_anchor`
 
 Verify the authenticity and current status of a single credential by its public identifier.
 
@@ -143,11 +143,11 @@ Verify the authenticity and current status of a single credential by its public 
 
 ### Example agent prompt
 
-> "Use the verify_anchor tool to check ARK-2026-001 and tell me if it's still valid."
+> "Use the arkova_verify_anchor tool to check ARK-2026-001 and tell me if it's still valid."
 
 ---
 
-## 2. `search_anchors`
+## 2. `arkova_search_anchors`
 
 Keyword search across anchored credentials.
 
@@ -261,9 +261,9 @@ reachable.
 
 ---
 
-## 4. `anchor_document` — gated write tool
+## 4. `arkova_anchor_document` — gated write tool
 
-`anchor_document` is not exposed by the default public MCP launch manifest. It is a gated write tool for controlled deployments only. To expose it, operators must set `MCP_ENABLE_ANCHOR_DOCUMENT=true` and authenticate with a caller whose auth result includes `write:anchors` or `anchor:write`.
+`arkova_anchor_document` is not exposed by the default public MCP launch manifest. It is a gated write tool for controlled deployments only. To expose it, operators must set `MCP_ENABLE_ANCHOR_DOCUMENT=true` and authenticate with a caller whose auth result includes `write:anchors` or `anchor:write`.
 
 When enabled, it submits a document's SHA-256 fingerprint to the public ledger. The document itself is never sent — only its fingerprint.
 
@@ -286,13 +286,13 @@ When enabled, it submits a document's SHA-256 fingerprint to the public ledger. 
   "record_id": "uuid",
   "public_id": "ARK-2026-001",
   "content_hash": "abc123...",
-  "message": "Document fingerprint submitted for batch anchoring. Check status with verify_document."
+  "message": "Document fingerprint submitted for batch anchoring. Check status with arkova_verify_document."
 }
 ```
 
 ---
 
-## 5. `verify_document`
+## 5. `arkova_verify_document`
 
 Verify a document by its SHA-256 fingerprint. Returns the anchor proof if found.
 
@@ -320,11 +320,11 @@ Verify a document by its SHA-256 fingerprint. Returns the anchor proof if found.
 }
 ```
 
-> **Note** — The agent-friendly `get_fingerprint` alias returns the same shape **without `record_id`** (it is the internal `public_records.id` UUID and never appears on the public-safe agent surface).
+> **Note** — The agent-friendly `arkova_get_fingerprint` alias returns the same shape **without `record_id`** (it is the internal `public_records.id` UUID and never appears on the public-safe agent surface).
 
 ---
 
-## 6. `verify_batch` 🆕 INT-02
+## 6. `arkova_verify_batch` 🆕 INT-02
 
 Verify multiple credentials in a single call. Accepts up to 100 public IDs and returns each result in input order. Use this when an agent needs to validate a list of credentials (e.g., a candidate portfolio, a screening pipeline batch, an audit sample).
 
@@ -382,9 +382,9 @@ Verify multiple credentials in a single call. Accepts up to 100 public IDs and r
 
 > "Verify these candidate credentials in one batch: ARK-2026-001, ARK-2026-002, ARK-2026-003. Then tell me which are revoked."
 
-### Why a separate tool from `verify_anchor`?
+### Why a separate tool from `arkova_verify_anchor`?
 
-Calling `verify_anchor` 100 times in a loop creates 100 turns of agent overhead (100 prompt re-evaluations, 100 tool dispatches, 100 result-parsing steps). `verify_batch` collapses that to **one** turn — far cheaper for the model and far faster wall-clock. Use `verify_batch` whenever you have a known list of IDs.
+Calling `arkova_verify_anchor` 100 times in a loop creates 100 turns of agent overhead (100 prompt re-evaluations, 100 tool dispatches, 100 result-parsing steps). `arkova_verify_batch` collapses that to **one** turn — far cheaper for the model and far faster wall-clock. Use `arkova_verify_batch` whenever you have a known list of IDs.
 
 ---
 
@@ -409,10 +409,10 @@ Tool calls share the per-API-key rate limits with the REST API:
 
 | Tool | Limit |
 |---|---|
-| `verify_anchor`, `verify_document` | 1,000 req/min |
-| `anchor_document` | Gated write tool; not exposed in default launch manifest |
-| `search_anchors`, `nessie_query` | 30 req/min (AI-rate-limited) |
-| `verify_batch` | 10 req/min (batch tier) |
+| `arkova_verify_anchor`, `arkova_verify_document` | 1,000 req/min |
+| `arkova_anchor_document` | Gated write tool; not exposed in default launch manifest |
+| `arkova_search_anchors`, `nessie_query` | 30 req/min (AI-rate-limited) |
+| `arkova_verify_batch` | 10 req/min (batch tier) |
 
 Rate limit responses include `Retry-After`. Agents should back off and retry.
 
@@ -439,7 +439,7 @@ curl -X POST https://edge.arkova.ai/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "verify_anchor",
+      "name": "arkova_verify_anchor",
       "arguments": { "public_id": "ARK-2026-001" }
     }
   }'
@@ -453,7 +453,7 @@ curl -X POST https://edge.arkova.ai/mcp \
     "id": 2,
     "method": "tools/call",
     "params": {
-      "name": "verify_batch",
+      "name": "arkova_verify_batch",
       "arguments": { "public_ids": ["ARK-2026-001", "ARK-2026-002"] }
     }
   }'
@@ -466,18 +466,19 @@ curl -X POST https://edge.arkova.ai/mcp \
 
 ## Other registered tools
 
-`oracle_batch_verify` — batch-verify up to 25 credentials with signed query-envelope metadata. Use when the consuming surface (e.g., a programmatic oracle) needs cryptographic proof of which IDs were checked at what time. Mirrors the v1 oracle batch endpoint; not part of the canonical agent v2 workflow.
+`arkova_oracle_batch_verify` — batch-verify up to 25 credentials with signed query-envelope metadata. Use when the consuming surface (e.g., a programmatic oracle) needs cryptographic proof of which IDs were checked at what time. Mirrors the v1 oracle batch endpoint; not part of the canonical agent v2 workflow.
 
-`list_agents` — list AI agents registered to the authenticated caller's organization. Used by management surfaces, not part of the per-credential agent flow.
+`arkova_list_agents` — list AI agents registered to the authenticated caller's organization. Used by management surfaces, not part of the per-credential agent flow.
 
 ## Changelog
 
 | Version | Date | Story | Change |
 |---|---|---|---|
-| v1.2 | 2026-05-03 | SCRUM-1132 + SCRUM-1584 | Added v2 detail aliases `get_organization`, `get_record`, `get_fingerprint`, `get_document`, plus `oracle_batch_verify` and `list_agents`. Total tools: 16. |
-| v1.1 | 2026-04-11 | INT-02 (SCRUM-643) | Added `verify_batch` tool (cle_verify deferred to INT-02b) |
-| v1.0 | 2026-03-22 | PH1-SDK-03 | Added `nessie_query`, `anchor_document`, `verify_document` |
-| v0.9 | 2026-03-08 | P8-S19 | Initial release with `verify_anchor` + `search_anchors` |
+| v1.2 | 2026-05-03 | SCRUM-1132 + SCRUM-1584 | Added v2 detail aliases `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`, plus `arkova_oracle_batch_verify` and `arkova_list_agents`. Total tools: 16. |
+| v1.1 | 2026-04-11 | INT-02 (SCRUM-643) | Added `arkova_verify_batch` tool (cle_verify deferred to INT-02b) |
+| v1.0 | 2026-03-22 | PH1-SDK-03 | Added `nessie_query`, `arkova_anchor_document`, `arkova_verify_document` |
+| v3.0 | 2026-09-02 | SCRUM-3894 | Every tool renamed with the `arkova_` prefix (`nessie_query` keeps its namespace); `verify_credential`/`search_credentials` → `arkova_verify_anchor`/`arkova_search_anchors`, no aliases — the old names caused an agent to sweep local secrets (BUG-2026-09-02-001). OAuth no longer advertised (D3); Bearer accepts ES256 via JWKS (BUG-2026-09-02-002). |
+| v0.9 | 2026-03-08 | P8-S19 | Initial release with `verify_credential` + `search_credentials` |
 
 ---
 

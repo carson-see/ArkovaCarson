@@ -141,22 +141,22 @@ export const agentGetDocumentSchema = agentGetAnchorSchema;
 
 // ── Registry ─────────────────────────────────────────────────────────────
 export const MCP_TOOL_SCHEMAS = {
-  verify_anchor: verifyCredentialSchema,
-  search_anchors: searchCredentialsSchema,
+  arkova_verify_anchor: verifyCredentialSchema,
+  arkova_search_anchors: searchCredentialsSchema,
   nessie_query: nessieQuerySchema,
-  anchor_document: anchorDocumentSchema,
-  verify_document: verifyDocumentSchema,
-  verify_batch: verifyBatchSchema,
-  search: agentSearchSchema,
-  verify: agentVerifySchema,
-  list_orgs: agentListOrgsSchema,
-  get_anchor: agentGetAnchorSchema,
-  get_organization: agentGetOrganizationSchema,
-  get_record: agentGetRecordSchema,
-  get_fingerprint: agentGetFingerprintSchema,
-  get_document: agentGetDocumentSchema,
-  oracle_batch_verify: oracleBatchVerifySchema,
-  list_agents: listAgentsSchema,
+  arkova_anchor_document: anchorDocumentSchema,
+  arkova_verify_document: verifyDocumentSchema,
+  arkova_verify_batch: verifyBatchSchema,
+  arkova_search: agentSearchSchema,
+  arkova_verify: agentVerifySchema,
+  arkova_list_orgs: agentListOrgsSchema,
+  arkova_get_anchor: agentGetAnchorSchema,
+  arkova_get_organization: agentGetOrganizationSchema,
+  arkova_get_record: agentGetRecordSchema,
+  arkova_get_fingerprint: agentGetFingerprintSchema,
+  arkova_get_document: agentGetDocumentSchema,
+  arkova_oracle_batch_verify: oracleBatchVerifySchema,
+  arkova_list_agents: listAgentsSchema,
 } as const;
 
 export type McpToolName = keyof typeof MCP_TOOL_SCHEMAS;
