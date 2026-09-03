@@ -22,9 +22,11 @@
  *
  * UNIQUE FRIENDLY NAME (Amendment A2, hardened per PR #2637 review item
  * 25): enrolling always sends a fresh, timestamp+random-suffixed
- * `friendlyName` (the suffix is `randomSuffixHex()`, `@/lib/random` —
- * crypto.getRandomValues-backed, not `Math.random()`, per SonarCloud
- * typescript:S2245) so a stale/unverified factor left over from an earlier
+ * `friendlyName` (the suffix is `crypto.randomUUID().slice(0, 8)` — R9, PR
+ * #2637 review round 2: replaces the bespoke `randomSuffixHex()` helper,
+ * now deleted, since the Web Crypto `randomUUID()` this repo already
+ * requires is an equally CSPRNG-backed 8-hex-char source with no extra
+ * module to maintain) so a stale/unverified factor left over from an earlier
  * attempt (prod has exactly one such row, dated 2026-03-23, on a platform
  * admin — see mfa-dossier.md) can never collide via
  * `mfa_factor_name_conflict`.
@@ -77,7 +79,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { supabase } from '@/lib/supabase';
 import { withTimeout, TimeoutError } from '@/lib/async';
 import { classifyMfaError } from '@/lib/mfaErrors';
-import { randomSuffixHex } from '@/lib/random';
 import { useAuth } from '@/hooks/useAuth';
 import { MFA_ENROLLMENT_REQUIRED_LABELS } from '@/lib/copy';
 
@@ -126,7 +127,7 @@ export function MfaEnrollmentRequired({
     let timedOut = false;
 
     async function startEnrollment() {
-      const friendlyName = `Authenticator ${new Date().toISOString().slice(0, 10)}-${randomSuffixHex()}`;
+      const friendlyName = `Authenticator ${new Date().toISOString().slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;
       const enrollPromise = supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName });
 
       // Item 31 orphan cleanup: if THIS original call later resolves with

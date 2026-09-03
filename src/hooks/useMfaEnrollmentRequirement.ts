@@ -18,17 +18,22 @@
  * see that module for the date-resolution precedence and the phase-1
  * role tier (ORG_ADMIN / platform admin).
  *
- * ONBOARDING GATE ON THE NUDGE ONLY (PR #2637 review, item 33): the grace
- * nudge's CTA points at `/settings`, which is a DEAD LINK for an ORG_ADMIN
- * with `org_id === null` — `RouteGuard` bounces that combination straight
- * to `/onboarding/org`, never `/settings`. So `mfaGraceActive` additionally
- * requires `profile.org_id` to be set WHEN `profile.role === 'ORG_ADMIN'`
- * (a platform admin needs no org and is unaffected). The hard block
- * (`mfaRequired`, evaluated once enforcement is active) is DELIBERATELY
- * UNCHANGED by this gate — `AuthGuard` renders before `RouteGuard`, so
- * `MfaEnrollmentRequired` is reachable and completable regardless of
- * onboarding state; only the pre-enforcement heads-up is suppressed until
- * there is somewhere useful for its CTA to send the user.
+ * ONBOARDING GATE ON THE NUDGE ONLY (item 33; R13 PR #2637 review round 2):
+ * the grace nudge's CTA points at `/settings`, which is a DEAD LINK for an
+ * ORG_ADMIN still mid-onboarding — `RouteGuard` sends that combination to
+ * `/onboarding/org` instead. `useProfile()` ALREADY computes exactly this
+ * decision as its `destination` field (see `useProfile.ts`'s
+ * `RouteDestination` derivation), so this hook reads
+ * `destination === '/onboarding/org'` directly instead of re-deriving
+ * `role === 'ORG_ADMIN' && !org_id` inline — duplicating that logic was a
+ * second place it could silently drift from `RouteGuard`'s real behaviour.
+ * A platform admin needs no org and is carved out explicitly (a platform
+ * admin who also happens to be an org-id-less ORG_ADMIN is unaffected).
+ * The hard block (`mfaRequired`, evaluated once enforcement is active) is
+ * DELIBERATELY UNCHANGED by this gate — `AuthGuard` renders before
+ * `RouteGuard`, so `MfaEnrollmentRequired` is reachable and completable
+ * regardless of onboarding state; only the pre-enforcement heads-up is
+ * suppressed until there is somewhere useful for its CTA to send the user.
  *
  * ROLE SOURCE: `useProfile()` (React Query, 60s staleTime), NOT a
  * standalone Supabase query — cached navigation reads the profile
@@ -45,8 +50,15 @@
  * instant, or an operator moving `VITE_MFA_ENFORCE_FROM` back via a Vercel
  * redeploy an open tab picks up lazily. This hook forces a re-evaluation
  * (a cheap local re-render, no network call) via the shared
- * `useForegroundInterval` — a 60s interval and `visibilitychange` — mirroring
- * `useMfaAssurance`'s identical cadence.
+ * `useVisibilityPolling` — a 60s interval and `visibilitychange`,
+ * `immediate: false` since there's no "first check" to skip duplicating
+ * (this hook has no network call of its own) — mirroring
+ * `useMfaAssurance`'s identical cadence. R7 (PR #2637 review round 2):
+ * this used to be a bespoke `useForegroundInterval` hook, now deleted in
+ * favour of reusing the pre-existing, more heavily reviewed polling hook.
+ * R12: `enabled: Boolean(profile)` — no point re-evaluating on a tick
+ * before there is a profile to evaluate against, mirroring
+ * `useMfaAssurance`'s `Boolean(userId)`.
  *
  * SAFETY: fails to `{ mfaRequired: false, mfaGraceActive: false }` on any
  * profile-query error or a null profile/role. A transient DB error must
@@ -60,7 +72,7 @@
 
 import { useMemo, useState } from 'react';
 import { useProfile } from './useProfile';
-import { useForegroundInterval } from './useForegroundInterval';
+import { useVisibilityPolling } from './useVisibilityPolling';
 import { isMfaEnforcementActive, isMfaRequiredRole, resolveMfaEnforceFrom } from '@/lib/mfaPolicy';
 
 interface UseMfaEnrollmentRequirementResult {
@@ -80,18 +92,21 @@ interface UseMfaEnrollmentRequirementResult {
 const REEVALUATE_INTERVAL_MS = 60_000;
 
 export function useMfaEnrollmentRequirement(): UseMfaEnrollmentRequirementResult {
-  const { profile, loading, error } = useProfile();
+  const { profile, loading, error, destination } = useProfile();
 
   // Forces a re-render so isMfaEnforcementActive()'s live Date.now() read
   // is re-evaluated periodically / on tab foreground, without touching
   // React Query or issuing any network call.
   const [tick, forceReevaluate] = useState(0);
-  useForegroundInterval(() => forceReevaluate((n) => n + 1), REEVALUATE_INTERVAL_MS);
+  useVisibilityPolling(() => forceReevaluate((n) => n + 1), REEVALUATE_INTERVAL_MS, {
+    immediate: false,
+    enabled: Boolean(profile),
+  });
 
   // Resolved ONCE per re-evaluation (item 18/EA4), not once per call site —
   // isMfaEnforcementActive and the returned enforceFromIso both reuse it.
-  // `tick` has no value of its own; bumping it is only how the foreground
-  // interval forces this memo to re-sample the live env/localStorage inputs.
+  // `tick` has no value of its own; bumping it is only how the polling
+  // hook forces this memo to re-sample the live env/localStorage inputs.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const enforceFromIso = useMemo(() => resolveMfaEnforceFrom(), [tick]);
 
@@ -107,11 +122,12 @@ export function useMfaEnrollmentRequirement(): UseMfaEnrollmentRequirementResult
   // default-parameter form is the same computation without that warning.
   const enforcementActive = isMfaEnforcementActive(undefined, enforceFromIso);
 
-  // Item 33: the grace nudge's CTA is a dead link for an org-id-less
-  // ORG_ADMIN (RouteGuard sends them to /onboarding/org, not /settings).
-  // Platform admins need no org, so they are unaffected either way.
-  const onboardingIncomplete =
-    effectiveProfile?.role === 'ORG_ADMIN' && !effectiveProfile?.is_platform_admin && !effectiveProfile?.org_id;
+  // Item 33/R13: the grace nudge's CTA is a dead link for an org-id-less
+  // ORG_ADMIN — `useProfile()`'s own `destination` already says
+  // '/onboarding/org' for exactly that case (RouteGuard's real routing
+  // decision), so read it directly instead of re-deriving role/org_id.
+  // Platform admins need no org, so they are carved out explicitly.
+  const onboardingIncomplete = destination === '/onboarding/org' && !effectiveProfile?.is_platform_admin;
 
   return {
     loading,

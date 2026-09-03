@@ -54,7 +54,6 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/lib/supabase';
-import { randomSuffixHex } from '@/lib/random';
 import type { TotpFactor } from '@/lib/mfaTypes';
 import { TWO_FACTOR_SETUP_LABELS as LABELS } from '@/lib/copy';
 
@@ -93,7 +92,10 @@ function authErrorCode(error: unknown): string | undefined {
  */
 function defaultFriendlyName(): string {
   const dateStr = new Date().toISOString().slice(0, 10);
-  return `${LABELS.DEFAULT_FACTOR_NAME(dateStr)}-${randomSuffixHex()}`;
+  // R9 (PR #2637 review round 2): crypto.randomUUID().slice(0, 8) replaces
+  // the bespoke randomSuffixHex() helper (now deleted) — an equally
+  // CSPRNG-backed 8-hex-char source with no extra module to maintain.
+  return `${LABELS.DEFAULT_FACTOR_NAME(dateStr)}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
 function formatCreatedDate(iso: string): string {

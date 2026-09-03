@@ -11,8 +11,10 @@
  *   shared `classifyMfaError` (this was the EA1 gap: a platform blip during
  *   the post-enrollment verify step used to strand a mandatorily-enrolling
  *   admin on a generic inline error with no escape route).
- * - `randomSuffix()` now comes from the shared `randomSuffixHex()`
- *   (`@/lib/random`, crypto-backed — SonarCloud typescript:S2245, item 25).
+ * - `randomSuffix()` now comes from `crypto.randomUUID().slice(0, 8)`
+ *   directly (R9, PR #2637 review round 2 — replaces the bespoke
+ *   `randomSuffixHex()` helper, now deleted; SonarCloud typescript:S2245,
+ *   item 25 still holds — this is CSPRNG-backed, not `Math.random()`).
  * - The enroll timeout is raised from 8s to 15s, and a LATE-resolving
  *   `enroll()` (one that loses the timeout race but later succeeds
  *   server-side) is best-effort unenrolled so it never becomes an orphaned,

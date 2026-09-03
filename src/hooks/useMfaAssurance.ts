@@ -41,8 +41,12 @@
  * LIVE RE-EVALUATION (SCRUM-3167, CTO ruling A4-11): beyond the initial
  * per-mount/per-userId check above, this hook also re-runs the SAME check
  * on `visibilitychange` (when the tab returns to foreground) and on a 60s
- * interval while mounted (via the shared `useForegroundInterval`). This
- * catches a session whose factor state changes server-side mid-session
+ * interval while mounted (via the shared `useVisibilityPolling`, with
+ * `immediate: false` since the initial-mount effect above already ran the
+ * first check — R7, PR #2637 review round 2: this used to be a bespoke
+ * `useForegroundInterval` hook, now deleted in favour of reusing the
+ * pre-existing, more heavily reviewed polling hook). This catches a
+ * session whose factor state changes server-side mid-session
  * (e.g. the user unenrolled their only TOTP factor from another device, or
  * an operator revoked a factor via the break-glass runbook) without
  * requiring a full page reload. Re-checks reuse the exact same fail-open
@@ -75,7 +79,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { withTimeout } from '@/lib/async';
-import { useForegroundInterval } from './useForegroundInterval';
+import { useVisibilityPolling } from './useVisibilityPolling';
 
 export type MfaAssuranceStatus = 'loading' | 'satisfied' | 'challenge_required';
 
@@ -199,7 +203,7 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
   // whenever the tab regains foreground, via the shared hook both MFA
   // policy consumers use. Inherits `check`'s fail-open contract and its
   // stale-response guard — there is no separate "polling" code path.
-  useForegroundInterval(check, REASSURANCE_INTERVAL_MS, Boolean(userId));
+  useVisibilityPolling(check, REASSURANCE_INTERVAL_MS, { immediate: false, enabled: Boolean(userId) });
 
   const markVerified = useCallback(() => {
     setState({ userId, status: 'satisfied', hasVerifiedFactor: true });

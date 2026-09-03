@@ -27,13 +27,17 @@
  *   3. `MFA_ADMIN_ENFORCE_FROM_DEFAULT` — the baked constant, so the
  *      deadline is real even with zero env configuration.
  *
- * Every candidate at every tier is validated against a STRICT UTC date
- * regex (CTO ruling A4-9) before use; anything that fails validation is
- * treated as absent and resolution falls through to the next tier. This
- * intentionally rejects non-UTC-suffixed strings, local-time-shaped
- * strings, and garbage — an ambiguous date must never silently become
- * "enforcement never starts" (fails toward the baked default, not toward
- * "no enforcement").
+ * Every candidate at every tier is validated with `z.string().datetime()`
+ * (CTO ruling A4-9; R10, PR #2637 review round 2 — replaces a hand-rolled
+ * regex with Zod's built-in ISO-datetime validator, this repo's existing
+ * validation dependency) before use; anything that fails validation is
+ * treated as absent and resolution falls through to the next tier. Zod's
+ * default (`offset: false`) accepts ONLY a `Z`-suffixed UTC instant with
+ * optional fractional seconds — no numeric offset, no missing `Z`, and it
+ * validates real calendar values (rejects month 13, Feb 30/29-on-a-
+ * non-leap-year, hour 25, etc.), which the prior regex did not. An
+ * ambiguous date must never silently become "enforcement never starts"
+ * (fails toward the baked default, not toward "no enforcement").
  *
  * `import.meta.env.*` and `localStorage` are read live, inside the
  * functions that use them (never cached at module scope) — the same
@@ -41,12 +45,16 @@
  * tests without `vi.resetModules()`.
  */
 
+import { z } from 'zod';
 import type { Database } from '@/types/database.types';
+import { readItem } from './safeStorage';
 
-const OVERRIDE_STORAGE_KEY = 'arkova_mfa_enforce_from_override';
+/** R14 (PR #2637 review round 2): exported so callers outside this module
+ * (e.g. `e2e/helpers/mfa.ts`'s `setEnforceDateOverride`) reference the same
+ * constant instead of duplicating the string literal. */
+export const MFA_ENFORCE_FROM_OVERRIDE_KEY = 'arkova_mfa_enforce_from_override';
 
-/** RFC 3339 UTC instant, seconds-required, optional fractional seconds, `Z` mandatory. */
-const STRICT_UTC_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+const utcDateTimeSchema = z.string().datetime();
 
 /**
  * Baked so the enforcement deadline is real even with zero environment
@@ -59,7 +67,7 @@ export const MFA_ADMIN_ENFORCE_FROM_DEFAULT = '2026-09-21T00:00:00Z';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function isValidUtcDateString(value: unknown): value is string {
-  return typeof value === 'string' && STRICT_UTC_DATE_RE.test(value) && !Number.isNaN(Date.parse(value));
+  return utcDateTimeSchema.safeParse(value).success;
 }
 
 function readDateOverride(): string | null {
@@ -67,15 +75,10 @@ function readDateOverride(): string | null {
     import.meta.env.DEV === true || import.meta.env.VITE_MFA_ALLOW_DATE_OVERRIDE === 'true';
   if (!overrideAllowed) return null;
 
-  try {
-    return localStorage.getItem(OVERRIDE_STORAGE_KEY);
-  } catch {
-    // Storage access can throw (private browsing, disabled storage, quota).
-    // Fall through to the next precedence tier rather than crashing policy
-    // resolution — MFA enforcement must never fail loudly for a UX reason
-    // this unrelated to the security decision being made.
-    return null;
-  }
+  // R8 (PR #2637 review round 2): shared safeStorage.readItem — see that
+  // module's doc comment for why the try/catch here matters even in this
+  // repo's own test environment, not just real private-browsing.
+  return readItem(localStorage, MFA_ENFORCE_FROM_OVERRIDE_KEY);
 }
 
 /** Resolve the effective MFA enforcement instant, per the precedence above. */

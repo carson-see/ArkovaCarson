@@ -15,8 +15,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { SEED_USERS } from '../fixtures/supabase';
 import { uniqueTestId } from './unique';
 import { totp } from './totp';
+import { MFA_ENFORCE_FROM_OVERRIDE_KEY } from '../../src/lib/mfaPolicy';
 
-export const MFA_ENFORCE_DATE_OVERRIDE_KEY = 'arkova_mfa_enforce_from_override';
+/**
+ * R14 (PR #2637 review round 2): re-exported from `src/lib/mfaPolicy.ts`'s
+ * own constant instead of a locally-duplicated string literal, so this
+ * helper and the app can never drift on the key name.
+ */
+export const MFA_ENFORCE_DATE_OVERRIDE_KEY = MFA_ENFORCE_FROM_OVERRIDE_KEY;
 
 export interface DisposableUserOptions {
   role: 'INDIVIDUAL' | 'ORG_ADMIN';

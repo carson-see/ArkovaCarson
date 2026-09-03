@@ -1,25 +1,27 @@
 /**
- * mfaCapabilityCooldown tests — SCRUM-3167 review batch (items 5/D1, 24).
+ * mfaCapabilityCooldown tests — SCRUM-3167 (PR #2637 review; round 2 R17).
  *
- * D1 (CONFIRMED by the verifier): AuthGuard's one-shot toast/Sentry ref was
- * PER AuthGuard INSTANCE, and every one of the ~52 routes mounts its own
- * AuthGuard. During an MFA-platform outage, a required-role admin who keeps
- * navigating gets a fresh `enroll()`/`challenge()` attempt PLUS a toast PLUS
- * a Sentry event on EVERY route change — no session-level memo. This module
- * is the shared, cross-instance cooldown: once ANY AuthGuard instance
- * reports a capability failure, every instance (including ones that mount
- * AFTER the fact, e.g. on the next navigation) sees the cooldown as active
- * for a bounded window and skips re-attempting the failing operation.
+ * R17 (CONFIRMED bypass): the cooldown used to be a single GLOBAL
+ * sessionStorage key that survived `useAuth.signOut()`'s hard redirect —
+ * on a shared browser, the NEXT user to sign in inherited the cooldown and
+ * was seeded fail-open at `AuthGuard` mount. It is now keyed by userId
+ * (both the module-level in-memory value and the sessionStorage mirror),
+ * and this file pins the cross-user isolation directly. The companion
+ * "never applies to the challenge path" half of R17 is enforced in
+ * `AuthGuard.tsx` (this module has no concept of "path" — it is a pure
+ * per-user timestamp store) and pinned in `AuthGuard.mfaGate.test.tsx`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   armMfaCapabilityCooldown,
   isMfaCapabilityCooldownActive,
+  clearMfaCapabilityCooldown,
   __resetMfaCapabilityCooldownForTests,
 } from './mfaCapabilityCooldown';
 
-// sessionStorage works natively in this test environment (unlike
-// localStorage — see mfaPolicy.ts's module doc comment / agents.md).
+const USER_A = 'user-a';
+const USER_B = 'user-b';
+
 describe('mfaCapabilityCooldown', () => {
   beforeEach(() => {
     __resetMfaCapabilityCooldownForTests();
@@ -31,43 +33,78 @@ describe('mfaCapabilityCooldown', () => {
   });
 
   it('is inactive before anything arms it', () => {
-    expect(isMfaCapabilityCooldownActive()).toBe(false);
+    expect(isMfaCapabilityCooldownActive(USER_A)).toBe(false);
   });
 
-  it('becomes active immediately after arming', () => {
-    armMfaCapabilityCooldown();
-    expect(isMfaCapabilityCooldownActive()).toBe(true);
+  it('becomes active for that user immediately after arming', () => {
+    armMfaCapabilityCooldown(USER_A);
+    expect(isMfaCapabilityCooldownActive(USER_A)).toBe(true);
   });
 
-  it('reports alreadyArmed=false on the FIRST arm and true on subsequent arms within the window', () => {
-    const first = armMfaCapabilityCooldown();
+  it('R17: is CROSS-USER ISOLATED — arming for user A never activates the cooldown for user B', () => {
+    armMfaCapabilityCooldown(USER_A);
+    expect(isMfaCapabilityCooldownActive(USER_A)).toBe(true);
+    expect(isMfaCapabilityCooldownActive(USER_B)).toBe(false);
+  });
+
+  it('reports alreadyArmed=false on the FIRST arm and true on subsequent arms for the SAME user within the window', () => {
+    const first = armMfaCapabilityCooldown(USER_A);
     expect(first.alreadyArmed).toBe(false);
 
-    const second = armMfaCapabilityCooldown();
+    const second = armMfaCapabilityCooldown(USER_A);
     expect(second.alreadyArmed).toBe(true);
+  });
+
+  it('arming for a different user does not count as "already armed" for the first user', () => {
+    armMfaCapabilityCooldown(USER_A);
+    const forB = armMfaCapabilityCooldown(USER_B);
+    expect(forB.alreadyArmed).toBe(false);
   });
 
   it('expires after the 5-minute window and re-arms cleanly', () => {
     vi.useFakeTimers();
     const t0 = Date.now();
-    armMfaCapabilityCooldown(t0);
+    armMfaCapabilityCooldown(USER_A, t0);
 
-    expect(isMfaCapabilityCooldownActive(t0 + 4 * 60_000)).toBe(true);
-    expect(isMfaCapabilityCooldownActive(t0 + 5 * 60_000 + 1)).toBe(false);
+    expect(isMfaCapabilityCooldownActive(USER_A, t0 + 4 * 60_000)).toBe(true);
+    expect(isMfaCapabilityCooldownActive(USER_A, t0 + 5 * 60_000 + 1)).toBe(false);
 
-    // Re-arming after expiry reports a fresh (not "already armed") window.
-    const rearm = armMfaCapabilityCooldown(t0 + 5 * 60_000 + 1);
+    const rearm = armMfaCapabilityCooldown(USER_A, t0 + 5 * 60_000 + 1);
     expect(rearm.alreadyArmed).toBe(false);
   });
 
-  it('persists across a fresh in-memory state (simulated reload) via the sessionStorage mirror', () => {
+  it('persists across a fresh in-memory state (simulated reload) via the per-user sessionStorage mirror', () => {
     const t0 = Date.now();
-    armMfaCapabilityCooldown(t0);
+    armMfaCapabilityCooldown(USER_A, t0);
 
-    // Simulate a full page reload: module state resets, sessionStorage does not.
     __resetMfaCapabilityCooldownForTests({ keepSessionStorage: true });
 
-    expect(isMfaCapabilityCooldownActive(t0 + 60_000)).toBe(true);
+    expect(isMfaCapabilityCooldownActive(USER_A, t0 + 60_000)).toBe(true);
+  });
+
+  it('R17(c): clearMfaCapabilityCooldown removes ONLY the named user\'s entry (module + sessionStorage)', () => {
+    armMfaCapabilityCooldown(USER_A);
+    armMfaCapabilityCooldown(USER_B);
+
+    clearMfaCapabilityCooldown(USER_A);
+
+    expect(isMfaCapabilityCooldownActive(USER_A)).toBe(false);
+    expect(isMfaCapabilityCooldownActive(USER_B)).toBe(true);
+  });
+
+  it('R17: clearing survives a simulated reload too (sessionStorage entry actually removed, not just the in-memory value)', () => {
+    armMfaCapabilityCooldown(USER_A);
+    clearMfaCapabilityCooldown(USER_A);
+
+    // Simulate a reload: in-memory state resets regardless, so this proves
+    // the sessionStorage-backed entry was really deleted, not just shadowed.
+    __resetMfaCapabilityCooldownForTests({ keepSessionStorage: true });
+    expect(isMfaCapabilityCooldownActive(USER_A)).toBe(false);
+  });
+
+  it('treats an empty/falsy userId as never active (no global fallback)', () => {
+    expect(isMfaCapabilityCooldownActive('')).toBe(false);
+    expect(() => armMfaCapabilityCooldown('')).not.toThrow();
   });
 
   it('sessionStorage access is wrapped in try/catch — a throwing getItem/setItem never crashes', () => {
@@ -77,11 +114,16 @@ describe('mfaCapabilityCooldown', () => {
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('storage blocked');
     });
+    const removeItemSpy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
 
-    expect(() => isMfaCapabilityCooldownActive()).not.toThrow();
-    expect(() => armMfaCapabilityCooldown()).not.toThrow();
+    expect(() => isMfaCapabilityCooldownActive(USER_A)).not.toThrow();
+    expect(() => armMfaCapabilityCooldown(USER_A)).not.toThrow();
+    expect(() => clearMfaCapabilityCooldown(USER_A)).not.toThrow();
 
     getItemSpy.mockRestore();
     setItemSpy.mockRestore();
+    removeItemSpy.mockRestore();
   });
 });

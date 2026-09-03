@@ -12,13 +12,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MFA_ADMIN_ENFORCE_FROM_DEFAULT,
+  MFA_ENFORCE_FROM_OVERRIDE_KEY,
   resolveMfaEnforceFrom,
   isMfaEnforcementActive,
   getMfaGraceDaysRemaining,
   isMfaRequiredRole,
 } from './mfaPolicy';
 
-const OVERRIDE_KEY = 'arkova_mfa_enforce_from_override';
+// R14 (PR #2637 review round 2): imported from the module itself instead
+// of a locally-duplicated literal, same reason `e2e/helpers/mfa.ts` does.
+const OVERRIDE_KEY = MFA_ENFORCE_FROM_OVERRIDE_KEY;
 
 // This test environment's global `localStorage` is a non-functional stub
 // (Node's built-in Storage global, inert without `--localstorage-file`) —
@@ -132,6 +135,18 @@ describe('resolveMfaEnforceFrom — precedence', () => {
     vi.stubEnv('DEV', true);
     localStorage.setItem(OVERRIDE_KEY, '2020-01-01T00:00:00.500Z');
     expect(resolveMfaEnforceFrom()).toBe('2020-01-01T00:00:00.500Z');
+  });
+
+  it('R10: a numeric-offset override string (e.g. +00:00) is rejected — Zod\'s default offset:false requires Z, not just UTC-equivalent', () => {
+    vi.stubEnv('DEV', true);
+    localStorage.setItem(OVERRIDE_KEY, '2020-01-01T00:00:00+00:00');
+    expect(resolveMfaEnforceFrom()).toBe(MFA_ADMIN_ENFORCE_FROM_DEFAULT);
+  });
+
+  it('R10: an override string with an invalid calendar date (Feb 30) is rejected — the Zod validator checks real calendar values, not just digit placement', () => {
+    vi.stubEnv('DEV', true);
+    localStorage.setItem(OVERRIDE_KEY, '2020-02-30T00:00:00Z');
+    expect(resolveMfaEnforceFrom()).toBe(MFA_ADMIN_ENFORCE_FROM_DEFAULT);
   });
 
   it('localStorage access is wrapped in try/catch — a throwing getItem never crashes resolution', () => {

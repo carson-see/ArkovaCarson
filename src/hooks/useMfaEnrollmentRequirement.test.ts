@@ -17,6 +17,17 @@
  * never be the reason this hook incorrectly reports "required" for an
  * unconfirmed role — the far worse failure direction is a bug that traps
  * an ordinary user behind a block they cannot resolve.
+ *
+ * R13 (PR #2637 review round 2): the onboarding-incomplete gate (item 33)
+ * now reads `useProfile().destination === '/onboarding/org'` directly
+ * instead of re-deriving `role === 'ORG_ADMIN' && !org_id` inline —
+ * `useProfile()` already computes exactly this decision (see
+ * `useProfile.ts`'s `RouteDestination` logic) and duplicating it here was
+ * a second place that could silently drift from `RouteGuard`'s real
+ * behaviour. The mock helper below computes a realistic `destination` the
+ * same way `useProfile.ts` does, so these tests exercise the real
+ * contract; a few tests pass a MISMATCHED `destination` explicitly to
+ * prove the hook reads that field rather than re-deriving its own answer.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -29,6 +40,37 @@ vi.mock('./useProfile', () => ({
 }));
 
 const ENFORCE_FROM = '2026-09-21T00:00:00Z';
+
+interface MockProfileShape {
+  role?: string | null;
+  is_platform_admin?: boolean | null;
+  org_id?: string | null;
+  requires_manual_review?: boolean;
+}
+
+/** Mirrors `useProfile.ts`'s `RouteDestination` derivation for a realistic mock. */
+function computeDestination(profile: MockProfileShape | null): string {
+  if (!profile) return '/auth';
+  if (profile.requires_manual_review) return '/review-pending';
+  if (!profile.role) return '/onboarding/role';
+  if (profile.role === 'ORG_ADMIN' && !profile.org_id) return '/onboarding/org';
+  if (profile.role === 'INDIVIDUAL') return '/vault';
+  if (profile.role === 'ORG_ADMIN' && profile.org_id) return '/dashboard';
+  if (profile.role === 'ORG_MEMBER') return '/dashboard';
+  return '/vault';
+}
+
+function mockProfile(
+  profile: MockProfileShape | null,
+  opts: { loading?: boolean; error?: string | null; destination?: string } = {},
+) {
+  mockUseProfile.mockReturnValue({
+    profile,
+    loading: opts.loading ?? false,
+    error: opts.error ?? null,
+    destination: opts.destination ?? computeDestination(profile),
+  });
+}
 
 function setDocumentHidden(hidden: boolean) {
   Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
@@ -54,7 +96,7 @@ describe('useMfaEnrollmentRequirement', () => {
   });
 
   it('is loading while the profile query is genuinely loading for the first time', async () => {
-    mockUseProfile.mockReturnValue({ profile: null, loading: true, error: null });
+    mockProfile(null, { loading: true });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -67,11 +109,7 @@ describe('useMfaEnrollmentRequirement', () => {
   it('ORG_ADMIN is mfaRequired once enforcement is active (past the enforcement instant)', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-22T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -84,11 +122,7 @@ describe('useMfaEnrollmentRequirement', () => {
   it('ORG_ADMIN is mfaGraceActive (not yet required) before the enforcement instant', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-01T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -106,16 +140,16 @@ describe('useMfaEnrollmentRequirement', () => {
   // after the enforcement date) is UNCHANGED and still completable
   // regardless of org_id — AuthGuard renders before RouteGuard, so the
   // forced-enrollment screen works with or without an org.
+  //
+  // R13: these now go through `destination` (via the `mockProfile` helper
+  // above, which computes it the same way `useProfile.ts` does) rather
+  // than the hook re-deriving role/org_id inline.
   // -----------------------------------------------------------------------
 
-  it('ITEM 33: an ORG_ADMIN with NO org yet (mid-onboarding) does NOT get the grace nudge, even before the enforcement date', async () => {
+  it('ITEM 33: an ORG_ADMIN with NO org yet (mid-onboarding, destination=/onboarding/org) does NOT get the grace nudge', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-01T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: null },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: null });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -124,14 +158,10 @@ describe('useMfaEnrollmentRequirement', () => {
     expect(result.current.mfaRequired).toBe(false);
   });
 
-  it('ITEM 33: an ORG_ADMIN with a real org DOES get the grace nudge before the enforcement date (onboarding complete)', async () => {
+  it('ITEM 33: an ORG_ADMIN with a real org (destination=/dashboard) DOES get the grace nudge before the enforcement date', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-01T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -139,14 +169,10 @@ describe('useMfaEnrollmentRequirement', () => {
     expect(result.current.mfaGraceActive).toBe(true);
   });
 
-  it('ITEM 33: the hard block (mfaRequired) is UNCHANGED and still true for an org-id-less ORG_ADMIN once enforcement is active — completable regardless of onboarding state', async () => {
+  it('ITEM 33: the hard block (mfaRequired) is UNCHANGED and still true for an org-id-less ORG_ADMIN once enforcement is active', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-22T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: null },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: null });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -157,11 +183,37 @@ describe('useMfaEnrollmentRequirement', () => {
   it('ITEM 33: a platform admin gets the grace nudge with NO org_id at all — platform admins are unaffected by the onboarding gate', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-01T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_MEMBER', is_platform_admin: true, org_id: null },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'ORG_MEMBER', is_platform_admin: true, org_id: null });
+
+    const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
+    const { result } = renderHook(() => useMfaEnrollmentRequirement());
+
+    expect(result.current.mfaGraceActive).toBe(true);
+  });
+
+  it('R13: reads destination DIRECTLY rather than re-deriving it — a mismatched destination of "/onboarding/org" suppresses the nudge even for a profile whose role/org_id alone would not suggest it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-01T00:00:00Z'));
+    // role/org_id here look like "onboarding complete" — only the
+    // explicitly-passed destination says otherwise.
+    mockProfile(
+      { role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' },
+      { destination: '/onboarding/org' },
+    );
+
+    const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
+    const { result } = renderHook(() => useMfaEnrollmentRequirement());
+
+    expect(result.current.mfaGraceActive).toBe(false);
+  });
+
+  it('R13: a platform admin at destination=/onboarding/org still gets the grace nudge (the !is_platform_admin carve-out)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-01T00:00:00Z'));
+    mockProfile(
+      { role: 'ORG_ADMIN', is_platform_admin: true, org_id: null },
+      { destination: '/onboarding/org' },
+    );
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -172,11 +224,7 @@ describe('useMfaEnrollmentRequirement', () => {
   it('a platform admin is treated the same as ORG_ADMIN regardless of org role', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-22T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_MEMBER', is_platform_admin: true },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'ORG_MEMBER', is_platform_admin: true });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -187,11 +235,7 @@ describe('useMfaEnrollmentRequirement', () => {
   it('CRITICAL: ORG_MEMBER is never required or grace-flagged, at any time — must never regress non-privileged users', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-22T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_MEMBER', is_platform_admin: false },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'ORG_MEMBER', is_platform_admin: false });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -203,11 +247,7 @@ describe('useMfaEnrollmentRequirement', () => {
   it('CRITICAL: INDIVIDUAL is never required or grace-flagged, at any time', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-22T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'INDIVIDUAL', is_platform_admin: false },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: 'INDIVIDUAL', is_platform_admin: false });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -219,11 +259,7 @@ describe('useMfaEnrollmentRequirement', () => {
   it('FAIL-OPEN: a profile query error resolves to not-required/not-grace rather than blocking on an unconfirmed role', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-22T00:00:00Z'));
-    mockUseProfile.mockReturnValue({
-      profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' },
-      loading: false,
-      error: 'network blip',
-    });
+    mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' }, { error: 'network blip' });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -234,7 +270,7 @@ describe('useMfaEnrollmentRequirement', () => {
   });
 
   it('FAIL-OPEN: a null profile (settled, no role) resolves to not-required/not-grace', async () => {
-    mockUseProfile.mockReturnValue({ profile: null, loading: false, error: null });
+    mockProfile(null);
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -245,11 +281,7 @@ describe('useMfaEnrollmentRequirement', () => {
   });
 
   it('FAIL-OPEN: a profile with a null role resolves to not-required/not-grace', async () => {
-    mockUseProfile.mockReturnValue({
-      profile: { role: null, is_platform_admin: null },
-      loading: false,
-      error: null,
-    });
+    mockProfile({ role: null, is_platform_admin: null });
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -259,7 +291,7 @@ describe('useMfaEnrollmentRequirement', () => {
   });
 
   it('ITEM 18/EA4: returns the resolved enforcement date so AuthGuard can thread it to MfaGraceNudge without a second resolution', async () => {
-    mockUseProfile.mockReturnValue({ profile: null, loading: false, error: null });
+    mockProfile(null);
 
     const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
     const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -271,11 +303,7 @@ describe('useMfaEnrollmentRequirement', () => {
     it('flips from mfaGraceActive to mfaRequired on the 60s tick once the clock crosses the enforcement instant', async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-09-20T23:59:00Z')); // 1 minute before enforcement
-      mockUseProfile.mockReturnValue({
-        profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' },
-        loading: false,
-        error: null,
-      });
+      mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' });
 
       const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
       const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -294,11 +322,7 @@ describe('useMfaEnrollmentRequirement', () => {
 
     it('re-evaluates when the tab becomes visible again', async () => {
       vi.setSystemTime(new Date('2026-09-20T23:59:00Z'));
-      mockUseProfile.mockReturnValue({
-        profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' },
-        loading: false,
-        error: null,
-      });
+      mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' });
 
       const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
       const { result } = renderHook(() => useMfaEnrollmentRequirement());
@@ -324,11 +348,7 @@ describe('useMfaEnrollmentRequirement', () => {
 
     it('cleans up the interval and listener on unmount without throwing', async () => {
       vi.useFakeTimers();
-      mockUseProfile.mockReturnValue({
-        profile: { role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' },
-        loading: false,
-        error: null,
-      });
+      mockProfile({ role: 'ORG_ADMIN', is_platform_admin: false, org_id: 'org-1' });
       const removeListenerSpy = vi.spyOn(document, 'removeEventListener');
 
       const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
@@ -340,6 +360,17 @@ describe('useMfaEnrollmentRequirement', () => {
       expect(() => {
         vi.advanceTimersByTime(120_000);
       }).not.toThrow();
+    });
+
+    it('R12: does not poll or listen at all when the profile is not yet loaded (enabled=Boolean(profile))', async () => {
+      vi.useFakeTimers();
+      mockProfile(null, { loading: true });
+      const addSpy = vi.spyOn(document, 'addEventListener');
+
+      const { useMfaEnrollmentRequirement } = await import('./useMfaEnrollmentRequirement');
+      renderHook(() => useMfaEnrollmentRequirement());
+
+      expect(addSpy).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function));
     });
   });
 });
