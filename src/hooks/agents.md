@@ -1,5 +1,17 @@
 # agents.md — hooks
-_Last updated: 2026-08-30_
+_Last updated: 2026-09-03_
+
+## 2026-09-03 SCRUM-3167 — `useMfaAssurance.ts` restored + live re-evaluation; `useMfaEnrollmentRequirement.ts` rewritten role+date; `useHipaaMfaGate.ts` deleted
+
+Three hooks, one enforcement gate consumed by `AuthGuard.tsx` (see `src/components/auth/agents.md`'s dated entry for the full decision table and fail-open contract — this entry covers only the hook layer).
+
+- **`useMfaAssurance(userId)` — restored verbatim from PR #1973 (`3572fcd6e`, reverted `6d10032b4`)**, then extended with a LIVE RE-EVALUATION trigger (CTO ruling A4-11): the same fail-open `getAuthenticatorAssuranceLevel()` check now also re-runs on `visibilitychange` (tab returns to foreground) and every 60s while mounted, via a shared `check()` callback and a `userIdRef`-based stale-response guard (not the original's per-effect `cancelled` closure — behaviorally equivalent, but one guard now serves three call sites: mount/userId-change, the interval, and the visibility listener). Fail-open contract is UNCHANGED: every ambiguous/error/timeout outcome resolves to `'satisfied'`, never `'challenge_required'` — this hook can only ever ADD friction for an already-enrolled user.
+- **`useMfaEnrollmentRequirement()` — REWRITTEN, no longer takes a `userId` argument.** CTO ruling A4-3 drops org-level enforcement (`organizations.hipaa_mfa_required`) from phase 1 entirely — that column is writable by any org owner/admin via PostgREST with zero audit trail, so this hook issues **NO** `organizations` query at all now. Role comes from `useProfile()` (React Query, 60s staleTime) instead of a standalone Supabase query, so cached navigation never flashes a spinner (A4-6) — **this hook MUST be called from inside `<ProfileProvider>`**; every `AuthGuard` render already is (`App.tsx`: `QueryClientProvider` > `BrowserRouter` > `ProfileProvider` wraps every route). Returns `{ loading, mfaRequired, mfaGraceActive }`, both derived from `src/lib/mfaPolicy.ts`'s `isMfaRequiredRole` × `isMfaEnforcementActive()`. Fails open to both-false on a profile query error or a null profile/role. Also carries the A4-11 live re-evaluation trigger (a forced re-render on the same 60s/visibilitychange cadence, since `isMfaEnforcementActive()` is a pure function of wall-clock time that a profile-only re-render would never notice crossing).
+- **`useHipaaMfaGate.ts` DELETED** (zero non-test importers, confirmed by repo-wide grep before deletion). Superseded by `useMfaEnrollmentRequirement.ts` above.
+
+**Phase-2 items, tracked not built here:**
+- Org-level enforcement needs an audited service-role RPC + a `REVOKE`-the-column migration (T3) before `organizations.hipaa_mfa_required` can safely gate anything again — this is what eventually delivers the still-open SCRUM-564 HIPAA REG-05 story. Do not read that column from either hook until that lands.
+- **SCRUM-3593** (aal2-aware RLS on platform-admin surfaces) is the phase-2 control that closes the accepted A4-7 fail-open bypass (see `src/components/auth/agents.md`) server-side — planned only after this gate has soaked in prod past the 2026-09-21 enforcement date.
 
 ## 2026-08-30 — `useComplianceScore.ts` `useJurisdictionRules` error surfacing (SCRUM-3670)
 

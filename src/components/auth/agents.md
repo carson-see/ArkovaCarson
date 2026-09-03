@@ -1,18 +1,21 @@
 # agents.md — components/auth
-_Last updated: 2026-07-22_
+_Last updated: 2026-09-03_
 
 ## What This Folder Contains
 Authentication and identity components: login, signup, route guards, identity verification, 2FA, data rights (export/delete/correction).
 
 ## Key Files
-- `AuthGuard.tsx` — Protects routes requiring authentication; redirects to login if unauthenticated
+- `AuthGuard.tsx` — Protects routes requiring authentication; redirects to login if unauthenticated. ALSO the MFA gate since SCRUM-3167 — see the dated entry below.
+- `MfaChallenge.tsx` — Every-login MFA challenge for a session with a verified factor still at aal1 (SCRUM-3167)
+- `MfaEnrollmentRequired.tsx` — Non-skippable, completable forced-enrollment screen for a required role with no verified factor (SCRUM-3167)
+- `MfaGraceNudge.tsx` — Dismissible pre-enforcement heads-up banner, rendered ABOVE children (SCRUM-3167)
 - `LoginForm.tsx` — Email/password login with Google and LinkedIn OAuth support, plus forgot-password flow
 - `SignUpForm.tsx` — User registration form
 - `OrgRequiredGate.tsx` — Wraps org-scoped pages; shows friendly upgrade prompt when user has no org_id
 - `RouteGuard.tsx` — Route-level guard component
 - `PlatformAdminRoute.tsx` — Route guard restricting platform-only admin routes to platform admins (see 2026-07-22 entry below)
 - `IdentityVerification.tsx` — Stripe Identity verification card (dev mode auto-verifies via bypass)
-- `TwoFactorSetup.tsx` — 2FA configuration UI
+- `TwoFactorSetup.tsx` — 2FA configuration UI (opt-in enroll/verify/unenroll card; a sibling SCRUM-3167 stream is rewriting this — see `security/mfa-settings-e2e-3167`, out of scope for this file's dated entry below)
 - `DataCorrectionForm.tsx` — GDPR/privacy data correction request form
 - `DeleteAccountDialog.tsx` — Account deletion confirmation dialog
 - `ExportDataButton.tsx` — GDPR data export trigger
@@ -47,3 +50,32 @@ IdentityVerification helper copy scrubbed ("your records and attestations"). Int
 Regression coverage: `AuthLinkErrorRedirect.test.tsx` drives a **real** `MemoryRouter` (react-router-dom is deliberately not mocked — a mocked `useNavigate` never changes the location, so the re-fire is invisible) and asserts the CTA still lands on `/login` from both entry paths. The pure-predicate tests in `src/lib/authLinkRedirect.test.ts` cannot catch this: `shouldRedirectToAuthCallback` is correct in isolation; the defect was in how often it is called.
 
 Note: `eslint-rules/no-unscoped-service-test.cjs` flags any test-file variable whose name merely *contains* "from" (substring match), so a mock named `mockAuthLinkErrorFromUrl` trips it spuriously. Mock state here is named `stubbedAuthLinkError` to avoid the false positive.
+
+## 2026-09-03 SCRUM-3167 — MFA login enforcement, restored and hardened (PR #1973 lineage)
+
+Restores the MFA gate PR #1973 shipped (`3572fcd6e`) and reverted 9 minutes later (`6d10032b4`) after it walled out every ORG_ADMIN and platform admin — root cause was prod Supabase Auth having `mfa_totp_enroll_enabled=false` while the enrollment screen had no escape hatch on an `enroll()` failure. Prod TOTP is enabled now (2026-09-03, verified round-trip); the design below adds the fail-open contract PR #1973 was missing so a platform misconfiguration can never repeat that incident.
+
+**AuthGuard.tsx decision order (first match wins)** — see `AuthGuard.mfaGate.test.tsx` for one named test per row:
+1. `authLoading` → spinner
+2. `!user` → login redirect/fallback
+3. `mfaStatus === 'loading'` (from `useMfaAssurance`) → spinner
+4. policy loading (from `useMfaEnrollmentRequirement`) → spinner
+5. `mfaCapabilityUnavailable` → **children**, unconditionally, for the rest of this AuthGuard instance's life
+6. `mfaStatus === 'challenge_required'` → `<MfaChallenge>`
+7. `!hasVerifiedFactor && mfaRequired` → `<MfaEnrollmentRequired>`
+8. `mfaGraceActive` → `<MfaGraceNudge/>` rendered ABOVE children (children still render — this is a heads-up, not a gate)
+9. else → children
+
+**FAIL-OPEN CONTRACT — read before touching any of these four files:**
+- `MfaChallenge`: `listFactors()` erroring calls `onVerified()` directly (changed from PR #1973, which showed an unrecoverable error screen instead). `challenge()`/`verify()` errors split into wrong-code (`mfa_verification_failed`, `mfa_verification_rejected`, `mfa_challenge_expired`, `validation_failed` → retryable inline error, the user's own mistake) versus everything else (unknown code, no code, thrown exception → `onCapabilityUnavailable(code)`).
+- `MfaEnrollmentRequired`: **CTO ruling A4-2 — no allowlist.** `enroll()` returning ANY error (known code, unknown code, missing data), a thrown exception, or a request that hangs past an 8s circuit breaker ALL call `onCapabilityUnavailable(code)`. Every existing ORG_ADMIN/platform admin has zero verified factors today, so a design that could wall one of them out on ANY enroll failure mode would repeat the PR #1973 incident exactly. Also sends a unique `friendlyName` per enrollment attempt (Amendment A2) to avoid `mfa_factor_name_conflict` against the one stale unverified factor already on prod.
+- `AuthGuard`: `onCapabilityUnavailable` is wired identically from both screens into one `mfaCapabilityUnavailable` state — once set, renders children for good, fires a Sentry `mfa_capability_unavailable` message (`{code, path}` tags only, never PII, via the same lazy `import('@/lib/sentry')` pattern as `src/components/layout/RouteErrorBoundary.tsx`) and a ONE-SHOT `toast.warning(MFA_CAPABILITY_LABELS.UNAVAILABLE_NOTICE)` (ref-guarded — fires at most once per AuthGuard mount even if the callback somehow fires twice).
+- **This fail-open bypass is an ACCEPTED PHASE-1 TRADE-OFF (CTO ruling A4-7).** An enrolled user hitting a blocked MFA endpoint falls back to aal1 pass-through rather than being locked out. The Sentry emission makes a sustained or targeted bypass observable; **SCRUM-3593 (aal2-aware RLS on platform-admin surfaces)** is the phase-2 control that closes it server-side, planned to land only after this gate has soaked in prod past the enforcement date.
+
+**Role tier is phase-1 ONLY** (CTO ruling A4-3): ORG_ADMIN and platform admins, from `src/lib/mfaPolicy.ts`'s `isMfaRequiredRole`. `organizations.hipaa_mfa_required` (org-level enforcement) is **deliberately not read anywhere in this gate** — that column is writable by any org owner/admin via PostgREST with zero audit trail, so it cannot back a security control yet. Phase 2 needs an audited service-role RPC + a column `REVOKE` migration (T3) before org-level enforcement can safely re-enable (this is what delivers the still-open SCRUM-564 HIPAA REG-05 story).
+
+**Date override rules** (`src/lib/mfaPolicy.ts`, CTO ruling A4-1/A4-9): the enforcement date defaults to `2026-09-21T00:00:00Z`, overridable by `VITE_MFA_ENFORCE_FROM` (Carson can move the deadline via a Vercel env change + redeploy, no code change), further overridable by `localStorage['arkova_mfa_enforce_from_override']` ONLY when `import.meta.env.DEV === true` OR `VITE_MFA_ALLOW_DATE_OVERRIDE === 'true'`. **Never set `VITE_MFA_ALLOW_DATE_OVERRIDE` on Vercel prod** — see `docs/reference/ENV.md`. Every candidate string must match a strict UTC regex or it is ignored (falls through, never treated as "never enforce").
+
+**Deleted:** `src/hooks/useHipaaMfaGate.ts` (zero non-test importers, superseded by `useMfaEnrollmentRequirement.ts`).
+
+**Founder-reserved go-live checklist items** (tracked, not this PR's job): enroll or demote the shared UAT demo account (`demo@arkova-uat.dev`, ORG_ADMIN) before 2026-09-21; `password_hibp_enabled` + `password_min_length=8` in Supabase Auth config; WebAuthn (SCRUM-1194) later.

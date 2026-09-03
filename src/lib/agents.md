@@ -1,6 +1,21 @@
 # agents.md — lib
 
-_Last updated: 2026-08-29_
+_Last updated: 2026-09-03_
+
+## 2026-09-03 SCRUM-3167 — `mfaPolicy.ts` (new): MFA enforcement date policy
+
+New module, the single source of truth `AuthGuard`/`useMfaEnrollmentRequirement`/`MfaGraceNudge` all read for "is MFA required, and from when." Phase 1 is role-based only — see `src/components/auth/agents.md` and `src/hooks/agents.md`'s dated SCRUM-3167 entries for the full gate design; this entry covers the policy module itself.
+
+- `MFA_ADMIN_ENFORCE_FROM_DEFAULT = '2026-09-21T00:00:00Z'` — baked so the deadline is real with zero environment configuration.
+- `resolveMfaEnforceFrom()` precedence, each tier validated against a **strict UTC regex** (`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$`, CTO ruling A4-9) before use — an invalid candidate at any tier falls through to the next, never treated as "never enforce":
+  1. `localStorage['arkova_mfa_enforce_from_override']`, read ONLY when `import.meta.env.DEV === true` OR `import.meta.env.VITE_MFA_ALLOW_DATE_OVERRIDE === 'true'` (CTO ruling A4-1 — this must survive a PRODUCTION build, e.g. a soak/E2E preview, not just `npm run dev`). **Never set `VITE_MFA_ALLOW_DATE_OVERRIDE` on Vercel prod** — see `docs/reference/ENV.md`.
+  2. `import.meta.env.VITE_MFA_ENFORCE_FROM` — Carson can move the rollout date via a Vercel env change + redeploy, no code change.
+  3. `MFA_ADMIN_ENFORCE_FROM_DEFAULT`.
+- `isMfaEnforcementActive(now = Date.now())` — inclusive boundary (`now >= enforceFrom`).
+- `getMfaGraceDaysRemaining(now)` — ceil days, floored at 0.
+- `isMfaRequiredRole(profile)` — pure predicate, `role === 'ORG_ADMIN' || is_platform_admin === true`. Fails closed to `false` on a null/undefined profile.
+- **Reads `import.meta.env.*` and `localStorage` live, inside the functions, never cached at module scope** — the same pattern `getAppBaseUrl` in `routes.ts` uses — so `vi.stubEnv` works in tests without `vi.resetModules()`. `localStorage` access is wrapped in try/catch: this repo's own vitest+jsdom environment has a non-functional global `localStorage` (Node's own inert built-in shadows jsdom's), so the try/catch isn't just defensive for real private-browsing — it is exercised by every local test run. `mfaPolicy.test.ts` documents the working localStorage-mock pattern (`Object.defineProperty(window, 'localStorage', {...})`, mirroring `GettingStartedChecklist.test.tsx`) for any future test that needs to touch it.
+- **Organization-level enforcement is deliberately NOT here** (CTO ruling A4-3): no `organizations` query, no `hipaa_mfa_required` read. That column is writable by any org owner/admin via PostgREST with no audit trail — phase 2 needs an audited service-role RPC + a column `REVOKE` migration (T3) first.
 
 ## 2026-08-29 — `docusignLinks.ts` (DocuSign record deep links, bilateral rollout, frontend-targeted T2)
 
