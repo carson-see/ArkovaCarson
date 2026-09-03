@@ -198,8 +198,17 @@ export function useAuth(): AuthState & AuthActions {
 
   const signOut = useCallback(async () => {
     // Set flag BEFORE any state changes so AuthGuard won't show
-    // misleading "sign in required" toast during the sign-out transition
-    sessionStorage.setItem('arkova_signed_out', '1');
+    // misleading "sign in required" toast during the sign-out transition.
+    // Wrapped in try/catch (CTO ruling A4-10, SCRUM-3167): a private-
+    // browsing or storage-disabled environment throwing here must not
+    // prevent sign-out itself from completing — losing the "just signed
+    // out" toast suppression is a cosmetic regression, but blocking
+    // sign-out entirely would be a lockout the user cannot self-resolve.
+    try {
+      sessionStorage.setItem('arkova_signed_out', '1');
+    } catch {
+      // ignore storage access errors in restricted environments
+    }
 
     setLoading(true);
     setError(null);

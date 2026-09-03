@@ -312,6 +312,55 @@ describe('useAuth', () => {
     expect(mockSessionStorage.setItem).toHaveBeenCalledWith('arkova_signed_out', '1');
   });
 
+  it('signOut still completes (calls supabase.signOut and redirects) when sessionStorage.setItem throws (CTO ruling A4-10)', async () => {
+    const mockUser = { id: 'user-1', email: 'test@test.com' };
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: mockUser } },
+      error: null,
+    });
+    mockSignOut.mockResolvedValue({ error: null });
+
+    const mockSessionStorage = {
+      getItem: vi.fn(),
+      setItem: vi.fn(() => {
+        throw new Error('storage blocked (private browsing / quota exceeded)');
+      }),
+      removeItem: vi.fn(),
+    };
+    Object.defineProperty(window, 'sessionStorage', { value: mockSessionStorage, writable: true });
+
+    const originalLocation = window.location;
+    const mockLocation = { ...originalLocation, href: '' };
+    Object.defineProperty(window, 'location', {
+      value: mockLocation,
+      writable: true,
+      configurable: true,
+    });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await expect(
+      act(async () => {
+        await result.current.signOut();
+      })
+    ).resolves.not.toThrow();
+
+    // The throwing setItem must not have prevented the actual sign-out.
+    expect(mockSignOut).toHaveBeenCalled();
+    expect(mockLocation.href).toBe('/login');
+
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    });
+  });
+
   it('signOut calls supabase signOut and redirects to /login (UAT-LR1-02)', async () => {
     const mockUser = { id: 'user-1', email: 'test@test.com' };
     mockGetSession.mockResolvedValue({
