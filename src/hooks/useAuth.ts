@@ -216,7 +216,15 @@ export function useAuth(): AuthState & AuthActions {
     const { error } = await supabase.auth.signOut();
 
     if (error) {
-      sessionStorage.removeItem('arkova_signed_out');
+      // Same rationale as the setItem above (A4-10 / PR #2637 review item
+      // 29) — a throwing removeItem must not crash the signOut() error
+      // path. Worst case the flag lingers and self-corrects the next time
+      // AuthGuard's redirect-toast effect reads and clears it.
+      try {
+        sessionStorage.removeItem('arkova_signed_out');
+      } catch {
+        // ignore storage access errors in restricted environments
+      }
       setError(error.message);
       setLoading(false);
       return;

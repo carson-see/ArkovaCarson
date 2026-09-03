@@ -361,6 +361,43 @@ describe('useAuth', () => {
     });
   });
 
+  it('signOut resolves and resets loading (no unhandled rejection) when supabase.signOut() errors AND sessionStorage.removeItem() throws (PR #2637 review item 29)', async () => {
+    const mockUser = { id: 'user-1', email: 'test@test.com' };
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: mockUser } },
+      error: null,
+    });
+    mockSignOut.mockResolvedValue({ error: { message: 'sign out failed' } });
+
+    const mockSessionStorage = {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+      removeItem: vi.fn(() => {
+        throw new Error('storage blocked (private browsing / quota exceeded)');
+      }),
+    };
+    Object.defineProperty(window, 'sessionStorage', { value: mockSessionStorage, writable: true });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await expect(
+      act(async () => {
+        await result.current.signOut();
+      })
+    ).resolves.not.toThrow();
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe('sign out failed');
+    // The throwing removeItem must still have been attempted (not skipped
+    // entirely) — only its failure is swallowed.
+    expect(mockSessionStorage.removeItem).toHaveBeenCalledWith('arkova_signed_out');
+  });
+
   it('signOut calls supabase signOut and redirects to /login (UAT-LR1-02)', async () => {
     const mockUser = { id: 'user-1', email: 'test@test.com' };
     mockGetSession.mockResolvedValue({
