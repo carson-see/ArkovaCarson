@@ -294,6 +294,28 @@ test.describe('MFA enrollment and login challenge', () => {
         });
       }
 
+      // R22 (live E2E on the rig at 32b10aef5; confirmed against GoTrue by
+      // probe-unenroll-aal.mjs): unenroll() of a factor verified THIS
+      // session drops the session's AAL from aal2 to aal1 on the NEXT
+      // refreshSession() — getAuthenticatorAssuranceLevel() still reports
+      // aal2 until then, but TwoFactorSetup's post-change refreshSession()
+      // call is exactly that trigger, so AuthGuard's live re-check
+      // correctly (fail-closed) swaps Settings for the login challenge
+      // right here. That is the intended security behaviour (see
+      // AuthGuard.tsx/MfaChallenge.tsx), not a bug — handle it instead of
+      // asserting Settings never moves.
+      await Promise.race([
+        page.getByTestId('twofactor-factors').waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {}),
+        page.getByTestId('mfa-challenge-code').waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {}),
+      ]);
+      if (await page.getByTestId('mfa-challenge-code').isVisible().catch(() => false)) {
+        await submitTotpCodeWithBoundaryRetry(page, firstSecret, {
+          codeTestId: 'mfa-challenge-code',
+          submitTestId: 'mfa-challenge-submit',
+          errorTestId: 'mfa-challenge-error',
+        });
+      }
+
       await expect(page.locator('[data-testid^="twofactor-factor-"]')).toHaveCount(1, { timeout: 10_000 });
     } finally {
       await deleteDisposableUser(serviceClient, userId);

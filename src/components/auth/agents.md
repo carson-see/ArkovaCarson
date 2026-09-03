@@ -109,6 +109,16 @@ rendered — every branch maps a GoTrue error `code` to one of our own copy stri
 - `mfa_totp_enroll_not_enabled` (the platform not having TOTP turned on) renders
   `TWO_FACTOR_SETUP_LABELS.UNAVAILABLE` as a non-blocking notice, not an error — this card must
   never wall a user the way the pre-revert PR #1973 architecture did platform-wide.
+- **R22 (live E2E on the rig, confirmed against GoTrue by a direct probe):** removing a verified
+  factor drops the session to aal1 on the next refresh (GoTrue), so the login-time challenge
+  re-appears; this is intended. `unenroll()` of a factor verified in THIS session does not
+  itself change `getAuthenticatorAssuranceLevel()`'s answer (it still reports aal2), but this
+  component's own post-change `refreshSession()` call above IS the trigger that re-evaluates
+  it — the refreshed JWT carries `aal: aal1` (with the remaining factor's `nextLevel: aal2`),
+  and `AuthGuard`'s live re-check correctly, fail-closed-ly swaps Settings for `MfaChallenge`
+  right there. `e2e/mfa-enrollment-and-challenge.spec.ts`'s backup-authenticator test handles
+  this by waiting for either the settings list or the challenge screen after a Remove, and
+  completing the challenge with the surviving factor if it appears.
 - After a successful verify (new or backup factor) or a successful unenroll, calls
   `supabase.auth.refreshSession()` (Amendment A4-8) so the JWT `aal` claim other code in the app
   reads (`useMfaAssurance`, in this same file's AuthGuard entry above) is current in this session
