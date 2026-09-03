@@ -134,11 +134,20 @@ class FeatureFlagRegistry {
   private flags = new Map<string, FlagState>();
 
   /**
-   * Last successfully-read DB value per flag (survives TTL expiry). A blip
-   * after a good read holds the flag steady rather than snapping to a default
-   * or back to the env var. Cleared by `_reset()`.
+   * Last successfully-read DB value for a DB-backed flag (survives TTL
+   * expiry) — derived from the snapshot rather than tracked in a second map.
+   * `this.flags` is `source: 'db'` for a name if and only if a
+   * `switchboard_flags` read for it has ever succeeded (`init()` /
+   * `refreshDbFlag()` are the only writers of `source: 'db'`), and a failed
+   * refresh re-applies that same last-good value via `resolveRefreshFallback`
+   * rather than a default — so once a flag goes `db`-sourced it never reverts
+   * to `env`-sourced short of `_reset()`. A blip after a good read holds the
+   * flag steady rather than snapping to a default or back to the env var.
    */
-  private lastKnownGoodDb = new Map<string, boolean>();
+  private lastKnownGoodDb(name: DbFlagName): boolean | undefined {
+    const state = this.flags.get(name);
+    return state?.source === 'db' ? state.value : undefined;
+  }
 
   /**
    * Initialize the registry — reads all env and DB flags, logs them.
@@ -179,9 +188,9 @@ class FeatureFlagRegistry {
           // If flag not in DB, fall back to env var
           const envFallback = process.env[key] === 'true';
           const fromDb = dbFlagMap.has(key);
-          // A row we genuinely read is a last-known-good value from boot on,
-          // so a refresh failure minutes later has something true to hold.
-          if (fromDb) this.lastKnownGoodDb.set(key, dbFlagMap.get(key) ?? false);
+          // A row we genuinely read becomes a last-known-good value from boot
+          // on (via the `source: 'db'` write below), so a refresh failure
+          // minutes later has something true to hold.
           this.flags.set(key, {
             value: fromDb ? (dbFlagMap.get(key) ?? false) : envFallback,
             source: fromDb ? 'db' : 'env',
@@ -271,7 +280,6 @@ class FeatureFlagRegistry {
       }
 
       const value = data.enabled === true;
-      this.lastKnownGoodDb.set(name, value);
       this.flags.set(name, { value, source: 'db', lastChecked: Date.now() });
       return value;
     } catch (err) {
@@ -301,7 +309,7 @@ class FeatureFlagRegistry {
         error,
         flagKey: name,
         fallback: fallback.value,
-        lastKnownGood: this.lastKnownGoodDb.get(name),
+        lastKnownGood: this.lastKnownGoodDb(name),
       },
       message,
     );
@@ -316,7 +324,7 @@ class FeatureFlagRegistry {
    * re-opened by an env var that says true (SCRUM-2247 fail-direction).
    */
   private resolveRefreshFallback(name: DbFlagName): Pick<FlagState, 'value' | 'source'> {
-    const lastGood = this.lastKnownGoodDb.get(name);
+    const lastGood = this.lastKnownGoodDb(name);
     if (lastGood !== undefined) return { value: lastGood, source: 'db' };
     const snapshot = this.flags.get(name);
     if (snapshot) return { value: snapshot.value, source: snapshot.source };
@@ -335,10 +343,13 @@ class FeatureFlagRegistry {
     return result;
   }
 
-  /** Reset for testing — clears the snapshot AND the last-known-good values. */
+  /**
+   * Reset for testing — clears the snapshot. The last-known-good value is
+   * derived from the snapshot (see `lastKnownGoodDb()`), so clearing `flags`
+   * clears both.
+   */
   _reset(): void {
     this.flags.clear();
-    this.lastKnownGoodDb.clear();
   }
 
   /**
