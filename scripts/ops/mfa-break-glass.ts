@@ -165,71 +165,50 @@ const ArgsSchema = z
 
 export type BreakGlassArgs = z.infer<typeof ArgsSchema>;
 
-/** CLI flag names this tool recognizes — used for duplicate-flag detection. */
-const KNOWN_FLAGS = ['email', 'factor-id', 'all', 'reason', 'ticket', 'operator', 'apply'] as const;
-
-/**
- * node:util `parseArgs` silently keeps the LAST value when a flag is
- * repeated (`--email a --email b` resolves to `b`) — for a tool that emails
- * an operator's stated reason/ticket into a SECURITY audit row and deletes a
- * factor by id, a repeated flag is far more likely a copy-paste mistake in a
- * hand-typed break-glass command than an intentional override. Detected and
- * rejected BEFORE parseArgs ever runs, so nothing is silently dropped.
- */
-export function findDuplicateFlags(argv: string[]): string[] {
-  const counts = new Map<string, number>();
-  for (const token of argv) {
-    if (!token.startsWith('--')) continue;
-    const name = token.slice(2).split('=')[0];
-    if (!(KNOWN_FLAGS as readonly string[]).includes(name)) continue; // parseArgs itself rejects unknown flags
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  return [...counts.entries()].filter(([, n]) => n > 1).map(([name]) => name);
-}
-
 /** Parses `process.argv`-shaped input (argv[0]/argv[1] are node/script path). */
 export function parseCliArgs(argv: string[]): BreakGlassArgs {
   const cliTokens = argv.slice(2);
 
-  // parseArgs runs FIRST, before the duplicate-flag scan. `parseArgs`
-  // rejects an option whose value token itself looks like another flag
-  // (e.g. `--reason --ticket ...`, where `--reason` never got a real value
-  // and silently swallowed the following `--ticket` token) with
-  // ERR_PARSE_ARGS_INVALID_OPTION_VALUE naming the flag that's actually
-  // missing its argument. Running the duplicate-flag scan first over that
-  // same argv instead counts the LATER, unrelated repeated `--ticket` and
-  // misreports "repeated: --ticket" — a real diagnosis exists and this
-  // ordering surfaces it (review finding #4, SCRUM-3584 PR #2635). The
-  // duplicate scan still runs afterward: parseArgs alone does NOT reject a
-  // genuinely repeated flag whose value is well-formed each time
-  // (`--email a --email b` parses fine, last value silently wins), which is
-  // exactly the copy-paste mistake this tool guards against.
+  // parseArgs runs FIRST and every option is declared `multiple: true`.
+  // `parseArgs` rejects an option whose value token itself looks like
+  // another flag (e.g. `--reason --ticket ...`, where `--reason` never got
+  // a real value) with ERR_PARSE_ARGS_INVALID_OPTION_VALUE naming the flag
+  // that's actually missing its argument — see review finding #4
+  // (SCRUM-3584 PR #2635). `multiple: true` makes parseArgs itself collect
+  // EVERY occurrence of a flag instead of silently keeping only the last
+  // (`--email a --email b` used to resolve to `b` with no signal that
+  // anything was dropped) — a repeated flag then shows up here as an array
+  // of length > 1, which `parseCliArgs` treats as a duplicate below. This
+  // replaces the separate `findDuplicateFlags` pre-scan (review finding B,
+  // simplify pass): one parseArgs call now does both jobs.
   const { values } = parseArgs({
     args: cliTokens,
     options: {
-      email: { type: 'string' },
-      'factor-id': { type: 'string' },
-      all: { type: 'boolean', default: false },
-      reason: { type: 'string' },
-      ticket: { type: 'string' },
-      operator: { type: 'string' },
-      apply: { type: 'boolean', default: false },
+      email: { type: 'string', multiple: true },
+      'factor-id': { type: 'string', multiple: true },
+      all: { type: 'boolean', multiple: true, default: [false] },
+      reason: { type: 'string', multiple: true },
+      ticket: { type: 'string', multiple: true },
+      operator: { type: 'string', multiple: true },
+      apply: { type: 'boolean', multiple: true, default: [false] },
     },
   });
 
-  const duplicates = findDuplicateFlags(cliTokens);
+  const duplicates = Object.entries(values)
+    .filter(([, v]) => Array.isArray(v) && v.length > 1)
+    .map(([name]) => name);
   if (duplicates.length > 0) {
     throw new Error(`each flag may be given once; repeated: ${duplicates.map((d) => `--${d}`).join(', ')}`);
   }
 
   const result = ArgsSchema.safeParse({
-    email: values.email,
-    factorId: values['factor-id'],
-    all: values.all,
-    reason: values.reason,
-    ticket: values.ticket,
-    operator: values.operator,
-    apply: values.apply,
+    email: values.email?.[0],
+    factorId: values['factor-id']?.[0],
+    all: values.all?.[0],
+    reason: values.reason?.[0],
+    ticket: values.ticket?.[0],
+    operator: values.operator?.[0],
+    apply: values.apply?.[0],
   });
 
   if (!result.success) {
@@ -269,7 +248,6 @@ interface PostgrestMaybeSingleLike {
 
 interface PostgrestFilterBuilderLike {
   eq(column: string, value: string): PostgrestMaybeSingleLike;
-  in(column: string, values: string[]): PostgrestMaybeSingleLike;
 }
 
 interface PostgrestQueryBuilderLike {
@@ -323,6 +301,15 @@ export interface SupabaseAdminLike {
 interface ResolvedUser {
   id: string;
   email: string;
+  /**
+   * Known eagerly (a string, or `null` for a profile with no org) when
+   * resolution folded `org_id` into the fast-path profiles SELECT —
+   * `undefined` when resolution came from the `listUsers` scan instead,
+   * which doesn't carry `org_id` and needs the separate `lookupOrgId` call
+   * in `runBreakGlass` (review finding F, SCRUM-3584 PR #2635 simplify
+   * pass: one profiles query instead of two on the common fast-path hit).
+   */
+  org_id?: string | null;
 }
 
 interface FactorDeleteResult {
@@ -424,6 +411,21 @@ function redBanner(supabaseUrl: string): string {
   ].join('\n');
 }
 
+/**
+ * Shared by both prod-deny sites — `main()` (before the service-role client
+ * is even constructed) and `runBreakGlass()`'s defence-in-depth repeat of
+ * the same check for any caller that skips `main()`. Message text unchanged
+ * from before this helper existed (review finding C, SCRUM-3584 PR #2635
+ * simplify pass) — `url` is accepted for symmetry with the other prod-deny
+ * call site and to keep this the one place that would need to change if the
+ * message ever needs to name the host, but the wording itself has never
+ * included it (`redBanner` above is what prints the host).
+ */
+function prodDenyMessage(url: string): string {
+  void url;
+  return `SUPABASE_URL targets production (${PROD_SUPABASE_REF}). Refusing without ALLOW_PROD_BREAK_GLASS=1 — see docs/runbooks/mfa-break-glass.md.`;
+}
+
 const LIST_USERS_PAGE_SIZE = 200;
 /**
  * Safety cap on the number of listUsers REQUESTS, not a real pagination
@@ -434,54 +436,45 @@ const LIST_USERS_PAGE_SIZE = 200;
 const LIST_USERS_MAX_PAGES = 200;
 
 /**
- * The candidate set queried against `profiles.email`. The DB trigger
- * (`enforce_lowercase_email()`, baseline migration) ONLY lowercases on
- * write — it does not NFKC-normalize — while `normalizeEmail()` (the
- * comparison normalizer used everywhere else in this tool) does trim ->
- * NFKC -> lowercase. For an email whose NFKC form differs from its
- * trim+lowercase form (e.g. a fullwidth or ligature character), the two
- * normalizations diverge and only one of them can match what the trigger
- * actually persisted. Querying both closes that gap without weakening
- * either: `.in('email', candidates)` is still one indexed round trip, and
- * `getUserById()` below still confirms whatever profiles row (if any)
- * comes back before trusting it. Deduped to a single value when the two
- * forms coincide (the common case for ASCII-only input).
- */
-function fastPathEmailCandidates(email: string): string[] {
-  const trimLower = email.trim().toLowerCase();
-  const nfkcLower = normalizeEmail(email);
-  return trimLower === nfkcLower ? [trimLower] : [trimLower, nfkcLower];
-}
-
-/**
- * Fast path: `profiles.email` is populated + lowercased by a DB trigger and
- * is effectively unique per auth user (worker precedent:
- * services/worker/src/api/invitations.ts's own profiles-by-email lookup),
- * so an indexed lookup over the small NFKC-vs-plain candidate set (see
- * `fastPathEmailCandidates`) finds the candidate in one round trip instead
- * of paginating every user in the project. The profiles row is only a
- * CANDIDATE — `auth.admin.getUserById()` confirms the auth user still
- * exists before trusting it, since a profile can outlive an auth-side
- * deletion, and the LIVE auth email (not the profiles row's email) is what
- * gets returned. Returns `null` (never throws) on any inconclusive outcome
- * — including the profiles lookup itself failing — so the caller always has
- * a safe, slower fallback: the full `auth.admin.listUsers()` scan below.
+ * Fast path: `profiles.email` is populated by the DB trigger
+ * `enforce_lowercase_email()` (baseline migration), which ONLY lowercases —
+ * it does not NFKC-normalize. Querying with that exact same
+ * transformation (`email.trim().toLowerCase()`, no NFKC — same precedent as
+ * services/worker/src/api/invitations.ts's own profiles-by-email lookup) is
+ * what actually matches what the trigger persisted; an input whose NFKC
+ * form diverges from its plain trim+lowercase form (e.g. a fullwidth or
+ * ligature character) simply won't hit this fast path and falls through to
+ * the `auth.admin.listUsers()` scan below, which normalizes fully via
+ * `normalizeEmail()` on both sides and will still find the user — slower,
+ * but correct. `org_id` is folded into the same SELECT (review finding F,
+ * SCRUM-3584 PR #2635 simplify pass) so a fast-path hit costs exactly one
+ * profiles query instead of a second one later for `lookupOrgId`. The
+ * profiles row is only a CANDIDATE — `auth.admin.getUserById()` confirms
+ * the auth user still exists before trusting it, since a profile can
+ * outlive an auth-side deletion, and the LIVE auth email (not the profiles
+ * row's email) is what gets returned. Returns `null` (never throws) on any
+ * inconclusive outcome — including the profiles lookup itself failing — so
+ * the caller always has a safe, slower fallback.
  */
 async function tryResolveViaProfilesFastPath(
   client: SupabaseAdminLike,
   email: string,
 ): Promise<ResolvedUser | null> {
   try {
-    const candidates = fastPathEmailCandidates(email);
-    const { data, error } = await client.from('profiles').select('id,email').in('email', candidates).maybeSingle();
-    const profileId = (data as { id?: unknown } | null)?.id;
-    if (error || typeof profileId !== 'string' || profileId.length === 0) return null;
+    const target = email.trim().toLowerCase();
+    const { data, error } = await client.from('profiles').select('id,email,org_id').eq('email', target).maybeSingle();
+    const row = data as { id?: unknown; org_id?: unknown } | null;
+    if (error || typeof row?.id !== 'string' || row.id.length === 0) return null;
 
-    const { data: userData, error: getErr } = await client.auth.admin.getUserById(profileId);
+    const { data: userData, error: getErr } = await client.auth.admin.getUserById(row.id);
     const authUser = userData?.user;
     if (getErr || !authUser) return null;
 
-    return { id: authUser.id, email: authUser.email ?? normalizeEmail(email) };
+    return {
+      id: authUser.id,
+      email: authUser.email ?? normalizeEmail(email),
+      org_id: typeof row.org_id === 'string' ? row.org_id : null,
+    };
   } catch {
     return null;
   }
@@ -646,6 +639,24 @@ function fail(message: string): BreakGlassOutcome {
   return { exitCode: EXIT_VALIDATION, summary: null, message };
 }
 
+/**
+ * Shared by both CONFIRM_* gates (CONFIRM_MFA_BREAK_GLASS and
+ * CONFIRM_MFA_BREAK_GLASS_ALL) — review finding D, SCRUM-3584 PR #2635
+ * simplify pass. Returns `null` when `value` is set and normalize-equal to
+ * `expectedEmail`, otherwise the exact failure message text each of the two
+ * call sites has always used (kept verbatim, not unified into one generic
+ * sentence, since they differ in whether the gate is the first or second
+ * ack and existing operators/runbook readers know these exact strings).
+ */
+function checkConfirmEnv(value: string | undefined, expectedEmail: string, envName: string): string | null {
+  if (value && normalizeEmail(value) === normalizeEmail(expectedEmail)) return null;
+  const got = value ? JSON.stringify(value) : '<unset>';
+  if (envName === 'CONFIRM_MFA_BREAK_GLASS') {
+    return `CONFIRM_MFA_BREAK_GLASS must equal the resolved user's email ("${expectedEmail}") to apply. Got ${got}.`;
+  }
+  return `--all also requires CONFIRM_MFA_BREAK_GLASS_ALL to equal the resolved user's email ("${expectedEmail}"). Got ${got}.`;
+}
+
 // ---------------------------------------------------------------------------
 // Core sequence
 // ---------------------------------------------------------------------------
@@ -667,10 +678,7 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
   // earlier gate.
   if (isProdHost(deps.supabaseUrl)) {
     if (deps.allowProdBreakGlass !== '1') {
-      return fail(
-        `SUPABASE_URL targets production (${PROD_SUPABASE_REF}). Refusing without ALLOW_PROD_BREAK_GLASS=1 — ` +
-          'see docs/runbooks/mfa-break-glass.md.',
-      );
+      return fail(prodDenyMessage(deps.supabaseUrl));
     }
     warn(redBanner(deps.supabaseUrl));
   }
@@ -686,16 +694,25 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
     return fail(`no user found for email "${args.email}"`);
   }
 
-  // 2. List every factor + look up org_id in parallel — both are
-  // independent reads keyed on the now-resolved user id. Print the table
-  // always (dry run and apply).
+  // 2. List every factor, and look up org_id UNLESS the fast-path
+  // resolution above already folded it into its own profiles SELECT
+  // (review finding F, SCRUM-3584 PR #2635 simplify pass) — `org_id` is
+  // present (a string or `null`) when it's already known, `undefined` only
+  // when resolution came from the listUsers scan instead, which requires
+  // this separate profiles-by-id lookup. Print the table always (dry run
+  // and apply).
   let factors: MfaFactorRow[];
   let orgId: string | null;
   try {
-    [factors, orgId] = await Promise.all([
-      listFactorsForUser(deps.client, user.id),
-      lookupOrgId(deps.client, user.id, warn),
-    ]);
+    if (user.org_id !== undefined) {
+      factors = await listFactorsForUser(deps.client, user.id);
+      orgId = user.org_id;
+    } else {
+      [factors, orgId] = await Promise.all([
+        listFactorsForUser(deps.client, user.id),
+        lookupOrgId(deps.client, user.id, warn),
+      ]);
+    }
   } catch (err) {
     return fail(`failed to list MFA factors for ${user.email}: ${errMessage(err)}`);
   }
@@ -744,12 +761,8 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
   }
 
   // 4. CONFIRM_MFA_BREAK_GLASS must equal the RESOLVED email.
-  if (!deps.confirmEnv || normalizeEmail(deps.confirmEnv) !== normalizeEmail(user.email)) {
-    const got = deps.confirmEnv ? JSON.stringify(deps.confirmEnv) : '<unset>';
-    return fail(
-      `CONFIRM_MFA_BREAK_GLASS must equal the resolved user's email ("${user.email}") to apply. Got ${got}.`,
-    );
-  }
+  const confirmError = checkConfirmEnv(deps.confirmEnv, user.email, 'CONFIRM_MFA_BREAK_GLASS');
+  if (confirmError) return fail(confirmError);
 
   // 4b. --all is a strictly larger blast radius than one --factor-id — every
   // factor this person has, in one command. Require a SECOND, distinct ack
@@ -757,12 +770,8 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
   // guarding a real-credentials profile) so `--all --apply` can never fire
   // off of a single copy-pasted CONFIRM_MFA_BREAK_GLASS value alone.
   if (args.all) {
-    if (!deps.confirmAllEnv || normalizeEmail(deps.confirmAllEnv) !== normalizeEmail(user.email)) {
-      const got = deps.confirmAllEnv ? JSON.stringify(deps.confirmAllEnv) : '<unset>';
-      return fail(
-        `--all also requires CONFIRM_MFA_BREAK_GLASS_ALL to equal the resolved user's email ("${user.email}"). Got ${got}.`,
-      );
-    }
+    const confirmAllError = checkConfirmEnv(deps.confirmAllEnv, user.email, 'CONFIRM_MFA_BREAK_GLASS_ALL');
+    if (confirmAllError) return fail(confirmAllError);
   }
 
   const detailsBase = {
@@ -960,10 +969,7 @@ async function main(): Promise<void> {
   // check does not re-print this banner.
   if (isProdHost(cfg.url) && cfg.allowProdBreakGlass !== '1') {
     // eslint-disable-next-line no-console
-    console.error(
-      `SUPABASE_URL targets production (${PROD_SUPABASE_REF}). Refusing without ALLOW_PROD_BREAK_GLASS=1 — ` +
-        'see docs/runbooks/mfa-break-glass.md.',
-    );
+    console.error(prodDenyMessage(cfg.url));
     process.exitCode = EXIT_VALIDATION;
     return;
   }
@@ -997,7 +1003,7 @@ async function main(): Promise<void> {
 if (isDirectEntrypoint(process.argv[1], import.meta.url)) {
   main().catch((err: unknown) => {
     // eslint-disable-next-line no-console
-    console.error(err instanceof Error ? err.message : String(err));
+    console.error(errMessage(err));
     process.exitCode = EXIT_VALIDATION;
   });
 }

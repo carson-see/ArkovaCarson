@@ -21,7 +21,6 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   runBreakGlass,
   parseCliArgs,
-  findDuplicateFlags,
   isProdHost,
   isDirectEntrypoint,
   normalizeEmail,
@@ -74,7 +73,7 @@ interface FakeClientOptions {
   onDeleteFactor?: (id: string) => { error: { message: string } | null };
 
   /** profiles-fast-path candidate row. Default: no row (forces the scan). */
-  profileEmailRow?: { id: string; email: string } | null;
+  profileEmailRow?: { id: string; email: string; org_id?: string | null } | null;
   profileEmailLookupError?: { message: string } | null;
   profileEmailLookupThrows?: Error;
   /** Override the default auto-confirm-from-profileEmailRow behaviour. */
@@ -98,10 +97,8 @@ interface FakeClientHandle {
   client: SupabaseAdminLike;
   inserts: Array<{ table: string; row: Record<string, unknown> }>;
   selectCalls: Array<{ table: string; columns: string }>;
-  /** Every `.eq(column, value)` call recorded (currently only the org_id lookup uses `.eq`). */
+  /** Every `.eq(column, value)` call recorded: the profiles email fast path uses `column: 'email'`, the org_id-by-id lookup uses `column: 'id'`. */
   eqCalls: Array<{ table: string; column: string; value: string }>;
-  /** Every `.in(column, values)` call recorded (currently only the profiles email fast path uses `.in`). */
-  inCalls: Array<{ table: string; column: string; values: string[] }>;
   deletedFactorIds: string[];
   listUsersCalls: number;
 }
@@ -110,7 +107,6 @@ function makeFakeClient(opts: FakeClientOptions = {}): FakeClientHandle {
   const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
   const selectCalls: Array<{ table: string; columns: string }> = [];
   const eqCalls: Array<{ table: string; column: string; value: string }> = [];
-  const inCalls: Array<{ table: string; column: string; values: string[] }> = [];
   const deletedFactorIds: string[] = [];
   let listUsersCalls = 0;
   let insertCallIndex = 0;
@@ -152,38 +148,26 @@ function makeFakeClient(opts: FakeClientOptions = {}): FakeClientHandle {
       select: (columns: string) => {
         selectCalls.push({ table, columns });
         return {
-          // Real callers only ever reach `.eq()` for the org_id lookup
-          // (`select('org_id').eq('id', userId)`) — the profiles email
-          // fast path uses `.in()` below. Recorded so tests can assert on
-          // the actual column/value a query used, per review finding #2:
-          // a fake that ignores its own arguments can't fail when
-          // production code queries the wrong key.
+          // Disambiguated by COLUMN, not by the select() columns string —
+          // production code only ever calls `.eq()` two ways: the profiles
+          // email fast path (`select('id,email,org_id').eq('email', ...)`)
+          // and the org_id-by-id lookup (`select('org_id').eq('id', ...)`).
+          // Recorded + matched on the real column/value so a query using
+          // the wrong key can't pass silently (review finding #2).
           eq: (column: string, value: string) => {
             eqCalls.push({ table, column, value });
             return {
               maybeSingle: async () => {
+                if (column === 'email') {
+                  if (opts.profileEmailLookupThrows) throw opts.profileEmailLookupThrows;
+                  if (opts.profileEmailLookupError) return { data: null, error: opts.profileEmailLookupError };
+                  const row = opts.profileEmailRow;
+                  if (!row || row.email !== value) return { data: null, error: null };
+                  return { data: { id: row.id, email: row.email, org_id: row.org_id ?? null }, error: null };
+                }
                 if (opts.profileOrgIdThrows) throw opts.profileOrgIdThrows;
                 if (opts.profileOrgIdError) return { data: null, error: opts.profileOrgIdError };
                 return { data: { org_id: opts.profileOrgId ?? null }, error: null };
-              },
-            };
-          },
-          // profiles email fast-path lookup (`select('id,email').in('email', candidates)`).
-          // Returns the fixture row ONLY when `column` is 'email' AND at
-          // least one candidate value matches the fixture's email exactly
-          // — a fake that returned the fixture regardless of the query key
-          // would never catch a fast path querying the wrong column or the
-          // wrong normalized form (review finding #2).
-          in: (column: string, values: string[]) => {
-            inCalls.push({ table, column, values });
-            return {
-              maybeSingle: async () => {
-                if (opts.profileEmailLookupThrows) throw opts.profileEmailLookupThrows;
-                if (opts.profileEmailLookupError) return { data: null, error: opts.profileEmailLookupError };
-                const row = opts.profileEmailRow;
-                if (!row || column !== 'email') return { data: null, error: null };
-                const matches = values.some((v) => v === row.email);
-                return { data: matches ? row : null, error: null };
               },
             };
           },
@@ -203,7 +187,6 @@ function makeFakeClient(opts: FakeClientOptions = {}): FakeClientHandle {
     inserts,
     selectCalls,
     eqCalls,
-    inCalls,
     deletedFactorIds,
     get listUsersCalls() {
       return listUsersCalls;
@@ -440,11 +423,12 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
       expect(handle.selectCalls.some((c) => c.table === 'profiles' && c.columns.includes('email'))).toBe(true);
       // The actual query key/value matter — a fake (or an implementation)
       // that queried the wrong column or a mangled value would still pass
-      // without this (review finding #2). USER_EMAIL is plain ASCII, so
-      // the fast path's trim+lowercase and NFKC+lowercase forms coincide:
-      // exactly one deduped candidate.
-      expect(handle.inCalls).toHaveLength(1);
-      expect(handle.inCalls[0]).toEqual({ table: 'profiles', column: 'email', values: [USER_EMAIL] });
+      // without this (review finding #2). The fast path queries the PLAIN
+      // trim+lowercase form only (review finding A, SCRUM-3584 PR #2635
+      // simplify pass) — exactly what enforce_lowercase_email() stores, no
+      // NFKC involved.
+      expect(handle.eqCalls).toHaveLength(1);
+      expect(handle.eqCalls[0]).toEqual({ table: 'profiles', column: 'email', value: USER_EMAIL });
     });
 
     it('falls back to the listUsers scan when profiles has no row', async () => {
@@ -456,31 +440,48 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
       expect(handle.listUsersCalls).toBeGreaterThan(0);
     });
 
-    it('queries BOTH the trim+lowercase and NFKC+lowercase candidate forms via .in(), and hits the fast path even when profiles.email only matches the non-NFKC form (review finding #1, SCRUM-3584 PR #2635)', async () => {
-      // profiles.email is populated by a DB trigger that ONLY lowercases
-      // (never NFKC-normalizes). A fullwidth Latin capital U (U+FF35)
-      // lowercases in place under plain `.toLowerCase()` to a fullwidth
-      // lowercase u (U+FF55, still non-ASCII) — but NFKC-then-lowercase
-      // collapses the whole thing down to plain ASCII "user@example.com".
-      // Before this fix, the fast path queried ONLY the NFKC form and
-      // would never match a profiles row stored in the non-NFKC shape,
-      // silently falling through to the slow full-scan path every time.
+    it('an NFKC-divergent --email input misses the single-form fast path (which queries only the plain trim+lowercase form — exactly what enforce_lowercase_email() stores, no NFKC) and is still resolved via the listUsers scan fallback, which normalizes fully (review finding A, SCRUM-3584 PR #2635 simplify pass)', async () => {
+      // profiles.email is stored as plain ASCII "user@example.com" (however
+      // it originally got there). The operator now types a fullwidth
+      // Latin capital U (U+FF35) — say, pasted from a support ticket.
+      // `rawEmailAsTyped.trim().toLowerCase()` (no NFKC) yields a fullwidth
+      // lowercase u (U+FF55) — a DIFFERENT string from the stored row, so
+      // the single-form fast path's `.eq('email', ...)` cannot match it.
+      // `normalizeEmail()` (trim -> NFKC -> lowercase), used by the scan
+      // fallback on both sides, collapses the fullwidth form all the way to
+      // plain ASCII and DOES match — proving the divergence is resolved by
+      // the (correctly slower) scan, not silently unresolvable.
       const rawEmailAsTyped = 'Ｕser@example.com';
-      const storedProfileEmail = rawEmailAsTyped.trim().toLowerCase();
-      const nfkcForm = normalizeEmail(rawEmailAsTyped);
-      expect(storedProfileEmail).not.toBe(nfkcForm); // sanity: the two forms really do diverge here
-      expect(nfkcForm).toBe(USER_EMAIL);
+      const fastPathKey = rawEmailAsTyped.trim().toLowerCase();
+      const storedProfileEmail = 'user@example.com';
+      expect(fastPathKey).not.toBe(storedProfileEmail); // sanity: they really do diverge
+      expect(normalizeEmail(rawEmailAsTyped)).toBe(storedProfileEmail); // ...and NFKC reconciles them
 
-      const handle = makeFakeClient({ profileEmailRow: { id: USER_ID, email: storedProfileEmail } });
+      const handle = makeFakeClient({
+        profileEmailRow: { id: USER_ID, email: storedProfileEmail },
+        users: [{ id: USER_ID, email: storedProfileEmail }],
+      });
       const outcome = await runBreakGlass(baseDeps(handle), baseArgs({ email: rawEmailAsTyped, apply: false }));
 
       expect(outcome.exitCode).toBe(EXIT_SUCCESS);
       expect(outcome.summary?.user_id).toBe(USER_ID);
-      expect(handle.listUsersCalls).toBe(0); // fast path was hit — no fallback scan needed
-      expect(handle.inCalls).toHaveLength(1);
-      expect(handle.inCalls[0].table).toBe('profiles');
-      expect(handle.inCalls[0].column).toBe('email');
-      expect(handle.inCalls[0].values.sort()).toEqual([storedProfileEmail, nfkcForm].sort());
+      expect(handle.listUsersCalls).toBeGreaterThan(0); // fast path missed — the scan fallback ran
+      // The fast path DID try, with exactly the plain trim+lowercase key —
+      // never any NFKC form.
+      expect(
+        handle.eqCalls.some((c) => c.table === 'profiles' && c.column === 'email' && c.value === fastPathKey),
+      ).toBe(true);
+    });
+
+    it('folds org_id into the fast-path SELECT — exactly one profiles query total, no separate lookupOrgId call (review finding F, SCRUM-3584 PR #2635 simplify pass)', async () => {
+      const handle = makeFakeClient({
+        profileEmailRow: { id: USER_ID, email: USER_EMAIL, org_id: 'org-fastpath-123' },
+      });
+      const outcome = await runBreakGlass(baseDeps(handle), baseArgs({ apply: false }));
+
+      expect(outcome.exitCode).toBe(EXIT_SUCCESS);
+      expect(outcome.summary?.org_id).toBe('org-fastpath-123');
+      expect(handle.selectCalls.filter((c) => c.table === 'profiles')).toHaveLength(1);
     });
 
     it('falls back to the scan when the profiles row is orphaned (getUserById finds no auth user)', async () => {
@@ -970,7 +971,7 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
       ).toThrow();
     });
 
-    describe('duplicate-flag detection (D4)', () => {
+    describe('duplicate-flag detection (D4 / review finding B, SCRUM-3584 PR #2635 simplify pass — every parseArgs option is `multiple: true`, so a repeated flag surfaces as an array of length > 1 with no separate pre-scan)', () => {
       it('rejects a repeated --email', () => {
         expect(() =>
           parseCliArgs([
@@ -1004,17 +1005,35 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
         ).toThrow(/repeated.*--factor-id/);
       });
 
-      it('findDuplicateFlags reports every duplicated flag, ignoring unknown/non-flag tokens', () => {
-        expect(findDuplicateFlags(['--email', 'a', '--email=b', '--reason', 'x', '--bogus', '--bogus'])).toEqual([
-          'email',
-        ]);
+      it('rejects a repeated --email mixing the `--email=value` form with the space-separated form', () => {
+        expect(() =>
+          parseCliArgs([
+            'node',
+            'mfa-break-glass.ts',
+            '--email',
+            'a@example.com',
+            '--email=b@example.com',
+            '--reason',
+            'x',
+            '--ticket',
+            'SCRUM-1',
+            '--operator',
+            'carson@arkova.io',
+            '--factor-id',
+            'x',
+          ]),
+        ).toThrow(/repeated.*--email/);
       });
 
-      it('findDuplicateFlags returns [] for a clean argv', () => {
-        expect(findDuplicateFlags(argv(['--factor-id', 'x']))).toEqual([]);
+      it('rejects a repeated boolean flag (--all given twice) — booleans are duplicate-checked exactly like string flags', () => {
+        expect(() => parseCliArgs(argv(['--all', '--all']))).toThrow(/repeated.*--all/);
       });
 
-      it('runs parseArgs before the duplicate-flag scan, so a value swallowed by a flag-shaped token is diagnosed correctly instead of misreported as a repeated LATER flag (review finding #4, SCRUM-3584 PR #2635)', () => {
+      it('rejects a repeated boolean flag (--apply given twice)', () => {
+        expect(() => parseCliArgs(argv(['--factor-id', 'x', '--apply', '--apply']))).toThrow(/repeated.*--apply/);
+      });
+
+      it('runs parseArgs before duplicate detection, so a value swallowed by a flag-shaped token is diagnosed correctly instead of misreported as a repeated LATER flag (review finding #4, SCRUM-3584 PR #2635)', () => {
         // --reason has no real value here: its value token is the
         // flag-shaped `--ticket` that follows, which Node's parseArgs
         // itself rejects as ambiguous. A duplicate-scan-first
