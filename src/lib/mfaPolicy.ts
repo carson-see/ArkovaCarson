@@ -41,6 +41,8 @@
  * tests without `vi.resetModules()`.
  */
 
+import type { Database } from '@/types/database.types';
+
 const OVERRIDE_STORAGE_KEY = 'arkova_mfa_enforce_from_override';
 
 /** RFC 3339 UTC instant, seconds-required, optional fractional seconds, `Z` mandatory. */
@@ -87,25 +89,51 @@ export function resolveMfaEnforceFrom(): string {
   return MFA_ADMIN_ENFORCE_FROM_DEFAULT;
 }
 
-/** Inclusive boundary: enforcement is active AT the enforcement instant, not only strictly after it. */
-export function isMfaEnforcementActive(now: number = Date.now()): boolean {
-  const enforceFromMs = Date.parse(resolveMfaEnforceFrom());
+/**
+ * Inclusive boundary: enforcement is active AT the enforcement instant, not
+ * only strictly after it.
+ *
+ * `enforceFrom` (item 18/EA4): most callers can omit it and let this
+ * function resolve the date itself. A caller that ALSO needs the resolved
+ * date for something else in the same render (e.g. `AuthGuard` threading it
+ * down to `MfaGraceNudge`) should resolve it once via `resolveMfaEnforceFrom()`
+ * and pass it here, instead of this function (and `getMfaGraceDaysRemaining`)
+ * each re-resolving it independently — up to 3 resolutions per render
+ * otherwise, all reading the same env/localStorage inputs.
+ */
+export function isMfaEnforcementActive(
+  now: number = Date.now(),
+  enforceFrom: string = resolveMfaEnforceFrom(),
+): boolean {
+  const enforceFromMs = Date.parse(enforceFrom);
   return now >= enforceFromMs;
 }
 
-/** Whole days remaining until enforcement, rounded UP, floored at 0 (never negative). */
-export function getMfaGraceDaysRemaining(now: number = Date.now()): number {
-  const enforceFromMs = Date.parse(resolveMfaEnforceFrom());
+/**
+ * Whole days remaining until enforcement, rounded UP, floored at 0 (never
+ * negative). See `isMfaEnforcementActive`'s doc comment for `enforceFrom`.
+ */
+export function getMfaGraceDaysRemaining(
+  now: number = Date.now(),
+  enforceFrom: string = resolveMfaEnforceFrom(),
+): number {
+  const enforceFromMs = Date.parse(enforceFrom);
   const remainingMs = enforceFromMs - now;
   if (remainingMs <= 0) return 0;
   return Math.ceil(remainingMs / DAY_MS);
 }
 
-/** The subset of a profile row this policy needs — never the whole `Profile` type, to keep this module dependency-light. */
-export interface MfaPolicyProfile {
-  role?: string | null;
-  is_platform_admin?: boolean | null;
-}
+/**
+ * The subset of a profile row this policy needs. `Pick` off the generated
+ * `profiles` Row type (item 12/S4/EA2) rather than a hand-rolled
+ * `{role?: string|null}` shape, so `role` stays the real
+ * `Database['public']['Enums']['user_role']` enum — widening it to a bare
+ * `string` would have let a typo'd role value type-check silently.
+ */
+export type MfaPolicyProfile = Pick<
+  Database['public']['Tables']['profiles']['Row'],
+  'role' | 'is_platform_admin'
+>;
 
 /**
  * Pure role predicate — phase 1 enforcement tier. ORG_ADMIN and platform

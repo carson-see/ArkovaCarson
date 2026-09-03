@@ -225,6 +225,31 @@ describe('getMfaGraceDaysRemaining — ceil days, min 0', () => {
   });
 });
 
+describe('isMfaEnforcementActive / getMfaGraceDaysRemaining — pre-resolved enforceFrom param (item 18/EA4)', () => {
+  it('isMfaEnforcementActive uses the explicitly passed enforceFrom instead of re-resolving from env/localStorage', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_MFA_ENFORCE_FROM', '2099-01-01T00:00:00Z'); // would say "not active" if re-resolved
+    const at = Date.parse('2026-09-21T00:00:00Z');
+    expect(isMfaEnforcementActive(at, '2026-09-21T00:00:00Z')).toBe(true);
+  });
+
+  it('getMfaGraceDaysRemaining uses the explicitly passed enforceFrom instead of re-resolving', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_MFA_ENFORCE_FROM', '2099-01-01T00:00:00Z'); // would give a huge count if re-resolved
+    const enforceFrom = '2026-09-21T00:00:00Z';
+    const oneDayBefore = Date.parse(enforceFrom) - 24 * 60 * 60 * 1000;
+    expect(getMfaGraceDaysRemaining(oneDayBefore, enforceFrom)).toBe(1);
+  });
+
+  it('both functions still resolve the date themselves when enforceFrom is omitted (backward compatible)', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_MFA_ENFORCE_FROM', undefined);
+    const at = Date.parse(MFA_ADMIN_ENFORCE_FROM_DEFAULT);
+    expect(isMfaEnforcementActive(at)).toBe(true);
+    expect(getMfaGraceDaysRemaining(at)).toBe(0);
+  });
+});
+
 describe('isMfaRequiredRole', () => {
   it('is true for ORG_ADMIN', () => {
     expect(isMfaRequiredRole({ role: 'ORG_ADMIN', is_platform_admin: false })).toBe(true);
@@ -248,8 +273,7 @@ describe('isMfaRequiredRole', () => {
     expect(isMfaRequiredRole(undefined)).toBe(false);
   });
 
-  it('is false when role and is_platform_admin are both null/undefined', () => {
-    expect(isMfaRequiredRole({})).toBe(false);
-    expect(isMfaRequiredRole({ role: null, is_platform_admin: null })).toBe(false);
+  it('is false for a profile with role not yet assigned (real shape: role is null, is_platform_admin is a real non-nullable boolean column, not null)', () => {
+    expect(isMfaRequiredRole({ role: null, is_platform_admin: false })).toBe(false);
   });
 });
