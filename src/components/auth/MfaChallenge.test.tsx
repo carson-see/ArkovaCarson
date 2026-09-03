@@ -1,28 +1,23 @@
 /**
- * MfaChallenge Component Tests — SCRUM-3167, hardened again per PR #2637
- * code review.
+ * MfaChallenge Component Tests — SCRUM-3167, FAIL-CLOSED rewrite
+ * (PR #2637 review round 2, R17-R21 CTO ruling — supersedes the earlier
+ * "fail open on any platform error").
  *
- * CHANGES FROM THE PRIOR VERSION (this batch):
- * - `onVerified` is now called ONLY after a real, successful verify(). The
- *   two fail-open branches (listFactors() erroring/timing out, or
- *   defensively finding no verified factor) now call the new `onBypassed`
- *   prop instead — `useMfaAssurance.markVerified()` was being called from
- *   a non-verify path, falsely asserting `hasVerifiedFactor=true` for up to
- *   60s (item 32).
- * - `listFactors()` is now wrapped in try/catch AND raced against an 8s
- *   timeout (item 2/E2) — previously a THROWN rejection left
- *   `loadingFactor=true` forever, an infinite spinner on the login gate.
- * - `challenge()`/`verify()` are now ALSO raced against the timeout
- *   (item 4/E4/EA6) — previously only try/caught, so a hang spun forever.
- * - Error classification moved to the shared `classifyMfaError` helper
- *   (`@/lib/mfaErrors`); `validation_failed` is REMOVED from the wrong-code
- *   set (item 30) — it's a platform error now.
- * - A `mounted`/cancelled guard on `handleSubmit` (item 6/D2/D8): a result
- *   arriving after unmount is ignored.
- * - "Sign out" is disabled while `loadingFactor` or `busy` (item 6/D8).
- * - The code input carries `inputMode="numeric"`, `autoComplete="one-time-code"`,
- *   `pattern="[0-9]*"` (item 8/D3), and its placeholder now comes from
- *   `MFA_CHALLENGE_LABELS.CODE_PLACEHOLDER` (item 10/C2).
+ * CTO ruling: fail-open is allowed ONLY on the ENROLLMENT path (no
+ * verified factor, platform can't issue one — see MfaEnrollmentRequired).
+ * The CHALLENGE path (this component — a session at aal1 whose user HAS a
+ * verified factor) must FAIL CLOSED: ANY error — network, timeout,
+ * unknown code, rate limit, IP mismatch — shows a retry screen with "Try
+ * again" and "Sign out", and NEVER grants access to protected content. A
+ * client-detected "platform error" is trivially attacker-triggerable
+ * (block one request in DevTools), so the prior fail-open design made MFA
+ * optional for anyone holding a password.
+ *
+ * `onVerified` is now the ONLY prop — it fires ONLY after a real,
+ * successful `challenge()`+`verify()` round trip. There is no
+ * `onBypassed`/`onCapabilityUnavailable` escape hatch from this
+ * component at all: `AuthGuard` cannot be told to render children from
+ * here, structurally, not just by convention.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -53,8 +48,6 @@ vi.mock('@/hooks/useAuth', () => ({
 
 describe('MfaChallenge', () => {
   const onVerified = vi.fn();
-  const onBypassed = vi.fn();
-  const onCapabilityUnavailable = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -66,9 +59,7 @@ describe('MfaChallenge', () => {
   });
 
   function renderChallenge() {
-    return render(
-      <MfaChallenge onVerified={onVerified} onBypassed={onBypassed} onCapabilityUnavailable={onCapabilityUnavailable} />
-    );
+    return render(<MfaChallenge onVerified={onVerified} />);
   }
 
   function enterCode(code: string) {
@@ -85,7 +76,7 @@ describe('MfaChallenge', () => {
     expect(screen.getByTestId('mfa-challenge-submit')).toBeDisabled();
   });
 
-  it('the code input carries the one-time-code UX attributes (item 8/D3)', async () => {
+  it('the code input carries the one-time-code UX attributes', async () => {
     renderChallenge();
     await waitFor(() => {
       expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
@@ -98,7 +89,7 @@ describe('MfaChallenge', () => {
     expect(input).toHaveAttribute('placeholder', MFA_CHALLENGE_LABELS.CODE_PLACEHOLDER);
   });
 
-  it('submits challenge + verify with the loaded factor id and calls onVerified (not onBypassed) on success', async () => {
+  it('submits challenge + verify with the loaded factor id and calls onVerified on success', async () => {
     mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
     mockVerify.mockResolvedValueOnce({ data: { session: {} }, error: null });
 
@@ -122,12 +113,10 @@ describe('MfaChallenge', () => {
     await waitFor(() => {
       expect(onVerified).toHaveBeenCalledTimes(1);
     });
-    expect(onBypassed).not.toHaveBeenCalled();
-    expect(onCapabilityUnavailable).not.toHaveBeenCalled();
   });
 
   it.each(['mfa_verification_failed', 'mfa_verification_rejected', 'mfa_challenge_expired'])(
-    'WRONG-CODE (%s): shows a retryable inline error and does NOT call onVerified/onBypassed/onCapabilityUnavailable',
+    'WRONG-CODE (%s): shows a retryable inline error and does NOT call onVerified, does NOT show the retry screen',
     async (code) => {
       mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
       mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'Invalid code', code } });
@@ -145,15 +134,20 @@ describe('MfaChallenge', () => {
         expect(screen.getByTestId('mfa-challenge-error')).toHaveTextContent(/invalid code/i);
       });
       expect(onVerified).not.toHaveBeenCalled();
-      expect(onBypassed).not.toHaveBeenCalled();
-      expect(onCapabilityUnavailable).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('mfa-challenge-retry')).not.toBeInTheDocument();
 
       // Still retryable: the code field and submit button are usable again.
       expect(screen.getByTestId('mfa-challenge-code')).not.toBeDisabled();
     }
   );
 
-  it('CHANGED (item 30): validation_failed is now a PLATFORM error, not a retryable wrong-code error', async () => {
+  // -----------------------------------------------------------------------
+  // FAIL CLOSED (R17-R21 CTO ruling): every non-wrong-code outcome shows
+  // the retry screen. NONE of them call onVerified. There is no callback
+  // this component could use to grant access even if it wanted to.
+  // -----------------------------------------------------------------------
+
+  it('R18: validation_failed (a "rejected" classification, distinct from wrong-code) shows an inline retryable error, NOT the fail-closed retry screen — the request reached GoTrue and got a real rejection, so the form stays usable', async () => {
     mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
     mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'bad request', code: 'validation_failed' } });
 
@@ -166,17 +160,40 @@ describe('MfaChallenge', () => {
     fireEvent.click(screen.getByTestId('mfa-challenge-submit'));
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('validation_failed');
+      expect(screen.getByTestId('mfa-challenge-error')).toHaveTextContent(/bad request/i);
     });
-    expect(screen.queryByTestId('mfa-challenge-error')).not.toBeInTheDocument();
+    expect(onVerified).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('mfa-challenge-retry')).not.toBeInTheDocument();
+    expect(screen.getByTestId('mfa-challenge-code')).not.toBeDisabled();
   });
 
-  it('PLATFORM ERROR on verify() (unknown code): calls onCapabilityUnavailable with the code, not a retry error', async () => {
+  it.each(['over_request_rate_limit', 'mfa_ip_address_mismatch'])(
+    'R18: the explicit rejection code %s shows an inline retryable error, NOT the fail-closed retry screen (a real backend rejection is not the fail-open bypass this ruling targets)',
+    async (code) => {
+      mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
+      mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'rejected', code } });
+
+      renderChallenge();
+      await waitFor(() => {
+        expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
+      });
+
+      enterCode('123456');
+      fireEvent.click(screen.getByTestId('mfa-challenge-submit'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('mfa-challenge-error')).toHaveTextContent(/rejected/i);
+      });
+      expect(onVerified).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('mfa-challenge-retry')).not.toBeInTheDocument();
+    }
+  );
+
+  it('R19 CHANGED: a "platform" classification (e.g. mfa_totp_verify_not_enabled) on the CHALLENGE path ALSO fails closed — this used to grant access, now it does not', async () => {
     mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
-    mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'service down', code: 'mfa_totp_verify_not_enabled' } });
+    mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'disabled', code: 'mfa_totp_verify_not_enabled' } });
 
     renderChallenge();
-
     await waitFor(() => {
       expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
     });
@@ -185,36 +202,15 @@ describe('MfaChallenge', () => {
     fireEvent.click(screen.getByTestId('mfa-challenge-submit'));
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('mfa_totp_verify_not_enabled');
-    });
-    expect(onVerified).not.toHaveBeenCalled();
-    expect(onBypassed).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('mfa-challenge-error')).not.toBeInTheDocument();
-  });
-
-  it('PLATFORM ERROR on challenge() (no code at all): calls onCapabilityUnavailable with "unknown"', async () => {
-    mockChallenge.mockResolvedValueOnce({ data: null, error: { message: 'network down' } });
-
-    renderChallenge();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
-    });
-
-    enterCode('123456');
-    fireEvent.click(screen.getByTestId('mfa-challenge-submit'));
-
-    await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
     });
     expect(onVerified).not.toHaveBeenCalled();
   });
 
-  it('PLATFORM ERROR: a thrown exception during submit calls onCapabilityUnavailable, never crashes', async () => {
+  it('R19: a thrown exception during submit shows the retry screen, never crashes, never grants access', async () => {
     mockChallenge.mockRejectedValueOnce(new TypeError('boom'));
 
     renderChallenge();
-
     await waitFor(() => {
       expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
     });
@@ -223,17 +219,16 @@ describe('MfaChallenge', () => {
     fireEvent.click(screen.getByTestId('mfa-challenge-submit'));
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
     });
     expect(onVerified).not.toHaveBeenCalled();
   });
 
-  it('ITEM 4/EA6: a HUNG challenge() call times out to onCapabilityUnavailable("unknown") instead of spinning forever', async () => {
+  it('a HUNG challenge() call times out to the retry screen instead of spinning forever', async () => {
     vi.useFakeTimers();
     mockChallenge.mockReturnValueOnce(new Promise(() => {}));
 
     renderChallenge();
-
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -244,28 +239,108 @@ describe('MfaChallenge', () => {
       await vi.advanceTimersByTimeAsync(8_000);
     });
 
-    expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+    expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
     expect(onVerified).not.toHaveBeenCalled();
   });
 
-  it('ITEM 4/EA6: a HUNG verify() call times out to onCapabilityUnavailable("unknown")', async () => {
-    vi.useFakeTimers();
-    mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
-    mockVerify.mockReturnValueOnce(new Promise(() => {}));
+  // -----------------------------------------------------------------------
+  // listFactors() failures (mount-time load) — item 2/E2 fixed the
+  // infinite-spinner bug; R19 changes the OUTCOME from a bypass to the
+  // fail-closed retry screen.
+  // -----------------------------------------------------------------------
+
+  it('FAIL-CLOSED (changed from fail-open): listFactors() unexpectedly returning no verified factor shows the retry screen, not access (defensive — should be unreachable via AuthGuard)', async () => {
+    mockListFactors.mockResolvedValueOnce({ data: { totp: [] }, error: null });
 
     renderChallenge();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
     });
-    enterCode('123456');
-    fireEvent.click(screen.getByTestId('mfa-challenge-submit'));
+    expect(onVerified).not.toHaveBeenCalled();
+  });
+
+  it('FAIL-CLOSED (changed from fail-open): listFactors() erroring shows the retry screen', async () => {
+    mockListFactors.mockResolvedValueOnce({ data: null, error: { message: 'network down' } });
+
+    renderChallenge();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
+    });
+    expect(onVerified).not.toHaveBeenCalled();
+  });
+
+  it('a THROWN listFactors() rejection shows the retry screen instead of leaving the spinner stuck forever', async () => {
+    mockListFactors.mockRejectedValueOnce(new TypeError('network exploded'));
+
+    renderChallenge();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
+    });
+    expect(onVerified).not.toHaveBeenCalled();
+  });
+
+  it('a HUNG listFactors() call (never resolves) times out to the retry screen', async () => {
+    vi.useFakeTimers();
+    mockListFactors.mockReturnValueOnce(new Promise(() => {}));
+
+    renderChallenge();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(8_000);
     });
 
-    expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+    expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
     expect(onVerified).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // "Try again" retry control + auto-retry
+  // -----------------------------------------------------------------------
+
+  it('clicking "Try again" re-attempts listFactors() and can recover into the normal code form', async () => {
+    mockListFactors.mockResolvedValueOnce({ data: null, error: { message: 'network down' } });
+
+    renderChallenge();
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
+    });
+
+    mockListFactors.mockResolvedValueOnce({
+      data: { totp: [{ id: 'factor-1', type: 'totp', status: 'verified' }] },
+      error: null,
+    });
+    fireEvent.click(screen.getByTestId('mfa-challenge-retry-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('mfa-challenge-retry')).not.toBeInTheDocument();
+  });
+
+  it('R19: auto-retries listFactors() on the live re-check cadence while on the retry screen (visibilitychange)', async () => {
+    mockListFactors.mockResolvedValueOnce({ data: null, error: { message: 'network down' } });
+
+    renderChallenge();
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
+    });
+    expect(mockListFactors).toHaveBeenCalledTimes(1);
+
+    mockListFactors.mockResolvedValueOnce({
+      data: { totp: [{ id: 'factor-1', type: 'totp', status: 'verified' }] },
+      error: null,
+    });
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
+    });
   });
 
   it('only allows digits in the code field, capped at 6', async () => {
@@ -291,14 +366,26 @@ describe('MfaChallenge', () => {
     expect(mockSignOut).toHaveBeenCalledTimes(1);
   });
 
-  it('ITEM 6/D8: Sign out is disabled while the factor is still loading', () => {
-    mockListFactors.mockReturnValueOnce(new Promise(() => {})); // never resolves during this assertion
+  it('Sign out is ALSO available from the retry screen — the escape hatch must survive a fail-closed error', async () => {
+    mockListFactors.mockResolvedValueOnce({ data: null, error: { message: 'network down' } });
+
+    renderChallenge();
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('mfa-challenge-signout'));
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('Sign out is disabled while the factor is still loading', () => {
+    mockListFactors.mockReturnValueOnce(new Promise(() => {}));
     renderChallenge();
 
     expect(screen.getByTestId('mfa-challenge-signout')).toBeDisabled();
   });
 
-  it('ITEM 6/D8: Sign out is disabled while a submit is in flight', async () => {
+  it('Sign out is disabled while a submit is in flight', async () => {
     let resolveChallenge!: (v: { data: { id: string } | null; error: null }) => void;
     mockChallenge.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -321,64 +408,7 @@ describe('MfaChallenge', () => {
     resolveChallenge({ data: { id: 'challenge-1' }, error: null });
   });
 
-  // -----------------------------------------------------------------------
-  // FAIL-OPEN via onBypassed (CHANGED, item 32) — listFactors()-level fail-
-  // open paths no longer call onVerified.
-  // -----------------------------------------------------------------------
-
-  it('FAIL-OPEN (onBypassed, not onVerified): calls onBypassed if listFactors unexpectedly returns no verified factor (defensive — should be unreachable via AuthGuard)', async () => {
-    mockListFactors.mockResolvedValueOnce({ data: { totp: [] }, error: null });
-
-    renderChallenge();
-
-    await waitFor(() => {
-      expect(onBypassed).toHaveBeenCalledTimes(1);
-    });
-    expect(onVerified).not.toHaveBeenCalled();
-  });
-
-  it('FAIL-OPEN (onBypassed, not onVerified): listFactors() erroring calls onBypassed — a platform read failure never trapped the user, and never falsely claims a real verify happened', async () => {
-    mockListFactors.mockResolvedValueOnce({ data: null, error: { message: 'network down' } });
-
-    renderChallenge();
-
-    await waitFor(() => {
-      expect(onBypassed).toHaveBeenCalledTimes(1);
-    });
-    expect(onVerified).not.toHaveBeenCalled();
-    expect(onCapabilityUnavailable).not.toHaveBeenCalled();
-  });
-
-  it('ITEM 2/E2: a THROWN listFactors() rejection calls onBypassed instead of leaving loadingFactor stuck forever', async () => {
-    mockListFactors.mockRejectedValueOnce(new TypeError('network exploded'));
-
-    renderChallenge();
-
-    await waitFor(() => {
-      expect(onBypassed).toHaveBeenCalledTimes(1);
-    });
-    expect(onVerified).not.toHaveBeenCalled();
-    // Never got stuck on the loading spinner (no code field rendered, but
-    // also no lingering "mfa-challenge" root without a bypass call).
-  });
-
-  it('ITEM 2/E2: a HUNG listFactors() call (never resolves) times out to onBypassed instead of spinning forever', async () => {
-    vi.useFakeTimers();
-    mockListFactors.mockReturnValueOnce(new Promise(() => {}));
-
-    renderChallenge();
-
-    expect(onBypassed).not.toHaveBeenCalled();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(8_000);
-    });
-
-    expect(onBypassed).toHaveBeenCalledTimes(1);
-    expect(onVerified).not.toHaveBeenCalled();
-  });
-
-  it('ITEM 6/D2: ignores a late-arriving submit result after unmount (no state update, no callback)', async () => {
+  it('ignores a late-arriving submit result after unmount (no state update, no callback)', async () => {
     let resolveVerify!: (v: { data: unknown; error: null }) => void;
     mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
     mockVerify.mockReturnValueOnce(
@@ -397,7 +427,6 @@ describe('MfaChallenge', () => {
 
     unmount();
     resolveVerify({ data: { session: {} }, error: null });
-    // Give the microtask queue a turn to process the resolved promise.
     await Promise.resolve();
     await Promise.resolve();
 

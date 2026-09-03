@@ -11,39 +11,62 @@
  *
  * DECISION ORDER (first match wins — see AuthGuard.mfaGate.test.tsx for one
  * named test per row):
- *   1 authLoading                    -> spinner
- *   2 !user                          -> login redirect / fallback
- *   3 mfaStatus loading              -> spinner
- *   4 policy loading                 -> spinner
- *   5 mfaCapabilityUnavailable       -> children (+ one-shot toast + Sentry)
- *   6 challenge_required             -> <MfaChallenge>
- *   7 !hasVerifiedFactor && required -> <MfaEnrollmentRequired>
- *   8 mfaGraceActive                 -> <MfaGraceNudge/> ABOVE children
- *   9 (else)                         -> children
+ *   1 authLoading                              -> spinner
+ *   2 !user                                    -> login redirect / fallback
+ *   3 mfaStatus loading                        -> spinner
+ *   4 policy loading                           -> spinner
+ *   5 challenge_required                       -> <MfaChallenge> (ALWAYS — no cooldown/bypass check)
+ *   6 !hasVerifiedFactor && required            -> cooldown active? children : <MfaEnrollmentRequired>
+ *   7 mfaGraceActive                           -> <MfaGraceNudge/> ABOVE children
+ *   8 (else)                                   -> children
  *
- * FAIL-OPEN CAPABILITY GATE (CTO ruling A4-7, accepted phase-1 trade-off,
- * hardened per PR #2637 review item 5/D1): `onCapabilityUnavailable` is the
- * shared escape hatch both `MfaChallenge` and `MfaEnrollmentRequired` call
- * when the MFA PLATFORM itself (not the user's code) is the reason
- * verification/enrollment cannot complete. This is deliberately prioritized
- * ABOVE the challenge/enrollment branches: once set, it renders `children`
- * for the rest of this AuthGuard instance's life, so an authenticated user
- * is never permanently walled out by a broken MFA backend.
+ * FAIL-CLOSED CHALLENGE / FAIL-OPEN ENROLLMENT (CTO ruling, PR #2637 review
+ * round 2, R17-R21 — SUPERSEDES the earlier "fail open on any platform
+ * error" design that let `onCapabilityUnavailable` short-circuit BOTH the
+ * challenge and enrollment branches from one shared top-level flag):
  *
- * CROSS-INSTANCE COOLDOWN (item 5/D1, CONFIRMED by the verifier; item 24):
- * every one of the ~52 routes in `App.tsx` mounts its OWN `AuthGuard`. A
- * naive per-instance one-shot ref meant a required-role admin who kept
- * navigating during an MFA-platform outage got a FRESH `enroll()`/
- * `challenge()` attempt, plus a toast, plus a Sentry event, on EVERY route
+ *   Row 5 (challenge) is checked and rendered UNCONDITIONALLY, before any
+ *   cooldown/capability state is even consulted. A user whose assurance
+ *   check reports a verified factor (`nextLevel === 'aal2'`) is ALWAYS
+ *   challenged — cooldown or not, prior capability trip or not. There is no
+ *   code path left that can render `children` for such a user without a
+ *   real, successful `challenge()`+`verify()` round trip inside
+ *   `MfaChallenge` (which itself now fails CLOSED on every error — see that
+ *   component's doc comment). This closes the confirmed bypass: the
+ *   capability cooldown used to be a single flag checked BEFORE row 5, so
+ *   on a shared browser the NEXT user to sign in (a different person, with
+ *   their OWN verified factor) could inherit a still-active cooldown window
+ *   from the PREVIOUS user's platform-outage trip and skip MfaChallenge
+ *   entirely. The cooldown is now (a) scoped to row 6 only, and (b) keyed
+ *   by userId in `mfaCapabilityCooldown.ts`, so it cannot even apply to a
+ *   different user in the first place — belt and suspenders.
+ *
+ *   Row 6 (enrollment) is the ONLY place fail-open is allowed: a user with
+ *   NO verified factor whose role requires one, but who cannot complete
+ *   enrollment because the MFA platform itself (not their input) is
+ *   unavailable. `onCapabilityUnavailable` is `MfaEnrollmentRequired`'s
+ *   escape hatch for exactly that case — see its own doc comment. Once
+ *   tripped, `children` renders for the rest of THIS instance's life, and
+ *   the userId-scoped cooldown seeds that same behavior for OTHER route
+ *   instances (and future mounts) for THIS user only, within the window —
+ *   see CROSS-INSTANCE COOLDOWN below. An authenticated user is never
+ *   permanently walled out of the app by a broken enrollment backend; they
+ *   also never get a channel to skip a challenge they could otherwise pass.
+ *
+ * CROSS-INSTANCE COOLDOWN (item 5/D1, CONFIRMED by the verifier; item 24;
+ * re-scoped per R17): every one of the ~52 routes in `App.tsx` mounts its
+ * OWN `AuthGuard`. A naive per-instance one-shot ref meant a required-role
+ * admin who kept navigating during an MFA-platform outage got a FRESH
+ * `enroll()` attempt, plus a toast, plus a Sentry event, on EVERY route
  * change. `src/lib/mfaCapabilityCooldown.ts` is the fix: a cross-instance,
- * time-bounded cooldown. This component's local `mfaCapabilityUnavailable`
- * state is seeded from the cooldown at mount (so a FRESH instance mounted
- * mid-outage renders children immediately, without ever mounting
- * `MfaChallenge`/`MfaEnrollmentRequired` — the operation is not
- * re-attempted, not just "the toast is suppressed"), and the toast/Sentry
+ * time-bounded, per-userId cooldown. This component's local
+ * `mfaCapabilityUnavailable` state is seeded from that cooldown (keyed by
+ * the CURRENT user) at mount and on every user change, so a fresh instance
+ * mounted mid-outage for the SAME user renders children immediately at row
+ * 6 without ever mounting `MfaEnrollmentRequired` again; the toast/Sentry
  * emission is gated on the cooldown's own `alreadyArmed` result rather than
- * a per-instance ref, so they fire at most once per cooldown window across
- * every route, not once per route.
+ * a per-instance ref, so it fires at most once per cooldown window across
+ * every route for that user, not once per route.
  *
  * Every fail-open emits a Sentry `mfa_capability_unavailable` message with
  * `{code, path}` tags (never PII) so a targeted or sustained bypass is
@@ -83,6 +106,7 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   const location = useLocation();
   const toastShown = useRef(false);
   const hadUser = useRef(false);
+  const userId = user?.id ?? null;
 
   // SECURITY (pre-pentest hardening, founder directive 2026-08-03 "MFA
   // needs to be mandatory" + "enforced everytime you login"; phase-1
@@ -97,7 +121,7 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   // enrolled factor, on a role that does NOT (yet) require MFA, are
   // completely unaffected — see useMfaAssurance's and
   // useMfaEnrollmentRequirement's fail-open safety contracts.
-  const { status: mfaStatus, hasVerifiedFactor, markVerified, markBypassed } = useMfaAssurance(user?.id ?? null);
+  const { status: mfaStatus, hasVerifiedFactor, markVerified, markBypassed } = useMfaAssurance(userId);
   const {
     loading: mfaRequirementLoading,
     mfaRequired,
@@ -105,21 +129,48 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
     enforceFromIso,
   } = useMfaEnrollmentRequirement();
 
-  // Seeded from the CROSS-INSTANCE cooldown (item 5/D1) so a fresh mount
-  // during an active cooldown window starts already in the fail-open state
-  // — MfaChallenge/MfaEnrollmentRequired are never mounted, so the failing
-  // operation is never re-attempted within the window.
-  const [mfaCapabilityUnavailable, setMfaCapabilityUnavailable] = useState(() => isMfaCapabilityCooldownActive());
+  // R17: seeded from the CROSS-INSTANCE, per-userId cooldown so a fresh
+  // mount during an active cooldown window for THIS user starts already in
+  // the fail-open state — `MfaEnrollmentRequired` is never mounted, so the
+  // failing operation is never re-attempted within the window. This flag is
+  // consulted ONLY inside the row-6 enrollment branch below — it can never
+  // short-circuit row 5 (challenge), which is checked first and
+  // unconditionally.
+  const [mfaCapabilityUnavailable, setMfaCapabilityUnavailable] = useState(() =>
+    isMfaCapabilityCooldownActive(userId ?? '')
+  );
+
+  // R17(d): re-derive for the CURRENT user whenever the user changes (sign
+  // out + a different sign-in without a full AuthGuard remount, or a stale
+  // instance surviving a user switch). Never carry one user's bypass flag
+  // forward onto another user — the per-userId cooldown storage already
+  // prevents cross-user reads, but this keeps the LOCAL render-time flag
+  // honest too.
+  const previousUserIdRef = useRef(userId);
+  useEffect(() => {
+    if (previousUserIdRef.current !== userId) {
+      previousUserIdRef.current = userId;
+      setMfaCapabilityUnavailable(isMfaCapabilityCooldownActive(userId ?? ''));
+    }
+  }, [userId]);
 
   const handleCapabilityUnavailable = useCallback(
     (code: string) => {
-      const { alreadyArmed } = armMfaCapabilityCooldown();
+      if (!userId) return;
+      const { alreadyArmed } = armMfaCapabilityCooldown(userId);
       setMfaCapabilityUnavailable(true);
+      // Enrollment-path bypass only (R19/R21): no real verify happened, so
+      // tell useMfaAssurance explicitly rather than leaving it implicit —
+      // see markBypassed's own doc comment for why this stays a distinct
+      // call from markVerified even though hasVerifiedFactor is already
+      // `false` on every path that reaches this branch.
+      markBypassed();
 
-      // One-shot ACROSS every AuthGuard instance, not per-instance: only
-      // the trip that actually opens a new cooldown window fires the
-      // toast/Sentry — a repeat trip while the window is already active
-      // (this instance or any other route's instance) does not.
+      // One-shot ACROSS every AuthGuard instance, not per-instance, and
+      // scoped to THIS user: only the trip that actually opens a new
+      // cooldown window fires the toast/Sentry — a repeat trip while the
+      // window is already active (this instance or any other route's
+      // instance, for the SAME user) does not.
       if (!alreadyArmed) {
         toast.warning(MFA_CAPABILITY_LABELS.UNAVAILABLE_NOTICE);
 
@@ -138,7 +189,7 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
           });
       }
     },
-    [location.pathname]
+    [location.pathname, userId, markBypassed]
   );
 
   // Track whether the user was previously authenticated
@@ -192,45 +243,39 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
     return <Spinner />;
   }
 
-  // Row 5: the MFA platform itself failed (not the user's code) — either
-  // in THIS instance, or in another route's AuthGuard instance within the
-  // cross-instance cooldown window (item 5/D1). Render children
-  // unconditionally for the rest of this instance's life — see the module
-  // doc comment's FAIL-OPEN CAPABILITY GATE section.
-  if (mfaCapabilityUnavailable) {
-    return <>{children}</>;
-  }
-
-  // Row 6: challenge takes priority over enrollment — a user who already
-  // has a verified factor is ALWAYS challenged on this session (independent
-  // of role/tier — voluntary enrollment is honored the same as mandated
-  // enrollment). Only a user with NO factor at all can reach row 7.
+  // Row 5: FAIL CLOSED. A user with a verified factor is ALWAYS challenged
+  // on this session (independent of role/tier — voluntary enrollment is
+  // honored the same as mandated enrollment), and — per the R17-R21 CTO
+  // ruling — this check runs BEFORE and INDEPENDENTLY OF any cooldown or
+  // capability-unavailable state. `MfaChallenge` itself never grants access
+  // on an error; there is no `onBypassed`/`onCapabilityUnavailable` wired
+  // here at all. Only a user with NO factor at all can reach row 6.
   if (mfaStatus === 'challenge_required') {
-    return (
-      <MfaChallenge
-        onVerified={markVerified}
-        onBypassed={markBypassed}
-        onCapabilityUnavailable={handleCapabilityUnavailable}
-      />
-    );
+    return <MfaChallenge onVerified={markVerified} />;
   }
 
-  // Row 7: FORCED ENROLLMENT, NOT A LOCKOUT. `mfaStatus` is 'satisfied'
-  // here, which means EITHER (a) aal2 already reached this session, OR (b)
-  // no verified factor exists — `hasVerifiedFactor` distinguishes them. A
-  // required role with no factor is routed into a completable enrollment
-  // screen — rendered INLINE, not via route navigation (`<Navigate>`), so
-  // there is no route to redirect to and therefore no possible
-  // guard-redirects-to-a-guarded-route loop (see the "NO REDIRECT LOOP"
-  // test and MfaEnrollmentRequired.tsx's doc comment for why this must
-  // stay completable).
+  // Row 6: FORCED ENROLLMENT, NOT A LOCKOUT — the only row where fail-open
+  // applies. `mfaStatus` is 'satisfied' here, which given row 5 above means
+  // no verified factor exists for this session (`hasVerifiedFactor` is
+  // false). A required role with no factor is routed into a completable
+  // enrollment screen — rendered INLINE, not via route navigation
+  // (`<Navigate>`), so there is no route to redirect to and therefore no
+  // possible guard-redirects-to-a-guarded-route loop (see the "NO REDIRECT
+  // LOOP" test and MfaEnrollmentRequired.tsx's doc comment for why this
+  // must stay completable). If the platform itself cannot issue a factor
+  // right now (this instance's own trip, or another route's within the
+  // per-userId cooldown window), render `children` instead of trapping an
+  // otherwise-authenticated user behind an impossible enrollment screen.
   if (!hasVerifiedFactor && mfaRequired) {
+    if (mfaCapabilityUnavailable) {
+      return <>{children}</>;
+    }
     return (
       <MfaEnrollmentRequired onEnrolled={markVerified} onCapabilityUnavailable={handleCapabilityUnavailable} />
     );
   }
 
-  // Row 8: the enforcement date has not arrived yet for this required-role
+  // Row 7: the enforcement date has not arrived yet for this required-role
   // user — nudge them ABOVE children (children still render; this is a
   // heads-up, not a gate). `enforceFromIso` was already resolved once by
   // useMfaEnrollmentRequirement (item 18/EA4) — passed straight through so
@@ -244,6 +289,6 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
     );
   }
 
-  // Row 9: nothing MFA-related pending.
+  // Row 8: nothing MFA-related pending.
   return <>{children}</>;
 }

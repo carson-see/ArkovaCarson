@@ -6,6 +6,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { clearMfaCapabilityCooldown } from '../lib/mfaCapabilityCooldown';
 import type { User, Session } from '@supabase/supabase-js';
 
 type OAuthProvider = Parameters<typeof supabase.auth.signInWithOAuth>[0]['provider'];
@@ -197,6 +198,16 @@ export function useAuth(): AuthState & AuthActions {
   }, [signInWithProvider]);
 
   const signOut = useCallback(async () => {
+    // R17(c) (PR #2637 review round 2, CONFIRMED cross-user bypass): clear
+    // THIS user's MFA capability cooldown before the redirect below. The
+    // cooldown is already keyed by userId (mfaCapabilityCooldown.ts), so a
+    // DIFFERENT user signing in afterward was never actually at risk — but
+    // clearing it here also means the SAME user's next sign-in doesn't
+    // inherit a stale cooldown from a platform outage that may have
+    // already resolved. `clearMfaCapabilityCooldown` itself is a no-op for
+    // a null/undefined userId and swallows any storage error internally.
+    clearMfaCapabilityCooldown(user?.id);
+
     // Set flag BEFORE any state changes so AuthGuard won't show
     // misleading "sign in required" toast during the sign-out transition.
     // Wrapped in try/catch (CTO ruling A4-10, SCRUM-3167): a private-
@@ -235,7 +246,7 @@ export function useAuth(): AuthState & AuthActions {
     // causing ErrorBoundary "Something went wrong" before navigate() takes effect.
     // Hard redirect avoids the React re-render entirely.
     window.location.href = '/login';
-  }, []);
+  }, [user]);
 
   const clearError = useCallback(() => {
     setError(null);

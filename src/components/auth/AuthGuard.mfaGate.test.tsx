@@ -10,28 +10,42 @@
  *   2 !user                    -> login redirect/fallback
  *   3 mfaStatus loading        -> spinner
  *   4 policy loading           -> spinner
- *   5 capabilityUnavailable    -> children (+ one-shot toast + Sentry)
- *   6 challenge_required       -> <MfaChallenge>
- *   7 !hasVerifiedFactor
- *       && mfaRequired         -> <MfaEnrollmentRequired>
- *   8 mfaGraceActive           -> <MfaGraceNudge/> ABOVE children
- *   9 (else)                   -> children
+ *   5 challenge_required       -> <MfaChallenge> (ALWAYS — no cooldown check)
+ *   6 !hasVerifiedFactor
+ *       && mfaRequired         -> cooldown active? children : <MfaEnrollmentRequired>
+ *   7 mfaGraceActive           -> <MfaGraceNudge/> ABOVE children
+ *   8 (else)                   -> children
+ *
+ * FAIL-CLOSED / FAIL-OPEN SPLIT (PR #2637 review round 2, R17-R21 CTO
+ * ruling — supersedes the earlier design where a single top-level
+ * `mfaCapabilityUnavailable` flag, checked BEFORE the challenge row, could
+ * bypass MfaChallenge entirely): row 5 (challenge) is now checked and
+ * rendered completely independently of any cooldown/capability state — a
+ * user with a verified factor is ALWAYS challenged, no matter what. The
+ * cooldown only ever applies inside row 6 (enrollment), and is keyed by
+ * userId so one user's outage trip can never let a DIFFERENT user in a
+ * shared browser skip a challenge they could otherwise pass.
  *
  * The single most important test in this file is the LOCKOUT-PREVENTION
  * GUARD: a user with NO MFA enrolled, on a role that does not require it,
  * must reach children exactly as before. Breaking that is the catastrophic
- * failure mode this whole change exists to avoid.
+ * failure mode this whole change exists to avoid. The second most important
+ * is the CROSS-USER ISOLATION test below: a shared-browser bypass of MFA
+ * for a DIFFERENT verified user is the exact vulnerability R17 fixes.
  *
  * `useMfaAssurance`, `useMfaEnrollmentRequirement`, `MfaChallenge`,
  * `MfaEnrollmentRequired`, and `MfaGraceNudge` are mocked here deliberately
  * — each has its own dedicated test file covering its internal behavior.
- * This file tests only AuthGuard's branching decision.
+ * This file tests only AuthGuard's branching decision. The capability
+ * cooldown (`mfaCapabilityCooldown.ts`) is a REAL module, not mocked — it is
+ * cheap, userId-keyed, and exercising the real module is the only way to
+ * prove cross-user isolation actually holds.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AuthGuard } from './AuthGuard';
-import { __resetMfaCapabilityCooldownForTests } from '@/lib/mfaCapabilityCooldown';
+import { __resetMfaCapabilityCooldownForTests, armMfaCapabilityCooldown } from '@/lib/mfaCapabilityCooldown';
 
 const toastWarning = vi.fn();
 const toastInfo = vi.fn();
@@ -81,21 +95,11 @@ vi.mock('../../hooks/useMfaEnrollmentRequirement', () => ({
 }));
 
 vi.mock('./MfaChallenge', () => ({
-  MfaChallenge: ({
-    onVerified,
-    onBypassed,
-    onCapabilityUnavailable,
-  }: {
-    onVerified: () => void;
-    onBypassed: () => void;
-    onCapabilityUnavailable: (code: string) => void;
-  }) => (
+  // R19: MfaChallenge takes ONLY onVerified now — there is no
+  // onBypassed/onCapabilityUnavailable escape hatch left to wire up.
+  MfaChallenge: ({ onVerified }: { onVerified: () => void }) => (
     <div>
       <button onClick={onVerified}>stub-mfa-challenge</button>
-      <button onClick={onBypassed}>stub-mfa-challenge-bypassed</button>
-      <button onClick={() => onCapabilityUnavailable('mfa_totp_verify_not_enabled')}>
-        stub-mfa-challenge-capability-fail
-      </button>
     </div>
   ),
 }));
@@ -249,33 +253,127 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Row 5: capabilityUnavailable -> children (+ one-shot toast + Sentry)
+  // Row 5: challenge_required -> <MfaChallenge>, UNCONDITIONALLY (R17-R21)
   // -----------------------------------------------------------------------
-  it('ROW 5 (capability unavailable from the challenge screen): fails open to children, fires the toast once, and reports to Sentry with {code, path}', async () => {
+  it('ROW 5: renders MfaChallenge instead of children when a challenge is required, regardless of role tier', () => {
+    mfaState.status = 'challenge_required';
+    requirementState.mfaRequired = false; // even an ordinary user is challenged if THEY enrolled voluntarily
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    expect(screen.queryByText('protected content')).not.toBeInTheDocument();
+    expect(screen.getByText('stub-mfa-challenge')).toBeInTheDocument();
+  });
+
+  it('ROW 5: renders children once MfaChallenge reports success (wires markVerified as onVerified)', () => {
     mfaState.status = 'challenge_required';
     render(
       <AuthGuard>
         <div>protected content</div>
       </AuthGuard>
     );
-
-    expect(screen.getByText('stub-mfa-challenge')).toBeInTheDocument();
-
-    screen.getByText('stub-mfa-challenge-capability-fail').click();
-
-    await screen.findByText('protected content');
-    expect(screen.queryByText('stub-mfa-challenge')).not.toBeInTheDocument();
-    expect(toastWarning).toHaveBeenCalledTimes(1);
-    expect(mockCaptureMessage).toHaveBeenCalledWith(
-      'mfa_capability_unavailable',
-      expect.objectContaining({
-        level: 'warning',
-        tags: expect.objectContaining({ code: 'mfa_totp_verify_not_enabled', path: '/private' }),
-      })
-    );
+    screen.getByText('stub-mfa-challenge').click();
+    expect(markVerified).toHaveBeenCalledTimes(1);
   });
 
-  it('ROW 5 (capability unavailable from the forced-enrollment screen): fails open to children instead of trapping the admin', async () => {
+  it('ROW 5 (priority over row 6): challenge takes priority over forced enrollment — a required-role user who has a factor but has not verified THIS session sees the challenge', () => {
+    mfaState.status = 'challenge_required';
+    mfaState.hasVerifiedFactor = true;
+    requirementState.mfaRequired = true;
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    expect(screen.getByText('stub-mfa-challenge')).toBeInTheDocument();
+    expect(screen.queryByText('stub-mfa-enrollment-required')).not.toBeInTheDocument();
+  });
+
+  it('R17(d) FAIL CLOSED: an active enrollment-path cooldown for THIS SAME user does NOT bypass the challenge — cooldown or not, a verified-factor user is always challenged', () => {
+    armMfaCapabilityCooldown('user-1');
+    mfaState.status = 'challenge_required';
+    mfaState.hasVerifiedFactor = true;
+    requirementState.mfaRequired = true;
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    expect(screen.getByText('stub-mfa-challenge')).toBeInTheDocument();
+    expect(screen.queryByText('protected content')).not.toBeInTheDocument();
+  });
+
+  it('R17/R19: MfaChallenge has no capability-unavailable/bypass escape hatch left to wire — the ONLY prop is onVerified (structural, not just behavioral)', () => {
+    mfaState.status = 'challenge_required';
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    // The old stub buttons for onBypassed/onCapabilityUnavailable no longer
+    // exist in the (updated) MfaChallenge mock at all.
+    expect(screen.queryByText('stub-mfa-challenge-bypassed')).not.toBeInTheDocument();
+    expect(screen.queryByText('stub-mfa-challenge-capability-fail')).not.toBeInTheDocument();
+  });
+
+  // -----------------------------------------------------------------------
+  // Row 6: !hasVerifiedFactor && mfaRequired -> cooldown ? children : <MfaEnrollmentRequired>
+  // -----------------------------------------------------------------------
+  it('ROW 6: forces enrollment (not children) for a required role with no verified factor', () => {
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = false;
+    requirementState.mfaRequired = true;
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    expect(screen.queryByText('protected content')).not.toBeInTheDocument();
+    expect(screen.getByText('stub-mfa-enrollment-required')).toBeInTheDocument();
+  });
+
+  it('ROW 6: renders children once MfaEnrollmentRequired reports success (wires markVerified as onEnrolled) — proves the forced flow is completable', () => {
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = false;
+    requirementState.mfaRequired = true;
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    screen.getByText('stub-mfa-enrollment-required').click();
+    expect(markVerified).toHaveBeenCalledTimes(1);
+  });
+
+  it('ROW 6: does NOT force enrollment for a required role that already has a verified factor and satisfied assurance (normal steady state)', () => {
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = true;
+    requirementState.mfaRequired = true;
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    expect(screen.getByText('protected content')).toBeInTheDocument();
+    expect(screen.queryByText('stub-mfa-enrollment-required')).not.toBeInTheDocument();
+  });
+
+  it('ROW 6: does NOT force enrollment for a non-required role with no factor (ORG_MEMBER / INDIVIDUAL)', () => {
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = false;
+    requirementState.mfaRequired = false;
+    render(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+    expect(screen.getByText('protected content')).toBeInTheDocument();
+    expect(screen.queryByText('stub-mfa-enrollment-required')).not.toBeInTheDocument();
+  });
+
+  it('ROW 6 (capability unavailable from the forced-enrollment screen): fails open to children, fires the toast once, reports to Sentry, and marks the assurance hook bypassed (R19/R21) not verified', async () => {
     mfaState.status = 'satisfied';
     mfaState.hasVerifiedFactor = false;
     requirementState.mfaRequired = true;
@@ -291,33 +389,43 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
 
     await screen.findByText('protected content');
     expect(screen.queryByText('stub-mfa-enrollment-required')).not.toBeInTheDocument();
+    expect(toastWarning).toHaveBeenCalledTimes(1);
     expect(mockCaptureMessage).toHaveBeenCalledWith(
       'mfa_capability_unavailable',
-      expect.objectContaining({ tags: expect.objectContaining({ code: 'mfa_totp_enroll_not_enabled' }) })
+      expect.objectContaining({
+        level: 'warning',
+        tags: expect.objectContaining({ code: 'mfa_totp_enroll_not_enabled', path: '/private' }),
+      })
     );
+    expect(markBypassed).toHaveBeenCalledTimes(1);
+    expect(markVerified).not.toHaveBeenCalled();
   });
 
-  it('ROW 5: the toast fires only ONCE even if onCapabilityUnavailable somehow fires more than once (ref guard)', async () => {
-    mfaState.status = 'challenge_required';
+  it('ROW 6: the toast fires only ONCE even if onCapabilityUnavailable somehow fires more than once (ref guard)', async () => {
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = false;
+    requirementState.mfaRequired = true;
     render(
       <AuthGuard>
         <div>protected content</div>
       </AuthGuard>
     );
 
-    screen.getByText('stub-mfa-challenge-capability-fail').click();
+    screen.getByText('stub-mfa-enrollment-capability-fail').click();
     await screen.findByText('protected content');
     expect(toastWarning).toHaveBeenCalledTimes(1);
   });
 
-  it('ROW 5: no Sentry PII — only {code, path} tags are sent, never a user id or email', async () => {
-    mfaState.status = 'challenge_required';
+  it('ROW 6: no Sentry PII — only {code, path} tags are sent, never a user id or email', async () => {
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = false;
+    requirementState.mfaRequired = true;
     render(
       <AuthGuard>
         <div>protected content</div>
       </AuthGuard>
     );
-    screen.getByText('stub-mfa-challenge-capability-fail').click();
+    screen.getByText('stub-mfa-enrollment-capability-fail').click();
     await screen.findByText('protected content');
 
     const call = mockCaptureMessage.mock.calls[0];
@@ -326,53 +434,58 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Item 5/D1 (CONFIRMED by the verifier) + item 24: the cooldown is
-  // CROSS-INSTANCE, not per-AuthGuard-mount. A fresh AuthGuard mounted
-  // while the cooldown is active (simulating the next of ~52 routes the
-  // user navigates to during an outage) must render children directly —
-  // WITHOUT ever mounting MfaChallenge/MfaEnrollmentRequired again — and
-  // must NOT fire a second toast/Sentry event.
+  // Item 5/D1 (CONFIRMED by the verifier) + item 24, re-scoped to row 6 only
+  // per R17: the cooldown is CROSS-INSTANCE, not per-AuthGuard-mount, but
+  // ONLY within the enrollment branch. A fresh AuthGuard mounted while the
+  // cooldown is active (simulating the next of ~52 routes the SAME user
+  // navigates to during an outage) must render children directly — WITHOUT
+  // ever mounting MfaEnrollmentRequired again — and must NOT fire a second
+  // toast/Sentry event.
   // -----------------------------------------------------------------------
-  it('ROW 5/D1: a FRESH AuthGuard instance mounted after another instance already failed open renders children immediately, with no second enroll()/challenge() attempt and no second toast/Sentry', async () => {
-    mfaState.status = 'challenge_required';
+  it('ROW 6/D1: a FRESH AuthGuard instance mounted after another instance already failed open renders children immediately, with no second enroll() attempt and no second toast/Sentry', async () => {
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = false;
+    requirementState.mfaRequired = true;
     const first = render(
       <AuthGuard>
         <div>first-route content</div>
       </AuthGuard>
     );
-    first.getByText('stub-mfa-challenge-capability-fail').click();
+    first.getByText('stub-mfa-enrollment-capability-fail').click();
     await first.findByText('first-route content');
     expect(toastWarning).toHaveBeenCalledTimes(1);
     expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
     first.unmount();
 
     // Simulate navigating to a DIFFERENT route — a brand new AuthGuard
-    // instance, same as every one of the ~52 routes in App.tsx.
-    mfaState.status = 'challenge_required'; // still required, if the gate were naive it would re-mount MfaChallenge
+    // instance, same as every one of the ~52 routes in App.tsx, for the
+    // SAME user (still no verified factor, still required).
     const second = render(
       <AuthGuard>
         <div>second-route content</div>
       </AuthGuard>
     );
 
-    // Renders children directly — MfaChallenge is never even mounted, so
-    // enroll()/challenge() cannot be re-attempted within the window.
-    expect(second.queryByText('stub-mfa-challenge')).not.toBeInTheDocument();
+    // Renders children directly — MfaEnrollmentRequired is never even
+    // mounted, so enroll() cannot be re-attempted within the window.
+    expect(second.queryByText('stub-mfa-enrollment-required')).not.toBeInTheDocument();
     expect(second.getByText('second-route content')).toBeInTheDocument();
     // No additional toast/Sentry beyond the first instance's one-shot.
     expect(toastWarning).toHaveBeenCalledTimes(1);
     expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('ROW 5/D1: the gate RE-ARMS once the cooldown window has expired — a fresh mount after the window sees the real MFA gate again', async () => {
+  it('ROW 6/D1: the gate RE-ARMS once the cooldown window has expired — a fresh mount after the window sees the real enrollment gate again', async () => {
     vi.useFakeTimers();
-    mfaState.status = 'challenge_required';
+    mfaState.status = 'satisfied';
+    mfaState.hasVerifiedFactor = false;
+    requirementState.mfaRequired = true;
     const first = render(
       <AuthGuard>
         <div>first-route content</div>
       </AuthGuard>
     );
-    first.getByText('stub-mfa-challenge-capability-fail').click();
+    first.getByText('stub-mfa-enrollment-capability-fail').click();
     await vi.advanceTimersByTimeAsync(0);
     first.unmount();
 
@@ -384,121 +497,83 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
         <div>second-route content</div>
       </AuthGuard>
     );
-    expect(second.getByText('stub-mfa-challenge')).toBeInTheDocument();
+    expect(second.getByText('stub-mfa-enrollment-required')).toBeInTheDocument();
     expect(second.queryByText('second-route content')).not.toBeInTheDocument();
     vi.useRealTimers();
   });
 
   // -----------------------------------------------------------------------
-  // Row 6: challenge_required -> <MfaChallenge>
+  // R17 CROSS-USER ISOLATION (the confirmed bypass this whole round fixes):
+  // a shared browser where user A trips the enrollment cooldown, signs out,
+  // and a DIFFERENT user B (who HAS a verified factor) signs in must still
+  // see a real challenge — B's session must never inherit A's cooldown.
   // -----------------------------------------------------------------------
-  it('ROW 6: renders MfaChallenge instead of children when a challenge is required, regardless of role tier', () => {
-    mfaState.status = 'challenge_required';
-    requirementState.mfaRequired = false; // even an ordinary user is challenged if THEY enrolled voluntarily
-    render(
-      <AuthGuard>
-        <div>protected content</div>
-      </AuthGuard>
-    );
-    expect(screen.queryByText('protected content')).not.toBeInTheDocument();
-    expect(screen.getByText('stub-mfa-challenge')).toBeInTheDocument();
-  });
+  it('R17 CROSS-USER: an enrollment cooldown armed for user A does not carry over to a DIFFERENT user B — B still sees the enrollment screen (not children) if B also has no factor and is required', () => {
+    armMfaCapabilityCooldown('user-A');
 
-  it('ROW 6: renders children once MfaChallenge reports success (wires markVerified as onVerified)', () => {
-    mfaState.status = 'challenge_required';
-    render(
-      <AuthGuard>
-        <div>protected content</div>
-      </AuthGuard>
-    );
-    screen.getByText('stub-mfa-challenge').click();
-    expect(markVerified).toHaveBeenCalledTimes(1);
-  });
-
-  it('ROW 6 (item 32): wires MfaChallenge\'s onBypassed to markBypassed, NOT markVerified — a fail-open bypass must never falsely claim a real verify happened', () => {
-    mfaState.status = 'challenge_required';
-    render(
-      <AuthGuard>
-        <div>protected content</div>
-      </AuthGuard>
-    );
-    screen.getByText('stub-mfa-challenge-bypassed').click();
-    expect(markBypassed).toHaveBeenCalledTimes(1);
-    expect(markVerified).not.toHaveBeenCalled();
-  });
-
-  it('ROW 6 (priority over row 7): challenge takes priority over forced enrollment — a required-role user who has a factor but has not verified THIS session sees the challenge', () => {
-    mfaState.status = 'challenge_required';
-    mfaState.hasVerifiedFactor = true;
-    requirementState.mfaRequired = true;
-    render(
-      <AuthGuard>
-        <div>protected content</div>
-      </AuthGuard>
-    );
-    expect(screen.getByText('stub-mfa-challenge')).toBeInTheDocument();
-    expect(screen.queryByText('stub-mfa-enrollment-required')).not.toBeInTheDocument();
-  });
-
-  // -----------------------------------------------------------------------
-  // Row 7: !hasVerifiedFactor && mfaRequired -> <MfaEnrollmentRequired>
-  // -----------------------------------------------------------------------
-  it('ROW 7: forces enrollment (not children) for a required role with no verified factor', () => {
+    authState.user = { id: 'user-B' };
     mfaState.status = 'satisfied';
     mfaState.hasVerifiedFactor = false;
     requirementState.mfaRequired = true;
+
     render(
       <AuthGuard>
         <div>protected content</div>
       </AuthGuard>
     );
-    expect(screen.queryByText('protected content')).not.toBeInTheDocument();
+
     expect(screen.getByText('stub-mfa-enrollment-required')).toBeInTheDocument();
+    expect(screen.queryByText('protected content')).not.toBeInTheDocument();
   });
 
-  it('ROW 7: renders children once MfaEnrollmentRequired reports success (wires markVerified as onEnrolled) — proves the forced flow is completable', () => {
-    mfaState.status = 'satisfied';
-    mfaState.hasVerifiedFactor = false;
-    requirementState.mfaRequired = true;
-    render(
-      <AuthGuard>
-        <div>protected content</div>
-      </AuthGuard>
-    );
-    screen.getByText('stub-mfa-enrollment-required').click();
-    expect(markVerified).toHaveBeenCalledTimes(1);
-  });
+  it('R17 CROSS-USER: an enrollment cooldown armed for user A does not let user B (who HAS a verified factor) skip the challenge — the confirmed shared-browser bypass', () => {
+    armMfaCapabilityCooldown('user-A');
 
-  it('ROW 7: does NOT force enrollment for a required role that already has a verified factor and satisfied assurance (normal steady state)', () => {
-    mfaState.status = 'satisfied';
+    authState.user = { id: 'user-B' };
+    mfaState.status = 'challenge_required';
     mfaState.hasVerifiedFactor = true;
     requirementState.mfaRequired = true;
+
     render(
       <AuthGuard>
         <div>protected content</div>
       </AuthGuard>
     );
-    expect(screen.getByText('protected content')).toBeInTheDocument();
-    expect(screen.queryByText('stub-mfa-enrollment-required')).not.toBeInTheDocument();
+
+    expect(screen.getByText('stub-mfa-challenge')).toBeInTheDocument();
+    expect(screen.queryByText('protected content')).not.toBeInTheDocument();
   });
 
-  it('ROW 7: does NOT force enrollment for a non-required role with no factor (ORG_MEMBER / INDIVIDUAL)', () => {
+  it('R17(d): re-derives the cooldown flag for a NEW user signing in within the same mounted AuthGuard instance (no full remount) — a stale bypass never survives a user switch', async () => {
+    armMfaCapabilityCooldown('user-1');
     mfaState.status = 'satisfied';
     mfaState.hasVerifiedFactor = false;
-    requirementState.mfaRequired = false;
-    render(
+    requirementState.mfaRequired = true;
+
+    const { rerender } = render(
       <AuthGuard>
         <div>protected content</div>
       </AuthGuard>
     );
+    // user-1's cooldown is active: renders children directly.
     expect(screen.getByText('protected content')).toBeInTheDocument();
-    expect(screen.queryByText('stub-mfa-enrollment-required')).not.toBeInTheDocument();
+
+    // A different user signs in without a full AuthGuard remount.
+    authState.user = { id: 'user-2' };
+    rerender(
+      <AuthGuard>
+        <div>protected content</div>
+      </AuthGuard>
+    );
+
+    await screen.findByText('stub-mfa-enrollment-required');
+    expect(screen.queryByText('protected content')).not.toBeInTheDocument();
   });
 
   // -----------------------------------------------------------------------
-  // Row 8: mfaGraceActive -> <MfaGraceNudge/> ABOVE children
+  // Row 7: mfaGraceActive -> <MfaGraceNudge/> ABOVE children
   // -----------------------------------------------------------------------
-  it('ROW 8: renders the grace nudge ABOVE children (children still render underneath) when mfaGraceActive is true', () => {
+  it('ROW 7: renders the grace nudge ABOVE children (children still render underneath) when mfaGraceActive is true', () => {
     mfaState.status = 'satisfied';
     mfaState.hasVerifiedFactor = false;
     requirementState.mfaRequired = false;
@@ -512,7 +587,7 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
     expect(screen.getByText('protected content')).toBeInTheDocument();
   });
 
-  it('ROW 8 (item 18/EA4): threads the already-resolved enforceFromIso into MfaGraceNudge instead of letting it re-resolve', () => {
+  it('ROW 7 (item 18/EA4): threads the already-resolved enforceFromIso into MfaGraceNudge instead of letting it re-resolve', () => {
     mfaState.status = 'satisfied';
     mfaState.hasVerifiedFactor = false;
     requirementState.mfaRequired = false;
@@ -526,7 +601,7 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
     expect(screen.getByText('stub-mfa-grace-nudge:2027-03-01T00:00:00Z')).toBeInTheDocument();
   });
 
-  it('ROW 8 (priority under row 7): a required role with no factor sees the forced enrollment screen, NOT the grace nudge, even if mfaGraceActive is somehow also true', () => {
+  it('ROW 7 (priority under row 6): a required role with no factor sees the forced enrollment screen, NOT the grace nudge, even if mfaGraceActive is somehow also true', () => {
     mfaState.status = 'satisfied';
     mfaState.hasVerifiedFactor = false;
     requirementState.mfaRequired = true;
@@ -541,9 +616,9 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Row 9: else -> children
+  // Row 8: else -> children
   // -----------------------------------------------------------------------
-  it('ROW 9: renders children in the default steady state (nothing MFA-related pending)', () => {
+  it('ROW 8: renders children in the default steady state (nothing MFA-related pending)', () => {
     render(
       <AuthGuard>
         <div>protected content</div>

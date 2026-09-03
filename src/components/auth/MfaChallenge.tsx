@@ -8,55 +8,57 @@
  * of a freshly-enrolled one.
  *
  * LOCKOUT SAFETY: always renders a working "Sign out" affordance (disabled
- * only while a request is genuinely in flight — item 6/D8). A user who has
- * lost their authenticator device cannot complete this screen — without an
- * escape hatch they would be fully trapped (authenticated enough to not see
- * the login page, not verified enough to reach the app). Signing out at
- * least returns them to a known, working state (the login page) where they
- * can seek account recovery, instead of a dead end.
+ * only while a request is genuinely in flight). A user who has lost their
+ * authenticator device cannot complete this screen — without an escape
+ * hatch they would be fully trapped (authenticated enough to not see the
+ * login page, not verified enough to reach the app). Signing out at least
+ * returns them to a known, working state (the login page) where they can
+ * seek account recovery, instead of a dead end.
  *
- * FAIL-OPEN CONTRACT (CTO ruling A4, PR #2637 review items 2/E2, 4/EA6, 30,
- * 32): this screen distinguishes "the user typed the wrong code" (their
- * fault, stay here and let them retry) from "the platform itself cannot
- * verify codes right now" (not their fault, and trapping them here would
- * be an availability incident, not a security control):
+ * FAIL-CLOSED CONTRACT (CTO ruling, PR #2637 review round 2, R17-R21 —
+ * SUPERSEDES the earlier "fail open on any platform error" design):
  *
- *   - `listFactors()` erroring, timing out, or throwing, OR unexpectedly
- *     finding no verified factor (defensive only — AuthGuard should never
- *     render this component without one), calls `onBypassed()`. This is
- *     NOT the same as a real verify — see `onBypassed` below.
- *   - `challenge()`/`verify()` returning a wrong-code error (via the shared
- *     `classifyMfaError`, `@/lib/mfaErrors` — `validation_failed` is
- *     deliberately NOT wrong-code, item 30: it's GoTrue's generic
- *     malformed-request code, not evidence of a bad TOTP code) shows a
- *     retryable inline error — the user's own mistake, and they can just
- *     try again.
- *   - Any OTHER `challenge()`/`verify()` error, a thrown exception, or a
- *     timeout (both calls are raced against an 8s budget — item 4/EA6:
- *     previously only `listFactors()` had one, so a hung `challenge()`/
- *     `verify()` spun the busy spinner forever) calls
- *     `onCapabilityUnavailable(code)` instead. AuthGuard treats this as a
- *     platform-availability failure: it renders `children`, emits a Sentry
- *     breadcrumb, and shows a one-shot toast — a broken MFA backend can
- *     never wall out an otherwise-authenticated user (accepted phase-1
- *     trade-off, tracked by SCRUM-3593's future aal2 RLS).
+ *   Fail-open is allowed ONLY on the ENROLLMENT path (`MfaEnrollmentRequired`
+ *   — a user with NO verified factor who cannot enrol because the platform
+ *   cannot issue one). THIS component is the CHALLENGE path: a session at
+ *   aal1 whose user HAS a verified factor. It fails CLOSED. Reason: a
+ *   client-detected "platform error" is trivially attacker-triggerable
+ *   (block one request in DevTools), so fail-open here made MFA optional
+ *   for anyone holding a password.
  *
- * `onVerified` vs `onBypassed` (item 32): `onVerified` fires ONLY after a
- * real, successful `challenge()`+`verify()` round trip — the one place this
- * screen has genuine evidence a factor was proven. Every fail-open branch
- * above calls `onBypassed` instead, which clears the challenge without
- * telling `useMfaAssurance` a verify happened (see that hook's module doc
- * comment). Conflating the two would let a platform read failure alone
- * mark `hasVerifiedFactor=true` for up to 60s.
+ *   `onVerified` is the ONLY prop — it fires ONLY after a real, successful
+ *   `challenge()`+`verify()` round trip. There is no `onBypassed` /
+ *   `onCapabilityUnavailable` escape hatch from this component: AuthGuard
+ *   cannot be told to render children from here, structurally, not just by
+ *   convention.
  *
- * A `mounted` guard (item 6/D2) ensures a result that arrives after this
- * component has unmounted (navigation away mid-request) is ignored —
- * neither state nor a callback fires for a stale in-flight request.
+ *   Three-way outcome per `classifyMfaError` (`@/lib/mfaErrors`):
+ *     - `wrong_code` (the user mistyped their TOTP code) and `rejected`
+ *       (an explicit backend rejection reached GoTrue and came back — rate
+ *       limit, IP mismatch, a malformed request) BOTH show an inline,
+ *       retryable error (`mfa-challenge-error`) and leave the code form
+ *       usable. Neither ever calls `onVerified`.
+ *     - `platform` (the explicit MFA-disabled capability codes, an
+ *       unrecognized/absent error code, a thrown exception, or either
+ *       `withTimeout` race firing) enters the `'retry'` state: a full
+ *       screen with "Try again" (re-runs `loadFactor()`) and "Sign out" —
+ *       it NEVER renders the code form and NEVER grants access. The same
+ *       `'retry'` state is entered if `listFactors()` itself fails,
+ *       errors, throws, times out, or (defensively) finds no verified
+ *       factor.
+ *   The `'retry'` state also re-checks automatically on the same
+ *   visibility/foreground cadence as the rest of the MFA gate
+ *   (`useVisibilityPolling`), so a transient platform outage clears itself
+ *   without the user having to act.
+ *
+ * A `mounted` guard ensures a result that arrives after this component has
+ * unmounted (navigation away mid-request) is ignored — neither state nor a
+ * callback fires for a stale in-flight request.
  */
 
 import { useState, useEffect, useCallback, useRef, FormEvent } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Loader2, AlertCircle, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -66,29 +68,29 @@ import { supabase } from '@/lib/supabase';
 import { withTimeout } from '@/lib/async';
 import { classifyMfaError } from '@/lib/mfaErrors';
 import { useAuth } from '@/hooks/useAuth';
+import { useVisibilityPolling } from '@/hooks/useVisibilityPolling';
 import { MFA_CHALLENGE_LABELS } from '@/lib/copy';
 
 interface MfaChallengeProps {
-  /** Called ONLY after a real, successful challenge()+verify() round trip. */
+  /** Called ONLY after a real, successful challenge()+verify() round trip. There is no other way out of this component that grants access. */
   onVerified: () => void;
-  /** Called on a fail-open path (listFactors() failure, or defensively finding no verified factor) — clears the challenge WITHOUT asserting a real verify happened. */
-  onBypassed: () => void;
-  /** Called when the MFA platform itself (not the user's code) is the reason verification cannot complete. */
-  onCapabilityUnavailable: (code: string) => void;
 }
 
 const MFA_CHALLENGE_TIMEOUT_MS = 8_000;
+const MFA_CHALLENGE_RETRY_INTERVAL_MS = 60_000;
 
-export function MfaChallenge({ onVerified, onBypassed, onCapabilityUnavailable }: Readonly<MfaChallengeProps>) {
+type ChallengeStatus = 'loading' | 'ready' | 'retry';
+
+export function MfaChallenge({ onVerified }: Readonly<MfaChallengeProps>) {
   const { signOut } = useAuth();
+  const [status, setStatus] = useState<ChallengeStatus>('loading');
   const [factorId, setFactorId] = useState<string | null>(null);
-  const [loadingFactor, setLoadingFactor] = useState(true);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // item 6/D2: a result arriving after unmount is ignored — no setState,
-  // no callback. Used by both the mount-time factor load and handleSubmit.
+  // A result arriving after unmount is ignored — no setState, no callback.
+  // Used by both the factor load and handleSubmit.
   const unmountedRef = useRef(false);
   useEffect(() => {
     unmountedRef.current = false;
@@ -97,56 +99,74 @@ export function MfaChallenge({ onVerified, onBypassed, onCapabilityUnavailable }
     };
   }, []);
 
-  useEffect(() => {
-    async function loadFactor() {
-      try {
-        const { data, error: listError } = await withTimeout(
-          supabase.auth.mfa.listFactors(),
-          MFA_CHALLENGE_TIMEOUT_MS,
-          'mfa-challenge-list-factors',
-        );
-        if (unmountedRef.current) return;
+  const loadFactor = useCallback(async () => {
+    // Deliberately does NOT set a 'loading' status before the request: the
+    // initial mount already starts at 'loading' (useState default), and a
+    // background/manual retry from the 'retry' screen should re-check
+    // silently — flashing back to the full-screen spinner on every retry
+    // attempt would be visual noise, and calling setState synchronously
+    // inside the mount effect below is exactly the cascading-render pattern
+    // react-hooks/set-state-in-effect flags. The screen simply stays on
+    // 'retry' until this resolves one way or the other.
+    try {
+      const { data, error: listError } = await withTimeout(
+        supabase.auth.mfa.listFactors(),
+        MFA_CHALLENGE_TIMEOUT_MS,
+        'mfa-challenge-list-factors',
+      );
+      if (unmountedRef.current) return;
 
-        if (listError || !data) {
-          // FAIL OPEN (A4, item 32): a platform read failure is not the
-          // user's fault, and this is not a real verify — onBypassed, not
-          // onVerified.
-          onBypassed();
-          return;
-        }
-
-        // Item 15/S5: no local factor type needed here — `data.totp` is
-        // already correctly typed by @supabase/supabase-js's listFactors()
-        // return type; the inline `{ status: string }` annotation this
-        // used to carry had already drifted from TwoFactorSetup.tsx's
-        // separate TotpFactor interface (now unified in `@/lib/mfaTypes`).
-        const verified = data.totp.find((f) => f.status === 'verified');
-        if (!verified) {
-          // Defensive only: AuthGuard should never render this component
-          // unless useMfaAssurance already confirmed a verified factor
-          // exists. If the factor was unenrolled in the split second between
-          // that check and this one, there is nothing to challenge against —
-          // fail OPEN rather than trap the user behind an impossible screen.
-          onBypassed();
-          return;
-        }
-
-        setFactorId(verified.id);
-        setLoadingFactor(false);
-      } catch {
-        // A thrown rejection or the timeout race above (item 2/E2) — a
-        // platform read failure by definition, same fail-open target.
-        if (unmountedRef.current) return;
-        onBypassed();
+      if (listError || !data) {
+        // FAIL CLOSED: a platform read failure never grants access from
+        // this component — it shows the retry screen instead.
+        setStatus('retry');
+        return;
       }
-    }
 
-    void loadFactor();
-    // Intentionally mount-once: onBypassed/onVerified end this screen's
-    // life one way or another; re-running on a prop-identity change would
-    // just re-issue the same read.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      const verified = data.totp.find((f) => f.status === 'verified');
+      if (!verified) {
+        // Defensive only: AuthGuard should never render this component
+        // unless useMfaAssurance already confirmed a verified factor
+        // exists. If the factor was unenrolled in the split second between
+        // that check and this one, fail CLOSED — there is no verified
+        // factor to challenge against, and this is not this user's signal
+        // to bypass MFA.
+        setStatus('retry');
+        return;
+      }
+
+      setFactorId(verified.id);
+      setError(null);
+      setStatus('ready');
+    } catch {
+      // A thrown rejection or the timeout race above — a platform failure
+      // by definition, same fail-closed target.
+      if (unmountedRef.current) return;
+      setStatus('retry');
+    }
   }, []);
+
+  useEffect(() => {
+    // Fetch-on-mount: the standard, React-docs-endorsed pattern for
+    // "synchronize with an external system" (https://react.dev/learn/
+    // you-might-not-need-an-effect#fetching-data) — `loadFactor` only
+    // updates state after its own internal `await`, never synchronously
+    // within this effect body, so there is no cascading-render risk; the
+    // heuristic below cannot see across that async boundary. `loadFactor`
+    // is stable (useCallback, empty deps) so listing it as a dependency
+    // does not cause a re-run on every render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadFactor();
+  }, [loadFactor]);
+
+  // Auto-retry on the same foreground/visibility cadence as the rest of the
+  // MFA gate: a transient platform outage clears itself without the user
+  // needing to click anything, but this NEVER runs while status is
+  // 'ready'/'loading' — only the fail-closed retry screen re-checks itself.
+  useVisibilityPolling(loadFactor, MFA_CHALLENGE_RETRY_INTERVAL_MS, {
+    immediate: false,
+    enabled: status === 'retry',
+  });
 
   const handleSubmit = useCallback(
     async (e: FormEvent) => {
@@ -167,11 +187,15 @@ export function MfaChallenge({ onVerified, onBypassed, onCapabilityUnavailable }
         if (challengeError || !challengeData) {
           setBusy(false);
           const classified = classifyMfaError(challengeError, MFA_CHALLENGE_LABELS.GENERIC_ERROR);
-          if (classified.kind === 'wrong_code') {
-            setError(classified.message);
+          if (classified.kind === 'platform') {
+            // FAIL CLOSED (changed from fail-open): a platform failure on
+            // the challenge path never grants access.
+            setStatus('retry');
             return;
           }
-          onCapabilityUnavailable(classified.code);
+          // wrong_code or rejected: a real, retryable outcome — the form
+          // stays usable.
+          setError(classified.message);
           return;
         }
 
@@ -186,26 +210,29 @@ export function MfaChallenge({ onVerified, onBypassed, onCapabilityUnavailable }
 
         if (verifyError) {
           const classified = classifyMfaError(verifyError, MFA_CHALLENGE_LABELS.GENERIC_ERROR);
-          if (classified.kind === 'wrong_code') {
-            setError(classified.message);
+          if (classified.kind === 'platform') {
+            setStatus('retry');
             return;
           }
-          onCapabilityUnavailable(classified.code);
+          setError(classified.message);
           return;
         }
 
         onVerified();
       } catch {
         // A thrown exception (network failure) or either timeout race
-        // above (item 4/EA6) — no error CODE exists to inspect, so this can
-        // never be mistaken for a wrong-code retry case.
+        // above — no error CODE exists to inspect, so this can never be
+        // mistaken for a wrong-code/rejected retry case. FAIL CLOSED.
         if (unmountedRef.current) return;
         setBusy(false);
-        onCapabilityUnavailable('unknown');
+        setStatus('retry');
       }
     },
-    [factorId, code, onVerified, onCapabilityUnavailable]
+    [factorId, code, onVerified]
   );
+
+  const loadingFactor = status === 'loading';
+  const showRetry = status === 'retry';
 
   return (
     <div className="flex min-h-screen items-center justify-center p-4" data-testid="mfa-challenge">
@@ -213,23 +240,44 @@ export function MfaChallenge({ onVerified, onBypassed, onCapabilityUnavailable }
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ArkovaIcon className="h-5 w-5" />
-            {MFA_CHALLENGE_LABELS.TITLE}
+            {showRetry ? MFA_CHALLENGE_LABELS.RETRY_TITLE : MFA_CHALLENGE_LABELS.TITLE}
           </CardTitle>
-          <CardDescription>{MFA_CHALLENGE_LABELS.DESCRIPTION}</CardDescription>
+          <CardDescription>
+            {showRetry ? MFA_CHALLENGE_LABELS.RETRY_EXPLANATION : MFA_CHALLENGE_LABELS.DESCRIPTION}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error && (
+          {error && !showRetry && (
             <Alert variant="destructive" data-testid="mfa-challenge-error">
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
 
-          {loadingFactor ? (
+          {showRetry && (
+            <div className="space-y-4" data-testid="mfa-challenge-retry">
+              <Alert variant="destructive">
+                <ShieldAlert className="h-4 w-4" />
+                <AlertDescription>{MFA_CHALLENGE_LABELS.RETRY_EXPLANATION}</AlertDescription>
+              </Alert>
+              <Button
+                type="button"
+                data-testid="mfa-challenge-retry-button"
+                className="w-full"
+                onClick={() => void loadFactor()}
+              >
+                {MFA_CHALLENGE_LABELS.RETRY_BUTTON}
+              </Button>
+            </div>
+          )}
+
+          {loadingFactor && (
             <div className="flex items-center justify-center py-4">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-          ) : (
+          )}
+
+          {status === 'ready' && (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="mfa-challenge-code">{MFA_CHALLENGE_LABELS.CODE_LABEL}</Label>

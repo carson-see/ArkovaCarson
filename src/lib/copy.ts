@@ -4453,6 +4453,11 @@ export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
 // enforcement date. §1.3-clean: no Wallet/Gas/Hash/Block/Transaction/
 // Crypto/Blockchain/Bitcoin/Testnet/Mainnet/UTXO/Broadcast/token.
 
+// R5 (PR #2637 review round 2): MFA_CHALLENGE_LABELS.GENERIC_ERROR and
+// MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR were byte-identical strings
+// maintained in two places. One shared constant, referenced by both.
+const MFA_GENERIC_VERIFY_ERROR = 'Verification failed. Please check the code and try again.';
+
 export const MFA_CHALLENGE_LABELS = {
   TITLE: 'Enter your verification code',
   DESCRIPTION: 'Your account has two-factor authentication enabled. Enter the 6-digit code from your authenticator app to continue.',
@@ -4461,7 +4466,13 @@ export const MFA_CHALLENGE_LABELS = {
   SUBMIT: 'Verify',
   VERIFYING: 'Verifying...',
   SIGN_OUT: 'Sign out',
-  GENERIC_ERROR: 'Verification failed. Please check the code and try again.',
+  GENERIC_ERROR: MFA_GENERIC_VERIFY_ERROR,
+  // R19 (PR #2637 review round 2, CTO ruling): the challenge path now FAILS
+  // CLOSED on any error that is not the user's own wrong code — this is the
+  // retry screen shown instead, never a bypass to protected content.
+  RETRY_TITLE: "We couldn't verify your code",
+  RETRY_EXPLANATION: 'Something went wrong on our end. Your two-factor requirement has not been cleared — please try again, or sign out and back in.',
+  RETRY_BUTTON: 'Try again',
 } as const;
 
 export const MFA_ENROLLMENT_REQUIRED_LABELS = {
@@ -4475,13 +4486,15 @@ export const MFA_ENROLLMENT_REQUIRED_LABELS = {
   SUBMIT: 'Verify & continue',
   VERIFYING: 'Verifying...',
   SIGN_OUT: 'Sign out',
-  GENERIC_ERROR: 'Verification failed. Please check the code and try again.',
+  GENERIC_ERROR: MFA_GENERIC_VERIFY_ERROR,
 } as const;
 
 // Shown when AuthGuard has to fail OPEN because the two-factor authentication
-// platform capability itself is unavailable (e.g. the identity provider has
-// TOTP enrollment turned off) — never a wall, always children + this one-shot
-// notice. See AuthGuard.tsx's `onCapabilityUnavailable` contract.
+// platform capability itself is unavailable — ONLY the ENROLLMENT path (a
+// user with no verified factor, who cannot enroll because the platform
+// cannot issue one) may fail open; the every-login CHALLENGE path never
+// does (R17-R21, PR #2637 review round 2 CTO ruling — see AuthGuard.tsx's
+// module doc comment). Never a wall, always children + this one-shot notice.
 export const MFA_CAPABILITY_LABELS = {
   UNAVAILABLE_NOTICE: "Two-factor authentication setup isn't available right now. Your account isn't affected — we've been notified and are looking into it.",
 } as const;
@@ -4514,7 +4527,6 @@ export const TWO_FACTOR_SETUP_LABELS = {
   CARD_TITLE: 'Two-Factor Authentication',
   CARD_DESCRIPTION: 'Add an extra layer of security to your account.',
 
-  LIST_HEADING: 'Authenticator apps',
   LIST_EMPTY: 'No authenticator apps added yet.',
   UNNAMED_FACTOR: 'Unnamed authenticator',
   STATUS_ENABLED: 'Enabled',
@@ -4550,4 +4562,11 @@ export const TWO_FACTOR_SETUP_LABELS = {
   ERROR_GENERIC: 'Something went wrong. Please try again.',
   ERROR_NAME_CONFLICT: 'That authenticator name is already in use. Please try again.',
   ERROR_STEP_UP_FAILED: 'That code did not match. Please try again.',
+
+  // R1 (PR #2637 review round 2, real bug): listFactors() could reject or
+  // hang with no try/catch and no timeout, leaving the card stuck on its
+  // loading spinner forever. This is the error view + retry control shown
+  // instead once that call fails or times out.
+  LOAD_ERROR_TITLE: "Couldn't load your two-factor authentication settings",
+  LOAD_ERROR_RETRY: 'Retry',
 } as const;
