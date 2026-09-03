@@ -741,6 +741,31 @@ separately). Full verdicts, defects, and landing-order constraints:
   `/login`, `activate_user` signature mismatch). Seven further wrong mappings were disarmed before
   they could fire.
 
+### Soaks — rig inventory correction (2026-09-03T05:35Z, verified live)
+
+- **Seven rigs were torn down by another session at 2026-09-03T01:18:32Z–01:22:51Z** (`~/arkova-soak/teardown-2026-09-03.log`,
+  `teardown-isolated-rig.sh --apply`, 6× `"Deleted project"` rc=0). Gone: consolidated-mm `krhegsltjkazuomynbww`,
+  credits-2442 `gsluatcqhwwynxpsidjy`, attest-park-0902 `symlfubaxyjehrshyhrw`, cleanup-2335 `bxgybbxkhuxwtgkgkwpe`,
+  contract-frontend-tooling `udpzylbccncnwvhbfjsu`, cron-chain-batch `sdkcfqprpmacxlazwjdy`, worker-webhook-runtime
+  `sawvgrwhgsmxjlwhpsyx`. docusign-bilateral `aqikotdkmhxmznonwmwk` is also gone with no entry in that log. Confirmed by
+  Supabase MCP `list_projects` at 05:35Z (13 projects remain: prod, the standing rig, 11 soak rigs) and
+  `gcloud run services describe` 404s.
+- **Consequence:** the consolidated-mm rig that the 2026-09-01 close-out kept so `pause_lift_obligation` could be
+  satisfied by extending it no longer exists. Lifting `DEPLOY_WORKER_PAUSED` now requires a fresh isolated rig and a
+  full consolidated soak of merged main. The CLOSED entry below still describes evidence that is sealed in-repo.
+- **Live state of the remaining rigs (checks: local driver process / open-PR citation / Cloud Run request log):**
+  RUNNING — provisioning-3873 `owieixqcnigfpiowptop` (#2571), rc-batch-0902 `rvdgwynxoapdzysoaayr` (~closes
+  07:49Z), docusign-guard `kyaecvotcbalsfahwslt` (to 2026-09-04T13:49Z), proof-txincl-0427 `uqobkjhlnqmcpjidngxr`,
+  admin-rpc-0428 `vofhfzyosxlneupohsem` (#2564), decl2499 `bwkxdehfjedynnjmnsos` (#2499). HOLD (open PR cites it) —
+  mig-public-projection `uayovlvdhmuovuyfxrog` (#2440/#2314), mig-docusign-trust `yfqgxycaiwgvvvbzhkma`
+  (#2518/#2476/#2472), reorg-3836 `hgmluvnqgfcigevqeebu` (#2495; its `detect-reorgs` Cloud Scheduler job is still
+  firing unattended). NEEDS CARSON — flag-live-2438 `vmfsmtilaovdjypqhjob` (4 h old, one request ever, cited by no PR)
+  and suborg-3863 `jpdhektjeawfjkznmpfe` (window nominally open to 2026-09-04T01:47Z, driver dead, 0 evidence files).
+  The standing rig `fizyjojbebyalirtjjht` hosts the MFA-3167 T2 soak next. No rig was torn down by this session.
+- **Orphan secrets:** the teardown script deletes only `supabase-url-*` / `supabase-service-role-key-*`; 54
+  `supabase-{anon-key,jwt-secret,url,service-role-key}-*` secrets plus `supabase-db-password-<ref>` entries in
+  GCP Secret Manager (`arkova1`) reference rigs that no longer exist. Sweep owed, not done.
+
 ### Soaks
 
 **OPEN PROD FINDING (2026-09-02, SCRUM-3953, P1/T3) — `anchor_proofs.block_height` is stale on 711,250 of 714,129 rows (99.6 %).**
@@ -1113,7 +1138,7 @@ the path is `/health` only" was true before that alias landed and is false now. 
 answer (prod runs `minScale=2`), so the `uptime` field differs between calls to the two paths — that
 is two containers, not two services.
 
-_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against Supabase Management API GET, MCP SQL, and the recorded prod round trip._
+_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against Supabase MCP list_projects, gcloud run services describe, and ~/arkova-soak/teardown-2026-09-03.log._
 Scope: the "Bug — Adobe Sign webhooks" addendum only — earlier readings keep their own dates.
 `org_integrations.webhook_id` absence on prod confirmed via the Supabase Management API,
 `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name
