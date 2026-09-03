@@ -118,7 +118,10 @@ export function TwoFactorSetup() {
   }, []);
 
   useEffect(() => {
-    void refreshFactors();
+    async function run() {
+      await refreshFactors();
+    }
+    void run();
   }, [refreshFactors]);
 
   const performEnroll = useCallback(async (name: string) => {
