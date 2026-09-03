@@ -156,6 +156,23 @@ describe('Batch Verify Action', () => {
   });
 });
 
+// P10: "Credential" is deliberately dropped from every action's Zapier-editor
+// display copy (label/description/key) — "Verify Anchor" / "Batch Verify
+// Anchors" — per CLAUDE.md §1.3 terminology. The `credential_type` FIELD name
+// (an input/output/sample key, not display copy) is explicitly kept, so this
+// only inspects `key`, `display.label`, and `display.description`.
+describe('action display copy has no "credential" wording (§1.3)', () => {
+  const actions = [App.creates.anchor_document, App.creates.verify_anchor, App.creates.batch_verify];
+
+  it('no action key, label, or description contains "credential" (case-insensitive)', () => {
+    for (const action of actions) {
+      expect(action.key.toLowerCase()).not.toContain('credential');
+      expect(action.display.label.toLowerCase()).not.toContain('credential');
+      expect(action.display.description.toLowerCase()).not.toContain('credential');
+    }
+  });
+});
+
 describe('Constants', () => {
   it('batch sync limit is 20', () => {
     expect(BATCH_SYNC_LIMIT).toBe(20);

@@ -76,15 +76,21 @@ const DEFAULT_RETRY_CONFIG: Required<Omit<RetryConfig, 'sleep'>> = {
 
 export class Arkova {
   private readonly baseUrl: string;
-  private readonly apiKey?: string;
-  private readonly x402Config?: ArkovaConfig['x402'];
+  // ECMAScript private fields (not TS `private`): a `private` class member is
+  // still an own, enumerable property at runtime, so `JSON.stringify(client)`
+  // and `Object.keys(client)` would otherwise leak the raw API key and the
+  // x402 payer address. `#`-fields are truly inaccessible outside the class
+  // body and are never enumerated by either. Requires target >= ES2022
+  // (packages/sdk/tsconfig.json already sets `"target": "ES2022"`).
+  #apiKey?: string;
+  #x402Config?: ArkovaConfig['x402'];
   private readonly retry: Required<Omit<RetryConfig, 'sleep'>>;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(config: ArkovaConfig = {}) {
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
-    this.apiKey = config.apiKey;
-    this.x402Config = config.x402;
+    this.#apiKey = config.apiKey;
+    this.#x402Config = config.x402;
     this.retry = {
       retries: config.retry?.retries ?? DEFAULT_RETRY_CONFIG.retries,
       baseDelayMs: config.retry?.baseDelayMs ?? DEFAULT_RETRY_CONFIG.baseDelayMs,
@@ -688,8 +694,8 @@ export class Arkova {
       ...(init?.headers as Record<string, string> ?? {}),
     };
 
-    if (this.apiKey) {
-      headers['X-API-Key'] = this.apiKey;
+    if (this.#apiKey) {
+      headers['X-API-Key'] = this.#apiKey;
     }
 
     const requestInit = { ...init, headers };
@@ -699,7 +705,7 @@ export class Arkova {
     while (true) {
       try {
         const response = await globalThis.fetch(url, requestInit);
-        if (!shouldRetryResponse(response) || attempt >= this.retry.retries) {
+        if (!isSafeRetryMethod(method) || !shouldRetryResponse(response) || attempt >= this.retry.retries) {
           return response;
         }
         await this.sleep(retryDelayMs(response, attempt, this.retry));
@@ -845,6 +851,21 @@ function mapRichVerificationFields(row: Record<string, unknown>): RichVerificati
     fileSize: nullableNumber(row.file_size),
     confidenceScores: nullableRecord(row.confidence_scores),
     subType: nullableString(row.sub_type),
+    bitcoinBlock: nullableNumber(row.bitcoin_block),
+    merkleProofHash: nullableString(row.merkle_proof_hash),
+    fingerprintSource: row.fingerprint_source as RichVerificationFields['fingerprintSource'] ?? null,
+    // proof_availability / fingerprint_rederivability (+ their notes) and the
+    // FERPA fields are OMITTED by the worker rather than sent as `null` when
+    // not applicable (see verify.ts field docs) — pass through as `undefined`
+    // when absent instead of coercing to `null`, or the SDK would claim a
+    // meaning ("unclassified") the server never asserted.
+    proofAvailability: row.proof_availability as RichVerificationFields['proofAvailability'] | undefined,
+    proofAvailabilityNote: row.proof_availability_note as string | undefined,
+    fingerprintRederivability:
+      row.fingerprint_rederivability as RichVerificationFields['fingerprintRederivability'] | undefined,
+    fingerprintRederivabilityNote: row.fingerprint_rederivability_note as string | undefined,
+    ferpaNotice: row.ferpa_notice as string | undefined,
+    directoryInfoSuppressed: row.directory_info_suppressed as boolean | undefined,
   };
 }
 

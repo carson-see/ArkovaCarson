@@ -1,20 +1,50 @@
 /**
  * Bullhorn Webhook/Subscription Handler (INT-07)
  *
- * Processes Bullhorn subscription events for automatic credential
+ * Processes Bullhorn subscription events for automatic record
  * verification when new files are added to candidate records.
+ *
+ * Inbound auth (SCRUM-3901, 2026-09-02): Bullhorn subscription POSTs carry
+ * no signature of their own, so the relay must present the shared secret in
+ * `x-arkova-webhook-secret`. `handleEvents` REJECTS every event when the
+ * secret is unset or does not match — fail closed, constant-time compare.
  */
 
 import type { BullhornConfig, BullhornSubscriptionEvent } from './types';
 import { CandidateVerificationTab } from './candidate-tab';
 
+export const BULLHORN_WEBHOOK_SECRET_HEADER = 'x-arkova-webhook-secret';
+
+/** Constant-time string equality (length leak only, same as timingSafeEqual). */
+export function constantTimeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const ab = enc.encode(a);
+  const bb = enc.encode(b);
+  if (ab.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
+  return diff === 0;
+}
+
 export class BullhornWebhookHandler {
   private readonly tab: CandidateVerificationTab;
   private readonly autoVerify: boolean;
+  private readonly webhookSecret: string | undefined;
 
   constructor(config: BullhornConfig) {
     this.tab = new CandidateVerificationTab(config);
     this.autoVerify = config.autoVerify ?? false;
+    this.webhookSecret = config.webhookSecret;
+  }
+
+  /**
+   * True only when a secret is configured AND the presented value matches it.
+   * Unset secret → false (fail closed), so a misconfigured deploy cannot be
+   * driven by anyone who can reach the endpoint.
+   */
+  verifyInboundSecret(presented: string | undefined | null): boolean {
+    if (!this.webhookSecret || !presented) return false;
+    return constantTimeEqual(this.webhookSecret, presented);
   }
 
   /**
@@ -25,7 +55,14 @@ export class BullhornWebhookHandler {
    */
   async handleEvents(
     subscriptionEvent: BullhornSubscriptionEvent,
+    presentedSecret: string | undefined | null,
   ): Promise<Array<{ eventId: string; action: string; result?: Record<string, unknown> }>> {
+    if (!this.verifyInboundSecret(presentedSecret)) {
+      return subscriptionEvent.events.map((event) => ({
+        eventId: event.eventId,
+        action: 'rejected_unauthenticated',
+      }));
+    }
     const results = [];
 
     for (const event of subscriptionEvent.events) {

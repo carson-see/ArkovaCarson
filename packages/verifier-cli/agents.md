@@ -22,6 +22,13 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
 - **Never contact Arkova.** `src/lib/independent-endpoint.ts::assertIndependentEndpoint`
   refuses any `arkova.*` host before any on-chain call. The on-chain fact is
   confirmed only against an independent Esplora node. Keep it that way.
+  **2026-09-02:** also refuses any `*.run.app` host — the raw Cloud Run host
+  (e.g. the SDK's `DEFAULT_BASE_URL`, `arkova-worker-270018525501.us-central1.
+  run.app`) is an Arkova-operated endpoint with no `arkova.*` vanity domain in
+  it, so the pre-existing regex missed it. Blocks the whole `*.run.app`
+  suffix rather than pattern-matching Arkova's own service name, since Cloud
+  Run hostnames carry no ownership signal a narrower match could trust. See
+  `test/independent-endpoint.test.ts`.
 - **Signature ≠ recompute — but a requested check that FAILS fails closed
   (S3-B).** The optional Ed25519 check (`src/lib/signature.ts`) proves only
   that Arkova issued the package; a PASSING signature must never substitute
@@ -139,6 +146,8 @@ rules, not steps:
 - npm name is the **unscoped `arkova-verifier-cli`**; the bin is `arkova-verify`.
   The `@arkova` scope does not exist and is not being created. Unscoped public
   is npm's default, so **no `--access public` and no `publishConfig`**.
+- **Not published yet** (2026-09-02): `npm view arkova-verifier-cli` returns 404, same as the
+  sibling `arkova-verifier`. README's Install section says so and points at "Build from source".
 - **`arkova-verifier` publishes FIRST.** This package depends on it, and the
   dependency is committed as `file:../verifier` **on purpose**: that sibling is
   not on the registry, so a `^0.1.0` range would break `npm install` in a fresh

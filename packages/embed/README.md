@@ -15,10 +15,16 @@ The shortest path: drop in a div and one script tag.
 <div data-arkova-credential="ARK-2026-001"></div>
 
 <!-- 2. The script auto-mounts every [data-arkova-credential] on page load -->
-<script src="https://cdn.arkova.ai/embed.js" defer></script>
+<script src="https://app.arkova.ai/embed.js" defer></script>
 ```
 
 That's the entire integration. No backend, no SDK, no auth tokens.
+
+> **No CDN exists yet.** `cdn.arkova.ai` has no DNS record — every script `src` in this README
+> points at `app.arkova.ai/embed.js` instead, which is what actually resolves today. A dedicated
+> CDN host may be stood up later; until then, self-host `dist/embed.iife.js` (see
+> [Styling and customization](#styling-and-customization)) if you don't want to depend on
+> `app.arkova.ai` serving the bundle.
 
 ---
 
@@ -73,7 +79,7 @@ A 320px single-line badge showing just status icon + label + filename + Arkova b
 If your app injects credentials after page load — common in React/Vue/Svelte apps — call `ArkovaEmbed.mount()` directly:
 
 ```html
-<script src="https://cdn.arkova.ai/embed.js"></script>
+<script src="https://app.arkova.ai/embed.js"></script>
 <script>
   ArkovaEmbed.mount({
     publicId: 'ARK-2026-001',
@@ -107,7 +113,7 @@ export function ArkovaBadge({ publicId }: { publicId: string }) {
 }
 ```
 
-Add the `<script src="https://cdn.arkova.ai/embed.js"></script>` to your `index.html` and you're done.
+Add the `<script src="https://app.arkova.ai/embed.js"></script>` to your `index.html` and you're done.
 
 ### Vue example
 
@@ -185,7 +191,7 @@ interface AnchorData {
 
 ## Distribution
 
-The bundle is built three ways and served from `https://cdn.arkova.ai`:
+The bundle is built three ways and served from `https://app.arkova.ai`:
 
 | File | Purpose | Use when |
 |---|---|---|
@@ -204,7 +210,7 @@ Source maps (`.map`) are published alongside each bundle for debugging.
 The widget is designed to drop into hostile environments without breaking:
 
 - **CORS:** the public verification API allows wildcard origins for read-only verify calls.
-- **CSP `script-src`:** the bundle is served from `cdn.arkova.ai` — add it to your `script-src` allowlist.
+- **CSP `script-src`:** the bundle is served from `app.arkova.ai` — add it to your `script-src` allowlist.
 - **CSP `connect-src`:** add `arkova-worker-270018525501.us-central1.run.app` (or your custom `apiBaseUrl`).
 - **CSP `style-src`:** **no allowlist change needed.** The widget uses inline `style="..."` attributes only — no `<style>` blocks, no `style-src 'unsafe-inline'` requirement *if* the inline style attribute hash is allowlisted. Most sites already allow inline style attributes.
 - **No external fonts.** The widget uses the `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, ...` system font stack.
@@ -246,7 +252,7 @@ No. It fetches the public verification record by ID and (optionally) logs a `met
 Yes. Each `[data-arkova-credential]` element is mounted independently. There's no global state.
 
 **What if my site uses a strict CSP?**
-You'll need to allowlist `cdn.arkova.ai` in `script-src` and `arkova-worker-270018525501.us-central1.run.app` in `connect-src`. The widget itself is `unsafe-eval`-free and avoids `<style>` blocks.
+You'll need to allowlist `app.arkova.ai` in `script-src` and `arkova-worker-270018525501.us-central1.run.app` in `connect-src`. The widget itself is `unsafe-eval`-free and avoids `<style>` blocks.
 
 **Can I use this in a Shadow DOM?**
 Yes. Pass a target inside an open shadow root:
@@ -269,6 +275,6 @@ MIT © Arkova
 
 ## See also
 
-- [@carsonarkova/sdk](../sdk) — TypeScript SDK for the Arkova verification API
+- [arkova](../sdk) — TypeScript SDK for the Arkova verification API
 - [docs/api/webhooks.md](../../docs/api/webhooks.md) — Webhook CRUD developer guide
 - [docs/api/README.md](../../docs/api/README.md) — Full API documentation index
