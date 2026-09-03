@@ -287,6 +287,41 @@ describe('CredentialRenderer', () => {
       expect(screen.queryByText('Professional Certification')).not.toBeInTheDocument();
     });
 
+    it('suppresses a template field that collides with sub_type too, not just the untemplated metadata loop', () => {
+      // Same regression as the test above, but with a template present.
+      // CredentialTemplatesManager derives a field's key from its label
+      // (`f.name.toLowerCase().replace(/\s+/g, '_')`), so an org-defined field
+      // literally named "Sub Type" becomes key `sub_type` — colliding with
+      // SUB_TYPE_METADATA_KEYS. The templated render branch reads
+      // `template.fields` independently of the untemplated metadata loop, so
+      // the dedup guard has to be applied there too or a record carrying both
+      // the canonical subType prop and a template field at that key renders
+      // two Type-ish rows for one credential.
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          subType="nursing_rn"
+          template={{
+            name: 'Custom Template',
+            fields: [
+              { key: 'sub_type', label: 'Sub Type', type: 'text' },
+              { key: 'institution', label: 'Institution', type: 'text' },
+            ],
+          }}
+          metadata={{ sub_type: 'professional_certification', institution: 'Test U' }}
+          status="SECURED"
+        />
+      );
+
+      expect(screen.getByText('Nursing RN')).toBeInTheDocument();
+      expect(screen.queryByText('Professional Certification')).not.toBeInTheDocument();
+      expect(screen.queryByText('Sub Type')).not.toBeInTheDocument();
+      // The rest of the template still renders — the guard is scoped to the
+      // colliding field only, not a reason to drop the whole template.
+      expect(screen.getByText('Institution')).toBeInTheDocument();
+      expect(screen.getByText('Test U')).toBeInTheDocument();
+    });
+
     it('falls back to the credential type label when subType is blank', () => {
       // formatCredentialSubType('') returns the em-dash placeholder, so an
       // unguarded prop would replace a real label with '—' on every record whose

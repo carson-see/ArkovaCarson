@@ -847,3 +847,96 @@ unresolved and is NOT addressed here.
   filename, so the second lander is red in CI until reconciled. Reconcile by
   rebuilding the body; never by pinning a filename or renumbering. Any future
   PR that redefines this function inherits the same obligation.
+
+## Recent migrations (0433 reconciliation, PR #2440)
+
+**This block resolves the `0421`/`0415` MERGE-ORDER DEPENDENCY flagged in the
+block immediately above. Uniquely titled so it cannot collide at EOF (CLAUDE.md
+§6).**
+
+The soak referenced as a live risk in the `0421` note above ran
+(`docs/staging/mig-public-projection/STANDUP.md`, isolated rig
+`arkova-soak-mig-public-projection` / `uayovlvdhmuovuyfxrog`, 2026-08-30) and
+measured the clobber directly: applying `0415` then `0421` in numeric order
+silently reverts the entire FERPA §99.37 directory-information suppression
+layer from `get_public_anchor`, bidirectionally, with no application order of
+the two files alone producing a head carrying both changes. Separately, `0415`
+was applied directly to **production** by RTE ahead of PR #2314's merge
+(ledger-reconciled to numeric `0415`), so this is not a hypothetical merge-order
+risk — as of that apply, production is already running the FERPA-suppressing
+body, and merging `0421` unmodified would be a live regression the moment it is
+applied.
+
+`0421` itself is **immutable** — it was applied to the isolated soak rig above,
+so `.claude/hooks/check-constitution-on-edit.sh` correctly refuses any edit to
+it (CLAUDE.md §1.2/§4). The reconciliation is therefore a NEW compensating
+migration, the same shape as `0360` compensating `0340` or `0383` restoring
+`0362`/`0356` after the `0376` clobber.
+
+| `0433` | `fix/public-verify-subtype-projection` (this PR) | SCRUM-3529 / FD-FERPA-1 | `0433_scrum3529_ferpa_directory_info_get_public_anchor_reconcile.sql` | FILE-ONLY, applied nowhere. T3. |
+
+**Prefix derivation.** `git log --all --diff-filter=A --name-only` over every
+ref (not per-PR bodies, not this file's prior claims, which are stale the
+moment a sibling branch commits) shows numeric prefixes already claimed through
+`0432` (`0422`–`0432` inclusive, across a dozen unrelated open branches —
+suborg tenancy, DocuSign webhook work, proof-tx-inclusion, the false-SECURED
+quarantine renumber, and others). Nothing claims `0433` anywhere in the
+repository's full ref history at authorship time. **Next author claims `0434`
+— re-derive with `git log --all --diff-filter=A`, do not trust this line or
+any single-digit gap in the sequence above it.**
+
+- **0433_scrum3529_ferpa_directory_info_get_public_anchor_reconcile.sql** —
+  redefines `public.get_public_anchor` a second time on top of `0421`: the body
+  is `0415`'s verbatim (`private.is_directory_info_suppressed`, the
+  `g.suppress_directory` hoist, every suppression branch, the additive
+  `directory_info_suppressed` key, the omitted-not-blanked
+  `recipient_identifier`) with `0421`'s single `sub_type` key layered on top,
+  unchanged in placement or gating. `sub_type` is **NOT** suppressed by
+  `g.suppress_directory` — filed as a second entry in
+  `directory_opt_out_residual_published_fields` (contract.json) alongside the
+  pre-existing `credential_type` residual, because `verify.ts`'s `API_RICH_KEYS`
+  loop already publishes `sub_type` unconditionally with no `suppressDirectory`
+  check (read directly from `services/worker/src/api/v1/verify.ts`, not
+  inferred), so gating it here alone would remove nothing from public reach
+  while reopening the SQL-vs-REST divergence FD-FERPA-1 exists to close.
+  `public.search_public_credentials` is untouched — `0421` never redefined it
+  and `0415`'s own change to it is unaffected by anything here.
+  **PRECONDITION, not just for applying but for MERGING**: this body calls
+  `private.is_directory_info_suppressed`, CREATEd only by `0415`. A `CREATE OR
+  REPLACE FUNCTION ... plpgsql` body is not validated against the catalog at
+  creation time, so replaying `supabase/migrations/` on a fresh environment
+  that has this file but not `0415`'s will succeed at CREATE and then fail
+  every single call to the public verify page at runtime. Production already
+  satisfies the precondition; a fresh isolated rig or `supabase db reset` does
+  not until `0415`'s own file also lands on `main` at its lower numeric prefix.
+  Contract updated in the same commit
+  (`scripts/ci/public-pii-projection-contract.json`: `sub_type` retained in
+  `projection_keys`/`$sub_type_note`; `directory_info_suppressed` added to both
+  `projection_keys` and `structural_keys`; a `directory_opt_out_predicate` /
+  `directory_opt_out_owner_migration` pointer plus
+  `directory_opt_out_residual_published_fields` — now `["credential_type",
+  "sub_type"]`, THIS PR's own decision — and its note. The rest of 0415's
+  eventual `directory_opt_out_*` design (suppressed/controlled/omitted field
+  lists, the fail-closed rationale, the verification-fields allow-list) is
+  deliberately NOT duplicated here — a second hand-maintained copy would drift
+  from PR #2314's own the moment either changes, and #2314 is the PR that adds
+  the consuming RATCHET test. Simplified from an earlier, fuller carry-forward
+  after `/simplify` flagged ~100 lines of contract data with no consumer
+  anywhere in this PR's tree.
+  `sql_owner_migration` was tried at `0433` and reverted BACK to `0385`: that
+  field is consumed by the tests that locate where
+  `is_academic_record_credential_type` / `academic_record_public_label` / the
+  detector vocabulary / the REVOKE statements are actually DEFINED (not where
+  `get_public_anchor` is latest redefined), and `0433` redefines only
+  `get_public_anchor` itself — none of those helpers. Repointing it broke 7 of
+  the 8 "detectors and vocabulary (migration 0385)" tests
+  (`src/tests/public-anchor-pii-projection.contract.test.ts`); it stays `0385`.
+  This PR deliberately does **not**
+  import PR #2314's `src/tests/ferpa-directory-info-opt-out.contract.test.ts` or
+  `tests/rls/ferpa-directory-info-opt-out.test.ts` — that regression suite is
+  #2314's own deliverable to land with `0415`'s file; this reconciliation is
+  scoped to making `0421`'s existing contract suite
+  (`src/tests/public-anchor-pii-projection.contract.test.ts`) pass against a
+  body that no longer clobbers FERPA suppression. Rollback in the file header:
+  restores `0415`'s body verbatim, explicitly NOT `0385` or `0421`'s original
+  form, either of which would also revert FERPA suppression.

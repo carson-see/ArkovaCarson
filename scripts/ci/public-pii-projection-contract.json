@@ -367,9 +367,9 @@
     "created_at", "credential_id_hash", "credential_title", "credential_type",
     "credit_hours", "delivery_format", "delivery_method", "description",
     "ethics_hours", "evidence_package_hash", "evidence_schema_version",
-    "expires_at", "expiry_date", "extraction_confidence",
-    "extraction_manifest_hash", "extraction_method", "fetched_at",
-    "field_of_study", "file_size", "filename", "fingerprint",
+    "directory_info_suppressed", "expires_at", "expiry_date",
+    "extraction_confidence", "extraction_manifest_hash", "extraction_method",
+    "fetched_at", "field_of_study", "file_size", "filename", "fingerprint",
     "fingerprint_source", "issued_at", "issued_date", "issuer", "issuer_name",
     "issuer_public_id", "jurisdiction", "merkle_proof_hash", "metadata",
     "nasba_lookup_date", "nasba_status", "network_receipt_id", "proof_url",
@@ -436,16 +436,25 @@
     "part of the issuer-authored metadata blob, and because putting it inside",
     "`metadata` would leave that object non-empty for academic records and flip",
     "the verify card out of its 'no metadata' render mode — the exact failure",
-    "$suppressed_vs_controlled describes."
+    "$suppressed_vs_controlled describes.",
+    "",
+    "WHY IT IS *NOT* IN directory_opt_out_suppressed_fields (0433 reconciliation).",
+    "0421's original body predated 0415 and never had to answer this; 0433 rebuilt",
+    "0421 onto 0415's FERPA-suppressing body and had to decide. sub_type is filed",
+    "as a SECOND residual entry in directory_opt_out_residual_published_fields,",
+    "alongside credential_type, for the identical reason: verify.ts's",
+    "`API_RICH_KEYS` loop publishes sub_type unconditionally, with no",
+    "`suppressDirectory` check, so gating it here alone would remove nothing from",
+    "public reach while reopening the SQL-vs-TS divergence 0415 exists to close."
   ],
 
   "structural_keys": [
     "anchor_timestamp", "bitcoin_block", "cle_metadata", "cpe_metadata",
-    "created_at", "credential_type", "expires_at", "expiry_date", "file_size",
-    "fingerprint", "fingerprint_source", "issued_at", "issued_date",
-    "issuer_public_id", "merkle_proof_hash", "metadata", "network_receipt_id",
-    "public_id", "record_uri", "revoked_at", "secured_at", "status",
-    "superseded_at", "verified"
+    "created_at", "credential_type", "directory_info_suppressed", "expires_at",
+    "expiry_date", "file_size", "fingerprint", "fingerprint_source", "issued_at",
+    "issued_date", "issuer_public_id", "merkle_proof_hash", "metadata",
+    "network_receipt_id", "public_id", "record_uri", "revoked_at", "secured_at",
+    "status", "superseded_at", "verified"
   ],
   "$structural_keys_note": [
     "The ONLY keys exempt from the cleaner requirement: verification-bearing or",
@@ -463,6 +472,44 @@
     "that 0385 itself introduced, and to every source expression a future",
     "migration might invent. Recognising danger fails open; recognising safety",
     "fails closed."
+  ],
+
+  "directory_opt_out_predicate": "is_directory_info_suppressed",
+  "directory_opt_out_owner_migration": "supabase/migrations/0415_ferpa_directory_info_opt_out_public_projections.sql",
+  "$directory_opt_out_pointer_note": [
+    "FD-FERPA-1 / PR #2314 owns the full directory_opt_out_* design — predicate",
+    "definition, suppressed/controlled/omitted field lists, the fail-closed",
+    "rationale, and the RATCHET classification test",
+    "(src/tests/ferpa-directory-info-opt-out.contract.test.ts). None of that is",
+    "duplicated into THIS contract file: #2314 is the PR that adds the",
+    "consuming test, and a second, hand-maintained copy here would drift from",
+    "#2314's own the moment either changes. Only the ONE field below is this",
+    "PR's (SCRUM-3529's) own decision, made necessary because 0433",
+    "(supabase/migrations/0433_scrum3529_ferpa_directory_info_get_public_anchor_",
+    "reconcile.sql) reconciles 0421's sub_type projection onto 0415's",
+    "suppression body — see that migration's header and",
+    "$sub_type_note above for the full reasoning."
+  ],
+
+  "directory_opt_out_residual_published_fields": ["credential_type", "sub_type"],
+  "$directory_opt_out_residual_note": [
+    "STATED, NOT HIDDEN (CLAUDE.md 1.5 / 1.13 R-7). The 0197 column comment",
+    "names 'degree type' as directory information, and 34 CFR 99.3 agrees",
+    "('degrees, honors and awards received'). `credential_type` is published",
+    "anyway, on BOTH anonymous surfaces, because verify.test.ts pins the REST",
+    "path emitting it on a suppressed record and one row answering two ways",
+    "across two public projections is the asymmetry FD-FERPA-1 exists to",
+    "remove. `sub_type` (added by 0421/0433, SCRUM-3529) joins it for the same",
+    "reason: verify.ts's `API_RICH_KEYS` loop publishes sub_type unconditionally",
+    "with no `suppressDirectory` check, so this SQL body matches it rather than",
+    "creating a THIRD asymmetry on top of the one FD-FERPA-1 was written to",
+    "close.",
+    "",
+    "No live exposure today: all three opted-out records have a NULL type, which",
+    "projects as the 'OTHER' fallback with sub_type absent from most of them.",
+    "This is a decision on the record awaiting a counsel/CTO call, not an",
+    "oversight. Changing it means changing the SQL projection AND verify.ts AND",
+    "the relevant tests in ONE PR."
   ],
 
   "max_public_url_chars": 2048,

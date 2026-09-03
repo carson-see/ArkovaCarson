@@ -279,6 +279,26 @@ function isMetadataDisplayHiddenKey(key: string): boolean {
   return key.startsWith('_') || METADATA_DISPLAY_HIDDEN_KEYS.has(key.toLowerCase()) || isFraudMetadataKey(key);
 }
 
+/**
+ * SCRUM-3529: skip a metadata/template-field key from the rendered field
+ * list. One shared test for BOTH the templated and untemplated rendering
+ * branches below, so the two cannot drift the way `isSubTypeKey` and
+ * `extractSubTypeLabel` would have if membership and lookup order were two
+ * separate lists (the reason `SUB_TYPE_METADATA_KEYS` is a single array).
+ *
+ * The second condition is the sub-type collision: when the canonical
+ * `subType` prop already produced a label, a metadata OR template-field key
+ * matching `SUB_TYPE_METADATA_KEYS` is a MIRROR of it — rendering it as a
+ * second field would publish two Types for one credential, and the mirror is
+ * the one that can be stale. A template field collides here because
+ * `CredentialTemplatesManager` derives a field's key from its label
+ * (`f.name.toLowerCase().replace(/\s+/g, '_')`), so an org-defined field
+ * literally named "Sub Type" becomes key `sub_type`.
+ */
+function shouldSkipMetadataField(key: string, canonicalSubTypeLabel: string | null): boolean {
+  return isMetadataDisplayHiddenKey(key) || (!!canonicalSubTypeLabel && isSubTypeKey(key));
+}
+
 export function CredentialRenderer({
   credentialType,
   subType,
@@ -366,7 +386,7 @@ export function CredentialRenderer({
 
   if (hasTemplate && hasMetadata) {
     for (const field of template.fields) {
-      if (isMetadataDisplayHiddenKey(field.key)) continue;
+      if (shouldSkipMetadataField(field.key, canonicalSubTypeLabel)) continue;
       const raw = metadata[field.key];
       const formatted = formatFieldValue(raw, field.type);
       if (formatted) {
@@ -375,14 +395,7 @@ export function CredentialRenderer({
     }
   } else if (hasMetadata) {
     for (const [key, value] of Object.entries(metadata)) {
-      if (isMetadataDisplayHiddenKey(key)) continue;
-      // SCRUM-3529: a metadata sub-type is a MIRROR of anchors.sub_type. When
-      // the canonical column is present it already drives the headline Type
-      // label, so rendering the mirror as a second "Type" row would publish two
-      // Types for one record — and the mirror is the one that can be stale.
-      // Suppressed rather than shown-and-contradicted (§1.5: say it once, say
-      // the measured value).
-      if (canonicalSubTypeLabel && isSubTypeKey(key)) continue;
+      if (shouldSkipMetadataField(key, canonicalSubTypeLabel)) continue;
       const formatted = isSubTypeKey(key) && typeof value === 'string'
         ? formatSubTypeOrNull(value)
         : formatFieldValue(value);
