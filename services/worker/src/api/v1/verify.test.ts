@@ -384,6 +384,27 @@ describe('buildVerificationResult', () => {
       expect(result.directory_info_suppressed).toBe(true);
     });
 
+    // CLE is in the FERPA directory-info set (suppressesDirectoryInfo /
+    // FERPA_EDUCATION_TYPES) but NOT in the structural academic set
+    // (isEducationCredentialType, ctdl-pii-guard.ts — DEGREE/CERTIFICATE/
+    // TRANSCRIPT only). The `description` field below this block was gated
+    // ONLY on `!isAcademicRecord`, so a CLE record with the opt-out set still
+    // shipped its raw description over REST — while the SQL projection
+    // (migration 0415 `get_public_anchor`, `'description'` CASE) suppresses it
+    // via `WHEN g.suppress_directory THEN NULL`. The two "unified" anonymous
+    // surfaces disagreed for this exact row/field combination.
+    it('suppresses description for CLE type with opt-out (parity with SQL get_public_anchor)', () => {
+      const anchor = createAnchor({
+        credential_type: 'CLE',
+        directory_info_opt_out: true,
+        description: 'Ethics CLE completed by Jane Doe, Bar No. 123456',
+      });
+      const result = buildVerificationResult(anchor);
+
+      expect(result.directory_info_suppressed).toBe(true);
+      expect(result).not.toHaveProperty('description');
+    });
+
     // FD-FERPA-1 (2026-08-21). The five cases above all pass a PRESENT
     // credential type, and the block they cover was written as
     // `anchor.credential_type && FERPA_EDUCATION_TYPES.includes(...)` — falsy

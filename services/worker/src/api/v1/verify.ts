@@ -469,9 +469,19 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   // public projections suppress outright. It was not even covered by the
   // REG-02 opt-out above.
   //
-  // Academic record  -> omitted entirely (structural).
-  // Everything else  -> value-gated, same as the other two projections.
-  if (!isAcademicRecord) {
+  // Academic record                -> omitted entirely (structural).
+  // Directory-info-suppressed (REG-02, includes CLE) -> omitted entirely.
+  //   CLE is in the wider FERPA/opt-out set (`isAcademicRecord` is FALSE for
+  //   it — see the note above) but not the narrow academic-structural set, so
+  //   a bare `!isAcademicRecord` check let an opted-out CLE record's
+  //   `description` ship raw while migration 0415's SQL projection
+  //   (`get_public_anchor`'s `'description'` CASE) suppresses it via
+  //   `WHEN g.suppress_directory THEN NULL`. Matching that here keeps the two
+  //   anonymous surfaces answering alike for the same row (see the
+  //   `suppressDirectory` comment above) — pinned by
+  //   verify.test.ts "suppresses description for CLE type with opt-out".
+  // Everything else                 -> value-gated, same as the other two projections.
+  if (!isAcademicRecord && !suppressDirectory) {
     const description = publicFreeTextOrNull(anchor.description);
     if (description) {
       result.description = description;

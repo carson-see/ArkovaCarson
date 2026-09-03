@@ -529,10 +529,6 @@
     "resolve_anchor_queue": {
       "disposition": "identity_guarded",
       "reason": "An admin RPC that resolves a duplicate-anchor queue entry and returns a uuid. Guarded by a profiles lookup on auth.uid() plus an explicit ORG_ADMIN role RAISE before it touches anchors. Returns no projection of directory fields."
-    },
-    "refresh_cache_anchor_type_counts": {
-      "disposition": "returns_no_projection",
-      "reason": "An aggregate cache refresher: counts anchors by credential_type into a stats cache and returns void. Emits no per-record value, and prod ACL confirms anon=false, authenticated=false (checked 2026-08-21)."
     }
   },
   "$directory_opt_out_classifications_note": [
