@@ -4457,10 +4457,10 @@ export const MFA_CHALLENGE_LABELS = {
   TITLE: 'Enter your verification code',
   DESCRIPTION: 'Your account has two-factor authentication enabled. Enter the 6-digit code from your authenticator app to continue.',
   CODE_LABEL: 'Verification code',
+  CODE_PLACEHOLDER: '000000',
   SUBMIT: 'Verify',
   VERIFYING: 'Verifying...',
   SIGN_OUT: 'Sign out',
-  LOADING_FACTOR_ERROR: 'Unable to load your two-factor authentication settings. Please sign in again.',
   GENERIC_ERROR: 'Verification failed. Please check the code and try again.',
 } as const;
 
