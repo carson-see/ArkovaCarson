@@ -783,9 +783,21 @@ separately). Full verdicts, defects, and landing-order constraints:
   firing unattended). NEEDS CARSON — flag-live-2438 `vmfsmtilaovdjypqhjob` (4 h old, one request ever, cited by no PR)
   and suborg-3863 `jpdhektjeawfjkznmpfe` (window nominally open to 2026-09-04T01:47Z, driver dead, 0 evidence files).
   The standing rig `fizyjojbebyalirtjjht` hosts the MFA-3167 T2 soak next. No rig was torn down by this session.
-- **Orphan secrets:** the teardown script deletes only `supabase-url-*` / `supabase-service-role-key-*`; 54
-  `supabase-{anon-key,jwt-secret,url,service-role-key}-*` secrets plus `supabase-db-password-<ref>` entries in
-  GCP Secret Manager (`arkova1`) reference rigs that no longer exist. Sweep owed, not done.
+- **Orphan secrets — partially swept 2026-09-03, and the diagnosis above was wrong.** The claim that
+  teardown "deletes only `supabase-url-*` / `supabase-service-role-key-*`" is stale: it also deletes
+  `ip-hash-pepper-<rig>-staging`, which is every secret `provision-isolated-rig.sh` creates. Nothing in
+  the repo creates `supabase-db-password-*` at all — provision passes the password straight to
+  `supabase projects create` and never stores it — so those entries were hand-created by operators.
+  There is no teardown gap to fix for them.
+  **Swept:** 21 secrets whose name ends in a project ref that no longer exists (13 `db-password`,
+  plus `db-url`/`service-role-key`/`url` for three dead refs). Verified absent from the Management API
+  and unreferenced by any of the 59 secret names in use across every live Cloud Run service, then
+  deleted and re-confirmed gone.
+  **NOT swept, deliberately:** the remaining ~123 rig-named secrets. A name-pattern classifier is
+  unsafe here — it flagged `api-key-hmac-secret-staging` as orphaned, which is a SHARED secret
+  referenced right now by `arkova-worker-docusign-guard-staging` and `arkova-worker-admin-rpc-0428-staging`.
+  Deleting it would have broken two live soaks. Only ref-named secrets are unambiguous; rig-named ones
+  need per-rig confirmation.
 
 ### Soaks
 
