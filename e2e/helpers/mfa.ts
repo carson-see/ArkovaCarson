@@ -82,6 +82,56 @@ export async function createDisposableUser(
   return { userId, email, password };
 }
 
+/**
+ * Create a throwaway `organizations` row for a disposable ORG_ADMIN.
+ *
+ * `RouteGuard` (`src/components/auth/RouteGuard.tsx`) sends ORG_ADMIN with a
+ * NULL `org_id` to `/onboarding/org`, never `/dashboard` — so any spec that
+ * needs a disposable ORG_ADMIN to actually land in the main app (not just
+ * clear the AuthGuard/MFA gate) must give it a real org. Only `display_name`
+ * / `legal_name` are NOT NULL with no default on `organizations`
+ * (`supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`); every
+ * other column defaults safely (`hipaa_mfa_required` defaults `false`, so
+ * this never triggers org-level MFA enforcement — Amendment A4-3 dropped
+ * that from Phase 1 regardless).
+ */
+export async function createDisposableOrg(
+  serviceClient: SupabaseClient,
+  options: { namePrefix?: string } = {},
+): Promise<{ orgId: string }> {
+  const name = uniqueTestId(options.namePrefix ?? 'e2e-mfa-org');
+
+  const { data, error } = await serviceClient
+    .from('organizations')
+    .insert({ display_name: name, legal_name: name })
+    .select('id')
+    .single();
+
+  if (error || !data) {
+    throw new Error(`Failed to create disposable MFA test org: ${error?.message}`);
+  }
+
+  return { orgId: data.id as string };
+}
+
+/**
+ * Best-effort cleanup — never throws. Call AFTER `deleteDisposableUser` for
+ * any user that referenced this org: `profiles.id` cascades on
+ * `auth.users` delete (`profiles_id_fkey ... ON DELETE CASCADE`), so the
+ * referencing profile row is already gone by the time this runs.
+ */
+export async function deleteDisposableOrg(
+  serviceClient: SupabaseClient,
+  orgId: string | null | undefined,
+): Promise<void> {
+  if (!orgId) return;
+
+  const { error } = await serviceClient.from('organizations').delete().eq('id', orgId);
+  if (error) {
+    console.warn(`[e2e/helpers/mfa] failed to delete disposable org ${orgId}: ${error.message}`);
+  }
+}
+
 /** Best-effort cleanup — never throws, so it is safe in a `finally` block. */
 export async function deleteDisposableUser(
   serviceClient: SupabaseClient,
