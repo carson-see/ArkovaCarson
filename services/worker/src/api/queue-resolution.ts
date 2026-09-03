@@ -70,6 +70,17 @@ function metadataString(metadata: unknown, key: string): string | null {
 }
 
 /**
+ * The one 500 shape `handleListPendingResolution` returns for every internal
+ * fault (profile lookup, admin lookup, anchors query) — same status/body,
+ * differing only in what gets logged. Kept as a helper so the three call
+ * sites can't drift onto three slightly different error payloads.
+ */
+function pendingResolutionInternalError(res: Response, logCtx: Record<string, unknown>, logMsg: string): void {
+  logger.error(logCtx, logMsg);
+  res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
+}
+
+/**
  * GET /api/queue/pending
  * Returns anchors currently in PENDING_RESOLUTION for the caller's org,
  * with a `sibling_count` per row so the UI can badge collisions.
@@ -122,8 +133,7 @@ export async function handleListPendingResolution(
     const { value: profile, error: profileError } = await getCallerProfileResult(callerUserId);
 
     if (profileError) {
-      logger.error({ userId: callerUserId }, 'queue/pending: profile lookup failed');
-      res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
+      pendingResolutionInternalError(res, { userId: callerUserId }, 'queue/pending: profile lookup failed');
       return;
     }
 
@@ -147,8 +157,11 @@ export async function handleListPendingResolution(
       profile,
     );
     if (adminLookupError) {
-      logger.error({ userId: callerUserId, orgId: profile.org_id }, 'queue/pending: admin lookup failed');
-      res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
+      pendingResolutionInternalError(
+        res,
+        { userId: callerUserId, orgId: profile.org_id },
+        'queue/pending: admin lookup failed',
+      );
       return;
     }
     if (!isAdmin) {
@@ -178,8 +191,11 @@ export async function handleListPendingResolution(
       .limit(500);
 
     if (rowsError) {
-      logger.error({ error: rowsError, userId: callerUserId }, 'queue/pending: anchors query failed');
-      res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
+      pendingResolutionInternalError(
+        res,
+        { error: rowsError, userId: callerUserId },
+        'queue/pending: anchors query failed',
+      );
       return;
     }
 
