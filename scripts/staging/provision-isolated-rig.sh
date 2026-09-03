@@ -1216,6 +1216,27 @@ on_apply_exit() {
     fi
   fi
   echo "ERROR: provision failed; fail-closed cleanup completed with original_rc=$rc." >&2
+
+  # A failed provision that already created the Supabase project leaves a
+  # BILLABLE project behind. Deleting it here would be wrong -- it destroys the
+  # diagnostic state write_provision_state just recorded, and a blind delete
+  # from an error path can race another session -- but saying nothing is how it
+  # goes unnoticed. Observed 2026-09-02: a run that died replaying the schema
+  # left arkova-soak-docusign-guard alive and billing with no mention of it in
+  # the failure output. So: name the ref, and hand over the exact teardown.
+  if [[ $APPLY -eq 1 && -n "${CREATED_PROJECT_REF:-}" ]]; then
+    echo "" >&2
+    echo "WARNING: Supabase project '${CREATED_PROJECT_REF}' was CREATED before this failure" >&2
+    echo "         and is STILL RUNNING (~\$10/mo). It was deliberately not deleted so the" >&2
+    echo "         blocked provision state stays inspectable." >&2
+    echo "         Inspect, then tear it down when you are done:" >&2
+    echo "" >&2
+    echo "           CONFIRM_TEARDOWN=${CREATED_PROJECT_REF} \\" >&2
+    echo "             ./scripts/staging/teardown-isolated-rig.sh \\" >&2
+    echo "             --project-ref ${CREATED_PROJECT_REF} \\" >&2
+    echo "             --service arkova-worker-${NAME}-staging --apply" >&2
+    echo "" >&2
+  fi
   exit "$rc"
 }
 
