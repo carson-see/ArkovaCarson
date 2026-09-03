@@ -107,7 +107,26 @@ Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` /
 before any session can write to Jira/Confluence; whoever picks this up should file it before
 closing out.
 
-### Soaks — DocuSign bilateral **RC-2** T3 (RUNNING)
+### Soaks — DocuSign **guard** T3 (RUNNING — do not touch)
+
+- **Rig:** isolated Supabase `kyaecvotcbalsfahwslt` (`arkova-soak-docusign-guard`, us-east-2), ledger head **0423**, preflight **`clean_mirror`**. Cloud Run `arkova-worker-docusign-guard-staging` rev **00003-hwq**, image `sha256:4aa5e8cd…`, source head `bfd0aaf5b32ad24db9717f8da1dbcb5ba2dee006`.
+- **Covers PR #2472 only** (migration 0423, the DocuSign metadata key write-authority trigger). Deliberately narrower than the discarded RC-2 window: #2474/#2476 are NOT in this branch and are not soaked here.
+- **Clock = Cloud Run worker uptime.** Window **2026-09-02T13:49:03Z → 2026-09-04T13:49:03Z**. Deployed `--min-instances=1` specifically so uptime is a meaningful continuity signal — the discarded window's 3 restarts came from instance recycling.
+- **Driver** `services/worker/scripts/load-test/docusign-guard-soak.sh` (detached, PPID 1), 5-min cycles. It asserts **DB deltas, not HTTP status**, and fails any cycle whose guard probe is not exactly `1111` (forged INSERT stripped · non-DocuSign `account_id`/`envelope_id` preserved · service_role preserved · forged UPDATE reverted).
+- **Cycle numbering restarts at 1 on each driver relaunch** — count evidence files and worker uptime, never the `cycle` field.
+- **`ENABLE_DOCUSIGN_INBOUND=true` on this rig is INERT** — the flag does not exist in #2472's branch. Do not read the rig config as "inbound was soaked". Scope note: `~/arkova-soak/docusign-bilateral/SCOPE-NOTE.md`.
+
+### Soaks — DocuSign bilateral **RC-2** T3 (CLOSED — evidence DISCARDED as hollow, rig deleted 2026-09-02)
+
+> **Do not treat anything below as merge-grade.** This window was discarded by the CTO session on
+> 2026-09-02 for three independent reasons: it never exercised PR #2472's changed behavior (0 of 191
+> cycles carried a guard probe), its worker restarted 3x on 09-01 so the longest continuous segment
+> was 34.2h not 48h, and its driver counted HTTP 202 as success while `connector_artifact` stayed at
+> 0 outbound rows — outbound events were being silently orphan-dropped for want of a DocuSign OAuth
+> token the rig could never have. Superseded by the **docusign-guard** soak below. Rig
+> `aqikotdkmhxmznonwmwk` was torn down by this session at 2026-09-03T00:4xZ (Cloud Run service and
+> per-rig secrets deleted, project confirmed absent) — that is the teardown the rig-inventory entry
+> further down could not attribute.
 
 - **Rig:** Supabase `aqikotdkmhxmznonwmwk`; worker `arkova-worker-docusign-bilateral-staging` rev **00004-xpn**, image `sha256:edca3f40…`, source head **`2302e815e61fca5af449ba53a7ccca2fac49606e`** (`rc/docusign-bilateral-2026-08-30`).
 - **Clock = Cloud Run revision ready 2026-08-31T00:46:58Z → T3 closes 2026-09-02T00:46:58Z.** Driver detached (PPID 1), 15-min cycles.
@@ -744,7 +763,9 @@ separately). Full verdicts, defects, and landing-order constraints:
 ### Soaks — rig inventory correction (2026-09-03T05:35Z, verified live)
 
 - **Seven rigs were torn down by another session at 2026-09-03T01:18:32Z–01:22:51Z** (`~/arkova-soak/teardown-2026-09-03.log`,
-  `teardown-isolated-rig.sh --apply`, 6× `"Deleted project"` rc=0). Gone: consolidated-mm `krhegsltjkazuomynbww`,
+  `teardown-isolated-rig.sh --apply`; the log actually records rc=1 and
+  `LegacyProjectsDeleteCancelledError` for all 7 — the CLI reports failure while the delete succeeds
+  server-side, confirmed by all 7 being absent from the Management API). Gone: consolidated-mm `krhegsltjkazuomynbww`,
   credits-2442 `gsluatcqhwwynxpsidjy`, attest-park-0902 `symlfubaxyjehrshyhrw`, cleanup-2335 `bxgybbxkhuxwtgkgkwpe`,
   contract-frontend-tooling `udpzylbccncnwvhbfjsu`, cron-chain-batch `sdkcfqprpmacxlazwjdy`, worker-webhook-runtime
   `sawvgrwhgsmxjlwhpsyx`. docusign-bilateral `aqikotdkmhxmznonwmwk` is also gone with no entry in that log. Confirmed by
@@ -2107,3 +2128,5 @@ Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archiv
 _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye` and `getblockheader` over the worker's GetBlock RPC._
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-03 by Claude Opus 5 — claims verified against the Supabase Management API project list, `gcloud run services describe`, the rig `/health` endpoint, and `~/arkova-soak/teardown-2026-09-03.log`._
