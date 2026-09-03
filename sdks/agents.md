@@ -5,7 +5,6 @@ Developer SDK packages for integrating with the Arkova Verification API. Each su
 ## Subdirectories
 - **`langchain/`** — LangChain Python-style tool wrappers (verify, oracle, search). Peer dep: `@langchain/core`.
 - **`langchain-ts/`** — LangChain TypeScript tool wrappers (verify, anchor status, search, attest, batch, signature).
-- **`mcp-server/`** — Model Context Protocol server exposing 10 tools (6 `arkova_` verification + 4 `nessie_` compliance intelligence, NCE-19) for Claude/OpenAI/Cursor.
 - **`mcp-server/`** — Model Context Protocol server exposing 10 tools (6 `arkova_`-prefixed +
   4 `nessie_`-prefixed compliance-intelligence tools, NCE-19) for Claude/OpenAI/Cursor. Published
   to npm as unscoped `arkova-mcp-server`, `bin` entry runs the stdio server via `npx`. This is
