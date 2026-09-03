@@ -4439,3 +4439,58 @@ export const PLATFORM_METRICS = {
  * implying the whole block was re-measured.
  */
 export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
+
+// ── Two-factor settings (SCRUM-3167 / SCRUM-3584) ──
+//
+// TwoFactorSetup.tsx rewrite. Lists ALL TOTP factors from listFactors()
+// (verified AND unverified — Amendment A2: a stale unverified factor from
+// 2026-03-23 must render as "Setup incomplete" with a Remove action, not be
+// hidden). Supports a second "backup" authenticator (up to the GoTrue cap of
+// 10). GoTrue v2.196.0 requires an AAL2 session to enroll a new factor once a
+// verified factor already exists, and to unenroll a verified factor
+// (Amendment A3) — both cases show an inline step-up code prompt
+// (challengeAndVerify against an existing verified factor) rather than a dead
+// end. §1.3-clean: no Wallet / Gas / Hash / Block / Transaction / Crypto /
+// Blockchain / Bitcoin / Testnet / Mainnet / UTXO / Broadcast / Token —
+// "code" is used throughout instead of the banned "token".
+export const TWO_FACTOR_SETUP_LABELS = {
+  CARD_TITLE: 'Two-Factor Authentication',
+  CARD_DESCRIPTION: 'Add an extra layer of security to your account.',
+
+  LIST_HEADING: 'Authenticator apps',
+  LIST_EMPTY: 'No authenticator apps added yet.',
+  UNNAMED_FACTOR: 'Unnamed authenticator',
+  STATUS_ENABLED: 'Enabled',
+  STATUS_INCOMPLETE: 'Setup incomplete',
+  ADDED_ON: (date: string) => `Added ${date}`,
+  REMOVE_ACTION: 'Remove',
+  REMOVE_ARIA: (name: string) => `Remove ${name}`,
+
+  ENABLE_BUTTON: 'Enable two-factor authentication',
+  ADD_BACKUP_BUTTON: 'Add backup authenticator',
+
+  /** Client-computed default; made unique against existing friendly names before enroll() is called. */
+  DEFAULT_FACTOR_NAME: (date: string) => `Authenticator ${date}`,
+  FRIENDLY_NAME_LABEL: 'Authenticator name',
+
+  QR_INSTRUCTIONS: 'Scan this QR code with your authenticator app.',
+  QR_ALT: 'QR code for authenticator app setup',
+  SECRET_LABEL: 'Manual entry code',
+
+  VERIFY_CODE_LABEL: 'Verification code',
+  VERIFY_CODE_PLACEHOLDER: '000000',
+  VERIFY_SUBMIT: 'Verify & enable',
+
+  STEP_UP_TITLE: 'Confirm it’s you',
+  STEP_UP_DESCRIPTION: 'Enter a code from an authenticator app you already have set up to continue.',
+  STEP_UP_CODE_LABEL: 'Authentication code',
+  STEP_UP_SUBMIT: 'Confirm',
+  STEP_UP_CANCEL: 'Cancel',
+
+  /** `mfa_totp_enroll_not_enabled` — a platform misconfiguration, not a user error. */
+  UNAVAILABLE: 'Two-factor setup is not available right now. Please try again later.',
+
+  ERROR_GENERIC: 'Something went wrong. Please try again.',
+  ERROR_NAME_CONFLICT: 'That authenticator name is already in use. Please try again.',
+  ERROR_STEP_UP_FAILED: 'That code did not match. Please try again.',
+} as const;
