@@ -60,8 +60,10 @@
  * KNOWN LIMITATIONS (documented rather than silently wrong):
  *   - "Has a consumer" is not "is drained in production". A consumer still
  *     needs a Cloud Scheduler binding in scripts/gcp-setup/cloud-scheduler.sh
- *     (in-process node-cron is dormant under Cloud Run CPU throttling, per the
- *     PROOF-03 finding). `professional_education.metadata_extraction` and
+ *     (in-process node-cron is not a durable trigger — no retry, no attempt
+ *     deadline, no run history, and nothing at all on a revision scaled to
+ *     zero; SCRUM-3384 retracts the stronger PROOF-03 reading that it never
+ *     fires in prod). `professional_education.metadata_extraction` and
  *     `docusign.notarization_completed` currently have cron ROUTES but no
  *     scheduler entry. Closing that needs a live-GCP read, which this static
  *     check cannot do; it is a separate gate, not a reason to weaken this one.
