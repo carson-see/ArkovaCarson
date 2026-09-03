@@ -116,9 +116,15 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
   // on the LATEST userId, not whatever userId it closed over when it was
   // created — a ref (rather than re-deriving useCallback on every userId
   // change) also lets the interval/listener effect below skip re-arming on
-  // every render.
+  // every render. Synced in an effect (never assigned during render —
+  // react-hooks/refs) declared BEFORE the userId-change effect further
+  // down, so by the time that effect's `check()` call reads the ref on a
+  // userId change, it already holds the new value (React runs a
+  // component's passive effects in declaration order on the same commit).
   const userIdRef = useRef(userId);
-  userIdRef.current = userId;
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
 
   // Guards against a setState commit after this hook instance has
   // unmounted (a check already in flight when navigation tears down this
