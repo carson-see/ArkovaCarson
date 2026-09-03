@@ -66,14 +66,39 @@
  * markVerified() vs markBypassed() (PR #2637 review, item 32): `MfaChallenge`
  * calls `markVerified()` ONLY after a real, successful `challenge()`+
  * `verify()` round trip — it is the one place this hook is told
- * `hasVerifiedFactor` is now truthfully `true`. `MfaChallenge`'s FAIL-OPEN
- * branches (a `listFactors()` read failing/timing out, or defensively
- * finding no verified factor) are not a real verify — they call
- * `markBypassed()` instead, which clears the challenge (`status` ->
- * `'satisfied'`) WITHOUT asserting anything new about `hasVerifiedFactor`.
- * Conflating the two would have `hasVerifiedFactor` claim `true` on a
- * platform read failure alone, for up to the 60s live-re-evaluation window
- * — exactly the kind of unevidenced claim §1.5 exists to prevent.
+ * `hasVerifiedFactor` is now truthfully `true`. `markBypassed()` is
+ * ENROLLMENT-PATH ONLY as of the R17-R21 CTO ruling (PR #2637 review round
+ * 2) — `MfaChallenge` has no fail-open branch left at all (it fails CLOSED
+ * on every error; see its own doc comment). The only remaining caller is
+ * `AuthGuard`'s enrollment-branch `handleCapabilityUnavailable`, for a user
+ * who was already known to have NO verified factor — it clears the
+ * challenge (`status` -> `'satisfied'`) WITHOUT asserting anything new
+ * about `hasVerifiedFactor`, preserving whatever this hook already knew.
+ *
+ * MODULE-SCOPE CACHE (R11, PR #2637 review round 2, efficiency): AuthGuard
+ * mounts a fresh `useMfaAssurance` instance per `<Route>` (App.tsx), so
+ * every in-app navigation previously re-awaited
+ * `getAuthenticatorAssuranceLevel()` and flashed the loading spinner even
+ * though the underlying session had not changed. The optional second
+ * argument, `sessionKey` (the caller's session `access_token` or
+ * `expires_at` — anything that changes on every genuinely new sign-in),
+ * lets a remount for the SAME `(userId, sessionKey)` pair render
+ * synchronously from the last known result instead of re-fetching. Caching
+ * is deliberately INERT whenever `sessionKey` is `null`/omitted — every
+ * pre-existing call site (all of `useMfaAssurance.test.ts`, which has no
+ * concept of a session key) keeps its exact prior behavior, most
+ * importantly the EVERY-LOGIN ENFORCEMENT guarantee: two independent
+ * `renderHook(() => useMfaAssurance('user-1'))` calls with no session key
+ * must never share a cache entry, or a completed challenge from the FIRST
+ * login would leak into the second. The 60s/visibility re-check (`check()`
+ * below) still runs and refreshes the cache regardless of whether this
+ * mount was seeded from it. `markVerified`/`markBypassed` write through to
+ * the cache too — otherwise a remount immediately after either would read
+ * the STALE pre-change cached value instead of the fresh one. `useAuth.ts`'s
+ * `signOut()` also clears the cache outright via
+ * `clearMfaAssuranceCache()`, as an explicit belt-and-suspenders measure
+ * even though a genuinely new sign-in already mints a new session key on
+ * its own.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -95,20 +120,59 @@ interface UseMfaAssuranceResult {
   hasVerifiedFactor: boolean;
   /** Call after a successful mfa.challenge()+mfa.verify() round trip. */
   markVerified: () => void;
-  /** Call to fail OPEN (clear the challenge) WITHOUT asserting a real verify happened — see module doc comment. */
+  /** Call to clear the challenge on the ENROLLMENT path only, WITHOUT asserting a real verify happened — see module doc comment. */
   markBypassed: () => void;
 }
 
 interface AssuranceState {
   userId: string | null;
+  sessionKey: string | null;
   status: MfaAssuranceStatus;
   hasVerifiedFactor: boolean;
 }
 
-const SATISFIED_NO_FACTOR: Omit<AssuranceState, 'userId'> = {
+const SATISFIED_NO_FACTOR: Omit<AssuranceState, 'userId' | 'sessionKey'> = {
   status: 'satisfied',
   hasVerifiedFactor: false,
 };
+
+interface CachedAssurance {
+  userId: string;
+  sessionKey: string;
+  status: MfaAssuranceStatus;
+  hasVerifiedFactor: boolean;
+}
+
+// R11: a single most-recent-result slot is enough — AuthGuard only ever
+// cares about the CURRENT user's CURRENT session, never a history of past
+// ones. See the module doc comment above for the "inert when sessionKey is
+// null" safety property this relies on.
+let moduleCache: CachedAssurance | null = null;
+
+function readModuleCache(userId: string, sessionKey: string | null): CachedAssurance | null {
+  if (!sessionKey || !moduleCache) return null;
+  if (moduleCache.userId !== userId || moduleCache.sessionKey !== sessionKey) return null;
+  return moduleCache;
+}
+
+function writeModuleCache(
+  userId: string,
+  sessionKey: string | null,
+  status: MfaAssuranceStatus,
+  hasVerifiedFactor: boolean,
+): void {
+  if (!sessionKey) return;
+  moduleCache = { userId, sessionKey, status, hasVerifiedFactor };
+}
+
+/** Explicit invalidation hook for `useAuth.ts`'s `signOut()` (R11). */
+export function clearMfaAssuranceCache(): void {
+  moduleCache = null;
+}
+
+export function __resetMfaAssuranceCacheForTests(): void {
+  moduleCache = null;
+}
 
 // getAuthenticatorAssuranceLevel() is documented as "fairly quick
 // (microseconds) and rarely uses the network" when called without a JWT
@@ -123,13 +187,29 @@ const ASSURANCE_CHECK_TIMEOUT_MS = 8_000;
 // change is caught well within one work session.
 const REASSURANCE_INTERVAL_MS = 60_000;
 
-export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
-  const [state, setState] = useState<AssuranceState>({ userId: null, ...SATISFIED_NO_FACTOR });
+export function useMfaAssurance(
+  userId: string | null,
+  sessionKey: string | null = null,
+): UseMfaAssuranceResult {
+  // R11: seed synchronously from the module cache when this exact
+  // (userId, sessionKey) pair was already resolved by a PRIOR instance
+  // (e.g. the previous route's AuthGuard, just unmounted on navigation) —
+  // a remount for the same session then renders immediately instead of
+  // flashing the loading spinner while re-awaiting the same answer.
+  const [state, setState] = useState<AssuranceState>(() => {
+    if (userId) {
+      const cached = readModuleCache(userId, sessionKey);
+      if (cached) {
+        return { userId, sessionKey, status: cached.status, hasVerifiedFactor: cached.hasVerifiedFactor };
+      }
+    }
+    return { userId: null, sessionKey: null, ...SATISFIED_NO_FACTOR };
+  });
 
   // `check()` is called from three places (initial mount / userId change,
   // the 60s interval, and the visibilitychange handler) and must always act
-  // on the LATEST userId, not whatever userId it closed over when it was
-  // created. Synced in an effect (never assigned during render —
+  // on the LATEST userId/sessionKey, not whatever it closed over when it
+  // was created. Synced in an effect (never assigned during render —
   // react-hooks/refs) declared BEFORE the userId-change effect further
   // down, so by the time that effect's `check()` call reads the ref on a
   // userId change, it already holds the new value (React runs a
@@ -138,6 +218,10 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
   useEffect(() => {
     userIdRef.current = userId;
   }, [userId]);
+  const sessionKeyRef = useRef(sessionKey);
+  useEffect(() => {
+    sessionKeyRef.current = sessionKey;
+  }, [sessionKey]);
 
   // Guards against a setState commit after this hook instance has
   // unmounted (a check already in flight when navigation tears down this
@@ -154,6 +238,7 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
 
   const check = useCallback(async () => {
     const checkedUserId = userIdRef.current;
+    const checkedSessionKey = sessionKeyRef.current;
     if (!checkedUserId) return;
 
     try {
@@ -163,30 +248,49 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
         'mfa-assurance-check',
       );
 
-      // Stale-response guard: userId moved on (user switch) or this
-      // instance unmounted while the call was in flight — never apply a
-      // result for a user/mount that is no longer current.
-      if (unmountedRef.current || userIdRef.current !== checkedUserId) return;
+      // Stale-response guard: userId/sessionKey moved on (user switch, new
+      // sign-in) or this instance unmounted while the call was in flight —
+      // never apply a result for a user/session/mount that is no longer
+      // current.
+      if (
+        unmountedRef.current ||
+        userIdRef.current !== checkedUserId ||
+        sessionKeyRef.current !== checkedSessionKey
+      ) {
+        return;
+      }
 
       if (error || !data) {
         // Fail OPEN — see module doc comment.
-        setState({ userId: checkedUserId, ...SATISFIED_NO_FACTOR });
+        setState({ userId: checkedUserId, sessionKey: checkedSessionKey, ...SATISFIED_NO_FACTOR });
+        writeModuleCache(checkedUserId, checkedSessionKey, 'satisfied', false);
         return;
       }
 
       const hasVerifiedFactor = data.nextLevel === 'aal2';
       const status: MfaAssuranceStatus =
         data.currentLevel === data.nextLevel ? 'satisfied' : 'challenge_required';
-      setState({ userId: checkedUserId, status, hasVerifiedFactor });
+      setState({ userId: checkedUserId, sessionKey: checkedSessionKey, status, hasVerifiedFactor });
+      writeModuleCache(checkedUserId, checkedSessionKey, status, hasVerifiedFactor);
     } catch {
-      if (unmountedRef.current || userIdRef.current !== checkedUserId) return;
+      if (
+        unmountedRef.current ||
+        userIdRef.current !== checkedUserId ||
+        sessionKeyRef.current !== checkedSessionKey
+      ) {
+        return;
+      }
       // Timeout or unexpected throw — fail OPEN. See module doc comment.
-      setState({ userId: checkedUserId, ...SATISFIED_NO_FACTOR });
+      setState({ userId: checkedUserId, sessionKey: checkedSessionKey, ...SATISFIED_NO_FACTOR });
+      writeModuleCache(checkedUserId, checkedSessionKey, 'satisfied', false);
     }
   }, []);
 
-  // Initial check on mount, and again whenever userId changes (login/
-  // logout/user switch).
+  // Initial check on mount, and again whenever userId/sessionKey changes
+  // (login/logout/user switch/token rotation) — UNLESS this exact mount was
+  // already seeded synchronously from the module cache above (R11), in
+  // which case a fresh fetch here would defeat the whole point of caching.
+  // The 60s/visibility re-check below still runs regardless.
   useEffect(() => {
     if (!userId) {
       // No setState needed: the render-time derivation below already
@@ -196,8 +300,11 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
       // no behavioral benefit (react-hooks/set-state-in-effect).
       return;
     }
+    if (readModuleCache(userId, sessionKey)) {
+      return;
+    }
     void check();
-  }, [userId, check]);
+  }, [userId, sessionKey, check]);
 
   // LIVE RE-EVALUATION (A4-11): re-run the same check on a 60s interval and
   // whenever the tab regains foreground, via the shared hook both MFA
@@ -206,8 +313,12 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
   useVisibilityPolling(check, REASSURANCE_INTERVAL_MS, { immediate: false, enabled: Boolean(userId) });
 
   const markVerified = useCallback(() => {
-    setState({ userId, status: 'satisfied', hasVerifiedFactor: true });
-  }, [userId]);
+    setState({ userId, sessionKey, status: 'satisfied', hasVerifiedFactor: true });
+    // R11: write through so an immediate remount (e.g. the next route)
+    // sees the fresh, truthful result instead of the stale pre-verify
+    // cache entry.
+    if (userId) writeModuleCache(userId, sessionKey, 'satisfied', true);
+  }, [userId, sessionKey]);
 
   const markBypassed = useCallback(() => {
     // Preserves whatever `hasVerifiedFactor` already reflected for THIS
@@ -215,20 +326,21 @@ export function useMfaAssurance(userId: string | null): UseMfaAssuranceResult {
     // truth either way. For a stale/never-resolved userId there is nothing
     // truthful to preserve, so it defaults to `false` (the same fail-open
     // default every other ambiguous outcome in this hook uses).
-    setState((prev) => ({
-      userId,
-      status: 'satisfied',
-      hasVerifiedFactor: prev.userId === userId ? prev.hasVerifiedFactor : false,
-    }));
-  }, [userId]);
+    setState((prev) => {
+      const hasVerifiedFactor = prev.userId === userId ? prev.hasVerifiedFactor : false;
+      if (userId) writeModuleCache(userId, sessionKey, 'satisfied', hasVerifiedFactor);
+      return { userId, sessionKey, status: 'satisfied', hasVerifiedFactor };
+    });
+  }, [userId, sessionKey]);
 
-  // `state` only reflects a completed check for `state.userId`. If `userId`
-  // has already moved on (new login / user switch) but the effect for the
-  // new id hasn't resolved yet, the committed `state` is stale — report
-  // 'loading' rather than whatever the PREVIOUS user's result was. Without
-  // this, a protected route could flash visible for one render before the
-  // real check for the new user completes.
-  if (state.userId !== userId) {
+  // `state` only reflects a completed check for `state.userId`/
+  // `state.sessionKey`. If either has already moved on (new login / user
+  // switch / token rotation) but the effect for the new identity hasn't
+  // resolved yet, the committed `state` is stale — report 'loading' rather
+  // than whatever the PREVIOUS user/session's result was. Without this, a
+  // protected route could flash visible for one render before the real
+  // check for the new identity completes.
+  if (state.userId !== userId || state.sessionKey !== sessionKey) {
     return {
       status: userId ? 'loading' : 'satisfied',
       hasVerifiedFactor: false,

@@ -7,6 +7,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { clearMfaCapabilityCooldown } from '../lib/mfaCapabilityCooldown';
+import { clearMfaAssuranceCache } from './useMfaAssurance';
 import type { User, Session } from '@supabase/supabase-js';
 
 type OAuthProvider = Parameters<typeof supabase.auth.signInWithOAuth>[0]['provider'];
@@ -207,6 +208,13 @@ export function useAuth(): AuthState & AuthActions {
     // already resolved. `clearMfaCapabilityCooldown` itself is a no-op for
     // a null/undefined userId and swallows any storage error internally.
     clearMfaCapabilityCooldown(user?.id);
+
+    // R11 (PR #2637 review round 2): also clear the assurance-check module
+    // cache — a genuinely new sign-in always mints a fresh session token,
+    // which already makes the cache naturally miss on its own (see that
+    // hook's module doc comment), but clearing it explicitly here is a
+    // belt-and-suspenders measure that costs nothing.
+    clearMfaAssuranceCache();
 
     // Set flag BEFORE any state changes so AuthGuard won't show
     // misleading "sign in required" toast during the sign-out transition.

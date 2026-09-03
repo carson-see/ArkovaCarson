@@ -528,4 +528,162 @@ describe('useMfaAssurance', () => {
       expect(mockGetAAL).not.toHaveBeenCalled();
     });
   });
+
+  // ---------------------------------------------------------------------
+  // R11 (PR #2637 review round 2, efficiency): AuthGuard mounts a fresh
+  // useMfaAssurance instance per <Route>, so every in-app navigation
+  // previously re-awaited getAuthenticatorAssuranceLevel() and flashed the
+  // full-page spinner even for the SAME session. These tests pass an
+  // explicit sessionKey (a real caller — AuthGuard — always will); every
+  // test ABOVE this block omits it on purpose and must keep behaving
+  // exactly as before (see the module doc comment's "inert when sessionKey
+  // is null" guarantee, and the EVERY-LOGIN ENFORCEMENT test above in
+  // particular, which relies on two sessionKey-less mounts NEVER sharing a
+  // cache entry).
+  // ---------------------------------------------------------------------
+  describe('R11: module-scope assurance cache (keyed by userId + sessionKey)', () => {
+    beforeEach(async () => {
+      const { __resetMfaAssuranceCacheForTests } = await import('./useMfaAssurance');
+      __resetMfaAssuranceCacheForTests();
+    });
+
+    it('a second mount for the SAME (userId, sessionKey) renders synchronously from cache — NO second getAuthenticatorAssuranceLevel call', async () => {
+      mockGetAAL.mockResolvedValue({
+        data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+        error: null,
+      });
+
+      const { useMfaAssurance } = await import('./useMfaAssurance');
+      const first = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      await waitFor(() => {
+        expect(first.result.current.status).toBe('challenge_required');
+      });
+      expect(mockGetAAL).toHaveBeenCalledTimes(1);
+      first.unmount();
+
+      const second = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      // Synchronous from the very first render — no waitFor needed.
+      expect(second.result.current.status).toBe('challenge_required');
+      expect(mockGetAAL).toHaveBeenCalledTimes(1);
+    });
+
+    it('a DIFFERENT sessionKey for the same user (a fresh sign-in) does NOT read the cache — re-fetches', async () => {
+      mockGetAAL.mockResolvedValue({
+        data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+        error: null,
+      });
+
+      const { useMfaAssurance } = await import('./useMfaAssurance');
+      const first = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      await waitFor(() => {
+        expect(first.result.current.status).toBe('challenge_required');
+      });
+      first.unmount();
+
+      const second = renderHook(() => useMfaAssurance('user-cache', 'token-b'));
+      // Not seeded from cache — starts 'loading' until the fresh fetch resolves.
+      expect(second.result.current.status).toBe('loading');
+      await waitFor(() => {
+        expect(mockGetAAL).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('a DIFFERENT userId does NOT read another user\'s cache — re-fetches', async () => {
+      mockGetAAL.mockResolvedValue({
+        data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+        error: null,
+      });
+
+      const { useMfaAssurance } = await import('./useMfaAssurance');
+      const first = renderHook(() => useMfaAssurance('user-A', 'token-shared'));
+      await waitFor(() => {
+        expect(first.result.current.status).toBe('challenge_required');
+      });
+      first.unmount();
+
+      const second = renderHook(() => useMfaAssurance('user-B', 'token-shared'));
+      expect(second.result.current.status).toBe('loading');
+      await waitFor(() => {
+        expect(mockGetAAL).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('markVerified() writes through to the cache — an immediate remount for the same session sees the fresh verified result, not the stale pre-verify one', async () => {
+      mockGetAAL.mockResolvedValue({
+        data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+        error: null,
+      });
+
+      const { useMfaAssurance } = await import('./useMfaAssurance');
+      const first = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      await waitFor(() => {
+        expect(first.result.current.status).toBe('challenge_required');
+      });
+      act(() => {
+        first.result.current.markVerified();
+      });
+      expect(first.result.current.status).toBe('satisfied');
+      first.unmount();
+
+      const second = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      expect(second.result.current.status).toBe('satisfied');
+      expect(second.result.current.hasVerifiedFactor).toBe(true);
+      // Still no second network call — the write-through cache served it.
+      expect(mockGetAAL).toHaveBeenCalledTimes(1);
+    });
+
+    it('an explicit clearMfaAssuranceCache() (used by useAuth.ts signOut()) forces the next mount to re-fetch even for the same (userId, sessionKey)', async () => {
+      mockGetAAL.mockResolvedValue({
+        data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+        error: null,
+      });
+
+      const { useMfaAssurance, clearMfaAssuranceCache } = await import('./useMfaAssurance');
+      const first = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      await waitFor(() => {
+        expect(mockGetAAL).toHaveBeenCalledTimes(1);
+      });
+      first.unmount();
+
+      clearMfaAssuranceCache();
+
+      const second = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      expect(second.result.current.status).toBe('loading');
+      await waitFor(() => {
+        expect(mockGetAAL).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('a cache-seeded mount still runs the live 60s/visibility re-check, which can refresh the cached value', async () => {
+      vi.useFakeTimers();
+      mockGetAAL.mockResolvedValue({
+        data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+        error: null,
+      });
+
+      const { useMfaAssurance } = await import('./useMfaAssurance');
+      const first = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      first.unmount();
+
+      // Server-side state changes before the second mount.
+      mockGetAAL.mockResolvedValue({
+        data: { currentLevel: 'aal2', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+        error: null,
+      });
+
+      const second = renderHook(() => useMfaAssurance('user-cache', 'token-a'));
+      // Seeded synchronously from the (now stale) cache.
+      expect(second.result.current.status).toBe('challenge_required');
+
+      // The 60s re-check still fires despite the cache seed and picks up
+      // the fresh server-side state.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(second.result.current.status).toBe('satisfied');
+    });
+  });
 });
