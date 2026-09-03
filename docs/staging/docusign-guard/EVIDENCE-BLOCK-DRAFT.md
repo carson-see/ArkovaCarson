@@ -12,8 +12,8 @@
 - **Behavior exercised:** 0423's trigger. Every cycle probes all four branches in ONE psql session; the cycle FAILS unless the result is exactly 1111 (A untrusted+DocuSign -> all 8 keys stripped, benign kept; B untrusted non-DocuSign -> account_id/envelope_id PRESERVED; C service_role -> preserved; D untrusted UPDATE hijack -> reverted). Plus two-tenant anchor lifecycle and the webhook HMAC surface (202 / 401 / replay 200).
 - **Health/smoke:** healthy, database ok, anchoring ok, git_sha matches deployed source head.
 - **E2E / CI:** TLA+ PASSED 4/4 (real TLC). `Tests` red is main's pre-existing health-detail-auth failure (#2584/#2587), not this PR.
-- **Trigger A (size, claimed >= BATCH_SIZE=10000):** PENDING
-- **Trigger B (age, pending >= 3000 AND oldest >= 3h):** PENDING
+- **Trigger A (size, pendingCount >= BATCH_SIZE=10000):** **FIRED 2026-09-03T11:28:02.556596Z** — direct log evidence: `Batch size trigger fired`, then `Claimed anchors for batch processing` (11:28:07) and `Batch anchor processing complete` (11:28:43). pendingCount 10,106; forced flush still held, so not Trigger D. PENDING 10,106 -> 108.
+- **Trigger B (age, pending >= 3000 AND oldest >= 3h):** **FIRED 2026-09-03T11:01:46Z** — pendingCount 4,064, oldest 3h03m. Established by ELIMINATION, not a log line: Trigger B emits nothing when it fires (it falls through the `else if (!triggerB_shouldFireOnAge(...))` guard) and the not-met path is logger.debug. Trigger D excluded (hold-flush active; every cycle recorded flush={"skipped":"held-for-trigger-exercise"}); Trigger A excluded (needs 10,000, actual 4,064); B's conditions met. Deduction from a closed set — recorded as such, not as a log assertion.
 - **Daily flush observation:** forced flush processed a batch every cycle for 209 cycles, each with a real batchId + merkleRoot + txId.
 - **Per-org isolation check:** orgs_with_docusign = 2 every cycle; both tenants driven.
 - **Rollback plan:** DROP TRIGGER trg_strip_unattested_docusign_metadata_keys; DROP FUNCTION enforce_docusign_metadata_key_authority(); NOTIFY pgrst. **Rehearsal:** PENDING (after window close; doing it mid-soak drops the trigger under test)
