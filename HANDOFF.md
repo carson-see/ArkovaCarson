@@ -726,6 +726,102 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
+**OPEN PROD FINDING (2026-09-02, SCRUM-3953, P1/T3) — `anchor_proofs.block_height` is stale on 711,250 of 714,129 rows (99.6 %).**
+The broadcast path stores the chain tip at broadcast time (`chain/signet.ts` `broadcastSignedTx`, "observability only") and `publicRecordAnchor.ts`
+persists it into `anchor_proofs`; confirmation corrects only `anchors.chain_block_height` (384/384 correct), and the populate job re-asserts the stale
+proof-row value next to the correct hash/header. `block_timestamp` is wrong on the same rows. Public API / webhooks / SDK read `anchors` and are
+correct; the downloadable audit certificate reads the proof row, prints "Network Record #N-2" and its embedded packet fails `arkova-verify --rpc`
+with `height_mismatch`. Not a regression (since PR #761, 2026-05-11); the current worker build still writes it. Audience today: the Arkova
+public-records org only. Finding, 476-row chain check and T3 fix design: `docs/staging/findings/prod-block-height-2026-09-02/finding.md`.
+Supersedes the "44 block hashes at more than one height" thread — same mechanism.
+
+**MAIN `Tests` RED SINCE 2026-09-02T13:58Z — fix PR #2623 (T0) open, SCRUM-3954.** Three merges combined: #2573 hardened anchoring health and
+left `health-detail-auth.test.ts`'s unprobed fixture asserting `ok`; #2584 and #2587 (merged 9 s apart) fix it in contradictory ways; dependabot #2606
+busted the zk artifact cache and the pinned ptau hosts answer 403 (durable mirror: SCRUM-3955). Nothing merges through Mergify until #2623 lands;
+the RC-batch and R1 close-outs below depend on it. Do not open another competing fix.
+
+**CLOSE-OUT RUNBOOK (drafted 2026-09-02; gate dry-runs in `docs/staging/rc-batch-0902/closeout/gate-dry-run.md`).**
+- **RC batch, window closes 2026-09-03T07:49:27Z.** (1) Stop the loop, confirm every `rc-live-NN.jsonl` is `pass`. (2) Open a separate `docs(rc):` PR
+  replacing `docs/staging/rc-manifests/rc-batch-2026-09-02.json` with `docs/staging/rc-batch-0902/closeout/rc-batch-2026-09-02.CLOSEOUT-DRAFT.json`
+  (drops the unrecognised `soak_mode`, adds `environment.revision/deploy_tag/deploy_log_id`, the `soak` object, `approval_*`, and fixes #2526's
+  `base_sha` to GitHub's live base `19d7adfb…`). Carson's CODEOWNERS review of that PR is the approval the manifest asserts — do not set
+  `approval_actor` to an agent; the gate rejects agent self-attestation. (3) After it merges and GitHub recomputes the merge previews, paste
+  `closeout/pr-252{5,6,7,8}-evidence-block.md` into the PR bodies (grep for `<<` first — the gate does not catch leftover markers).
+  #2528 is not a draft: a green gate on it is merge authorization. Main's `Tests` job must be green first (fix in flight, see below).
+- **R1 / #2524, window closes 2026-09-04T13:38:43Z.** (1) Stop the loop. (2) Run the 0427 rollback rehearsal ON THE RIG after the window
+  (apply the file's `-- ROLLBACK:` SQL, re-apply 0427, re-run the driver once). (3) Paste `docs/staging/proof-txincl-0427/closeout/pr-2524-evidence-block.md`
+  with `Soak end`, the cycle count and the rehearsal filled; human approver = Carson. The base must stay `4b3db0c0c` — **do not merge `main` into
+  the branch again**: once the base passes `1b7d8601c` the migration-ledger carve-out fires and demands a re-soak. No `staging_deploy_log` row exists on
+  either rig (manual standup); the provenance text in the blocks passes the parser, SCRUM-1803 intent unmet.
+- **Jira/Confluence (created 2026-09-02, all To Do):** #2524→SCRUM-3956 (epic SCRUM-2325, page 135036931) · #2525→SCRUM-3959 (SCRUM-1866, 135495682) ·
+  #2526→SCRUM-3962 (SCRUM-2895, 135528450) · #2527→SCRUM-3965 (SCRUM-2325, 134938627) · #2528→SCRUM-3968 (SCRUM-2325, 135561218); each has
+  `[Verify]` + `[Close-out]` subtasks. At close-out: add the key to each PR title/body, tick the page DoD lists, transition subtasks with the parent
+  only after merge + prod green. The #2525/#2526 PR bodies are stale (superseded rig, "501" now 404, "1 h" now 30 min) — replace, don't append.
+- **Then** tear both rigs down (`scripts/staging/teardown-isolated-rig.sh`, §7 cost sweep) and close the soak entries here.
+
+**RUNNING — PR #2524 T3 isolated soak (`feat/proof-tx-inclusion-branch`, migration `0427`), started 2026-09-02.**
+- **Rig:** isolated Supabase `uqobkjhlnqmcpjidngxr` (`arkova-soak-proof-txincl-0427`, us-east-2),
+  ledger head **0427** (119 rows; `0381` applied via session-pooler psql + ledger row per
+  STAGING_RIG.md item 3). Cloud Run `arkova-worker-proof-txincl-0427-staging` rev **00001-f8j**,
+  image digest `sha256:daa5e4112f280b8aa5ff65c4e24b9c4afe569a69257630ed2a2e91ecb069a956`, built from
+  `a3f1d6b36b513d2fd9d65e2d1e6f6f5f2b6cf20c`. **The PR head is `e5815e9ac`** — a merge of `origin/main`
+  (`4b3db0c0c`) into `a3f1d6b36` committed 2026-09-02T12:54Z, 44 min *before* the window opened. The
+  PR-authored diff is byte-identical across the two heads; the only runtime delta under the PR's own paths
+  is a rate-limiter bucket rename in `routes/cron.ts` from an already-merged PR. CTO decision: clock kept,
+  residual-risk note `docs/staging/proof-txincl-0427/evidence/E2-base-movement-residual-risk-2026-09-02.md`.
+  Branch still frozen — do not push to it.
+- **Preflight:** `environment_type=clean_mirror` 7/7 —
+  `docs/staging/proof-txincl-0427/clean-mirror-preflight-proof-txincl-0427.json`.
+- **Clock basis = Cloud Run worker uptime**, revision ready **2026-09-02T13:38:43Z**;
+  T3 window closes **2026-09-04T13:38:43Z**. Fixture: 3000 SECURED real-mainnet-txid anchors
+  (wedge 120 / bulk 450 / spread 2430), 2 orgs. Scheduler: only `…-populate-confirmation-proofs`
+  (`*/5`) is wired — `batch-anchors` deliberately absent, so **nothing broadcasts**.
+- **Driver:** `services/worker/scripts/pr2524-proof-txinclusion-driver.ts` on branch
+  `soak/proof-txincl-driver` @ `455dffaa0` (sha256 `6221c0a9d9f4ae862d594f759f0ddfb3c4e055ecb43d939cd950e051692a4a99`); evidence is
+  committed under `docs/staging/proof-txincl-0427/evidence/`. **`r1-live-06` (2026-09-02T20:10Z) passed A1–A9 with
+  `evidenceForSoak=true`** (`evidence/live-06.jsonl`): stored and published tx-inclusion pair identical
+  (index 1966, 12 siblings) and folds to the published header merkleroot. The `live-01..05` A7/A8 failures
+  were driver defects (missing IAM header, then the wrong route `/api/v1/proof/:id`), not reader defects —
+  see `evidence/E1-direct-probes-2026-09-02.md`.
+- **Health read 2026-09-02T19:30Z:** 2,880 / 3,000 populated; the remaining 120 are the designed
+  wedge cohort (1 shared txid, 120 distinct wrong block hashes); 0 half-pairs, 0 index-out-of-range.
+- **Do not** touch this rig, its Scheduler job, or `feat/proof-tx-inclusion-branch`.
+
+**RUNNING — RC batch T2 soak for PRs #2525 / #2526 / #2527 (T2) + #2528 (T1 frontend, targeted evidence), started 2026-09-02.**
+- Supabase `rvdgwynxoapdzysoaayr` (`arkova-soak-rc-batch-0902`), ledger head **0419** = `main`, preflight
+  `clean_mirror` 7/7 (`docs/staging/rc-batch-0902/clean-mirror-preflight-rc-batch-0902.json`).
+- Cloud Run `arkova-worker-rc-batch-0902-staging` rev **arkova-worker-rc-batch-0902-staging-00001-p4l**, image digest
+  `sha256:55c34e1fdf0423562159569c31d775343ef73f13394ff084ce7e62471caf5ccf` (built by Cloud Build — the local Docker registry path was throttled), source head
+  `78621249595e37398170da9b298ae13cd753a801` = `rc/soak-batch-2026-09-02` (clean merge of all four CURRENT PR heads).
+- **Clock basis = Cloud Run worker uptime**; 12h T2 window **2026-09-02T19:49:27Z → 2026-09-03T07:49:27Z**.
+  Scheduler: `…-populate-confirmation-proofs` + `…-check-confirmations` (`*/5`); `batch-anchors` deliberately absent → nothing broadcasts.
+- Manifest: `docs/staging/rc-manifests/rc-batch-2026-09-02.json` (per-PR head SHA coverage, `approval_status: pending`).
+- **Admission:** `docs/staging/rc-batch-0902/isolated-rig-provision-rc-batch-0902.json`. **Fixture** `scripts/staging/seed-rc-batch-0902-fixture.sql`
+  applied ~20:23Z (11 SECURED anchors on real receipts, 11 proofs, 10 attestations, 2 orgs). **Driver** `services/worker/scripts/rc-batch-0902-driver.ts`
+  on `soak/rc-batch-0902-driver` @ `31569f76e` (sha256 `29fd4c4d3824cb887464ba9e28befa334a529b966989c9783452f9b33bd994df`), 17 assertions
+  (A27 verdict/bundle, A25 attestation park + PII sweep, A26 detect-reorgs manifest + endpoint). **`rc-live-01` 20:25Z: 17/17 pass,
+  `evidenceForSoak=true`** (`docs/staging/rc-batch-0902/evidence/rc-live-01.jsonl`); a detached loop re-runs it every 2 h until the window closes.
+- **0417 replay gap, reconciled:** the post-seed preflight found migration `0417` (in the RC head; present in the prod migration ledger since 2026-08-22) missing from the rig;
+  applied 20:31:13Z via `supabase db push --linked --include-all` (one file), preflight from the RC head checkout back to `clean_mirror` 7/7
+  at 20:31:20Z (`post-reconcile-preflight-rc-batch-0902.json`). Full sequence + why `rc-live-01` stays valid: `evidence/E1-…-0417-reconciliation-2026-09-02.md`. Filed SCRUM-3951.
+- **Rollback rehearsal done 20:32Z** (`evidence/E2-rollback-rehearsal-2026-09-02.md`): prod image `8147ed3a…` booted healthy as a zero-traffic tagged
+  revision, serving instance untouched (uptime continuous), revision then deleted.
+- **#2528 targeted frontend evidence: QR works end-to-end — YES** (`evidence/frontend-2528-qr/frontend-2528-qr-e2e.md`): certificate QR decodes to
+  `https://app.arkova.ai/verify/<id>` (jsQR on the matrix and on the rasterised PDF), prod renders `ARK-DOC-9G5HQZ` Secured at 1280/375 and under an iOS
+  Safari UA, `ARK-DOC-ZZZZZZ` fails honestly, 38/38 vitest.
+- **Do not** touch this rig, its Scheduler jobs, `rc/soak-batch-2026-09-02`, or the four member PR branches.
+
+**(superseded above — RC batch rig was STANDING at the previous refresh.)**
+- Supabase `rvdgwynxoapdzysoaayr` (`arkova-soak-rc-batch-0902`), ledger head **0419** = `main`,
+  preflight `clean_mirror` 7/7. RC tree `rc/soak-batch-2026-09-02` @ `78621249595e37398170da9b298ae13cd753a801`
+  (all four CURRENT PR heads merged clean). Worker not yet deployed — image building; manifest draft
+  `docs/staging/rc-manifests/rc-batch-2026-09-02.json`. Window opens when the worker is up.
+
+**CLOSED (declared window passed 2026-09-01T16:23:20Z) — DocuSign bilateral T3 RC soak.** Its
+close-out status is whatever its own docs say (`docs/staging/docusign-bilateral-2026-08/`); this
+block no longer asserts it as RUNNING. Original entry retained below for the record.
+
+
 > ### ✅ PR #2461 soak CLOSED and SEALED — rig torn down 2026-08-31
 >
 > T2 window **2026-08-31T00:15:22Z → 12:15:22Z**, full 12 h served, on isolated rig
@@ -1152,7 +1248,7 @@ from any GCP project as a platform user. Separately, `main` carries 95 pre-exist
 typecheck errors (express-types portability) unrelated to this incident; given the deploy-typecheck
 blackout behaviour they warrant their own ticket.
 
-_Last refreshed: 2026-08-11 by carson — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-02 (rev 3, RC batch window opened) by Claude (session for carson@arkova.io) — claims verified against gcloud run describe, Cloud Run /api/health, Supabase MCP execute_sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._
 
 ### 2026-08-01/02 (CTO session) — pre-pentest PII/security hardening wave, DocuSign timeout investigation, soak findings F-1..F-10
 
@@ -1967,3 +2063,5 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
 _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye` and `getblockheader` over the worker's GetBlock RPC._
+
+_Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
