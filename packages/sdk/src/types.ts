@@ -90,11 +90,11 @@ export interface ArkovaConfig {
   baseUrl?: string;
   /** Built-in retry handling for 429/5xx responses. Set retries=0 to disable. */
   retry?: RetryConfig;
-  /** Enable x402 auto-payment (requires USDC wallet) */
+  /** Enable x402 auto-payment (requires a USDC-capable on-chain signer) */
   x402?: {
     /** x402 facilitator URL */
     facilitatorUrl?: string;
-    /** Payer wallet address (USDC on Base) */
+    /** Payer address (USDC on Base) */
     payerAddress: string;
     /** Function to sign x402 payment */
     signPayment: (amount: string, payTo: string) => Promise<string>;
@@ -145,15 +145,15 @@ export interface RichVerificationFields {
    * certification, conformity assessment, or attestation.
    */
   complianceControlsNote?: string | null;
-  /** Bitcoin block confirmations at anchor time */
+  /** Network confirmations at anchor time */
   chainConfirmations?: number | null;
   /** Public ID of the parent anchor in a credential lineage */
   parentPublicId?: string | null;
   /** Version in the credential lineage */
   versionNumber?: number | null;
-  /** Bitcoin transaction ID of the revocation */
+  /** Network receipt ID of the revocation */
   revocationTxId?: string | null;
-  /** Bitcoin block height at which revocation was anchored */
+  /** Network record height at which revocation was anchored */
   revocationBlockHeight?: number | null;
   /** Source document MIME type */
   fileMime?: string | null;
@@ -163,6 +163,58 @@ export interface RichVerificationFields {
   confidenceScores?: Record<string, unknown> | null;
   /** Fine-grained credential subtype */
   subType?: string | null;
+  /**
+   * Literal camelCase mirror of the frozen v1 API field (services/worker/src/
+   * api/v1/verify.ts). Kept as-is rather than renamed for API-fidelity —
+   * CLAUDE.md §1.8 freezes the v1 response schema, so the SDK's mapped field
+   * name tracks the wire field name exactly rather than the §1.3 UI-copy
+   * substitution that applies to user-facing strings, not to a typed mirror
+   * of a frozen server contract.
+   */
+  bitcoinBlock?: number | null;
+  /** Merkle inclusion proof hash for this anchor, when computed. */
+  merkleProofHash?: string | null;
+  /**
+   * R19 (CTO ruling 2026-07-28): evidence class for how `fingerprint` was
+   * computed. `'document_bytes'` = a real file's bytes were fingerprinted
+   * client-side. `'issuer_record_attestation'` = no source document was
+   * supplied; the issuer's asserted record content was fingerprinted. `null`
+   * = unclassified (anchor predates classification; never guessed).
+   */
+  fingerprintSource?: 'document_bytes' | 'issuer_record_attestation' | null;
+  /**
+   * SCRUM-2575: whether a per-document proof can actually be retrieved for
+   * this record, or only the on-chain commitment exists. Omitted (never
+   * present as `null`) when the anchor has not reached a state where a proof
+   * answer is meaningful.
+   */
+  proofAvailability?: 'per_document' | 'root_only';
+  /**
+   * The measured / asserted / NOT-asserted statement that accompanies
+   * `proofAvailability` (§1.5). Present exactly when `proofAvailability` is.
+   */
+  proofAvailabilityNote?: string;
+  /**
+   * BUG-2026-08-13-010 (§1.5 / §1.6A): how this record's fingerprint relates
+   * to its source. `'fetch_time_snapshot'` = the fingerprint commits the
+   * exact bytes Arkova retrieved from a connected third-party source at
+   * fetch time; re-fetching the source is not expected to reproduce it.
+   * Emitted only for connector-sourced records; omitted otherwise (absence
+   * means "no re-derivability statement", never "re-derivable").
+   */
+  fingerprintRederivability?: 'fetch_time_snapshot';
+  /**
+   * The measured / asserted / NOT-asserted statement that accompanies
+   * `fingerprintRederivability` (§1.5). Present exactly when it is.
+   */
+  fingerprintRederivabilityNote?: string;
+  /** FERPA re-disclosure notice for education credential types (REG-03). */
+  ferpaNotice?: string;
+  /**
+   * Whether directory-level fields were suppressed per FERPA §99.37 opt-out
+   * (REG-02).
+   */
+  directoryInfoSuppressed?: boolean;
 }
 
 /** Result of a verification check */

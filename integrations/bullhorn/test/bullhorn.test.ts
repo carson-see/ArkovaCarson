@@ -8,12 +8,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BullhornConnector } from '../src/connector';
 import { CandidateVerificationTab } from '../src/candidate-tab';
-import { BullhornWebhookHandler } from '../src/webhook-handler';
+import { BullhornWebhookHandler, constantTimeEqual } from '../src/webhook-handler';
 import type { BullhornConfig, BullhornSubscriptionEvent } from '../src/types';
 
 const mockFetch = vi.fn();
 
 const TEST_CONFIG: BullhornConfig = {
+  webhookSecret: 'unit-test-webhook-secret',
   bullhornRestUrl: 'https://rest-test.bullhornstaffing.com/rest-services/e999',
   bullhornRestToken: 'bh-test-token',
   arkovaApiKey: 'ak_test_bullhorn',
@@ -266,7 +267,7 @@ describe('BullhornWebhookHandler', () => {
       requestId: 1,
       lastRequestId: 0,
     };
-    const results = await handler.handleEvents(event);
+    const results = await handler.handleEvents(event, 'unit-test-webhook-secret');
     expect(results[0].action).toBe('skipped_non_candidate');
   });
 
@@ -279,7 +280,7 @@ describe('BullhornWebhookHandler', () => {
       requestId: 2,
       lastRequestId: 1,
     };
-    const results = await handler.handleEvents(event);
+    const results = await handler.handleEvents(event, 'unit-test-webhook-secret');
     expect(results[0].action).toBe('entity_update_noted');
   });
 
@@ -292,7 +293,30 @@ describe('BullhornWebhookHandler', () => {
       requestId: 3,
       lastRequestId: 2,
     };
-    const results = await handler.handleEvents(event);
+    const results = await handler.handleEvents(event, 'unit-test-webhook-secret');
     expect(results[0].action).toBe('no_action');
+  });
+});
+
+
+describe('BullhornWebhookHandler — inbound auth (SCRUM-3901)', () => {
+  const event = { events: [{ eventId: 'e1', entityName: 'Candidate', entityId: 1, eventType: 'FILE' }] } as any;
+  it('rejects every event when the presented secret is missing', async () => {
+    const handler = new BullhornWebhookHandler(TEST_CONFIG);
+    expect(await handler.handleEvents(event, undefined)).toEqual([{ eventId: 'e1', action: 'rejected_unauthenticated' }]);
+  });
+  it('rejects every event when the presented secret mismatches', async () => {
+    const handler = new BullhornWebhookHandler(TEST_CONFIG);
+    expect(await handler.handleEvents(event, 'wrong')).toEqual([{ eventId: 'e1', action: 'rejected_unauthenticated' }]);
+  });
+  it('fails closed when no secret is configured, even if one is presented', async () => {
+    const handler = new BullhornWebhookHandler({ ...TEST_CONFIG, webhookSecret: undefined });
+    expect(handler.verifyInboundSecret('anything')).toBe(false);
+    expect(await handler.handleEvents(event, 'anything')).toEqual([{ eventId: 'e1', action: 'rejected_unauthenticated' }]);
+  });
+  it('constantTimeEqual compares equal-length strings byte-wise and rejects length mismatch', () => {
+    expect(constantTimeEqual('abc', 'abc')).toBe(true);
+    expect(constantTimeEqual('abc', 'abd')).toBe(false);
+    expect(constantTimeEqual('abc', 'abcd')).toBe(false);
   });
 });

@@ -29,6 +29,29 @@ describe('Arkova', () => {
     const client = new Arkova({ apiKey: 'ak_test_123' });
     expect(client).toBeDefined();
   });
+
+  it('never leaks the API key via JSON.stringify', () => {
+    const client = new Arkova({ apiKey: 'ak_live_x' });
+    expect(JSON.stringify(client)).not.toContain('ak_live_x');
+  });
+
+  it('never leaks the API key via Object.keys enumeration', () => {
+    const client = new Arkova({ apiKey: 'ak_live_x' });
+    for (const key of Object.keys(client)) {
+      expect((client as unknown as Record<string, unknown>)[key]).not.toBe('ak_live_x');
+    }
+  });
+
+  it('never leaks x402 config via JSON.stringify', () => {
+    const client = new Arkova({
+      apiKey: 'ak_live_x',
+      x402: {
+        payerAddress: '0xae12000000000000000000000000000000dead',
+        signPayment: async () => 'signed',
+      },
+    });
+    expect(JSON.stringify(client)).not.toContain('0xae12000000000000000000000000000000dead');
+  });
 });
 
 describe('fingerprint', () => {
@@ -487,6 +510,96 @@ describe('verify', () => {
     expect(result.complianceControls).toBeNull();
     expect(result.complianceControlsNote).toBeNull();
   });
+
+  // P4 type-drift fix: the worker's VerificationResult (services/worker/src/
+  // api/v1/verify.ts L134-247) emits nine fields the SDK previously typed
+  // and mapped none of: proof_availability(_note), fingerprint_source,
+  // fingerprint_rederivability(_note), ferpa_notice,
+  // directory_info_suppressed, merkle_proof_hash, bitcoin_block.
+  it('maps proof-availability, fingerprint-provenance, FERPA, and on-chain fields', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        verified: true,
+        status: 'ACTIVE',
+        record_uri: 'https://app.arkova.ai/verify/ARK-2026-004',
+        bitcoin_block: 912345,
+        merkle_proof_hash: 'b'.repeat(64),
+        fingerprint_source: 'document_bytes',
+        fingerprint_rederivability: 'fetch_time_snapshot',
+        fingerprint_rederivability_note: 'Fingerprint commits the bytes fetched at connector-fetch time.',
+        ferpa_notice: 'Re-disclosure of this record is subject to FERPA.',
+        directory_info_suppressed: true,
+        proof_availability: 'per_document',
+        proof_availability_note: 'A per-document proof is available and can be retrieved.',
+      }),
+    });
+
+    const result = await client.verify('ARK-2026-004');
+    expect(result.bitcoinBlock).toBe(912345);
+    expect(result.merkleProofHash).toBe('b'.repeat(64));
+    expect(result.fingerprintSource).toBe('document_bytes');
+    expect(result.fingerprintRederivability).toBe('fetch_time_snapshot');
+    expect(result.fingerprintRederivabilityNote).toBe(
+      'Fingerprint commits the bytes fetched at connector-fetch time.',
+    );
+    expect(result.ferpaNotice).toBe('Re-disclosure of this record is subject to FERPA.');
+    expect(result.directoryInfoSuppressed).toBe(true);
+    expect(result.proofAvailability).toBe('per_document');
+    expect(result.proofAvailabilityNote).toBe('A per-document proof is available and can be retrieved.');
+  });
+
+  it('omits proof-availability, fingerprint-provenance, and FERPA fields when the API omits them', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        verified: true,
+        status: 'ACTIVE',
+        record_uri: 'https://app.arkova.ai/verify/ARK-2026-005',
+      }),
+    });
+
+    const result = await client.verify('ARK-2026-005');
+    expect(result.proofAvailability).toBeUndefined();
+    expect(result.proofAvailabilityNote).toBeUndefined();
+    expect(result.fingerprintSource).toBeNull();
+    expect(result.fingerprintRederivability).toBeUndefined();
+    expect(result.fingerprintRederivabilityNote).toBeUndefined();
+    expect(result.ferpaNotice).toBeUndefined();
+    expect(result.directoryInfoSuppressed).toBeUndefined();
+    expect(result.bitcoinBlock).toBeNull();
+    expect(result.merkleProofHash).toBeNull();
+  });
+
+  // Doc-accuracy regression: confirmed live against production
+  // (2026-08-18, npm-publish clean-room verification) that
+  // GET /api/v1/verify/{publicId} for an unknown ID returns
+  // 404 { verified: false, error: "Record not found" } — a legacy
+  // human-readable string, not the `not_found` slug the README's error
+  // code table documents for other v1 endpoints. jsonOrThrow carries
+  // `error` through verbatim as `code`, so pin that exact contract here:
+  // a documentation claim of `code: 'not_found'` for this call would have
+  // been silently wrong for every caller who branches on it.
+  it('throws ArkovaError with the server\'s literal error string as `code` on 404 (not a normalized slug)', async () => {
+    const client = new Arkova();
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ verified: false, error: 'Record not found' }),
+      headers: { get: () => null },
+    });
+
+    await expect(client.verify('ARK-DOES-NOT-EXIST')).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'Record not found',
+      message: 'Record not found',
+    });
+  });
 });
 
 describe('query', () => {
@@ -683,6 +796,49 @@ describe('API v2 agent methods', () => {
       verificationStatus: 'VERIFIED',
     }]);
     expect(result[0]).not.toHaveProperty('id');
+  });
+});
+
+describe('retry safety (non-idempotent methods must not be retried on 5xx/429)', () => {
+  it('does not retry a POST that returns 503 — calls fetch once and surfaces the error', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 2, sleep } });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      headers: new Headers(),
+      json: async () => ({ error: 'internal_error' }),
+    });
+
+    await expect(
+      client.webhooks.create({ url: 'https://example.com/hooks' }),
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('still retries a GET that returns 503 before succeeding', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 1, sleep } });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        json: async () => ({ error: 'internal_error' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ results: [], next_cursor: null }),
+      });
+
+    const result = await client.search('acme');
+
+    expect(result.results).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
   });
 });
 

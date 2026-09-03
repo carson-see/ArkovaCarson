@@ -74,3 +74,6 @@ timestamp (§1.5 — measured vs asserted).
 - This package publishes **first**; `arkova-verifier-cli` depends on it and
   publishes second. Ordered runbook: [`../verifier-cli/PUBLISHING.md`](../verifier-cli/PUBLISHING.md).
 - `prepack` runs the build, so `npm publish` cannot ship a stale `dist/`.
+- **2026-09-02:** `npm view arkova-verifier` returns 404 — not published yet. README's Install
+  section now says so up front and points at building from source / `file:../verifier` instead
+  of a misleading bare `npm install arkova-verifier` with no caveat.

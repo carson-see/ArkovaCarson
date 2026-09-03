@@ -1,7 +1,7 @@
 /**
- * Action: Verify Credential
+ * Action: Verify Anchor
  *
- * Verifies a credential by its Arkova public ID (ARK-XXXX).
+ * Verifies an anchor by its Arkova public ID (ARK-XXXX).
  */
 
 import { BASE_URL } from '../constants';
@@ -38,12 +38,12 @@ const perform = async (z: any, bundle: any) => {
   };
 };
 
-export const verifyCredentialAction = {
+export const verifyAnchorAction = {
   key: 'verify_anchor',
   noun: 'Verification',
   display: {
-    label: 'Verify Credential',
-    description: 'Verify a credential by its Arkova public ID.',
+    label: 'Verify Anchor',
+    description: 'Verify an anchor by its Arkova public ID.',
   },
   operation: {
     perform,
