@@ -1,6 +1,6 @@
 # agents.md — e2e/
 
-_Last updated: 2026-09-03 (MFA enrollment + login-challenge spec added; auth.setup.ts now injects an enforcement-date override)._
+_Last updated: 2026-09-03 (MFA enrollment + login-challenge spec added, made fully self-contained for seed-less rigs; auth.setup.ts now injects an enforcement-date override)._
 
 ## 2026-09-03 — MFA enrollment/challenge spec + `helpers/totp.ts` + `helpers/mfa.ts` (SCRUM-3167 / SCRUM-3584)
 
@@ -14,6 +14,15 @@ local Supabase reachable here; another session owns the shared local stack per
 `project_local_supabase_shared_project_id`). Run it for real at integration once both branches
 land, before citing it as merge-grade evidence.
 
+**Fully self-contained — no `SEED_USERS`, no `.auth/*.json`.** The MFA-3167 soak rig
+(`fizyjojbebyalirtjjht`) has none of the usual seed users (`demo-admin@arkova.local` /
+`demo-user@arkova.local` / `sarah@arkova.ai` are all absent there), so every scenario creates
+its own disposable user (and, where needed, its own disposable org) via the service client and
+logs in through the real `/login` UI. The spec sets its own empty
+`test.use({ storageState: { cookies: [], origins: [] } })`, so it never depends on the `setup`
+project's saved sessions either — run it under a Playwright project with `dependencies: []`
+(no `setup` project) so it doesn't pay for seed-user logins it never uses.
+
 - **`helpers/totp.ts`** — dependency-free RFC 6238 TOTP (`base32Decode`, `totp`; SHA-1, 6 or
   8 digits, 30s step; only `node:crypto`, no new npm dependency). Ported from a CTO-session
   scratchpad script proven against the RFC 6238 Appendix B vectors. `e2e/` is **not** in
@@ -24,30 +33,41 @@ land, before citing it as merge-grade evidence.
 - **`helpers/mfa.ts`** — `createDisposableUser`/`deleteDisposableUser` (same idiom as
   `withProfileSession` in `helpers/profile-session.ts`: `auth.admin.createUser()` then an
   **explicit** `profiles` upsert — never assume an `auth.users` trigger populates it),
-  `loginViaUi` (drives the real `/login` form via the `#email`/`#password` locators from
-  `auth.setup.ts` — unlike `createProfileSession`'s storageState injection, these specs need a
-  real login because that's what the AuthGuard MFA gate runs on), `setEnforceDateOverride`
-  (writes `arkova_mfa_enforce_from_override` via `page.addInitScript` so it's present before the
-  app's first script runs), `readSecretFromSettings` (reads `twofactor-secret` on `/settings`).
-- **The spec** covers: (a) an INDIVIDUAL enrolling TOTP in Settings then completing the SAME
-  factor as a login challenge (`mfa-challenge*` test ids) on the next sign-in; (b) the seeded
-  `orgAdmin` seeing the dismissible `mfa-grace-nudge` before the enforcement date (future
-  override) while still reaching the app, and the dismissal surviving a reload (sessionStorage);
-  (c) a disposable `ORG_ADMIN` past the enforcement date (past override) hitting the hard
-  `mfa-enrollment-required` block and completing it — proves the block is a real onboarding
-  step, not a dead end; (d) adding and removing a second "backup" `TwoFactorSetup` factor,
-  handling the optional AAL2 `twofactor-stepup` prompt.
-- **`auth.setup.ts`** now patches `arkova_mfa_enforce_from_override=2099-01-01T00:00:00Z` into
-  every seed user's saved `storageState` file after login (under
-  `resolveE2EFrontendOrigin()` — Playwright matches storageState by origin, same reasoning as
-  `createProfileSession`), then verifies the entry landed the same way it already verifies the
-  Supabase session token. Without this, the ~100 existing specs that reuse `.auth/*.json` would
-  start seeing the grace nudge / hard block for `orgAdmin`/`orgBAdmin` sessions once the
-  2026-09-21 default enforcement date (`src/lib/mfaPolicy.ts`) passes. A plain UI login never
-  writes this key on its own — it has to be patched into the file, not read back from the page.
+  `createDisposableOrg`/`deleteDisposableOrg` (a throwaway `organizations` row — needed because
+  `RouteGuard` sends an ORG_ADMIN with a NULL `org_id` to `/onboarding/org`, never `/dashboard`;
+  only `display_name`/`legal_name` are required on that table, everything else defaults safely
+  and `hipaa_mfa_required` defaults `false`), `loginViaUi` (drives the real `/login` form via
+  the `#email`/`#password` locators from `auth.setup.ts` — unlike `createProfileSession`'s
+  storageState injection, these specs need a real login because that's what the AuthGuard MFA
+  gate runs on), `setEnforceDateOverride` (writes `arkova_mfa_enforce_from_override` via
+  `page.addInitScript` so it's present before the app's first script runs),
+  `readSecretFromSettings` (reads `twofactor-secret` on `/settings`).
+- **The spec** covers: (a) a disposable INDIVIDUAL enrolling TOTP in Settings then completing
+  the SAME factor as a login challenge (`mfa-challenge*` test ids) on the next sign-in; (b) a
+  disposable ORG_ADMIN with its own throwaway org seeing the dismissible `mfa-grace-nudge`
+  before the enforcement date (future override) while still reaching the app, and the dismissal
+  surviving a reload (sessionStorage); (c) a disposable ORG_ADMIN past the enforcement date
+  (past override) hitting the hard `mfa-enrollment-required` block and completing it — proves
+  the block is a real onboarding step, not a dead end (this one does NOT need a disposable org:
+  `AuthGuard` runs before `RouteGuard`, so the MFA block renders regardless of `org_id`, and
+  landing on `/onboarding/org` afterward still satisfies `APP_URL_PATTERN`); (d) adding and
+  removing a second "backup" `TwoFactorSetup` factor, handling the optional AAL2
+  `twofactor-stepup` prompt.
+- **`auth.setup.ts`** (unchanged by the self-containment pass — the CI local stack still has
+  seed users) patches `arkova_mfa_enforce_from_override=2099-01-01T00:00:00Z` into every seed
+  user's saved `storageState` file after login (under `resolveE2EFrontendOrigin()` — Playwright
+  matches storageState by origin, same reasoning as `createProfileSession`), then verifies the
+  entry landed the same way it already verifies the Supabase session token. Without this, the
+  ~100 existing specs that reuse `.auth/*.json` would start seeing the grace nudge / hard block
+  for `orgAdmin`/`orgBAdmin` sessions once the 2026-09-21 default enforcement date
+  (`src/lib/mfaPolicy.ts`) passes. A plain UI login never writes this key on its own — it has to
+  be patched into the file, not read back from the page.
 - **Do not widen `AnchorUpdateSchema` or any other spec's fixtures for this feature** — MFA
-  state lives entirely in `auth.mfa_factors` / `auth.sessions` and the disposable users' own
-  `profiles` rows, never on `anchors`.
+  state lives entirely in `auth.mfa_factors` / `auth.sessions`, the disposable users' own
+  `profiles` rows, and (for scenario (b)) one disposable `organizations` row — never on
+  `anchors`.
+- **Do not assume any seed user or a `setup`-project `.auth/*.json` file exists** when adding a
+  new case to this spec — the whole point of this file is that it works on a rig with neither.
 
 ## 2026-08-29 — DocuSign Record case added to `record-detail.spec.ts` (bilateral rollout, frontend-targeted T2)
 

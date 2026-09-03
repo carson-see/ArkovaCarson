@@ -11,11 +11,26 @@
  * `arkova_mfa_enforce_from_override` localStorage override key. The CTO runs
  * this at integration once both branches land.
  *
+ * FULLY SELF-CONTAINED — no `SEED_USERS`, no `.auth/*.json` storageState.
+ * The MFA-3167 soak rig (`fizyjojbebyalirtjjht`) has none of the usual seed
+ * users (`demo-admin@arkova.local` / `demo-user@arkova.local` /
+ * `sarah@arkova.ai` are absent there), so every scenario below creates its
+ * own disposable user via the service client and logs in through the real
+ * `/login` UI (`loginViaUi`) rather than depending on seeded credentials or
+ * a saved session. `test.use({ storageState: { cookies: [], origins: [] } })`
+ * below means this spec never reads the `setup` project's `.auth/*.json`
+ * either. Run it under a Playwright project with `dependencies: []` (no
+ * `setup` project) so it doesn't even pay for seed-user logins it never
+ * uses — the soak config does this.
+ *
  * Covers:
  *  (a) an INDIVIDUAL enrolls TOTP in Settings, then completes the SAME
  *      factor as a login challenge on the next sign-in;
- *  (b) the seeded orgAdmin (no factor) sees the dismissible grace nudge
- *      before the enforcement date and still reaches the app;
+ *  (b) a disposable ORG_ADMIN (own throwaway `organizations` row — see
+ *      `createDisposableOrg`, needed because `RouteGuard` sends an
+ *      org-id-less ORG_ADMIN to `/onboarding/org` instead of `/dashboard`)
+ *      sees the dismissible grace nudge before the enforcement date and
+ *      still reaches the app;
  *  (c) a disposable ORG_ADMIN past the enforcement date hits the hard
  *      `MfaEnrollmentRequired` screen and can complete it — proves the
  *      block is a real onboarding step, not a dead end;
@@ -23,18 +38,19 @@
  *      removes it again, handling the AAL2 step-up prompt if GoTrue asks
  *      for one.
  *
- * Every test creates and tears down its own disposable user (`finally` per
- * `e2e/helpers/profile-session.ts`'s `withProfileSession` idiom) except (b),
- * which drives the existing seeded orgAdmin read-only (UI login only — never
- * touches its factors).
+ * Every test creates and tears down its own disposable user (and, for (b),
+ * its own disposable org) in a `finally` block, per
+ * `e2e/helpers/profile-session.ts`'s `withProfileSession` idiom.
  */
 
-import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import { test, expect, getServiceClient } from './fixtures';
 import { acceptDisclaimerIfVisible } from './helpers/dashboard';
 import { totp, base32Decode } from './helpers/totp';
 import {
   createDisposableUser,
   deleteDisposableUser,
+  createDisposableOrg,
+  deleteDisposableOrg,
   loginViaUi,
   setEnforceDateOverride,
   readSecretFromSettings,
@@ -122,28 +138,50 @@ test.describe('MFA enrollment and login challenge', () => {
     }
   });
 
-  test('seeded orgAdmin sees the dismissible grace nudge before the enforcement date and still reaches the app', async ({ page }) => {
-    // Far-future override: this must hold regardless of the real wall-clock
-    // date relative to the 2026-09-21 default, and independent of whatever
-    // date e2e/auth.setup.ts bakes into the shared storageState files (this
-    // spec never touches those files — it logs in fresh).
-    await setEnforceDateOverride(page, '2099-01-01T00:00:00Z');
+  test('a disposable ORG_ADMIN sees the dismissible grace nudge before the enforcement date and still reaches the app', async ({ page }) => {
+    const serviceClient = getServiceClient();
+    let userId: string | null = null;
+    let orgId: string | null = null;
 
-    await loginViaUi(page, SEED_USERS.orgAdmin.email, SEED_USERS.orgAdmin.password);
-    await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
-    await acceptDisclaimerIfVisible(page);
+    try {
+      // RouteGuard sends an ORG_ADMIN with no org_id to /onboarding/org, not
+      // /dashboard — this spec needs the real app to assert #main-content
+      // and the nudge together, so it needs a real (throwaway) org.
+      const org = await createDisposableOrg(serviceClient, { namePrefix: 'e2e-mfa-grace-org' });
+      orgId = org.orgId;
 
-    // Grace, not a block: the nudge shows AND the app content is reachable.
-    await expect(page.getByTestId('mfa-grace-nudge')).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('#main-content')).toBeVisible();
+      const user = await createDisposableUser(serviceClient, {
+        role: 'ORG_ADMIN',
+        orgId,
+        emailPrefix: 'e2e-mfa-grace',
+      });
+      userId = user.userId;
 
-    await page.getByTestId('mfa-grace-nudge-dismiss').click();
-    await expect(page.getByTestId('mfa-grace-nudge')).toBeHidden();
+      // Far-future override: this must hold regardless of the real wall-clock
+      // date relative to the 2026-09-21 default.
+      await setEnforceDateOverride(page, '2099-01-01T00:00:00Z');
 
-    // Dismissal is sessionStorage-backed (per-session, not per-visit) — it
-    // must survive a reload of the same tab.
-    await page.reload();
-    await expect(page.getByTestId('mfa-grace-nudge')).toBeHidden();
+      await loginViaUi(page, user.email, user.password);
+      await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
+      await acceptDisclaimerIfVisible(page);
+
+      // Grace, not a block: the nudge shows AND the app content is reachable.
+      await expect(page.getByTestId('mfa-grace-nudge')).toBeVisible({ timeout: 10_000 });
+      await expect(page.locator('#main-content')).toBeVisible();
+
+      await page.getByTestId('mfa-grace-nudge-dismiss').click();
+      await expect(page.getByTestId('mfa-grace-nudge')).toBeHidden();
+
+      // Dismissal is sessionStorage-backed (per-session, not per-visit) — it
+      // must survive a reload of the same tab.
+      await page.reload();
+      await expect(page.getByTestId('mfa-grace-nudge')).toBeHidden();
+    } finally {
+      // Delete the user first — profiles.id cascades on auth.users delete,
+      // so the org has no remaining referencing row by the time it's deleted.
+      await deleteDisposableUser(serviceClient, userId);
+      await deleteDisposableOrg(serviceClient, orgId);
+    }
   });
 
   test('a disposable ORG_ADMIN past the enforcement date must enroll before entering, and can', async ({ page }) => {
