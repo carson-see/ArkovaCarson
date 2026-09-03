@@ -41,15 +41,21 @@
  * this signal (accepted phase-1 trade-off, tracked toward SCRUM-3593's
  * future aal2 RLS — see AuthGuard.tsx and this folder's agents.md).
  *
- * ENROLL TIMEOUT + ORPHAN CLEANUP (PR #2637 review item 31): the enroll()
- * budget is 15s (raised from 8s — enrollment is a heavier call than a
- * login challenge, and this screen has no busy competing UI to unblock).
- * If the request loses that race but the ORIGINAL call later resolves
- * successfully anyway (the network was just slow, not actually down), the
- * resulting factor is a real, unverified row on the server that this
- * screen never showed to the user — a best-effort `unenroll()` fires so it
- * never becomes an invisible orphan (unenrolling an unverified factor
- * needs no aal2, Amendment A3).
+ * ENROLL TIMEOUT + ORPHAN CLEANUP (PR #2637 review item 31, extended R3/R20
+ * in round 2): the enroll() budget is 15s (raised from 8s — enrollment is a
+ * heavier call than a login challenge, and this screen has no busy
+ * competing UI to unblock). If the request loses that race but the
+ * ORIGINAL call later resolves successfully anyway (the network was just
+ * slow, not actually down), the resulting factor is a real, unverified row
+ * on the server that this screen never showed to the user — a best-effort
+ * `unenroll()` fires so it never becomes an invisible orphan (unenrolling
+ * an unverified factor needs no aal2, Amendment A3). R20 extends this to
+ * ANY unmount, not just the timeout race: a user who simply navigates away
+ * before `enroll()` resolves leaves the exact same kind of orphan if that
+ * original call later succeeds server-side. R3: the cleanup `unenroll()`
+ * call itself is now raced against `ORPHAN_CLEANUP_TIMEOUT_MS`, like every
+ * other supabase.auth.mfa.* call in this file — previously it was
+ * fire-and-forget with no bound at all.
  *
  * PLATFORM FAILURES DURING VERIFY, NOT JUST ENROLL (items 4/E4/EA1):
  * `challenge()`/`verify()` in `handleVerify` are now ALSO wrapped in
@@ -101,6 +107,11 @@ interface MfaEnrollmentRequiredProps {
 // the worst case.
 const ENROLL_TIMEOUT_MS = 15_000;
 const VERIFY_TIMEOUT_MS = 8_000;
+// R3 (PR #2637 review round 2): the orphan-cleanup unenroll() call gets the
+// same timeout discipline as every other supabase.auth.mfa.* call in this
+// file — it was previously fire-and-forget with no bound at all, so a hung
+// unenroll() request could linger indefinitely instead of settling.
+const ORPHAN_CLEANUP_TIMEOUT_MS = 8_000;
 
 export function MfaEnrollmentRequired({
   onEnrolled,
@@ -127,17 +138,28 @@ export function MfaEnrollmentRequired({
     let timedOut = false;
 
     async function startEnrollment() {
-      const friendlyName = `Authenticator ${new Date().toISOString().slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;
+      // R9: computed on its own line, not inlined into the template
+      // literal below — see TwoFactorSetup.tsx's defaultFriendlyName for
+      // why (npm run lint:copy's scanner treats a whole backtick template
+      // as user-facing copy).
+      const suffix = crypto.randomUUID().slice(0, 8);
+      const friendlyName = `Authenticator ${new Date().toISOString().slice(0, 10)}-${suffix}`;
       const enrollPromise = supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName });
 
       // Item 31 orphan cleanup: if THIS original call later resolves with
       // a real factor id after we've already reported unavailable (i.e.
       // it lost the race below), best-effort unenroll it — fire-and-forget,
-      // errors ignored, since there is no UI left to report them to.
+      // errors ignored, since there is no UI left to report them to. R3:
+      // the unenroll() call itself is now raced against a timeout too, like
+      // every other supabase.auth.mfa.* call in this file.
       enrollPromise
         .then((result) => {
           if (timedOut && result?.data?.id) {
-            void supabase.auth.mfa.unenroll({ factorId: result.data.id }).catch(() => {
+            void withTimeout(
+              supabase.auth.mfa.unenroll({ factorId: result.data.id }),
+              ORPHAN_CLEANUP_TIMEOUT_MS,
+              'mfa-enroll-orphan-cleanup-timeout',
+            ).catch(() => {
               /* best-effort only */
             });
           }
@@ -148,7 +170,26 @@ export function MfaEnrollmentRequired({
 
       try {
         const { data, error: enrollError } = await withTimeout(enrollPromise, ENROLL_TIMEOUT_MS, 'mfa-enroll');
-        if (unmountedRef.current) return;
+        if (unmountedRef.current) {
+          // R20 (PR #2637 review round 2): a late-resolving enroll() after
+          // ANY unmount — not just the timeout race above (e.g. the user
+          // simply navigated away before this screen finished loading) —
+          // still leaves a real, unverified factor row on the server if it
+          // succeeded. Clean it up best-effort instead of silently
+          // returning and leaving an invisible orphan; there is no UI left
+          // to show, so errors here are swallowed same as the timeout-race
+          // cleanup above.
+          if (data?.id) {
+            void withTimeout(
+              supabase.auth.mfa.unenroll({ factorId: data.id }),
+              ORPHAN_CLEANUP_TIMEOUT_MS,
+              'mfa-enroll-orphan-cleanup-unmount',
+            ).catch(() => {
+              /* best-effort only */
+            });
+          }
+          return;
+        }
 
         if (enrollError || !data) {
           // FAIL OPEN (A4-2): no allowlist — every enroll error routes here.

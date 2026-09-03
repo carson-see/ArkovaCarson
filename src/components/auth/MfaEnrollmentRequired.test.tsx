@@ -469,4 +469,92 @@ describe('MfaEnrollmentRequired', () => {
 
     expect(mockUnenroll).not.toHaveBeenCalled();
   });
+
+  it('R20: a late-resolving enroll() after an ORDINARY unmount (navigating away, not a timeout) is ALSO best-effort unenrolled — the orphan-cleanup extension is not limited to the timeout race', async () => {
+    let resolveEnroll!: (v: typeof VALID_ENROLL_RESPONSE) => void;
+    mockEnroll.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveEnroll = resolve;
+      })
+    );
+
+    const { unmount } = renderScreen();
+    await waitFor(() => {
+      expect(mockEnroll).toHaveBeenCalledTimes(1);
+    });
+
+    // The user navigates away before enroll() has resolved at all — no
+    // timeout involved.
+    unmount();
+    expect(mockUnenroll).not.toHaveBeenCalled();
+
+    // The original request finally comes back, after unmount, and
+    // succeeded server-side.
+    await act(async () => {
+      resolveEnroll(VALID_ENROLL_RESPONSE);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUnenroll).toHaveBeenCalledWith({ factorId: 'factor-new' });
+    expect(onCapabilityUnavailable).not.toHaveBeenCalled();
+    expect(onEnrolled).not.toHaveBeenCalled();
+  });
+
+  it('R20: a late-resolving enroll() after an ordinary unmount that itself FAILED (no factor id) does not call unenroll', async () => {
+    let resolveEnroll!: (v: { data: null; error: { code: string } }) => void;
+    mockEnroll.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveEnroll = resolve;
+      })
+    );
+
+    const { unmount } = renderScreen();
+    await waitFor(() => {
+      expect(mockEnroll).toHaveBeenCalledTimes(1);
+    });
+
+    unmount();
+
+    await act(async () => {
+      resolveEnroll({ data: null, error: { code: 'mfa_totp_enroll_not_enabled' } });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUnenroll).not.toHaveBeenCalled();
+  });
+
+  it('R3: the orphan-cleanup unenroll() call is itself raced against a timeout — a HUNG unenroll() settles instead of lingering forever', async () => {
+    vi.useFakeTimers();
+    let resolveEnroll!: (v: typeof VALID_ENROLL_RESPONSE) => void;
+    mockEnroll.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveEnroll = resolve;
+      })
+    );
+    // unenroll() hangs forever — without R3's withTimeout wrap this
+    // fire-and-forget promise would never settle at all.
+    mockUnenroll.mockReturnValueOnce(new Promise(() => {}));
+
+    renderScreen();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+
+    await act(async () => {
+      resolveEnroll(VALID_ENROLL_RESPONSE);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockUnenroll).toHaveBeenCalledWith({ factorId: 'factor-new' });
+
+    // The hung unenroll() call itself times out — this must not throw an
+    // unhandled rejection or hang the test.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+  });
 });

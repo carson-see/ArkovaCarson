@@ -30,8 +30,8 @@
  *   inside real `<form>`s, so Enter submits.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { TwoFactorSetup } from './TwoFactorSetup';
 import { TWO_FACTOR_SETUP_LABELS } from '@/lib/copy';
 import type { TotpFactor } from '@/lib/mfaTypes';
@@ -124,13 +124,212 @@ describe('TwoFactorSetup', () => {
     mockUnenroll.mockResolvedValue({ data: {}, error: null });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // -----------------------------------------------------------------------
+  // R1 (PR #2637 review round 2, real bug): refreshFactors() had no
+  // try/catch and no timeout at all — a rejected or hung listFactors() left
+  // the mount-time effect awaiting forever and the card stuck on its
+  // loading spinner permanently.
+  // -----------------------------------------------------------------------
+  it('R1: a REJECTED listFactors() at mount shows the load-error view with a Retry control, instead of an infinite loading spinner', async () => {
+    mockListFactors.mockRejectedValueOnce(new TypeError('network exploded'));
+
+    render(<TwoFactorSetup />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-load-error')).toHaveTextContent(
+        TWO_FACTOR_SETUP_LABELS.LOAD_ERROR_TITLE,
+      );
+    });
+    expect(screen.getByTestId('twofactor-load-retry')).toBeInTheDocument();
+    expect(screen.queryByTestId('twofactor-factors')).not.toBeInTheDocument();
+  });
+
+  it('R1: a HUNG listFactors() call (never resolves) times out to the load-error view instead of spinning forever', async () => {
+    vi.useFakeTimers();
+    mockListFactors.mockReturnValueOnce(new Promise(() => {}));
+
+    render(<TwoFactorSetup />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+
+    expect(screen.getByTestId('twofactor-load-error')).toBeInTheDocument();
+  });
+
+  it('R1: clicking Retry on the load-error view re-attempts listFactors() and can recover into the normal list view', async () => {
+    mockListFactors.mockRejectedValueOnce(new TypeError('network exploded'));
+
+    render(<TwoFactorSetup />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-load-error')).toBeInTheDocument();
+    });
+
+    mockListFactors.mockResolvedValueOnce(mkListFactorsResponse([verifiedFactor()]));
+    fireEvent.click(screen.getByTestId('twofactor-load-retry'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-factors')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('twofactor-load-error')).not.toBeInTheDocument();
+  });
+
+  // -----------------------------------------------------------------------
+  // R2 (PR #2637 review round 2): handleVerify/handleStepUpSubmit now route
+  // through the shared classifyMfaError instead of a blanket error message
+  // for every outcome — a genuine wrong-code rejection keeps the specific
+  // copy, but a PLATFORM failure (rate limit, capability code, IP mismatch)
+  // must never show the misleading "that code did not match" copy.
+  // -----------------------------------------------------------------------
+  it('R2: a platform-classified challenge() error during initial verify shows the GENERIC error, not the wrong-code copy', async () => {
+    mockListFactors.mockResolvedValue(mkListFactorsResponse([]));
+    mockEnroll.mockResolvedValueOnce({
+      data: {
+        id: 'factor-new',
+        type: 'totp',
+        totp: { qr_code: 'data:image/svg+xml;base64,test', secret: 'JBSWY3DPEHPK3PXP', uri: '' },
+      },
+      error: null,
+    });
+    mockChallenge.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'disabled', code: 'mfa_totp_verify_not_enabled' },
+    });
+
+    render(<TwoFactorSetup />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-enable')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('twofactor-enable'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-verify-code')).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByTestId('twofactor-verify-code'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByTestId('twofactor-verify-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-error')).toHaveTextContent(TWO_FACTOR_SETUP_LABELS.ERROR_GENERIC);
+    });
+    expect(screen.queryByTestId('twofactor-error')).not.toHaveTextContent(
+      TWO_FACTOR_SETUP_LABELS.ERROR_STEP_UP_FAILED,
+    );
+  });
+
+  it('R2: a wrong-code verify() error during initial verify shows the specific "code did not match" copy (behavior change: previously always the generic message)', async () => {
+    mockListFactors.mockResolvedValue(mkListFactorsResponse([]));
+    mockEnroll.mockResolvedValueOnce({
+      data: {
+        id: 'factor-new',
+        type: 'totp',
+        totp: { qr_code: 'data:image/svg+xml;base64,test', secret: 'JBSWY3DPEHPK3PXP', uri: '' },
+      },
+      error: null,
+    });
+    mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
+    mockVerify.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'Invalid code', code: 'mfa_verification_failed' },
+    });
+
+    render(<TwoFactorSetup />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-enable')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('twofactor-enable'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-verify-code')).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByTestId('twofactor-verify-code'), { target: { value: '000000' } });
+    fireEvent.click(screen.getByTestId('twofactor-verify-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-error')).toHaveTextContent(
+        TWO_FACTOR_SETUP_LABELS.ERROR_STEP_UP_FAILED,
+      );
+    });
+  });
+
+  it('R2: a platform-classified challengeAndVerify() error during step-up shows the GENERIC error, not "that code did not match"', async () => {
+    mockListFactors.mockResolvedValue(mkListFactorsResponse([verifiedFactor()]));
+    mockEnroll.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'AAL2 required', code: 'insufficient_aal' },
+    });
+    mockChallengeAndVerify.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'rate limited', code: 'over_request_rate_limit' },
+    });
+
+    render(<TwoFactorSetup />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-add-backup')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('twofactor-add-backup'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-stepup')).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByTestId('twofactor-stepup-code'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByTestId('twofactor-stepup-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('twofactor-error')).toHaveTextContent(TWO_FACTOR_SETUP_LABELS.ERROR_GENERIC);
+    });
+    expect(screen.queryByTestId('twofactor-error')).not.toHaveTextContent(
+      TWO_FACTOR_SETUP_LABELS.ERROR_STEP_UP_FAILED,
+    );
+  });
+
+  it('R2: a HUNG challenge() call during initial verify times out to the generic error instead of spinning forever', async () => {
+    vi.useFakeTimers();
+    mockListFactors.mockResolvedValue(mkListFactorsResponse([]));
+    mockEnroll.mockResolvedValueOnce({
+      data: {
+        id: 'factor-new',
+        type: 'totp',
+        totp: { qr_code: 'data:image/svg+xml;base64,test', secret: 'JBSWY3DPEHPK3PXP', uri: '' },
+      },
+      error: null,
+    });
+    mockChallenge.mockReturnValueOnce(new Promise(() => {}));
+
+    render(<TwoFactorSetup />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.click(screen.getByTestId('twofactor-enable'));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    fireEvent.change(screen.getByTestId('twofactor-verify-code'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByTestId('twofactor-verify-submit'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+
+    expect(screen.getByTestId('twofactor-error')).toHaveTextContent(TWO_FACTOR_SETUP_LABELS.ERROR_GENERIC);
+  });
+
   it('lists both verified and unverified factors with status badges (E1: sourced from data.all, not the verified-only data.totp)', async () => {
     mockListFactors.mockResolvedValue(mkListFactorsResponse([verifiedFactor(), unverifiedFactor()]));
 
     render(<TwoFactorSetup />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('twofactor-factor-list')).toBeInTheDocument();
+      expect(screen.getByTestId('twofactor-factors')).toBeInTheDocument();
     });
 
     const verifiedRow = screen.getByTestId('twofactor-factor-factor-verified');
