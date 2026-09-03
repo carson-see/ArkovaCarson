@@ -26,19 +26,32 @@ import { db } from '../../utils/db.js';
 
 const PARENT = '22222222-2222-4222-8222-222222222222';
 
-/** organizations.max_sub_orgs + a COUNT of approved children. */
+/**
+ * organizations.max_sub_orgs + the approved children.
+ *
+ * Discriminates on the COLUMN LIST, not on a `{ count }` options object: the
+ * cap no longer asks PostgREST for an exact count (R0-8 / SCRUM-1254), it
+ * selects the child ids and takes `.length`. `select('id')` is the child
+ * lookup; anything else is the max_sub_orgs read.
+ */
 function mockCap(opts: { max?: number | null; approved?: number; countError?: boolean }) {
   (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
     if (table === 'organizations') {
       const chain = {
-        select: (_cols: string, o?: { count?: string; head?: boolean }) =>
-          o?.count
+        select: (cols: string) =>
+          cols === 'id'
             ? {
                 eq: () => ({
                   eq: () => Promise.resolve(
                     opts.countError
-                      ? { count: null, error: { message: 'boom' } }
-                      : { count: opts.approved ?? 0, error: null },
+                      ? { data: null, error: { message: 'boom' } }
+                      : {
+                          data: Array.from(
+                            { length: opts.approved ?? 0 },
+                            (_unused, i) => ({ id: `child-${i}` }),
+                          ),
+                          error: null,
+                        },
                   ),
                 }),
               }

@@ -519,4 +519,49 @@ BEGIN
 END;
 $function$;
 
+-- ---------------------------------------------------------------------------
+-- EXECUTE grants — required, not decorative.
+--
+-- Every CREATE OR REPLACE above re-defines a SECURITY DEFINER function. On a
+-- database where the function already exists this is a REPLACE and the existing
+-- ACL survives; on a FRESH replay (`supabase db reset`, every isolated soak rig,
+-- a rebuilt staging project) it is a CREATE, and Supabase's ALTER DEFAULT
+-- PRIVILEGES hands anon and authenticated EXECUTE at CREATE time. Without the
+-- revokes below, this migration silently re-opens on every new environment what
+-- 0418 closed — four SECURITY DEFINER functions that move credits and suspend
+-- organizations, callable by anon.
+--
+-- REVOKE ... FROM PUBLIC alone is NOT sufficient: anon and authenticated are
+-- granted DIRECTLY, so they must be named. Prod ACL for these is service_role
+-- only (verified 2026-09-02 on vzwyaatejekddvltxyye:
+-- `postgres=X/postgres | service_role=X/postgres`) and this block reproduces it.
+--
+-- ROLLBACK: these statements are idempotent and match the pre-existing prod
+-- ACL, so the rollback in this file's header needs no additional step.
+-- ---------------------------------------------------------------------------
+
+REVOKE ALL ON FUNCTION public.allocate_credits_to_sub_org(uuid, uuid, integer, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.allocate_credits_to_sub_org(uuid, uuid, integer, text) TO service_role;
+
+REVOKE ALL ON FUNCTION public.allocate_credits_to_sub_org(uuid, uuid, integer, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.allocate_credits_to_sub_org(uuid, uuid, integer, text, uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_parent_credit_rollup(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_parent_credit_rollup(uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.get_parent_credit_rollup(uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_parent_credit_rollup(uuid, uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.suspend_suborg(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.suspend_suborg(uuid, uuid, text) TO service_role;
+
+REVOKE ALL ON FUNCTION public.suspend_suborg(uuid, uuid, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.suspend_suborg(uuid, uuid, text, uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.unsuspend_suborg(uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.unsuspend_suborg(uuid, uuid) TO service_role;
+
+REVOKE ALL ON FUNCTION public.unsuspend_suborg(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.unsuspend_suborg(uuid, uuid, uuid) TO service_role;
+
 COMMIT;

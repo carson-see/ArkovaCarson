@@ -91,7 +91,7 @@ export interface BuilderState {
   /** Alias for `error` matching the compliance-audit field name. */
   selectError?: unknown;
   /**
-   * Row count for `.select(cols, { count: 'exact', head: true })` chains
+   * Row count for head-only COUNT selects (PostgREST exact-count chains)
    * (SCRUM-3863 D3 sub-org cap). Defaults to 0 so a builder that never opted
    * in still answers a count query rather than failing closed.
    */
@@ -126,7 +126,7 @@ export function makeBuilder(state: BuilderState = {}): Builder {
       builder,
     );
 
-  // A COUNT select (`select(cols, { count: 'exact', head: true })`) terminates
+  // A head-only COUNT select terminates
   // on its last `.eq()`, not on a named terminal, so it gets its own small
   // thenable chain. Scoped deliberately: making `.eq()` itself awaitable for
   // every builder broke unrelated create/approve chains.

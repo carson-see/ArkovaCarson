@@ -184,18 +184,30 @@ export async function resolveSubOrgCap(
 
   const limit: number = org?.max_sub_orgs ?? DEFAULT_MAX_SUB_ORGS;
 
-  const { count, error } = await database
+  // Deliberately NOT a PostgREST head-only exact-count select (R0-8 / SCRUM-1254):
+  // PostgREST's exact count is the pattern that produced 60 s statement
+  // timeouts on hot tables, and `organizations` is one of them. This filter is
+  // an indexed equality on `parent_org_id` returning at most a handful of rows
+  // — the cap is 20 — so selecting the ids and taking `.length` is both exact
+  // and cheaper than asking the planner for a count.
+  //
+  // It stays UNBOUNDED on purpose. `current` is surfaced in the API response
+  // below, and a `.limit(cap)` would silently under-report whenever an admin
+  // lowers `max_sub_orgs` beneath the number of children already approved —
+  // exactly the case an operator needs to see accurately.
+  const { data: children, error } = await database
     .from('organizations')
-    .select('id', { count: 'exact', head: true })
+    .select('id')
     .eq('parent_org_id', parentOrgId)
     .eq('parent_approval_status', 'APPROVED');
 
-  if (error || typeof count !== 'number') {
+  if (error || !Array.isArray(children)) {
     logger.error({ err: error?.message, parentOrgId }, 'suborg_cap_count_failed');
     return { ok: false, limit, current: -1, unavailable: true };
   }
 
-  return { ok: count < limit, limit, current: count };
+  const current = children.length;
+  return { ok: current < limit, limit, current };
 }
 
 /** Check if user is admin/owner of their org */

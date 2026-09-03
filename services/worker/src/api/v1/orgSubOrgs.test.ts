@@ -38,6 +38,28 @@ import { buildInvitationEmail } from '../../email/templates.js';
 import { buildApp as buildAppFromRouter, makeBuilder } from './__testHelpers.js';
 
 /**
+ * Seed for the sub-org cap's child lookup.
+ *
+ * The cap no longer asks PostgREST for an exact count (R0-8 / SCRUM-1254): it
+ * does `.select('id').eq(...).eq(...)` and awaits that chain directly. With no
+ * `{ count }` option, `makeBuilder`'s countChain never engages and awaiting the
+ * plain builder yields the builder itself — which reads as "unavailable" and
+ * fails the cap CLOSED. This gives the chain a terminal that resolves to N
+ * approved children. Deliberately local rather than making every builder's
+ * `.eq()` awaitable, which the note in makeBuilder records as having broken
+ * unrelated create/approve chains.
+ */
+function capChildrenBuilder(approved: number) {
+  const rows = Array.from({ length: approved }, (_unused, i) => ({ id: `child-${i}` }));
+  const chain: Record<string, unknown> = {};
+  chain.eq = () => chain;
+  chain.then = (resolve: (v: unknown) => unknown) =>
+    Promise.resolve({ data: rows, error: null }).then(resolve);
+  return { select: () => chain };
+}
+
+
+/**
  * orgSubOrgs.ts reads `req.userId` (untyped cast at line 27), not the typed
  * `req.authUserId` convention used by most v1 routers. Inject the cast field
  * here rather than widening the global Request type for one router.
@@ -79,7 +101,7 @@ function setupActionRouteDb(options: {
   // adds a sub-org, so it does not consult the cap and needs no extra builders.
   const capBuilders = options.childStatus === 'PENDING'
     ? [makeBuilder({ maybeSingleData: { max_sub_orgs: options.maxSubOrgs ?? null } }),
-       makeBuilder({ count: options.approvedCount ?? 0 })]
+       capChildrenBuilder(options.approvedCount ?? 0) as unknown as ReturnType<typeof makeBuilder>]
     : [];
   const orgBuilders = [childFetch, ...capBuilders, statusUpdate];
 
@@ -317,7 +339,7 @@ describe('POST /api/v1/org/sub-orgs/create (HAKI-REQ-01)', () => {
     // calls. This list is a QUEUE, so they must be seeded in call order or the
     // child-create shifts the wrong builder and returns no row.
     const capLimit = makeBuilder({ maybeSingleData: { max_sub_orgs: null } });
-    const capCount = makeBuilder({ count: 0 });
+    const capCount = capChildrenBuilder(0) as unknown as ReturnType<typeof makeBuilder>;
     const orgBuilders = [parentOrg, capLimit, capCount, childCreate, cleanupDelete];
     const orgMemberBuilders = [membership, memberInsert];
 
