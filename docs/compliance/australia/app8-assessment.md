@@ -67,7 +67,7 @@ This assessment documents the reasonable steps Arkova has taken to ensure compli
 | Safeguard | Description |
 |-----------|-------------|
 | **Security training** | Annual security awareness training for all staff |
-| **Access controls** | Principle of least privilege; MFA required for production systems |
+| **Access controls** | Principle of least privilege; MFA available (opt-in) on the Arkova application — administrator enforcement in progress (SCRUM-3167), NOT yet enforced. Staff access to cloud infrastructure consoles (GitHub/GCP/Supabase/Vercel/Cloudflare) is a separate, SSO-backed control (`docs/compliance/security-training.md`) |
 | **Incident response** | Documented breach notification procedure (see operational runbook Section 12-14) |
 | **Regular assessment** | This APP 8 assessment reviewed annually or upon material change |
 
@@ -115,7 +115,7 @@ Based on this assessment, Arkova has taken reasonable steps to ensure that Austr
 
 1. Client-side processing architecture (documents never leave user's device)
 2. Standard Contractual Clauses with Australia-specific annex
-3. Technical security measures (encryption, RLS, MFA)
+3. Technical security measures (encryption, RLS, MFA available opt-in with administrator enforcement in progress under SCRUM-3167)
 4. Ongoing monitoring and annual reassessment
 
 provides adequate protection for the cross-border disclosure of Australian personal information.

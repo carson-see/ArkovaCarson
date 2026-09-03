@@ -8,7 +8,7 @@
  *   - a proof packet (canonical bundle shape: fingerprint, merkle_root,
  *     merkle_proof[{hash,position}], tx_id, block_height, block_timestamp,
  *     merkle_index, leaf_count, op_return_payload = ARKV‖root no version byte),
- *   - the EXACT independent-node REST responses `@arkova/verifier`'s
+ *   - the EXACT independent-node REST responses `arkova-verifier`'s
  *     confirmInclusion requests (`/tx/:txid`, `/block-height/:h`,
  *     `/block/:hash/header`, `/tx/:txid/merkle-proof`), built with REAL
  *     double-SHA256 headers + inclusion proofs so the on-chain path is exercised

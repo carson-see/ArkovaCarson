@@ -62,7 +62,7 @@ Two rules out of it:
 This branch also had **no test** — the only branch in the module without one, and the one that shipped the defect. Both are covered now.
 | `drive-watch-bootstrap.ts` | **DRIVE-02 (SCRUM-2367)**: folder-watch bootstrap → persists initial page token, channel id/expiry, owner scope (my_drive vs shared_drive), status, `last_renewal_error` into `drive_watch_state` (mig 0351) via `upsert_drive_watch_state`. `persist()` forwards `p_last_renewal_error` — the RPC MUST declare that param (fixed in 0351: `p_last_renewal_error text DEFAULT NULL`, written on INSERT + ON CONFLICT UPDATE). Folder-permission failures → `status='permission_denied'` (no throw); folder id mismatch → `failed`. `folder_path`/`owner_email` are sensitive — persisted to the RLS row ONLY, never logged. |
 | `drive-change-dedupe.ts` | **DRIVE-03 (SCRUM-2368)**: pure change classifier + revision dedupe key + bounded/PII-scrubbed audit projection. Ignores removed/trashed/unsupported-MIME; each `(file_id, revision)` queues once (backed by `drive_revision_ledger` UNIQUE). Companion to `drive-changes-processor.ts`. |
-| `drive-channel-renewal.ts` | **DRIVE-06 (SCRUM-2371)**: pure channel-renewal sweep — renews before expiry, alerts + marks `degraded` on failure (token-revoked + renewal-failed paths), recovers expired channels idempotently, STOPS a watch whose org lost entitlement. **NO cron** — cadence is a HANDOFF to Lane 2's Cloud Scheduler → HTTP `/jobs/*` (node-cron does not fire on throttled Cloud Run). Status vocabulary the sweep + bootstrap write MUST all be permitted by the 0351 `drive_watch_state_status_check` CHECK: `active \| permission_denied \| expired \| stopped \| degraded \| failed` (`degraded` added 2026-07-01 — it was previously omitted and the first renewal failure would have violated the constraint). `drive-watch-state-rpc.test.ts` is the SQL-contract guard that keeps code↔CHECK vocabulary from drifting (mock-DB renewal tests can't catch a real constraint mismatch). |
+| `drive-channel-renewal.ts` | **DRIVE-06 (SCRUM-2371)**: pure channel-renewal sweep — renews before expiry, alerts + marks `degraded` on failure (token-revoked + renewal-failed paths), recovers expired channels idempotently, STOPS a watch whose org lost entitlement. **NO cron** — cadence is a HANDOFF to Lane 2's Cloud Scheduler → HTTP `/jobs/*` (the trigger with retries and an attempt deadline; SCRUM-3384). Status vocabulary the sweep + bootstrap write MUST all be permitted by the 0351 `drive_watch_state_status_check` CHECK: `active \| permission_denied \| expired \| stopped \| degraded \| failed` (`degraded` added 2026-07-01 — it was previously omitted and the first renewal failure would have violated the constraint). `drive-watch-state-rpc.test.ts` is the SQL-contract guard that keeps code↔CHECK vocabulary from drifting (mock-DB renewal tests can't catch a real constraint mismatch). |
 
 ## Do / Don't Rules
 
@@ -134,6 +134,25 @@ So (2) can never run until (1) has happened. The callback used to type its local
 
 The write is deliberately **conditional** (`...(subscription ? { last_page_token } : {})`), not `?? null`. This is an upsert: unconditionally writing null on a *failed re-watch* would wipe a working org's cursor, and nothing else can re-seed it, so every change from then on would be skipped silently. Omitting the column preserves the existing cursor. Both behaviours are pinned by tests in `drive-oauth.test.ts`.
 
+## 2026-08-15 — FD-15: `(org_id, integration_id)` are shape-checked, not RFC-checked
+
+`drive-changes-runner.ts`'s three adapter-boundary schemas, `drive-artifact-producer.ts`'s job
+payload, and `docusign.ts`'s envelope-completed payload all validate `org_id` / `integration_id` /
+`rule_event_id`. Every one of those values is read out of `org_integrations` (or returned by the
+`enqueue_rule_event` RPC) before it reaches these schemas — none is Drive- or DocuSign-supplied.
+
+Zod 4.x's `z.string().uuid()` is strict RFC 9562 and rejects UUIDs that Postgres `uuid` happily
+stores, so validating our own stored ids more harshly than the column storing them can only
+false-reject. These now use `dbUuid()` from `../../utils/db-row-validation.ts`. See
+BUG-2026-08-12-003 / FD-15.
+
+Two boundaries in this folder deliberately did NOT move:
+
+- **`schemas.ts` `MicrosoftGraphChange.tenantId` stays strict** — it is parsed straight off the
+  Microsoft Graph webhook notification body (`api/v1/webhooks/microsoft-graph.ts`). That is external
+  input; strict validation is correct there.
+- **Drive-supplied ids were never UUID-validated and still are not.** File / revision / parent ids
+  are `z.string().min(1)` because Drive ids are not UUIDs — unchanged by this work.
 ## 2026-08-15 FD-D1 — `drive-connect-eligibility.ts` no longer admits individual scope
 
 **There is exactly one allowed shape now: `{ allowed: true, scope: 'org', orgId }`.** The

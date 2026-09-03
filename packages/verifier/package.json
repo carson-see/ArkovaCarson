@@ -1,5 +1,5 @@
 {
-  "name": "@arkova/verifier",
+  "name": "arkova-verifier",
   "version": "0.1.0",
   "description": "Standalone, zero-Arkova-dependency Bitcoin anchor verifier — confirms on-chain inclusion of an Arkova anchor against an INDEPENDENT Esplora/Blockstream node",
   "main": "dist/index.js",
@@ -12,7 +12,7 @@
       "require": "./dist/index.js"
     }
   },
-  "files": ["dist", "LICENSE"],
+  "files": ["dist", "README.md", "LICENSE"],
   "sideEffects": false,
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
@@ -22,6 +22,11 @@
   },
   "keywords": ["arkova", "verification", "bitcoin", "anchor", "esplora", "independent"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/carson-see/ArkovaCarson",
+    "directory": "packages/verifier"
+  },
   "engines": {
     "node": ">=18"
   },

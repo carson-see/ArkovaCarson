@@ -2,6 +2,45 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-08-23 — `apiIpShadowGuard.ts`: the broad `/api` IP guard and its two §1.10 carve-outs
+
+New module. `index.ts` used to build this limiter inline, which made its skip predicate impossible to
+test without booting the server; it now lives here with the predicate split out, the same shape
+`routes/admin-paths.ts` uses to split `isAdminRouterPath` out of `adminRouter`.
+
+**What it is.** A blunt 60/min-per-IP backstop for anonymous `/api/*` traffic. It is NOT the limiter
+that implements any Constitution §1.10 tier — every tier has its own correctly-keyed limiter further
+down the chain. Treat it as defense-in-depth, and when it starts binding a documented tier, that is
+the bug.
+
+**It is MOUNTED twice, and charged once.** `index.ts` mounts the same instance at `/api` (ahead of
+badgeRouter) and prefix-less (ahead of didWebRouter + proofKeysRouter, which serve `/.well-known/*`
+and `/orgs/*`). Both mounts are load-bearing; `rateLimit()` charges a request at most once per
+limiter INSTANCE (`utils/rateLimit.ts`, COUNTED_LIMITERS, RC #2269), which is what makes that safe.
+Do not delete a mount, and do not add a third.
+
+**Carve-out 1 — keyed `/api/v1/*` (F-2).** Requests presenting `Bearer ak_…` / `X-API-Key: ak_…` skip
+it; `apiV1Router`'s keyedRateLimiter (1,000/min/key) owns them.
+
+**Carve-out 2 — anonymous public verification (SCRUM-2603).** §1.10 gives anonymous callers 100
+req/min/IP on the public verification API. They were getting ~30: this guard bound first, and before
+SCRUM-3418 it wrote the same bare-per-IP bucket as `apiV1Router`'s 100/min `anonRateLimiter`, so one
+verify request charged that entry twice and the 60-cap guard refused at request #31.
+`/api/v1/verify` now skips it and is capped by `publicVerifyAnonLimiter` (`v1-verify-anon`, 100/min,
+keyed callers skipped) instead. Measured on the real limiter in `apiIpShadowGuard.test.ts`.
+
+**Why `publicVerifyAnonLimiter` is mounted in `index.ts` and not left to `apiV1Router`'s
+`anonRateLimiter`** — which enforces the same 100/min: the v1 router runs `verificationApiGate()`
+BEFORE its rate limiting, so with `ENABLE_VERIFICATION_API` off a verify request 503s without ever
+reaching that limiter. Skipping the IP guard while relying on it would leave the dark-API path
+uncapped. The two limiters cost one count each against separate buckets and share a cap, so anonymous
+verify binds at 100/min whether the surface is lit or dark. A test pins the dark shape.
+
+**If you widen `isPublicVerifyPath`, re-read that paragraph first.** The carve-out's safety rests on
+the skipped path having its own limiter above the feature gate. It matches on the path with the query
+string stripped and requires `/` or end-of-path after the prefix, so `/api/v1/verify-anchor` does not
+inherit it.
+
 ## 2026-08-12 — `apiKeyAuth` refuses `revoked_at`-stamped keys (FD-P7 companion)
 
 The middleware now selects `revoked_at` and returns 401 `api_key_revoked` when it is non-null even

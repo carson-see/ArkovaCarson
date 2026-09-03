@@ -32,6 +32,7 @@
  * §-credit: the charge is `debitAndEnqueueAnchor` AT SECURING and nowhere else.
  */
 import { z } from 'zod';
+import { dbUuid } from '../utils/db-row-validation.js';
 import { db as defaultDb } from '../utils/db.js';
 import { logger as defaultLogger } from '../utils/logger.js';
 import { processBatchAnchors, type BatchAnchorResult } from './batch-anchor.js';
@@ -72,8 +73,8 @@ export const AnchorInsertPayload = z
   .object({
     fingerprint: z.string().regex(/^[0-9a-f]{64}$/, 'fingerprint must be 64-hex sha256'),
     status: z.literal('PENDING'),
-    org_id: z.string().uuid(),
-    user_id: z.string().uuid(),
+    org_id: dbUuid('org_id'),
+    user_id: dbUuid('user_id'),
     filename: z.string().min(1).max(255),
     credential_type: z.literal('CONTRACT_POSTSIGNING'),
     metadata: z.record(z.string(), z.unknown()),
@@ -1342,8 +1343,10 @@ export async function defaultListDrainableOrgIds(
 /**
  * Cron entrypoint (QUEUE-06). Cloud Scheduler → `POST /jobs/drain-connector-artifacts`.
  *
- * In-process node-cron is dormant under Cloud Run CPU throttling (proven by the
- * PROOF-03 soak), so prod drives this via HTTP. No-ops (`skipped:true`) when the
+ * Prod drives this via HTTP because Cloud Scheduler is the trigger with retries
+ * and an attempt deadline; the in-process registration in routes/scheduled.ts is
+ * a backup that also fires on every warm prod instance (SCRUM-3384), which the
+ * per-row compare-and-set claim makes safe. No-ops (`skipped:true`) when the
  * flag is off. Per-org drains are isolated: one org throwing alerts (scope=cycle)
  * and the remaining orgs still drain — no silent drop.
  */

@@ -66,7 +66,10 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 | `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation | Stable |
 | `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) | Stable |
 | `anchor.expired` | Anchor's `expires_at` timestamp passes | Stable |
+| `anchor.superseded` | A `SECURED` anchor is atomically replaced by a re-issued child (`SECURED` → `SUPERSEDED`), via `POST /api/anchor/:id/supersede`. Offered as a listed subscription option since SCRUM-3538; the CRUD allowlist has accepted it since SCRUM-2937. | Stable |
 | `anchor.batch_secured` | Aggregate event for the merkle-batch path (fires once per merkle TX; per-anchor `anchor.secured` events still fan out alongside). Subscribable since SCRUM-1794. | Stable |
+
+`anchor.superseded` payload `data`: `public_id`, `status` (always `SUPERSEDED`), `chain_tx_id`, `chain_block_height`, `superseded_at`, plus optional `superseded_by_public_id` (the replacement record's public id — `null` when it is not resolvable at dispatch time), `supersession_reason` (free text, max 500 chars), and `org_public_id`. Follow `superseded_by_public_id` to walk the version chain without polling.
 
 ### Credential Lifecycle (SCRUM-1743)
 

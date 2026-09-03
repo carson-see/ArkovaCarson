@@ -62,8 +62,12 @@ const script = readFileSync(SCRIPT, 'utf8');
 const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
+// Byte-pin over the whole file. scripts/staging/agents.md is pinned by TWO test
+// files: this whole-file hash + heading count, and batch-drain-admission-adapter
+// .test.ts's prefix/per-section hashes and ordered heading list. Any edit here
+// must recompute BOTH, exactly the way each test computes them.
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  'de9940120fafc610ad2b416cffed3caf2fc395eaaace756c3a9fddc83f35e11d';
+  '17474300b8e1748f5f3ceee0088229b400beb4826cdfbca3cdea5c08c4ff427e';
 
 // A wedged synchronous child must be killed with a diagnosable ETIMEDOUT
 // instead of hanging the suite — but this deadline is a HANG detector, not a
@@ -88,10 +92,10 @@ const CHILD_TIMEOUT_EXIT_CODE = 124;
 vi.setConfig({ testTimeout: 3 * PROVISION_CHILD_TIMEOUT_MS + 30_000 });
 
 describe('scripts/staging/agents.md — exact cross-lane semantic union', () => {
-  it('retains the complete 16-section body shared by both current lane heads', () => {
+  it('retains the complete 17-section body shared by both current lane heads', () => {
     const headings = stagingAgents.match(/^## .+$/gm) ?? [];
-    expect(headings).toHaveLength(16);
-    expect(new Set(headings).size).toBe(16);
+    expect(headings).toHaveLength(17);
+    expect(new Set(headings).size).toBe(17);
     expect(createHash('sha256').update(stagingAgents).digest('hex')).toBe(
       CANONICAL_CROSS_LANE_AGENTS_SHA256,
     );
@@ -406,6 +410,15 @@ describe('provision-isolated-rig.sh — safety model preserved under the new ove
  * side effect is a stub.
  */
 
+/**
+ * The non-firing hold schedule every Scheduler job is created on, before the
+ * immediate pause. Cloud Scheduler CALENDAR-VALIDATES day-of-month, so the
+ * previous `0 0 31 2 *` was rejected `INVALID_ARGUMENT` by the live API and
+ * Step 4 could not execute at all (2026-08-30 stand-up finding 2). Feb 29 is a
+ * real date the validator accepts and cannot arrive between create and pause.
+ */
+const SCHEDULER_HOLD_SCHEDULE = '0 0 29 2 *';
+
 const STUB_CRON_SECRET = 'stub-cron-secret-value-8f3a17';
 const STUB_SERVICE_URL = 'https://arkova-worker-stub.example.run.app';
 const STUB_REVISION = 'arkova-worker-stub-00001-abc';
@@ -422,11 +435,25 @@ interface ApplyRunResult extends SyncRunResult {
   artifactDir: string;
   admissionArtifactPath: string;
   schedulerStates: Record<string, string>;
+  /** Exact bytes the run piped into each Secret Manager secret, by secret name. */
+  secretPayloads: Record<string, string>;
 }
 
 interface ApplyRunOptions {
   imageRef?: string | null;
   projectRef?: string;
+  /**
+   * Statuses `supabase projects list` reports on successive polls. The last
+   * entry repeats forever, so `['COMING_UP', 'ACTIVE_HEALTHY']` models the real
+   * post-create window and `['COMING_UP']` models a project that never comes up.
+   */
+  projectStatusSequence?: string[];
+  /** Consecutive `supabase link` invocations that fail before one succeeds. */
+  linkFailures?: number;
+  /** Consecutive `supabase db push` invocations that fail before one succeeds. */
+  dbPushFailures?: number;
+  /** Secret names whose `gcloud secrets describe` must report absent. */
+  missingSecrets?: string[];
   deployedImageRef?: string;
   resolvedImageDigest?: string;
   sourceHead?: string | null;
@@ -472,6 +499,11 @@ function applyRunStubbed(
   const updateCountFile = join(stubDir, 'scheduler-update-count');
   const resumeCountFile = join(stubDir, 'scheduler-resume-count');
   const enabledDescribeCountFile = join(stubDir, 'scheduler-enabled-describe-count');
+  const projectPollCountFile = join(stubDir, 'project-poll-count');
+  const linkCountFile = join(stubDir, 'link-count');
+  const dbPushCountFile = join(stubDir, 'db-push-count');
+  const projectStatusSequence = options.projectStatusSequence ?? ['ACTIVE_HEALTHY'];
+  const missingSecrets = options.missingSecrets ?? [];
   const finalSchedulerJobSuffix = profile === 'gemini'
     ? 'classify-proof-backcatalog'
     : options.rigId === 'RIG-B1'
@@ -518,6 +550,8 @@ function applyRunStubbed(
     'STRIPE_WEBHOOK_SECRET',
     'API_KEY_HMAC_SECRET',
     'CRON_SECRET',
+    // config.ts superRefine fails production boot without it (2026-08-30 finding 1).
+    'IP_HASH_PEPPER',
     ...(profile === 'chain'
       ? ['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']
       : []),
@@ -563,9 +597,17 @@ printf '%s\\n' "$*" >> "${logFile}"
 printf 'gcloud %s\\n' "$*" >> "${orderLogFile}"
 # Real gcloud always consumes stdin for --data-file=-; a stub that exits
 # without reading leaves the provisioner's printf writer racing a closed
-# pipe (SIGPIPE rc=141 under pipefail on loaded runners).
+# pipe (SIGPIPE rc=141 under pipefail on loaded runners). The payload is
+# captured (still fully drained) so tests can assert on the exact bytes
+# written to Secret Manager without those bytes ever being printed.
 if [[ "$*" == *"--data-file=-"* ]]; then
-  cat >/dev/null
+  mkdir -p '${join(stubDir, 'secret-payloads')}'
+  if [[ "$1" == "secrets" && ( "$2" == "create" || "$2" == "versions" ) ]]; then
+    if [[ "$2" == "create" ]]; then payload_secret="$3"; else payload_secret="$4"; fi
+    cat > '${join(stubDir, 'secret-payloads')}/'"$payload_secret"
+  else
+    cat >/dev/null
+  fi
 fi
 if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   if [[ "$*" == *"status.latestReadyRevisionName"* ]]; then
@@ -581,6 +623,15 @@ if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
 fi
 if [[ "$1" == "artifacts" && "$2" == "docker" && "$3" == "images" && "$4" == "describe" ]]; then
   echo 'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${options.sourceImageDigest ?? STUB_IMAGE_DIGEST}'
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "describe" ]]; then
+  for absent in ${missingSecrets.map((name) => `'${name}'`).join(' ') || "''"}; do
+    if [[ -n "$absent" && "$3" == "$absent" ]]; then
+      echo "NOT_FOUND: Secret [$3] not found." >&2
+      exit 1
+    fi
+  done
   exit 0
 fi
 if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
@@ -651,6 +702,43 @@ if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
   echo '{"id":"${options.projectRef ?? 'abcdefghijklmnopqrst'}"}'
   exit 0
 fi
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "list" ]]; then
+  # Successive polls walk the declared status sequence; the last entry repeats.
+  poll_statuses=(${projectStatusSequence.map((status) => `'${status}'`).join(' ')})
+  poll_count=0
+  if [[ -f '${projectPollCountFile}' ]]; then poll_count="$(cat '${projectPollCountFile}')"; fi
+  poll_count=$((poll_count + 1))
+  printf '%s' "$poll_count" > '${projectPollCountFile}'
+  status_index=$((poll_count - 1))
+  if (( status_index >= \${#poll_statuses[@]} )); then
+    status_index=$(( \${#poll_statuses[@]} - 1 ))
+  fi
+  printf '[{"id":"%s","name":"stub","status":"%s"}]\\n' \\
+    '${options.projectRef ?? 'abcdefghijklmnopqrst'}' "\${poll_statuses[$status_index]}"
+  exit 0
+fi
+if [[ "$1" == "supabase" && "$2" == "link" ]]; then
+  link_count=0
+  if [[ -f '${linkCountFile}' ]]; then link_count="$(cat '${linkCountFile}')"; fi
+  link_count=$((link_count + 1))
+  printf '%s' "$link_count" > '${linkCountFile}'
+  if (( link_count <= ${options.linkFailures ?? 0} )); then
+    echo 'failed to connect to postgres: LegacyDbConfigIpv6Error' >&2
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "$1" == "supabase" && "$2" == "db" && "$3" == "push" ]]; then
+  push_count=0
+  if [[ -f '${dbPushCountFile}' ]]; then push_count="$(cat '${dbPushCountFile}')"; fi
+  push_count=$((push_count + 1))
+  printf '%s' "$push_count" > '${dbPushCountFile}'
+  if (( push_count <= ${options.dbPushFailures ?? 0} )); then
+    echo 'failed SASL auth: Tenant or user not found' >&2
+    exit 1
+  fi
+  exit 0
+fi
 if [[ "$1" == "supabase" ]]; then
   exit 0
 fi
@@ -685,6 +773,11 @@ exit 64
       'L2-S2a-FIX Step-4 Scheduler command validity under --apply (stubbed)',
     STAGING_RIG_ID: options.rigId === null ? '' : (options.rigId ?? `rig-${name}`),
     STAGING_LEASE_ID: options.leaseId === null ? '' : (options.leaseId ?? `lease-${name}`),
+    // The post-create readiness poll and the link/push retries are real waits in
+    // production; under stubs they must not spend wall-clock. Overridable via
+    // options.env for the cases that assert the bounded-attempt behavior itself.
+    STAGING_PROJECT_READY_POLL_SECONDS: '0',
+    STAGING_LINK_RETRY_SECONDS: '0',
   };
   if (options.useUntrackedDriver) {
     const untrackedDriver = join(stubDir, 'untracked-driver.ts');
@@ -740,6 +833,13 @@ exit 64
         readFileSync(join(schedulerStateDir, jobName), 'utf8'),
       ]))
     : {};
+  const secretPayloadDir = join(stubDir, 'secret-payloads');
+  const secretPayloads = existsSync(secretPayloadDir)
+    ? Object.fromEntries(readdirSync(secretPayloadDir).map((secretName) => [
+        secretName,
+        readFileSync(join(secretPayloadDir, secretName), 'utf8'),
+      ]))
+    : {};
   return {
     out,
     code,
@@ -752,6 +852,7 @@ exit 64
     artifactDir,
     admissionArtifactPath,
     schedulerStates,
+    secretPayloads,
   };
 }
 
@@ -923,7 +1024,7 @@ describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under 
   it('immediately pauses every created Scheduler job and verifies PAUSED before continuing', () => {
     for (const create of schedulerCreates) {
       const jobName = create.split(' ')[4];
-      expect(create).toContain('--schedule=0 0 31 2 *');
+      expect(create).toContain(`--schedule=${SCHEDULER_HOLD_SCHEDULE}`);
       const createIndex = result.callOrder.indexOf(`gcloud ${create}`);
       const pauseIndex = result.callOrder.findIndex(
         (entry) => entry.startsWith(`gcloud scheduler jobs pause ${jobName} `),
@@ -1096,7 +1197,7 @@ describe('provision-isolated-rig.sh — RIG-B1 identity, trigger specs, and admi
     );
 
     expect(createIndex).toBeGreaterThanOrEqual(0);
-    expect(result.callOrder[createIndex]).toContain('--schedule=0 0 31 2 *');
+    expect(result.callOrder[createIndex]).toContain(`--schedule=${SCHEDULER_HOLD_SCHEDULE}`);
     expect(pauseIndex).toBe(createIndex + 1);
     expect(describeIndexes.some((index) => index === pauseIndex + 1)).toBe(true);
     expect(describeIndexes.some((index) => index > preflightIndex && index < updateIndex)).toBe(true);
@@ -1841,6 +1942,297 @@ describe('provision-isolated-rig.sh — valid Gemini admission', () => {
       use_mocks: 'true',
       enable_prod_network_anchoring: 'false',
     });
+  });
+});
+
+/**
+ * Consolidated-mm-2026-08 stand-up findings (2026-08-30) — four defects that
+ * every 2026-08 rig had to repair BY HAND after running this script:
+ *
+ *   1. IP_HASH_PEPPER absent from every profile's secret overlay, while
+ *      services/worker/src/config.ts requires it whenever NODE_ENV=production.
+ *      A rig deployed exactly as scripted crash-loops at boot.
+ *   2. The Scheduler hold schedule `0 0 31 2 *` is rejected INVALID_ARGUMENT by
+ *      the live Cloud Scheduler API (it calendar-validates day-of-month), so
+ *      Step 4 could not execute as written.
+ *   3. The chain profile's default RPC/WIF secret names do not exist in
+ *      arkova1; the only live signet RPC secrets point at a private 10.x node
+ *      that needs a VPC connector this script never attached.
+ *   4. Step 2 linked immediately after `projects create`, so a COMING_UP
+ *      project stored the legacy IPv6 direct-db config and `db push` died on
+ *      LegacyDbConfigIpv6Error before the pooler tenant existed.
+ *
+ * Source: docs/staging/consolidated-mm-2026-08/soak-start-2026-08-30T1546Z.md
+ * ("Findings filed from this stand-up") and the admission JSON's `deviations`.
+ */
+
+describe('provision-isolated-rig.sh — IP_HASH_PEPPER is wired on every profile (finding 1)', () => {
+  it('binds a per-rig pepper secret in the dry-run overlay for mock, chain, and gemini', () => {
+    for (const profile of ['mock', 'chain', 'gemini']) {
+      const { out, code } = dryRun(['--name', `pepper-${profile}`, '--profile', profile]);
+      expect(code, `profile ${profile} should dry-run cleanly`).toBe(0);
+      expect(out, `profile ${profile}: pepper binding`).toContain(
+        `IP_HASH_PEPPER=ip-hash-pepper-pepper-${profile}-staging:latest`,
+      );
+    }
+  });
+
+  it('creates the per-rig pepper secret before the worker deploy when it does not exist', () => {
+    const result = applyRunStubbed('pepper-create', 'mock', {
+      missingSecrets: ['ip-hash-pepper-pepper-create-staging'],
+    });
+    expect(result.code, result.out).toBe(0);
+
+    const createIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('gcloud secrets create ip-hash-pepper-pepper-create-staging '),
+    );
+    const deployIndex = result.callOrder.findIndex((entry) => entry.startsWith('gcloud run deploy '));
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(deployIndex).toBeGreaterThan(createIndex);
+    expect(result.callOrder[createIndex]).toContain('--data-file=-');
+
+    const deploy = result.gcloudCalls.find((call) => call.startsWith('run deploy '));
+    expect(deploy).toContain('IP_HASH_PEPPER=ip-hash-pepper-pepper-create-staging:latest');
+  });
+
+  it('never rotates an existing pepper (a new version would orphan every hash the rig already wrote)', () => {
+    const result = applyRunStubbed('pepper-existing', 'mock');
+    expect(result.code, result.out).toBe(0);
+    expect(
+      result.gcloudCalls.some((call) => call.startsWith('secrets create ip-hash-pepper-')),
+    ).toBe(false);
+    expect(
+      result.gcloudCalls.some((call) => call.startsWith('secrets versions add ip-hash-pepper-')),
+    ).toBe(false);
+    // It must still prove the bound version is readable before the deploy.
+    expect(
+      result.gcloudCalls.some(
+        (call) =>
+          call.startsWith('secrets versions access latest ') &&
+          call.includes('--secret=ip-hash-pepper-pepper-existing-staging'),
+      ),
+    ).toBe(true);
+  });
+
+  it('generates 256 bits of entropy and never lets those bytes reach output or argv', () => {
+    const result = applyRunStubbed('pepper-quiet', 'mock', {
+      missingSecrets: ['ip-hash-pepper-pepper-quiet-staging'],
+    });
+    expect(result.code, result.out).toBe(0);
+
+    // Assert on the EXACT bytes the run piped into Secret Manager, not on a
+    // 64-hex regex over the output — the plan legitimately prints the image
+    // digest and driver hash, which are also 64 hex characters.
+    const pepper = result.secretPayloads['ip-hash-pepper-pepper-quiet-staging'];
+    expect(pepper, 'the pepper must be written to Secret Manager').toMatch(/^[0-9a-f]{64}$/);
+    expect(result.out).not.toContain(pepper);
+    for (const call of result.gcloudCalls) {
+      expect(call, 'the pepper travels through --data-file=-, never argv').not.toContain(pepper);
+    }
+    expect(script).not.toMatch(/IP_HASH_PEPPER=[0-9a-f]{16,}/);
+  });
+
+  it('generates a distinct pepper per rig rather than a fixed value', () => {
+    const first = applyRunStubbed('pepper-entropy-a', 'mock', {
+      missingSecrets: ['ip-hash-pepper-pepper-entropy-a-staging'],
+    });
+    const second = applyRunStubbed('pepper-entropy-b', 'mock', {
+      missingSecrets: ['ip-hash-pepper-pepper-entropy-b-staging'],
+    });
+    expect(first.code, first.out).toBe(0);
+    expect(second.code, second.out).toBe(0);
+    expect(first.secretPayloads['ip-hash-pepper-pepper-entropy-a-staging']).not.toBe(
+      second.secretPayloads['ip-hash-pepper-pepper-entropy-b-staging'],
+    );
+  });
+
+  it('records the pepper secret name in provision state so teardown can reclaim it', () => {
+    const result = applyRunStubbed('pepper-state', 'mock');
+    expect(result.code, result.out).toBe(0);
+    const state = JSON.parse(
+      readFileSync(join(result.artifactDir, 'isolated-rig-provision-pepper-state.json'), 'utf8'),
+    );
+    expect(state.secrets.ip_hash_pepper).toBe('ip-hash-pepper-pepper-state-staging');
+  });
+});
+
+describe('provision-isolated-rig.sh — Scheduler hold schedule is calendar-valid (finding 2)', () => {
+  it('never emits the API-rejected February 31st hold schedule', () => {
+    expect(script).not.toContain('0 0 31 2 *');
+    expect(script).toContain(SCHEDULER_HOLD_SCHEDULE);
+  });
+
+  it('creates every chain-profile job on the calendar-valid hold schedule', () => {
+    const result = applyRunStubbed('hold-schedule', 'chain');
+    expect(result.code, result.out).toBe(0);
+    const creates = result.gcloudCalls.filter((call) =>
+      call.startsWith('scheduler jobs create http '),
+    );
+    expect(creates.length).toBeGreaterThan(0);
+    for (const create of creates) {
+      expect(create).toContain(`--schedule=${SCHEDULER_HOLD_SCHEDULE}`);
+      // Day 31 of month 2 does not exist; the live API rejects it outright.
+      expect(create).not.toContain('--schedule=0 0 31 2 *');
+    }
+  });
+});
+
+describe('provision-isolated-rig.sh — private-node RPC needs a VPC connector (finding 3)', () => {
+  // Secret Manager resource NAMES, never values. Held in `_NAME` constants so no
+  // `…_SECRET: '<high-entropy literal>'` pair exists for the secret scanner's
+  // generic-api-key heuristic to flag.
+  const PRIVATE_RPC_URL_NAME = 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-url';
+  const PRIVATE_RPC_AUTH_NAME = 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth';
+  const PRIVATE_TREASURY_WIF_NAME = 'arkova-s33-rig-b1-treasury-wif-signet';
+  const signetRpcEnv = {
+    STAGING_BITCOIN_NETWORK: 'signet',
+    STAGING_GETBLOCK_RPC_URL_SECRET: PRIVATE_RPC_URL_NAME,
+    STAGING_GETBLOCK_RPC_AUTH_SECRET: PRIVATE_RPC_AUTH_NAME,
+    STAGING_TREASURY_WIF_SECRET: PRIVATE_TREASURY_WIF_NAME,
+  };
+
+  it('attaches the connector and egress to the deploy when one is declared', () => {
+    const result = applyRunStubbed('vpc-attached', 'chain', {
+      env: {
+        ...signetRpcEnv,
+        STAGING_VPC_CONNECTOR: 'fullsoak-btc-rpc',
+        STAGING_VPC_EGRESS: 'private-ranges-only',
+      },
+    });
+    expect(result.code, result.out).toBe(0);
+    const deploy = result.gcloudCalls.find((call) => call.startsWith('run deploy '));
+    expect(deploy).toContain('--vpc-connector=fullsoak-btc-rpc');
+    expect(deploy).toContain('--vpc-egress=private-ranges-only');
+  });
+
+  it('leaves the deploy unchanged when no connector is declared', () => {
+    const result = applyRunStubbed('vpc-absent', 'mock');
+    expect(result.code, result.out).toBe(0);
+    const deploy = result.gcloudCalls.find((call) => call.startsWith('run deploy '));
+    expect(deploy).not.toContain('--vpc-connector');
+    expect(deploy).not.toContain('--vpc-egress');
+  });
+
+  it('refuses a private-node RPC secret with no connector, before any paid mutation', () => {
+    const result = applyRunStubbed('vpc-missing', 'chain', { env: signetRpcEnv });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/vpc-connector/i);
+    expect(result.out).toContain(PRIVATE_RPC_URL_NAME);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
+
+  it('warns in the dry-run plan that --apply will refuse a connector-less private-node rig', () => {
+    const { out, code } = dryRun(['--name', 'vpc-dry', '--profile', 'chain'], signetRpcEnv);
+    // Dry-run still exits 0 and mutates nothing; the plan just tells the truth
+    // about what --apply would do with this configuration.
+    expect(code).toBe(0);
+    expect(out).toMatch(/WARNING/);
+    expect(out).toMatch(/vpc-connector/);
+    expect(out).toMatch(/REFUSE/);
+  });
+
+  it('rejects an unsupported egress mode rather than deploying an unreachable rig', () => {
+    const result = applyRunStubbed('vpc-bad-egress', 'chain', {
+      env: {
+        ...signetRpcEnv,
+        STAGING_VPC_CONNECTOR: 'fullsoak-btc-rpc',
+        STAGING_VPC_EGRESS: 'some-traffic',
+      },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/egress/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('names the live signet secrets and the connector when a chain secret is missing', () => {
+    const result = applyRunStubbed('vpc-remediation', 'chain', {
+      missingSecrets: ['bitcoin-rpc-url-staging'],
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain('bitcoin-rpc-url-staging');
+    expect(result.out).toContain(PRIVATE_RPC_URL_NAME);
+    expect(result.out).toMatch(/vpc-connector/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+});
+
+describe('provision-isolated-rig.sh — link waits for ACTIVE_HEALTHY (finding 4)', () => {
+  it('polls project status after create and before link, then links and pushes', () => {
+    const result = applyRunStubbed('ready-poll', 'mock', {
+      projectStatusSequence: ['COMING_UP', 'COMING_UP', 'ACTIVE_HEALTHY'],
+    });
+    expect(result.code, result.out).toBe(0);
+
+    const createIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('npx supabase projects create '),
+    );
+    const firstPollIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('npx supabase projects list '),
+    );
+    const linkIndex = result.callOrder.findIndex((entry) => entry.startsWith('npx supabase link '));
+    const pushIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('npx supabase db push '),
+    );
+    const lastPollIndex = result.callOrder.reduce(
+      (last, entry, index) => (entry.startsWith('npx supabase projects list ') ? index : last),
+      -1,
+    );
+
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(firstPollIndex).toBeGreaterThan(createIndex);
+    expect(lastPollIndex).toBeLessThan(linkIndex);
+    expect(linkIndex).toBeLessThan(pushIndex);
+    // It kept polling through both COMING_UP reports rather than linking on the first.
+    expect(
+      result.npxCalls.filter((call) => call.startsWith('supabase projects list ')),
+    ).toHaveLength(3);
+  });
+
+  it('fails closed without linking when the project never reaches ACTIVE_HEALTHY', () => {
+    const result = applyRunStubbed('ready-never', 'mock', {
+      projectStatusSequence: ['COMING_UP'],
+      env: { STAGING_PROJECT_READY_MAX_ATTEMPTS: '2', STAGING_PROJECT_READY_POLL_SECONDS: '0' },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/ACTIVE_HEALTHY/);
+    expect(result.npxCalls.filter((call) => call.startsWith('supabase projects list '))).toHaveLength(2);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase link '))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase db push '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
+
+  it('retries a link that loses the pooler-tenant race, then proceeds', () => {
+    const result = applyRunStubbed('link-retry', 'mock', { linkFailures: 1 });
+    expect(result.code, result.out).toBe(0);
+    expect(result.npxCalls.filter((call) => call.startsWith('supabase link '))).toHaveLength(2);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase db push '))).toBe(true);
+  });
+
+  it('retries a db push that loses the pooler-tenant race, then proceeds', () => {
+    const result = applyRunStubbed('push-retry', 'mock', { dbPushFailures: 1 });
+    expect(result.code, result.out).toBe(0);
+    expect(result.npxCalls.filter((call) => call.startsWith('supabase db push '))).toHaveLength(2);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
+  });
+
+  it('fails closed when the retries are exhausted instead of deploying against an unmigrated rig', () => {
+    const result = applyRunStubbed('link-exhausted', 'mock', {
+      linkFailures: 99,
+      env: { STAGING_LINK_MAX_ATTEMPTS: '3', STAGING_LINK_RETRY_SECONDS: '0' },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.filter((call) => call.startsWith('supabase link '))).toHaveLength(3);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase db push '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
+
+  it('shows the readiness poll in the dry-run plan without executing it', () => {
+    const { out, code } = dryRun(['--name', 'ready-dry']);
+    expect(code).toBe(0);
+    expect(out).toMatch(/supabase projects list/);
+    expect(out).toMatch(/ACTIVE_HEALTHY/);
+    expect(out).not.toMatch(/^executing:/m);
   });
 });
 
