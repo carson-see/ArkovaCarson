@@ -460,3 +460,16 @@ const resp = await fetch(
 ```typescript
 return { content: [{ type: 'text', text: safeErrorText(error, 'tool_name') }] };
 ```
+
+## 2026-09-02 — full `arkova_` prefix, OAuth de-advertised, ES256 Bearer, error sanitising (SCRUM-3894 / PR #2589)
+
+Trigger: BUG-2026-09-02-001 — an agent holding `search_credentials` swept local `.env` files instead of calling the server. Decisions D1–D4 on the epic AUDIT page (Confluence 135069697).
+
+- **Every tool is now `arkova_`-prefixed** (`nessie_query` keeps its namespace): `verify_credential`→`arkova_verify_anchor`, `search_credentials`→`arkova_search_anchors`, and `search`/`verify`/`get_*`/`list_*`/`verify_document`/`verify_batch`/`oracle_batch_verify`/`anchor_document` → `arkova_<same>`. In place, **no aliases** (aliases preserve the ambiguity). Hosted and npm names are now identical. `search_public_credentials` is a Supabase RPC, not a tool — unchanged.
+- **D3 — OAuth is no longer advertised.** `handleProtectedResourceMetadata` carries no `authorization_servers` (the AS it named, `edge.arkova.ai/auth`, never existed); the 401 message and every surface say: API key via `X-API-Key`, or a Supabase session JWT via `Authorization: Bearer`; authorization-code flow is not supported. `public/.well-known/oauth-protected-resource` aligned.
+- **BUG-2026-09-02-002 — Bearer actually works again.** `mcp-jwt-verify.ts` verifies **ES256** against the project JWKS (`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`, `kid`-selected, cached in-isolate, one forced refetch on unknown `kid`) and keeps HS256 as the fallback for previously-used keys. Prod signs ES256 (`signing-keys` read live 2026-09-02); the HS256-only pin had rejected every current token with `wrong_alg`. `validateBearer` no longer fails closed when `SUPABASE_JWT_SECRET` is unset — only the HS256 fallback needs it. Tests mint a real P-256 pair (`mcp-jwt-verify.test.ts`).
+- **F4 — every tool error path is sanitised.** ~11 `errorResult(`…${error.message}`)` sites in `mcp-tools.ts` now go through `safeErrorText` (moved to `mcp-error-utils.ts`), so a `fetch` `TypeError` embedding an internal URL never reaches `content[0].text`. Closes SCRUM-3495.
+- **Soak deploys:** `wrangler.soak.toml` — `workers_dev = true`, NO `[[routes]]`, per-rig KV ids substituted into a scratch copy; deploy with `--name arkova-edge-<rig>`. Never deploy a rig with the routed `wrangler.toml`.
+- **Deploy drift:** prod `arkova-edge` was a pre-2026-06-07 build with none of the fixes since (audit-log P0, pepper, sanitiser, verify-by-fingerprint). Nothing in CI deploys this worker (SCRUM-3907 / SCRUM-1032); SCRUM-3797 tracks the deploy.
+
+Verification: parity gate OK (16 tools × 6 surfaces), edge suite 56/56, `tsc` clean.

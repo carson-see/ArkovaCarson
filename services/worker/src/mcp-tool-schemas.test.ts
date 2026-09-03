@@ -42,22 +42,22 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
     const names: McpToolName[] = Object.keys(MCP_TOOL_SCHEMAS) as McpToolName[];
     expect(names).toEqual(
       expect.arrayContaining([
-        'verify_anchor',
-        'search_anchors',
+        'arkova_verify_anchor',
+        'arkova_search_anchors',
         'nessie_query',
-        'anchor_document',
-        'verify_document',
-        'verify_batch',
-        'search',
-        'verify',
-        'list_orgs',
-        'get_anchor',
-        'get_organization',
-        'get_record',
-        'get_fingerprint',
-        'get_document',
-        'oracle_batch_verify',
-        'list_agents',
+        'arkova_anchor_document',
+        'arkova_verify_document',
+        'arkova_verify_batch',
+        'arkova_search',
+        'arkova_verify',
+        'arkova_list_orgs',
+        'arkova_get_anchor',
+        'arkova_get_organization',
+        'arkova_get_record',
+        'arkova_get_fingerprint',
+        'arkova_get_document',
+        'arkova_oracle_batch_verify',
+        'arkova_list_agents',
       ]),
     );
   });
@@ -85,14 +85,14 @@ describe('validateToolArgs — unknown tool', () => {
   });
 });
 
-describe('validateToolArgs — verify_anchor', () => {
+describe('validateToolArgs — arkova_verify_anchor', () => {
   it('accepts a canonical public_id', () => {
-    const result = validateToolArgs('verify_anchor', { public_id: VALID_PUBLIC_ID });
+    const result = validateToolArgs('arkova_verify_anchor', { public_id: VALID_PUBLIC_ID });
     expect(result.ok).toBe(true);
   });
 
   it('rejects a lowercase public_id with INVALID_ARGS', () => {
-    const result = validateToolArgs('verify_anchor', { public_id: 'ark-deg-abc' });
+    const result = validateToolArgs('arkova_verify_anchor', { public_id: 'ark-deg-abc' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('INVALID_ARGS');
@@ -101,7 +101,7 @@ describe('validateToolArgs — verify_anchor', () => {
   });
 
   it('rejects extra fields in strict mode', () => {
-    const result = validateToolArgs('verify_anchor', {
+    const result = validateToolArgs('arkova_verify_anchor', {
       public_id: VALID_PUBLIC_ID,
       injected: 'x',
     });
@@ -109,29 +109,29 @@ describe('validateToolArgs — verify_anchor', () => {
   });
 
   it('rejects missing public_id', () => {
-    const result = validateToolArgs('verify_anchor', {});
+    const result = validateToolArgs('arkova_verify_anchor', {});
     expect(result.ok).toBe(false);
   });
 
   it('rejects non-object input', () => {
-    const result = validateToolArgs('verify_anchor', 'not-an-object');
+    const result = validateToolArgs('arkova_verify_anchor', 'not-an-object');
     expect(result.ok).toBe(false);
   });
 });
 
-describe('validateToolArgs — search_anchors', () => {
+describe('validateToolArgs — arkova_search_anchors', () => {
   it('accepts query + optional max_results', () => {
-    const result = validateToolArgs('search_anchors', { query: 'registered nurse', max_results: 5 });
+    const result = validateToolArgs('arkova_search_anchors', { query: 'registered nurse', max_results: 5 });
     expect(result.ok).toBe(true);
   });
 
   it('rejects empty query', () => {
-    const result = validateToolArgs('search_anchors', { query: '' });
+    const result = validateToolArgs('arkova_search_anchors', { query: '' });
     expect(result.ok).toBe(false);
   });
 
   it('rejects max_results > 50', () => {
-    const result = validateToolArgs('search_anchors', { query: 'x', max_results: 500 });
+    const result = validateToolArgs('arkova_search_anchors', { query: 'x', max_results: 500 });
     expect(result.ok).toBe(false);
   });
 });
@@ -143,50 +143,50 @@ describe('validateToolArgs — agent v2 aliases', () => {
   });
 
   it('accepts search(q,type?,limit?) using the REST v2 parameter name', () => {
-    const result = validateToolArgs('search', { q: 'acme', type: 'org', limit: 5 });
+    const result = validateToolArgs('arkova_search', { q: 'acme', type: 'org', limit: 5 });
     expect(result.ok).toBe(true);
   });
 
   it('keeps max_results as a backwards-compatible search alias', () => {
-    const result = validateToolArgs('search', { q: 'acme', type: 'org', max_results: 5 });
+    const result = validateToolArgs('arkova_search', { q: 'acme', type: 'org', max_results: 5 });
     expect(result.ok).toBe(true);
   });
 
   it('allows REST v2 search limit parity up to the OpenAPI maximum', () => {
-    const result = validateToolArgs('search', { q: 'acme', limit: requireSearchLimitMax() });
+    const result = validateToolArgs('arkova_search', { q: 'acme', limit: requireSearchLimitMax() });
     expect(result.ok).toBe(true);
   });
 
   it('rejects search limits above the OpenAPI maximum', () => {
-    const result = validateToolArgs('search', { q: 'acme', limit: requireSearchLimitMax() + 1 });
+    const result = validateToolArgs('arkova_search', { q: 'acme', limit: requireSearchLimitMax() + 1 });
     expect(result.ok).toBe(false);
   });
 
   it('rejects unknown search type', () => {
-    const result = validateToolArgs('search', { q: 'acme', type: 'issuer' });
+    const result = validateToolArgs('arkova_search', { q: 'acme', type: 'issuer' });
     expect(result.ok).toBe(false);
   });
 
   it('accepts verify(fingerprint)', () => {
-    const result = validateToolArgs('verify', { fingerprint: VALID_HASH });
+    const result = validateToolArgs('arkova_verify', { fingerprint: VALID_HASH });
     expect(result.ok).toBe(true);
   });
 
-  it('accepts list_orgs with no arguments', () => {
-    const result = validateToolArgs('list_orgs', {});
+  it('accepts arkova_list_orgs with no arguments', () => {
+    const result = validateToolArgs('arkova_list_orgs', {});
     expect(result.ok).toBe(true);
   });
 
-  it('accepts get_anchor(public_id)', () => {
-    const result = validateToolArgs('get_anchor', { public_id: VALID_PUBLIC_ID });
+  it('accepts arkova_get_anchor(public_id)', () => {
+    const result = validateToolArgs('arkova_get_anchor', { public_id: VALID_PUBLIC_ID });
     expect(result.ok).toBe(true);
   });
 
   it('accepts detail endpoint operation schemas', () => {
-    expect(validateToolArgs('get_organization', { public_id: 'org_acme' }).ok).toBe(true);
-    expect(validateToolArgs('get_record', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
-    expect(validateToolArgs('get_fingerprint', { fingerprint: VALID_HASH }).ok).toBe(true);
-    expect(validateToolArgs('get_document', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
+    expect(validateToolArgs('arkova_get_organization', { public_id: 'org_acme' }).ok).toBe(true);
+    expect(validateToolArgs('arkova_get_record', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
+    expect(validateToolArgs('arkova_get_fingerprint', { fingerprint: VALID_HASH }).ok).toBe(true);
+    expect(validateToolArgs('arkova_get_document', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
   });
 });
 
@@ -202,14 +202,14 @@ describe('validateToolArgs — nessie_query', () => {
   });
 });
 
-describe('validateToolArgs — anchor_document', () => {
+describe('validateToolArgs — arkova_anchor_document', () => {
   it('accepts content_hash only', () => {
-    const result = validateToolArgs('anchor_document', { content_hash: VALID_HASH });
+    const result = validateToolArgs('arkova_anchor_document', { content_hash: VALID_HASH });
     expect(result.ok).toBe(true);
   });
 
   it('accepts the advertised idempotency_key field', () => {
-    const result = validateToolArgs('anchor_document', {
+    const result = validateToolArgs('arkova_anchor_document', {
       content_hash: VALID_HASH,
       idempotency_key: VALID_IDEMPOTENCY_KEY,
     });
@@ -221,7 +221,7 @@ describe('validateToolArgs — anchor_document', () => {
   });
 
   it('rejects malformed idempotency_key values', () => {
-    const result = validateToolArgs('anchor_document', {
+    const result = validateToolArgs('arkova_anchor_document', {
       content_hash: VALID_HASH,
       idempotency_key: 'retry-1',
     });
@@ -230,7 +230,7 @@ describe('validateToolArgs — anchor_document', () => {
   });
 
   it('still rejects unknown fields', () => {
-    const result = validateToolArgs('anchor_document', {
+    const result = validateToolArgs('arkova_anchor_document', {
       content_hash: VALID_HASH,
       retry_token: VALID_IDEMPOTENCY_KEY,
     });
@@ -242,12 +242,12 @@ describe('validateToolArgs — anchor_document', () => {
   });
 
   it('rejects a too-short hash', () => {
-    const result = validateToolArgs('anchor_document', { content_hash: 'abc' });
+    const result = validateToolArgs('arkova_anchor_document', { content_hash: 'abc' });
     expect(result.ok).toBe(false);
   });
 
   it('rejects a non-URL source_url', () => {
-    const result = validateToolArgs('anchor_document', {
+    const result = validateToolArgs('arkova_anchor_document', {
       content_hash: VALID_HASH,
       source_url: 'not a url',
     });
@@ -255,64 +255,64 @@ describe('validateToolArgs — anchor_document', () => {
   });
 });
 
-describe('validateToolArgs — verify_document', () => {
+describe('validateToolArgs — arkova_verify_document', () => {
   it('accepts a valid SHA-256 hash', () => {
-    const result = validateToolArgs('verify_document', { content_hash: VALID_HASH });
+    const result = validateToolArgs('arkova_verify_document', { content_hash: VALID_HASH });
     expect(result.ok).toBe(true);
   });
 
   it('rejects non-hex characters', () => {
-    const result = validateToolArgs('verify_document', { content_hash: 'Z'.repeat(64) });
+    const result = validateToolArgs('arkova_verify_document', { content_hash: 'Z'.repeat(64) });
     expect(result.ok).toBe(false);
   });
 });
 
-describe('validateToolArgs — verify_batch', () => {
+describe('validateToolArgs — arkova_verify_batch', () => {
   it('accepts an array of 1-100 public_ids', () => {
-    const result = validateToolArgs('verify_batch', { public_ids: [VALID_PUBLIC_ID] });
+    const result = validateToolArgs('arkova_verify_batch', { public_ids: [VALID_PUBLIC_ID] });
     expect(result.ok).toBe(true);
   });
 
   it('rejects empty array', () => {
-    const result = validateToolArgs('verify_batch', { public_ids: [] });
+    const result = validateToolArgs('arkova_verify_batch', { public_ids: [] });
     expect(result.ok).toBe(false);
   });
 
   it('rejects an invalid ID within the array', () => {
-    const result = validateToolArgs('verify_batch', { public_ids: [VALID_PUBLIC_ID, 'not-valid'] });
+    const result = validateToolArgs('arkova_verify_batch', { public_ids: [VALID_PUBLIC_ID, 'not-valid'] });
     expect(result.ok).toBe(false);
   });
 
   it('rejects > 100 entries', () => {
     const big = Array.from({ length: 101 }, () => VALID_PUBLIC_ID);
-    const result = validateToolArgs('verify_batch', { public_ids: big });
+    const result = validateToolArgs('arkova_verify_batch', { public_ids: big });
     expect(result.ok).toBe(false);
   });
 });
 
-describe('validateToolArgs — oracle_batch_verify', () => {
+describe('validateToolArgs — arkova_oracle_batch_verify', () => {
   it('caps at 25 entries', () => {
     const over = Array.from({ length: 26 }, () => VALID_PUBLIC_ID);
-    const result = validateToolArgs('oracle_batch_verify', { public_ids: over });
+    const result = validateToolArgs('arkova_oracle_batch_verify', { public_ids: over });
     expect(result.ok).toBe(false);
   });
 });
 
-describe('validateToolArgs — list_agents', () => {
+describe('validateToolArgs — arkova_list_agents', () => {
   it('accepts empty object', () => {
-    const result = validateToolArgs('list_agents', {});
+    const result = validateToolArgs('arkova_list_agents', {});
     expect(result.ok).toBe(true);
   });
 
   it('rejects any argument (strict schema)', () => {
-    const result = validateToolArgs('list_agents', { status: 'active' });
+    const result = validateToolArgs('arkova_list_agents', { status: 'active' });
     expect(result.ok).toBe(false);
   });
 });
 
 describe('validationErrorToToolResult', () => {
   it('returns an MCP error envelope without leaking internal state', () => {
-    const result = validateToolArgs('verify_anchor', { public_id: 'lowercase' });
+    const result = validateToolArgs('arkova_verify_anchor', { public_id: 'lowercase' });
     if (result.ok) throw new Error('expected failure');
 
     const envelope = validationErrorToToolResult(result.error);
@@ -324,7 +324,7 @@ describe('validationErrorToToolResult', () => {
       issues: { path: string; message: string }[];
     };
     expect(body.error).toBe('INVALID_ARGS');
-    expect(body.tool).toBe('verify_anchor');
+    expect(body.tool).toBe('arkova_verify_anchor');
     expect(body.issues.length).toBeGreaterThan(0);
     // No `received` field, no stack traces, no internal paths.
     expect(envelope.content[0].text).not.toContain('ZodError');

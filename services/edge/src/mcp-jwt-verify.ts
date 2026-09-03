@@ -5,9 +5,16 @@
  * before any network round-trip, verify the bearer token's HS256 signature
  * against `SUPABASE_JWT_SECRET` and check `exp`, `iat`, `aud`, `iss` locally.
  *
- * Supabase issues HS256-signed JWTs with a symmetric secret, so Web Crypto
- * (already available in CF Workers + Node 20+) suffices — no `jose` dep
- * needed, matching the lean approach used by `mcp-hmac.ts`.
+ * Supabase projects now sign session JWTs with an asymmetric **ES256** key
+ * (`signing-keys` → `ES256 status=in_use`, `HS256 status=previously_used`,
+ * read live on prod 2026-09-02 — BUG-2026-09-02-002). Until then this module
+ * accepted HS256 only, which rejected every current token with `wrong_alg`.
+ * ES256 is verified against the project JWKS
+ * (`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`, selected by `kid`, cached
+ * in-isolate, refetched once on an unknown `kid`) and needs NO shared secret.
+ * HS256 remains as the fallback for tokens minted under the previously-used
+ * key and is the only path that needs `SUPABASE_JWT_SECRET`. Any other `alg`
+ * fails closed. Web Crypto only — no `jose` dep, matching `mcp-hmac.ts`.
  *
  * See also: `services/worker/src/auth.ts` `verifyJwtLocally` — same intent
  * on the Node worker side, uses `jose`. Keeping a parallel WebCrypto path
@@ -21,6 +28,7 @@ export type JwtVerifyResult =
 interface JwtHeader {
   alg?: string;
   typ?: string;
+  kid?: string;
 }
 
 interface JwtPayload {
@@ -36,7 +44,10 @@ interface JwtPayload {
   app_metadata?: { scopes?: unknown };
 }
 
-const ALLOWED_ALG = 'HS256';
+const HS256 = 'HS256';
+const ES256 = 'ES256';
+/** JWKS cache TTL. Supabase rotates keys rarely; an unknown `kid` forces one refetch regardless. */
+const JWKS_TTL_MS = 10 * 60 * 1000;
 const CLOCK_SKEW_SEC = 30;
 
 const ENCODER = new TextEncoder();
@@ -95,6 +106,92 @@ async function hmacSignatureMatches(
   );
 }
 
+export interface JsonWebKey256 {
+  kty: string;
+  crv?: string;
+  x?: string;
+  y?: string;
+  kid?: string;
+  alg?: string;
+  use?: string;
+}
+export type JwksFetcher = (url: string) => Promise<{ keys: JsonWebKey256[] }>;
+
+async function defaultFetchJwks(url: string): Promise<{ keys: JsonWebKey256[] }> {
+  const res = await fetch(url, { headers: { accept: 'application/json' } });
+  if (!res.ok) throw new Error(`jwks_http_${res.status}`);
+  return res.json() as Promise<{ keys: JsonWebKey256[] }>;
+}
+
+export function jwksUrlFor(supabaseUrl: string): string {
+  return `${supabaseUrl.replace(/\/+$/, '')}/auth/v1/.well-known/jwks.json`;
+}
+
+// In-isolate JWKS cache keyed by URL: { fetchedAt, keys by kid }.
+let jwksCache: { url: string; fetchedAt: number; byKid: Map<string, CryptoKey> } | null = null;
+
+async function importEcPublicKey(jwk: JsonWebKey256): Promise<CryptoKey | null> {
+  if (jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) return null;
+  try {
+    return await crypto.subtle.importKey(
+      'jwk',
+      { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, ext: true },
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['verify'],
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function loadJwks(url: string, fetchJwks: JwksFetcher, force: boolean): Promise<Map<string, CryptoKey>> {
+  const fresh = jwksCache && jwksCache.url === url && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS;
+  if (fresh && !force) return jwksCache!.byKid;
+  const doc = await fetchJwks(url);
+  const byKid = new Map<string, CryptoKey>();
+  for (const jwk of doc.keys ?? []) {
+    if (!jwk.kid) continue;
+    const key = await importEcPublicKey(jwk);
+    if (key) byKid.set(jwk.kid, key);
+  }
+  jwksCache = { url, fetchedAt: Date.now(), byKid };
+  return byKid;
+}
+
+/** Test hook: drop the in-isolate JWKS cache. */
+export function resetJwksCacheForTests(): void {
+  jwksCache = null;
+}
+
+async function es256SignatureMatches(
+  signingInput: string,
+  signatureSegment: string,
+  kid: string | undefined,
+  supabaseUrl: string,
+  fetchJwks: JwksFetcher,
+): Promise<boolean | 'unknown_kid'> {
+  if (!kid) return 'unknown_kid';
+  const url = jwksUrlFor(supabaseUrl);
+  let byKid = await loadJwks(url, fetchJwks, false);
+  let key = byKid.get(kid);
+  if (!key) {
+    // One forced refetch covers a rotation that happened after the cache filled.
+    byKid = await loadJwks(url, fetchJwks, true);
+    key = byKid.get(kid);
+    if (!key) return 'unknown_kid';
+  }
+  const sig = base64UrlDecode(signatureSegment);
+  // JWS ES256 signatures are raw r||s (64 bytes) — exactly what WebCrypto ECDSA expects.
+  if (sig.length !== 64) return false;
+  return crypto.subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    sig as BufferSource,
+    ENCODER.encode(signingInput) as BufferSource,
+  );
+}
+
 function audMatches(claim: string | string[] | undefined, expected: string): boolean {
   if (typeof claim === 'string') return claim === expected;
   if (Array.isArray(claim)) return claim.includes(expected);
@@ -122,21 +219,23 @@ function scopesFromPayload(payload: JwtPayload): string[] {
  * short reason — callers MUST short-circuit (no network round-trip) so a
  * compromise of `/auth/v1/user` cannot back-channel forged tokens.
  *
- * Validates: structure, alg=HS256, signature, exp (with 30s skew),
+ * Validates: structure, alg (ES256 via JWKS or HS256 via secret), signature, exp (with 30s skew),
  * iat (with 30s skew), aud (default "authenticated"), iss (must startWith
  * `<SUPABASE_URL>/auth/v1`).
  */
 export async function verifySupabaseJwt(
   token: string,
   options: {
-    secret: string;
+    /** Legacy HS256 secret. Optional — only the HS256 fallback needs it. */
+    secret?: string;
     supabaseUrl: string;
     expectedAud?: string;
     nowSec?: number;
+    /** Test hook / override for the JWKS fetch. */
+    fetchJwks?: JwksFetcher;
   },
 ): Promise<JwtVerifyResult> {
-  const { secret, supabaseUrl, expectedAud = 'authenticated', nowSec } = options;
-  if (!secret) return { ok: false, reason: 'missing_secret' };
+  const { secret, supabaseUrl, expectedAud = 'authenticated', nowSec, fetchJwks = defaultFetchJwks } = options;
   if (!token) return { ok: false, reason: 'empty_token' };
 
   const parts = token.split('.');
@@ -145,14 +244,26 @@ export async function verifySupabaseJwt(
 
   const header = decodeJsonSegment<JwtHeader>(headerSeg);
   if (!header) return { ok: false, reason: 'bad_header' };
-  if (header.alg !== ALLOWED_ALG) return { ok: false, reason: 'wrong_alg' };
+  if (header.alg !== HS256 && header.alg !== ES256) return { ok: false, reason: 'wrong_alg' };
 
   const payload = decodeJsonSegment<JwtPayload>(payloadSeg);
   if (!payload) return { ok: false, reason: 'bad_payload' };
 
   const signingInput = `${headerSeg}.${payloadSeg}`;
-  const sigOk = await hmacSignatureMatches(signingInput, sigSeg, secret);
-  if (!sigOk) return { ok: false, reason: 'bad_signature' };
+  if (header.alg === ES256) {
+    let esOk: boolean | 'unknown_kid';
+    try {
+      esOk = await es256SignatureMatches(signingInput, sigSeg, header.kid, supabaseUrl, fetchJwks);
+    } catch {
+      return { ok: false, reason: 'jwks_unavailable' };
+    }
+    if (esOk === 'unknown_kid') return { ok: false, reason: 'unknown_kid' };
+    if (!esOk) return { ok: false, reason: 'bad_signature' };
+  } else {
+    if (!secret) return { ok: false, reason: 'missing_secret' };
+    const sigOk = await hmacSignatureMatches(signingInput, sigSeg, secret);
+    if (!sigOk) return { ok: false, reason: 'bad_signature' };
+  }
 
   const now = nowSec ?? Math.floor(Date.now() / 1000);
 

@@ -16,7 +16,7 @@ import {
 
 function makeEvent(over: Partial<AnomalyEvent> = {}): AnomalyEvent {
   return {
-    toolName: 'verify_anchor',
+    toolName: 'arkova_verify_anchor',
     apiKeyId: 'key-1',
     userId: 'user-1',
     orgId: 'org-1',

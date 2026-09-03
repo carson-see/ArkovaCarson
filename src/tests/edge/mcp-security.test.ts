@@ -205,7 +205,7 @@ describe('mcp-rate-limit — enforceRateLimit (SCRUM-919)', () => {
       put: vi.fn(async (k: string, v: string) => { store.set(k, v); }),
     } as unknown as KVNamespace;
 
-    const r = await enforceRateLimit(makeEnv({ kv }), 'key-A', 'search_anchors');
+    const r = await enforceRateLimit(makeEnv({ kv }), 'key-A', 'arkova_search_anchors');
     expect(r.ok).toBe(true);
     expect(kv.put).toHaveBeenCalledTimes(1);
     // First call stores count=1.
@@ -215,14 +215,14 @@ describe('mcp-rate-limit — enforceRateLimit (SCRUM-919)', () => {
 
   it('denies when the bucket is full + returns a retryAfter hint', async () => {
     const kv = {
-      get: vi.fn(async () => '10'), // already at oracle_batch_verify limit (10/min)
+      get: vi.fn(async () => '10'), // already at arkova_oracle_batch_verify limit (10/min)
       put: vi.fn(),
     } as unknown as KVNamespace;
 
-    const r = await enforceRateLimit(makeEnv({ kv }), 'key-B', 'oracle_batch_verify');
+    const r = await enforceRateLimit(makeEnv({ kv }), 'key-B', 'arkova_oracle_batch_verify');
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.toolName).toBe('oracle_batch_verify');
+      expect(r.toolName).toBe('arkova_oracle_batch_verify');
       expect(r.limit).toBe(10);
       expect(r.retryAfterSeconds).toBeGreaterThanOrEqual(1);
       expect(r.retryAfterSeconds).toBeLessThanOrEqual(60);
@@ -275,7 +275,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     await logMcpToolCall(makeEnv(), {
       apiKeyId: 'ak-1',
       userId: 'u-1',
-      toolName: 'verify_anchor',
+      toolName: 'arkova_verify_anchor',
       argsJson: JSON.stringify({ public_id: 'ARK-DEG-ABC' }),
       outcome: 'success',
       latencyMs: 42,
@@ -295,7 +295,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     expect(body.event_category).toBe('SECURITY');
     expect(body.actor_id).toBe('u-1');
     expect(body.target_type).toBe('mcp_tool');
-    expect(body.target_id).toBe('verify_anchor');
+    expect(body.target_id).toBe('arkova_verify_anchor');
     // details is a JSON-serialized string; parse it back
     const details = JSON.parse(body.details);
     expect(details.api_key_id).toBe('ak-1');
@@ -317,7 +317,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     await expect(logMcpToolCall(makeEnv(), {
       apiKeyId: null,
       userId: 'u-2',
-      toolName: 'list_agents',
+      toolName: 'arkova_list_agents',
       argsJson: '{}',
       outcome: 'tool_error',
       latencyMs: 99,
@@ -343,7 +343,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     await logMcpToolCall(makeEnv(), {
       apiKeyId: 'ak-1',
       userId: 'u-1',
-      toolName: 'verify_anchor',
+      toolName: 'arkova_verify_anchor',
       argsJson: '{}',
       outcome: 'success',
       latencyMs: 1,
@@ -369,7 +369,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     await logMcpToolCall(makeEnv({ MCP_IP_HASH_PEPPER: undefined }), {
       apiKeyId: 'ak-1',
       userId: 'u-1',
-      toolName: 'verify_anchor',
+      toolName: 'arkova_verify_anchor',
       argsJson: '{}',
       outcome: 'success',
       latencyMs: 1,
