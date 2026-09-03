@@ -12,10 +12,23 @@
  *
  *   mfaRequired    = isMfaRequiredRole(profile) && isMfaEnforcementActive()
  *   mfaGraceActive = isMfaRequiredRole(profile) && !isMfaEnforcementActive()
+ *                      && onboardingComplete(profile)
  *
  * `isMfaRequiredRole` / `isMfaEnforcementActive` live in `mfaPolicy.ts` —
  * see that module for the date-resolution precedence and the phase-1
  * role tier (ORG_ADMIN / platform admin).
+ *
+ * ONBOARDING GATE ON THE NUDGE ONLY (PR #2637 review, item 33): the grace
+ * nudge's CTA points at `/settings`, which is a DEAD LINK for an ORG_ADMIN
+ * with `org_id === null` — `RouteGuard` bounces that combination straight
+ * to `/onboarding/org`, never `/settings`. So `mfaGraceActive` additionally
+ * requires `profile.org_id` to be set WHEN `profile.role === 'ORG_ADMIN'`
+ * (a platform admin needs no org and is unaffected). The hard block
+ * (`mfaRequired`, evaluated once enforcement is active) is DELIBERATELY
+ * UNCHANGED by this gate — `AuthGuard` renders before `RouteGuard`, so
+ * `MfaEnrollmentRequired` is reachable and completable regardless of
+ * onboarding state; only the pre-enforcement heads-up is suppressed until
+ * there is somewhere useful for its CTA to send the user.
  *
  * ROLE SOURCE: `useProfile()` (React Query, 60s staleTime), NOT a
  * standalone Supabase query — cached navigation reads the profile
@@ -31,8 +44,8 @@
  * profile changes would never notice the clock crossing the enforcement
  * instant, or an operator moving `VITE_MFA_ENFORCE_FROM` back via a Vercel
  * redeploy an open tab picks up lazily. This hook forces a re-evaluation
- * (a cheap local re-render, no network call) on a 60s interval and on
- * `visibilitychange` (tab returns to foreground), mirroring
+ * (a cheap local re-render, no network call) via the shared
+ * `useForegroundInterval` — a 60s interval and `visibilitychange` — mirroring
  * `useMfaAssurance`'s identical cadence.
  *
  * SAFETY: fails to `{ mfaRequired: false, mfaGraceActive: false }` on any
@@ -45,19 +58,25 @@
  * a warm 60s-stale cache hit on navigation).
  */
 
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useProfile } from './useProfile';
-import { isMfaEnforcementActive, isMfaRequiredRole } from '@/lib/mfaPolicy';
+import { useForegroundInterval } from './useForegroundInterval';
+import { isMfaEnforcementActive, isMfaRequiredRole, resolveMfaEnforceFrom } from '@/lib/mfaPolicy';
 
 interface UseMfaEnrollmentRequirementResult {
   loading: boolean;
   mfaRequired: boolean;
   mfaGraceActive: boolean;
+  /**
+   * The enforcement date this render evaluated against, already resolved —
+   * pass this straight to `<MfaGraceNudge enforceFrom={...} />` (item
+   * 18/EA4) instead of letting it re-resolve the same env/localStorage
+   * inputs a second time.
+   */
+  enforceFromIso: string;
 }
 
-// Same cadence as useMfaAssurance's live re-check (A4-11) — kept as two
-// independent intervals rather than a shared one so each hook stays
-// self-contained and neither depends on the other being mounted.
+// Same cadence as useMfaAssurance's live re-check (A4-11).
 const REEVALUATE_INTERVAL_MS = 60_000;
 
 export function useMfaEnrollmentRequirement(): UseMfaEnrollmentRequirementResult {
@@ -66,29 +85,15 @@ export function useMfaEnrollmentRequirement(): UseMfaEnrollmentRequirementResult
   // Forces a re-render so isMfaEnforcementActive()'s live Date.now() read
   // is re-evaluated periodically / on tab foreground, without touching
   // React Query or issuing any network call.
-  const [, forceReevaluate] = useState(0);
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      forceReevaluate((n) => n + 1);
-    }, REEVALUATE_INTERVAL_MS);
+  const [tick, forceReevaluate] = useState(0);
+  useForegroundInterval(() => forceReevaluate((n) => n + 1), REEVALUATE_INTERVAL_MS);
 
-    const onVisibilityChange = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        forceReevaluate((n) => n + 1);
-      }
-    };
-
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibilityChange);
-    }
-
-    return () => {
-      clearInterval(intervalId);
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onVisibilityChange);
-      }
-    };
-  }, []);
+  // Resolved ONCE per re-evaluation (item 18/EA4), not once per call site —
+  // isMfaEnforcementActive and the returned enforceFromIso both reuse it.
+  // `tick` has no value of its own; bumping it is only how the foreground
+  // interval forces this memo to re-sample the live env/localStorage inputs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const enforceFromIso = useMemo(() => resolveMfaEnforceFrom(), [tick]);
 
   // Fail OPEN on a profile-query error — an unconfirmed role must never be
   // treated as "required". `useProfile()` still returns whatever stale
@@ -96,11 +101,22 @@ export function useMfaEnrollmentRequirement(): UseMfaEnrollmentRequirementResult
   // treats the role as unknown rather than trusting possibly-stale data.
   const effectiveProfile = error ? null : profile;
   const roleRequired = isMfaRequiredRole(effectiveProfile);
-  const enforcementActive = isMfaEnforcementActive();
+  // `now` omitted (not `Date.now()` inline) so isMfaEnforcementActive's own
+  // default parameter reads the clock — an explicit inline Date.now() call
+  // here trips react-hooks/purity's "impure during render" rule; the
+  // default-parameter form is the same computation without that warning.
+  const enforcementActive = isMfaEnforcementActive(undefined, enforceFromIso);
+
+  // Item 33: the grace nudge's CTA is a dead link for an org-id-less
+  // ORG_ADMIN (RouteGuard sends them to /onboarding/org, not /settings).
+  // Platform admins need no org, so they are unaffected either way.
+  const onboardingIncomplete =
+    effectiveProfile?.role === 'ORG_ADMIN' && !effectiveProfile?.is_platform_admin && !effectiveProfile?.org_id;
 
   return {
     loading,
     mfaRequired: roleRequired && enforcementActive,
-    mfaGraceActive: roleRequired && !enforcementActive,
+    mfaGraceActive: roleRequired && !enforcementActive && !onboardingIncomplete,
+    enforceFromIso,
   };
 }
