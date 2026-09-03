@@ -98,6 +98,10 @@ interface FakeClientHandle {
   client: SupabaseAdminLike;
   inserts: Array<{ table: string; row: Record<string, unknown> }>;
   selectCalls: Array<{ table: string; columns: string }>;
+  /** Every `.eq(column, value)` call recorded (currently only the org_id lookup uses `.eq`). */
+  eqCalls: Array<{ table: string; column: string; value: string }>;
+  /** Every `.in(column, values)` call recorded (currently only the profiles email fast path uses `.in`). */
+  inCalls: Array<{ table: string; column: string; values: string[] }>;
   deletedFactorIds: string[];
   listUsersCalls: number;
 }
@@ -105,6 +109,8 @@ interface FakeClientHandle {
 function makeFakeClient(opts: FakeClientOptions = {}): FakeClientHandle {
   const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
   const selectCalls: Array<{ table: string; columns: string }> = [];
+  const eqCalls: Array<{ table: string; column: string; value: string }> = [];
+  const inCalls: Array<{ table: string; column: string; values: string[] }> = [];
   const deletedFactorIds: string[] = [];
   let listUsersCalls = 0;
   let insertCallIndex = 0;
@@ -146,19 +152,41 @@ function makeFakeClient(opts: FakeClientOptions = {}): FakeClientHandle {
       select: (columns: string) => {
         selectCalls.push({ table, columns });
         return {
-          eq: () => ({
-            maybeSingle: async () => {
-              if (columns.includes('org_id')) {
+          // Real callers only ever reach `.eq()` for the org_id lookup
+          // (`select('org_id').eq('id', userId)`) — the profiles email
+          // fast path uses `.in()` below. Recorded so tests can assert on
+          // the actual column/value a query used, per review finding #2:
+          // a fake that ignores its own arguments can't fail when
+          // production code queries the wrong key.
+          eq: (column: string, value: string) => {
+            eqCalls.push({ table, column, value });
+            return {
+              maybeSingle: async () => {
                 if (opts.profileOrgIdThrows) throw opts.profileOrgIdThrows;
                 if (opts.profileOrgIdError) return { data: null, error: opts.profileOrgIdError };
                 return { data: { org_id: opts.profileOrgId ?? null }, error: null };
-              }
-              // email->id fast-path lookup (`select('id,email')`)
-              if (opts.profileEmailLookupThrows) throw opts.profileEmailLookupThrows;
-              if (opts.profileEmailLookupError) return { data: null, error: opts.profileEmailLookupError };
-              return { data: opts.profileEmailRow ?? null, error: null };
-            },
-          }),
+              },
+            };
+          },
+          // profiles email fast-path lookup (`select('id,email').in('email', candidates)`).
+          // Returns the fixture row ONLY when `column` is 'email' AND at
+          // least one candidate value matches the fixture's email exactly
+          // — a fake that returned the fixture regardless of the query key
+          // would never catch a fast path querying the wrong column or the
+          // wrong normalized form (review finding #2).
+          in: (column: string, values: string[]) => {
+            inCalls.push({ table, column, values });
+            return {
+              maybeSingle: async () => {
+                if (opts.profileEmailLookupThrows) throw opts.profileEmailLookupThrows;
+                if (opts.profileEmailLookupError) return { data: null, error: opts.profileEmailLookupError };
+                const row = opts.profileEmailRow;
+                if (!row || column !== 'email') return { data: null, error: null };
+                const matches = values.some((v) => v === row.email);
+                return { data: matches ? row : null, error: null };
+              },
+            };
+          },
         };
       },
       insert: async (row: Record<string, unknown>) => {
@@ -174,6 +202,8 @@ function makeFakeClient(opts: FakeClientOptions = {}): FakeClientHandle {
     client,
     inserts,
     selectCalls,
+    eqCalls,
+    inCalls,
     deletedFactorIds,
     get listUsersCalls() {
       return listUsersCalls;
@@ -408,6 +438,13 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
       expect(outcome.summary?.user_id).toBe(USER_ID);
       expect(handle.listUsersCalls).toBe(0);
       expect(handle.selectCalls.some((c) => c.table === 'profiles' && c.columns.includes('email'))).toBe(true);
+      // The actual query key/value matter — a fake (or an implementation)
+      // that queried the wrong column or a mangled value would still pass
+      // without this (review finding #2). USER_EMAIL is plain ASCII, so
+      // the fast path's trim+lowercase and NFKC+lowercase forms coincide:
+      // exactly one deduped candidate.
+      expect(handle.inCalls).toHaveLength(1);
+      expect(handle.inCalls[0]).toEqual({ table: 'profiles', column: 'email', values: [USER_EMAIL] });
     });
 
     it('falls back to the listUsers scan when profiles has no row', async () => {
@@ -417,6 +454,33 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
       expect(outcome.exitCode).toBe(EXIT_SUCCESS);
       expect(outcome.summary?.user_id).toBe(USER_ID);
       expect(handle.listUsersCalls).toBeGreaterThan(0);
+    });
+
+    it('queries BOTH the trim+lowercase and NFKC+lowercase candidate forms via .in(), and hits the fast path even when profiles.email only matches the non-NFKC form (review finding #1, SCRUM-3584 PR #2635)', async () => {
+      // profiles.email is populated by a DB trigger that ONLY lowercases
+      // (never NFKC-normalizes). A fullwidth Latin capital U (U+FF35)
+      // lowercases in place under plain `.toLowerCase()` to a fullwidth
+      // lowercase u (U+FF55, still non-ASCII) — but NFKC-then-lowercase
+      // collapses the whole thing down to plain ASCII "user@example.com".
+      // Before this fix, the fast path queried ONLY the NFKC form and
+      // would never match a profiles row stored in the non-NFKC shape,
+      // silently falling through to the slow full-scan path every time.
+      const rawEmailAsTyped = 'Ｕser@example.com';
+      const storedProfileEmail = rawEmailAsTyped.trim().toLowerCase();
+      const nfkcForm = normalizeEmail(rawEmailAsTyped);
+      expect(storedProfileEmail).not.toBe(nfkcForm); // sanity: the two forms really do diverge here
+      expect(nfkcForm).toBe(USER_EMAIL);
+
+      const handle = makeFakeClient({ profileEmailRow: { id: USER_ID, email: storedProfileEmail } });
+      const outcome = await runBreakGlass(baseDeps(handle), baseArgs({ email: rawEmailAsTyped, apply: false }));
+
+      expect(outcome.exitCode).toBe(EXIT_SUCCESS);
+      expect(outcome.summary?.user_id).toBe(USER_ID);
+      expect(handle.listUsersCalls).toBe(0); // fast path was hit — no fallback scan needed
+      expect(handle.inCalls).toHaveLength(1);
+      expect(handle.inCalls[0].table).toBe('profiles');
+      expect(handle.inCalls[0].column).toBe('email');
+      expect(handle.inCalls[0].values.sort()).toEqual([storedProfileEmail, nfkcForm].sort());
     });
 
     it('falls back to the scan when the profiles row is orphaned (getUserById finds no auth user)', async () => {
@@ -452,6 +516,58 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
 
       expect(outcome.exitCode).toBe(EXIT_SUCCESS);
       expect(handle.listUsersCalls).toBeGreaterThan(0);
+    });
+  });
+
+  describe('resolveUserByEmail — stale profiles.email vs the live auth email (review finding #3, SCRUM-3584 PR #2635)', () => {
+    // A profiles row can lag the auth-side email (the auth email changed
+    // and the profiles-table copy hasn't caught up, or never gets
+    // updated). The profiles row is only used to FIND the user id — the
+    // resolved `user.email` returned to the rest of the tool must always be
+    // the CURRENT auth email from `getUserById()`, and every downstream
+    // check (most importantly the CONFIRM_MFA_BREAK_GLASS gate) must
+    // compare against that resolved email, never the stale profiles value.
+    const STALE_PROFILE_EMAIL = 'old-address@example.com';
+    const CURRENT_AUTH_EMAIL = 'new-address@example.com';
+
+    function staleHandle(): FakeClientHandle {
+      return makeFakeClient({
+        profileEmailRow: { id: USER_ID, email: STALE_PROFILE_EMAIL },
+        getUserById: async (id) => ({ data: { user: { id, email: CURRENT_AUTH_EMAIL } }, error: null }),
+      });
+    }
+
+    it('resolves user.email to the live auth email, not the stale profiles.email used to find the user', async () => {
+      const handle = staleHandle();
+      const outcome = await runBreakGlass(baseDeps(handle), baseArgs({ email: STALE_PROFILE_EMAIL, apply: false }));
+
+      expect(outcome.exitCode).toBe(EXIT_SUCCESS);
+      expect(outcome.summary?.user_id).toBe(USER_ID);
+      expect(outcome.summary?.email).toBe(CURRENT_AUTH_EMAIL);
+      expect(handle.listUsersCalls).toBe(0);
+    });
+
+    it('rejects a CONFIRM_MFA_BREAK_GLASS equal to the STALE profiles email — the gate compares against the resolved auth email, not the lookup key', async () => {
+      const handle = staleHandle();
+      const outcome = await runBreakGlass(
+        baseDeps(handle, { confirmEnv: STALE_PROFILE_EMAIL }),
+        baseArgs({ email: STALE_PROFILE_EMAIL, factorId: FACTOR_A.id, apply: true }),
+      );
+
+      expect(outcome.exitCode).toBe(EXIT_VALIDATION);
+      expect(handle.inserts).toHaveLength(0);
+      expect(handle.deletedFactorIds).toHaveLength(0);
+    });
+
+    it('accepts a CONFIRM_MFA_BREAK_GLASS equal to the resolved (current) auth email even though the operator looked the user up by their old address', async () => {
+      const handle = staleHandle();
+      const outcome = await runBreakGlass(
+        baseDeps(handle, { confirmEnv: CURRENT_AUTH_EMAIL }),
+        baseArgs({ email: STALE_PROFILE_EMAIL, factorId: FACTOR_A.id, apply: true }),
+      );
+
+      expect(outcome.exitCode).toBe(EXIT_SUCCESS);
+      expect(handle.deletedFactorIds).toEqual([FACTOR_A.id]);
     });
   });
 
@@ -897,6 +1013,41 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
       it('findDuplicateFlags returns [] for a clean argv', () => {
         expect(findDuplicateFlags(argv(['--factor-id', 'x']))).toEqual([]);
       });
+
+      it('runs parseArgs before the duplicate-flag scan, so a value swallowed by a flag-shaped token is diagnosed correctly instead of misreported as a repeated LATER flag (review finding #4, SCRUM-3584 PR #2635)', () => {
+        // --reason has no real value here: its value token is the
+        // flag-shaped `--ticket` that follows, which Node's parseArgs
+        // itself rejects as ambiguous. A duplicate-scan-first
+        // implementation instead counts the two (unrelated) --ticket
+        // tokens and reports "repeated: --ticket" — not the operator's
+        // actual mistake.
+        const argvWithSwallowedValue = [
+          'node',
+          'mfa-break-glass.ts',
+          '--email',
+          'a@b.com',
+          '--reason',
+          '--ticket',
+          '--ticket',
+          'SCRUM-1234',
+          '--operator',
+          'carson@arkova.io',
+          '--factor-id',
+          'x',
+        ];
+
+        let thrown: unknown;
+        try {
+          parseCliArgs(argvWithSwallowedValue);
+        } catch (err) {
+          thrown = err;
+        }
+
+        expect(thrown).toBeInstanceOf(Error);
+        const message = (thrown as Error).message;
+        expect(message).toMatch(/--reason/);
+        expect(message).not.toMatch(/repeated/i);
+      });
     });
   });
 
@@ -992,6 +1143,43 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
       expect(isDirectEntrypoint('/nonexistent/path/does-not-exist.mjs', import.meta.url)).toBe(
         false,
       );
+    });
+
+    describe('realpath failure falls back to unresolved-path string comparison instead of silently returning false (review finding #5, SCRUM-3584 PR #2635)', () => {
+      it('returns true and warns once when realpath throws but the unresolved path strings match', () => {
+        const samePath = '/some/fake/path/script.mjs';
+        const warnings: string[] = [];
+
+        const result = isDirectEntrypoint(samePath, pathToFileURL(samePath).href, {
+          realpath: () => {
+            throw new Error('EACCES: permission denied');
+          },
+          warn: (line) => warnings.push(line),
+        });
+
+        expect(result).toBe(true);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toMatch(/fall(?:s|ing|en)? back|fallback/i);
+        expect(warnings[0]).toMatch(/EACCES/);
+      });
+
+      it('returns false when realpath throws and the unresolved path strings do NOT match', () => {
+        const warnings: string[] = [];
+
+        const result = isDirectEntrypoint(
+          '/some/fake/path/other.mjs',
+          pathToFileURL('/some/fake/path/script.mjs').href,
+          {
+            realpath: () => {
+              throw new Error('EACCES: permission denied');
+            },
+            warn: (line) => warnings.push(line),
+          },
+        );
+
+        expect(result).toBe(false);
+        expect(warnings).toHaveLength(1);
+      });
     });
   });
 });

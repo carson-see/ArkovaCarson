@@ -191,11 +191,19 @@ export function findDuplicateFlags(argv: string[]): string[] {
 export function parseCliArgs(argv: string[]): BreakGlassArgs {
   const cliTokens = argv.slice(2);
 
-  const duplicates = findDuplicateFlags(cliTokens);
-  if (duplicates.length > 0) {
-    throw new Error(`each flag may be given once; repeated: ${duplicates.map((d) => `--${d}`).join(', ')}`);
-  }
-
+  // parseArgs runs FIRST, before the duplicate-flag scan. `parseArgs`
+  // rejects an option whose value token itself looks like another flag
+  // (e.g. `--reason --ticket ...`, where `--reason` never got a real value
+  // and silently swallowed the following `--ticket` token) with
+  // ERR_PARSE_ARGS_INVALID_OPTION_VALUE naming the flag that's actually
+  // missing its argument. Running the duplicate-flag scan first over that
+  // same argv instead counts the LATER, unrelated repeated `--ticket` and
+  // misreports "repeated: --ticket" — a real diagnosis exists and this
+  // ordering surfaces it (review finding #4, SCRUM-3584 PR #2635). The
+  // duplicate scan still runs afterward: parseArgs alone does NOT reject a
+  // genuinely repeated flag whose value is well-formed each time
+  // (`--email a --email b` parses fine, last value silently wins), which is
+  // exactly the copy-paste mistake this tool guards against.
   const { values } = parseArgs({
     args: cliTokens,
     options: {
@@ -208,6 +216,11 @@ export function parseCliArgs(argv: string[]): BreakGlassArgs {
       apply: { type: 'boolean', default: false },
     },
   });
+
+  const duplicates = findDuplicateFlags(cliTokens);
+  if (duplicates.length > 0) {
+    throw new Error(`each flag may be given once; repeated: ${duplicates.map((d) => `--${d}`).join(', ')}`);
+  }
 
   const result = ArgsSchema.safeParse({
     email: values.email,
@@ -256,6 +269,7 @@ interface PostgrestMaybeSingleLike {
 
 interface PostgrestFilterBuilderLike {
   eq(column: string, value: string): PostgrestMaybeSingleLike;
+  in(column: string, values: string[]): PostgrestMaybeSingleLike;
 }
 
 interface PostgrestQueryBuilderLike {
@@ -420,23 +434,46 @@ const LIST_USERS_PAGE_SIZE = 200;
 const LIST_USERS_MAX_PAGES = 200;
 
 /**
+ * The candidate set queried against `profiles.email`. The DB trigger
+ * (`enforce_lowercase_email()`, baseline migration) ONLY lowercases on
+ * write — it does not NFKC-normalize — while `normalizeEmail()` (the
+ * comparison normalizer used everywhere else in this tool) does trim ->
+ * NFKC -> lowercase. For an email whose NFKC form differs from its
+ * trim+lowercase form (e.g. a fullwidth or ligature character), the two
+ * normalizations diverge and only one of them can match what the trigger
+ * actually persisted. Querying both closes that gap without weakening
+ * either: `.in('email', candidates)` is still one indexed round trip, and
+ * `getUserById()` below still confirms whatever profiles row (if any)
+ * comes back before trusting it. Deduped to a single value when the two
+ * forms coincide (the common case for ASCII-only input).
+ */
+function fastPathEmailCandidates(email: string): string[] {
+  const trimLower = email.trim().toLowerCase();
+  const nfkcLower = normalizeEmail(email);
+  return trimLower === nfkcLower ? [trimLower] : [trimLower, nfkcLower];
+}
+
+/**
  * Fast path: `profiles.email` is populated + lowercased by a DB trigger and
  * is effectively unique per auth user (worker precedent:
  * services/worker/src/api/invitations.ts's own profiles-by-email lookup),
- * so an indexed equality lookup finds the candidate in one round trip
- * instead of paginating every user in the project. The profiles row is only
- * a CANDIDATE — `auth.admin.getUserById()` confirms the auth user still
+ * so an indexed lookup over the small NFKC-vs-plain candidate set (see
+ * `fastPathEmailCandidates`) finds the candidate in one round trip instead
+ * of paginating every user in the project. The profiles row is only a
+ * CANDIDATE — `auth.admin.getUserById()` confirms the auth user still
  * exists before trusting it, since a profile can outlive an auth-side
- * deletion. Returns `null` (never throws) on any inconclusive outcome —
- * including the profiles lookup itself failing — so the caller always has a
- * safe, slower fallback: the full `auth.admin.listUsers()` scan below.
+ * deletion, and the LIVE auth email (not the profiles row's email) is what
+ * gets returned. Returns `null` (never throws) on any inconclusive outcome
+ * — including the profiles lookup itself failing — so the caller always has
+ * a safe, slower fallback: the full `auth.admin.listUsers()` scan below.
  */
 async function tryResolveViaProfilesFastPath(
   client: SupabaseAdminLike,
-  target: string,
+  email: string,
 ): Promise<ResolvedUser | null> {
   try {
-    const { data, error } = await client.from('profiles').select('id,email').eq('email', target).maybeSingle();
+    const candidates = fastPathEmailCandidates(email);
+    const { data, error } = await client.from('profiles').select('id,email').in('email', candidates).maybeSingle();
     const profileId = (data as { id?: unknown } | null)?.id;
     if (error || typeof profileId !== 'string' || profileId.length === 0) return null;
 
@@ -444,7 +481,7 @@ async function tryResolveViaProfilesFastPath(
     const authUser = userData?.user;
     if (getErr || !authUser) return null;
 
-    return { id: authUser.id, email: authUser.email ?? target };
+    return { id: authUser.id, email: authUser.email ?? normalizeEmail(email) };
   } catch {
     return null;
   }
@@ -476,9 +513,9 @@ async function resolveUserByEmailScan(client: SupabaseAdminLike, target: string)
 }
 
 async function resolveUserByEmail(client: SupabaseAdminLike, email: string): Promise<ResolvedUser | null> {
-  const target = normalizeEmail(email);
-  const viaProfiles = await tryResolveViaProfilesFastPath(client, target);
+  const viaProfiles = await tryResolveViaProfilesFastPath(client, email);
   if (viaProfiles) return viaProfiles;
+  const target = normalizeEmail(email);
   return resolveUserByEmailScan(client, target);
 }
 
@@ -813,6 +850,16 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
 // Entrypoint-detection helper
 // ---------------------------------------------------------------------------
 
+/** Injectable for tests only — production always uses the real `realpathSync` + stderr. */
+export interface IsDirectEntrypointDeps {
+  realpath?: (path: string) => string;
+  warn?: (line: string) => void;
+}
+
+function defaultEntrypointWarn(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
+
 /**
  * Decides whether this module was invoked directly (`node script.js`,
  * `npx tsx script.ts`) vs merely imported. The naive
@@ -826,17 +873,49 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
  * path). Both failure modes make `main()` silently never run — exit 0, no
  * output, no error — which is a much worse failure mode for an ops tool
  * than a loud crash. `realpathSync` on both sides after resolving argv1 to
- * an absolute path closes both gaps; any resolution failure (e.g. argv1
- * doesn't exist) is treated as "not the entrypoint" rather than thrown.
+ * an absolute path closes both gaps.
+ *
+ * A `realpathSync` failure (argv1 doesn't exist, a permissions error, a
+ * transient FS issue) used to be swallowed into a blanket "not the
+ * entrypoint" — silently exit 0 with `main()` never invoked, the same
+ * silent no-op this function exists to prevent in the first place (review
+ * finding #5, SCRUM-3584 PR #2635). Instead, a realpath failure now falls
+ * back to comparing the UNRESOLVED path strings (argv1 normalized via
+ * `path.resolve`, the module URL normalized via `fileURLToPath`) — weaker
+ * (it won't catch a symlink pointing at the same file under a different
+ * name) but it means this can still correctly say "yes, run main()" for
+ * the ordinary non-symlinked case, and it writes one line to stderr naming
+ * why the fallback triggered so the fallback is never silent. No secrets
+ * are involved in either the paths or the underlying fs error message.
  */
-export function isDirectEntrypoint(argv1: string | undefined, moduleUrl: string): boolean {
+export function isDirectEntrypoint(
+  argv1: string | undefined,
+  moduleUrl: string,
+  deps: IsDirectEntrypointDeps = {},
+): boolean {
   if (!argv1) return false;
+  const realpath = deps.realpath ?? realpathSync;
+  const warn = deps.warn ?? defaultEntrypointWarn;
+
+  let invokedResolved: string;
+  let thisFileRaw: string;
   try {
-    const invoked = realpathSync(resolvePath(argv1));
-    const thisFile = realpathSync(fileURLToPath(moduleUrl));
-    return invoked === thisFile;
+    invokedResolved = resolvePath(argv1);
+    thisFileRaw = fileURLToPath(moduleUrl);
   } catch {
+    // Can't even build the two paths to compare (e.g. a malformed module
+    // URL) — no sane fallback exists either.
     return false;
+  }
+
+  try {
+    return realpath(invokedResolved) === realpath(thisFileRaw);
+  } catch (err) {
+    warn(
+      `isDirectEntrypoint: realpath failed (${errMessage(err)}) — falling back to unresolved path string ` +
+        'comparison. A symlinked invocation of a DIFFERENT real file may no longer be detected as a match.',
+    );
+    return invokedResolved === thisFileRaw;
   }
 }
 
