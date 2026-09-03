@@ -57,15 +57,21 @@
  * other supabase.auth.mfa.* call in this file — previously it was
  * fire-and-forget with no bound at all.
  *
- * PLATFORM FAILURES DURING VERIFY, NOT JUST ENROLL (items 4/E4/EA1):
- * `challenge()`/`verify()` in `handleVerify` are now ALSO wrapped in
- * try/catch and raced against a timeout, with the same shared
- * `classifyMfaError` (`@/lib/mfaErrors`) MfaChallenge uses — a platform
- * blip during the POST-enrollment verify step used to strand a
- * mandatorily-enrolling admin on a generic inline error with no escape
- * route (EA1); it now routes to `onCapabilityUnavailable` exactly like the
- * enroll step already did. A wrong CODE still shows the retryable inline
- * error — that is the user's own mistake.
+ * PLATFORM FAILURES DURING VERIFY, NOT JUST ENROLL (items 4/E4/EA1, three-way
+ * split corrected R24 — PR #2637 review round 2, real bug): `challenge()`/
+ * `verify()` in `handleVerify` are wrapped in try/catch and raced against a
+ * timeout, with the same shared `classifyMfaError` (`@/lib/mfaErrors`)
+ * `MfaChallenge` uses. Only a `'platform'` classification (the explicit
+ * MFA-disabled capability codes, or an unrecognized/absent code — i.e. a
+ * genuine platform blip) routes to `onCapabilityUnavailable`, exactly like
+ * the enroll step already does (EA1's original rationale: this must fail
+ * open here too, or a mandatorily-enrolling admin gets stranded on a
+ * generic inline error with no escape route). A `'wrong_code'` OR a
+ * `'rejected'` classification (an explicit backend rejection — rate limit,
+ * IP mismatch, a malformed request) both show a retryable inline error
+ * instead — R24 fixed a real bug where `'rejected'` was being treated the
+ * same as `'platform'` here, contradicting `mfaErrors.ts`'s own contract
+ * that `'rejected'` is never a fail-open signal on either path.
  *
  * A `mounted` guard (item 6/D2) ensures a result arriving after this
  * component has unmounted is ignored. "Sign out" is disabled while
@@ -242,14 +248,21 @@ export function MfaEnrollmentRequired({
         if (challengeError || !challengeData) {
           setBusy(false);
           const classified = classifyMfaError(challengeError, MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR);
-          if (classified.kind === 'wrong_code') {
-            setError(classified.message);
+          // R24 (PR #2637 review round 2, real bug): mirrors MfaChallenge's
+          // three-way branch — ONLY 'platform' fails open. The prior
+          // two-way `wrong_code` vs "everything else" split treated
+          // 'rejected' codes (over_request_rate_limit, mfa_ip_address_mismatch,
+          // validation_failed) as fail-open too, contradicting mfaErrors.ts's
+          // own contract that 'rejected' is NEVER a fail-open signal on
+          // either path. EA1's rationale (a platform failure during the
+          // post-enrollment verify step must fail open, same as the enroll
+          // step) still holds — it just means 'platform' specifically, not
+          // every non-wrong-code outcome.
+          if (classified.kind === 'platform') {
+            onCapabilityUnavailable(classified.code);
             return;
           }
-          // EA1: a platform failure during the post-enrollment verify step
-          // must fail open exactly like the enroll step already does — not
-          // strand a mandatorily-enrolling admin on a generic inline error.
-          onCapabilityUnavailable(classified.code);
+          setError(classified.message);
           return;
         }
 
@@ -268,11 +281,12 @@ export function MfaEnrollmentRequired({
 
         if (verifyError) {
           const classified = classifyMfaError(verifyError, MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR);
-          if (classified.kind === 'wrong_code') {
-            setError(classified.message);
+          // R24: same three-way split as the challenge() branch above.
+          if (classified.kind === 'platform') {
+            onCapabilityUnavailable(classified.code);
             return;
           }
-          onCapabilityUnavailable(classified.code);
+          setError(classified.message);
           return;
         }
 

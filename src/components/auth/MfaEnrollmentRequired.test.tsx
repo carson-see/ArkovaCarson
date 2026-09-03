@@ -223,9 +223,9 @@ describe('MfaEnrollmentRequired', () => {
     expect(screen.queryByTestId('mfa-enrollment-error')).not.toBeInTheDocument();
   });
 
-  it('ITEM 4/EA1: a PLATFORM error on verify() calls onCapabilityUnavailable', async () => {
+  it('ITEM 4/EA1 (R24): a PLATFORM error on verify() (unrecognized code) calls onCapabilityUnavailable', async () => {
     mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
-    mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'bad request', code: 'validation_failed' } });
+    mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'service down', code: 'mfa_totp_verify_not_enabled' } });
 
     renderScreen();
     await waitFor(() => {
@@ -236,9 +236,65 @@ describe('MfaEnrollmentRequired', () => {
     fireEvent.click(screen.getByTestId('mfa-enrollment-submit'));
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('validation_failed');
+      expect(onCapabilityUnavailable).toHaveBeenCalledWith('mfa_totp_verify_not_enabled');
     });
+    expect(onEnrolled).not.toHaveBeenCalled();
   });
+
+  // R24 (PR #2637 review round 2, real bug — fixed): the two branches above
+  // used to treat EVERY non-wrong-code outcome as fail-open, including an
+  // explicit backend REJECTION (validation_failed, over_request_rate_limit,
+  // mfa_ip_address_mismatch — classifyMfaError's `'rejected'` kind), which
+  // directly contradicts mfaErrors.ts's own contract that `'rejected'` is
+  // NEVER a fail-open signal on either the challenge or enrollment path.
+  // These prove the fix: a rejection shows an inline retryable error and
+  // never calls onCapabilityUnavailable or onEnrolled.
+  it.each(['validation_failed', 'over_request_rate_limit', 'mfa_ip_address_mismatch'])(
+    'R24: a REJECTED verify() error (%s) shows an inline error — NOT onCapabilityUnavailable, NOT onEnrolled',
+    async (code) => {
+      mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
+      mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'rejected by GoTrue', code } });
+
+      renderScreen();
+      await waitFor(() => {
+        expect(screen.getByTestId('mfa-enrollment-code')).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByTestId('mfa-enrollment-code'), { target: { value: '123456' } });
+      fireEvent.click(screen.getByTestId('mfa-enrollment-submit'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(/rejected by gotrue/i);
+      });
+      expect(onCapabilityUnavailable).not.toHaveBeenCalled();
+      expect(onEnrolled).not.toHaveBeenCalled();
+      // Stays on the same completable screen — a rejection is retryable,
+      // not a reason to fail open or otherwise abandon the code form.
+      expect(screen.getByTestId('mfa-enrollment-code')).toBeInTheDocument();
+    }
+  );
+
+  it.each(['validation_failed', 'over_request_rate_limit', 'mfa_ip_address_mismatch'])(
+    'R24: a REJECTED challenge() error (%s) shows an inline error — NOT onCapabilityUnavailable, NOT onEnrolled',
+    async (code) => {
+      mockChallenge.mockResolvedValueOnce({ data: null, error: { message: 'rejected by GoTrue', code } });
+
+      renderScreen();
+      await waitFor(() => {
+        expect(screen.getByTestId('mfa-enrollment-code')).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByTestId('mfa-enrollment-code'), { target: { value: '123456' } });
+      fireEvent.click(screen.getByTestId('mfa-enrollment-submit'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(/rejected by gotrue/i);
+      });
+      expect(onCapabilityUnavailable).not.toHaveBeenCalled();
+      expect(onEnrolled).not.toHaveBeenCalled();
+      expect(screen.getByTestId('mfa-enrollment-code')).toBeInTheDocument();
+    }
+  );
 
   it('ITEM 4/E4: a THROWN exception during handleVerify calls onCapabilityUnavailable, resets busy, never crashes', async () => {
     mockChallenge.mockRejectedValueOnce(new TypeError('boom'));
