@@ -20,11 +20,14 @@
  * verify (Supabase's verify() elevates the session, exactly like the
  * login-challenge path in MfaChallenge.tsx).
  *
- * UNIQUE FRIENDLY NAME (Amendment A2): enrolling always sends a fresh,
- * timestamp+random-suffixed `friendlyName` so a stale/unverified factor
- * left over from an earlier attempt (prod has exactly one such row, dated
- * 2026-03-23, on a platform admin — see mfa-dossier.md) can never collide
- * via `mfa_factor_name_conflict`.
+ * UNIQUE FRIENDLY NAME (Amendment A2, hardened per PR #2637 review item
+ * 25): enrolling always sends a fresh, timestamp+random-suffixed
+ * `friendlyName` (the suffix is `randomSuffixHex()`, `@/lib/random` —
+ * crypto.getRandomValues-backed, not `Math.random()`, per SonarCloud
+ * typescript:S2245) so a stale/unverified factor left over from an earlier
+ * attempt (prod has exactly one such row, dated 2026-03-23, on a platform
+ * admin — see mfa-dossier.md) can never collide via
+ * `mfa_factor_name_conflict`.
  *
  * FAIL-OPEN ON ANY ENROLL FAILURE (CTO ruling A4-2): `enroll()` returning
  * ANY error (known code, unknown code, or missing data), a thrown
@@ -36,13 +39,34 @@
  * this signal (accepted phase-1 trade-off, tracked toward SCRUM-3593's
  * future aal2 RLS — see AuthGuard.tsx and this folder's agents.md).
  *
- * LOCKOUT SAFETY: always renders a working "Sign out" affordance, for the
- * same reason as MfaChallenge — a user who cannot complete setup right
- * now (no phone handy) must be able to back out to a known-working state
- * (the login page) rather than being trapped mid-session with no exit.
+ * ENROLL TIMEOUT + ORPHAN CLEANUP (PR #2637 review item 31): the enroll()
+ * budget is 15s (raised from 8s — enrollment is a heavier call than a
+ * login challenge, and this screen has no busy competing UI to unblock).
+ * If the request loses that race but the ORIGINAL call later resolves
+ * successfully anyway (the network was just slow, not actually down), the
+ * resulting factor is a real, unverified row on the server that this
+ * screen never showed to the user — a best-effort `unenroll()` fires so it
+ * never becomes an invisible orphan (unenrolling an unverified factor
+ * needs no aal2, Amendment A3).
+ *
+ * PLATFORM FAILURES DURING VERIFY, NOT JUST ENROLL (items 4/E4/EA1):
+ * `challenge()`/`verify()` in `handleVerify` are now ALSO wrapped in
+ * try/catch and raced against a timeout, with the same shared
+ * `classifyMfaError` (`@/lib/mfaErrors`) MfaChallenge uses — a platform
+ * blip during the POST-enrollment verify step used to strand a
+ * mandatorily-enrolling admin on a generic inline error with no escape
+ * route (EA1); it now routes to `onCapabilityUnavailable` exactly like the
+ * enroll step already did. A wrong CODE still shows the retryable inline
+ * error — that is the user's own mistake.
+ *
+ * A `mounted` guard (item 6/D2) ensures a result arriving after this
+ * component has unmounted is ignored. "Sign out" is disabled while
+ * `starting` or `busy` (item 6/D8) — same lockout-safety rationale as
+ * MfaChallenge, but a click mid-request would otherwise abandon an
+ * in-flight enrollment on the server without a way to know its outcome.
  */
 
-import { useState, useEffect, useCallback, FormEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, FormEvent } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Loader2, AlertCircle, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -51,6 +75,9 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/lib/supabase';
+import { withTimeout, TimeoutError } from '@/lib/async';
+import { classifyMfaError } from '@/lib/mfaErrors';
+import { randomSuffixHex } from '@/lib/random';
 import { useAuth } from '@/hooks/useAuth';
 import { MFA_ENROLLMENT_REQUIRED_LABELS } from '@/lib/copy';
 
@@ -63,25 +90,16 @@ interface EnrollmentData {
 interface MfaEnrollmentRequiredProps {
   /** Called once enroll()+challenge()+verify() succeeds. */
   onEnrolled: () => void;
-  /** Called when enroll() itself fails or hangs — a platform capability failure, not a user-fixable code. */
+  /** Called when enroll() (or the post-enrollment verify) itself fails or hangs — a platform capability failure, not a user-fixable code. */
   onCapabilityUnavailable: (code: string) => void;
 }
 
-// Same circuit-breaker rationale as useMfaAssurance's assurance check: a
-// last-resort bound so a stalled enroll() call surfaces the fail-open
-// capability screen instead of an infinite spinner.
-const ENROLL_TIMEOUT_MS = 8_000;
-
-function timeout(ms: number): Promise<never> {
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('mfa-enroll-timeout')), ms);
-  });
-}
-
-/** Short, non-cryptographic uniqueness suffix — this only needs to avoid a friendly-name collision, not to be unguessable. */
-function randomSuffix(): string {
-  return Math.random().toString(36).slice(2, 8);
-}
+// Item 31: raised from 8s. Enrollment has no competing busy UI to unblock,
+// and is a heavier call than a login challenge — a longer budget avoids
+// mistaking ordinary latency for a platform outage while still bounding
+// the worst case.
+const ENROLL_TIMEOUT_MS = 15_000;
+const VERIFY_TIMEOUT_MS = 8_000;
 
 export function MfaEnrollmentRequired({
   onEnrolled,
@@ -94,18 +112,42 @@ export function MfaEnrollmentRequired({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // item 6/D2: a result arriving after unmount is ignored — no setState,
+  // no callback. Shared by the mount-time enroll() and handleVerify.
+  const unmountedRef = useRef(false);
   useEffect(() => {
-    let cancelled = false;
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let timedOut = false;
 
     async function startEnrollment() {
-      const friendlyName = `Authenticator ${new Date().toISOString().slice(0, 10)}-${randomSuffix()}`;
+      const friendlyName = `Authenticator ${new Date().toISOString().slice(0, 10)}-${randomSuffixHex()}`;
+      const enrollPromise = supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName });
+
+      // Item 31 orphan cleanup: if THIS original call later resolves with
+      // a real factor id after we've already reported unavailable (i.e.
+      // it lost the race below), best-effort unenroll it — fire-and-forget,
+      // errors ignored, since there is no UI left to report them to.
+      enrollPromise
+        .then((result) => {
+          if (timedOut && result?.data?.id) {
+            void supabase.auth.mfa.unenroll({ factorId: result.data.id }).catch(() => {
+              /* best-effort only */
+            });
+          }
+        })
+        .catch(() => {
+          /* the main try/catch below already handles this outcome */
+        });
 
       try {
-        const { data, error: enrollError } = await Promise.race([
-          supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName }),
-          timeout(ENROLL_TIMEOUT_MS),
-        ]);
-        if (cancelled) return;
+        const { data, error: enrollError } = await withTimeout(enrollPromise, ENROLL_TIMEOUT_MS, 'mfa-enroll');
+        if (unmountedRef.current) return;
 
         if (enrollError || !data) {
           // FAIL OPEN (A4-2): no allowlist — every enroll error routes here.
@@ -120,8 +162,11 @@ export function MfaEnrollmentRequired({
           secret: data.totp.secret,
         });
         setStarting(false);
-      } catch {
-        if (cancelled) return;
+      } catch (err) {
+        if (err instanceof TimeoutError) {
+          timedOut = true;
+        }
+        if (unmountedRef.current) return;
         // Thrown exception or the timeout race above — no error CODE
         // exists to inspect, so this can never be mistaken for a
         // known/unknown-but-real error code.
@@ -131,9 +176,6 @@ export function MfaEnrollmentRequired({
     }
 
     void startEnrollment();
-    return () => {
-      cancelled = true;
-    };
     // Intentionally mount-once: re-enrolling on every re-render would spam
     // Supabase and burn the MaxEnrolledFactors cap (Amendment A3).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,32 +189,59 @@ export function MfaEnrollmentRequired({
       setBusy(true);
       setError(null);
 
-      const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-        factorId: enrollmentData.factorId,
-      });
+      try {
+        const { data: challengeData, error: challengeError } = await withTimeout(
+          supabase.auth.mfa.challenge({ factorId: enrollmentData.factorId }),
+          VERIFY_TIMEOUT_MS,
+          'mfa-enrollment-challenge',
+        );
+        if (unmountedRef.current) return;
 
-      if (challengeError || !challengeData) {
-        setError(challengeError?.message ?? MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR);
+        if (challengeError || !challengeData) {
+          setBusy(false);
+          const classified = classifyMfaError(challengeError, MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR);
+          if (classified.kind === 'wrong_code') {
+            setError(classified.message);
+            return;
+          }
+          // EA1: a platform failure during the post-enrollment verify step
+          // must fail open exactly like the enroll step already does — not
+          // strand a mandatorily-enrolling admin on a generic inline error.
+          onCapabilityUnavailable(classified.code);
+          return;
+        }
+
+        const { error: verifyError } = await withTimeout(
+          supabase.auth.mfa.verify({
+            factorId: enrollmentData.factorId,
+            challengeId: challengeData.id,
+            code,
+          }),
+          VERIFY_TIMEOUT_MS,
+          'mfa-enrollment-verify',
+        );
+        if (unmountedRef.current) return;
+
         setBusy(false);
-        return;
+
+        if (verifyError) {
+          const classified = classifyMfaError(verifyError, MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR);
+          if (classified.kind === 'wrong_code') {
+            setError(classified.message);
+            return;
+          }
+          onCapabilityUnavailable(classified.code);
+          return;
+        }
+
+        onEnrolled();
+      } catch {
+        if (unmountedRef.current) return;
+        setBusy(false);
+        onCapabilityUnavailable('unknown');
       }
-
-      const { error: verifyError } = await supabase.auth.mfa.verify({
-        factorId: enrollmentData.factorId,
-        challengeId: challengeData.id,
-        code,
-      });
-
-      setBusy(false);
-
-      if (verifyError) {
-        setError(verifyError.message || MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR);
-        return;
-      }
-
-      onEnrolled();
     },
-    [enrollmentData, code, onEnrolled]
+    [enrollmentData, code, onEnrolled, onCapabilityUnavailable]
   );
 
   return (
@@ -206,7 +275,7 @@ export function MfaEnrollmentRequired({
                 <div className="flex justify-center rounded-lg border bg-white p-4" data-testid="mfa-enrollment-qr">
                   <img
                     src={enrollmentData.qrCode}
-                    alt="QR code for authenticator app"
+                    alt={MFA_ENROLLMENT_REQUIRED_LABELS.QR_ALT}
                     className="h-48 w-48"
                   />
                 </div>
@@ -230,7 +299,10 @@ export function MfaEnrollmentRequired({
                       data-testid="mfa-enrollment-code"
                       value={code}
                       onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                      placeholder="000000"
+                      placeholder={MFA_ENROLLMENT_REQUIRED_LABELS.CODE_PLACEHOLDER}
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      pattern="[0-9]*"
                       maxLength={6}
                       disabled={busy}
                       className="pl-10 font-mono text-center text-lg tracking-widest"
@@ -262,6 +334,7 @@ export function MfaEnrollmentRequired({
             size="sm"
             data-testid="mfa-enrollment-signout"
             className="w-full text-muted-foreground"
+            disabled={starting || busy}
             onClick={() => void signOut()}
           >
             {MFA_ENROLLMENT_REQUIRED_LABELS.SIGN_OUT}

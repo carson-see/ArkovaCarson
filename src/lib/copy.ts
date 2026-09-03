@@ -4468,12 +4468,13 @@ export const MFA_ENROLLMENT_REQUIRED_LABELS = {
   TITLE: 'Two-factor authentication required',
   DESCRIPTION: 'Your role has elevated access to organization data, so two-factor authentication is required before you can continue. Scan the QR code below with an authenticator app, then enter the 6-digit code it generates.',
   SCAN_INSTRUCTION: 'Scan this QR code with your authenticator app',
+  QR_ALT: 'QR code for authenticator app',
   MANUAL_ENTRY_LABEL: 'Manual entry code',
   CODE_LABEL: 'Verification code',
+  CODE_PLACEHOLDER: '000000',
   SUBMIT: 'Verify & continue',
   VERIFYING: 'Verifying...',
   SIGN_OUT: 'Sign out',
-  START_ERROR: 'Unable to start two-factor authentication setup. Please sign out and sign in again.',
   GENERIC_ERROR: 'Verification failed. Please check the code and try again.',
 } as const;
 
