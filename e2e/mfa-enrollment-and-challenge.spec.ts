@@ -19,9 +19,14 @@
  * `/login` UI (`loginViaUi`) rather than depending on seeded credentials or
  * a saved session. `test.use({ storageState: { cookies: [], origins: [] } })`
  * below means this spec never reads the `setup` project's `.auth/*.json`
- * either. Run it under a Playwright project with `dependencies: []` (no
- * `setup` project) so it doesn't even pay for seed-user logins it never
- * uses — the soak config does this.
+ * either. Item 36 (PR #2637 review) — precisely: `playwright.config.ts`'s
+ * checked-in projects ALL declare `dependencies: ['setup']`, so in CI this
+ * spec still runs under the `setup` project and pays for seed-user logins
+ * it never uses (harmless, just wasted setup time — it never READS
+ * `.auth/*.json` regardless, per the empty storageState override above).
+ * Against a rig with no seed users at all (e.g. the MFA-3167 soak rig),
+ * run with a config whose project has `dependencies: []` instead — the
+ * soak harness ships one outside this repo; no such project exists here.
  *
  * Covers:
  *  (a) an INDIVIDUAL enrolls TOTP in Settings, then completes the SAME
@@ -54,6 +59,7 @@ import {
   loginViaUi,
   setEnforceDateOverride,
   readSecretFromSettings,
+  submitTotpCodeWithBoundaryRetry,
 } from './helpers/mfa';
 import { TWO_FACTOR_SETUP_LABELS } from '../src/lib/copy';
 
@@ -110,8 +116,11 @@ test.describe('MFA enrollment and login challenge', () => {
       await page.getByTestId('twofactor-enable').click();
 
       const secret = await readSecretFromSettings(page);
-      await page.getByTestId('twofactor-verify-code').fill(totp(secret));
-      await page.getByTestId('twofactor-verify-submit').click();
+      await submitTotpCodeWithBoundaryRetry(page, secret, {
+        codeTestId: 'twofactor-verify-code',
+        submitTestId: 'twofactor-verify-submit',
+        errorTestId: 'twofactor-error',
+      });
 
       await expect(page.getByText(TWO_FACTOR_SETUP_LABELS.STATUS_ENABLED)).toBeVisible({ timeout: 10_000 });
 
@@ -127,8 +136,11 @@ test.describe('MFA enrollment and login challenge', () => {
       await loginViaUi(page, user.email, user.password);
 
       await expect(page.getByTestId('mfa-challenge')).toBeVisible({ timeout: 15_000 });
-      await page.getByTestId('mfa-challenge-code').fill(totp(secret));
-      await page.getByTestId('mfa-challenge-submit').click();
+      await submitTotpCodeWithBoundaryRetry(page, secret, {
+        codeTestId: 'mfa-challenge-code',
+        submitTestId: 'mfa-challenge-submit',
+        errorTestId: 'mfa-challenge-error',
+      });
 
       await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
       await acceptDisclaimerIfVisible(page);
@@ -203,8 +215,11 @@ test.describe('MFA enrollment and login challenge', () => {
       await expect(page.getByTestId('mfa-enrollment-qr')).toBeVisible();
 
       const secret = (await page.getByTestId('mfa-enrollment-secret').innerText()).trim();
-      await page.getByTestId('mfa-enrollment-code').fill(totp(secret));
-      await page.getByTestId('mfa-enrollment-submit').click();
+      await submitTotpCodeWithBoundaryRetry(page, secret, {
+        codeTestId: 'mfa-enrollment-code',
+        submitTestId: 'mfa-enrollment-submit',
+        errorTestId: 'mfa-enrollment-error',
+      });
 
       // The block is completable — it must release into the real app, not
       // just accept the code and stay parked.
@@ -234,8 +249,11 @@ test.describe('MFA enrollment and login challenge', () => {
       await page.goto('/settings');
       await page.getByTestId('twofactor-enable').click();
       const firstSecret = await readSecretFromSettings(page);
-      await page.getByTestId('twofactor-verify-code').fill(totp(firstSecret));
-      await page.getByTestId('twofactor-verify-submit').click();
+      await submitTotpCodeWithBoundaryRetry(page, firstSecret, {
+        codeTestId: 'twofactor-verify-code',
+        submitTestId: 'twofactor-verify-submit',
+        errorTestId: 'twofactor-error',
+      });
       await expect(page.getByTestId('twofactor-add-backup')).toBeVisible({ timeout: 10_000 });
 
       // Verifying a newly-enrolled factor elevates THIS session to aal2
@@ -245,15 +263,21 @@ test.describe('MFA enrollment and login challenge', () => {
       // shows the inline step-up form).
       await page.getByTestId('twofactor-add-backup').click();
       if (await page.getByTestId('twofactor-stepup').isVisible({ timeout: 2_000 }).catch(() => false)) {
-        await page.getByTestId('twofactor-stepup-code').fill(totp(firstSecret));
-        await page.getByTestId('twofactor-stepup-submit').click();
+        await submitTotpCodeWithBoundaryRetry(page, firstSecret, {
+          codeTestId: 'twofactor-stepup-code',
+          submitTestId: 'twofactor-stepup-submit',
+          errorTestId: 'twofactor-error',
+        });
       }
 
       await expect(page.getByTestId('twofactor-qr')).toBeVisible({ timeout: 10_000 });
       const backupFriendlyName = await page.getByTestId('twofactor-friendly-name').inputValue();
       const backupSecret = await readSecretFromSettings(page);
-      await page.getByTestId('twofactor-verify-code').fill(totp(backupSecret));
-      await page.getByTestId('twofactor-verify-submit').click();
+      await submitTotpCodeWithBoundaryRetry(page, backupSecret, {
+        codeTestId: 'twofactor-verify-code',
+        submitTestId: 'twofactor-verify-submit',
+        errorTestId: 'twofactor-error',
+      });
 
       await expect(page.locator('[data-testid^="twofactor-factor-"]')).toHaveCount(2, { timeout: 10_000 });
 
@@ -263,8 +287,11 @@ test.describe('MFA enrollment and login challenge', () => {
       await backupRow.getByRole('button', { name: TWO_FACTOR_SETUP_LABELS.REMOVE_ACTION }).click();
 
       if (await page.getByTestId('twofactor-stepup').isVisible({ timeout: 2_000 }).catch(() => false)) {
-        await page.getByTestId('twofactor-stepup-code').fill(totp(firstSecret));
-        await page.getByTestId('twofactor-stepup-submit').click();
+        await submitTotpCodeWithBoundaryRetry(page, firstSecret, {
+          codeTestId: 'twofactor-stepup-code',
+          submitTestId: 'twofactor-stepup-submit',
+          errorTestId: 'twofactor-error',
+        });
       }
 
       await expect(page.locator('[data-testid^="twofactor-factor-"]')).toHaveCount(1, { timeout: 10_000 });

@@ -14,6 +14,7 @@ import type { Page } from '@playwright/test';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SEED_USERS } from '../fixtures/supabase';
 import { uniqueTestId } from './unique';
+import { totp } from './totp';
 
 export const MFA_ENFORCE_DATE_OVERRIDE_KEY = 'arkova_mfa_enforce_from_override';
 
@@ -193,4 +194,58 @@ export async function readSecretFromSettings(page: Page): Promise<string> {
   await secretLocator.waitFor({ state: 'visible', timeout: 10_000 });
   const text = await secretLocator.innerText();
   return text.trim();
+}
+
+// Item 23/A2-6 (PR #2637 review) — the RFC 6238 30-second step boundary is
+// a real flake vector: a code computed right at the edge of a step can be
+// stale by the time Playwright's fill()+click() round trip reaches the
+// server, and GoTrue rejects it with `mfa_verification_failed`.
+const TOTP_STEP_MS = 30_000;
+const BOUNDARY_SAFETY_MARGIN_MS = 3_000;
+
+/**
+ * Compute a TOTP code for `secret`, nudging forward exactly one step if
+ * "now" is within `BOUNDARY_SAFETY_MARGIN_MS` of the current step
+ * boundary — a code computed that close to the edge is the one most likely
+ * to go stale mid-submit. Deterministic (no randomness, no clock wait):
+ * either the current step's code, or the NEXT step's, decided purely by
+ * where "now" falls in the current 30s window.
+ */
+function computeTotpAvoidingBoundary(secret: string): string {
+  const now = Date.now();
+  const msIntoStep = now % TOTP_STEP_MS;
+  const msUntilBoundary = TOTP_STEP_MS - msIntoStep;
+  const effectiveNow = msUntilBoundary < BOUNDARY_SAFETY_MARGIN_MS ? now + TOTP_STEP_MS : now;
+  return totp(secret, { now: effectiveNow });
+}
+
+/**
+ * Fill a 6-digit TOTP code input and submit, guarding the 30s RFC 6238
+ * step-boundary flake vector: computes the code as late as possible (right
+ * before fill+submit) via `computeTotpAvoidingBoundary`, and if the server
+ * still rejects it as a wrong code, retries EXACTLY ONCE — waiting out a
+ * full step first so the freshly-computed retry code cannot straddle the
+ * same boundary again. A second failure is treated as a real defect, not a
+ * flake: it is left to fail the test rather than looping.
+ */
+export async function submitTotpCodeWithBoundaryRetry(
+  page: Page,
+  secret: string,
+  opts: { codeTestId: string; submitTestId: string; errorTestId: string },
+): Promise<void> {
+  await page.getByTestId(opts.codeTestId).fill(computeTotpAvoidingBoundary(secret));
+  await page.getByTestId(opts.submitTestId).click();
+
+  const failed = await page
+    .getByTestId(opts.errorTestId)
+    .isVisible({ timeout: 3_000 })
+    .catch(() => false);
+  if (!failed) return;
+
+  // One deterministic retry: wait out a full step so the freshly computed
+  // code cannot straddle the same boundary the first attempt did, then
+  // resubmit. Bounded to exactly one retry — see the doc comment above.
+  await page.waitForTimeout(TOTP_STEP_MS);
+  await page.getByTestId(opts.codeTestId).fill(totp(secret, { now: Date.now() }));
+  await page.getByTestId(opts.submitTestId).click();
 }

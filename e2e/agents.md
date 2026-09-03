@@ -20,8 +20,14 @@ land, before citing it as merge-grade evidence.
 its own disposable user (and, where needed, its own disposable org) via the service client and
 logs in through the real `/login` UI. The spec sets its own empty
 `test.use({ storageState: { cookies: [], origins: [] } })`, so it never depends on the `setup`
-project's saved sessions either — run it under a Playwright project with `dependencies: []`
-(no `setup` project) so it doesn't pay for seed-user logins it never uses.
+project's saved sessions either. **Item 36 correction (PR #2637 review):** every checked-in
+project in `playwright.config.ts` declares `dependencies: ['setup']` — there is no
+`dependencies: []` project in this repo. In CI, this spec therefore still runs under `setup`
+and pays for seed-user logins it never reads (harmless waste, not a correctness issue, since
+the empty storageState override above means it never touches `.auth/*.json` regardless).
+Against a rig with NO seed users at all (e.g. the MFA-3167 soak rig, which has none of the
+usual seed users), run it with a config whose project has `dependencies: []` instead — the
+soak harness ships one outside this repo.
 
 - **`helpers/totp.ts`** — dependency-free RFC 6238 TOTP (`base32Decode`, `totp`; SHA-1, 6 or
   8 digits, 30s step; only `node:crypto`, no new npm dependency). Ported from a CTO-session
@@ -29,7 +35,11 @@ project's saved sessions either — run it under a Playwright project with `depe
   `vitest.config.ts`'s `include` globs, so the vector re-assertions live as a Playwright
   `test.describe('totp helper')` block inside the new spec, not a `.test.ts` file — that block
   needs no `page` fixture and no live stack, so it is the one part of the spec that genuinely
-  could run standalone.
+  could run standalone. Item 26 (SonarCloud typescript:S8786, PR #2637 review): the base32
+  cleanup no longer trims trailing `=` padding with a regex quantifier anchored at the end
+  (`/=+$/`, flagged for potential super-linear backtracking) — `stripTrailingBase32Padding()`
+  does a plain backward character scan instead (no backtracking, O(n) in the padding length).
+  Behaviourally identical; re-verified against the RFC vectors after the change.
 - **`helpers/mfa.ts`** — `createDisposableUser`/`deleteDisposableUser` (same idiom as
   `withProfileSession` in `helpers/profile-session.ts`: `auth.admin.createUser()` then an
   **explicit** `profiles` upsert — never assume an `auth.users` trigger populates it),
@@ -41,7 +51,12 @@ project's saved sessions either — run it under a Playwright project with `depe
   storageState injection, these specs need a real login because that's what the AuthGuard MFA
   gate runs on), `setEnforceDateOverride` (writes `arkova_mfa_enforce_from_override` via
   `page.addInitScript` so it's present before the app's first script runs),
-  `readSecretFromSettings` (reads `twofactor-secret` on `/settings`).
+  `readSecretFromSettings` (reads `twofactor-secret` on `/settings`),
+  `submitTotpCodeWithBoundaryRetry` (item 23/A2-6, PR #2637 review — guards the RFC 6238 30s
+  step boundary: computes the code as late as possible, nudging forward one step if within 3s
+  of the boundary, and retries EXACTLY ONCE — waiting out a full step first — if the server
+  rejects it as a wrong code; a second failure is a real defect and is left to fail the test).
+  Every TOTP fill+submit in the spec goes through this helper now, not a raw `.fill(totp(...))`.
 - **The spec** covers: (a) a disposable INDIVIDUAL enrolling TOTP in Settings then completing
   the SAME factor as a login challenge (`mfa-challenge*` test ids) on the next sign-in; (b) a
   disposable ORG_ADMIN with its own throwaway org seeing the dismissible `mfa-grace-nudge`
@@ -62,6 +77,21 @@ project's saved sessions either — run it under a Playwright project with `depe
   for `orgAdmin`/`orgBAdmin` sessions once the 2026-09-21 default enforcement date
   (`src/lib/mfaPolicy.ts`) passes. A plain UI login never writes this key on its own — it has to
   be patched into the file, not read back from the page.
+- **Item 17/B4 (PR #2637 review) — the `arkova_mfa_enforce_from_override` localStorage key is
+  NOT unconditionally honoured.** `src/lib/mfaPolicy.ts`'s `resolveMfaEnforceFrom()` only reads
+  it when `import.meta.env.DEV === true` OR `import.meta.env.VITE_MFA_ALLOW_DATE_OVERRIDE ===
+  'true'` (CTO ruling A4-1) — never on a plain production build with neither set. `npm run dev`
+  (what CI's E2E job runs) always satisfies `DEV === true`, so the override works there with no
+  extra flag. A **built-preview** run (`vite build` + `vite preview`, or any Vercel-style
+  production bundle) does NOT satisfy `DEV`, so after 2026-09-21 (the baked default enforcement
+  date) it will stop honouring the override UNLESS `VITE_MFA_ALLOW_DATE_OVERRIDE=true` was set
+  at build time — the MFA-3167 soak build sets this flag explicitly for exactly this reason
+  (`docs/reference/ENV.md`: never set it on Vercel prod). If this spec (or `auth.setup.ts`'s
+  patched override) is ever run against a built-preview instead of `npm run dev`, confirm that
+  build set the flag first — otherwise every override-dependent assertion here (the grace-nudge
+  scenario's future date, the hard-block scenario's past date, and `auth.setup.ts`'s far-future
+  patch protecting the other ~100 specs) silently stops working with no error, just the real
+  (unoverridden) enforcement date taking over.
 - **Do not widen `AnchorUpdateSchema` or any other spec's fixtures for this feature** — MFA
   state lives entirely in `auth.mfa_factors` / `auth.sessions`, the disposable users' own
   `profiles` rows, and (for scenario (b)) one disposable `organizations` row — never on

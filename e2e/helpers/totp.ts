@@ -20,9 +20,23 @@ import { createHmac } from 'node:crypto';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
+/**
+ * Strip trailing `=` padding characters without a regex quantifier at the
+ * end of the string (SonarCloud typescript:S8786 — `/=+$/` was flagged for
+ * potential super-linear backtracking). A plain backward scan has no
+ * backtracking at all, and is O(n) in the number of trailing `=` chars.
+ */
+function stripTrailingBase32Padding(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '=') {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 /** Decode an RFC 4648 base32 string (case-insensitive, padding optional) to raw bytes. */
 export function base32Decode(input: string): Buffer {
-  const clean = input.toUpperCase().replace(/=+$/, '').replace(/[^A-Z2-7]/g, '');
+  const clean = stripTrailingBase32Padding(input.toUpperCase()).replace(/[^A-Z2-7]/g, '');
   let bits = 0;
   let value = 0;
   const bytes: number[] = [];
