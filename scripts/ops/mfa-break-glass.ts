@@ -13,21 +13,30 @@
  * SAFETY SEQUENCE (CTO plan Amendment A4 ruling 5 — BINDING):
  *   resolve user by email -> print ALL factors (id/friendly_name/status/
  *   created) -> require explicit --factor-id <id> or --all -> require
- *   env CONFIRM_MFA_BREAK_GLASS=<email> equal to the resolved email ->
- *   write an audit_events INTENT row BEFORE deleting anything ->
- *   deleteFactor per selected id -> write a COMPLETION row -> any audit
- *   write failure is loud and exits non-zero.
+ *   env CONFIRM_MFA_BREAK_GLASS=<email> equal to the resolved email
+ *   (and, for --all, ALSO CONFIRM_MFA_BREAK_GLASS_ALL=<email> — a
+ *   second-tier ack, same shape as provision-isolated-rig.sh's
+ *   CONFIRM_REAL_CONFIG, since "every factor this person has" is a much
+ *   larger blast radius than one factor id) -> write an audit_events
+ *   INTENT row BEFORE deleting anything -> deleteFactor per selected id
+ *   -> write a COMPLETION row -> any audit write failure is loud and
+ *   exits non-zero.
  *
  * GoTrue rule this tool depends on (CTO plan Amendment A3): deleting a
  * VERIFIED factor invalidates every session of that user with AAL below
  * aal2 — i.e. this logs the user out everywhere. That is expected, not a
- * bug: the user signs back in and re-enrolls under whatever grace/
- * enforcement policy currently applies (src/lib/mfaPolicy.ts).
+ * bug. At this head (before SCRUM-3167's enforcement gate ships — see
+ * branch security/mfa-enforcement-3167), the user simply signs back in
+ * with their password and re-enrolls from Settings; once that PR is
+ * live, they may instead be routed through a mandatory re-enrollment
+ * screen depending on their role and the enforcement date. Either way
+ * this tool's job ends at "the factor is gone" — see the runbook for
+ * what the user experiences next.
  *
  * Dry run is the default and writes NOTHING: it resolves the user, lists
  * every factor, validates a selection if one was given, and prints the
- * plan. Only `--apply` plus a matching `CONFIRM_MFA_BREAK_GLASS` env var
- * performs a delete.
+ * plan. Only `--apply` plus the matching CONFIRM env var(s) performs a
+ * delete.
  *
  * Usage (dry run — always do this first):
  *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... \
@@ -45,16 +54,18 @@
  *       --operator carson@arkova.io --apply
  *
  * Against prod (SUPABASE_URL host containing vzwyaatejekddvltxyye) also
- * requires ALLOW_PROD_BREAK_GLASS=1, printed as a red banner — see the
- * runbook's "never" list before ever setting that.
+ * requires ALLOW_PROD_BREAK_GLASS=1 — for ANY run, dry run included —
+ * printed as a red banner. See the runbook's "never" list before ever
+ * setting that.
  *
  * Exit codes:
  *   0 — dry run completed, or apply completed with every selected
  *       factor deleted and both audit rows recorded.
  *   1 — validation / precondition failure. NOTHING was written: bad
- *       args, user not found, --factor-id doesn't belong to the
- *       resolved user, missing/mismatched CONFIRM_MFA_BREAK_GLASS, or a
- *       prod host denied without ALLOW_PROD_BREAK_GLASS=1.
+ *       args, duplicated flags, user not found, --factor-id doesn't
+ *       belong to the resolved user, missing/mismatched CONFIRM env
+ *       var(s), or a prod host was denied without
+ *       ALLOW_PROD_BREAK_GLASS=1.
  *   2 — the INTENT audit row failed to insert. Aborted BEFORE any
  *       delete — no factor was touched.
  *   3 — one or more deletes were attempted, but the COMPLETION audit
@@ -70,9 +81,18 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { realpathSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
+// Self-contained (no further imports) — safe to reuse across the frontend/
+// scripts tsconfig boundary. Canonical fix for the 2026-08-17 poison-record
+// incident (docs/staging/fullsoak-2026-08/prod-repair-poison-record-2026-08-17.md):
+// `String.prototype.slice` cuts at UTF-16 code-unit boundaries, which can
+// leave a lone surrogate that PostgREST rejects as invalid JSON. Reusing the
+// one canonical helper here instead of re-deriving the same fix locally.
+import { truncateUtf16Safe } from '../../services/worker/src/utils/utf16-truncate.js';
 
 // ---------------------------------------------------------------------------
 // Exit codes (see file header for the full table).
@@ -89,18 +109,26 @@ const PROD_SUPABASE_REF = 'vzwyaatejekddvltxyye';
 /** audit_events.details CHECK: char_length(details) <= 10000. */
 const AUDIT_DETAILS_MAX = 10000;
 
+/** SCREAMING_SNAKE to match the dominant event_type casing convention in
+ * this codebase (the EMERGENCY_ACCESS_* family is the closest precedent for
+ * "an operator did a privileged, auditable thing to someone else's
+ * account"). */
+const EVENT_TYPE_REQUESTED = 'MFA_BREAK_GLASS_REQUESTED';
+const EVENT_TYPE_COMPLETED = 'MFA_BREAK_GLASS_COMPLETED';
+
 // ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
 
+/**
+ * Only `SCRUM-1234` or this exact Jira browse URL shape — NOT any http(s)
+ * URL. An arbitrary URL (a Google Doc, a Slack thread) isn't a ticket
+ * reference this tool can rely on existing or staying reachable; the Jira
+ * link is the one external reference this repo treats as durable.
+ */
 function isValidTicketRef(ticket: string): boolean {
   if (/^SCRUM-\d+$/i.test(ticket)) return true;
-  try {
-    const url = new URL(ticket);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
+  return /^https:\/\/arkova\.atlassian\.net\/browse\/SCRUM-\d+\/?$/i.test(ticket);
 }
 
 const ArgsSchema = z
@@ -108,13 +136,24 @@ const ArgsSchema = z
     email: z.string().trim().email('--email must be a valid email address'),
     factorId: z.string().trim().min(1).optional(),
     all: z.boolean().default(false),
-    reason: z.string().trim().min(1, '--reason is required'),
+    reason: z
+      .string()
+      .trim()
+      .min(1, '--reason is required')
+      .max(2000, '--reason must be 2000 characters or fewer'),
     ticket: z
       .string()
       .trim()
       .min(1, '--ticket is required')
-      .refine(isValidTicketRef, { message: '--ticket must look like SCRUM-1234 or a URL' }),
-    operator: z.string().trim().min(1, '--operator (name/email) is required'),
+      .max(300, '--ticket must be 300 characters or fewer')
+      .refine(isValidTicketRef, {
+        message: '--ticket must look like SCRUM-1234 or https://arkova.atlassian.net/browse/SCRUM-1234',
+      }),
+    operator: z
+      .string()
+      .trim()
+      .min(1, '--operator (name/email) is required')
+      .max(200, '--operator must be 200 characters or fewer'),
     apply: z.boolean().default(false),
   })
   .refine((v) => !(v.factorId && v.all), {
@@ -126,10 +165,39 @@ const ArgsSchema = z
 
 export type BreakGlassArgs = z.infer<typeof ArgsSchema>;
 
+/** CLI flag names this tool recognizes — used for duplicate-flag detection. */
+const KNOWN_FLAGS = ['email', 'factor-id', 'all', 'reason', 'ticket', 'operator', 'apply'] as const;
+
+/**
+ * node:util `parseArgs` silently keeps the LAST value when a flag is
+ * repeated (`--email a --email b` resolves to `b`) — for a tool that emails
+ * an operator's stated reason/ticket into a SECURITY audit row and deletes a
+ * factor by id, a repeated flag is far more likely a copy-paste mistake in a
+ * hand-typed break-glass command than an intentional override. Detected and
+ * rejected BEFORE parseArgs ever runs, so nothing is silently dropped.
+ */
+export function findDuplicateFlags(argv: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const token of argv) {
+    if (!token.startsWith('--')) continue;
+    const name = token.slice(2).split('=')[0];
+    if (!(KNOWN_FLAGS as readonly string[]).includes(name)) continue; // parseArgs itself rejects unknown flags
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, n]) => n > 1).map(([name]) => name);
+}
+
 /** Parses `process.argv`-shaped input (argv[0]/argv[1] are node/script path). */
 export function parseCliArgs(argv: string[]): BreakGlassArgs {
+  const cliTokens = argv.slice(2);
+
+  const duplicates = findDuplicateFlags(cliTokens);
+  if (duplicates.length > 0) {
+    throw new Error(`each flag may be given once; repeated: ${duplicates.map((d) => `--${d}`).join(', ')}`);
+  }
+
   const { values } = parseArgs({
-    args: argv.slice(2),
+    args: cliTokens,
     options: {
       email: { type: 'string' },
       'factor-id': { type: 'string' },
@@ -167,7 +235,8 @@ export function parseCliArgs(argv: string[]): BreakGlassArgs {
 export interface MfaFactorRow {
   id: string;
   factor_type: string;
-  friendly_name: string | null;
+  /** Matches auth-js `Factor.friendly_name?: string` — optional, never `null` on the wire. */
+  friendly_name?: string | null;
   status: string;
   created_at: string;
 }
@@ -194,11 +263,28 @@ interface PostgrestQueryBuilderLike {
   insert(row: Record<string, unknown>): PromiseLike<{ error: SupabaseErrorLike | null }>;
 }
 
+/**
+ * `data` mirrors `auth-js` `GoTrueAdminApi.listUsers` exactly: on success it
+ * is `{ users, nextPage, lastPage, total }` (never `null`); on failure it is
+ * `{ users: [] }` with `error` set. There is no "no data" shape to defend
+ * against — `nextPage` is `null` once the Link header carries no further
+ * page, which is the real pagination-termination signal (a short `users`
+ * array is NOT — the last page can happen to be full).
+ */
+interface ListUsersData {
+  users: AdminUserRow[];
+  nextPage?: number | null;
+}
+
 export interface SupabaseAdminLike {
   auth: {
     admin: {
       listUsers(params: { page: number; perPage: number }): Promise<{
-        data: { users: AdminUserRow[] } | null;
+        data: ListUsersData;
+        error: SupabaseErrorLike | null;
+      }>;
+      getUserById(id: string): Promise<{
+        data: { user: AdminUserRow | null };
         error: SupabaseErrorLike | null;
       }>;
       mfa: {
@@ -220,19 +306,19 @@ export interface SupabaseAdminLike {
 // Core types
 // ---------------------------------------------------------------------------
 
-export interface ResolvedUser {
+interface ResolvedUser {
   id: string;
   email: string;
 }
 
-export interface FactorDeleteResult {
+interface FactorDeleteResult {
   id: string;
   friendly_name: string | null;
   status: 'deleted' | 'failed';
   error?: string;
 }
 
-export interface BreakGlassSummary {
+interface BreakGlassSummary {
   mode: 'dry-run' | 'apply';
   user_id: string;
   email: string;
@@ -244,7 +330,7 @@ export interface BreakGlassSummary {
   completion_audit_recorded?: boolean;
 }
 
-export interface BreakGlassOutcome {
+interface BreakGlassOutcome {
   exitCode: number;
   summary: BreakGlassSummary | null;
   message?: string;
@@ -256,6 +342,8 @@ export interface BreakGlassDeps {
   supabaseUrl: string;
   /** process.env.CONFIRM_MFA_BREAK_GLASS */
   confirmEnv?: string;
+  /** process.env.CONFIRM_MFA_BREAK_GLASS_ALL — required in addition, only for --all --apply. */
+  confirmAllEnv?: string;
   /** process.env.ALLOW_PROD_BREAK_GLASS */
   allowProdBreakGlass?: string;
   log?: (line: string) => void;
@@ -266,8 +354,33 @@ export interface BreakGlassDeps {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Non-Error rejections happen (a re-thrown postgrest-js error, a plain
+ * `{message}` object) — falling through to `String(err)` on those produces
+ * the useless `"[object Object]"` in exactly the exit-3 "insert this row
+ * manually" message where operators most need a real reason.
+ */
 function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object' && err !== null) {
+    const maybeMessage = (err as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string') return maybeMessage;
+  }
+  return String(err);
+}
+
+/**
+ * One canonical email-comparison normalizer, used everywhere this script
+ * compares two emails (resolution target, CONFIRM env vars). NFKC folds
+ * compatibility variants before lowercasing so equivalent-looking inputs
+ * compare equal consistently across every call site — this does not claim
+ * full Unicode case-folding correctness (e.g. the Turkish dotted-İ problem
+ * has no locale-free general solution), only that this tool applies the
+ * SAME normalization everywhere instead of ad hoc `.toLowerCase()` calls
+ * that could drift out of sync with each other.
+ */
+export function normalizeEmail(value: string): string {
+  return value.trim().normalize('NFKC').toLowerCase();
 }
 
 function safeHost(supabaseUrl: string): string {
@@ -298,26 +411,75 @@ function redBanner(supabaseUrl: string): string {
 }
 
 const LIST_USERS_PAGE_SIZE = 200;
-/** Safety cap so a bug can never spin this into an infinite page loop. */
+/**
+ * Safety cap on the number of listUsers REQUESTS, not a real pagination
+ * limit — real termination is `nextPage` going null. This exists only so a
+ * broken/malicious backend that always returns a truthy `nextPage` can't
+ * spin this into an infinite loop.
+ */
 const LIST_USERS_MAX_PAGES = 200;
 
-async function resolveUserByEmail(client: SupabaseAdminLike, email: string): Promise<ResolvedUser | null> {
-  const target = email.trim().toLowerCase();
-  for (let page = 1; page <= LIST_USERS_MAX_PAGES; page += 1) {
+/**
+ * Fast path: `profiles.email` is populated + lowercased by a DB trigger and
+ * is effectively unique per auth user (worker precedent:
+ * services/worker/src/api/invitations.ts's own profiles-by-email lookup),
+ * so an indexed equality lookup finds the candidate in one round trip
+ * instead of paginating every user in the project. The profiles row is only
+ * a CANDIDATE — `auth.admin.getUserById()` confirms the auth user still
+ * exists before trusting it, since a profile can outlive an auth-side
+ * deletion. Returns `null` (never throws) on any inconclusive outcome —
+ * including the profiles lookup itself failing — so the caller always has a
+ * safe, slower fallback: the full `auth.admin.listUsers()` scan below.
+ */
+async function tryResolveViaProfilesFastPath(
+  client: SupabaseAdminLike,
+  target: string,
+): Promise<ResolvedUser | null> {
+  try {
+    const { data, error } = await client.from('profiles').select('id,email').eq('email', target).maybeSingle();
+    const profileId = (data as { id?: unknown } | null)?.id;
+    if (error || typeof profileId !== 'string' || profileId.length === 0) return null;
+
+    const { data: userData, error: getErr } = await client.auth.admin.getUserById(profileId);
+    const authUser = userData?.user;
+    if (getErr || !authUser) return null;
+
+    return { id: authUser.id, email: authUser.email ?? target };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fallback: paginate `auth.admin.listUsers()` until `nextPage` is null (real
+ * termination signal — a short `users` array does NOT mean "last page") or
+ * the runaway-loop guard trips. Used when the user has no `profiles` row
+ * (e.g. an auth user mid-signup) or the fast path above was inconclusive.
+ */
+async function resolveUserByEmailScan(client: SupabaseAdminLike, target: string): Promise<ResolvedUser | null> {
+  let page: number | null = 1;
+  for (let i = 0; i < LIST_USERS_MAX_PAGES && page !== null; i += 1) {
     const { data, error } = await client.auth.admin.listUsers({ page, perPage: LIST_USERS_PAGE_SIZE });
     if (error) throw new Error(error.message);
     const users = data?.users ?? [];
-    const found = users.find((u) => (u.email ?? '').toLowerCase() === target);
-    if (found) {
-      return { id: found.id, email: found.email ?? email };
-    }
-    if (users.length < LIST_USERS_PAGE_SIZE) {
-      return null;
-    }
+    const found = users.find((u) => normalizeEmail(u.email ?? '') === target);
+    if (found) return { id: found.id, email: found.email ?? target };
+    page = data?.nextPage ?? null;
   }
-  throw new Error(
-    `exceeded ${LIST_USERS_MAX_PAGES} pages of auth.admin.listUsers without finding "${email}" or exhausting results`,
-  );
+  if (page !== null) {
+    throw new Error(
+      `exceeded ${LIST_USERS_MAX_PAGES} pages of auth.admin.listUsers while scanning for "${target}" — the user ` +
+        'may still exist; this is a runaway-loop guard, not proof of absence. Investigate pagination or check auth.users directly.',
+    );
+  }
+  return null;
+}
+
+async function resolveUserByEmail(client: SupabaseAdminLike, email: string): Promise<ResolvedUser | null> {
+  const target = normalizeEmail(email);
+  const viaProfiles = await tryResolveViaProfilesFastPath(client, target);
+  if (viaProfiles) return viaProfiles;
+  return resolveUserByEmailScan(client, target);
 }
 
 async function listFactorsForUser(client: SupabaseAdminLike, userId: string): Promise<MfaFactorRow[]> {
@@ -358,19 +520,76 @@ async function insertAuditEvent(
 }
 
 /**
- * Keeps `details` under the audit_events CHECK (<=10000 chars) rather than
- * fail the insert outright. Drops the most verbose, least essential field
- * first; a manual DB read of `target_id` + `user_id` still identifies the
- * factor(s) even if this ever has to truncate.
+ * Keeps `details` under the audit_events CHECK (<=10000 chars). NEVER slices
+ * the SERIALIZED JSON string — that is exactly the bug class
+ * scripts/ci/feedback-rules/surrogate-safe-truncate.ts exists to catch: a
+ * cut landing inside a `\uXXXX` escape or a UTF-16 surrogate pair produces
+ * either invalid JSON or a lone surrogate that PostgREST rejects wholesale
+ * (the 2026-08-17 incident). Instead this only ever shortens the `reason`
+ * field VALUE with `truncateUtf16Safe` (surrogate-safe) and re-serializes,
+ * shrinking further in a small bounded loop until it fits — so the result
+ * is always valid JSON, by construction, never by hoping the cut point was
+ * safe.
  */
-function boundedDetailsJson(details: Record<string, unknown>): string {
+export function boundedDetailsJson(details: Record<string, unknown>): string {
   const full = JSON.stringify(details);
   if (full.length <= AUDIT_DETAILS_MAX) return full;
 
-  const withoutFriendlyNames = JSON.stringify({ ...details, friendly_names: '<truncated>', _truncated: true });
+  const reason = typeof details.reason === 'string' ? details.reason : '';
+  const overBy = full.length - AUDIT_DETAILS_MAX;
+  let truncatedReason = truncateUtf16Safe(reason, Math.max(0, reason.length - overBy - 40));
+  let candidate = JSON.stringify({ ...details, reason: truncatedReason, _truncated: true });
+
+  let guard = 0;
+  while (candidate.length > AUDIT_DETAILS_MAX && truncatedReason.length > 0 && guard < 20) {
+    truncatedReason = truncateUtf16Safe(truncatedReason, Math.floor(truncatedReason.length / 2));
+    candidate = JSON.stringify({ ...details, reason: truncatedReason, _truncated: true });
+    guard += 1;
+  }
+  if (candidate.length <= AUDIT_DETAILS_MAX) return candidate;
+
+  // Reason alone can't make it fit — astronomically unlikely given the Zod
+  // caps (reason <=2000, operator <=200, ticket <=300) — so drop
+  // friendly_names too before falling back to the identifying fields only.
+  const withoutFriendlyNames = JSON.stringify({ ...details, reason: '', friendly_names: [], _truncated: true });
   if (withoutFriendlyNames.length <= AUDIT_DETAILS_MAX) return withoutFriendlyNames;
 
-  return `${full.slice(0, AUDIT_DETAILS_MAX - 40)}..."_truncated_hard":true}`;
+  // Absolute last resort. `factor_ids` and `user_id`/`ticket` are NOT
+  // Zod-capped the way `reason`/`operator`/`ticket` (the CLI-args ones) are —
+  // `factor_ids` in particular is server/GoTrue-controlled, not CLI input —
+  // so this function must stay bounded even if a future caller hands it an
+  // unreasonably large id list. Every remaining field gets its OWN
+  // surrogate-safe cap rather than assuming any of them is inherently small.
+  const userId = typeof details.user_id === 'string' ? truncateUtf16Safe(details.user_id, 100) : null;
+  const ticket = typeof details.ticket === 'string' ? truncateUtf16Safe(details.ticket, 100) : null;
+  const factorIdsJoined = Array.isArray(details.factor_ids) ? details.factor_ids.join(',') : '';
+  const factorIdsCapped = truncateUtf16Safe(factorIdsJoined, 9000);
+
+  return JSON.stringify({
+    user_id: userId,
+    factor_ids: factorIdsCapped,
+    ticket,
+    _truncated: true,
+    _truncated_hard: true,
+  });
+}
+
+/** Builds the two audit rows this tool writes — same 7-field shape, different event_type/details. */
+function buildAuditRow(
+  eventType: string,
+  targetId: string,
+  orgId: string | null,
+  details: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    event_type: eventType,
+    event_category: 'SECURITY',
+    actor_id: null,
+    target_type: 'mfa_factor',
+    target_id: targetId,
+    org_id: orgId,
+    details: boundedDetailsJson(details),
+  };
 }
 
 function padEndSafe(value: string, width: number): string {
@@ -403,7 +622,12 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
   const log = deps.log ?? (() => {});
   const warn = deps.warn ?? (() => {});
 
-  // 0. Prod hard-deny — before touching the client at all.
+  // 0. Prod hard-deny — defence in depth. `main()` already checks this
+  // BEFORE constructing a client with real credentials (so a prod client is
+  // never even built without the flag); this repeats the check for any
+  // caller that invokes runBreakGlass() directly with a client already in
+  // hand (tests, or a future entrypoint) rather than relying on main()'s
+  // earlier gate.
   if (isProdHost(deps.supabaseUrl)) {
     if (deps.allowProdBreakGlass !== '1') {
       return fail(
@@ -425,10 +649,16 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
     return fail(`no user found for email "${args.email}"`);
   }
 
-  // 2. List every factor, print the table (always — dry run and apply).
+  // 2. List every factor + look up org_id in parallel — both are
+  // independent reads keyed on the now-resolved user id. Print the table
+  // always (dry run and apply).
   let factors: MfaFactorRow[];
+  let orgId: string | null;
   try {
-    factors = await listFactorsForUser(deps.client, user.id);
+    [factors, orgId] = await Promise.all([
+      listFactorsForUser(deps.client, user.id),
+      lookupOrgId(deps.client, user.id, warn),
+    ]);
   } catch (err) {
     return fail(`failed to list MFA factors for ${user.email}: ${errMessage(err)}`);
   }
@@ -450,8 +680,7 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
     // validation already forbids this combination when --apply is set.
     selected = [];
   }
-
-  const orgId = await lookupOrgId(deps.client, user.id, warn);
+  const selectedIds = selected.map((f) => f.id);
 
   const baseSummary: BreakGlassSummary = {
     mode: args.apply ? 'apply' : 'dry-run',
@@ -459,7 +688,7 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
     email: user.email,
     org_id: orgId,
     factors_found: factors.length,
-    factors_selected: selected.map((f) => f.id),
+    factors_selected: selectedIds,
   };
 
   if (!args.apply) {
@@ -468,43 +697,54 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
   }
 
   // Args validation guarantees factorId or all was given when apply=true,
-  // and the factorId branch above already returned on a non-match — so
-  // reaching apply mode with an empty selection would be a logic bug, not a
-  // user error. Guard it anyway rather than silently no-op deleting nothing.
-  if (selected.length === 0) {
-    return fail('no factors selected for --apply — pass --factor-id <id> or --all');
+  // and the factorId branch above already returned on a non-match. This IS
+  // still reachable, though — not a logic bug: `--all --apply` on a user
+  // with zero enrolled factors reaches here with `selected = []`. Fail
+  // safely with a clear message rather than silently "succeeding" at
+  // deleting nothing.
+  if (selectedIds.length === 0) {
+    return fail('no factors selected for --apply — this user has no MFA factors to remove');
   }
 
-  // 4. CONFIRM_MFA_BREAK_GLASS must equal the RESOLVED email, case-insensitive.
-  if (!deps.confirmEnv || deps.confirmEnv.trim().toLowerCase() !== user.email.toLowerCase()) {
+  // 4. CONFIRM_MFA_BREAK_GLASS must equal the RESOLVED email.
+  if (!deps.confirmEnv || normalizeEmail(deps.confirmEnv) !== normalizeEmail(user.email)) {
     const got = deps.confirmEnv ? JSON.stringify(deps.confirmEnv) : '<unset>';
     return fail(
       `CONFIRM_MFA_BREAK_GLASS must equal the resolved user's email ("${user.email}") to apply. Got ${got}.`,
     );
   }
 
+  // 4b. --all is a strictly larger blast radius than one --factor-id — every
+  // factor this person has, in one command. Require a SECOND, distinct ack
+  // (same two-tier shape as provision-isolated-rig.sh's CONFIRM_REAL_CONFIG
+  // guarding a real-credentials profile) so `--all --apply` can never fire
+  // off of a single copy-pasted CONFIRM_MFA_BREAK_GLASS value alone.
+  if (args.all) {
+    if (!deps.confirmAllEnv || normalizeEmail(deps.confirmAllEnv) !== normalizeEmail(user.email)) {
+      const got = deps.confirmAllEnv ? JSON.stringify(deps.confirmAllEnv) : '<unset>';
+      return fail(
+        `--all also requires CONFIRM_MFA_BREAK_GLASS_ALL to equal the resolved user's email ("${user.email}"). Got ${got}.`,
+      );
+    }
+  }
+
   const detailsBase = {
-    operator: args.operator,
-    reason: args.reason,
-    ticket: args.ticket,
+    // Identifying fields FIRST, so they survive even if boundedDetailsJson
+    // ever has to truncate — reason (the most likely field to be long, and
+    // the least essential for identifying WHAT was deleted) goes last.
     user_id: user.id,
-    factor_ids: selected.map((f) => f.id),
-    friendly_names: selected.map((f) => f.friendly_name),
+    factor_ids: selectedIds,
     statuses: selected.map((f) => f.status),
+    ticket: args.ticket,
+    operator: args.operator,
     host: safeHost(deps.supabaseUrl),
+    friendly_names: selected.map((f) => f.friendly_name ?? null),
+    reason: args.reason,
   };
-  const targetId = selected.map((f) => f.id).join(',');
+  const targetId = selectedIds.join(',');
 
   // 5. INTENT audit row — BEFORE any delete. Failure aborts with nothing touched.
-  const intentRow = {
-    event_type: 'mfa_break_glass_requested',
-    event_category: 'SECURITY',
-    actor_id: null,
-    target_type: 'mfa_factor',
-    target_id: targetId,
-    org_id: orgId,
-    details: boundedDetailsJson(detailsBase),
-  };
+  const intentRow = buildAuditRow(EVENT_TYPE_REQUESTED, targetId, orgId, detailsBase);
 
   const intentResult = await insertAuditEvent(deps.client, intentRow);
   if (intentResult.error) {
@@ -518,33 +758,25 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
   }
 
   // 6. Delete each selected factor. A per-factor failure does not stop the
-  // loop — every selected factor gets one attempt, and every outcome (success
-  // or failure) is recorded in the COMPLETION row below.
+  // loop — every selected factor gets one attempt, and every outcome
+  // (success or failure) is recorded in the COMPLETION row below.
   const results: FactorDeleteResult[] = [];
   for (const factor of selected) {
     try {
       const { error } = await deps.client.auth.admin.mfa.deleteFactor({ id: factor.id, userId: user.id });
       results.push(
         error
-          ? { id: factor.id, friendly_name: factor.friendly_name, status: 'failed', error: error.message }
-          : { id: factor.id, friendly_name: factor.friendly_name, status: 'deleted' },
+          ? { id: factor.id, friendly_name: factor.friendly_name ?? null, status: 'failed', error: error.message }
+          : { id: factor.id, friendly_name: factor.friendly_name ?? null, status: 'deleted' },
       );
     } catch (err) {
-      results.push({ id: factor.id, friendly_name: factor.friendly_name, status: 'failed', error: errMessage(err) });
+      results.push({ id: factor.id, friendly_name: factor.friendly_name ?? null, status: 'failed', error: errMessage(err) });
     }
   }
   const anyFailed = results.some((r) => r.status === 'failed');
 
   // 7. COMPLETION audit row — always attempted, success or failure alike.
-  const completionRow = {
-    event_type: 'mfa_break_glass_completed',
-    event_category: 'SECURITY',
-    actor_id: null,
-    target_type: 'mfa_factor',
-    target_id: targetId,
-    org_id: orgId,
-    details: boundedDetailsJson({ ...detailsBase, results }),
-  };
+  const completionRow = buildAuditRow(EVENT_TYPE_COMPLETED, targetId, orgId, { ...detailsBase, results });
 
   const completionResult = await insertAuditEvent(deps.client, completionRow);
   if (completionResult.error) {
@@ -578,6 +810,37 @@ export async function runBreakGlass(deps: BreakGlassDeps, args: BreakGlassArgs):
 }
 
 // ---------------------------------------------------------------------------
+// Entrypoint-detection helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Decides whether this module was invoked directly (`node script.js`,
+ * `npx tsx script.ts`) vs merely imported. The naive
+ * `fileURLToPath(import.meta.url) === process.argv[1]` comparison is a
+ * STRING equality check on two paths that can each be spelled multiple
+ * ways for the same file: `process.argv[1]` may be relative
+ * (`npx tsx scripts/ops/mfa-break-glass.ts` from the repo root) and either
+ * side may cross a symlink (macOS aliases `/tmp` to `/private/tmp`, so a
+ * script run from a `/tmp/...` path never string-matches its own
+ * `import.meta.url`, which Node resolves to the `/private/tmp/...` real
+ * path). Both failure modes make `main()` silently never run — exit 0, no
+ * output, no error — which is a much worse failure mode for an ops tool
+ * than a loud crash. `realpathSync` on both sides after resolving argv1 to
+ * an absolute path closes both gaps; any resolution failure (e.g. argv1
+ * doesn't exist) is treated as "not the entrypoint" rather than thrown.
+ */
+export function isDirectEntrypoint(argv1: string | undefined, moduleUrl: string): boolean {
+  if (!argv1) return false;
+  try {
+    const invoked = realpathSync(resolvePath(argv1));
+    const thisFile = realpathSync(fileURLToPath(moduleUrl));
+    return invoked === thisFile;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CLI entrypoint
 // ---------------------------------------------------------------------------
 
@@ -585,6 +848,7 @@ interface EnvConfig {
   url: string;
   serviceRoleKey: string;
   confirmEnv?: string;
+  confirmAllEnv?: string;
   allowProdBreakGlass?: string;
 }
 
@@ -601,6 +865,7 @@ function loadEnvConfig(env: NodeJS.ProcessEnv): EnvConfig {
     url,
     serviceRoleKey,
     confirmEnv: env.CONFIRM_MFA_BREAK_GLASS,
+    confirmAllEnv: env.CONFIRM_MFA_BREAK_GLASS_ALL,
     allowProdBreakGlass: env.ALLOW_PROD_BREAK_GLASS,
   };
 }
@@ -608,6 +873,22 @@ function loadEnvConfig(env: NodeJS.ProcessEnv): EnvConfig {
 async function main(): Promise<void> {
   const args = parseCliArgs(process.argv);
   const cfg = loadEnvConfig(process.env);
+
+  // Prod-host hard-deny BEFORE constructing a client with real prod
+  // credentials — never build a service-role client pointed at prod without
+  // the flag, even one that ends up unused. runBreakGlass() re-checks this
+  // (see its own step 0) for any caller that skips main(); that duplicate
+  // check does not re-print this banner.
+  if (isProdHost(cfg.url) && cfg.allowProdBreakGlass !== '1') {
+    // eslint-disable-next-line no-console
+    console.error(
+      `SUPABASE_URL targets production (${PROD_SUPABASE_REF}). Refusing without ALLOW_PROD_BREAK_GLASS=1 — ` +
+        'see docs/runbooks/mfa-break-glass.md.',
+    );
+    process.exitCode = EXIT_VALIDATION;
+    return;
+  }
+
   const client = createClient(cfg.url, cfg.serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   }) as unknown as SupabaseAdminLike;
@@ -617,6 +898,7 @@ async function main(): Promise<void> {
       client,
       supabaseUrl: cfg.url,
       confirmEnv: cfg.confirmEnv,
+      confirmAllEnv: cfg.confirmAllEnv,
       allowProdBreakGlass: cfg.allowProdBreakGlass,
       // eslint-disable-next-line no-console
       log: (line) => console.log(line),
@@ -633,7 +915,7 @@ async function main(): Promise<void> {
   process.exitCode = outcome.exitCode;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isDirectEntrypoint(process.argv[1], import.meta.url)) {
   main().catch((err: unknown) => {
     // eslint-disable-next-line no-console
     console.error(err instanceof Error ? err.message : String(err));
