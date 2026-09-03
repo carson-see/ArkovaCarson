@@ -258,12 +258,11 @@ describe('SCRUM-3584 — mfa-break-glass', () => {
     });
 
     it('paginates listUsers until it finds the matching email', async () => {
-      const page1 = Array.from({ length: 3 }, (_, i) => ({ id: `other-${i}`, email: `other${i}@example.com` }));
+      // A full page (200 = LIST_USERS_PAGE_SIZE) signals "there may be more" —
+      // matching real listUsers pagination, where a short page means last page.
+      const page1 = Array.from({ length: 200 }, (_, i) => ({ id: `other-${i}`, email: `other${i}@example.com` }));
       const page2 = [{ id: USER_ID, email: USER_EMAIL }];
       const handle = makeFakeClient({ listUsersPages: [page1, page2] });
-      // Force a small page size boundary by having page1 be "full" relative
-      // to what the resolver expects — the resolver keeps paging as long as
-      // a page comes back non-empty and no match is found yet in this fake.
       const outcome = await runBreakGlass(baseDeps(handle), baseArgs({ apply: false }));
 
       expect(outcome.exitCode).toBe(EXIT_SUCCESS);
