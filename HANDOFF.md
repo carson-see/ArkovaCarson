@@ -107,6 +107,32 @@ Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` /
 before any session can write to Jira/Confluence; whoever picks this up should file it before
 closing out.
 
+### Soaks — MFA enforcement (SCRUM-3167 / SCRUM-3584): PR #2635 exercise RUNNING, PR #2637 pending — do not touch rig `nesuwjlscilzzbhpvbkt`
+
+- **Rig:** isolated Supabase project **`nesuwjlscilzzbhpvbkt`** (`arkova-soak-mfa-3167`, us-east-2, PG 17, created
+  2026-09-03T06:31Z by the CTO session). **No Cloud Run service** — PR #2637 is frontend-only and PR #2635 is an operator
+  CLI; neither touches the worker. Schema replayed from origin/main `17f24e26c` (`db push --include-all` to 0380, then
+  psql over the session pooler for 0381→0419 because the CLI pipeline cannot run `CREATE INDEX CONCURRENTLY`; dry-run
+  "up to date"; 119 ledger rows; baseline fixture seeded). Preflight **`clean_mirror`** at 2026-09-03T06:37:42Z →
+  `~/arkova-soak/mfa-3167/evidence/preflight-iso-open-20260903T063740Z.json`. TOTP enroll/verify ON (Management API);
+  a real enrol→challenge→verify→aal2→unenrol round trip passed at 06:38:03Z.
+- **Why not the standing rig:** an honest preflight of `fizyjojbebyalirtjjht` (run from an origin/main checkout WITH
+  `--prod-project-ref`) classifies it **`soak_artifact`** — PR-only ledger row `0420 scrum2538_check_unified_credits_fail_closed`
+  from open PR #2442's soak (`~/arkova-soak/mfa-3167/evidence/preflight-standing-rig-honest-*.json`). The earlier
+  "clean_mirror" reading of that rig used the script's hardcoded default prod versions and a lagging checkout. The standing
+  rig was left untouched.
+- **PR #2635 (break-glass CLI, T1-declared, 12 h exercise):** head **`bccc24a09f274484f0079afac0ab7f30905d7233`** (post-`/simplify`),
+  frozen checkout `~/arkova-soak/mfa-3167/checkouts/wt-pr-b`. Clock **2026-09-03T07:05:25Z → 19:05:25Z** (a first window on
+  `ab5b7d2bb`, 06:40:30Z→06:57Z, was discarded when the cleanup commit changed the head — `bg-window1-ab5b7d2bb-discarded/`), supervisor
+  `~/arkova-soak/mfa-3167/break-glass-supervisor.sh` (detached), 10-min cycles: disposable user → enrol+verify → dry run →
+  negative probes (CONFIRM mismatch, foreign factor id, `--all` without `CONFIRM_MFA_BREAK_GLASS_ALL`) → apply → factor gone →
+  both audit rows → re-enrol → cleanup. Per-cycle JSON `~/arkova-soak/mfa-3167/bg-evidence/`; pre-clock validation cycle
+  (ok=34 fail=0 on each head) quarantined under `bg-validation-2026-09-03/`, not evidence. PR stays **draft**; `Human approver:` is Carson's.
+- **PR #2637 (enforcement, frontend-only T2, 12 h):** not started — waiting on the post-review fix batch; will run on the same
+  rig from a frozen checkout `~/arkova-soak/mfa-3167/checkouts/wt-pr-a` (vite preview :4173 + `driver.mjs` + Playwright legs).
+- **Teardown:** delete `nesuwjlscilzzbhpvbkt` when BOTH soaks close (§7 sweep). It appears in the Supabase project list; do not
+  sweep it before then.
+
 ### Soaks — DocuSign **guard** T3 (RUNNING — do not touch)
 
 - **Rig:** isolated Supabase `kyaecvotcbalsfahwslt` (`arkova-soak-docusign-guard`, us-east-2), ledger head **0423**, preflight **`clean_mirror`**. Cloud Run `arkova-worker-docusign-guard-staging` rev **00003-hwq**, image `sha256:4aa5e8cd…`, source head `bfd0aaf5b32ad24db9717f8da1dbcb5ba2dee006`.
@@ -259,6 +285,18 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
 > via the merge; the authored commits are tests-only. **Whether the evidence carries to the new
 > head is a §1.12 residual-risk call and is NOT decided here — do not claim the soak for
 > `99ea75fbf`.**
+
+### Auth — MFA enforcement design ruling (2026-09-03T07:30Z) — challenge path fails CLOSED
+
+- PR #2637's pre-merge sweep confirmed the "fail open on any platform error" design was a bypass (global sessionStorage
+  cooldown survived sign-out; rate-limit/IP-mismatch rejections classified as platform failures) — BUG-2026-09-03-002 /
+  SCRUM-4027, never shipped. Ruling: challenge path (aal1 + verified factor) fails closed with retry/sign-out; fail-open
+  ONLY on the enrollment path (no factor, platform cannot issue one); cooldown per-user, enrollment-only, cleared on
+  sign-out. Round-2 batch in progress on the PR branch.
+- Residual: any client-side gate is forgeable; server-side aal2 enforcement (RLS + worker API) = **SCRUM-4026** (T3).
+  Until it ships, docs/R-7 say "MFA required at sign-in (client-enforced)", never "MFA enforced".
+- Flaky test logged: BUG-2026-09-03-001 / SCRUM-4028 (`InviteMemberModal` under full-suite load; unrelated to both PRs).
+- Deferred cleanup: SCRUM-4025 (shared entrypoint guard + errMessage helpers).
 
 ### Auth — MFA (2026-09-03, verified live)
 
@@ -782,7 +820,8 @@ separately). Full verdicts, defects, and landing-order constraints:
   (#2518/#2476/#2472), reorg-3836 `hgmluvnqgfcigevqeebu` (#2495; its `detect-reorgs` Cloud Scheduler job is still
   firing unattended). NEEDS CARSON — flag-live-2438 `vmfsmtilaovdjypqhjob` (4 h old, one request ever, cited by no PR)
   and suborg-3863 `jpdhektjeawfjkznmpfe` (window nominally open to 2026-09-04T01:47Z, driver dead, 0 evidence files).
-  The standing rig `fizyjojbebyalirtjjht` hosts the MFA-3167 T2 soak next. No rig was torn down by this session.
+  The standing rig `fizyjojbebyalirtjjht` was NOT used for MFA-3167: it preflights `soak_artifact` (PR-only row 0420, PR #2442).
+  The MFA soaks run on the new isolated project `nesuwjlscilzzbhpvbkt` (see `### Soaks — MFA enforcement`). No rig was torn down by this session.
 - **Orphan secrets — partially swept 2026-09-03, and the diagnosis above was wrong.** The claim that
   teardown "deletes only `supabase-url-*` / `supabase-service-role-key-*`" is stale: it also deletes
   `ip-hash-pepper-<rig>-staging`, which is every secret `provision-isolated-rig.sh` creates. Nothing in
@@ -2141,4 +2180,4 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
-_Last refreshed: 2026-09-03 by Claude Opus 5 — claims verified against the Supabase Management API project list, `gcloud run services describe`, the rig `/health` endpoint, and `~/arkova-soak/teardown-2026-09-03.log`._
+_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against the Supabase Management API project list/config, `scripts/ci/staging-honesty-preflight.ts` artifacts, psql ledger queries, and the harness logs under `~/arkova-soak/mfa-3167/`._
