@@ -14,6 +14,7 @@ import {
   SECURE_DIALOG_LABELS,
   AI_EXTRACTION_LABELS,
   EXTRACTION_RECOVERY_LABELS,
+  EXTRACTION_FAILURE_REASON_COPY,
   SECURING_CHOICE_LABELS,
   SECURE_QUEUE_LABELS,
 } from '@/lib/copy';
@@ -21,6 +22,7 @@ import { detectFraudForDocument } from '@/lib/fraudDetection';
 import { supabase } from '@/lib/supabase';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { runExtraction, fetchTemplateReconstruction } from '@/lib/aiExtraction';
+import type { ExtractionFailureReason } from '@/lib/aiExtraction';
 import { applyTemplate } from '@/lib/templateMapper';
 import { ROUTES } from '@/lib/routes';
 
@@ -459,6 +461,84 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
     expect(toast.error).not.toHaveBeenCalled();
     // The soft path warns with the specific recovery toast copy.
     expect(toast.warning).toHaveBeenCalledWith(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // SCRUM — extraction-failed reason accuracy.
+  // The orchestrator computes WHY extraction failed and reports it through
+  // `onProgress` as a bounded `reasonCode`. The dialog previously discarded it
+  // and rendered a FIXED string claiming "image quality or an unsupported
+  // format" — false for a timeout, a dropped session, or a supported-but-slow
+  // file (the founder hit this on a supported .xml). These tests pin the
+  // rendered reason to the reported code.
+  //
+  // §1.6: the dialog renders copy looked up BY CODE. It must never render
+  // free-form error text, so a code it does not recognize falls back to the
+  // generic description rather than printing whatever string arrived.
+  // ───────────────────────────────────────────────────────────────────────────
+  it.each([
+    ['timeout', EXTRACTION_FAILURE_REASON_COPY.timeout],
+    ['network', EXTRACTION_FAILURE_REASON_COPY.network],
+    ['auth', EXTRACTION_FAILURE_REASON_COPY.auth],
+    ['no_text', EXTRACTION_FAILURE_REASON_COPY.no_text],
+    ['unsupported_format', EXTRACTION_FAILURE_REASON_COPY.unsupported_format],
+    ['server_error', EXTRACTION_FAILURE_REASON_COPY.server_error],
+  ])('renders the reason copy for reasonCode=%s instead of the fixed image-quality string', async (reasonCode, expected) => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    vi.mocked(runExtraction).mockImplementationOnce(async (_f, _fp, _t, onProgress) => {
+      onProgress?.({
+        stage: 'error',
+        progress: 0,
+        reasonCode: reasonCode as ExtractionFailureReason,
+        message: 'raw orchestrator message that must not be rendered',
+      });
+      return null;
+    });
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.TITLE)).toBeInTheDocument();
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    // The old, often-false fixed string is gone for a coded failure.
+    expect(screen.queryByText(EXTRACTION_RECOVERY_LABELS.DESCRIPTION)).not.toBeInTheDocument();
+    // §1.6: free-form text from the orchestrator is never rendered.
+    expect(
+      screen.queryByText(/raw orchestrator message/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('§1.6: falls back to the generic description and renders NO free-form text when the reason code is absent or unrecognized', async () => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    vi.mocked(runExtraction).mockImplementationOnce(async (_f, _fp, _t, onProgress) => {
+      onProgress?.({
+        stage: 'error',
+        progress: 0,
+        // No reasonCode: the pre-existing generic catch-all path, whose
+        // `message` may be an arbitrary Error message and is NOT §1.6-safe.
+        message: 'Applicant Jane Doe, licence 12345, of 4 Privet Drive',
+      });
+      return null;
+    });
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.DESCRIPTION)).toBeInTheDocument();
+    expect(screen.queryByText(/Jane Doe/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Privet Drive/)).not.toBeInTheDocument();
+  });
+
+  it('does not claim image quality or an unsupported format for a timeout', async () => {
+    // Regression guard for the founder report: the fixed copy asserted a cause
+    // it could not know. Whatever the timeout copy says, it must not blame the
+    // document's image quality.
+    expect(EXTRACTION_FAILURE_REASON_COPY.timeout).not.toMatch(/image quality/i);
+    expect(EXTRACTION_FAILURE_REASON_COPY.timeout).not.toMatch(/unsupported format/i);
+    expect(EXTRACTION_FAILURE_REASON_COPY.network).not.toMatch(/image quality/i);
+    expect(EXTRACTION_FAILURE_REASON_COPY.auth).not.toMatch(/image quality/i);
   });
 
   it('STILL routes a fail-closed (OCR engine / NER model) failure to privacy-blocked', async () => {

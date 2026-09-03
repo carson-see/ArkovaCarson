@@ -1,5 +1,80 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-02 — `cache-zk-artifacts` gained `restore-keys`; a lockfile bump must not re-download the ptau
+
+`ci.yml`'s Tests job keys the zk circuit artifact cache on `extraction-proof.circom` +
+`circuits/build.sh` + `services/worker/package-lock.json`. Any dependabot bump of the worker
+lockfile rotates that key, and on a miss `build.sh` re-downloads the ~19 MB
+`powersOfTau28_hez_final_14.ptau`. On 2026-09-02 both public hosts for that file
+(`storage.googleapis.com/zkevm` and `hermez.s3-eu-west-1`) answered `403 AccessDenied`, so the qs
+bump in PR #2606 took `main`'s `Tests` job red (run 33669376517: build step exit 22, verify step
+`No such file`, `zk-proof.test.ts` erroring at module load — by design, that suite is fail-loud,
+never skip).
+
+The step now carries `restore-keys: zk-artifacts-${{ runner.os }}-circom2.1.9-`. A prefix fallback
+restores the newest previous entry, which holds the SHA-256-pinned build inputs (ptau + circomlib
+tarball) alongside the old outputs; `build.sh` skips the downloads when the files are present,
+re-verifies both pins, and regenerates wasm/zkey/vkey from source with the current snarkjs. Two
+properties to keep: (1) `restore-keys` must equal the exact key's static prefix, and (2)
+`install-circom` / `build-zk-circuit` stay gated on
+`steps.cache-zk-artifacts.outputs.cache-hit != 'true'` — only an exact hit sets `cache-hit`, so a
+fallback still rebuilds. Both are pinned by `scripts/ci/ci-workflow-contract.test.ts` ("zk circuit
+artifact cache survives a key rotation"). Not covered: a fully evicted cache — there is no public
+URL to seed from today, so an Arkova-owned mirror is the durable fix (see
+`services/worker/circuits/agents.md`).
+
+## 2026-08-29 — Policy Lints now gates the Mergify queue; do-not-merge body/label parity step (SCRUM-3804)
+
+`check-success = Policy Lints` was added to all three `.mergify.yml` queue rules' `merge_conditions` (s33-wave2-corpus, urgent, default). The `policy-lints` job — coverage monotonic, count:'exact' baseline, feedback rules, config-drift, MCP tool-claim parity, HANDOFF verification lint, Confluence coverage — had run on every PR but was never in `merge_conditions`, so it reported without blocking, and every override label documented for its steps (`mcp-claim-parity-reviewed`, `handoff-narrative-only`, `coverage-drop-allowed`, …) was a no-op AS A MERGE GATE (the same "reports without blocking" class as the 2026-08-17 Orphaned Export Lint entry; `scripts/ci/agents.md` recorded the gap on 2026-08-23). The job carries no job-level `if:` and no path filter, so it reports on every ci.yml PR run — only the ci.yml-wide `paths-ignore` caveat applies, shared with every other gated check. Branch protection's required-check set stays a separate Carson/admin surface. The job also gained one step: `Do-not-merge body/label parity (SCRUM-3804)` runs `scripts/ci/check-do-not-merge-body.ts`, failing any NON-DRAFT PR whose body says "do not merge" (case-insensitive) without the `do-not-merge` label — a prose hold is inert to Mergify (the #2240 pattern), so it must be label-backed, drafted, or removed. Contract test: `scripts/ci/mergify-policy-lints-gate.test.ts`.
+## 2026-08-29 — merge-queue skips require the mergify[bot] PR author, not just the branch name (SCRUM-3812)
+
+Both `ci.yml` (`evidence-identity`) and `staging-evidence.yml` skip their enforcement steps for
+Mergify's speculative merge-queue PRs — necessarily, since those PRs carry Mergify's own body, not
+the original PR's evidence block, and a fail-closed gate that checks them deadlocks every queued
+merge. But the skip predicate was `startsWith(github.head_ref, 'mergify/merge-queue/')` ALONE, and
+`github.head_ref` is fully author-controlled: a PR opened from a branch literally named
+`mergify/merge-queue/<anything>` skipped every step, and a job whose steps all skip still posts
+SUCCESS — greening `check-success = Evidence-identity gate` AND
+`check-success = Staging Soak Evidence Gate` in every `.mergify.yml` queue without either checker
+running. The same PR that activated the evidence-identity gate randomized its `$GITHUB_OUTPUT`
+heredoc delimiter so an author cannot forge the identity the gate protects, while the branch name
+skipped the gate outright.
+
+Every merge-queue `if:` in both files now requires
+`&& github.event.pull_request.user.login == 'mergify[bot]'` alongside the branch prefix. The PR
+author is assigned by GitHub and immutable, so only genuine Mergify speculative PRs skip (verified
+against live queue PRs #2464–#2468: all authored by `mergify[bot]`). Deliberately NOT
+`github.actor`: a human re-running a genuine queue PR's checks becomes the actor, which would
+un-skip the gate mid-queue and deadlock it. The skip remains PER-STEP (not job-level `if:`) on
+purpose — a job-level skip would leave the check unreported, and an unreported check never
+satisfies `check-success`, deadlocking the queue from the other direction.
+
+Pinned by `scripts/ci/soak-integrity-gates-failclosed.test.ts` (ci.yml side) and
+`scripts/ci/staging-evidence-workflow-contract.test.ts` (staging-evidence side): every `if:` line
+consulting `github.head_ref` or the queue-branch prefix must be one of exactly two canonical
+shapes — the compound skip or its exact negation — so a branch-only or `||`-weakened variant fails
+the contract. Both suites share the same `MERGE_QUEUE_SKIP_EXPRESSION` constant text; keep them in
+lockstep.
+
+## 2026-08-23 — `staging-evidence.yml` also resolves the PR AUTHOR live (SCRUM-3481)
+
+The `Resolve live PR state` step now emits an `author_login` output alongside the SHAs, and
+the check step binds it as `PR_AUTHOR`. `scripts/ci/check-staging-evidence.ts` reads it for
+exactly one purpose: rejecting a `### Residual-risk note` whose `Approved by:` resolves to
+the PR author, so an author cannot self-grant the CLAUDE.md §1.12 exception that waives the
+preflight and soak-duration requirements.
+
+Two properties to keep if you touch it:
+
+- **It comes from `gh api`, never from the PR body.** The body is author-controlled; the
+  whole point of the check is that this value is not. It is read from the same `DATA` blob
+  the head/base SHAs come from.
+- **It is shape-validated before it reaches `$GITHUB_OUTPUT`.** A GitHub login is
+  `[A-Za-z0-9-]{1,39}`; anything else is dropped to the empty string with a `::warning::`
+  (the cross-check then simply does not run — "unknown author" is treated as unknown, not as
+  a match). That validation is what stops an unexpected value from injecting extra
+  `key=value` lines into the step's outputs, the same class the per-run random heredoc
+  delimiter below guards for the body.
 ## 2026-08-23 — worker `tsc --noEmit` is now a STEP in `typecheck-lint` (SCRUM-1811)
 
 `typecheck-lint` gained `Typecheck worker (deploy-gate parity)` —
@@ -613,7 +688,7 @@ workflow that runs on every PR.
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
 - `docs/runbooks/ci/verifying-current-check-runs.md` — cross-checking `gh pr checks` against actual check-run timestamps; the frozen-event-payload rerun trap and its fix (SCRUM-3030)
 - S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
-- `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)
+- ADR for Option A (read-only diff) — "Migration drift prevention" in Confluence space A; the repo copy under docs/confluence/ was deleted when Confluence became canonical (CLAUDE.md §0 rule 4)
 
 ## The `workflow_dispatch` pause override was exercised in prod (2026-08-27)
 
@@ -635,3 +710,11 @@ consolidated soak of merged `main` at the accumulated head BEFORE the variable f
 Corollary for `revision-drift.yml` (cron `*/10`, fires Sentry on `/health.git_sha` drifting > 1h
 from `origin/main`): while the pause holds, drift is the EXPECTED steady state, not an incident. Do
 not treat one of its alerts as evidence that a deploy failed without first checking the variable.
+
+## Workflow comments are now lint-checked for dead governance pointers (2026-08-31)
+
+`scripts/ci/check-doc-pointers.ts` (ci.yml job `Doc Pointer Resolution`) now scans the **comment lines** of every `.github/workflows/*.yml`, plus this file and every other nested `agents.md`. Only governance prefixes are asserted there — `memory/`, `docs/`, `.claude/`, `.github/` — because a comment sitting next to a step inherits that step's `working-directory:` — the comment above the worker test step names `services/worker/src/ai/zk-proof.test.ts` in worker-relative shorthand, which is correct in context and must not be flagged. `run:`/`with:` values are not scanned at all: they name generated artifacts (`circuits/artifacts/*.zkey`) and working-directory-relative paths.
+
+This closed a hole that had been live for months: `ci.yml`'s SCRUM-1811 comment block, this file (twice), and `scripts/ci/agents.md` all cited `memory/project_deploy_typecheck_blackout.md`, which had never existed in the repo. Nothing could see it, because the old scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. The file now exists; the check now covers the surfaces that cite it.
+
+Note the gate is **not** in `.mergify.yml merge_conditions` and `main` carries no `required_status_checks`, so it reports without blocking. Adding it to the queue conditions is the same class of change as the `Orphaned Export Lint` and `Python SDK Tests` wirings recorded above, and has not been done here.

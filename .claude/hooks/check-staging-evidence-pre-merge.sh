@@ -93,6 +93,30 @@ if [[ "$target_match_count" -gt 1 ]]; then
   exit 0
 fi
 
+# Bounded gh runner (SCRUM-3656). This hook makes a NETWORK call from inside
+# a PreToolUse hook: un-timeouted, a hung `gh pr view` wedges the session's
+# Bash tool at the exact moment the agent runs a `gh pr ready`/`gh pr merge`.
+# Every gh invocation below goes through this wrapper and gets a hard
+# wall-clock budget (seconds; ARKOVA_HOOK_GH_TIMEOUT overrides for tests,
+# capped at 99 so the bound cannot be configured away). macOS ships no
+# timeout(1), so the fallback is perl's alarm+exec -- the alarm timer
+# survives execve, and the exec'd gh dies on SIGALRM when the budget expires
+# (measured: a 60s-stalled gh returns in ~1s with a 1s budget). If neither
+# bounding tool exists the call runs unbounded, which is the pre-fix
+# behavior, never worse. A killed call yields an empty body, and the
+# empty-body path below DENIES -- the timeout fails closed.
+_gh_budget="${ARKOVA_HOOK_GH_TIMEOUT:-10}"
+[[ "$_gh_budget" =~ ^[1-9][0-9]?$ ]] || _gh_budget=10
+bounded_gh() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$_gh_budget" gh "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$_gh_budget" gh "$@"
+  else
+    gh "$@"
+  fi
+}
+
 # Extract the PR selector if one is present. `gh pr ready` and
 # `gh pr merge` both accept `[<number> | <url> | <branch>]` per the
 # GitHub CLI manual.
@@ -107,14 +131,14 @@ pr_selector=$(
 # one, gh resolves the current branch's PR (only safe when the
 # command itself omitted a selector).
 if [[ -n "${pr_selector:-}" ]]; then
-  body=$(gh pr view "$pr_selector" --json body --jq '.body' 2>/dev/null || true)
+  body=$(bounded_gh pr view "$pr_selector" --json body --jq '.body' 2>/dev/null || true)
 else
-  body=$(gh pr view --json body --jq '.body' 2>/dev/null || true)
+  body=$(bounded_gh pr view --json body --jq '.body' 2>/dev/null || true)
 fi
 
 # If we couldn't fetch a PR body, fail safe — block with a clear message.
 if [[ -z "$body" ]]; then
-  jq -n --arg msg 'Could not resolve a PR for this branch. Open a PR (gh pr create) before transitioning to Ready or merging. Staging soak evidence is mandatory per CLAUDE.md §1.11 / §1.12.' '{
+  jq -n --arg msg "Could not resolve a PR for this branch (no PR exists, or the gh call failed or exceeded its ${_gh_budget}s budget). Open a PR (gh pr create) before transitioning to Ready or merging. Staging soak evidence is mandatory per CLAUDE.md §1.11 / §1.12." '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
