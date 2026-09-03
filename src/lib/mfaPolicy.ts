@@ -57,6 +57,27 @@ export const MFA_ENFORCE_FROM_OVERRIDE_KEY = 'arkova_mfa_enforce_from_override';
 const utcDateTimeSchema = z.string().datetime();
 
 /**
+ * R23 (PR #2637 review round 2, CI failure): `import.meta.env` only exists
+ * under Vite's (or Vitest's) build pipeline — it is `undefined` under plain
+ * `tsx`/Node, which is exactly how `scripts/ci/check-compliance-mapping-mirror.ts`
+ * loads this module (transitively, via `complianceMapping.ts`). Every
+ * `import.meta.env.X` read in this file used to throw
+ * `TypeError: Cannot read properties of undefined (reading 'X')` the moment
+ * a non-Vite runtime touched it.
+ *
+ * Guarded with `?.` directly on `import.meta.env` at each read site, rather
+ * than copying it into a local/module-scope variable first: Vite's and
+ * Vitest's `import.meta.env` handling (including `vi.stubEnv` in tests)
+ * targets the literal `import.meta.env.X` access pattern, and an earlier
+ * version of this fix that read `import.meta.env` into a helper function's
+ * return value broke `vi.stubEnv` — the copy was not the same live-updating
+ * reference/proxy Vitest patches. `import.meta.env?.X` keeps that exact
+ * pattern (recognizable to Vite's static analysis) while still degrading
+ * to `undefined` — "no override configured," falls through to the next
+ * resolution tier — instead of throwing when `env` itself doesn't exist.
+ */
+
+/**
  * Baked so the enforcement deadline is real even with zero environment
  * configuration. Two weeks out from the CTO plan's authoring date
  * (2026-09-03), giving Carson time to enroll the shared UAT demo account
@@ -72,7 +93,7 @@ function isValidUtcDateString(value: unknown): value is string {
 
 function readDateOverride(): string | null {
   const overrideAllowed =
-    import.meta.env.DEV === true || import.meta.env.VITE_MFA_ALLOW_DATE_OVERRIDE === 'true';
+    import.meta.env?.DEV === true || import.meta.env?.VITE_MFA_ALLOW_DATE_OVERRIDE === 'true';
   if (!overrideAllowed) return null;
 
   // R8 (PR #2637 review round 2): shared safeStorage.readItem — see that
@@ -86,7 +107,7 @@ export function resolveMfaEnforceFrom(): string {
   const override = readDateOverride();
   if (isValidUtcDateString(override)) return override;
 
-  const envValue = import.meta.env.VITE_MFA_ENFORCE_FROM;
+  const envValue = import.meta.env?.VITE_MFA_ENFORCE_FROM;
   if (isValidUtcDateString(envValue)) return envValue;
 
   return MFA_ADMIN_ENFORCE_FROM_DEFAULT;

@@ -166,6 +166,36 @@ describe('resolveMfaEnforceFrom — precedence', () => {
     resolveMfaEnforceFrom();
     expect(getItemSpy).not.toHaveBeenCalled();
   });
+
+  it('R23 (PR #2637 review round 2, CI failure): does not throw when import.meta.env itself is undefined — exactly what scripts/ci/check-compliance-mapping-mirror.ts hits, since it loads this module under plain tsx/Node, not Vite', () => {
+    // Deliberately NOT the literal `import.meta.env = ...` token sequence:
+    // Vitest's own transform rewrites every `import.meta.env` access (so
+    // `vi.stubEnv` can intercept it) into an expression that is not a
+    // valid assignment target, which fails this test file's transform at
+    // parse time. Bracket notation on a captured `import.meta` reference
+    // reaches the SAME underlying property without matching that rewrite
+    // pattern. `globalThis.__vitest_worker__.metaEnv` is Vitest's OWN
+    // env-stubbing proxy, consulted first by that rewrite — it must be
+    // cleared too, or mfaPolicy.ts's `import.meta.env?.X` reads would keep
+    // resolving through it instead of falling through to the (now
+    // missing) real `import.meta.env`.
+    const importMeta = import.meta as unknown as Record<string, unknown>;
+    const worker = (globalThis as { __vitest_worker__?: Record<string, unknown> }).__vitest_worker__;
+    const originalEnv = importMeta['env'];
+    const originalMetaEnv = worker?.['metaEnv'];
+    importMeta['env'] = undefined;
+    if (worker) worker['metaEnv'] = undefined;
+    try {
+      expect(() => resolveMfaEnforceFrom()).not.toThrow();
+      // Every tier degrades to "not configured" — falls all the way
+      // through to the baked default, never crashes and never silently
+      // treats a missing env as "never enforce."
+      expect(resolveMfaEnforceFrom()).toBe(MFA_ADMIN_ENFORCE_FROM_DEFAULT);
+    } finally {
+      importMeta['env'] = originalEnv;
+      if (worker) worker['metaEnv'] = originalMetaEnv;
+    }
+  });
 });
 
 describe('isMfaEnforcementActive — inclusive UTC boundary', () => {

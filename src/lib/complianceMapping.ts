@@ -16,13 +16,24 @@
 import { resolveMfaEnforceFrom } from './mfaPolicy';
 
 /**
- * Item 34 (PR #2637 review): computed at module evaluation from
- * `mfaPolicy.ts`'s own date-resolution logic, rather than a hardcoded
- * literal — the HIPAA-164.312-MFA description below can never drift from
- * the ACTUAL effective enforcement date if `VITE_MFA_ENFORCE_FROM` moves
- * it. No circular import: `mfaPolicy.ts` has no import of this module.
+ * Item 34 (PR #2637 review): derived from `mfaPolicy.ts`'s own
+ * date-resolution logic, rather than a hardcoded literal — the
+ * HIPAA-164.312-MFA description below can never drift from the ACTUAL
+ * effective enforcement date if `VITE_MFA_ENFORCE_FROM` moves it. No
+ * circular import: `mfaPolicy.ts` has no import of this module.
+ *
+ * R23 (PR #2637 review round 2, CI failure): this is a FUNCTION, not a
+ * module-scope constant — `mfaPolicy.ts`'s own doc comment states its
+ * "never cache at module scope" rule for exactly this reason.
+ * `resolveMfaEnforceFrom()` reads `import.meta.env`, which does not exist
+ * under plain `tsx`/Node; `scripts/ci/check-compliance-mapping-mirror.ts`
+ * loads this module that way, so a module-scope call here crashed on
+ * import alone, before any export was even used. Called lazily instead —
+ * see `HIPAA-164.312-MFA`'s `description` getter below, the only reader.
  */
-const MFA_ENFORCE_FROM_DATE = resolveMfaEnforceFrom().slice(0, 10);
+function getMfaEnforceFromDate(): string {
+  return resolveMfaEnforceFrom().slice(0, 10);
+}
 
 /** A single regulatory control reference */
 export interface ComplianceControl {
@@ -108,13 +119,12 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   // non-test importers, so `organizations.session_timeout_minutes` is stored
   // and never acted on.
   //
-  // Item 34 (PR #2637 review): the date in the description below is
-  // `MFA_ENFORCE_FROM_DATE` (computed at module top from
-  // `resolveMfaEnforceFrom()`), NOT a hardcoded literal — it moves
-  // automatically if `VITE_MFA_ENFORCE_FROM` does. Item 11/C3: the
-  // description also discloses that this is an APPLICATION-LEVEL sign-in
-  // gate, not a database-level control — the stronger control is a phase-2
-  // SCRUM-3593 RLS ticket.
+  // Item 34 (PR #2637 review): the date in the description below comes from
+  // `getMfaEnforceFromDate()` (`resolveMfaEnforceFrom()`), NOT a hardcoded
+  // literal — it moves automatically if `VITE_MFA_ENFORCE_FROM` does. Item
+  // 11/C3: the description also discloses that this is an
+  // APPLICATION-LEVEL sign-in gate, not a database-level control — the
+  // stronger control is a phase-2 SCRUM-3593 RLS ticket.
   //
   // R21 (PR #2637 review round 2, CTO ruling R17-R21 — SUPERSEDES the
   // original "fails open on a platform error" wording): fail-open is now
@@ -132,7 +142,24 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   //
   // NEVER RENAME THIS KEY — a worker mirror gate compares the compliance
   // control ID set (SCRUM-3167 Amendment A5 item 7). Description edits only.
-  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', `Person or entity authentication — multi-factor authentication (authenticator app) is available to every account; it is required for organization administrators and platform administrators from ${MFA_ENFORCE_FROM_DATE} and is not yet required for other roles (application-level sign-in gate: the login challenge fails closed on any error and never grants access without a real verified code, while first-time enrollment fails open only until the platform can issue a factor; database-level enforcement is planned under SCRUM-3593)`),
+  //
+  // R23: a getter, not a plain string built by `ctrl()` — the description
+  // is computed on READ, not at object-construction time (which still
+  // happens at module-eval time for every other control here), so
+  // `getMfaEnforceFromDate()` (and therefore `resolveMfaEnforceFrom()`)
+  // only ever runs when something actually asks for this control's
+  // `description`. `enumerable: true` behavior (the object-literal `get`
+  // syntax gives this for free) means `Object.keys`, spread, and
+  // `JSON.stringify` all still see it normally — only lazier, not hidden.
+  'HIPAA-164.312-MFA': {
+    id: 'HIPAA-164.312-MFA',
+    framework: 'HIPAA',
+    label: 'HIPAA §164.312(d) MFA',
+    color: FRAMEWORK_COLORS['HIPAA'],
+    get description(): string {
+      return `Person or entity authentication — multi-factor authentication (authenticator app) is available to every account; it is required for organization administrators and platform administrators from ${getMfaEnforceFromDate()} and is not yet required for other roles (application-level sign-in gate: the login challenge fails closed on any error and never grants access without a real verified code, while first-time enrollment fails open only until the platform can issue a factor; database-level enforcement is planned under SCRUM-3593)`;
+    },
+  },
   'HIPAA-164.312-AUDIT': ctrl('HIPAA-164.312-AUDIT', 'HIPAA', 'HIPAA §164.312(b) Audit', 'Audit controls — hardware, software, and procedural mechanisms to record PHI access'),
   'HIPAA-164.312-SESSION': ctrl('HIPAA-164.312-SESSION', 'HIPAA', 'HIPAA §164.312(a)(2)(iii) Session', 'Automatic logoff — session timeout is configurable per organization but is not currently applied to active sessions'),
   // International frameworks (REG-27)
