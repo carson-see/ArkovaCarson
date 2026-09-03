@@ -2,6 +2,56 @@
 
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
+## 2026-09-02 — a /health mock that omits `getAnchoringRpcStatus` is now a live cold-cache test
+
+`buildHealthResponse` falls back to the module-local `UNPROBED` constant
+(`state: 'unknown'`, `checkedAtMs: null`) whenever `deps.getAnchoringRpcStatus`
+is absent. Since 8a3629e64 (PR #2573, merged 2026-09-02 13:17Z) that snapshot is no longer inert: when
+`config.enableProdNetworkAnchoring === true`, `evaluateAnchoringRpcHealth`
+fails closed and reports `anchoring: 'warning'` — an unmeasured credential is
+the absence of a measurement, not a measured `ok` (§1.5).
+
+So **the pair `enableProdNetworkAnchoring: true` + no `getAnchoringRpcStatus`
+is a meaningful assertion now, not a default.** `health-detail-auth.test.ts`
+had exactly that pair for SCRUM-2653 reasons that had nothing to do with the
+RPC probe, and when the carve-out landed its compact-liveness assertion
+(`anchoring: 'ok'`) went red on `main` — reddening the required `Tests` check
+on every open PR whose merge ref included main.
+
+When you write or copy a `HealthCheckDeps` mock:
+
+- If the test is about something OTHER than RPC cold-start, wire a
+  genuinely-probed snapshot (`state: 'ok'`, non-null `checkedAtMs`), or leave
+  `enableProdNetworkAnchoring: false`. Don't leave the pair by accident.
+- `health.test.ts`'s `createMockDeps` defaults the flag to `false`, which is
+  why that suite never saw the break. Its
+  `cold cache (never probed) reaches the verdict through the response` block
+  now pins the wiring end-to-end (`deps.config` -> `prodAnchoringEnabled` ->
+  `UNPROBED`), which is the coverage that was missing: the carve-out was
+  unit-tested in `anchoring-rpc-probe.test.ts` but never exercised through
+  `buildHealthResponse`.
+- A transient `unknown` that FOLLOWS a real probe keeps `checkedAtMs` and must
+  stay non-degrading — `verify-worker-runtime.yml` and `deploy-staging.yml`
+  assert `anchoring == "ok"`, so degrading on a blip would flap the gates.
+
+**Addendum, later on 2026-09-02 — the fix for that red was merged twice, and the
+two fixes contradict.** PR #2584 (`d4dc3cfdb`, 17:39:23Z) flipped the assertion
+to `anchoring: 'warning'` on the reasoning "the mock wires no probe"; PR #2587
+(`498608193`, 17:39:32Z) wired the probed-`ok` snapshot described above on the
+reasoning "the assertion stays `'ok'`". Each was green on the `main` it was
+written against, the hunks do not overlap so git merged them without a
+conflict, and the combination — a probed-`ok` fixture asserting `'warning'` —
+was first executed on `main` (run 33662564027: `expected 'warning', received
+'ok'`). The resolution keeps #2587's design and restores the `'ok'` assertion,
+which is what the bullets above prescribe. Two corrections to carry forward:
+(1) the carve-out reached `main` via PR #2573 (`45bb0e002`, 13:17Z), not
+PR #2335 as both fix PRs stated — attribute a break with
+`gh api repos/{owner}/{repo}/commits/<sha>/pulls`, not from `git log`
+adjacency; (2) before opening a fix for a red `main`, check
+`gh pr list --state open --search "<failing test file>"` — if a fix is already
+up, review that one instead of racing it, because nothing in the merge path
+runs two green fixes together before both are on `main`.
+
 ## 2026-08-23 — the "unscoped limiters share one IP bucket" mechanism is GONE (SCRUM-3418)
 
 Two long notes in this file — the 2026-08-10 `anchor.ts` activation entry and the SCRUM-3012
