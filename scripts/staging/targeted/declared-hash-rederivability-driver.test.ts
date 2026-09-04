@@ -61,6 +61,7 @@ describe('judgeRederivability', () => {
       'declared-hash': ok(declaredFixed),
       measured: ok(measured),
       'cached-declared': ok(declaredFixed),
+      'declared-proof-surface': ok(declaredFixed),
     });
     expect(v.deviations).toEqual([]);
     expect(v.claimed).toEqual(['measured']);
@@ -91,6 +92,7 @@ describe('judgeRederivability', () => {
       'declared-hash': ok(declaredFixed),
       measured: ok({ public_id: MEASURED_PUBLIC_ID, verified: true }),
       'cached-declared': ok(declaredFixed),
+      'declared-proof-surface': ok(declaredFixed),
     });
     expect(v.deviations.join(' ')).toContain('over-suppression');
     expect(v.deviations.join(' ')).toContain('DISCRIMINATOR FAILED');
@@ -103,5 +105,29 @@ describe('judgeRederivability', () => {
     });
     expect(v.declaredResolved).toBe(false);
     expect(v.deviations.join(' ')).toContain('POSITIVE CONTROL FAILED');
+  });
+});
+
+
+describe('proof and cache positive controls', () => {
+  const clean = () => ({
+    'declared-hash': ok(declaredFixed),
+    measured: ok(measured),
+    'cached-declared': ok(declaredFixed),
+    'declared-proof-surface': ok(declaredFixed),
+  });
+  it.each(['declared-proof-surface', 'cached-declared'] as const)(
+    'rejects a missing or errored %s instead of counting absence as success', (label) => {
+      for (const outcome of [undefined, { status: 404, body: null }, ok(null), ok({ error: 'missing' })]) {
+        const bodies: Parameters<typeof judgeRederivability>[0] = clean();
+        if (outcome === undefined) delete bodies[label];
+        else bodies[label] = outcome;
+        expect(judgeRederivability(bodies).deviations.join(' ')).toContain(label);
+      }
+    },
+  );
+  it('rejects a fetch-time claim on the proof endpoint', () => {
+    expect(judgeRederivability({ ...clean(), 'declared-proof-surface': ok(declaredUnfixed) })
+      .deviations.join(' ')).toContain('declared-proof-surface carried');
   });
 });

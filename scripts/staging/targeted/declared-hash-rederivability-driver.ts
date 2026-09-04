@@ -118,7 +118,9 @@ export function judgeRederivability(
     const o = bodies[label];
     if (o === undefined || o.status !== 200) return false;
     const b = o.body;
-    return b !== null && typeof b === 'object' && !Array.isArray(b);
+    if (b === null || typeof b !== 'object' || Array.isArray(b)) return false;
+    const expectedId = label === 'measured' ? MEASURED_PUBLIC_ID : DECLARED_PUBLIC_ID;
+    return b.public_id === expectedId && !('error' in b);
   };
   for (const [label, outcome] of Object.entries(bodies)) {
     if (claimsFetchTimeMeasurement(outcome.body)) claimed.push(label);
@@ -138,7 +140,8 @@ export function judgeRederivability(
       + 'for every row would pass unnoticed.',
     );
   }
-  for (const label of ['declared-hash', 'cached-declared']) {
+  for (const label of ['declared-hash', 'cached-declared', 'declared-proof-surface']) {
+    if (!resolved(label)) deviations.push(`POSITIVE CONTROL FAILED: ${label} did not resolve the expected record.`);
     if (claimed.includes(label)) {
       deviations.push(
         `${label} carried fingerprint_rederivability — a DECLARED hash must not claim a measured `
@@ -168,7 +171,7 @@ async function fireOnce(
   ctx: DriverContext,
   stats: DriverStats,
   plan: RederivabilityRequestSpec[],
-): Promise<void> {
+): Promise<string[]> {
   const headers = iamAuthHeaders();
   const bodies: Record<string, { status: number; body: JsonBody }> = {};
   for (const spec of plan) {
@@ -181,13 +184,15 @@ async function fireOnce(
     + `measuredResolved=${verdict.measuredResolved} deviations=${verdict.deviations.length}`,
   );
   for (const d of verdict.deviations) ctx.log(`::error::${d}`);
+  return verdict.deviations;
 }
 
 // istanbul ignore next — exercised only against a live rig
-async function main(): Promise<void> {
+export async function runRederivabilityDriver(): Promise<void> {
   const args = parseDriverArgs(process.argv.slice(2));
   const apiBase = resolveStagingApiBase(process.env);
   const stats = newDriverStats();
+  const deviations: string[] = [];
 
   await runDriver({
     apiBase,
@@ -195,15 +200,26 @@ async function main(): Promise<void> {
     label: REDERIVABILITY_DRIVER.driver,
     stats,
     plan: () => Promise.resolve(planRederivabilityRequests(apiBase)),
-    fireOnce: (ctx, plan) => fireOnce(ctx, stats, plan as RederivabilityRequestSpec[]),
+    fireOnce: async (ctx, plan) => {
+      try {
+        deviations.push(...await fireOnce(ctx, stats, plan as RederivabilityRequestSpec[]));
+      } catch (err) {
+        // runDriver logs and continues after exceptions: retain the failure here.
+        deviations.push(`Pass failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
+    },
   });
 
-  const evidence = summarizeEvidence(stats, { ...REDERIVABILITY_DRIVER, apiBase });
+  if (args.dryRun) return;
+  const summary = summarizeEvidence(stats, { ...REDERIVABILITY_DRIVER, apiBase });
+  const evidence = { ...summary, deviations, allExpected: summary.allExpected && deviations.length === 0 };
   writeEvidenceFile(args.evidenceOut, evidence);
+  if (!evidence.allExpected) throw new Error('Soak failed: unexpected responses or assertion failures; see evidence.');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((err) => {
+  runRederivabilityDriver().catch((err) => {
     console.error(
       `::error::declared-hash-rederivability driver failed: ${err instanceof Error ? err.message : err}`,
     );
