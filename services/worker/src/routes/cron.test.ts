@@ -490,9 +490,9 @@ vi.mock('../jobs/docusign-listener-drift.js', () => ({
 }));
 
 // PROOF-03 (SCRUM-2336): confirmation-proof backfill HTTP endpoint. Cloud
-// Scheduler hits POST /jobs/populate-confirmation-proofs because in-process
-// node-cron is dormant under Cloud Run CPU throttling (the soak proved the
-// dev/test backup never fires in prod).
+// Scheduler hits POST /jobs/populate-confirmation-proofs because it is the
+// trigger with retries and an attempt deadline; the in-process registration is
+// the dev/test backup (SCRUM-3384).
 const mockRunConfirmationProofBackfill = vi.fn().mockResolvedValue({
   skipped: false,
   scanned: 12,
@@ -1077,8 +1077,8 @@ describe('cron routes', () => {
 
   // PROOF-03 (SCRUM-2336): the Cloud Scheduler trigger for the confirmation-proof
   // backfill. Mirrors /check-confirmations: same cronAuth, same JSON-result /
-  // 500-on-error shape. This endpoint (not in-process node-cron) is what actually
-  // fires the backfill in prod, where CPU throttling leaves node-cron dormant.
+  // 500-on-error shape. This endpoint is the prod trigger for the backfill; the
+  // in-process registration is a backup, not a substitute (SCRUM-3384).
   describe('POST /populate-confirmation-proofs', () => {
     it('returns the backfill result as JSON on success', async () => {
       const app = createApp();

@@ -642,3 +642,71 @@ describe('ci.yml commit-message payload transport (E2BIG, PR #2346)', () => {
     expect(context).toMatch(/PR_COMMITS_MSGS_FILE/u);
   });
 });
+
+describe("ci.yml zk circuit artifact cache survives a key rotation", () => {
+  // 2026-09-02: a dependabot bump of services/worker/package-lock.json rotated
+  // the exact cache key, the rebuild tried to re-download the Powers of Tau
+  // file, and both public hosts answered 403 AccessDenied — main's Tests job
+  // went red on a lockfile bump (run 33669376517). `restore-keys` carries the
+  // SHA-256-pinned build inputs (ptau + circomlib tarball) over from the
+  // newest previous entry so build.sh rebuilds from source instead of
+  // downloading. Only an EXACT key hit sets `cache-hit`, so the rebuild steps
+  // still run on a fallback — which is the second property pinned here.
+  const steps = workflowSteps(readFileSync(WORKFLOW_PATH, "utf8"));
+  const cacheStep = steps.find((block) => /^\s+id:\s*cache-zk-artifacts\s*$/mu.test(block));
+
+  function scalarLine(block: string, key: string): string {
+    return block.split("\n").find((line) => new RegExp(`^\\s*${key}:`, "u").test(line)) ?? "";
+  }
+
+  /** Lines of a `key: |` block scalar, trimmed, in order. */
+  function blockScalarLines(block: string, key: string): string[] {
+    const lines = block.split("\n");
+    const start = lines.findIndex((line) => new RegExp(`^\\s*${key}:\\s*\\|\\s*$`, "u").test(line));
+    if (start === -1) return [];
+    const keyIndent = /^(\s*)/u.exec(lines[start])?.[1].length ?? 0;
+    const collected: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (line.trim() === "") continue;
+      const indent = /^(\s*)/u.exec(line)?.[1].length ?? 0;
+      if (indent <= keyIndent) break;
+      collected.push(line.trim());
+    }
+    return collected;
+  }
+
+  it("still keys the exact entry on circuit source, build script and worker lockfile", () => {
+    expect(cacheStep, "expected the `cache-zk-artifacts` step in the Tests job").toBeDefined();
+    const keyLine = scalarLine(cacheStep ?? "", "key");
+    for (const input of [
+      "services/worker/circuits/extraction-proof.circom",
+      "services/worker/circuits/build.sh",
+      "services/worker/package-lock.json",
+    ]) {
+      expect(keyLine, `${input} must stay in the exact cache key`).toContain(input);
+    }
+  });
+
+  it("falls back to the newest entry for the same OS + circom pin when the exact key misses", () => {
+    expect(cacheStep).toBeDefined();
+    const keyLine = scalarLine(cacheStep ?? "", "key");
+    const keyPrefix = /key:\s*(.+?)\$\{\{\s*hashFiles\(/u.exec(keyLine)?.[1]?.trim();
+    expect(keyPrefix, "exact key must have the shape `<static prefix>${{ hashFiles(...) }}`").toBeTruthy();
+
+    expect(
+      blockScalarLines(cacheStep ?? "", "restore-keys"),
+      "restore-keys must list the exact key's static prefix so a lockfile bump reuses the pinned build inputs instead of re-downloading them",
+    ).toContain(keyPrefix);
+  });
+
+  it("keeps the rebuild steps gated on the EXACT hit, so a prefix fallback still rebuilds from source", () => {
+    for (const id of ["install-circom", "build-zk-circuit"]) {
+      const step = steps.find((block) => new RegExp(`^\\s+id:\\s*${id}\\s*$`, "mu").test(block));
+      expect(step, `expected the \`${id}\` step`).toBeDefined();
+      expect(
+        scalarLine(step ?? "", "if"),
+        `${id} must run whenever the exact key missed — a restore-keys fallback does not set cache-hit`,
+      ).toMatch(/steps\.cache-zk-artifacts\.outputs\.cache-hit\s*!=\s*'true'/u);
+    }
+  });
+});
