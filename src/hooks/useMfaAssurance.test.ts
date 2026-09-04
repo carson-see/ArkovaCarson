@@ -410,6 +410,33 @@ describe('useMfaAssurance', () => {
   // ---------------------------------------------------------------------
 
   describe('live re-evaluation', () => {
+    it.each(['error', 'rejection', 'timeout'] as const)(
+      'keeps an established challenge closed when the background check has a %s',
+      async (failure) => {
+        vi.useFakeTimers();
+        const { useMfaAssurance, clearMfaAssuranceCache } = await import('./useMfaAssurance');
+        clearMfaAssuranceCache();
+        mockGetAAL.mockResolvedValueOnce({
+          data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+          error: null,
+        });
+        if (failure === 'error') mockGetAAL.mockResolvedValue({ data: null, error: { message: 'offline' } });
+        if (failure === 'rejection') mockGetAAL.mockRejectedValue(new Error('offline'));
+        if (failure === 'timeout') mockGetAAL.mockReturnValue(new Promise(() => {}));
+        const first = renderHook(() => useMfaAssurance('known-factor-user', 'same-session'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(first.result.current.status).toBe('challenge_required');
+        await act(async () => { await vi.advanceTimersByTimeAsync(69_000); });
+        expect(first.result.current.status).toBe('challenge_required');
+        expect(first.result.current.hasVerifiedFactor).toBe(true);
+        first.unmount();
+        const nextRoute = renderHook(() => useMfaAssurance('known-factor-user', 'same-session'));
+        expect(nextRoute.result.current.status).toBe('challenge_required');
+        expect(nextRoute.result.current.hasVerifiedFactor).toBe(true);
+        clearMfaAssuranceCache();
+      },
+    );
+
     it('re-checks every 60 seconds while mounted', async () => {
       vi.useFakeTimers();
       mockGetAAL.mockResolvedValue({

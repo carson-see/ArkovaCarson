@@ -55,8 +55,11 @@
  * fail-open contract.
  *
  * SAFETY CONTRACT — read before changing this file:
- * Every ambiguous/error/timeout outcome below resolves to `'satisfied'`
- * (i.e. do NOT show a challenge). This hook can therefore only ever ADD
+ * An ambiguous/error/timeout outcome before a factor is known resolves to
+ * `'satisfied'`. Once this session is known to have a verified factor,
+ * an unavailable recheck preserves its last assurance state. In particular,
+ * a pending challenge cannot disappear because a background check failed.
+ * This hook can therefore only ever ADD
  * friction for users who have a verified MFA factor; it can never be the
  * reason a user with no MFA factor is blocked from signing in. That
  * asymmetry is deliberate: an availability incident that locks out every
@@ -241,6 +244,22 @@ export function useMfaAssurance(
     const checkedSessionKey = sessionKeyRef.current;
     if (!checkedUserId) return;
 
+    const preserveKnownAssuranceOrFailOpen = () => {
+      setState((previous) => {
+        if (
+          previous.userId === checkedUserId &&
+          previous.sessionKey === checkedSessionKey &&
+          previous.hasVerifiedFactor
+        ) {
+          // An unavailable lookup cannot prove that a known factor was removed
+          // or that the user completed its challenge. Keep both state and cache.
+          return previous;
+        }
+        writeModuleCache(checkedUserId, checkedSessionKey, 'satisfied', false);
+        return { userId: checkedUserId, sessionKey: checkedSessionKey, ...SATISFIED_NO_FACTOR };
+      });
+    };
+
     try {
       const { data, error } = await withTimeout(
         supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
@@ -261,9 +280,7 @@ export function useMfaAssurance(
       }
 
       if (error || !data) {
-        // Fail OPEN — see module doc comment.
-        setState({ userId: checkedUserId, sessionKey: checkedSessionKey, ...SATISFIED_NO_FACTOR });
-        writeModuleCache(checkedUserId, checkedSessionKey, 'satisfied', false);
+        preserveKnownAssuranceOrFailOpen();
         return;
       }
 
@@ -281,8 +298,7 @@ export function useMfaAssurance(
         return;
       }
       // Timeout or unexpected throw — fail OPEN. See module doc comment.
-      setState({ userId: checkedUserId, sessionKey: checkedSessionKey, ...SATISFIED_NO_FACTOR });
-      writeModuleCache(checkedUserId, checkedSessionKey, 'satisfied', false);
+      preserveKnownAssuranceOrFailOpen();
     }
   }, []);
 

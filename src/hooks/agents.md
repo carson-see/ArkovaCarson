@@ -1,6 +1,18 @@
 # agents.md — hooks
 _Last updated: 2026-09-03_
 
+## 2026-09-04 — release review: preserve an established MFA challenge on failed rechecks
+
+`useMfaAssurance` now preserves the current session's known-factor state when a
+background assurance lookup errors, rejects, or times out. Previously these paths
+replaced `challenge_required` with `satisfied` and cleared `hasVerifiedFactor`,
+allowing AuthGuard to render protected content without verification. Three
+red-first regressions cover the failures and the next route's cache read.
+This supersedes the unconditional recheck fail-open statement below: initial
+unknown-factor availability behavior remains, but a known factor is never erased
+by an unavailable lookup. Successful rechecks can still detect factor removal.
+Runtime change: the previous PR #2637 soak does not cover this correction.
+
 ## 2026-09-03 SCRUM-3167 — `useMfaAssurance.ts` restored + live re-evaluation; `useMfaEnrollmentRequirement.ts` rewritten role+date; useHipaaMfaGate (deleted) deleted
 
 Three hooks, one enforcement gate consumed by `AuthGuard.tsx` (see `src/components/auth/agents.md`'s dated entry for the full decision table and fail-open contract — this entry covers only the hook layer).
