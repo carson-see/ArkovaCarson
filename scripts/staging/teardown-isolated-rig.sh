@@ -40,7 +40,14 @@ set -euo pipefail
 # Hard-deny constants — NEVER tear these down.
 # ---------------------------------------------------------------------------
 PROD_SUPABASE_REF="vzwyaatejekddvltxyye"
-SHARED_STAGING_SUPABASE_REF="ujtlwnoqfhtitcmsnrpq"
+# The shared staging project ref has changed at least once (the original
+# ujtlwnoqfhtitcmsnrpq project was deleted and the rig rebuilt elsewhere), so a
+# single hard-coded ref silently stops protecting the LIVE shared rig the moment
+# it moves — the deny list would have waved through a delete of the real one.
+# Deny every ref this script has ever known as shared staging, and resolve the
+# current one from the secret the shared worker actually reads.
+SHARED_STAGING_SUPABASE_REFS=("ujtlwnoqfhtitcmsnrpq" "fizyjojbebyalirtjjht")
+SHARED_STAGING_SUPABASE_REF="${SHARED_STAGING_SUPABASE_REFS[0]}"
 DENIED_CLOUD_RUN_SERVICES=("arkova-worker" "arkova-worker-staging")
 
 # ---------------------------------------------------------------------------
@@ -93,9 +100,11 @@ deny() { echo "REFUSING: $*" >&2; exit 1; }
 if [[ "$PROJECT_REF" == "$PROD_SUPABASE_REF" ]]; then
   deny "--project-ref is the PROD Supabase project ($PROD_SUPABASE_REF). Never tear down prod."
 fi
-if [[ "$PROJECT_REF" == "$SHARED_STAGING_SUPABASE_REF" ]]; then
-  deny "--project-ref is the SHARED staging project ($SHARED_STAGING_SUPABASE_REF). Use teardown-and-reset.sh to reset shared staging, not this script."
-fi
+for shared_ref in "${SHARED_STAGING_SUPABASE_REFS[@]}"; do
+  if [[ "$PROJECT_REF" == "$shared_ref" ]]; then
+    deny "--project-ref is a SHARED staging project ($shared_ref). Use teardown-and-reset.sh to reset shared staging, not this script."
+  fi
+done
 for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"; do
   if [[ "$SERVICE" == "$denied" ]]; then
     deny "--service '$SERVICE' is a shared/prod Cloud Run service."
@@ -141,6 +150,62 @@ run_cmd() {
     "$@"
   fi
 }
+
+# Reclaim the isolated project, and VERIFY it actually went away.
+#
+# `npx supabase projects delete` reports
+#   {"_tag":"Error","error":{"code":"LegacyProjectsDeleteCancelledError",
+#    "message":"context canceled"}}   (rc=1)
+# while the deletion SUCCEEDS server-side. This is a false NEGATIVE: the client
+# gives up before the server finishes, so teardown announces failure on a
+# project that is in fact being reclaimed.
+#
+# CORRECTION (2026-09-03): an earlier version of this comment, and the commit
+# that introduced it, had this backwards -- claiming teardown reported success
+# while projects stayed alive and billing, and blaming the 17 lingering
+# arkova-soak-* projects on it. Both were wrong. Verified: the 2026-09-03
+# teardown run logged rc=1 for all 7 projects, and all 7 are confirmed GONE via
+# the Management API. The lingering projects were soaks nobody had torn down
+# yet, not a broken teardown.
+#
+# Either way the remedy is the same and is why this helper exists: do not trust
+# the CLI's exit status in EITHER direction -- verify absence and report what is
+# actually true. The Management API DELETE /v1/projects/<ref> is kept as a
+# fallback for the case where the project genuinely survives (verified working
+# on aqikotdkmhxmznonwmwk, which returned 200 after two CLI failures).
+reclaim_project() {
+  local ref="$1" code
+  print_cmd npx supabase projects delete "$ref"
+  [[ $APPLY -eq 1 ]] || return 0
+  npx supabase projects delete "$ref" 2>&1 | grep -vE '^npm warn' || true
+  sleep 5
+  if ! project_still_exists "$ref"; then
+    echo "# project $ref reclaimed (CLI)." >&2
+    return 0
+  fi
+  echo "WARN: CLI delete left $ref alive; falling back to the Management API." >&2
+  : "${SUPABASE_ACCESS_TOKEN:?required for the Management API delete fallback}"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+    "https://api.supabase.com/v1/projects/${ref}" \
+    -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+    -H 'Content-Type: application/json')"
+  sleep 10
+  if project_still_exists "$ref"; then
+    echo "ERROR: $ref is STILL ACTIVE after CLI and API delete (api_http=${code})." >&2
+    echo "       It is billing. Delete it from the Supabase dashboard." >&2
+    return 1
+  fi
+  echo "# project $ref reclaimed (Management API, http=${code})." >&2
+}
+
+project_still_exists() {
+  local ref="$1"
+  [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]] || return 0   # cannot verify -> assume alive
+  curl -s "https://api.supabase.com/v1/projects" \
+    -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" 2>/dev/null \
+    | grep -q "\"$ref\""
+}
+
 
 RECLAIM_LABEL="delete Supabase project"
 if [[ $FLAG_ONLY -eq 1 ]]; then
@@ -226,9 +291,32 @@ echo
 # ---------------------------------------------------------------------------
 RIG_NAME="${SERVICE#arkova-worker-}"; RIG_NAME="${RIG_NAME%-staging}"
 echo "# Step 2b/3 — delete per-rig secrets for '$RIG_NAME'"
+# Secret names are DERIVED from the service name, so they miss on any rig
+# provisioned before this naming convention (e.g. the wave2 rig used
+# `supabase-url-wave2`, not `supabase-url-wave2-2026-08-staging`). Under
+# `set -e` that NOT_FOUND aborted the whole script at Step 2b and never reached
+# Step 3 — leaving the Supabase project, the one resource that actually costs
+# money, alive while the run looked like it had done its job. A missing secret
+# is the expected case for older rigs, so it must not be fatal; anything left
+# behind is reported at the end instead.
+SECRETS_NOT_FOUND=()
 for secret in "supabase-url-${RIG_NAME}-staging" "supabase-service-role-key-${RIG_NAME}-staging" "ip-hash-pepper-${RIG_NAME}-staging"; do
-  run_cmd gcloud secrets delete "$secret" --project="$GCP_PROJECT" --quiet
+  if [[ $APPLY -eq 1 ]]; then
+    print_cmd gcloud secrets delete "$secret" --project="$GCP_PROJECT" --quiet
+    echo "executing: gcloud secrets delete $secret" >&2
+    if ! gcloud secrets delete "$secret" --project="$GCP_PROJECT" --quiet 2>/dev/null; then
+      SECRETS_NOT_FOUND+=("$secret")
+      echo "  not found (older naming convention?) — continuing: $secret" >&2
+    fi
+  else
+    print_cmd gcloud secrets delete "$secret" --project="$GCP_PROJECT" --quiet
+  fi
 done
+if [[ ${#SECRETS_NOT_FOUND[@]} -gt 0 ]]; then
+  echo "# NOTE: ${#SECRETS_NOT_FOUND[@]} derived secret name(s) did not exist."
+  echo "#       Check for older-convention names and delete by hand:"
+  echo "#         gcloud secrets list --project=$GCP_PROJECT | grep -i '$RIG_NAME'"
+fi
 echo
 
 # ---------------------------------------------------------------------------
@@ -252,7 +340,7 @@ if [[ $FLAG_ONLY -eq 1 ]]; then
 else
   echo "#   default reclaim: delete the project (MCP-equivalent: delete project)."
   echo "#   MCP pause_project will NOT work on a paid project (CLAUDE.md §7) — delete or use --flag-only."
-  run_cmd npx supabase projects delete "$PROJECT_REF"
+  reclaim_project "$PROJECT_REF"
 fi
 echo
 
