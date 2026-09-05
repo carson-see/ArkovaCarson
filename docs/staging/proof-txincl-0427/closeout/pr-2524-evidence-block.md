@@ -40,3 +40,11 @@ Jira: SCRUM-3956 — Confluence: https://arkova.atlassian.net/wiki/spaces/A/page
 - Void condition: any further commit on feat/proof-tx-inclusion-branch that touches a runtime or tested file voids this note and the rig must be rebuilt — do not merge main into the branch before it merges.
 - Approved by: <<APPROVER: Carson>> (CTO decision recorded in docs/staging/proof-txincl-0427/evidence/E2-base-movement-residual-risk-2026-09-02.md)
 - Verification: compare the PR-only diff at a3f1d6b36 against the PR-only diff at e5815e9ac (each against its merge-base with origin/main), and diff a3f1d6b36..e5815e9ac restricted to services/worker/src/routes/cron.ts — commands listed in the E2 note.
+
+**A2/A3 intermittent failures, explained (E4).** Two of seven observed cycles (`live-08`, `live-09`) failed A2/A3; root cause is a soak-driver
+evidence-collection race, NOT a regression in this PR's H1 fix. The rig's mandatory Trigger A (Cloud Scheduler, `*/5`, same route the driver polls)
+lands in the narrow gap after the driver's own wrap tick and silently consumes the wedge before the driver's next tick — the shared in-process cursor
+(`confirmation-proof-populate.ts:414`) advances regardless of which caller triggered it, exactly as designed. A direct read-only DB probe at the time
+(Supabase MCP, `uqobkjhlnqmcpjidngxr`) confirmed the H1 guarantee held throughout: the 2,880-row bulk+spread cohort stayed 100% populated and the
+120-row wedge stayed 100% `block_header IS NULL`, independent of what any single driver tick reported. `live-06`, `live-07`, and `live-10` passed
+A2/A3 cleanly on the same rig. Full analysis: `docs/staging/proof-txincl-0427/evidence/E4-wedge-cursor-race-not-a-regression-2026-09-03.md`.
