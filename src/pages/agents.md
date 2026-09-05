@@ -1,6 +1,62 @@
 # agents.md — pages
 _Last updated: 2026-08-30_
 
+## 2026-08-30 SCRUM-3559 — `ThirdPartyNoticesPage.tsx` includes copyright lines + verbatim license text
+
+The page listed dependency names + SPDX identifiers only; strict MIT attribution
+wants the notice text itself included, and LGPL §4 wants a copy of the license
+(previously two `gnu.org` links). Entries now render an optional `copyright`
+line and a collapsed-by-default `<details>` block (`LicenseTextDetails`) with the
+VERBATIM upstream license text — in the DOM either way, which is what discharges
+the obligation; collapsing is presentation only. Fields come from the
+regenerated `thirdPartyNotices.generated.json` (see `scripts/security/agents.md`
+for the README-fallback guard — a package without a real license file gets no
+inline text, links only). Bundle note: the JSON is ~570KB raw but is statically
+imported ONLY by this page, which `App.tsx` loads via `lazyWithRetry`, so it
+lands in this page's own lazy chunk (57KB gzipped), never the initial bundle.
+New copy key `THIRD_PARTY_NOTICES_LABELS.LICENSE_TEXT_TOGGLE`; §1.3 clean.
+
+Tests are split by data source, deliberately: `ThirdPartyNoticesPage.test.tsx`
+(pre-existing) runs against the REAL generated JSON — its old "does not include
+a fabricated xlsx entry (no such dependency exists in the tree)" case was
+rewritten in this change because its premise went stale: `xlsx@0.18.5` IS a
+direct production dependency today, and the assertion only stayed green because
+the committed data predated it (2026-07-28) — stale data masking a missing
+attribution. The replacement derives truth from `package-lock.json` both ways
+(no entry that isn't in the lockfile; xlsx present at the lockfile's version).
+`ThirdPartyNoticesPage.license-text.test.tsx` (new, 7 cases, TDD red-first)
+mocks the JSON module and pins rendering behavior: copyright renders, text is
+inside `<details>`, toggle only for entries carrying text, pending badge only
+for `status: 'pending'`, links survive for link-only entries. Also fixed in
+passing (found in 375px UAT, pre-existing): the licenseTextUrls link labels
+embed full URLs and overflowed a 375px viewport — `break-all` added.
+## 2026-08-30 SCRUM-3532 / SCRUM-3670 — fetch failures no longer masquerade as empty data
+
+Two page-level consumption gaps (deferred surfaces documented by SCRUM-1999, which bounded
+itself to OrgRegistryTable/ReportsList):
+
+- `DashboardPage.tsx` — `useAnchors` has exposed `error` since the React-Query migration but
+  the page never destructured it, so a failed anchors fetch fell through to the "secure your
+  first document" onboarding empty state. Now renders the canonical `DataErrorBanner`
+  (`data-testid="records-fetch-error-banner"`, title `DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE`,
+  message `TOAST.RECORDS_FETCH_FAILED`, Retry → `refreshAnchors`) inside the records
+  CardContent; the empty state and the filter no-results block are gated on `!recordsError`,
+  and stale records from a previous successful fetch stay visible below the banner
+  (React-Query keeps `data` on refetch error). The raw hook `error` string is deliberately
+  NOT rendered — generic copy only (§1.4; the hook's error is raw PostgREST text). Same
+  treatment in `src/components/vault/VaultDashboard.tsx`. Tests:
+  `DashboardPage.fetch-error.test.tsx` (4 cases, red-first).
+- `ComplianceDashboardPage.tsx` — `useJurisdictionRules()` now exposes `error`/`refetch`
+  (see `src/hooks/agents.md`); the page renders a retryable `DataErrorBanner`
+  (`data-testid="compliance-rules-error-banner"`) above the jurisdiction/industry selectors
+  when the public rules fetch fails, instead of silently empty pickers. The selects stay
+  mounted — their US-CA/accounting fallback options still drive the score card during retry.
+  Copy is local `RULES_ERROR_COPY` (§1.3-clean; copy.ts locked under concurrent PRs — same
+  precedent as `ReportsList.tsx`'s `REPORTS_STATE_COPY`). Both pre-existing suites' hook
+  mocks updated to the full new return shape. Tests:
+  `ComplianceDashboardPage.rulesError.test.tsx` (3 cases, red-first). Known remaining gap,
+  on the record: the page still does not consume `useComplianceScore().error` (score/gap
+  fetch failures render as "No data") — out of SCRUM-3670's scope, untracked.
 ## 2026-08-30 SCRUM-3524 — `OrgProfilePage.tsx` `handleInvite` propagates the invite result
 
 `useInviteMember.inviteMember` never rethrows (SCRUM-1979 toast-safety) — it

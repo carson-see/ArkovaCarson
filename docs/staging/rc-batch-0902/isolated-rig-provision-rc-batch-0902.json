@@ -1,0 +1,49 @@
+{
+  "kind": "isolated-rig-provision",
+  "schema_version": 1,
+  "rig_name": "arkova-soak-rc-batch-0902",
+  "created_at": "2026-09-02",
+  "created_by": "Claude (CTO session)",
+  "supabase_project_ref": "rvdgwynxoapdzysoaayr",
+  "supabase_region": "us-east-2",
+  "cloud_run_service": "arkova-worker-rc-batch-0902-staging",
+  "cloud_run_region": "us-central1",
+  "cloud_run_url": "https://arkova-worker-rc-batch-0902-staging-kvojbeutfa-uc.a.run.app",
+  "deployed_revision": "arkova-worker-rc-batch-0902-staging-00001-p4l",
+  "revision_created": "2026-09-02T19:48:33Z",
+  "revision_ready": "2026-09-02T19:49:18Z",
+  "image_digest": "sha256:55c34e1fdf0423562159569c31d775343ef73f13394ff084ce7e62471caf5ccf",
+  "head_sha": "78621249595e37398170da9b298ae13cd753a801",
+  "base_sha": "e99c6cb7028843b863ad6492c8e8cf81c6f591da",
+  "rc_manifest": "docs/staging/rc-manifests/rc-batch-2026-09-02.json",
+  "included_prs": [
+    2525,
+    2526,
+    2527,
+    2528
+  ],
+  "pr_heads": {
+    "2525": "24fbb72cc",
+    "2526": "c646d18e8",
+    "2527": "2cb005850",
+    "2528": "7781bf0eb"
+  },
+  "ledger_head": "0419",
+  "preflight_result": "environment_type=clean_mirror (7/7) \u2014 docs/staging/rc-batch-0902/clean-mirror-preflight-rc-batch-0902.json",
+  "fixture": "scripts/staging/seed-rc-batch-0902-fixture.sql (applied 2026-09-02 after the clean_mirror preflight; post-seed preflight expected fixture_seeded)",
+  "driver_path": "services/worker/scripts/rc-batch-0902-driver.ts",
+  "driver_branch": "soak/rc-batch-0902-driver",
+  "driver_commit": "31569f76e",
+  "driver_sha256": "29fd4c4d3824cb887464ba9e28befa334a529b966989c9783452f9b33bd994df",
+  "driver_sha": "29fd4c4d3824cb887464ba9e28befa334a529b966989c9783452f9b33bd994df",
+  "tier": "T2 (2525/2526/2527) + T1 frontend targeted (2528)",
+  "soak_start": "2026-09-02T19:49:27Z",
+  "soak_end": "2026-09-03T07:49:27Z",
+  "clock_basis": "Cloud Run worker uptime, single instance (minScale=1)",
+  "scheduler": "none wired \u2014 driver POSTs /jobs/detect-reorgs directly; nothing broadcasts",
+  "deny": [
+    "vzwyaatejekddvltxyye",
+    "fizyjojbebyalirtjjht",
+    "uqobkjhlnqmcpjidngxr"
+  ]
+}
