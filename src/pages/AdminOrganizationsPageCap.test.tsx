@@ -128,4 +128,28 @@ describe('AdminOrganizationsPage — document cap vs billing flag (SCRUM-4474)',
       expect(body).toEqual({ anchor_quota: 2000, cap_enforced: true, is_test: false });
     });
   });
+
+  it('turning the cap OFF does not WIPE the recorded quota (review F5)', async () => {
+    const user = userEvent.setup();
+    // Login Defense in prod: a recorded quota of 15 that has never applied.
+    // 0440's backfill preserves that 15 rather than guessing at it; the modal
+    // must not throw it away the moment an admin saves anything.
+    renderWith(org({ display_name: 'Login Defense', anchor_quota: 15, cap_enforced: false, is_test: false }));
+    expect((await screen.findAllByText('Uncapped')).length).toBeGreaterThan(0);
+
+    mockWorkerFetch.mockResolvedValueOnce(jsonResponse({ success: true }));
+    await user.click(screen.getAllByRole('button', { name: /cap/i })[0]);
+
+    const save = await screen.findByRole('button', { name: /^save$/i });
+    await user.click(save);
+
+    await waitFor(() => {
+      const call = mockWorkerFetch.mock.calls.find((c) => String(c[0]).includes('/quota'));
+      expect(call).toBeDefined();
+      const body = JSON.parse((call![1] as RequestInit).body as string);
+      // The bug: this used to send anchor_quota: null whenever the cap toggle
+      // was off, discarding the 15 on any save.
+      expect(body).toEqual({ anchor_quota: 15, cap_enforced: false, is_test: false });
+    });
+  });
 });

@@ -103,9 +103,16 @@ function buildQuotaPayload(
   capEnabled: boolean,
   quotaNum: number,
   isTest: boolean,
+  recordedQuota: number | null,
 ): { anchor_quota: number | null; cap_enforced: boolean; is_test: boolean } {
   return {
-    anchor_quota: capEnabled ? quotaNum : null,
+    // Turning the cap OFF must not DISCARD the number. This previously sent
+    // `null`, so an admin who opened this modal on an org holding a
+    // recorded-but-inert quota (Login Defense: anchor_quota = 15, cap off) and
+    // saved anything at all wiped the 15 — the exact value 0440's backfill goes
+    // out of its way to preserve rather than guess at. `cap_enforced` is the
+    // switch; `anchor_quota` is the number, and the two are independent.
+    anchor_quota: capEnabled ? quotaNum : recordedQuota,
     cap_enforced: capEnabled,
     is_test: isTest,
   };
@@ -550,7 +557,7 @@ export function AdminOrganizationsPage() {
       const res = await workerFetch(`/api/admin/organizations/${encodeURIComponent(editingOrg.id)}/quota`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildQuotaPayload(capEnabled, quotaNum, capIsTest)),
+        body: JSON.stringify(buildQuotaPayload(capEnabled, quotaNum, capIsTest, editingOrg.anchor_quota)),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
