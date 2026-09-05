@@ -32,7 +32,7 @@ describe('driver completion status', () => {
         const status = scenario === 'proof-404' && url.endsWith('/proof') ? 404 : 200;
         const body = status === 404 ? { error: 'NO_BATCH_PROOF' } : {
           public_id: measured ? MEASURED_PUBLIC_ID : DECLARED_PUBLIC_ID,
-          ...(measured || scenario === 'false-claim' ? { fingerprint_rederivability: 'fetch_time_snapshot' } : {}),
+          ...(measured || scenario === 'false-claim' ? { fingerprint_rederivability: 'fetch_time_snapshot', fingerprint_rederivability_note: 'Measured: exact fetched bytes.' } : {}),
         };
         return new Response(JSON.stringify(body), { status });
       }));

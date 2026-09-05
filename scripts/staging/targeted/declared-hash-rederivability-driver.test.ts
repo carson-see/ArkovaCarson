@@ -23,6 +23,7 @@ const measured = {
   public_id: MEASURED_PUBLIC_ID,
   verified: true,
   fingerprint_rederivability: 'fetch_time_snapshot',
+  fingerprint_rederivability_note: 'Measured: exact bytes retrieved at fetch time.',
 };
 
 describe('planRederivabilityRequests', () => {
@@ -129,5 +130,22 @@ describe('proof and cache positive controls', () => {
   it('rejects a fetch-time claim on the proof endpoint', () => {
     expect(judgeRederivability({ ...clean(), 'declared-proof-surface': ok(declaredUnfixed) })
       .deviations.join(' ')).toContain('declared-proof-surface carried');
+  });
+});
+
+describe('measured control semantics', () => {
+  it.each([
+    { fingerprint_rederivability: 'declared_unverified', fingerprint_rederivability_note: 'Declared only' },
+    { fingerprint_rederivability: 'fetch_time_snapshot' },
+    { fingerprint_rederivability: 'fetch_time_snapshot', fingerprint_rederivability_note: '' },
+    { fingerprint_rederivability_note: 'Measured only' },
+  ])('rejects a wrong or incomplete class/note pair: %j', (fields) => {
+    const verdict = judgeRederivability({
+      'declared-hash': ok(declaredFixed),
+      measured: ok({ public_id: MEASURED_PUBLIC_ID, ...fields }),
+      'cached-declared': ok(declaredFixed),
+      'declared-proof-surface': ok(declaredFixed),
+    });
+    expect(verdict.deviations.join(' ')).toContain('measured class/note');
   });
 });

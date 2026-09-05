@@ -59,3 +59,9 @@ Unit tests pin that the judge FAILS against pre-#2499 bodies, against a stale-ca
 ## 2026-09-04 — #2499 soak verdict must reach the process exit
 
 The declared-hash driver previously logged semantic failures without failing the run, and ignored the proof endpoint's 404. All 52 historical cycle artifacts had `allExpected:false` despite a successful supervisor exit. The driver now requires matching record IDs on every requested surface, checks the proof response for forbidden measurement claims, retains semantic and thrown-pass failures across the shared loop, writes failed evidence, then rejects so the CLI exits 1. Dry-run does not emit passing evidence. Runtime tests exercise the real loop with HTTP stubs for a clean result, missing proof, false measurement claim, and authentication failure. Historical evidence remains invalid; this repair does not create a valid proof fixture or certify packet-export coverage.
+
+## 2026-09-05 — PR 2499 positive control
+
+The measured control requires fetch_time_snapshot AND a nonempty accompanying
+note. Presence of either field alone cannot qualify the driver. Four malformed
+or misclassified response cases failed before this stricter judge.

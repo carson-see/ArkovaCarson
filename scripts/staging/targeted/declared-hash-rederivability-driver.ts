@@ -149,6 +149,15 @@ export function judgeRederivability(
       );
     }
   }
+  const measuredBody = bodies.measured?.body;
+  if (measuredResolved && (
+    measuredBody === null || typeof measuredBody !== 'object' || Array.isArray(measuredBody)
+    || measuredBody.fingerprint_rederivability !== 'fetch_time_snapshot'
+    || typeof measuredBody.fingerprint_rederivability_note !== 'string'
+    || measuredBody.fingerprint_rederivability_note.trim().length === 0
+  )) {
+    deviations.push('POSITIVE CONTROL FAILED: measured class/note must be the complete fetch_time_snapshot pair.');
+  }
   if (measuredResolved && !claimed.includes('measured')) {
     deviations.push(
       'measured lost fingerprint_rederivability — over-suppression is its own regression: a '
