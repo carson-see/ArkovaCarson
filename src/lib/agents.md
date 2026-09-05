@@ -529,3 +529,7 @@ Keep the entries in the worker's declaration order and keep the copy §1.3-clean
 Hash / Blockchain — "replaced by a newer version", not "superseded transaction").
 `scripts/ci/check-webhook-event-registration-drift.ts` compares this map's key list against the
 worker map on every PR, in the required root `Tests` job.
+
+## 2026-09-05 — Certificate wrapped field spacing
+
+`generateAuditReport.addField` reserves the height of every wrapped value line. A long filename previously overlapped the next field because the helper always advanced 5 mm. The regression test reads the PDF text operators and checks the next baseline against the last painted filename line. Keep horizontal label spacing and vertical wrapping covered together.

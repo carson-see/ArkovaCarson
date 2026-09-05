@@ -565,6 +565,22 @@ describe('audit certificate — field label / value spacing as painted', () => {
     for (const g of gaps) expect(g.gap).toBeGreaterThanOrEqual(FIELD_LABEL_GAP_MM - EPS);
   });
 
+  it('places the next field below every painted line of a wrapped filename', () => {
+    const filename = 'Synthetic long filename ' + 'document '.repeat(18) + '.pdf';
+    const { doc } = buildAuditReport(securedData({ filename, fileSize: undefined }));
+    const block = doc.output().match(/BT[\s\S]*?ET/g)!
+      .find(value => value.includes('(Synthetic long filename'))!;
+    expect(block).toBeDefined();
+    const paintedLines = [...block.matchAll(/\) Tj/g)].length;
+    expect(paintedLines).toBeGreaterThan(1);
+    const leadingPt = Number(block.match(/([\d.]+) TL/)![1]);
+    const runs = textRuns(doc);
+    const first = runs.find(run => run.text.startsWith('Synthetic long filename'))!;
+    const next = runs.find(run => run.text === CERTIFICATE_COPY.FIELD_CREDENTIAL_TYPE)!;
+    const lastBaseline = first.y + (paintedLines - 1) * leadingPt / PT_PER_MM;
+    expect(next.y - lastBaseline).toBeGreaterThanOrEqual(3);
+  });
+
   it('jsPDF measures Helvetica-Bold with its own AFM widths, wider than regular (guards the fix)', () => {
     // jsPDF's standard-14 tables carry the Adobe AFM advance widths at 10 per
     // mille resolution. Summed for "Network Observed Time": Helvetica-Bold

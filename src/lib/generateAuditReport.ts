@@ -661,6 +661,7 @@ function addField(
   doc.setTextColor(80, 80, 80);
   doc.text(label, labelX, y);
 
+  let fieldHeight = 5;
   if (value) {
     // Measure BEFORE switching faces, advance widths only — the width the
     // label just painted at.
@@ -673,10 +674,13 @@ function addField(
 
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(0, 0, 0);
-    doc.text(value, valueX, y, { maxWidth: valueMaxWidth });
+    const lines: string[] = doc.splitTextToSize(value, valueMaxWidth);
+    doc.text(lines, valueX, y);
+    // Reserve every painted line before the next field starts.
+    fieldHeight = Math.max(fieldHeight, lines.length * doc.getLineHeight() / doc.internal.scaleFactor);
   }
 
-  return y + 5;
+  return y + fieldHeight;
 }
 
 /** Render a value on its own line in monospace (fingerprints, roots, etc.). */
