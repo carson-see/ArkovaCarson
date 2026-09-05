@@ -153,19 +153,26 @@ run_cmd() {
 
 # Reclaim the isolated project, and VERIFY it actually went away.
 #
-# `npx supabase projects delete` fails on these projects with
+# `npx supabase projects delete` reports
 #   {"_tag":"Error","error":{"code":"LegacyProjectsDeleteCancelledError",
-#    "message":"context canceled"}}
-# and — because that is the CLI's own error object rather than a non-zero exit
-# in every case — a teardown could report success while the project stayed
-# ACTIVE_HEALTHY and billing. That is why 17 arkova-soak-* projects were still
-# alive on 2026-09-02 despite their soaks being long finished.
+#    "message":"context canceled"}}   (rc=1)
+# while the deletion SUCCEEDS server-side. This is a false NEGATIVE: the client
+# gives up before the server finishes, so teardown announces failure on a
+# project that is in fact being reclaimed.
 #
-# The Management API DELETE /v1/projects/<ref> works where the CLI does not
-# (verified 2026-09-02 on aqikotdkmhxmznonwmwk: CLI failed twice, API returned
-# 200 and the project disappeared). Try the CLI first so behaviour is unchanged
-# where it works, then fall back, then VERIFY — never claim reclaimed without
-# confirming absence.
+# CORRECTION (2026-09-03): an earlier version of this comment, and the commit
+# that introduced it, had this backwards -- claiming teardown reported success
+# while projects stayed alive and billing, and blaming the 17 lingering
+# arkova-soak-* projects on it. Both were wrong. Verified: the 2026-09-03
+# teardown run logged rc=1 for all 7 projects, and all 7 are confirmed GONE via
+# the Management API. The lingering projects were soaks nobody had torn down
+# yet, not a broken teardown.
+#
+# Either way the remedy is the same and is why this helper exists: do not trust
+# the CLI's exit status in EITHER direction -- verify absence and report what is
+# actually true. The Management API DELETE /v1/projects/<ref> is kept as a
+# fallback for the case where the project genuinely survives (verified working
+# on aqikotdkmhxmznonwmwk, which returned 200 after two CLI failures).
 reclaim_project() {
   local ref="$1" code
   print_cmd npx supabase projects delete "$ref"

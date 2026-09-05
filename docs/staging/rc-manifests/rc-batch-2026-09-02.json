@@ -4,13 +4,12 @@
   "created_at": "2026-09-02T19:30:00Z",
   "created_by": "carson@arkova.io",
   "release_owner": "Carson",
-  "soak_mode": "isolated_rig_soak",
-  "approval_status": "pending",
+  "approval_status": "not_yet_approved — pending Carson's CODEOWNERS review of this PR (docs/staging/rc-manifests/ @carson-see); this manifest's own PR review is the approval action, per its PR description",
   "train_launch_sha": "78621249595e37398170da9b298ae13cd753a801",
   "target_main_sha": "e128f1fb507da9ede08e4960d0a83e071beb6fd5",
   "allowed_base_shas": [
     "4b3db0c0c4aaa28b1df5506c59357835f6f995a7",
-    "5c145df5cd72d10060f1c84308b72bda74d29c9a",
+    "19d7adfbdd48ba87d9980364c2699c73317dffd4",
     "8147ed3a719c93112ddbfcee3889ec30bc26f4ec",
     "b5e823c3a2b43f0b6c6c329161c9d593a1462539"
   ],
@@ -26,7 +25,11 @@
     "staging_url": "https://arkova-worker-rc-batch-0902-staging-kvojbeutfa-uc.a.run.app",
     "image_digest": "sha256:55c34e1fdf0423562159569c31d775343ef73f13394ff084ce7e62471caf5ccf",
     "soak_window": "2026-09-02T19:49:27Z to 2026-09-03T07:49:27Z (12h T2)",
-    "preflight_result": "environment_type=clean_mirror (7/7) \u2014 docs/staging/rc-batch-0902/clean-mirror-preflight-rc-batch-0902.json"
+    "preflight_result": "environment_type=clean_mirror (7/7) — docs/staging/rc-batch-0902/clean-mirror-preflight-rc-batch-0902.json; re-confirmed clean_mirror 7/7 at 20:31:20Z after the 0417 reconciliation — docs/staging/rc-batch-0902/post-reconcile-preflight-rc-batch-0902.json",
+    "revision": "arkova-worker-rc-batch-0902-staging-00001-p4l",
+    "deploy_tag": "none at close-out — the E2 rollback-rehearsal tag `rollback` on revision 00002-ker was removed after that check completed (2026-09-02T20:32:51Z); the soaking revision 00001-p4l has never carried a traffic tag (single-revision isolated service, 100% traffic throughout). See docs/staging/rc-batch-0902/evidence/E2-rollback-rehearsal-2026-09-02.md. Note: `gcloud run revisions list` at close-out still lists 00002-ker (0% traffic, no tag) — E2's text says the revision was deleted; only the tag/traffic removal is independently confirmed, the revision object itself was not observed deleted at close-out time.",
+    "supabase_project_ref_status": "ACTIVE_HEALTHY (confirmed via Supabase MCP get_project at close-out, 2026-09-03)",
+    "deploy_log_id": "not applicable — no public.staging_deploy_log row exists for this rig; deployed directly via `gcloud run deploy` during isolated-rig standup, not through scripts/staging/deploy.sh (accepted manual-standup path, see docs/reference/STAGING_RIG.md). Revision arkova-worker-rc-batch-0902-staging-00001-p4l created 2026-09-02T19:48:33Z, ready 19:49:18Z, serving sha256:55c34e1fdf0423562159569c31d775343ef73f13394ff084ce7e62471caf5ccf (confirmed via gcloud run revisions describe at close-out). Provenance: docs/staging/rc-batch-0902/isolated-rig-provision-rc-batch-0902.json. No matching entry found in `gcloud builds list --project=arkova1` at close-out time (2026-09-03); the build id could not be independently confirmed and is not asserted."
   },
   "included_prs": [
     {
@@ -46,7 +49,7 @@
     {
       "number": 2526,
       "head_sha": "c646d18e8e27cc7bf290a3225ed3a80bf4718b3f",
-      "base_sha": "5c145df5cd72d10060f1c84308b72bda74d29c9a",
+      "base_sha": "19d7adfbdd48ba87d9980364c2699c73317dffd4",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "branch": "fix/detect-reorgs-deadman-monitoring",
@@ -67,7 +70,7 @@
       "soak_train": "rc-batch-2026-09-02",
       "soak_window": "2026-09-02T19:49:27Z to 2026-09-03T07:49:27Z (12h T2)",
       "maturity_record": "docs/staging/rc-batch-0902/evidence/",
-      "ci_summary": "feat(proof): three-state verification verdict. Additive verdict \u2208 {valid,invalid,unverifiable} + verdict_note on GET /api/v1/verify/:publicId/proof; boolean verified unchanged. Follow-up commit: armed-but-uninspected branch never claims valid. One known merge conflict with #2524 in docs.ts (union resolves). Head is a verified ancestor of the soaked RC tree 78621249595e.",
+      "ci_summary": "feat(proof): three-state verification verdict. Additive verdict ∈ {valid,invalid,unverifiable} + verdict_note on GET /api/v1/verify/:publicId/proof; boolean verified unchanged. Follow-up commit: armed-but-uninspected branch never claims valid. One known merge conflict with #2524 in docs.ts (union resolves). Head is a verified ancestor of the soaked RC tree 78621249595e.",
       "rollback_note": "Remove the two additive fields; consumers ignoring unknown keys are unaffected.",
       "migration_files": []
     },
@@ -89,9 +92,30 @@
   "excluded_prs": [
     {
       "number": 2524,
-      "reason": "T3 migration PR (0427); soaking separately on its own isolated rig uqobkjhlnqmcpjidngxr per \u00a71.11A exclusive-clean-state rule"
+      "reason": "T3 migration PR (0427); soaking separately on its own isolated rig uqobkjhlnqmcpjidngxr per §1.11A exclusive-clean-state rule"
     }
   ],
   "exceptions": [],
-  "notes": "Four no-migration PRs sharing one clean rig. RC tree is a clean merge of all four CURRENT heads onto main (rebuilt after another session pushed follow-up commits to all four branches). Nothing broadcasts: only populate-confirmation-proofs and check-confirmations Scheduler jobs are wired; batch-anchors deliberately absent."
+  "notes": "Four no-migration PRs sharing one clean rig. RC tree is a clean merge of all four CURRENT heads onto main (rebuilt after another session pushed follow-up commits to all four branches). Nothing broadcasts: only populate-confirmation-proofs and check-confirmations Scheduler jobs are wired; batch-anchors deliberately absent. CLOSE-OUT (2026-09-03): the 12h window closed at 2026-09-03T07:49:27Z; 7 driver cycles landed (rc-live-01 through rc-live-07), all pass, all 17/17, evidenceForSoak=true on every cycle; rc-live-03 through rc-live-07 were produced by the detached loop but were sitting uncommitted in a separate build worktree until this close-out PR — verified byte-identical (sha256) against the source files before being added here. approval_status is intentionally NOT `approved`: Carson has not yet reviewed this manifest. See this PR's description for the approval plan.",
+  "soak": {
+    "start": "2026-09-02T19:49:27Z",
+    "end": "2026-09-03T07:49:27Z",
+    "duration_hours": 12,
+    "harness_version": "services/worker/scripts/rc-batch-0902-driver.ts@31569f76e044894dd747804a6b9e13a5a850f1d2 (sha256 29fd4c4d3824cb887464ba9e28befa334a529b966989c9783452f9b33bd994df) + e2e/rc-batch-0902-frontend-evidence.spec.ts@31569f76e for #2528",
+    "result": "pass — 7 two-hourly driver cycles spanning the full 12h window (rc-live-01 2026-09-02T20:25:35Z, rc-live-02 20:32:08Z, rc-live-03 22:35:43Z, rc-live-04 2026-09-03T00:42:11Z, rc-live-05 02:45:46Z, rc-live-06 04:49:22Z, rc-live-07 06:52:06Z); 17/17 assertions pass on every cycle, 0 failures across all 7 cycles (119/119 total), evidenceForSoak=true on every cycle; buildGitSha 78621249595e37398170da9b298ae13cd753a801 identical on all 7 (no rebuild or drift mid-soak); Cloud Run revision 00001-p4l confirmed continuously up with no restart via live /health at report time (uptime 47497s, git_sha matches, 2026-09-03T08:59Z), spanning the full soak window; #2528 targeted frontend evidence verdict YES (certificate QR round-trip, docs/staging/rc-batch-0902/evidence/frontend-2528-qr/).",
+    "evidence_links": [
+      "docs/staging/rc-batch-0902/evidence/rc-live-01.jsonl",
+      "docs/staging/rc-batch-0902/evidence/rc-live-02.jsonl",
+      "docs/staging/rc-batch-0902/evidence/rc-live-03.jsonl",
+      "docs/staging/rc-batch-0902/evidence/rc-live-04.jsonl",
+      "docs/staging/rc-batch-0902/evidence/rc-live-05.jsonl",
+      "docs/staging/rc-batch-0902/evidence/rc-live-06.jsonl",
+      "docs/staging/rc-batch-0902/evidence/rc-live-07.jsonl",
+      "docs/staging/rc-batch-0902/evidence/E1-post-seed-preflight-and-0417-reconciliation-2026-09-02.md",
+      "docs/staging/rc-batch-0902/evidence/E2-rollback-rehearsal-2026-09-02.md",
+      "docs/staging/rc-batch-0902/evidence/E3-scheduler-trigger-observation-2026-09-02T2038Z.md",
+      "docs/staging/rc-batch-0902/evidence/frontend-2528-qr/frontend-2528-qr-e2e.md"
+    ],
+    "expires_at": "2026-09-17T07:49:27Z"
+  }
 }
