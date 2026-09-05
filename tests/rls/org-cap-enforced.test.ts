@@ -40,11 +40,25 @@ import {
   type TypedClient,
 } from '../../src/tests/rls/helpers';
 
-const RUN_ID = Date.now().toString(36);
-const PARENT_ORG_ID = `cafe0000-0000-4000-8000-${RUN_ID.padStart(12, '0').slice(-12)}`;
-const CHILD_ORG_ID = `cafe0001-0000-4000-8000-${RUN_ID.padStart(12, '0').slice(-12)}`;
-const RPC_TEST_ORG_ID = `cafe0002-0000-4000-8000-${RUN_ID.padStart(12, '0').slice(-12)}`;
-const RPC_BILLABLE_ORG_ID = `cafe0003-0000-4000-8000-${RUN_ID.padStart(12, '0').slice(-12)}`;
+/**
+ * The run id lands in the final field of a UUID literal, which Postgres parses
+ * as hex. `Date.now().toString(36)` is base36, so it emits letters past `f`
+ * ("mtov7fd3") and every insert died on `22P02 invalid input syntax for type
+ * uuid` before it could reach the behaviour under test. Base 16 keeps it a
+ * legal node field; the 4 random hex digits keep two runs that share a
+ * millisecond from colliding on the same org ids.
+ */
+const RUN_ID = (
+  Date.now().toString(16) +
+  Math.floor(Math.random() * 0x10000)
+    .toString(16)
+    .padStart(4, '0')
+).slice(-12);
+
+const PARENT_ORG_ID = `cafe0000-0000-4000-8000-${RUN_ID}`;
+const CHILD_ORG_ID = `cafe0001-0000-4000-8000-${RUN_ID}`;
+const RPC_TEST_ORG_ID = `cafe0002-0000-4000-8000-${RUN_ID}`;
+const RPC_BILLABLE_ORG_ID = `cafe0003-0000-4000-8000-${RUN_ID}`;
 
 const ALL_ORG_IDS = [PARENT_ORG_ID, CHILD_ORG_ID, RPC_TEST_ORG_ID, RPC_BILLABLE_ORG_ID];
 
