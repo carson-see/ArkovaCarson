@@ -112,3 +112,7 @@ reintroduce the class in a different function with nothing to catch it
 Comment lines are stripped before asserting on SQL (`code()` helper) — every
 `-- ROLLBACK:` header quotes the old body, so a naive substring match on the raw
 file finds the defect in its own rollback note.
+
+## 2026-09-05 — FERPA verification suppression contract
+
+The verify API description is emitted only when both `!isAcademicRecord` and `!suppressDirectory` hold. The public-projection contract now requires that conjunction; its previous exact single-predicate pattern rejected the stricter implementation. Removing either predicate fails the contract (mutation-checked). The real verify response suite separately covers opted-out CLE and missing credential types. This is a test repair, not a change to public response behavior.
