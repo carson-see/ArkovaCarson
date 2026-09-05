@@ -3,6 +3,43 @@
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
 _Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditions + new do-not-merge body/label parity lint; previously: evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
 
+## 2026-09-05 — a claim rule that could not fire, and a sixth surface nobody checked
+
+**`CLAIM_RULES[retrieval-mechanism-claim]` was DEAD.** Its `tools` still read
+`search_anchors` after the registry renamed the tool to `arkova_search_anchors`.
+`mentionRegex` excludes `_` on both sides of the boundary — deliberately, so `verify`
+cannot match inside `verify_batch` — so the old name matched nothing inside the new one.
+No region was ever scoped to the rule; it produced no violations and the gate reported a
+clean pass while checking nothing. **A dead rule and a clean repo are indistinguishable in
+the exit code.** That is the lesson worth keeping: this file's rules are scoped by a
+string that another repository owns, and a rename there silently disarms them.
+
+The `CLAIM_RULES` orphan test now fails any rule scoped to a name `TOOL_DEFINITIONS` does
+not register — the class, not the instance. Scoped to the live name the rule fires again
+and every surface passes it, so the six baseline entries it was holding (3
+retrieval-mechanism on `arkova_search_anchors`, 3 disabled-capability on `nessie_query`)
+were genuinely stale and are removed. Shrink-only, and none of them a claim written here.
+The 3 `card-description-parity` entries stay: those violations still occur.
+
+**Rule 5, `skill-bare-tool-name` (new).** `public/.well-known/agent-skills/*/SKILL.md`
+were a SIXTH published surface carrying MCP call instructions, checked by nothing — three
+of them named tools the server does not register, so an agent following the skill got a
+tool-not-found, on the client, where we never see it. The rule flags a backticked bare
+name from the 15-name set in an MCP context (the `## MCP` section body, or a line naming
+MCP or the edge endpoint). Context scoping is what keeps it narrow: `search` is a REST
+path segment under `## HTTP` in the same file and `verify` is an English verb. Strict, no
+baseline — a broken instruction is not a claim anyone can own for a sprint. Skills are
+discovered from the directory, so a new one is covered the moment it exists. Rule 5 runs
+over `input.skills`, NOT `input.surfaces`: the skills carry no tool descriptions, so
+running the description rules over them would attribute a neighbouring tool's prose to
+whatever the skill happens to name.
+
+**`check-api-contract-drift.ts`** now DERIVES the expected `x-agent-usage.tool_name` as
+`arkova_${operationId}` rather than requiring equality (SCRUM-4465), which keeps the two
+identifiers pinned across a fixed prefix. `operationId` itself is unchanged and must stay
+so; the §1.8 reasoning is in `docs/api/agents.md` (2026-09-05).
+
+
 ## 2026-08-29 — `check-do-not-merge-body.ts` (new) + `mergify-policy-lints-gate.test.ts` (new) — SCRUM-3804
 
 **The Policy Lints job now gates the queue.** `check-success = Policy Lints` is in all three `.mergify.yml` queue rules' `merge_conditions`, closing the gap this file's own 2026-08-23 NOTE recorded (the job "fails loudly in the run log while gating nothing") — which also meant every override label documented for its steps was a no-op as a merge gate, there being nothing to override. `mergify-policy-lints-gate.test.ts` pins the condition into every queue rule, the exact `name: Policy Lints` job name in ci.yml, and the job staying free of a job-level `if:` (an unreported required check never satisfies `check-success` and deadlocks the queue). Branch protection's required-check set remains a separate, Carson/admin-only surface — as of the 2026-08-23 verification `main` has no `required_status_checks` at all, so the Mergify layer is the only in-repo merge gate.
