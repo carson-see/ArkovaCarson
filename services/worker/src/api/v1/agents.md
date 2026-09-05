@@ -1058,3 +1058,8 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
+
+
+## PR #2442 release review — 2026-09-05
+
+PR #2442 review: an ambiguous credit debit returns 503 before extraction. Error copy states that no extraction ran without claiming an unverified credit balance.

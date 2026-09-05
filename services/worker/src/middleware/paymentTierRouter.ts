@@ -127,6 +127,9 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
         p_amount: cost,
       });
       if (deductError) throw deductError;
+      // Only the RPC's literal boolean false establishes that no debit occurred.
+      // An absent/malformed response is ambiguous and must not trigger a second charge.
+      if (typeof deductData !== 'boolean') throw new Error('Credit debit returned an invalid response');
       deductOk = deductData;
     } catch (deductError) {
       // FAIL CLOSED. Falling through to Stripe metered would bill a customer
@@ -430,7 +433,7 @@ export function paymentTierRouter() {
         res.status(503).json({
           error: 'credit_system_unavailable',
           message:
-            'Credit accounting is temporarily unavailable. No charge was made for this request. Please retry.',
+            'Credit accounting could not be confirmed. This request was not completed. Please try again later.',
         });
         return;
       }

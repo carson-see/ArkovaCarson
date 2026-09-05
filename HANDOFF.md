@@ -2187,3 +2187,8 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against the Supabase Management API project list/config, `scripts/ci/staging-honesty-preflight.ts` artifacts, psql ledger queries, and the harness logs under `~/arkova-soak/mfa-3167/`._
+
+
+## PR #2442 release review — 2026-09-05
+
+Held for a fresh T3 run. The earlier completed run predates current worker changes. Review added strict boolean debit-response validation and removed unverified no-debit claims from failure copy. Migration 0434 locks the balance row before month rollover; a disposable PostgreSQL two-session regression reproduces the lost debit with 0420 and preserves it with 0434. No production migration or deploy has occurred. The function signature and seed shape are unchanged. Future queued credit migrations (including PR #2572) must preserve this lock when their final function definitions are reconciled.

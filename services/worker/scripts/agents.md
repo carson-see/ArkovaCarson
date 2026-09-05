@@ -28,3 +28,7 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 - Never import these scripts from the worker runtime (`services/worker/src/`).
 - Tests must mock LLM and Stripe calls — no real API calls in test runs.
 - Budget guardrails (`--limit N`, `--dry-run`) are mandatory on scripts that spend provider budget.
+
+## PR #2442 concurrency verification
+
+`check-credit-rollover-race.py` creates and removes its own network-isolated PostgreSQL 17 container. It executes the exact 0420 and 0434 check function bodies with a controlled two-session lock interleaving: the old function erases a committed debit, while 0434 preserves it. This verifies the SQL algorithm; it does not replace full Supabase staging evidence.

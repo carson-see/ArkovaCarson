@@ -358,3 +358,8 @@ occurrence is diagnosable instead of an unexplained 403.
 
 Mount order is the contract and is pinned by `__tests__/phiScopeMount.test.ts`: `requireAuth` →
 `requireScopeAnyAuth` → rate limiter → router.
+
+
+## PR #2442 release review — 2026-09-05
+
+PR #2442 review: only a literal boolean false debit result may fall through to another payment tier. Null, missing, string and object results return 503; the response does not claim a debit was absent when its outcome is unknown.

@@ -158,7 +158,13 @@ describe('paymentTierRouter', () => {
     // credit may well have been debited for — an RPC error leaves the debit in
     // an UNKNOWN state, so falling through can double-charge and serving the
     // request can give it away. Neither is acceptable for money: stop.
-    it('fails CLOSED with 503 when the deduct RPC errors — does NOT fall through to Stripe', async () => {
+    it.each([
+      { data: null, error: { message: 'deduct RPC failed' } },
+      { data: null, error: null },
+      { data: undefined, error: null },
+      { data: 'false', error: null },
+      { data: {}, error: null },
+    ])('fails CLOSED for an error or ambiguous debit response: %j', async (deductResponse) => {
       // Subscriptions lookup returns an ACTIVE subscription on purpose: if the
       // router still fell through to Tier 2 this test would see 200 +
       // stripe_metered. Seeing 503 proves the fall-through is gone.
@@ -180,13 +186,14 @@ describe('paymentTierRouter', () => {
       (db.rpc as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ data: 50, error: null }) // not beta
         .mockResolvedValueOnce({ data: { remaining: 100 }, error: null }) // check_unified_credits: org has credits
-        .mockResolvedValueOnce({ data: null, error: { message: 'deduct RPC failed' } }); // deduct errors
+        .mockResolvedValueOnce(deductResponse); // only boolean false proves no debit
 
       const app = createApp('user-1', 'org-1');
       const res = await request(app).get('/api/v1/verify/test');
 
       expect(res.status).toBe(503);
       expect(res.body.error).toBe('credit_system_unavailable');
+      expect(res.body.message).not.toContain('No charge was made');
       expect(res.body.tier).toBeUndefined();
 
       expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);

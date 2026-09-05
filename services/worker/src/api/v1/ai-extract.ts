@@ -285,7 +285,7 @@ router.post('/', async (req: Request, res: Response) => {
       res.status(503).json({
         error: 'credit_system_unavailable',
         message:
-          'Credit accounting is temporarily unavailable. No credits were consumed and no extraction was performed. Please retry.',
+          'Credit accounting could not be confirmed. No extraction was performed. Please try again later.',
       });
       return;
     }
