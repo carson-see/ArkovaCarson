@@ -133,6 +133,17 @@ constructs jsPDF with `floatPrecision: 'smart'` (5 decimals at ≥1 instead of t
 16-decimal default — 3.5 nm on a point, so nothing renders differently), which
 takes the QR block from 19.4 KB to 9.4 KB. Reference SECURED certificate: 2
 pages before and after.
+_Last updated: 2026-08-30_
+
+## 2026-08-30 SCRUM-3559 — `THIRD_PARTY_NOTICES_LABELS` gains `LICENSE_TEXT_TOGGLE`
+
+`copy.ts` `THIRD_PARTY_NOTICES_LABELS` adds `LICENSE_TEXT_TOGGLE` ('View
+license text') for the collapsible verbatim-license-text blocks on
+`/legal/third-party-notices`, and the two section intros now say the page
+*includes* (not just links) license text + copyright notices — keeping the
+copy honest about what the page actually renders (R-7 direction: the old
+`PAGE_DESCRIPTION` already promised "license text" the page did not carry
+inline). §1.3 clean.
 _Last updated: 2026-08-29_
 
 ## 2026-08-29 — `docusignLinks.ts` (DocuSign record deep links, bilateral rollout, frontend-targeted T2)
