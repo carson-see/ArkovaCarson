@@ -1,4 +1,9 @@
 # agents.md — src/
+
+## UAT-01 / SCRUM-4031 — signup environment type (2026-09-05)
+
+`vite-env.d.ts` no longer advertises the retired beta signup variable. The signup component ignores legacy values; API, webhook, MCP and SDK authentication contracts are unchanged.
+
 _Last updated: 2026-07-15 (WebMCP discovery tools)._
 
 ## What This Folder Contains

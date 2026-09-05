@@ -1,5 +1,10 @@
 # agents.md — e2e/
 
+## UAT-01 / SCRUM-4031 — public signup entry (2026-09-05)
+
+`signup-entry.spec.ts` runs without seed sessions or backend writes. At 1280px and 375px it checks immediate email/OAuth controls, keyboard order, mismatch recovery, sign-in navigation, no horizontal overflow and screenshot attachments. Build with a stale `VITE_BETA_INVITE_CODE` value to reproduce legacy deployments. This smoke does not establish email delivery or server confirmation policy; `auth.spec.ts` owns the real confirmation-required account creation check.
+
+
 _Last updated: 2026-08-29 (DocuSign record deep links spec added to record-detail.spec.ts)._
 
 ## 2026-08-29 — DocuSign Record case added to `record-detail.spec.ts` (bilateral rollout, frontend-targeted T2)
