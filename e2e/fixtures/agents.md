@@ -1,5 +1,9 @@
 # e2e/fixtures/agents.md
 
+## SCRUM-4448 — development-only securing layout entry
+
+`secure-dialog-layout.html` and `secure-dialog-layout.tsx` mount the actual securing dialog/CSS in an isolated MemoryRouter for browser geometry tests. Vite serves this HTML entry only during development; the production build starts from the root application entry and does not include the fixture. External boundaries are provided by the Playwright helper. This intentionally does not use the authenticated fixture barrel or seed accounts, per the isolated headless UI testing directive.
+
 Playwright test fixtures providing authenticated page contexts and Supabase helpers for E2E tests.
 
 ## Files
