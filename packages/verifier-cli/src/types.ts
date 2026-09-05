@@ -23,6 +23,8 @@ export interface MerkleProofEntry {
  * bundle).
  */
 export interface ProofPacket {
+  /** Nested evidence returned by the public proof API, including signed payloads. */
+  proof_bundle?: Pick<ProofPacket, 'tx_inclusion_branch' | 'tx_block_index'> | null;
   /** The document fingerprint (leaf), 64-hex. */
   fingerprint: string;
   /** The Merkle root committed on-chain, 64-hex. */

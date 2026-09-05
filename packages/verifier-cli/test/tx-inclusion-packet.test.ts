@@ -50,6 +50,19 @@ describe('B3 — ProofPacket carries the layer-2 bitcoin-tree evidence', () => {
     expect(report.packetTxInclusion).toEqual({ branchLength: 2, blockIndex: 2 });
   });
 
+  it('reads the nested proof_bundle returned by the live signed and unsigned API', async () => {
+    const fixture = firstPassingRecomputeFixture();
+    const packet = { ...fixture.packet, proof_bundle: { tx_inclusion_branch: TX_BRANCH, tx_block_index: 2 } };
+    const report = await verifyProof(packet);
+    expect(report.packetTxInclusion).toEqual({ branchLength: 2, blockIndex: 2 });
+  });
+
+  it('never combines a top-level half-pair with a nested pair', async () => {
+    const fixture = firstPassingRecomputeFixture();
+    const packet = { ...fixture.packet, tx_inclusion_branch: TX_BRANCH, proof_bundle: { tx_inclusion_branch: TX_BRANCH, tx_block_index: 2 } };
+    expect((await verifyProof(packet)).packetTxInclusion).toBeNull();
+  });
+
   it('reports null when the packet predates migration 0427', async () => {
     const fixture = firstPassingRecomputeFixture();
     const report = await verifyProof(fixture.packet);

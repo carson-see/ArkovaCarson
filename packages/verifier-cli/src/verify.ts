@@ -218,8 +218,13 @@ const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
 function readPacketTxInclusion(
   packet: ProofPacket,
 ): { branchLength: number; blockIndex: number } | null {
-  const branch = packet.tx_inclusion_branch;
-  const index = packet.tx_block_index;
+  // API envelopes nest evidence; exported flat packets keep it at top level.
+  // Select one whole pair. A partial explicit flat pair must not borrow a
+  // counterpart from a nested object and turn missing evidence into a claim.
+  const evidence = packet.tx_inclusion_branch !== undefined || packet.tx_block_index !== undefined
+    ? packet : packet.proof_bundle;
+  const branch = evidence?.tx_inclusion_branch;
+  const index = evidence?.tx_block_index;
   if (!Array.isArray(branch)) return null;
   if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return null;
   if (branch.length > 31) return null;
