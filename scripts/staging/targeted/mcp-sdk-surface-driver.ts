@@ -34,8 +34,8 @@
  *      line must be valid JSON-RPC (logs belong on stderr).
  *
  *   C) SDK contract smoke (`--with-sdks`, optional and thin) — `npm pack`
- *      the TypeScript SDK (`packages/sdk`, `@carsonarkova/sdk`) and, when
- *      `python3` is available, `pip install` the Python sdist
+ *      the TypeScript SDK (`packages/sdk`, `arkova`) and install the Python sdist
+ *      using an absolute Python executable (both SDK legs are required)
  *      (`packages/arkova-py`, unscoped `arkova`) into a venv, then call
  *      `verify()` / `verifyBatch()` against the isolated rig through a tiny
  *      loopback proxy that injects the Cloud Run IAM header (neither SDK
@@ -81,19 +81,22 @@
  *   STAGING_JWT_PASSWORD                 optional — required alongside _EMAIL
  *   STAGING_SUPABASE_ANON_KEY            optional — required alongside _EMAIL
  *   MCP_PACKAGE_DIR                      optional, default `sdks/mcp-server`
+ *   STAGING_NPM_CLI                       optional absolute npm-cli.js path;
+ *                                         defaults to the current Node installation
+ *   STAGING_PYTHON_BIN                    optional absolute Python 3 executable;
+ *                                         never resolved through PATH
  *
  * `--dry-run` prints the plan (with placeholder fixtures) without packing,
  * spawning, or firing anything.
  */
 
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { realpathSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parseArgs } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 
 import { resolveStagingApiBase } from '../load-harness-env';
 import {
@@ -106,6 +109,8 @@ import {
   type DriverEvidence,
 } from './driver-core';
 import { iamAuthHeaders, requireEnv, writeEvidenceFile } from './runtime';
+
+const execFileAsync = promisify(execFile);
 
 export const MCP_SDK_DRIVER = { driver: 'mcp-sdk-surface', pr: '#2589' } as const;
 
@@ -283,8 +288,8 @@ export function assertToolNamePrefixes(
  * a same-count substitution.
  */
 export function assertExactToolSet(tools: readonly McpToolSummary[], expectedNames: readonly string[]): string | null {
-  const actual = tools.map((t) => t.name).sort();
-  const expected = [...expectedNames].sort();
+  const actual = tools.map((t) => t.name).sort((a, b) => a.localeCompare(b));
+  const expected = [...expectedNames].sort((a, b) => a.localeCompare(b));
   if (actual.length !== expected.length) {
     return `expected exactly ${expected.length} tools, got ${actual.length}: [${actual.join(', ')}]`;
   }
@@ -1110,29 +1115,58 @@ function resolvePackageJson(pkgDir: string): { name: string; bin?: Record<string
   return JSON.parse(readFileSync(join(absDir, 'package.json'), 'utf8'));
 }
 
+export function resolveInstalledTool(configured: string | undefined, candidates: readonly string[], label: string, mode = constants.R_OK): string {
+  for (const candidate of configured === undefined ? candidates : [configured]) {
+    if (!isAbsolute(candidate)) throw new Error(`${label} must be an absolute path`);
+    try {
+      const actual = realpathSync(candidate);
+      if (!statSync(actual).isFile()) throw new Error('not a file');
+      accessSync(actual, mode);
+      return actual;
+    } catch {
+      if (configured !== undefined) throw new Error(`${label} is not an accessible file`);
+    }
+  }
+  throw new Error(`${label} requires an installed tool at an explicit absolute path`);
+}
+
+function resolveNpmCli(): string {
+  return resolveInstalledTool(process.env.STAGING_NPM_CLI, [
+    resolve(dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js'),
+    '/usr/share/nodejs/npm/bin/npm-cli.js',
+  ], 'STAGING_NPM_CLI');
+}
+
+function resolvePythonBin(): string {
+  return resolveInstalledTool(process.env.STAGING_PYTHON_BIN, [
+    '/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3',
+  ], 'STAGING_PYTHON_BIN', constants.X_OK);
+}
+
 /**
- * `npm run build` (best-effort — a package may already carry a fresh
- * `dist/`), then `npm pack` into `installDir` and `npm install` the tarball
+ * Require a fresh successful build, then `npm pack` into `installDir` and install the tarball
  * there with `--ignore-scripts` (soak driver, not a build pipeline — we do
  * not want the installed package's own postinstall hooks running against an
  * unrelated tmp tree).
  */
-function npmPackAndInstall(pkgDir: string, installDir: string, log: (m: string) => void): { installDir: string; pkgName: string } {
+export function npmPackAndInstall(pkgDir: string, installDir: string, log: (m: string) => void): { installDir: string; pkgName: string } {
   const absPkgDir = isAbsolute(pkgDir) ? pkgDir : resolve(process.cwd(), pkgDir);
   const pkgJson = resolvePackageJson(pkgDir);
-  try {
-    execFileSync('npm', ['run', 'build'], { cwd: absPkgDir, stdio: 'pipe' });
-  } catch (err) {
-    log(`npm run build in ${pkgDir} failed or is a no-op (continuing on existing dist/): ${err instanceof Error ? err.message : String(err)}`);
-  }
+  const npmCli = resolveNpmCli();
+  execFileSync(process.execPath, [npmCli, 'run', 'build'], { cwd: absPkgDir, stdio: 'pipe' });
   mkdirSync(installDir, { recursive: true });
-  const packOut = execFileSync('npm', ['pack', '--json', `--pack-destination=${installDir}`], {
+  // These packages' prepack hooks repeat the build and pollute --json stdout.
+  // The explicit build above already succeeded; pack those fresh artifacts once.
+  const packOut = execFileSync(process.execPath, [npmCli, 'pack', '--ignore-scripts', '--json', `--pack-destination=${installDir}`], {
     cwd: absPkgDir,
     encoding: 'utf8',
   });
   const packInfo = JSON.parse(packOut) as Array<{ filename: string }>;
+  if (packInfo.length !== 1 || !packInfo[0].filename?.endsWith('.tgz') || basename(packInfo[0].filename) !== packInfo[0].filename) {
+    throw new Error('npm pack must return exactly one tarball filename');
+  }
   const tgzPath = join(installDir, packInfo[0].filename);
-  execFileSync('npm', ['install', tgzPath, '--no-save', '--no-audit', '--no-fund', '--ignore-scripts'], {
+  execFileSync(process.execPath, [npmCli, 'install', tgzPath, '--no-save', '--no-audit', '--no-fund', '--ignore-scripts'], {
     cwd: installDir,
     stdio: 'pipe',
   });
@@ -1301,9 +1335,14 @@ async function startIamLoopbackProxy(targetBase: string): Promise<{ url: string;
       for (const [k, v] of Object.entries(req.headers)) {
         if (typeof v === 'string' && k.toLowerCase() !== 'host' && k.toLowerCase() !== 'connection') headers[k] = v;
       }
-      Object.assign(headers, iamAuthHeaders());
+      Object.assign(headers, iamAuthHeaders(headers));
       const upstream = await fetch(target, { method: req.method, headers, body });
-      res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
+      // fetch decodes upstream compression; forwarded framing must describe these decoded bytes.
+      const responseHeaders = new Headers(upstream.headers);
+      responseHeaders.delete('content-encoding');
+      responseHeaders.delete('content-length');
+      responseHeaders.delete('transfer-encoding');
+      res.writeHead(upstream.status, Object.fromEntries(responseHeaders.entries()));
       res.end(Buffer.from(await upstream.arrayBuffer()));
     })().catch((err) => {
       try {
@@ -1370,16 +1409,7 @@ async function runTsSdkSmoke(ctx: {
   }
 }
 
-function hasPython3(): boolean {
-  try {
-    execFileSync('python3', ['--version'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function runPySdkSmoke(ctx: {
+export async function runPySdkSmoke(ctx: {
   stats: DriverStats;
   pyPkgDir: string;
   venvDir: string;
@@ -1392,14 +1422,18 @@ async function runPySdkSmoke(ctx: {
   const start = Date.now();
   try {
     const script = [
-      'import json, sys',
+      'import json, os',
       'from arkova import Arkova',
-      `client = Arkova(api_key=${JSON.stringify(ctx.apiKey)}, base_url=${JSON.stringify(proxy.url)})`,
+      'client = Arkova(api_key=os.environ["ARKOVA_SMOKE_API_KEY"], base_url=os.environ["ARKOVA_SMOKE_BASE_URL"])',
       `result = client.verify(${JSON.stringify(ctx.fx.publicId)})`,
       'print(json.dumps({"ok": True}))',
     ].join('\n');
     const pythonBin = join(ctx.venvDir, 'bin', 'python3');
-    const out = execFileSync(pythonBin, ['-c', script], { encoding: 'utf8', timeout: 30_000 });
+    // A synchronous child would block this process's loopback proxy until timeout.
+    const { stdout: out } = await execFileAsync(pythonBin, ['-c', script], {
+      encoding: 'utf8', timeout: 30_000,
+      env: { ...process.env, ARKOVA_SMOKE_API_KEY: ctx.apiKey, ARKOVA_SMOKE_BASE_URL: proxy.url },
+    });
     recordOutcome(ctx.stats, {
       label: 'sdk:py:verify',
       endpoint: 'sdk:py:verify',
@@ -1424,18 +1458,25 @@ async function runPySdkSmoke(ctx: {
   ctx.log('sdk:py:verify done');
 }
 
-function buildPySdist(pkgDir: string, venvDir: string, log: (m: string) => void): string {
+export function selectPythonSdist(venvDir: string): string {
+  const artifacts = readdirSync(venvDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.tar.gz'));
+  if (artifacts.length !== 1) throw new Error('Python build must produce exactly one sdist');
+  return join(venvDir, artifacts[0].name);
+}
+
+export function buildPySdist(pkgDir: string, venvDir: string, log: (m: string) => void): string {
   const absPkgDir = isAbsolute(pkgDir) ? pkgDir : resolve(process.cwd(), pkgDir);
-  execFileSync('python3', ['-m', 'venv', venvDir], { stdio: 'pipe' });
-  const pip = join(venvDir, 'bin', 'pip');
-  execFileSync(pip, ['install', '--quiet', 'build'], { stdio: 'pipe' });
-  execFileSync('python3', ['-m', 'build', '--sdist', '--outdir', venvDir], {
+  const pythonBin = resolvePythonBin();
+  execFileSync(pythonBin, ['-m', 'venv', venvDir], { stdio: 'pipe' });
+  const venvPython = join(venvDir, 'bin', 'python3');
+  execFileSync(venvPython, ['-m', 'pip', 'install', '--quiet', 'build'], { stdio: 'pipe' });
+  execFileSync(venvPython, ['-m', 'build', '--sdist', '--outdir', venvDir], {
     cwd: absPkgDir,
     stdio: 'pipe',
   });
-  const dirents = execFileSync('sh', ['-c', `ls ${JSON.stringify(venvDir)}/*.tar.gz`], { encoding: 'utf8' }).trim().split('\n');
-  const sdist = dirents[0];
-  execFileSync(pip, ['install', '--quiet', sdist], { stdio: 'pipe' });
+  const sdist = selectPythonSdist(venvDir);
+  execFileSync(venvPython, ['-m', 'pip', 'install', '--quiet', sdist], { stdio: 'pipe' });
   log(`python SDK installed from ${sdist} into ${venvDir}`);
   return venvDir;
 }
@@ -1492,20 +1533,9 @@ async function main(): Promise<void> {
     let sdkInstall: { installDir: string; pkgName: string } | null = null;
     let pyVenv: string | null = null;
     if (args.withSdks) {
-      try {
-        sdkInstall = npmPackAndInstall('packages/sdk', join(tmpRoot, 'sdk'), log);
-      } catch (err) {
-        log(`--with-sdks: TS SDK pack/install failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-      }
-      if (hasPython3()) {
-        try {
-          pyVenv = buildPySdist('packages/arkova-py', join(tmpRoot, 'py'), log);
-        } catch (err) {
-          log(`--with-sdks: python SDK install failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-        }
-      } else {
-        log('--with-sdks: python3 not found; skipping the Python SDK leg.');
-      }
+      // Requested surfaces are mandatory: failed setup must never become a green partial soak.
+      sdkInstall = npmPackAndInstall('packages/sdk', join(tmpRoot, 'sdk'), log);
+      pyVenv = buildPySdist('packages/arkova-py', join(tmpRoot, 'py'), log);
     }
 
     const endAt = args.cycles === undefined ? Date.now() + (args.durationMin ?? 15) * 60_000 : undefined;
@@ -1527,18 +1557,10 @@ async function main(): Promise<void> {
       });
       await runStdioCycle({ stats, cliPath, apiBase, apiKey, fx, evidence, log });
       if (args.withSdks && sdkInstall) {
-        try {
-          await runTsSdkSmoke({ stats, sdkInstall, apiKey, apiBase, fx, log });
-        } catch (err) {
-          log(`sdk:ts smoke failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-        }
+        await runTsSdkSmoke({ stats, sdkInstall, apiKey, apiBase, fx, log });
       }
       if (args.withSdks && pyVenv) {
-        try {
-          await runPySdkSmoke({ stats, pyPkgDir: 'packages/arkova-py', venvDir: pyVenv, apiKey, apiBase, fx, log });
-        } catch (err) {
-          log(`sdk:py smoke failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-        }
+        await runPySdkSmoke({ stats, pyPkgDir: 'packages/arkova-py', venvDir: pyVenv, apiKey, apiBase, fx, log });
       }
 
       if (shouldContinue()) {
@@ -1554,6 +1576,7 @@ async function main(): Promise<void> {
   const base: DriverEvidence = summarizeEvidence(stats, { ...MCP_SDK_DRIVER, apiBase });
   const enriched = { ...base, mcp: evidence, edgeMcpBase: edgeBase, cycles: cycle };
   writeEvidenceFile(args.evidenceOut, enriched);
+  if (!base.allExpected) process.exitCode = 1;
   log(`done: ${base.totalRequests} requests across ${cycle} cycle(s), allExpected=${base.allExpected}`);
   for (const [label, s] of Object.entries(base.byLabel)) {
     log(`  ${label}: ok=${s.expected} bad=${s.unexpected} p95=${s.p95Ms}ms`);

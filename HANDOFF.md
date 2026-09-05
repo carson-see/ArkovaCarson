@@ -14,6 +14,10 @@
 
 ## Now
 
+### PR #2589 release review — source corrections awaiting qualification (2026-09-05)
+
+The release candidate includes bounded ES256/JWKS refresh, verifier DNS-host normalization and the Zapier lock repair. Review also corrected the namespaced MCP contract gate (SCRUM-4465) and SDK driver failures that could package stale code or block the Python proxy (SCRUM-4466). Local regression and package evidence is tracked on [the release story page](https://arkova.atlassian.net/wiki/spaces/A/pages/137101729). The PR is Ready with `do-not-merge`; current-head CI and a fresh T3 staging window remain required. No production qualification is claimed.
+
 ### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
 
 **711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
