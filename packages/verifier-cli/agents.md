@@ -194,3 +194,7 @@ rules, not steps:
   here — it has no concept of the ordered two-step `file:` dependency swap.
 - `fixtures/` ships (auditors can re-run the corpus) but nothing in `src/` reads
   it at runtime, so it is corpus value only, not a runtime dependency.
+
+## 2026-09-05 — live proof envelope parity
+
+The actual signed API payload nests the 0427 pair under proof_bundle. A live downloaded package verified but reported packetTxInclusion=null because the CLI read flat fields only. Read a complete pair from either shape; explicit top-level fields take precedence and never borrow a missing counterpart from the nested object. The nested-wire regression failed before the fix. This only restores structural reporting; no independent-network or local branch-fold verdict is added.
