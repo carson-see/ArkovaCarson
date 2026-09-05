@@ -57,22 +57,14 @@ SET LOCAL lock_timeout = '5s';
 -- hoist, every directory-information suppression branch, the
 -- `directory_info_suppressed` additive key, the omitted-not-blanked
 -- `recipient_identifier`), with 0421's single addition layered on top —
--- `'sub_type', private.public_free_text_or_null(a.sub_type)`, placed
--- immediately after `credential_type` as 0421 placed it.
+-- a directory-gated canonical `sub_type`, placed immediately after
+-- `credential_type`. Its non-suppressed value uses public_free_text_or_null.
 --
--- `sub_type` is NOT suppressed by `g.suppress_directory`. This is a decision,
--- not an oversight, filed as a second entry in
--- `directory_opt_out_residual_published_fields` in
--- `scripts/ci/public-pii-projection-contract.json` alongside the existing
--- `credential_type` residual: `services/worker/src/api/v1/verify.ts`'s
--- `API_RICH_KEYS` loop already publishes `sub_type` unconditionally, with no
--- `suppressDirectory` check anywhere in its logic (confirmed by reading
--- verify.ts directly, not inferred from 0421's comments), so gating it here
--- alone would remove nothing from public reach — the same value for the same
--- anchor stays anonymously fetchable one route over — while reopening the
--- exact SQL-vs-REST divergence FD-FERPA-1 exists to close. `sub_type` is the
--- same conceptual class as `credential_type`: a taxonomy field, not
--- issuer-authored prose like `title` or `description`.
+-- `sub_type` is suppressed whenever `g.suppress_directory` applies. Unlike
+-- credential_type, it is arbitrary text with no enum or CHECK. The matching
+-- worker change gates API_RICH_KEYS on suppressDirectory too, so the field
+-- cannot be recovered from the other anonymous surface. Published records
+-- retain the canonical value, gated by public_free_text_or_null.
 --
 -- `public.search_public_credentials` is deliberately NOT touched by this
 -- migration. `0421` never redefined it; `0415` already added the directory-
@@ -127,8 +119,8 @@ SET LOCAL lock_timeout = '5s';
 -- ROLLBACK: — re-run the `CREATE OR REPLACE FUNCTION
 -- ROLLBACK: public.get_public_anchor(p_public_id text)` block from
 -- ROLLBACK: supabase/migrations/0415_ferpa_directory_info_opt_out_public_projections.sql,
--- ROLLBACK: which is this file's body minus the single
--- ROLLBACK: `'sub_type', private.public_free_text_or_null(a.sub_type),` line,
+-- ROLLBACK: which is this file's body without the added
+-- ROLLBACK: directory-gated `sub_type` projection,
 -- ROLLBACK: then `NOTIFY pgrst, 'reload schema';`. Do NOT roll back further to
 -- ROLLBACK: 0385 or to 0421's original (pre-reconciliation) form — either would
 -- ROLLBACK: ALSO revert the FERPA directory-information suppression layer,
@@ -210,14 +202,11 @@ BEGIN
       -- 0433 (SCRUM-3529, reconciling 0421 onto 0415): the CANONICAL
       -- anchors.sub_type column, immediately after the parent type it refines.
       -- VALUE-GATED, never raw: sub_type is bare `text` with no CHECK and no
-      -- enum, so nothing in the schema stops an issuer or an extraction
-      -- pipeline writing free text into it. NOT gated on `g.suppress_directory`
-      -- — a SECOND recorded residual alongside credential_type immediately
-      -- above, because verify.ts's `API_RICH_KEYS` loop already publishes
-      -- sub_type unconditionally with no suppressDirectory check. See
-      -- directory_opt_out_residual_published_fields and $sub_type_note in
-      -- scripts/ci/public-pii-projection-contract.json.
-      'sub_type', private.public_free_text_or_null(a.sub_type),
+      -- enum, so arbitrary issuer-authored content must respect directory
+      -- suppression as well as the value cleaner. SQL emits explicit null;
+      -- the optional REST field is omitted for the same suppressed record.
+      'sub_type', CASE WHEN g.suppress_directory THEN NULL
+                       ELSE private.public_free_text_or_null(a.sub_type) END,
       -- 0415: award and expiry dates are directory information (99.3, "dates of
       -- attendance", "degrees, honors and awards received"). Both keys are
       -- already nullable on this projection, so NULL is in-shape rather than a

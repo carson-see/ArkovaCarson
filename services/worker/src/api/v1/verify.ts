@@ -514,6 +514,10 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     'fingerprint_source',
   ] as const;
   for (const key of API_RICH_KEYS) {
+    // sub_type is arbitrary issuer-authored text, not an enum. An opted-out
+    // record must not expose it through a second public projection.
+    if (key === 'sub_type' && suppressDirectory) continue;
+
     // BUG-2026-06-24-007 (worker side): compliance controls describe a CURRENT
     // posture. A revoked / superseded / expired credential must not carry them —
     // the SCRUM-2227 note disclaims attestation, not currency, and a machine

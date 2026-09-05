@@ -304,6 +304,26 @@ describe('buildVerificationResult', () => {
 
   // REG-02: Directory Information Opt-Out (FERPA Section 99.37)
   describe('directory_info_opt_out', () => {
+    it.each(['DEGREE', 'CLE', null])('withholds sub_type for opted-out %s records', (credentialType) => {
+      const result = buildVerificationResult(createAnchor({
+        credential_type: credentialType,
+        directory_info_opt_out: true,
+        sub_type: 'Learner-specific program detail',
+      }));
+      expect(result.directory_info_suppressed).toBe(true);
+      expect(result).not.toHaveProperty('sub_type');
+      expect(result.verified).toBe(true);
+    });
+
+    it('preserves subtype for published and non-education controls', () => {
+      for (const fields of [
+        { credential_type: 'DEGREE', directory_info_opt_out: false },
+        { credential_type: 'LICENSE', directory_info_opt_out: true },
+      ]) {
+        expect(buildVerificationResult(createAnchor({ ...fields, sub_type: 'state_license' })).sub_type).toBe('state_license');
+      }
+    });
+
     it('suppresses directory fields for education type when opt-out is true', () => {
       const anchor = createAnchor({
         credential_type: 'DEGREE',

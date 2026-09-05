@@ -367,6 +367,11 @@ describe('public projection PII gate — the definition production runs', () => 
     ).not.toContain('sub_type');
   });
 
+  it('withholds the new subtype field when directory suppression applies', () => {
+    const clause = projectedKeys(latestRedefiner()).find(([key]) => key === 'sub_type')?.[1];
+    expect(clause).toMatch(/CASE\s+WHEN\s+g\.suppress_directory\s+THEN\s+NULL\s+ELSE\s+private\.public_free_text_or_null\(a\.sub_type\)/i);
+  });
+
   it('keeps sub_type out of the academic suppression set, matching verify.ts', () => {
     // Parity, not laxity: verify.ts already publishes a value-gated `sub_type`
     // for DEGREE/CERTIFICATE/TRANSCRIPT to anonymous callers, so suppressing it
