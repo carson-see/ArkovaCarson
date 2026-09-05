@@ -22,7 +22,7 @@ async function readResponse<T>(responsePromise: Promise<Response>): Promise<T> {
   try {
     response = await responsePromise;
     body = await response.json();
-    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error(OAUTH_EMAIL_CONFIRMATION_LABELS.RETRY);
   } catch { throw new ConfirmationError(OAUTH_EMAIL_CONFIRMATION_LABELS.RETRY); }
   if (!response.ok) throw new ConfirmationError(
     typeof body.error === 'string' ? body.error : OAUTH_EMAIL_CONFIRMATION_LABELS.RETRY,

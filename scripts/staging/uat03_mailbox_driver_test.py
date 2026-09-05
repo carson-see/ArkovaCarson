@@ -2,6 +2,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
+from tempfile import TemporaryDirectory
 
 SPEC = importlib.util.spec_from_file_location('driver', Path(__file__).with_name('uat03_mailbox_driver.py'))
 driver = importlib.util.module_from_spec(SPEC)
@@ -14,21 +16,58 @@ class DriverGuards(unittest.TestCase):
                 'appUrl': 'https://uat03-mailbox-0905.example.invalid', 'head': 'a' * 40,
                 'hookUri': 'pg-functions://postgres/private/oauth_email_confirmation_token_hook'}
 
+    def test_artifact_paths_are_confined_before_read_or_write(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp).resolve() / 'artifacts'
+            root.mkdir()
+            with patch.object(driver, 'ARTIFACT_ROOT', root):
+                self.assertEqual(driver.artifact_path('manifest.json'), root / 'manifest.json')
+                self.assertEqual(driver.artifact_path('runs/evidence.json'), root / 'runs/evidence.json')
+                for path in ('../outside.json', str(root.parent / 'outside.json'), '.', 'secret.env'):
+                    with self.subTest(path=path), self.assertRaises(ValueError):
+                        driver.artifact_path(path)
+                (root / 'linked.json').symlink_to(root.parent / 'outside.json')
+                with self.assertRaises(ValueError):
+                    driver.artifact_path('linked.json')
+                (root / 'linked-dir').symlink_to(root.parent, target_is_directory=True)
+                with self.assertRaises(ValueError):
+                    driver.artifact_path('linked-dir/evidence.json')
+            linked_root = root.parent / 'alias'
+            linked_root.symlink_to(root, target_is_directory=True)
+            with patch.object(driver, 'ARTIFACT_ROOT', linked_root), self.assertRaises(ValueError):
+                driver.artifact_path('manifest.json')
+
     def test_owned_target(self):
         self.assertEqual(driver.validate_manifest(self.manifest())['projectRef'], 'abcdefghijklmnopqrst')
 
+    def test_released_reuse_target_requires_exact_ref_worker_binding(self):
+        manifest = {**self.manifest(), 'projectRef': 'hgmluvnqgfcigevqeebu',
+                    'workerUrl': 'https://arkova-worker-reorg-3836-staging-kvojbeutfa-uc.a.run.app'}
+        self.assertEqual(driver.validate_manifest(manifest), manifest)
+        bad_targets = (
+            {**manifest, 'workerUrl': self.manifest()['workerUrl']},
+            {**manifest, 'projectRef': 'abcdefghijklmnopqrst'},
+            {**manifest, 'workerUrl': manifest['workerUrl'].replace('-uc.a.', '-evil.')},
+            {**manifest, 'kind': 'preview', 'branchId': driver.PREVIEW_ID},
+        )
+        for value in bad_targets:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                driver.validate_manifest(value)
+
     def test_production_and_shared_refs_denied(self):
         for ref in ('vzwyaatejekddvltxyye', 'ujtlwnoqfhtitcmsnrpq', 'ryasykzdduzymschbucr'):
+            manifest = {**self.manifest(), 'projectRef': ref}
             with self.subTest(ref=ref), self.assertRaises(ValueError):
-                driver.validate_manifest({**self.manifest(), 'projectRef': ref})
+                driver.validate_manifest(manifest)
 
     def test_arbitrary_or_shared_worker_denied(self):
         for url in ('https://app.arkova.ai', 'https://arkova-worker-staging-example.run.app',
                     'https://evil.invalid', 'http://localhost:3001',
                     self.manifest()['workerUrl'] + '?redirect=1',
                     self.manifest()['workerUrl'].replace('https://', 'https://user:pass@')):
+            manifest = {**self.manifest(), 'workerUrl': url}
             with self.subTest(url=url), self.assertRaises(ValueError):
-                driver.validate_manifest({**self.manifest(), 'workerUrl': url})
+                driver.validate_manifest(manifest)
 
     def test_only_exact_owned_preview(self):
         p = {**self.manifest(), 'kind': 'preview', 'projectRef': 'fbwislntqahuzlpehpxk',
@@ -47,6 +86,20 @@ class DriverGuards(unittest.TestCase):
                         raw.replace(b'/signup#', b'/login#'),
                         raw.replace(b'oauth_confirmation', b'other_confirmation')):
             self.assertIsNone(driver.mailbox_proof(changed, address, target))
+
+    def test_imap_refactor_retains_freshness_and_recipient_binding(self):
+        import imaplib, time
+        runner = driver.Runner.__new__(driver.Runner)
+        runner.m = self.manifest()
+        address = 'fixture+uat03-run@example.invalid'
+        proof = 'mailbox-proof-of-at-least-twenty-characters'
+        now = int(time.time())
+        header = ('1 (INTERNALDATE ' + imaplib.Time2Internaldate(now) + ')').encode()
+        raw = (f'To: {address}\nContent-Type: text/plain\n\n'
+               f'{runner.m["appUrl"]}/signup#token={proof}&type=oauth_confirmation').encode()
+        self.assertEqual(runner.fresh_imap_proof([b')', (header, raw)], address, now * 1000), proof)
+        self.assertIsNone(runner.fresh_imap_proof([(header, raw)], address, (now + 1) * 1000))
+        self.assertIsNone(runner.fresh_imap_proof([(header, raw)], 'other@example.invalid', now * 1000))
 
     def test_stdio_proof_requires_fresh_matching_mailbox_metadata(self):
         request = {'recipient': 'fixture+uat03-run@example.invalid', 'appOrigin': self.manifest()['appUrl'], 'issuedAfterMs': 1000}

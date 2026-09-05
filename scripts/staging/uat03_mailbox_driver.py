@@ -29,12 +29,29 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
 
 OWNED_NAME = 'arkova-soak-uat03-mailbox-0905'
+REUSED_REF = 'hgmluvnqgfcigevqeebu'
+REUSED_NAME = 'arkova-soak-reorg-3836'
+REUSED_WORKER = 'https://arkova-worker-reorg-3836-staging-kvojbeutfa-uc.a.run.app'
 PREVIEW_REF = 'fbwislntqahuzlpehpxk'
 PREVIEW_ID = '4b169a53-3b26-4665-aef2-42d0fdfcb958'
 PARENT_REF = 'vzwyaatejekddvltxyye'
 DENIED_REFS = {PARENT_REF, 'ujtlwnoqfhtitcmsnrpq', 'ryasykzdduzymschbucr'}
 CONFIRM = '/api/auth/email-confirmation'
 PENDING = 'arkova_email_pending'
+BEARER = 'Bearer '
+MANAGEMENT_PROJECTS = 'https://api.supabase.com/v1/projects/'
+ARTIFACT_ROOT = Path(__file__).resolve().parents[2] / 'artifacts' / 'uat03-mailbox'
+
+
+def artifact_path(value):
+    """Constrain operator file arguments to this checkout's dedicated artifacts."""
+    root = ARTIFACT_ROOT
+    if root.resolve() != root:
+        raise ValueError('Artifact directory must not traverse a symlink')
+    path = (root / value).resolve()
+    if not path.is_relative_to(root) or path == root or path.suffix != '.json':
+        raise ValueError('JSON path within artifacts/uat03-mailbox required')
+    return path
 
 
 def validate_manifest(value):
@@ -47,9 +64,13 @@ def validate_manifest(value):
     elif value.get('kind') != 'standalone':
         raise ValueError('Owned target kind required')
     worker = urlparse(value.get('workerUrl', ''))
+    if ref == REUSED_REF:
+        allowed_worker = value.get('kind') == 'standalone' and value.get('workerUrl', '').rstrip('/') == REUSED_WORKER
+    else:
+        allowed_worker = bool(re.fullmatch(r'(?:pr-2655---)?arkova-worker-uat03-mailbox-0905-staging-[a-z0-9-]+\.run\.app', worker.hostname or ''))
     if (worker.scheme != 'https' or worker.username or worker.password or worker.port
             or worker.path not in ('', '/') or worker.query or worker.fragment
-            or not re.fullmatch(r'(?:pr-2655---)?arkova-worker-uat03-mailbox-0905-staging-[a-z0-9-]+\.run\.app', worker.hostname or '')):
+            or not allowed_worker):
         raise ValueError('Exact owned UAT03 worker URL required')
     app = urlparse(value.get('appUrl', ''))
     if (app.scheme != 'https' or not app.hostname or app.hostname in ('app.arkova.ai', 'arkova.ai')
@@ -141,7 +162,7 @@ def request(method, url, headers=None, body=None):
     except HTTPError as error:
         try:
             return error.code, json.loads(error.read())
-        except (ValueError, UnicodeError):
+        except ValueError:
             return error.code, None
     except (URLError, TimeoutError, ValueError):
         return 0, None
@@ -188,7 +209,7 @@ class Runner:
     def auth(self, method, path, body=None, bearer=None, admin=False):
         key = self.admin if admin else self.anon
         return request(method, self.sb + '/auth/v1' + path,
-                       {'apikey': key, 'Authorization': 'Bearer ' + (bearer or key)}, body)
+                       {'apikey': key, 'Authorization': BEARER + (bearer or key)}, body)
 
     def worker(self, method, path, body=None, bearer=None):
         if time.monotonic() - self.iam_at >= 1200 or not self.iam:
@@ -197,9 +218,9 @@ class Runner:
                 raise ValueError('Long runs require refreshable gcloud identity, not a static IAM credential')
             self.iam = supplied or subprocess.check_output(['gcloud', 'auth', 'print-identity-token'], text=True, stderr=subprocess.DEVNULL).strip()
             self.iam_at = time.monotonic()
-        headers = {'X-Serverless-Authorization': 'Bearer ' + self.iam}
+        headers = {'X-Serverless-Authorization': BEARER + self.iam}
         if bearer:
-            headers['Authorization'] = 'Bearer ' + bearer
+            headers['Authorization'] = BEARER + bearer
         return request(method, self.m['workerUrl'].rstrip('/') + path, headers, body)
 
     def preflight(self):
@@ -209,17 +230,18 @@ class Runner:
         relative = str(Path(__file__).resolve().relative_to(root))
         committed = subprocess.check_output(['git', 'show', current + ':' + relative], stderr=subprocess.DEVNULL)
         self.check('driver bytes match committed head', hashlib.sha256(committed).digest() == hashlib.sha256(Path(__file__).read_bytes()).digest())
-        headers = {'Authorization': 'Bearer ' + self.management}
+        headers = {'Authorization': BEARER + self.management}
         if self.m['kind'] == 'standalone':
-            status, project = request('GET', 'https://api.supabase.com/v1/projects/' + self.m['projectRef'], headers)
-            self.check('owned standalone project identity', status == 200 and project.get('name') == OWNED_NAME, status)
+            status, project = request('GET', MANAGEMENT_PROJECTS + self.m['projectRef'], headers)
+            expected_name = REUSED_NAME if self.m['projectRef'] == REUSED_REF else OWNED_NAME
+            self.check('owned standalone project identity', status == 200 and project.get('name') == expected_name, status)
         else:
-            status, branches = request('GET', 'https://api.supabase.com/v1/projects/' + PARENT_REF + '/branches', headers)
+            status, branches = request('GET', MANAGEMENT_PROJECTS + PARENT_REF + '/branches', headers)
             branch = next((b for b in branches if b.get('id') == PREVIEW_ID), {}) if isinstance(branches, list) else {}
             self.check('owned preview migration readiness', status == 200 and branch.get('project_ref') == PREVIEW_REF
                        and branch.get('name') == 'cto/uat03-oauth-confirmation-20260905'
                        and branch.get('status') == 'FUNCTIONS_DEPLOYED', status)
-        status, config = request('GET', 'https://api.supabase.com/v1/projects/' + self.m['projectRef'] + '/config/auth', headers)
+        status, config = request('GET', MANAGEMENT_PROJECTS + self.m['projectRef'] + '/config/auth', headers)
         self.check('readable reviewed hook configuration', status == 200
                    and config.get('hook_custom_access_token_enabled') is True
                    and config.get('hook_custom_access_token_uri') == self.m['hookUri'], status)
@@ -259,7 +281,7 @@ class Runner:
     def product(self, fixture, pending):
         bearer = fixture['session']['access_token']
         status, rows = request('GET', self.sb + '/rest/v1/profiles?select=id&id=eq.' + fixture['id'],
-            {'apikey': self.anon, 'Authorization': 'Bearer ' + bearer})
+            {'apikey': self.anon, 'Authorization': BEARER + bearer})
         self.check('pending Data API denial' if pending else 'normal Data API own-profile control',
             status == 403 if pending else status == 200 and rows == [{'id': fixture['id']}], status)
         # Invalid empty key body cannot mint a key. Ordinary JWT must reach validation;
@@ -267,6 +289,30 @@ class Runner:
         status, body = self.worker('POST', '/api/v1/keys', {}, bearer)
         self.check('pending key mint denied' if pending else 'normal worker authentication control',
             status == 401 if pending else status == 400 and body.get('error') == 'validation_error', status)
+
+    def fresh_imap_proof(self, parts, recipient, issued_after):
+        for item in parts:
+            if not isinstance(item, tuple):
+                continue
+            received = imaplib.Internaldate2tuple(item[0])
+            if received is None or time.mktime(received) < issued_after // 1000:
+                continue
+            proof = mailbox_proof(item[1], recipient, self.m['appUrl'])
+            if proof:
+                return proof
+        return None
+
+    def search_imap_proof(self, recipient, issued_after):
+        kind, found = self.imap.uid('search', None, 'HEADER', 'To', '"' + recipient + '"')
+        if kind != 'OK':
+            return None
+        for uid in reversed(found[0].split()[-20:]):
+            kind, parts = self.imap.uid('fetch', uid, '(INTERNALDATE BODY.PEEK[])')
+            if kind == 'OK':
+                proof = self.fresh_imap_proof(parts, recipient, issued_after)
+                if proof:
+                    return proof
+        return None
 
     def receive(self, recipient, issued_after):
         if self.mailbox_mode == 'stdin':
@@ -276,20 +322,10 @@ class Runner:
             return proof
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
-            kind, found = self.imap.uid('search', None, 'HEADER', 'To', '"' + recipient + '"')
-            if kind == 'OK':
-                for uid in reversed(found[0].split()[-20:]):
-                    kind, parts = self.imap.uid('fetch', uid, '(INTERNALDATE BODY.PEEK[])')
-                    if kind == 'OK':
-                        for item in parts:
-                            if isinstance(item, tuple):
-                                received = imaplib.Internaldate2tuple(item[0])
-                                if received is None or time.mktime(received) < issued_after // 1000:
-                                    continue
-                                proof = mailbox_proof(item[1], recipient, self.m['appUrl'])
-                                if proof:
-                                    self.check('actual mailbox receipt and app link binding', True)
-                                    return proof
+            proof = self.search_imap_proof(recipient, issued_after)
+            if proof:
+                self.check('actual mailbox receipt and app link binding', True)
+                return proof
             time.sleep(5)
         self.check('actual mailbox receipt and app link binding', False)
 
@@ -375,13 +411,13 @@ class Runner:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--manifest', required=True)
+    parser.add_argument('--manifest', required=True, help='JSON path within artifacts/uat03-mailbox')
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--mailbox-mode', choices=('stdin', 'imap'), default='stdin')
     parser.add_argument('--duration-minutes', type=int, default=0)
-    parser.add_argument('--evidence-out')
+    parser.add_argument('--evidence-out', help='JSON path within artifacts/uat03-mailbox')
     args = parser.parse_args()
-    manifest = validate_manifest(json.loads(Path(args.manifest).read_text()))
+    manifest = validate_manifest(json.loads(artifact_path(args.manifest).read_text()))
     if not 0 <= args.duration_minutes <= 3000:
         raise ValueError('Duration must be 0..3000 minutes')
     if not args.execute:
@@ -391,6 +427,10 @@ def main():
         return 0
     if not args.evidence_out:
         raise ValueError('Evidence output path required for execution')
+    output = artifact_path(args.evidence_out)
+    if output.exists():
+        raise ValueError('Evidence output must be a new file')
+    output.parent.mkdir(parents=True, exist_ok=True)
     runner = Runner(manifest, args.duration_minutes, args.mailbox_mode)
     completed = False
     try:
@@ -404,9 +444,10 @@ def main():
         clean = runner.cleanup()
         result = evidence(manifest['head'], runner.checks, completed and clean,
                           runner.ids, time.monotonic() - runner.started)
-        path = Path(args.evidence_out)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(result, indent=2) + '\n')
+        # Revalidate after the hosted run; exclusive creation prevents clobbering
+        # an existing file or a symlink placed during the run.
+        with artifact_path(args.evidence_out).open('x') as file:
+            file.write(json.dumps(result, indent=2) + '\n')
     return 0 if result['allPassed'] else 1
 
 

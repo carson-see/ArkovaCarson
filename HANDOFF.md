@@ -18,7 +18,10 @@
 
 Implementation is on `cto/uat03-oauth-confirmation-20260905`; **not released or activated**.
 See [the scope, evidence, and rollout gates](docs/uat03-email-confirmation.md).
-Migration 0436 keeps activation NULL. Root resolved the initial Auth-config403 and read both
+Migration 0436 was applied to the owned PR preview and keeps activation NULL; its automatic
+preview check passed. The driver’s path and exact released-rig binding guards pass locally.
+Full final-head CI, hosted mailbox/authorization proof and release approval remain pending.
+Root resolved the initial Auth-config403 and read both
 production/owned preview hooks disabled with URI NULL; recheck before installation. UAT-02 owns
 Google consent branding; UAT-04 owns
 MFA; UAT-17 owns verified-domain policy. The retired beta env sample cleanup belongs to

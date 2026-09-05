@@ -9,7 +9,13 @@ import { OAUTH_EMAIL_CONFIRMATION_LABELS as LABELS } from '@/lib/copy';
 import { clearEmailConfirmationToken, isEmailConfirmationPending } from '@/lib/oauthConfirmation';
 import { getConfirmationStatus, sendConfirmationEmail, completeEmailConfirmation, ConfirmationError } from '@/lib/emailConfirmationApi';
 
-export function OAuthEmailConfirmation({ mailboxProof }: { mailboxProof: string | null }) {
+function confirmationDescription(hasProof: boolean, sent: boolean, busy: boolean) {
+  if (hasProof) return LABELS.LINK_DESCRIPTION;
+  if (sent) return LABELS.SENT;
+  return busy ? LABELS.PREPARING : LABELS.UNSENT;
+}
+
+export function OAuthEmailConfirmation({ mailboxProof }: Readonly<{ mailboxProof: string | null }>) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(!mailboxProof);
@@ -95,12 +101,12 @@ export function OAuthEmailConfirmation({ mailboxProof }: { mailboxProof: string 
     <Mail className="mx-auto h-10 w-10 text-primary" aria-hidden="true" />
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {completeWithoutSession ? <>
-      <p role="status">{LABELS.COMPLETE_SIGN_IN}</p>
+      <output className="block">{LABELS.COMPLETE_SIGN_IN}</output>
       <Button className="w-full" disabled={busy} onClick={() => void act(leaveAccount)}>{LABELS.SIGN_IN}</Button>
     </> : <>
-      <p className="text-sm text-muted-foreground" role="status">
-        {mailboxProof ? LABELS.LINK_DESCRIPTION : sent ? LABELS.SENT : busy ? LABELS.PREPARING : LABELS.UNSENT}
-      </p>
+      <output className="block text-sm text-muted-foreground">
+        {confirmationDescription(Boolean(mailboxProof), sent, busy)}
+      </output>
       {mailboxProof && user && <p className="text-sm text-muted-foreground">{LABELS.SWITCH_NOTE}</p>}
       {mailboxProof ? <Button className="w-full" disabled={busy} onClick={() => void act(confirm)}>
         {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{busy ? LABELS.WORKING : LABELS.CONFIRM}
