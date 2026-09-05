@@ -14,6 +14,10 @@
 
 ## Now
 
+### UAT-01 — public signup released (2026-09-05, SCRUM-4031)
+
+[PR #2653](https://github.com/carson-see/ArkovaCarson/pull/2653) merged via Mergify at 16:49:30 UTC (`3954ca54d5d44cc15902756af0a70b44df79c6be`). Vercel production deployment `dpl_7g6sgAjbDxiuWfog58gZTL8krFJu` was independently verified READY with `app.arkova.ai` on that merge at 16:52 UTC. Later main deployments retain the signup change. Logged-out signup passed actual headless Chrome checks at 1280/375: immediate registration controls, retired beta gate absent, keyboard/error/navigation behavior and no horizontal overflow. No account writes. [Production metadata, screenshots and independent CTO verification](https://arkova.atlassian.net/wiki/spaces/A/pages/137134081); [merge-candidate CI passed](https://github.com/carson-see/ArkovaCarson/actions/runs/33976208584) (18,992 tests and 349 E2E cases). API, worker, webhook, MCP and SDK authentication were unchanged by this frontend fix. OAuth branding/mailbox verification and MFA retain their separate UAT ownership. Final close-out is tracked in SCRUM-4031 after the required observation deadline of 17:19:30 UTC.
+
 ### PR #2589 release review — source corrections awaiting qualification (2026-09-05)
 
 The release candidate includes bounded ES256/JWKS refresh, verifier DNS-host normalization and the Zapier lock repair. Review also corrected the namespaced MCP contract gate (SCRUM-4465) and SDK driver failures that could package stale code or block the Python proxy (SCRUM-4466). Local regression and package evidence is tracked on [the release story page](https://arkova.atlassian.net/wiki/spaces/A/pages/137101729). The PR is Ready with `do-not-merge`; current-head CI and a fresh T3 staging window remain required. No production qualification is claimed.
@@ -2190,4 +2194,4 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
-_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against gcloud/MCP/CI output: the Supabase Management API project list/config, `scripts/ci/staging-honesty-preflight.ts` artifacts, psql ledger queries, and the harness logs under `~/arkova-soak/mfa-3167/`._
+_Last refreshed: 2026-09-05 by Codex CTO — claims verified against gcloud/MCP/CI output._
