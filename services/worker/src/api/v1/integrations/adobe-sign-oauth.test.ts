@@ -49,6 +49,7 @@ import { logger } from '../../../utils/logger.js';
 import { buildAdobeSignRefreshTokenSecretName } from '../../../integrations/connectors/adobe-sign-token-store.js';
 
 type RouterDeps = NonNullable<Parameters<typeof createAdobeSignOAuthRouter>[0]>;
+type RefreshTokenStore = NonNullable<RouterDeps['refreshTokenStore']>;
 
 const ROUTER_ENV: NodeJS.ProcessEnv = {
   ADOBE_SIGN_CLIENT_ID: 'adobe-client-id',
@@ -176,9 +177,9 @@ const kms: KmsClient = {
 
 function refreshTokenStoreDouble() {
   const store = {
-    put: vi.fn(async () => undefined),
-    get: vi.fn(async () => 'stored-refresh-token'),
-    delete: vi.fn(async () => undefined),
+    put: vi.fn<RefreshTokenStore['put']>().mockResolvedValue(undefined),
+    get: vi.fn<RefreshTokenStore['get']>().mockResolvedValue('stored-refresh-token'),
+    delete: vi.fn<RefreshTokenStore['delete']>().mockResolvedValue(undefined),
   };
   return store;
 }
