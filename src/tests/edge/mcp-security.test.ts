@@ -53,6 +53,8 @@ import {
   getCorsOrigin,
   shouldFailClosedWhenSigningKeyMissing,
   validateBearer,
+  withTelemetry,
+  type RequestTelemetryContext,
 } from '../../../services/edge/src/mcp-server';
 import { unwrapSignedEntry } from '../../../services/edge/src/mcp-origin-allowlist';
 import {
@@ -741,5 +743,60 @@ describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
 
     await expect(validateBearer(token, env)).resolves.toBeNull();
     expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+});
+
+describe('mcp-server — withTelemetry scrubs a THROWN tool error (review 2026-09-05)', () => {
+  function makeTelemetry(): RequestTelemetryContext {
+    return {
+      // No SUPABASE_* / SENTRY_DSN → the audit write and anomaly reporter
+      // both no-op; this describe only exercises the error envelope.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      env: {} as any,
+      execCtx: { waitUntil: () => {}, passThroughOnException: () => {} },
+      apiKeyId: 'key-telemetry',
+      userId: 'user-telemetry',
+      anchorDocumentEnabled: false,
+      clientIp: null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+  }
+
+  // The MCP SDK's `createToolError` (@modelcontextprotocol/sdk
+  // server/mcp.js) writes `err.message` to `content[0].text` verbatim, so a
+  // re-thrown Error hands the raw upstream detail to the MCP client.
+  it('returns a scrubbed envelope instead of re-throwing an internal URL', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const leaky = withTelemetry(
+      'arkova_verify_anchor',
+      async () => {
+        throw new Error('https://xyz.supabase.co/rest/v1/anchors?select=secret');
+      },
+      makeTelemetry(),
+    );
+
+    const result = await leaky({ public_id: 'ARK-DEG-ABC123' });
+    expect(result.isError).toBe(true);
+    const text = result.content[0].text;
+    expect(text).not.toContain('supabase.co');
+    expect(text).not.toContain('select=');
+    expect(JSON.parse(text)).toEqual({
+      error: 'arkova_verify_anchor failed',
+      code: 'TOOL_ERROR',
+    });
+    // Full detail still reaches Logpush.
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('passes a normal tool result through untouched', async () => {
+    const ok = withTelemetry(
+      'arkova_verify_anchor',
+      async () => ({ content: [{ type: 'text' as const, text: '{"ok":true}' }] }),
+      makeTelemetry(),
+    );
+    await expect(ok({ public_id: 'ARK-DEG-ABC123' })).resolves.toEqual({
+      content: [{ type: 'text', text: '{"ok":true}' }],
+    });
   });
 });

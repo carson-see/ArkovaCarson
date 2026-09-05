@@ -113,7 +113,7 @@ type ScopedConfig = SupabaseConfig;
 
 /** Per-request telemetry context — threaded into every tool invocation so
  *  SEC-01 rate limiting + SEC-06 audit logging can scope to the caller. */
-interface RequestTelemetryContext {
+export interface RequestTelemetryContext {
   env: Env;
   execCtx: ExecutionContext;
   apiKeyId: string | null;
@@ -136,7 +136,7 @@ interface RequestTelemetryContext {
  *  this wrapper runs. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyArgs = Record<string, any>;
-function withTelemetry(
+export function withTelemetry(
   toolName: string,
   handler: (args: AnyArgs) => Promise<ToolResult>,
   telemetry: RequestTelemetryContext,
@@ -225,8 +225,17 @@ function withTelemetry(
       if (result.isError) outcome = 'tool_error';
       return result;
     } catch (err) {
+      // Do NOT re-throw. The MCP SDK's `createToolError`
+      // (@modelcontextprotocol/sdk/server/mcp.js) puts `err.message` on the
+      // wire verbatim, so a thrown `Error` carrying an internal PostgREST URL,
+      // a query string, or a host name would be handed straight to the client.
+      // Full detail goes to Logpush via `safeErrorText`; the caller gets the
+      // same scrubbed envelope every other tool-error path returns.
       outcome = 'tool_error';
-      throw err;
+      return {
+        content: [{ type: 'text' as const, text: safeErrorText(err, toolName) }],
+        isError: true,
+      };
     } finally {
       logOnce();
     }
