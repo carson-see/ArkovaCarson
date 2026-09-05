@@ -1,6 +1,82 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
+_Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditions + new do-not-merge body/label parity lint; previously: evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+
+## 2026-08-29 — `check-do-not-merge-body.ts` (new) + `mergify-policy-lints-gate.test.ts` (new) — SCRUM-3804
+
+**The Policy Lints job now gates the queue.** `check-success = Policy Lints` is in all three `.mergify.yml` queue rules' `merge_conditions`, closing the gap this file's own 2026-08-23 NOTE recorded (the job "fails loudly in the run log while gating nothing") — which also meant every override label documented for its steps was a no-op as a merge gate, there being nothing to override. `mergify-policy-lints-gate.test.ts` pins the condition into every queue rule, the exact `name: Policy Lints` job name in ci.yml, and the job staying free of a job-level `if:` (an unreported required check never satisfies `check-success` and deadlocks the queue). Branch protection's required-check set remains a separate, Carson/admin-only surface — as of the 2026-08-23 verification `main` has no `required_status_checks` at all, so the Mergify layer is the only in-repo merge gate.
+
+**`check-do-not-merge-body.ts`** (new Policy Lints step): fails any NON-DRAFT PR whose body contains "do not merge" (case-insensitive, whitespace-tolerant across line wraps) without the `do-not-merge` label — the #2240 pattern, where a body-level hold is inert to Mergify and the PR auto-merges over its author's written objection. The hyphenated `do-not-merge` (label mentions in prose) deliberately does NOT match. Draft + body are refreshed live via `gh` and labels resolve through `resolvePrLabels`' env ∪ live union (frozen-payload fallback on any fetch failure, same degradation story as `ciContext.fetchLiveLabels`), so applying the label and re-running the job passes. No override label — the pass condition IS a label. Freshness boundary, stated: ci.yml does not trigger on `edited` / `ready_for_review`, so a body edited (or a draft readied) without a new push keeps the old check result — shared with every body-gated check in this job, not introduced here.
+_Last updated: 2026-08-30 (SCRUM-3618 `src/tests/rls/` T0 tooling entry — plus the 2026-08-29 evidence-gate integrity + anchor-feeder T3 path rule)._
+
+## 2026-08-30 — `check-staging-evidence.ts` T0 entry for `src/tests/rls/` (SCRUM-3618)
+
+The RLS test-helper subtree (`src/tests/rls/` — the exact path CLAUDE.md §1.7 names for
+`withUser()` / `withAuth()`, plus `cleanupClient()` and the pinned seed constants) matched
+no T0 bucket: not `TEST_FILE_RE` (`helpers.ts` is not `*.test.ts`), no PATH_RULE, no
+allowlist entry — so the tests-only SCRUM-3618 parallel-safety fix classified T1
+("default frontend / additive change") purely for touching the shared sign-out helper.
+Same class as the CODEOWNERS / gitleaks entries: imported ONLY by `*.test.ts` files
+(verified no `src/` runtime importer), no surface a soak could exercise. Added
+`/^src\/tests\/rls\//` to `STAGING_TOOLING_ALLOW`, pinned red-first by a
+`requiredTierFor` test covering both the lone helper and the full SCRUM-3618 change-set
+shape. Deliberately NOT the whole of `src/tests/`: `queryTestUtils.tsx` was not
+importer-audited, so it stays on the fail-closed default until someone does that audit.
+_Last updated: 2026-08-23 (webhook event registration drift: `check-webhook-event-registration-drift.ts`)._
+
+## 2026-08-23 — `check-webhook-event-registration-drift.ts` (new): the webhook event set has ONE source of truth
+
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in `services/worker/src/webhooks/payload-schemas.ts` decides the
+outbound webhook event set: `VALID_WEBHOOK_EVENTS` is `Object.keys()` of it, so registering a schema
+makes the event subscribable through the CRUD API and validated at dispatch **in the same commit**.
+Six other lists mirror it by hand — the dashboard picker (`AVAILABLE_EVENTS`), the event catalog
+(`CATALOG_DATA`), `src/lib/copy.ts` descriptions, `packages/sdk/src/types.ts` `WebhookEventType`,
+`integrations/zapier/src/constants.ts` `VALID_EVENTS`, and the `docs/api/webhooks.md` tables. That
+mirror has now drifted three times (SCRUM-1794, BUG-002, DI-775), and every fix added another
+**hardcoded pin** to the surface that drifted.
+
+A hardcoded pin only fires when someone edits that surface and forgets its own pin. It cannot fire
+when the worker map GROWS and the mirror stands still — the direction all three incidents travelled.
+Measured before writing this check: with an extra key in the map, `WebhookSettings.test.tsx` +
+`WebhookEventCatalog.test.tsx` (40 tests), the Zapier suite (23) and the SDK suite (62, `tsc
+--noEmit` exit 0) were all green. Worse, two of those suites never run on a PR at all —
+`publish-sdk.yml` triggers on an `sdk-v*` tag and nothing runs the Zapier tests.
+
+This check parses the map's keys and compares all six mirrors against them (order-sensitive for the
+code lists, whose own pins use `toEqual` on an array; set-wise for the markdown tables, which group
+by event family). It fails **closed**: an unresolvable declaration or a region that parses to zero
+ids is a violation, not a skip. Comments are stripped before extraction — every one of these
+surfaces explains in prose WHY an event is listed, naming other events while doing so, and counting
+a mention as a listing would pass a surface that offers nothing. The markdown side reads only the
+first cell of a table row for the same reason.
+
+**No workflow wiring.** The companion `.test.ts` calls the collector against the real repo, and the
+root vitest `include` already globs `scripts/**/*.test.ts`, so it runs inside the required `Tests`
+job. Running the script directly (`npx tsx scripts/ci/check-webhook-event-registration-drift.ts`)
+prints a per-surface diff and exits 1 — useful locally, not a second gate to keep in sync.
+
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus `TIER_SPECS.T1` aligned to §1.12: 2h soak with required `Soak start:`/`Soak end:`)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
+_Last updated: 2026-08-30 (orphan-row blast radius scoped to migration-surface PRs) — previously 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
+
+## 2026-08-29 — `check-staging-evidence.ts` anchor-feeder T3 path rule (SCRUM-3802)
+
+PR #2266 merged tier-under-declared (declared T2, its own `jobs/agents.md` entry says
+"T3 (cron-on-anchors)"): the anchor-lifecycle T3 rule is a filename whitelist, and
+`publicRecordAnchor.ts` — the cron that batch-inserts up to 10k anchors per Bitcoin tx —
+was not on it, so the diff fell through to the T2 `jobs/` catch-all and §1.13's
+fail-closed guarantee was void for the whole file class. A second T3 rule now pins the
+rest of the audited anchor pipeline (`reason: 'anchor-creating feeder / anchor pipeline
+(SCRUM-3802)'`): anchor-row creators (`publicRecordAnchor`, `connector-artifact-drain`,
+`rule-action-dispatcher`), lifecycle mutators (`mainnet-migration`,
+`public-record-quarantine`), Bitcoin sign/broadcast + recovery decision
+(`supplementary-proof-anchor` + `.adapter`, `txid-journal`), and the shared batch
+contract (`anchor-batching`). The audit criterion was writes: every `jobs/` file that
+inserts/updates `anchors`, signs or broadcasts, or sets batch fan-out. Read-only anchors
+consumers (`stuck-anchor-monitor`, `docusign-anchor-reconciliation`'s detector, digests)
+deliberately stay on the T2 catch-all — pinned by tests both ways, including the exact
+merged file set of #2266 now classifying T3.
 
 ## 2026-08-23 — `check-staging-evidence.ts` evidence-gate integrity (SCRUM-3481 / 3509 / 3533 / 3542 / 3549)
 
@@ -197,6 +273,28 @@ original closure classes.
   `GITHUB_ACTIONS=true`, so unit runs stay quiet and every CI base-drift verdict, pass or fail,
   states the file sets it was computed from.
 
+## 2026-08-29 — eighth closure: `TIER_SPECS.T1.soakHours` was 0 while CLAUDE.md §1.12 says "2 h soak"
+
+The seventh closure fixed the approver half of the T1 gap and recorded the other half in
+passing: with `soakHours: 0` and no window fields, a green T1 gate proved no soak either.
+That was a constitution/gate disagreement, not a policy choice — §1.12's T1 row has said
+"2 h soak" with "soak start/end" in its required evidence all along, and every other
+surface already agreed (docs/staging/PR_TEMPLATE.md's T1 block carries `Soak start:` /
+`Soak end:` with "at least 2h after Soak start"; the `soak-evidence` skill says "T1 (2 h
+soak): … soak start + end"; the Files section below has said "T1 is a 2h soak path, not a
+zero-soak bypass" since PR #801). CTO decision (merged #2241/#2264 history): the GATE
+matches the constitution. `TIER_SPECS.T1` is now `soakHours: 2` with `Soak start:` /
+`Soak end:` required. No new validators were needed — `soakDurationErrors()` was already
+tier-generic (field-presence-driven, comparing elapsed hours against
+`TIER_SPECS[tier].soakHours`), `requiredValueErrors`' T1 arm picks the new fields up for
+non-empty enforcement, `futureTimestampErrors()` already covered future-dated windows at
+every tier, and the T2-only RM targeted-duration waiver cannot leak into T1
+(`targetedDurationWaiverErrors` returns invalid for anything but T2). The RC-manifest path
+inherits the 2h floor through the same `TIER_SPECS[tier].soakHours` read. Red-first: 5
+failed on the prior head (the 0h pin, the missing-window pin, a no-window T1 body passing,
+and two sub-2h windows passing), green after. **This raises the bar for in-flight T1
+PRs**: any open T1 PR whose evidence block has no `Soak start:`/`Soak end:` (or a window
+under 2h) goes red on its next evaluation and needs a real 2h window added.
 
 ## 2026-08-23 — `aggregate-commit-messages.ts` (new): commit messages ship by FILE, not by env var (E2BIG)
 
@@ -361,6 +459,41 @@ Two design points to preserve if you touch it:
   open PR for most of a day, because each owning PR carried one of the two and
   was held red by the other. `main()` keeps these violations out of `blocking`;
   a unit test pins that contract.
+- **`prod-migration-apply-hook.test.ts` lives here, not next to the hook it tests
+  (2026-08-30).** It covers `.claude/hooks/check-prod-migration-apply.sh`, which
+  blocks a PROD `apply_migration` whose `NNNN` prefix is neither on `origin/main`
+  nor in `snapshots/ledger-numeric-exemptions.json` — the same-motion rule that
+  `0401`/`0402`, `0418`/`0419` and `0425` each violated. The test is under
+  `scripts/` because vitest's include globs are `tests/**`, `src/**` and
+  `scripts/**` — **`.claude/**` is in none of them**, so a test placed beside the
+  hook would never run, which is the bullet below in a different costume. Two of
+  its cases assert WIRING rather than behavior: that `.claude/settings.json`
+  registers the hook on a matcher which actually matches a real MCP tool name,
+  and that the hook's prod project ref equals `migration-drift.yml`'s. Before
+  this hook existed, `settings.json` matched only `Bash` and
+  `Edit|Write|NotebookEdit`, so no hook had ever been offered an MCP tool call at
+  all — which is the whole reason CLAUDE.md called that path unenforceable.
+- **`ledger-orphan-prod-row` blocks only PRs that touch the migration surface
+  (2026-08-30) — do not "restore" it to blocking everywhere.** Same whole-ledger
+  evaluation, same board-wide blast radius as the bullet above, but for the class
+  that actually keeps recurring: an out-of-band prod apply reds this required
+  check on EVERY open PR, and because it is a Mergify queue gate that is a full
+  board stall. Three times in under three weeks — `0401`/`0402` (08-11),
+  `0418`/`0419` (08-27), `0425` (08-30, 36 open PRs, surfaced on #2249 which
+  touches zero migrations). The asymmetry is the point: an orphan's only remedies
+  are "merge the owning PR" or "write the exemption", and an unrelated PR's author
+  can do neither, so the gate blocked exactly the people without the remedy.
+  `partitionOrphanViolations()` now downgrades orphans to warnings when the PR
+  touches neither `supabase/migrations/**` nor
+  `snapshots/ledger-numeric-exemptions.json`. Detection is UNCHANGED — the
+  annotation is emitted on every run either way; only the blast radius shrank.
+  FAIL-CLOSED: `migration-drift.yml` sets `LEDGER_PR_MIGRATION_SURFACE=0` only for
+  a `pull_request` it successfully diffed, and the script treats every other value
+  (including unset — push-to-`main`, `workflow_dispatch`, a diff failure, an older
+  workflow revision) as blocking. Ledger CORRUPTION (non-numeric version,
+  duplicate name/version) is never downgraded: it means the ledger is untrustworthy
+  for everyone, so no PR is more responsible than another. Unit tests pin both the
+  partition and the fail-closed CLI default.
 - **A gate is only real if it is wired.** Several scripts here were written but
   never made required — check `ci.yml` (and branch protection) before assuming
   a script gates anything. `evidence-identity-report` is deliberately
@@ -467,7 +600,7 @@ Two design points to preserve if you touch it:
 - **`check-staging-gcloud-policy.ts`** — blocks raw `gcloud run deploy` / `gcloud run services update` commands against `arkova-worker-staging` outside `scripts/staging/deploy.sh`; historical docs need a nearby `staging-gcloud-ok:` reason.
 - `check-deploy-lint-parity.ts` (R0-4 / SCRUM-1250) — enforces that `deploy-worker.yml` and `ci.yml` lint steps run the SAME `npm run lint` script per CLAUDE.md §0 rule 9.
 - **`check-deploy-build-parity.ts`** (CONDITIONAL-GO sub-decision B / TWO-SURFACE) — sibling of the lint-parity gate, closing the COMPILE hole. Asserts **3-way** worker BUILD-command equality (fails closed): `services/worker/package.json` `scripts.build` === `tsc -p tsconfig.build.json`; `services/worker/Dockerfile` contains a `RUN npm run build` line; `ci.yml` has a `services/worker` step **named with the `deploy-parity` marker** whose `run:` is exactly `npm run build`. The `deploy-parity` name marker isolates the dedicated compile gate so the gate is NOT confused by the `npm run build:circuit` zk-artifact step (also a worker-dir "build" step). Exports `auditDeployBuildParity()` + the constants for the test. Wired into the `typecheck-lint` job. **Pure file-reading hard invariant** — imports only `readFileSync`/`resolve`, NO ciContext / git / `process.env` (mirrors `check-deploy-lint-parity.ts`), so it runs cleanly in the shallow-checkout `typecheck-lint` job and keeps SCRUM-1258 trivially satisfied. No in-script override; a build-command mismatch is never acceptable, the escape hatch is editing the invariant in-PR (with `ci-config-change` / `build-parity-ack` signoff). Tests in `check-deploy-build-parity.test.ts` (9 tests, incl. a live-repo-files parity assertion + a regression guard that the script imports no ciContext/git/env). Pairs with the two non-required ci.yml compile jobs (`Worker Build (deploy-parity)`, `Verifier Build`).
-- **`check-deploy-typecheck-parity.ts`** (SCRUM-1811) — THIRD sibling of the lint (R0-4) and build (sub-decision B) parity gates, closing the last hole in the trio: the worker TYPECHECK. Root tsconfigs `exclude` `services/`, so root `npm run typecheck` never sees worker source; `worker-build-parity` compiles `tsconfig.build.json`, which **excludes `src/**/*.test.ts`**, and is both in-job path-gated and NON-REQUIRED. `deploy-worker.yml` meanwhile typechecks the **plain** `tsconfig.json` (tests INCLUDED). Net effect: a TS error in a worker TEST file passed every PR check and only failed post-merge in the deploy gate, blacking out ALL prod worker deploys while `main` kept merging (`memory/project_deploy_typecheck_blackout.md`; SCRUM-1810 was exactly this; SCRUM-3130 recorded main ~20 merged PRs ahead of prod). Asserts, fail-closed: (1) `deploy-worker.yml` has a `services/worker` step named `*Typecheck*` running exactly `node_modules/.bin/tsc --noEmit`; (2) `ci.yml` has the same step **inside the `typecheck-lint` job** — already `check-success = TypeCheck & Lint` in `.mergify.yml`, so it actually blocks a merge; (3) that step carries **no `if:` guard**, so a test-only edit cannot slip past a path filter; (4) neither workflow's typecheck step is renamed into a SIBLING gate's marker — a name containing `lint` would be captured by `check-deploy-lint-parity.ts` (which then demands `npm run lint`), and a ci.yml name containing `deploy-parity` would be captured by `check-deploy-build-parity.ts` (which then demands `npm run build`). The trap is the natural-looking "Typecheck worker (deploy-parity)", mirroring the sibling JOB's own name; assertion (4) rejects it with a message naming the real constraint instead of leaving the rule as unenforced prose. Its step scanner walks BACK to the **nearest** preceding `name:` (not the first matching one in the window), which is what stops a neighbouring `Lint worker` name from being mis-attributed to a `tsc` command. **Pure file-reading hard invariant** — imports only `readFileSync`/`resolve`, no ciContext / git / `process.env`, so it runs in the shallow-checkout `typecheck-lint` job. No in-script override; signoff is `ci-config-change` at the workflow level. Tests in `check-deploy-typecheck-parity.test.ts` (12 tests, incl. a live-repo-files parity assertion, a `tsconfig.build.json` mutation, a wrong-host-job mutation, an `if:`-guard mutation, three sibling-marker rename mutations, and the no-ciContext/git/env regression guard). **Deliberately does NOT flip `Worker Build (deploy-parity)` into branch protection / `.mergify.yml`** — that required-flip is reserved to Carson/admin per `.github/workflows/agents.md`; adding a step to an already-required job closes the same gap without touching that surface.
+- **`check-deploy-typecheck-parity.ts`** (SCRUM-1811) — THIRD sibling of the lint (R0-4) and build (sub-decision B) parity gates, closing the last hole in the trio: the worker TYPECHECK. Root tsconfigs `exclude` `services/`, so root `npm run typecheck` never sees worker source; `worker-build-parity` compiles `tsconfig.build.json`, which **excludes `src/**/*.test.ts`**, and is both in-job path-gated and NON-REQUIRED. `deploy-worker.yml` meanwhile typechecks the **plain** `tsconfig.json` (tests INCLUDED). Net effect: a TS error in a worker TEST file passed every PR check and only failed post-merge in the deploy gate, blacking out ALL prod worker deploys while `main` kept merging (`memory/project_deploy_typecheck_blackout.md`; SCRUM-1810 was exactly this; SCRUM-3130 recorded main ~20 merged PRs ahead of prod). Asserts, fail-closed: (1) `deploy-worker.yml` has a `services/worker` step named `*Typecheck*` running exactly `node_modules/.bin/tsc --noEmit`; (2) `ci.yml` has the same step **inside the `typecheck-lint` job** — already `check-success = TypeCheck & Lint` in `.mergify.yml`, so it actually blocks a merge; (3) that step carries **no `if:` guard**, so a test-only edit cannot slip past a path filter; (4) neither workflow's typecheck step is renamed into a SIBLING gate's marker — a name containing `lint` would be captured by `check-deploy-lint-parity.ts` (which then demands `npm run lint`), and a ci.yml name containing `deploy-parity` would be captured by `check-deploy-build-parity.ts` (which then demands `npm run build`). The trap is the natural-looking "Typecheck worker (deploy-parity)", mirroring the sibling JOB's own name; assertion (4) rejects it with a message naming the real constraint instead of leaving the rule as unenforced prose. Its step scanner walks BACK to the **nearest** preceding `name:` (not the first matching one in the window), which is what stops a neighbouring `Lint worker` name from being mis-attributed to a `tsc` command. The `if:` scan covers the WHOLE step block, not just name→run: step keys are an unordered YAML mapping, so a guard after the `run:` line — or one opening the item as `- if:` ahead of the `name:` — guards the step exactly as well, and the original name→run scan missed both orderings (post-merge audit finding on PR #2427). It matches `if:` only at the step's own key column, bounded by the first dedent past it, so a neighbouring step's guard or an `if:`-shaped line inside a `run: |` script does not false-positive; comment lines are skipped at ANY indentation, since YAML ignores them and a dedented comment between step keys does not end the step. **Pure file-reading hard invariant** — imports only `readFileSync`/`resolve`, no ciContext / git / `process.env`, so it runs in the shallow-checkout `typecheck-lint` job. No in-script override; signoff is `ci-config-change` at the workflow level. Tests in `check-deploy-typecheck-parity.test.ts` (16 tests, incl. a live-repo-files parity assertion, a `tsconfig.build.json` mutation, a wrong-host-job mutation, four `if:`-guard mutations — between name and run, after the `run:` line, `- if:` opening the item, and a guard behind a dedented comment — a neighbouring-step-guard non-attribution case, three sibling-marker rename mutations, and the no-ciContext/git/env regression guard). **Deliberately does NOT flip `Worker Build (deploy-parity)` into branch protection / `.mergify.yml`** — that required-flip is reserved to Carson/admin per `.github/workflows/agents.md`; adding a step to an already-required job closes the same gap without touching that surface.
 - `check-rls-auth-uid-wrap.ts` (SCRUM-1280) — RLS policy lint: `auth.uid()` must always be wrapped in `(SELECT auth.uid())` to allow Postgres planner constant-folding.
 - `check-null-identity-guard.ts` (F-5b/F-5c) — blocks NEW migrations whose authorization guard compares a parameter **directly** against an identity function (`IS DISTINCT FROM auth.uid()` / `(SELECT auth.uid())` / `get_user_org_id()`). `IS DISTINCT FROM` returns FALSE when BOTH sides are NULL, so a caller with no identity passing an explicit NULL argument skips the RAISE and gets a 200 + all-zero result instead of a 403 — a "silent success" where an unauthorized call is indistinguishable from an authorized empty one. Required shape: resolve the identity into a local, reject NULL, THEN compare against the local. **`FIRST_ENFORCED_PREFIX = 393` is load-bearing** — migration `0380` (PR #1778, already applied to prod ahead of merge) genuinely contains the flagged idiom and is superseded at runtime by `0391`; lowering the cutoff without landing a compensating migration for every file in between will red-light in-flight PRs. Skips SQL comment lines so `-- ROLLBACK:` blocks may quote the old body verbatim. Deliberately does NOT flag `col = auth.uid()` RLS quals or the `EXISTS (... WHERE id = auth.uid() ...)` idiom — both fail CLOSED on NULL. Override label: `null-identity-guard-intentional`. Failure-mode tested in `src/tests/f5c-monthly-count-null-identity-guard.test.ts`.
 - `check-handoff-claims.ts` (R0-6 / SCRUM-1252) — HANDOFF.md verification lint: edits asserting prod state require a verification artifact link. **Merge-ref hardening (2026-07-06, PR #1408):** `resolveDiffBase()` re-anchors the two-dot diff to `HEAD^1` when HEAD is provably GitHub's synthetic `refs/pull/N/merge` commit (pull_request event + 2-parent HEAD + pinned base ancestor of first parent + `GITHUB_SHA` match or canonical `Merge <sha> into <sha>` subject) — otherwise a post-PR-creation base-branch HANDOFF.md edit (f11a5290 class) is misattributed to every pre-drift PR and the gate goes red on a file the PR never touched. All other shapes fall back to the pinned-base two-dot (fail-closed). Fixture repro + gate-not-weakened pin in `check-handoff-claims.test.ts`.
@@ -490,11 +623,13 @@ Two design points to preserve if you touch it:
 - **`check-credential-type-drift.ts`** (SCRUM-2013) — compares every file containing credential type enums against the canonical `ANCHOR_CREDENTIAL_TYPES` in `services/worker/src/lib/credential-evidence.ts`, including `SecureDocumentDialog.tsx` fuzzy AI type-map target values. Fails the build when any location has missing or extra values compared with the source of truth.
 
 - **`check-orphaned-exports.ts`** (SCRUM-3032/3033/3034, CTO ruling R14, 2026-07-28; identity-based diff-scoping fix 2026-07-28 PR #1723 review follow-up) — orphaned hook/component export lint. Scans exported React hooks (`src/hooks/**`, name matching `use[A-Z]`) and components (`src/components/**`, PascalCase name with a function/class/CallExpression-wrapped initializer — SCREAMING_SNAKE_CASE data constants are excluded even when they happen to have a CallExpression initializer, e.g. `WEBHOOK_EVENT_CATALOG = X.map(...)`) and flags any whose only importers are test files (`*.test.*`/`*.spec.*`), Storybook files (`*.stories.*`), or the defining file itself. Builds a full import/re-export/dynamic-import edge graph via the TypeScript compiler API (`ts.createSourceFile`) over the whole `src/` tree: barrel re-exports (`export { X } from './x'` / `export * from './x'`) only count as real usage if the barrel itself is, in turn, imported by real code — traced transitively through nested barrels via `isReachable()`. Dynamic `import(...)` calls (anywhere in a file, including inside `React.lazy(() => import(...)).then(...)`) count as importing everything from the target module, so route-registered pages (`src/App.tsx`'s `lazyWithRetry(() => import(...))` pattern, `src/lib/routes.ts`) need no special-casing — they fall out of the same general scan. Per CTO ruling R14: FAIL-CLOSED (exit 1) only for exports NEWLY introduced in the PR. "New" is decided by **export IDENTITY** (`exportIdentityKey` = kind+name) resolved against the **merge-base version of the same file** (or its pre-rename path, via `git diff --find-renames --name-status` / `parseRenameMap`) — NOT by declaration line position. (An earlier line-position implementation misclassified a purely cosmetic reformat of an existing orphan's declaration line as new, and would have misclassified a file rename/move the same way; fixed in the 2026-07-28 PR #1723 review pass — see the script's header comment for the full writeup.) `findOrphanCandidates()` filters to unreachable exports first so merge-base lookups (`buildMergeBaseExportIndex`, via `git show <mergeBaseSha>:<path>`) are only ever done for that small candidate set, not the whole hooks/components tree. Pre-existing orphans print as a WARN-only inventory (30 found as of 2026-07-28, including `useFolders` — the exact #1657 incident this gate exists to catch). 48 tests in `check-orphaned-exports.test.ts`, including barrel-reachable / barrel-unreachable / lazy-loaded / router-registered / identity-based diff-scoping fixture scenarios (cosmetic reformat stays pre-existing, genuinely new export still fails closed, renamed/moved file stays pre-existing). Wired into `ci.yml` as the standalone `orphaned-export-lint` job (`continue-on-error: false` — the script's own new-vs-preexisting split is the leniency mechanism, not the CI config). Known limitations documented in the script's header comment: anonymous default exports are not classified; `export * as ns from` is treated the same as `export * from`; a two-step `import { X } from './x'; export { X };` re-export (as opposed to the single-statement `export { X } from './x'` barrel form used throughout this repo) is not traced; `isComponentLikeInitializer`'s PascalCase+CallExpression heuristic can sweep in non-components (e.g. `createContext(...)`, PascalCase Zod schemas) — harmless when imported, latent false-positive surface otherwise; and a known INVERSE GAP — a PR that deletes the last real importer of an existing hook/component (without touching that hook's own file) makes it newly unreachable but is only ever reported pre-existing (WARN), never fail-closed, because this gate compares export identity against the merge base, not reachability against the merge base. Closing that gap needs a full merge-base import graph (materially more scope); tracked as a follow-up, not attempted in the 2026-07-28 fix.
+- **`check-third-party-notices-fresh.ts`** — freshness gate for `src/data/thirdPartyNotices.generated.json` (the `/legal/third-party-notices` data file). Re-derives the notices payload from the installed tree via the generator's own `buildNotices()` and diffs it against what is committed, ignoring `generatedAt` and excluding platform-variant packages (detected from `os`/`cpu`/`libc` in `package-lock.json`, so a darwin-generated file matches an ubuntu runner). Ratchets against `snapshots/third-party-notices-drift-baseline.json`: fails on drift beyond the recorded baseline, warns on inherited drift, hard-fails once the baseline expires. Run locally with `npx tsx scripts/ci/check-third-party-notices-fresh.ts`; fix with `npm run license:notices:generate`. Deliberately NOT wired as a root npm script: root `package.json` governs the runtime dependency tree, so touching it holds a CI-only PR above T0 in `check-staging-evidence.ts`. CI job `Third-Party Notices Freshness`, listed in all three `.mergify.yml` queues.
 - **`staging-honesty-preflight.ts`** (SCRUM-1668) — queries a Supabase staging database and reports whether the environment is a clean mirror, has soak artifacts, or is fixture-seeded. 8 checks: (1) PR-only / staging-only migration rows, (2) duplicate names, (3) duplicate versions, (4) known artifact rows, (5) missing SUBMITTED anchors, (6) prod ledger divergence, (7) org topology — single-tenant prod vs multi-org staging seeds, (8) prod facts — pg_cron vacuum-anchors exists, refresh_pipeline_dashboard_cache exists, and refresh-pipeline-dashboard-cache is scheduled. The migration ledger falls back to the Supabase Management API when `supabase_migrations` is hidden from PostgREST; `--prod-project-ref` + `--management-api-token` / `SUPABASE_ACCESS_TOKEN` query the live prod ledger and prod facts. Check 8 is optional (backward-compatible), with `--prod-facts` CLI fallback. **Check 7 is no longer optional in a real run:** the runner always supplies either org-topology data or `orgTopologyError`, and an unreadable projection emits a FAILED `org_topology` check rather than being omitted from the report (FD-PREFLIGHT-1 — it previously selected a non-existent `organizations.name` column, so 42703 made the check vanish and its absence looked identical to a clean report; it had never run on any rig). Org-name columns come from the exported `ORG_NAME_COLUMNS` (`legal_name`, `display_name`), and a source-level ratchet in the unit suite fails if the call site hardcodes a column again. 102 tests in `staging-honesty-preflight.test.ts`.
 
 ## `snapshots/`
 Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per gate).
 - `prod-tables.json`, `worker-env-adhoc-baseline.json`, `rls-policy-coverage-baseline.json`, `views-security-invoker-baseline.json`, `migration-prefix-baseline.json` — see the gate that reads each.
+- **`third-party-notices-drift-baseline.json`** — known-bad state for `check-third-party-notices-fresh.ts`. `driftingNames` are package names whose disclosure on `/legal/third-party-notices` is already wrong or missing (NOT approved omissions); `blockedPinnedNotices` holds platform-INDEPENDENT family roots of allowlist-cleared copyleft deps with no pinned notice, so one entry matches both the darwin and the linux package name. Retire it by resolving the pinned-notice gap, regenerating the notices file, and setting both arrays to `[]`. Regenerate the payload with `npx tsx scripts/ci/check-third-party-notices-fresh.ts --emit-baseline`.
 - **`copy-terms-baseline.json`** (SCRUM-2148 / SCRUM-2149) — grandfather baseline for `scripts/check-copy-terms.ts` (`npm run lint:copy`, defined one level up in `scripts/`). Records ONLY pre-existing copy-term/raw-enum violations that can't be fixed in their PR (locked file or another in-flight track). The linter fails on NEW violations only; match key = normalised `file`+`line`+`term` (term lower-cased — two different terms on the same line are two entries). Each entry needs a `reason`. Full protocol in `scripts/agents.md` → "Copy-term linter". Never baseline a self-introduced violation.
 
 ## Conventions
@@ -527,7 +662,7 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **The allow-list is by PATH, not by type name.** `run-lease.ts` and `proofJobCheckpoint.ts` store rows in `job_queue` that are NOT queued work (leases and resumable checkpoints, read back by their owner, never via `claim_next_job`), and `utils/jobQueue.ts` is the queue itself. Adding a new one is a deliberate, reviewable edit to the script with a comment saying why it is not work.
 - **Resolve `as const`.** The repo declares every job-type constant as `export const X = '...' as const`, an `AsExpression`. The first run of this guard fail-closed on all three of them because the resolver did not unwrap it — worth knowing before adding another literal form.
 - **Ambiguity fails closed:** a constant name bound to two different literals across the tree resolves to `null` rather than picking a winner.
-- **Known limitation, stated in the script's own header: "has a consumer" is NOT "is drained in prod."** A consumer still needs a Cloud Scheduler binding in `scripts/gcp-setup/cloud-scheduler.sh`; in-process node-cron is dormant under Cloud Run CPU throttling (PROOF-03). `professional_education.metadata_extraction` and `docusign.notarization_completed` currently have cron routes and no scheduler entry. Closing that needs a live-GCP read this static check cannot do — a separate gate, not a reason to weaken this one.
+- **Known limitation, stated in the script's own header: "has a consumer" is NOT "is drained in prod."** A consumer still needs a Cloud Scheduler binding in `scripts/gcp-setup/cloud-scheduler.sh`; in-process node-cron is not a durable trigger — no retry, no attempt deadline, no run history, and nothing at all on a revision scaled to zero (PROOF-03, as narrowed by SCRUM-3384: it does fire in prod, on every warm instance). `professional_education.metadata_extraction` and `docusign.notarization_completed` currently have cron routes and no scheduler entry. Closing that needs a live-GCP read this static check cannot do — a separate gate, not a reason to weaken this one.
 - **Regression-proved, not assumed:** run against `origin/main` (`25e1d32`) it names both defects at `api/v1/ai-extract-batch.ts:173` and `jobs/rule-action-dispatcher.ts:856`. A guard whose failing case was never observed is a guess.
 - Wired as `npm run ci:job-queue-parity` in the `policy-lints` job of `ci.yml`. Per the "a gate is only real if it is wired" note above, check that step exists before citing this guard.
 - **The `live worker tree` tests scan once, in `beforeAll`, with an explicit 60s budget — do not drop that back to a per-test scan.** Walking and regex-scanning `services/worker/src` is ~1,200 files / ~16 MB of real work that grows with the repo, and each test in that block used to redo it. It passed in isolation and then timed out at vitest's 5s default in CI under full-suite parallelism (426 files) — a repo-size tripwire that reads exactly like a genuine parity break. The budget is the only thing that changed; the assertions did not, and the guard was re-confirmed to fail closed by planting an orphan producer and watching it go red.
@@ -586,6 +721,54 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **FD-GATE-2, fixed at the consumer.** `ciContext.changedFiles()` no longer two-dots from the (possibly frozen) env base — see `scripts/ci/lib/agents.md` for the `resolveDiffBase` anchoring contract. This corrects the gate's `ownFiles`, the tier detector, `compute-merge-authority`, and the feedback-rules scans in one place, without touching the workflows that still pass the frozen sha. Also fixes the raw-head fallback misattribution (FD-GATE-3 defect 2). Known boundary: `--diff-filter=AMR` still drops deletions — that is FD-GATE-4, deliberately not addressed here.
 - **This is a §1.12/§1.13 merge-gate semantics change:** landed as a T0 tooling PR, opened as DRAFT for named human review — the gate that decides whether other PRs may merge must not be self-merged on its own green checks.
 
+## Merge-queue skip predicates require the mergify[bot] author (SCRUM-3812, 2026-08-29)
+
+- **The defect.** The fail-closed `evidence-identity` (ci.yml) and `staging-evidence` gates both
+  skipped their enforcement steps on `startsWith(github.head_ref, 'mergify/merge-queue/')` ALONE.
+  `github.head_ref` is author-controlled, and a job whose steps all skip still posts SUCCESS — so a
+  PR opened from a branch named `mergify/merge-queue/<anything>` greened BOTH
+  `check-success` conditions in every `.mergify.yml` queue with zero checker executions. This
+  contradicted the gates' own threat model (the same activation PR randomized the `$GITHUB_OUTPUT`
+  heredoc delimiter precisely so an author cannot forge evidence identity).
+- **The fix.** Every merge-queue `if:` in both workflows now also requires
+  `github.event.pull_request.user.login == 'mergify[bot]'` — GitHub-assigned, immutable, and true of
+  every real Mergify speculative PR (verified against live queue PRs #2464–#2468). NOT
+  `github.actor`, which becomes the re-running human and would deadlock a genuine queue PR. The
+  per-step skip shape is unchanged (a job-level `if:` would leave the check unreported, and an
+  unreported check never satisfies `check-success`).
+- **Contract tests.** `soak-integrity-gates-failclosed.test.ts` (ci.yml) and
+  `staging-evidence-workflow-contract.test.ts` (staging-evidence.yml, with mutation cases) pin that
+  every `if:` consulting `github.head_ref` / the queue-branch prefix is exactly the compound skip or
+  its exact negation — branch-only and `||`-weakened variants fail. The two files carry the same
+  `MERGE_QUEUE_SKIP_EXPRESSION` text; change them in lockstep. Written red-first against the
+  pre-fix workflows (5 failures), green after.
+
+## 2026-08-30 — `check-third-party-notices-fresh.ts` (new, wired into ci.yml + all three Mergify queues)
+
+`src/data/thirdPartyNotices.generated.json` backs the shipped `/legal/third-party-notices` page and is GENERATED (`npm run license:notices:generate`), but **nothing ever ran that generator in CI** — grepping `.github/workflows/*.yml` and `scripts/ci/*.ts` for `license:notices` returned zero hits. Consequences, both invisible until a human looked: the committed file was stamped `generatedAt: 2026-07-28` and had drifted by 81 package names (13+ production dependencies present in the tree and absent from the page — `xlsx`, `heic-decode`, `upng-js`, `utif2` and the SheetJS stack among them), and `qrcode-generator@2.0.4` shipped undisclosed until a reviewer caught it by hand. The generator had also been **failing closed** the whole time (`@img/sharp-libvips-*` is allowlist-cleared copyleft with no entry in `third-party-notices.pinned.json`), writing nothing on every invocation, and nobody noticed because nobody invoked it.
+
+**Platform stability was the real design problem.** The generator scans the INSTALLED tree, and npm installs only the platform-matching build of an optional native dependency: the committed file lists `@img/sharp-darwin-arm64` / `@napi-rs/canvas-darwin-arm64` (generated on a Mac) where an ubuntu runner installs `@img/sharp-linux-x64` / `@napi-rs/canvas-linux-x64-gnu`. A naive diff would fail on every PR for a reason unrelated to staleness. Platform-variant packages are therefore excluded from the comparison, identified **mechanically from `os`/`cpu`/`libc` in `package-lock.json`** rather than from a hardcoded family list — which matters, because the mechanical rule catches `onnxruntime-node`, os/cpu-constrained but carrying no platform token in its name and missed by any hand-written `@img/*` + `@napi-rs/*` list. Those three fields are npm's complete set of platform gates, so nothing else can differ between hosts. Excluding them loses no signal: every platform-fanned family is an optional-dep fan-out of a non-platform parent (`sharp`, `@napi-rs/canvas`, `@img/colour`) that stays in the comparison and moves with its children.
+
+**Duplicate package names are real here — do not "simplify" the multimap back into a Map.** `onnxruntime-common`, `pako` and `sprintf-js` are each present at TWO hoisted versions in the root production tree. Grouping by name into a `Map<string, NoticeLike>` keeps only the last of each, which silently compared three packages at half coverage; it was also a latent platform-instability bug, because which entry survived depended on `license-checker`'s iteration order and nothing guarantees that order matches between hosts. `byName` returns a name -> entries[] multimap and versions/licenses are compared as sorted, de-duplicated sets, so the result is order-independent by construction. Regression-covered by two tests, including one that lists the same two versions in the opposite order and asserts no drift.
+
+**It is a RATCHET, and that is what makes it requireable.** Both breakages above are owned by the separate "Regenerate third-party notices (blocked by sharp)" task, and failing on that inherited state would red every open PR at once. So the known-bad state is recorded in `snapshots/third-party-notices-drift-baseline.json` with an `expires` date, and the gate fails on anything BEYOND it — new drift (the `qrcode-generator` class) is blocked from day one, inherited drift is printed as a warning on every run, and the whole thing hard-fails once the baseline expires. The generator FATAL is surfaced the same way: a known-blocked family root warns, a NEW one fails. Baseline matching is by package NAME, not version, deliberately — version-exact matching would red a routine dependency bump that nobody can currently fix, because the generator cannot write.
+
+Reuses the generator's own `buildNotices()` (extracted in this change; `main()` is now a thin wrapper and CLI behaviour is byte-identical) rather than re-deriving the classification — a second copy would drift from the first and start silently comparing the wrong thing. `buildNotices()` returns `missingNotice` instead of throwing, so the freshness question stays answerable while an unrelated compliance gap is outstanding.
+
+Verification, not assertion: the platform-stability claim was tested by running `--emit-baseline` on darwin-arm64 and again under `docker --platform linux/amd64`, and the ratchet was proven end-to-end by deleting an in-sync entry from the committed file and confirming the gate named it and exited 1.
+
+Tests: `check-third-party-notices-fresh.test.ts` (20) and `mergify-notices-freshness-gate.test.ts` (7, which also pins that the ci.yml job carries no job-level `if:`, no path filter and no `continue-on-error` — a `skipped` check never satisfies `check-success` and would deadlock the queue).
+
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
+
+## Doc Pointer Resolution (`check-doc-pointers.ts`)
+
+- **`check-doc-pointers.ts`** — every repo-relative path cited by the required-reading set must resolve. Scan set: `CLAUDE.md`, `AGENTS.md`, `.claude/skills/*/SKILL.md`, `.claude/hooks/*.sh`, `memory/**/*.md`, **every tracked nested `agents.md`**, and the **comment lines** of `.github/workflows/*.yml`. Runs as its own ci.yml job `doc-pointers` / **`Doc Pointer Resolution`**.
+- **It is NOT in `.mergify.yml merge_conditions` and `main` has no `required_status_checks`**, so today it reports without blocking a merge. Treat a red run as a real defect anyway; making it a queue gate is a separate, deliberate change.
+- **Resolution is multi-base**, most specific first: the doc's own directory → each ancestor package root (a dir with `package.json`/`pyproject.toml`) → repo root. Folder-local notes write paths the way their readers do: `packages/verifier-cli/agents.md` names its entry point relative to its own directory (the file being `packages/verifier-cli/src/cli.ts`), and `services/worker/src/api/v1/agents.md` names the org-auth guard relative to the worker package root (`services/worker/src/api/_org-auth.ts`). Repo-root-only resolution called 59 correctly-written references dead.
+- **Workflow YAML: comments only, governance prefixes only** (`memory/`, `docs/`, `.claude/`, `.github/`). A `run:` value is config, not prose, and its paths are relative to the step's `working-directory:`. Even a *comment* inherits that frame: `deploy-worker.yml` names `services/worker/src/ai/zk-proof.test.ts` in worker-relative shorthand, which is correct in context and unresolvable from the workflow file's own location. Asserting source prefixes there would be noise, so it does not.
+- **Out of scope on purpose:** `HANDOFF.md` (`## History` is an append-only dated log) and `docs/**` narrative — release runbooks, soak premortems and RC manifests carry ~120 pointers that are dead by design because the run they describe is over. Their folder-local `agents.md` files ARE scanned.
+- **Deliberately-absent paths** (negative examples, generated artifacts, a file a command writes, named planned work) go in `scripts/ci/snapshots/doc-pointer-exemptions.json` with a `reason`. `check-doc-pointers.test.ts` fails on a stale exemption (the path now resolves), a missing reason, or an exemption naming a doc outside the scan set — so the list cannot quietly grow into a bypass.
+- Tests: `check-doc-pointers.test.ts` (20 tests) — scan-set contract, the multi-base resolution rules, workflow comment-vs-config split, exemption scoping, and a live-repo ratchet asserting zero dead pointers across the whole set. That ratchet is the assertion that would have caught `memory/project_deploy_typecheck_blackout.md`, which was cited by two gate sources and three `agents.md` files while never existing in the repo.

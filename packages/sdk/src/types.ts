@@ -11,6 +11,11 @@ export type WebhookEventType =
   | 'anchor.secured'
   | 'anchor.revoked'
   | 'anchor.expired'
+  // A SECURED record was atomically replaced by a re-issued child record
+  // (SECURED -> SUPERSEDED). Carries `superseded_by_public_id`, the public slug
+  // of the replacement, so a headless consumer can follow the version chain
+  // without the dashboard (SCRUM-2937).
+  | 'anchor.superseded'
   | 'anchor.batch_secured'
   | 'credential.issued'
   | 'credential.verified'
@@ -85,11 +90,11 @@ export interface ArkovaConfig {
   baseUrl?: string;
   /** Built-in retry handling for 429/5xx responses. Set retries=0 to disable. */
   retry?: RetryConfig;
-  /** Enable x402 auto-payment (requires USDC wallet) */
+  /** Enable x402 auto-payment (requires a USDC-capable on-chain signer) */
   x402?: {
     /** x402 facilitator URL */
     facilitatorUrl?: string;
-    /** Payer wallet address (USDC on Base) */
+    /** Payer address (USDC on Base) */
     payerAddress: string;
     /** Function to sign x402 payment */
     signPayment: (amount: string, payTo: string) => Promise<string>;
@@ -140,15 +145,15 @@ export interface RichVerificationFields {
    * certification, conformity assessment, or attestation.
    */
   complianceControlsNote?: string | null;
-  /** Bitcoin block confirmations at anchor time */
+  /** Network confirmations at anchor time */
   chainConfirmations?: number | null;
   /** Public ID of the parent anchor in a credential lineage */
   parentPublicId?: string | null;
   /** Version in the credential lineage */
   versionNumber?: number | null;
-  /** Bitcoin transaction ID of the revocation */
+  /** Network receipt ID of the revocation */
   revocationTxId?: string | null;
-  /** Bitcoin block height at which revocation was anchored */
+  /** Network record height at which revocation was anchored */
   revocationBlockHeight?: number | null;
   /** Source document MIME type */
   fileMime?: string | null;

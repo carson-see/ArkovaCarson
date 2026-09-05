@@ -16,10 +16,12 @@
  */
 import http from 'k6/http';
 import crypto from 'k6/crypto';
+import { sleep } from 'k6';
 
 import {
   buildSyntheticConnectPayload,
   serializeConnectPayload,
+  buildBilateralRequest,
 } from './docusign-synth.js';
 
 const VERIFY_PATH = '/api/v1/verify/anchor/00000000-0000-0000-0000-000000000000';
@@ -82,4 +84,75 @@ export function executeScenario(scenario, { workerUrl, key, accountId, vu, iter,
     headers: LOADTEST_HEADERS,
     tags: { scenario: 'health' },
   });
+}
+
+// ── docusign-bilateral-2026-08 (CTO Decision Record, R9) ────────────────────
+//
+// k6-only glue for the bilateral soak: signs + posts every `BilateralStep`
+// `buildBilateralRequest` (docusign-synth.js) produces. Same division of
+// labor as the rest of this file — payload SHAPE lives in the crypto-free
+// synth module (cross-validated in docusign-bilateral-synth.test.ts), signing
+// + HTTP assembly lives here (k6-only, not unit-tested directly).
+
+/**
+ * A key that is deliberately never equal to any real signing key, for the
+ * 'wrong_hmac' family. Suffix guarantees non-collision even if `realKey` is
+ * empty or already ends oddly.
+ * @param {string} realKey
+ * @returns {string}
+ */
+function deliberatelyWrongKey(realKey) {
+  return `${realKey}-loadtest-wrong-key-do-not-use`;
+}
+
+/**
+ * Resolve which key material a step's `signAs` role maps to.
+ * @param {'org'|'wrong'|'shared'} signAs
+ * @param {{ orgKey: string, sharedKey: string }} keys
+ * @returns {string}
+ */
+function resolveSigningKey(signAs, keys) {
+  if (signAs === 'shared') return keys.sharedKey;
+  if (signAs === 'wrong') return deliberatelyWrongKey(keys.orgKey);
+  return keys.orgKey;
+}
+
+/**
+ * Fire ONE BilateralStep and return the k6 http response.
+ * @param {import('./docusign-synth.js').BilateralStep} step
+ * @param {{ workerUrl: string, orgKey: string, sharedKey: string }} keys
+ */
+export function executeBilateralStep(step, keys) {
+  const body = typeof step.payload === 'string' ? step.payload : serializeConnectPayload(step.payload);
+  const signingKey = resolveSigningKey(step.signAs, keys);
+  const signature = signConnectBase64(body, signingKey);
+  const query = step.customrecipient ? '?customrecipient=true' : '';
+
+  return http.post(`${keys.workerUrl}/webhooks/docusign${query}`, body, {
+    headers: {
+      'content-type': 'application/json',
+      'X-DocuSign-Signature-1': signature,
+    },
+    tags: { scenario: 'docusign', family: step.label },
+  });
+}
+
+/**
+ * Build + fire every step for a bilateral family (most families are one
+ * step; 'replay' and 'self_forgery_provenance_conflict' are two paired
+ * steps — `delayMs` on a step sleeps before firing it). Returns the ordered
+ * `{ step, res }` pairs so the caller's `check()` calls can assert per-step
+ * `expectStatus`.
+ * @param {string} family
+ * @param {import('./docusign-synth.js').BilateralContext & { workerUrl: string, orgKey: string, sharedKey: string }} ctx
+ * @returns {Array<{ step: import('./docusign-synth.js').BilateralStep, res: unknown }>}
+ */
+export function executeBilateralRequest(family, ctx) {
+  const steps = buildBilateralRequest(family, ctx);
+  const results = [];
+  for (const step of steps) {
+    if (step.delayMs) sleep(step.delayMs / 1000);
+    results.push({ step, res: executeBilateralStep(step, ctx) });
+  }
+  return results;
 }

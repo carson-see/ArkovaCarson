@@ -38,7 +38,7 @@ Documents themselves never leave the data subject's device — only fingerprints
 | General Principle (§6) | Process only with consent or a permitted contractual/legal basis |
 | Notice & Choice (§7) | This notice is provided at onboarding; right to withdraw consent at any time |
 | Disclosure (§8) | No disclosure beyond purposes stated in §3 without prior consent |
-| Security (§9) | AES-256 at rest + TLS 1.2+ in transit; RLS multi-tenant isolation; MFA on admin access |
+| Security (§9) | AES-256 at rest + TLS 1.2+ in transit; RLS multi-tenant isolation; MFA available (opt-in) — administrator enforcement in progress, not yet in effect |
 | Retention (§10) | Retained only while subscription active + 7 years audit-trail retention |
 | Data Integrity (§11) | Data accuracy maintained via continuous validation + data subject rectification channel |
 | Access (§12) | Access + correction rights honoured within 21 days |
@@ -108,7 +108,7 @@ Affected data subjects are notified in the same timeframe when the risk is high.
 |-----------|--------|
 | Encryption in transit | TLS 1.2+ |
 | Encryption at rest | AES-256 |
-| Access control | Row-level security + MFA on admin |
+| Access control | Row-level security; MFA available (opt-in) — administrator enforcement in progress, not yet in effect |
 | Logging | Append-only audit log |
 | Client-side processing | Documents never leave the device |
 | Incident response | 72-hour breach runbook |

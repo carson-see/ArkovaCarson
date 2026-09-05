@@ -23,13 +23,14 @@
  */
 
 import { z } from 'zod';
+import { dbUuid } from '../utils/db-row-validation.js';
 import { logger } from '../utils/logger.js';
 
 /**
  * CodeRabbit PR #734: schema-validate every write path before issuing
  * DB operations.
  */
-const AnchorIdSchema = z.string().uuid();
+const AnchorIdSchema = dbUuid('anchor_id');
 
 const AuditEventRowSchema = z.object({
   // SCRUM-1800 (SCRUM-1743 Phase 2c): allow credential.status_changed +
@@ -45,8 +46,8 @@ const AuditEventRowSchema = z.object({
   ]),
   event_category: z.literal('ANCHOR'),
   target_type: z.literal('anchor'),
-  target_id: z.string().uuid(),
-  org_id: z.string().uuid().nullable(),
+  target_id: dbUuid('target_id'),
+  org_id: dbUuid('org_id').nullable(),
   details: z.string(),
 }).strict();
 

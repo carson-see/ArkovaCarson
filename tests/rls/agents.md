@@ -83,3 +83,43 @@ way and was anon-callable in prod until revoked on 2026-08-11.
 - **Keep the positive case in the same suite.** If `service_role` also lost
   EXECUTE the function is merely broken, and "anon cannot call it" would pass
   for the wrong reason.
+
+## Fixture rules for full-parallel runs (SCRUM-3618 / SCRUM-3577)
+
+Vitest runs every file in this directory in its own worker, concurrently,
+against ONE shared database and ONE shared set of seeded demo users. Two
+suites (`docusign-integrations`, `credential-source-providers`) flaked for
+months under full-suite runs while passing in isolation. The mechanism, and
+the rules that keep it dead — the first two are CI-enforced by
+`tests/infra/rls-suite-parallel-safety.test.ts` (default `npm test`, no DB
+needed), which reuses the 2026-08-15 e2e sign-out guard's detector:
+
+- **Never derive fixture identities from `auth.getUser()`.** supabase-js
+  `signOut()` defaults to scope `"global"`, revoking EVERY session of that
+  user server-side. Whichever suite finished first signed the shared demo
+  user out from under the suites still running; their mid-run `getUser()`
+  then failed ("Auth session missing!"), a `?? ''` fallback poisoned the
+  seeded `user_id` to `''`, and service-role seeds died with 22P02 — while
+  PostgREST queries kept "working" (JWT-only validation) or silently degraded
+  to anon once supabase-js dropped the local session. Use the pinned constants
+  from `src/tests/rls/helpers.ts` (`DEMO_CREDENTIALS.adminId` / `.userId` /
+  `.betaAdminId`, `ORG_IDS.*`) the way `p7.test.ts` and `rls-extended.test.ts`
+  always did.
+- **`signOut({ scope: 'local' })` in every afterAll** (what `cleanupClient()`
+  now does). A default global sign-out is un-scoped teardown of shared session
+  state — it reaches into every other worker.
+- **Seed inserts THROW on error.** An unchecked seed that silently fails turns
+  the read assertions later in the file into count/flake noise instead of a
+  clear fixture error. (Same doctrine as the load-bearing fixture note on
+  `sanitize-metadata-helper-revoke.test.ts` above.)
+- **Tag every seeded row with a file-unique key** (an `account_id` prefix, a
+  distinctive fingerprint), delete by that tag in BOTH directions — before
+  seeding (leftovers of a crashed prior run; several fixture keys sit under
+  partial UNIQUE indexes) and in afterAll — and never delete more broadly
+  than your own tag.
+- **Never pick "any row" with `.limit(1).single()` and no ORDER BY.** Under
+  parallelism the arbitrary row can be another suite's sandbox org/profile,
+  deleted mid-run by that suite's teardown. Pin to seeded stable IDs.
+- **Do not serialize the suite instead** (`fileParallelism: false` in
+  `vitest.config.rls.ts`): it would hide this class of collision and slow
+  every RLS run; parallel execution is itself part of what the suite proves.
