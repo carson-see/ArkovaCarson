@@ -78,10 +78,13 @@ EOF
   exit 1
 fi
 
-# short_name : package_dir (relative to repo root) : published npm name
+# short_name : package_dir (relative to repo root). The published npm name
+# is read from each package's own package.json "name" field (see
+# publish_one) rather than hardcoded here a third time — packages/sdk and
+# sdks/mcp-server already carry the source-of-truth name.
 PACKAGES=(
-  "sdk:packages/sdk:arkova"
-  "mcp-server:sdks/mcp-server:arkova-mcp-server"
+  "sdk:packages/sdk"
+  "mcp-server:sdks/mcp-server"
 )
 
 # Compares the local package.json version against what's already live on
@@ -95,19 +98,21 @@ already_published() {
 }
 
 publish_one() {
-  local short_name="$1" pkg_dir="$2" npm_name="$3"
+  local short_name="$1" pkg_dir="$2"
 
   if [[ -n "$ONLY" && "$ONLY" != "$short_name" ]]; then
     echo "== Skipping $short_name (--only=$ONLY)"
     return 0
   fi
 
-  echo
-  echo "== $short_name  ($pkg_dir -> npm: $npm_name)"
   cd "$REPO_ROOT/$pkg_dir"
 
-  local local_version
+  local npm_name local_version
+  npm_name="$(node -p "require('./package.json').name")"
   local_version="$(node -p "require('./package.json').version")"
+
+  echo
+  echo "== $short_name  ($pkg_dir -> npm: $npm_name)"
 
   if already_published "$npm_name" "$local_version"; then
     echo "-- $npm_name@$local_version is already live on npm — skipping (idempotent)"
@@ -142,10 +147,8 @@ publish_one() {
 
 for entry in "${PACKAGES[@]}"; do
   short_name="${entry%%:*}"
-  rest="${entry#*:}"
-  pkg_dir="${rest%%:*}"
-  npm_name="${rest#*:}"
-  publish_one "$short_name" "$pkg_dir" "$npm_name"
+  pkg_dir="${entry#*:}"
+  publish_one "$short_name" "$pkg_dir"
 done
 
 if [[ "$DRY_RUN" == "1" ]]; then

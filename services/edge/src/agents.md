@@ -157,3 +157,20 @@ See `services/edge/agents.md` (same date) for the full entry. File-level notes:
 - **`mcp-server.ts`** — `TOOL_DESC` keys renamed; `handleProtectedResourceMetadata` has no `authorization_servers` (D3); `validateBearer` tolerates a missing `SUPABASE_JWT_SECRET` (ES256 path needs none).
 - **`mcp-jwt-verify.ts`** — ES256 via JWKS + HS256 fallback; exports `jwksUrlFor`, `resetJwksCacheForTests`, `JwksFetcher`. `supabase-jwt.ts` still pins HS256 and has no non-test importer — candidate for removal, not touched here.
 - **`mcp-error-utils.ts`** — `safeErrorText` home (was in `mcp-server.ts`; moved to avoid an import cycle).
+
+## 2026-09-05 — unauthenticated JWKS refreshes must be bounded (PR #2589)
+
+An unknown `kid` is attacker-controlled and reaches local JWT verification before
+authenticated tool rate limiting. Never force a network request for each unknown
+key. Share in-flight JWKS refreshes and retain both successful and failed attempts
+for a 30-second cooldown. The successful-key cache remains valid for 10 minutes;
+known cached keys continue working during an unknown-key refresh outage. A newly
+rotated key can be fetched after the short cooldown, and unknown keys always fail
+closed. The default fetch and response-body read are bounded by a five-second
+abort timer. `resetJwksCacheForTests` clears both cache and refresh-attempt state.
+
+Regression tests reproduce request amplification, concurrent cold fetches, and
+outage retries, and verify the timeout, legitimate rotation, and outage recovery.
+The current review and release record is Confluence page `137101729`; the same
+finding is recorded in master bug tracker `88768514`. Auth changes require T3
+qualification on the final frozen source; older T2 wording is superseded.

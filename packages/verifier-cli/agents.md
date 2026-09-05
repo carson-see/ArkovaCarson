@@ -174,3 +174,12 @@ rules, not steps:
   here — it has no concept of the ordered two-step `file:` dependency swap.
 - `fixtures/` ships (auditors can re-run the corpus) but nothing in `src/` reads
   it at runtime, so it is corpus value only, not a runtime dependency.
+
+## 2026-09-05 — normalize DNS root dots before the independent-host guard
+
+`URL.hostname` retains a final DNS root dot: `app.arkova.ai.` denotes the same
+host as `app.arkova.ai`. Apply the Arkova and Cloud Run host policy after removing
+that root dot; otherwise a trailing dot bypasses both suffix guards. The returned
+URL and report label stay unchanged. A regression exercises both the raw worker
+host and vanity host with a root dot. Review evidence and release status are on
+Confluence page `137101729`, with the finding in master bug log `88768514`.

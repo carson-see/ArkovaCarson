@@ -42,4 +42,13 @@ describe('independent-node guard', () => {
   it('rejects an invalid URL', () => {
     expect(() => assertIndependentEndpoint('not a url')).toThrow(/Invalid --rpc/);
   });
+
+  it('refuses operator hosts with a DNS root dot', () => {
+    for (const endpoint of [
+      'https://arkova-worker-270018525501.us-central1.run.app./api',
+      'https://app.arkova.ai./api',
+    ]) {
+      expect(() => assertIndependentEndpoint(endpoint), endpoint).toThrow(/Arkova-operated/);
+    }
+  });
 });

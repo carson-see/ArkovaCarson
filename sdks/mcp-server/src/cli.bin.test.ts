@@ -11,9 +11,13 @@
  * `node_modules/.bin/<name>`, the same way for a global install, and the
  * same way `npx` stages its temp cache. This test reproduces exactly that:
  * it builds the real `dist/cli.js`, symlinks it the way npm would, and
- * spawns a real `node` process against the symlink — the same path a user
- * running `npx -y arkova-mcp-server` (or the Claude Desktop config this
- * package's own README documents) actually takes.
+ * connects a real MCP `Client` to it over the SDK's own `StdioClientTransport`
+ * — which spawns a real `node` process against the symlink, the same path a
+ * user running `npx -y arkova-mcp-server` (or the Claude Desktop config
+ * this package's own README documents) actually takes. Using the SDK's own
+ * client/transport (rather than hand-rolled process spawning + line-buffered
+ * JSON-RPC framing) still exercises the real symlinked process; it just
+ * lets the SDK own the protocol plumbing instead of reimplementing it.
  *
  * This is a regression test for a real bug: the previous entry-point guard
  * (`import.meta.url === \`file://${process.argv[1]}\``) compared a
@@ -26,19 +30,21 @@
  * Story: npm publication prep (2026-08-18) — clean-room verification finding.
  */
 
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const distCli = join(packageRoot, 'dist', 'cli.js');
 
 let binSymlinkDir: string;
 let binSymlinkPath: string;
-let child: ChildProcessWithoutNullStreams | undefined;
+let client: Client | undefined;
 
 beforeAll(() => {
   // Build fresh so this test exercises the same dist/ the package actually
@@ -53,111 +59,48 @@ beforeAll(() => {
   symlinkSync(distCli, binSymlinkPath);
 }, 30_000);
 
-afterEach(() => {
-  if (child && !child.killed) {
-    child.kill();
-    child = undefined;
+afterAll(() => {
+  if (binSymlinkDir) {
+    rmSync(binSymlinkDir, { recursive: true, force: true });
   }
 });
 
-interface JsonRpcMessage {
-  jsonrpc: '2.0';
-  id?: number;
-  method?: string;
-  params?: unknown;
-  result?: Record<string, unknown>;
-  error?: unknown;
-}
+afterEach(async () => {
+  if (client) {
+    await client.close();
+    client = undefined;
+  }
+});
 
-function driveStdioSession(
-  env: NodeJS.ProcessEnv,
-): Promise<{ initialize: JsonRpcMessage; toolsList: JsonRpcMessage; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    child = spawn('node', [binSymlinkPath], { env, stdio: ['pipe', 'pipe', 'pipe'] });
-
-    let stderr = '';
-    child.stderr.on('data', (d) => {
-      stderr += d.toString();
-    });
-
-    let buf = '';
-    const responses: JsonRpcMessage[] = [];
-    child.stdout.on('data', (d) => {
-      buf += d.toString();
-      let idx: number;
-      while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx);
-        buf = buf.slice(idx + 1);
-        if (line.trim()) {
-          try {
-            responses.push(JSON.parse(line));
-          } catch {
-            // ignore non-JSON lines
-          }
-        }
-      }
-    });
-
-    child.on('error', reject);
-
-    const timer = setTimeout(() => {
-      reject(new Error(`stdio session timed out. stderr so far: ${stderr}`));
-    }, 8_000);
-
-    function send(msg: JsonRpcMessage): void {
-      child?.stdin.write(`${JSON.stringify(msg)}\n`);
-    }
-
-    function waitFor(id: number): Promise<JsonRpcMessage> {
-      return new Promise((res) => {
-        const iv = setInterval(() => {
-          const found = responses.find((r) => r.id === id);
-          if (found) {
-            clearInterval(iv);
-            res(found);
-          }
-        }, 25);
-      });
-    }
-
-    (async () => {
-      send({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2024-11-05',
-          capabilities: {},
-          clientInfo: { name: 'cli-bin-regression-test', version: '0.0.1' },
-        },
-      });
-      const initialize = await waitFor(1);
-
-      send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-      send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-      const toolsList = await waitFor(2);
-
-      clearTimeout(timer);
-      resolve({ initialize, toolsList, stderr });
-    })().catch(reject);
+/**
+ * Builds a transport that spawns `node <binSymlinkPath>` — a real process
+ * through the real symlink — the way `StdioClientTransport` would for any
+ * real MCP client. `pipeStderr` opts into capturing the child's stderr via
+ * a PassThrough stream instead of inheriting the test runner's own stderr.
+ */
+function symlinkTransport(env: NodeJS.ProcessEnv, pipeStderr: boolean): StdioClientTransport {
+  return new StdioClientTransport({
+    command: 'node',
+    args: [binSymlinkPath],
+    env: env as Record<string, string>,
+    stderr: pipeStderr ? 'pipe' : undefined,
   });
 }
 
 describe('bin invocation via a real npm-style symlink', () => {
   it('starts the stdio server and answers initialize + tools/list when run through the symlink', async () => {
-    const { initialize, toolsList } = await driveStdioSession({
-      ...process.env,
-      ARKOVA_API_KEY: 'ak_live_test_placeholder',
-      PATH: process.env.PATH,
-    });
-
-    expect(initialize.result).toBeDefined();
-    expect((initialize.result as { serverInfo?: { name?: string } }).serverInfo?.name).toBe(
-      'arkova-mcp-server',
+    const transport = symlinkTransport(
+      { ...process.env, ARKOVA_API_KEY: 'ak_live_test_placeholder', PATH: process.env.PATH },
+      false,
     );
+    client = new Client({ name: 'cli-bin-regression-test', version: '0.0.1' });
+    // connect() spawns the process (via transport.start()) and drives the
+    // initialize handshake — the SDK equivalent of the old send-then-waitFor.
+    await client.connect(transport);
 
-    expect(toolsList.result).toBeDefined();
-    const tools = (toolsList.result as { tools: Array<{ name: string }> }).tools;
+    expect(client.getServerVersion()?.name).toBe('arkova-mcp-server');
+
+    const { tools } = await client.listTools();
     expect(tools.length).toBe(6);
   }, 15_000);
 
@@ -165,7 +108,21 @@ describe('bin invocation via a real npm-style symlink', () => {
     const env = { ...process.env, PATH: process.env.PATH };
     delete env.ARKOVA_API_KEY;
 
-    const { stderr } = await driveStdioSession(env);
+    const transport = symlinkTransport(env, true);
+    let stderr = '';
+    // Attach before connect()/start() — the stream is a PassThrough created
+    // in the transport's constructor specifically so no early output is
+    // lost while a caller wires up its listener.
+    transport.stderr?.on('data', (d) => {
+      stderr += d.toString();
+    });
+
+    client = new Client({ name: 'cli-bin-regression-test', version: '0.0.1' });
+    await client.connect(transport);
+    // A full round trip (mirrors the margin the previous hand-rolled
+    // harness had by completing tools/list before asserting) so the
+    // 'data' event for the early stderr write has had a turn to fire.
+    await client.listTools();
 
     expect(stderr).toContain('ARKOVA_API_KEY is not set');
   }, 15_000);

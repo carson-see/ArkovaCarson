@@ -3173,14 +3173,15 @@ export const THIRD_PARTY_NOTICES_LABELS = {
     'Arkova is built with open-source software. This page lists the third-party components included in our applications and their license terms, including the components with obligations beyond a standard permissive license.',
   COPYLEFT_SECTION_HEADING: 'Components with additional license obligations',
   COPYLEFT_SECTION_INTRO:
-    'These components carry license terms beyond a standard permissive license (MIT/ISC/BSD/Apache-2.0). Each entry states what is used, how, and links the full license text.',
+    'These components carry license terms beyond a standard permissive license (MIT/ISC/BSD/Apache-2.0). Each entry states what is used, how, and includes or links the full license text.',
   PENDING_BADGE: 'In development — not yet shipped',
   UNMODIFIED_LABEL: 'Used unmodified from the published upstream release.',
   SOURCE_LINK_LABEL: 'Unmodified upstream source',
   LICENSE_TEXT_LABEL: 'License text',
+  LICENSE_TEXT_TOGGLE: 'View license text',
   GENERAL_SECTION_HEADING: 'Open-source components',
   GENERAL_SECTION_INTRO:
-    'The following components are used under their respective permissive licenses (MIT, ISC, BSD, Apache-2.0, and similar). This list is generated from our dependency tree.',
+    'The following components are used under their respective permissive licenses (MIT, ISC, BSD, Apache-2.0, and similar). This list is generated from our dependency tree. Where a component publishes a license file, its copyright notice and full license text are included below.',
   GENERATED_AT_PREFIX: 'List generated',
   REPOSITORY_LABEL: 'Repository',
 } as const;

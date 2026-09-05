@@ -2,8 +2,9 @@
  * Local Supabase JWT verification for the edge MCP server (SCRUM-926 / MCP-SEC-07).
  *
  * Defense-in-depth against trusting Supabase's `/auth/v1/user` blindly:
- * before any network round-trip, verify the bearer token's HS256 signature
- * against `SUPABASE_JWT_SECRET` and check `exp`, `iat`, `aud`, `iss` locally.
+ * before the user lookup, verify the bearer token's signature and check
+ * `exp`, `iat`, `aud`, `iss`. ES256 keys come from the bounded JWKS fetch;
+ * legacy HS256 signatures use `SUPABASE_JWT_SECRET` locally.
  *
  * Supabase projects now sign session JWTs with an asymmetric **ES256** key
  * (`signing-keys` → `ES256 status=in_use`, `HS256 status=previously_used`,
@@ -11,7 +12,9 @@
  * accepted HS256 only, which rejected every current token with `wrong_alg`.
  * ES256 is verified against the project JWKS
  * (`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`, selected by `kid`, cached
- * in-isolate, refetched once on an unknown `kid`) and needs NO shared secret.
+ * in-isolate, refreshed on an unknown `kid` at most once every 30 seconds)
+ * and needs NO shared secret. Concurrent requests share one refresh; failed
+ * refreshes also observe the cooldown, and HTTP requests time out after 5 seconds.
  * HS256 remains as the fallback for tokens minted under the previously-used
  * key and is the only path that needs `SUPABASE_JWT_SECRET`. Any other `alg`
  * fails closed. Web Crypto only — no `jose` dep, matching `mcp-hmac.ts`.
@@ -46,8 +49,10 @@ interface JwtPayload {
 
 const HS256 = 'HS256';
 const ES256 = 'ES256';
-/** JWKS cache TTL. Supabase rotates keys rarely; an unknown `kid` forces one refetch regardless. */
+/** Bound unauthenticated refresh traffic while allowing signing-key rotation. */
 const JWKS_TTL_MS = 10 * 60 * 1000;
+const JWKS_REFRESH_COOLDOWN_MS = 30_000;
+const JWKS_FETCH_TIMEOUT_MS = 5_000;
 const CLOCK_SKEW_SEC = 30;
 
 const ENCODER = new TextEncoder();
@@ -118,9 +123,15 @@ export interface JsonWebKey256 {
 export type JwksFetcher = (url: string) => Promise<{ keys: JsonWebKey256[] }>;
 
 async function defaultFetchJwks(url: string): Promise<{ keys: JsonWebKey256[] }> {
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error(`jwks_http_${res.status}`);
-  return res.json() as Promise<{ keys: JsonWebKey256[] }>;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), JWKS_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { headers: { accept: 'application/json' }, signal: controller.signal });
+    if (!res.ok) throw new Error(`jwks_http_${res.status}`);
+    return await res.json() as { keys: JsonWebKey256[] };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function jwksUrlFor(supabaseUrl: string): string {
@@ -129,6 +140,14 @@ export function jwksUrlFor(supabaseUrl: string): string {
 
 // In-isolate JWKS cache keyed by URL: { fetchedAt, keys by kid }.
 let jwksCache: { url: string; fetchedAt: number; byKid: Map<string, CryptoKey> } | null = null;
+// Retain failed attempts too: an attacker controls kid but cannot make every
+// rejected token trigger another request to the authentication service.
+let jwksRefreshAttempt: {
+  url: string;
+  startedAt: number;
+  pending: boolean;
+  promise: Promise<Map<string, CryptoKey>>;
+} | null = null;
 
 async function importEcPublicKey(jwk: JsonWebKey256): Promise<CryptoKey | null> {
   if (jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) return null;
@@ -145,9 +164,7 @@ async function importEcPublicKey(jwk: JsonWebKey256): Promise<CryptoKey | null> 
   }
 }
 
-async function loadJwks(url: string, fetchJwks: JwksFetcher, force: boolean): Promise<Map<string, CryptoKey>> {
-  const fresh = jwksCache && jwksCache.url === url && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS;
-  if (fresh && !force) return jwksCache!.byKid;
+async function fetchAndImportJwks(url: string, fetchJwks: JwksFetcher): Promise<Map<string, CryptoKey>> {
   const doc = await fetchJwks(url);
   const byKid = new Map<string, CryptoKey>();
   for (const jwk of doc.keys ?? []) {
@@ -159,9 +176,29 @@ async function loadJwks(url: string, fetchJwks: JwksFetcher, force: boolean): Pr
   return byKid;
 }
 
+async function loadJwks(url: string, fetchJwks: JwksFetcher, force: boolean): Promise<Map<string, CryptoKey>> {
+  const now = Date.now();
+  if (!force && jwksCache?.url === url && now - jwksCache.fetchedAt < JWKS_TTL_MS) {
+    return jwksCache.byKid;
+  }
+  if (jwksRefreshAttempt?.url === url &&
+      (jwksRefreshAttempt.pending || now - jwksRefreshAttempt.startedAt < JWKS_REFRESH_COOLDOWN_MS)) {
+    return jwksRefreshAttempt.promise;
+  }
+  const attempt = {
+    url,
+    startedAt: now,
+    pending: true,
+    promise: fetchAndImportJwks(url, fetchJwks).finally(() => { attempt.pending = false; }),
+  };
+  jwksRefreshAttempt = attempt;
+  return attempt.promise;
+}
+
 /** Test hook: drop the in-isolate JWKS cache. */
 export function resetJwksCacheForTests(): void {
   jwksCache = null;
+  jwksRefreshAttempt = null;
 }
 
 async function es256SignatureMatches(
@@ -176,7 +213,7 @@ async function es256SignatureMatches(
   let byKid = await loadJwks(url, fetchJwks, false);
   let key = byKid.get(kid);
   if (!key) {
-    // One forced refetch covers a rotation that happened after the cache filled.
+    // Rotation refreshes share the same cooldown as cold and failed requests.
     byKid = await loadJwks(url, fetchJwks, true);
     key = byKid.get(kid);
     if (!key) return 'unknown_kid';
@@ -213,10 +250,10 @@ function scopesFromPayload(payload: JwtPayload): string[] {
 }
 
 /**
- * Verify a Supabase HS256 JWT locally.
+ * Verify a Supabase ES256 or legacy HS256 JWT before the remote user lookup.
  *
  * Returns ok+userId+tier on success. On failure returns ok:false with a
- * short reason — callers MUST short-circuit (no network round-trip) so a
+ * short reason — callers MUST short-circuit (no remote user lookup) so a
  * compromise of `/auth/v1/user` cannot back-channel forged tokens.
  *
  * Validates: structure, alg (ES256 via JWKS or HS256 via secret), signature, exp (with 30s skew),

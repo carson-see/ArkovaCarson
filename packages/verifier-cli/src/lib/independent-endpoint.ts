@@ -39,7 +39,10 @@ export function assertIndependentEndpoint(endpoint: string): URL {
   } catch {
     throw new Error(`Invalid --rpc endpoint: ${endpoint}`);
   }
-  if (ARKOVA_HOST_RE.test(url.hostname) || CLOUD_RUN_HOST_RE.test(url.hostname)) {
+  // A final root dot denotes the same DNS host. URL.hostname retains it,
+  // so normalize it before applying the operator-host policy.
+  const hostname = url.hostname.replace(/\.$/, '');
+  if (ARKOVA_HOST_RE.test(hostname) || CLOUD_RUN_HOST_RE.test(hostname)) {
     throw new Error(
       `Refusing to verify against an Arkova-operated node (${url.hostname}). ` +
         'The reference verifier must confirm the on-chain fact independently. ' +

@@ -15,6 +15,8 @@ They are **separate implementations with independently maintained tool sets** â€
 
 ## Hosted (recommended)
 
+Run directly with `npx` (no install step needed):
+
 ```bash
 claude mcp add --transport http arkova https://edge.arkova.ai/mcp --header "X-API-Key: ak_live_your_key"
 ```

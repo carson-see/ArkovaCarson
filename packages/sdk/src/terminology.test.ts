@@ -53,14 +53,16 @@ const EXPECTED_COUNTS: Record<string, { hash: number; block: number; crypto: num
 
 describe('shipped source terminology (§1.3)', () => {
   for (const file of SHIPPED_SOURCE_FILES) {
+    // Read once per file and reuse across both assertions below instead of
+    // re-reading the same source file from disk for each `it()`.
+    const content = readFileSync(join(srcDir, file), 'utf-8');
+
     it(`${file} has no strictly-banned §1.3 terms`, () => {
-      const content = readFileSync(join(srcDir, file), 'utf-8');
       const matches = content.match(STRICTLY_BANNED) ?? [];
       expect(matches, `found: ${JSON.stringify(matches)}`).toEqual([]);
     });
 
     it(`${file} has the expected (reviewed) count of ratcheted terms`, () => {
-      const content = readFileSync(join(srcDir, file), 'utf-8');
       const counts = {
         hash: (content.match(/\bhash\b/gi) ?? []).length,
         block: (content.match(/\bblock\b/gi) ?? []).length,
