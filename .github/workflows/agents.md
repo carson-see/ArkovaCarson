@@ -1,5 +1,28 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-02 — `cache-zk-artifacts` gained `restore-keys`; a lockfile bump must not re-download the ptau
+
+`ci.yml`'s Tests job keys the zk circuit artifact cache on `extraction-proof.circom` +
+`circuits/build.sh` + `services/worker/package-lock.json`. Any dependabot bump of the worker
+lockfile rotates that key, and on a miss `build.sh` re-downloads the ~19 MB
+`powersOfTau28_hez_final_14.ptau`. On 2026-09-02 both public hosts for that file
+(`storage.googleapis.com/zkevm` and `hermez.s3-eu-west-1`) answered `403 AccessDenied`, so the qs
+bump in PR #2606 took `main`'s `Tests` job red (run 33669376517: build step exit 22, verify step
+`No such file`, `zk-proof.test.ts` erroring at module load — by design, that suite is fail-loud,
+never skip).
+
+The step now carries `restore-keys: zk-artifacts-${{ runner.os }}-circom2.1.9-`. A prefix fallback
+restores the newest previous entry, which holds the SHA-256-pinned build inputs (ptau + circomlib
+tarball) alongside the old outputs; `build.sh` skips the downloads when the files are present,
+re-verifies both pins, and regenerates wasm/zkey/vkey from source with the current snarkjs. Two
+properties to keep: (1) `restore-keys` must equal the exact key's static prefix, and (2)
+`install-circom` / `build-zk-circuit` stay gated on
+`steps.cache-zk-artifacts.outputs.cache-hit != 'true'` — only an exact hit sets `cache-hit`, so a
+fallback still rebuilds. Both are pinned by `scripts/ci/ci-workflow-contract.test.ts` ("zk circuit
+artifact cache survives a key rotation"). Not covered: a fully evicted cache — there is no public
+URL to seed from today, so an Arkova-owned mirror is the durable fix (see
+`services/worker/circuits/agents.md`).
+
 ## 2026-08-29 — Policy Lints now gates the Mergify queue; do-not-merge body/label parity step (SCRUM-3804)
 
 `check-success = Policy Lints` was added to all three `.mergify.yml` queue rules' `merge_conditions` (s33-wave2-corpus, urgent, default). The `policy-lints` job — coverage monotonic, count:'exact' baseline, feedback rules, config-drift, MCP tool-claim parity, HANDOFF verification lint, Confluence coverage — had run on every PR but was never in `merge_conditions`, so it reported without blocking, and every override label documented for its steps (`mcp-claim-parity-reviewed`, `handoff-narrative-only`, `coverage-drop-allowed`, …) was a no-op AS A MERGE GATE (the same "reports without blocking" class as the 2026-08-17 Orphaned Export Lint entry; `scripts/ci/agents.md` recorded the gap on 2026-08-23). The job carries no job-level `if:` and no path filter, so it reports on every ci.yml PR run — only the ci.yml-wide `paths-ignore` caveat applies, shared with every other gated check. Branch protection's required-check set stays a separate Carson/admin surface. The job also gained one step: `Do-not-merge body/label parity (SCRUM-3804)` runs `scripts/ci/check-do-not-merge-body.ts`, failing any NON-DRAFT PR whose body says "do not merge" (case-insensitive) without the `do-not-merge` label — a prose hold is inert to Mergify (the #2240 pattern), so it must be label-backed, drafted, or removed. Contract test: `scripts/ci/mergify-policy-lints-gate.test.ts`.
@@ -566,7 +589,9 @@ Cloud Scheduler job (`drive-subscription-renewal`, declared in
 separate, manual `gcloud scheduler jobs create` step outside this workflow's
 reach (no `gcloud` credentials in the authoring session). Until it runs, renewal
 relies solely on the hourly in-process backup, which is not a reliable substitute
-under Cloud Run CPU throttling (node-cron does not fire on a throttled instance).
+— a process-local timer has no retry, no attempt deadline and no run history, and
+it stops entirely on a revision scaled to zero (SCRUM-3384 narrows the older
+CPU-throttling reading: on a warm instance node-cron fires normally).
 See the activating PR's body for the exact command and a post-deploy verification
 runbook.
 

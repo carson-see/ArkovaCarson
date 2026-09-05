@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318 # v3.97.0
+        uses: trufflesecurity/trufflehog@20652fbbdefffcdaa493a5bf57ab2ac6b1db715b # v3.97.1
         with:
           extra_args: --only-verified
 
@@ -1030,6 +1030,21 @@ jobs:
         with:
           path: services/worker/circuits/artifacts
           key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
+          # Prefix fallback for when the exact key rotates — which every
+          # services/worker/package-lock.json bump does. Only an EXACT hit sets
+          # `cache-hit`, so on a fallback the two steps below still run and
+          # regenerate wasm/zkey/vkey from source with the current snarkjs;
+          # what the fallback carries over is the SHA-256-pinned build INPUTS
+          # (powersOfTau28_hez_final_14.ptau, circomlib-v2.0.5.tar.gz) that
+          # build.sh would otherwise re-download, and build.sh re-verifies
+          # both against its pins before use. Needed because the download path
+          # has no working source: on 2026-09-02 both public ptau hosts
+          # (storage.googleapis.com/zkevm and hermez.s3-eu-west-1) answered
+          # 403 AccessDenied, so the dependabot lockfile bump in PR #2606
+          # turned main's Tests job red (run 33669376517). Contract pinned by
+          # scripts/ci/ci-workflow-contract.test.ts.
+          restore-keys: |
+            zk-artifacts-${{ runner.os }}-circom2.1.9-
 
       - name: Install circom (cache miss only)
         id: install-circom
@@ -1588,10 +1603,23 @@ jobs:
         if: steps.e2e-changed.outputs.changed == 'true'
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
-          version: 1.123.0
+          # 2.x is required for the MFA E2E specs (SCRUM-3167): CLI 1.123.0 bundles
+          # gotrue v2.125.1, has no [auth.mfa] config fields (it only warns
+          # "Unknown config fields"), and sets no GOTRUE_MFA_* env, so the local
+          # auth server always ran with MFA disabled. 2.x maps
+          # [auth.mfa.totp] enroll_enabled/verify_enabled in supabase/config.toml to
+          # GOTRUE_MFA_TOTP_ENROLL_ENABLED / GOTRUE_MFA_TOTP_VERIFY_ENABLED (verified
+          # against a running 2.98.2-composed local stack). Pinned to the exact
+          # version proven to start this repo's stack; types-check/test jobs keep
+          # 1.123.0 and are bumped separately.
+          version: 2.98.2
 
       - name: Start Supabase
         if: steps.e2e-changed.outputs.changed == 'true'
+        env:
+          # CLI 2.x pipelines migrations; the wrapper strips CREATE INDEX CONCURRENTLY
+          # in this job's throwaway checkout only (see scripts/ci-supabase-start.sh).
+          CI_SUPABASE_STRIP_CONCURRENTLY: '1'
         run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
