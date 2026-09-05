@@ -1084,3 +1084,47 @@ describe('F4 — tool catch blocks scrub errors via safeErrorText', () => {
     expect(parsed).toEqual({ error: 'arkova_verify_anchor failed', code: 'TOOL_ERROR' });
   });
 });
+
+// ── Review 2026-09-05: upstream bodies must never reach the MCP client ──
+
+describe('upstream error bodies are scrubbed before reaching the caller', () => {
+  const POSTGREST_400 = JSON.stringify({
+    message: 'column anchors.secret_col does not exist',
+    details: 'internal detail for anchors.secret_col',
+    hint: 'Perhaps you meant to reference the column "anchors.public_id".',
+    code: '42703',
+  });
+
+  it('arkova_search_anchors lexical fallback does not echo the PostgREST body', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 1st call: search_public_credentials RPC fails → fallback.
+    // 2nd call: the direct /rest/v1/anchors query fails with a leaky body.
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => POSTGREST_400 })
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => POSTGREST_400 });
+
+    const result = await handleSearchCredentials({ query: 'diploma' }, CONFIG);
+    const text = result.content[0].text;
+
+    expect(result.isError).toBe(true);
+    expect(text).not.toContain('secret_col');
+    expect(text).not.toContain('42703');
+    expect(JSON.parse(text)).toMatchObject({ code: 'TOOL_ERROR' });
+    // The body is still available to operators via Logpush.
+    expect(err.mock.calls.flat().join(' ')).toContain('secret_col');
+    err.mockRestore();
+  });
+
+  it('nessie_query text fallback does not echo the PostgREST body', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockFetch.mockResolvedValue({ ok: false, status: 400, text: async () => POSTGREST_400 });
+
+    const result = await handleNessieQuery({ query: 'patent filings' }, CONFIG);
+    const text = result.content[0].text;
+
+    expect(result.isError).toBe(true);
+    expect(text).not.toContain('secret_col');
+    expect(JSON.parse(text)).toMatchObject({ code: 'TOOL_ERROR' });
+    err.mockRestore();
+  });
+});

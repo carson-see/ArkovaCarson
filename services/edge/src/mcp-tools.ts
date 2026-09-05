@@ -811,8 +811,13 @@ async function searchCredentialsFallback(
 
     const resp = await supabaseFetch(config, `/rest/v1/anchors?${params}`);
     if (!resp.ok) {
+      // The PostgREST body names columns and can echo row content; it goes to
+      // Logpush only. `safeErrorText` logs it and returns the fixed envelope.
       const body = await resp.text().catch(() => '');
-      return errorResult(`Search failed (fallback): HTTP ${resp.status} — ${body}`);
+      return errorResult(safeErrorText(
+        new Error(`HTTP ${resp.status}: ${body}`),
+        'arkova_search_anchors (lexical fallback)',
+      ));
     }
 
     const rows = await resp.json() as Array<Record<string, unknown>>;
@@ -1427,8 +1432,12 @@ async function nessieTextFallback(
 
     const resp = await supabaseFetch(config, `/rest/v1/public_records?${params}`);
     if (!resp.ok) {
+      // Logpush gets the body; the MCP client gets the scrubbed envelope.
       const body = await resp.text().catch(() => '');
-      return errorResult(`Nessie query failed (text fallback): HTTP ${resp.status} — ${body}`);
+      return errorResult(safeErrorText(
+        new Error(`HTTP ${resp.status}: ${body}`),
+        'nessie_query_text_fallback',
+      ));
     }
 
     const rows = (await resp.json()) as Array<Record<string, unknown>>;
@@ -1535,8 +1544,11 @@ async function submitAnchorViaRpc(
   });
   if (!rpcResponse.ok) {
     if (rpcResponse.status === 404) return undefined;
-    const errorText = await rpcResponse.text();
-    return errorResult(`Anchor submission failed: ${errorText}`);
+    const errorText = await rpcResponse.text().catch(() => '');
+    return errorResult(safeErrorText(
+      new Error(`HTTP ${rpcResponse.status}: ${errorText}`),
+      'arkova_anchor_document (rpc)',
+    ));
   }
 
   const records = await rpcResponse.json() as Array<Record<string, unknown>>;
@@ -1563,8 +1575,11 @@ async function submitAnchorDirect(
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    return errorResult(`Anchor submission failed: ${errorText}`);
+    const errorText = await response.text().catch(() => '');
+    return errorResult(safeErrorText(
+      new Error(`HTTP ${response.status}: ${errorText}`),
+      'arkova_anchor_document (direct)',
+    ));
   }
 
   const records = await response.json() as Array<Record<string, unknown>>;
