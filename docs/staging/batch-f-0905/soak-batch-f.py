@@ -93,7 +93,7 @@ assert len(set(BURST_PATHS)) == 40
 
 # The single-path saturation target. NOT in BURST_PATHS, so its 10/min bucket
 # is untouched when the 11-hit run starts.
-SATURATE_PATH = "populate-confirmation-proofs"
+SATURATE_PATH = "materialize-proof-backcatalog"
 
 
 def now() -> str:
@@ -211,10 +211,12 @@ def probe_2663(base: str, cron_secret: str, out: dict) -> None:
     t0 = time.time()
 
     def fire(p):
-        st, h, raw = http("POST", f"{base}/jobs/{p}", headers=hdrs, timeout=25)
+        st, h, raw = http("POST", f"{base}/jobs/{p}", headers=hdrs, timeout=30)
         return p, st, h.get("Retry-After"), h.get("X-RateLimit-Remaining")
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    # All 40 in flight at once: the limiter counts on arrival, so this IS the
+    # coinciding-Cloud-Scheduler-cadence burst that the old global bucket refused.
+    with ThreadPoolExecutor(max_workers=40) as ex:
         results = list(ex.map(fire, BURST_PATHS))
     elapsed_a = round(time.time() - t0, 2)
     codes = {}
@@ -231,24 +233,32 @@ def probe_2663(base: str, cron_secret: str, out: dict) -> None:
     expect(elapsed_a < 60, f"#2663 burst took {elapsed_a}s — not inside one minute, result is not probative")
     expect(not rate_limited, f"#2663 REGRESSION: 429 on distinct job paths {rate_limited}")
 
-    # --- B. 11 hits on ONE path -> 11th is 429 + Retry-After ----------------
-    saturate = []
+    # --- B. 11 hits on ONE path -> exactly one 429, carrying Retry-After -----
+    # Fired concurrently for the same reason as the burst; completion order is
+    # not deterministic, so the assertion is on the COUNT (10 admitted by the
+    # per-path 10/min bucket, the 11th refused), not on which one lost.
     t0 = time.time()
-    for i in range(11):
-        st, h, _raw = http("POST", f"{base}/jobs/{SATURATE_PATH}", headers=hdrs, timeout=25)
-        saturate.append({"n": i + 1, "status": st, "retry_after": h.get("Retry-After")})
+
+    def hit(i):
+        st, h, _raw = http("POST", f"{base}/jobs/{SATURATE_PATH}", headers=hdrs, timeout=30)
+        return {"n": i + 1, "status": st, "retry_after": h.get("Retry-After")}
+
+    with ThreadPoolExecutor(max_workers=11) as ex:
+        saturate = list(ex.map(hit, range(11)))
     elapsed_b = round(time.time() - t0, 2)
+    refused = [a for a in saturate if a["status"] == 429]
     out["pr2663_saturate"] = {
         "path": SATURATE_PATH,
         "elapsed_seconds": elapsed_b,
         "attempts": saturate,
+        "refused_count": len(refused),
     }
     expect(elapsed_b < 60, f"#2663 saturation took {elapsed_b}s — the 60s window rolled, result is not probative")
-    first10 = [a["status"] for a in saturate[:10]]
-    expect(429 not in first10, f"#2663 per-path budget refused inside its 10/min allowance: {first10}")
-    last = saturate[10]
-    expect(last["status"] == 429, f"#2663 11th hit on one path was {last['status']}, expected 429")
-    expect(last["retry_after"] is not None, "#2663 429 carried no Retry-After header (§1.10)")
+    expect(len(refused) == 1,
+           f"#2663 per-path bucket refused {len(refused)} of 11 hits on one path, expected exactly 1: "
+           f"{[a['status'] for a in saturate]}")
+    expect(refused[0]["retry_after"] is not None,
+           "#2663 the per-path 429 carried no Retry-After header (§1.10)")
 
 
 def probe_2655(rig: Rig, base: str, supa_url: str, service_key: str, tag: str, out: dict) -> None:
@@ -369,8 +379,9 @@ def probe_2658(rig: Rig, base: str, tag: str, hmac_secret: str, out: dict) -> No
 
     # 1. A NEW signup org must get an ENFORCED free-tier cap from the trigger.
     org = rig.one(
-        "INSERT INTO organizations (display_name, domain) VALUES "
-        f"({q('BatchF Signup ' + tag)}, {q('bf-signup-' + rand(8) + '.test')}) RETURNING id"
+        "INSERT INTO organizations (legal_name, display_name, domain) VALUES "
+        f"({q('BatchF Signup ' + tag + ' LLC')}, {q('BatchF Signup ' + tag)}, "
+        f"{q('bf-signup-' + rand(8) + '.test')}) RETURNING id"
     )
     seeded = rig.one(
         f"SELECT anchor_quota, is_test, cap_enforced FROM org_credits WHERE org_id = {q(org['id'])}::uuid"
@@ -413,8 +424,9 @@ def probe_2658(rig: Rig, base: str, tag: str, hmac_secret: str, out: dict) -> No
 
     # 4. The capped org's 11th anchor is refused 402 with a §1.3-clean message.
     capped = rig.one(
-        "INSERT INTO organizations (display_name, domain) VALUES "
-        f"({q('BatchF Capped ' + tag)}, {q('bf-capped-' + rand(8) + '.test')}) RETURNING id"
+        "INSERT INTO organizations (legal_name, display_name, domain) VALUES "
+        f"({q('BatchF Capped ' + tag + ' LLC')}, {q('BatchF Capped ' + tag)}, "
+        f"{q('bf-capped-' + rand(8) + '.test')}) RETURNING id"
     )
     cap_uid = rig.one("SELECT id FROM auth.users ORDER BY created_at LIMIT 1")["id"]
     rig.sql(
@@ -431,7 +443,7 @@ def probe_2658(rig: Rig, base: str, tag: str, hmac_secret: str, out: dict) -> No
     raw_key = "ark_bf_" + rand(40)
     key_hash = hmac.new(hmac_secret.encode(), raw_key.encode(), hashlib.sha256).hexdigest()
     rig.sql(
-        "INSERT INTO api_keys (org_id, user_id, name, key_hash, key_prefix, scopes) VALUES ("
+        "INSERT INTO api_keys (org_id, created_by, name, key_hash, key_prefix, scopes) VALUES ("
         f"{q(capped['id'])}::uuid, {q(cap_uid)}::uuid, {q('batch-f-' + tag)}, {q(key_hash)}, "
         f"{q(raw_key[:12])}, ARRAY['anchor:write','anchor:read'])"
     )
@@ -497,33 +509,48 @@ def triggers_and_isolation(rig: Rig, base: str, cron_secret: str, tag: str,
         state["last_daily_flush_at"] = time.time()
         state.setdefault("daily_flush_observations", []).append(obs)
 
-    # Per-org isolation: org A's anchors must be invisible to org B's API key.
+    # Per-org isolation: the RLS boundary. Org B's authenticated session must
+    # not be able to read org A's anchor rows. Deliberately NOT the public
+    # /verify endpoint — that surface is cross-tenant by design.
     iso = rig.one(
         "SELECT (SELECT count(*)::int FROM anchors a JOIN organizations o ON o.id = a.org_id "
         "        WHERE o.display_name = 'BatchF Isolation A') AS a_rows,"
         " (SELECT count(*)::int FROM anchors a JOIN organizations o ON o.id = a.org_id "
         "        WHERE o.display_name = 'BatchF Isolation B') AS b_rows"
     )
-    key_b = read("isolation-b-api-key.txt")
+    expect(iso["a_rows"] >= 1 and iso["b_rows"] >= 1,
+           f"isolation fixture is missing anchors on one side: {iso}")
     a_public = rig.one(
         "SELECT a.public_id FROM anchors a JOIN organizations o ON o.id = a.org_id "
         "WHERE o.display_name = 'BatchF Isolation A' LIMIT 1"
-    )
-    st, _h, raw = http(
-        "GET", f"{base}/api/v1/anchors/{a_public['public_id']}",
-        headers={"Authorization": "Bearer " + identity_token(), "X-API-Key": key_b},
-    )
-    out["per_org_isolation"] = {"counts": iso, "org_a_anchor": a_public["public_id"],
-                                "read_with_org_b_key_status": st, "body": jbody(raw)}
-    expect(st in (403, 404),
-           f"per-org isolation FAILED: org B's key read org A's anchor with {st}")
+    )["public_id"]
+    supa_url = read("supabase-url.txt")
+    service_key = read("service-role-key.txt")
+    ts, _th, tr = http("POST", f"{supa_url}/auth/v1/token?grant_type=password",
+                       headers={"apikey": service_key},
+                       body={"email": read("isolation-b-user.txt"),
+                             "password": read("isolation-b-password.txt")})
+    expect(ts == 200, f"isolation: org B password grant failed {ts}: {tr[:200]}")
+    jwt = jbody(tr)["access_token"]
+    rs, _rh, rr = http("GET", f"{supa_url}/rest/v1/anchors?select=public_id,org_id",
+                       headers={"apikey": service_key, "Authorization": "Bearer " + jwt})
+    rows = jbody(rr)
+    visible = [r.get("public_id") for r in rows] if isinstance(rows, list) else []
+    out["per_org_isolation"] = {"counts": iso, "org_a_anchor": a_public,
+                                "org_b_session_status": rs,
+                                "org_b_visible_rows": len(visible),
+                                "org_a_anchor_visible_to_org_b": a_public in visible}
+    expect(rs == 200, f"per-org isolation probe could not read as org B: {rs} {rr[:200]}")
+    expect(a_public not in visible,
+           f"per-org isolation FAILED: org B's session read org A's anchor {a_public}")
 
 
-def anti_hollow(rig: Rig, tag: str, out: dict) -> None:
+def anti_hollow(rig: Rig, tag: str, out: dict) -> int:
     """Rows written and re-counted under this cycle's unique tag."""
     rig.sql(
-        "INSERT INTO organizations (display_name, domain) VALUES "
-        f"({q('BatchF Cycle ' + tag)}, {q('bf-cycle-' + tag + '.test')})"
+        "INSERT INTO organizations (legal_name, display_name, domain) VALUES "
+        f"({q('BatchF Cycle ' + tag + ' LLC')}, {q('BatchF Cycle ' + tag)}, "
+        f"{q('bf-cycle-' + tag + '.test')})"
     )
     n = rig.one(f"SELECT count(*)::int AS n FROM organizations WHERE display_name = {q('BatchF Cycle ' + tag)}")
     expect(n["n"] == 1, f"anti-hollow: cycle tag {tag} counted {n['n']} rows, expected 1")
