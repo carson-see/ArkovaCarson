@@ -484,14 +484,26 @@ export function createAdobeSignOAuthRouter(deps: AdobeSignOAuthDeps = {}): Route
         return;
       }
 
+      const { data: previous, error: previousError } = await db
+        .from('org_integrations')
+        .select('id, account_id, token_secret_name, webhook_id, base_uri')
+        .eq('org_id', payload.orgId).eq('provider', Provider).eq('account_id', accountId)
+        .is('revoked_at', null).maybeSingle();
+      if (previousError) {
+        res.redirect(302, appendResult(returnTo, 'adobe_sign_error', 'save_failed'));
+        return;
+      }
+
       const now = deps.now?.() ?? new Date();
       const kms = deps.kms ?? await createDefaultKmsClient();
       const refreshTokenStore = tokenStore();
+      // Each callback owns its secret. Failure cleanup must never delete a
+      // credential still referenced by a previously connected row.
       const tokenSecretName = buildAdobeSignRefreshTokenSecretName({
         projectId: resolveAdobeSignSecretManagerProjectId(deps.env),
         orgId: payload.orgId,
         accountId,
-      });
+      }) + '-' + randomUUID();
       const encrypted = await encryptTokens({
         access_token: tokens.access_token,
         token_type: tokens.token_type,
@@ -606,6 +618,19 @@ export function createAdobeSignOAuthRouter(deps: AdobeSignOAuthDeps = {}): Route
         return;
       }
 
+      // The replacement row now references its own secret and webhook. Only
+      // after that durable write may the superseded resources be removed.
+      if (previous?.webhook_id && previous.webhook_id !== webhookId && previous.base_uri) {
+        await tryDeleteAdobeWebhook({ apiAccessPoint: previous.base_uri,
+          accessToken: tokens.access_token, webhookId: previous.webhook_id,
+          clientDeps: clientDeps(), orgId: payload.orgId });
+      }
+      if (previous?.token_secret_name && previous.token_secret_name !== tokenSecretName) {
+        await refreshTokenStore.delete({ name: previous.token_secret_name }).catch((error: unknown) => {
+          logger.warn({ error, orgId: payload.orgId }, 'Superseded Adobe refresh-token secret cleanup failed');
+        });
+      }
+
       await recordIntegrationEvent(db, {
         orgId: payload.orgId,
         integrationId: integration?.id,
@@ -703,22 +728,16 @@ export function createAdobeSignOAuthRouter(deps: AdobeSignOAuthDeps = {}): Route
       const apiAccessPoint = row.base_uri;
 
       let accessToken: string | null = null;
+      let refreshToken: string | null = null;
       if (tokenSecretName) {
         try {
-          const refreshToken = await refreshTokenStore.get({ name: tokenSecretName });
+          refreshToken = await refreshTokenStore.get({ name: tokenSecretName });
           if (refreshToken) {
             // Only needed when there is something to tear down Adobe-side.
             if (webhookId && apiAccessPoint) {
               const refreshed = await refreshAdobeSignAccessToken({ refreshToken, deps: clientDeps() });
               accessToken = refreshed.access_token;
             }
-            await revokeAdobeSignToken({ token: refreshToken, deps: clientDeps() }).catch((revokeError: unknown) => {
-              logger.warn(
-                { orgId, integrationId: row.id, message: revokeError instanceof Error ? revokeError.message : 'unknown' },
-                'Adobe Sign token revoke failed during disconnect (non-fatal)',
-              );
-              teardownFailures.push('token_revoke');
-            });
           }
         } catch (error) {
           logger.warn(
@@ -746,6 +765,16 @@ export function createAdobeSignOAuthRouter(deps: AdobeSignOAuthDeps = {}): Route
           adobeWebhookRemoved = false;
           teardownFailures.push('webhook_delete_no_token');
         }
+      }
+
+      if (refreshToken) {
+        await revokeAdobeSignToken({ token: refreshToken, deps: clientDeps() }).catch((revokeError: unknown) => {
+          logger.warn(
+            { orgId, integrationId: row.id, message: revokeError instanceof Error ? revokeError.message : 'unknown' },
+            'Adobe Sign token revoke failed during disconnect (non-fatal)',
+          );
+          teardownFailures.push('token_revoke');
+        });
       }
 
       if (tokenSecretName) {

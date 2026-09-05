@@ -46,6 +46,7 @@ vi.mock('../../../utils/db.js', () => ({ db: {} }));
 
 import { createAdobeSignOAuthRouter } from './adobe-sign-oauth.js';
 import { logger } from '../../../utils/logger.js';
+import { buildAdobeSignRefreshTokenSecretName } from '../../../integrations/connectors/adobe-sign-token-store.js';
 
 type RouterDeps = NonNullable<Parameters<typeof createAdobeSignOAuthRouter>[0]>;
 
@@ -110,6 +111,7 @@ interface ConnectDbOptions {
   orgLookupError?: unknown;
   upsertResult?: QueryResult;
   integrationRows?: unknown;
+  previousIntegration?: Record<string, unknown>;
   integrationLookupError?: unknown;
   updateResult?: QueryResult;
 }
@@ -147,7 +149,12 @@ function connectDb(options: ConnectDbOptions = {}) {
       if (options.integrationRows !== undefined) {
         return mockQuery({ data: options.integrationRows, error: null }, capture);
       }
-      return mockQuery(options.upsertResult ?? { data: { id: TEST_INTEGRATION_ID }, error: null }, capture);
+      const chain = mockQuery({ data: options.previousIntegration ?? null, error: null }, capture);
+      chain.upsert = vi.fn((value: unknown, opts?: unknown) => {
+        capture('upsert', value); capture('upsert:options', opts);
+        return mockQuery(options.upsertResult ?? { data: { id: TEST_INTEGRATION_ID }, error: null }, capture);
+      });
+      return chain;
     }
     return mockQuery({ data: null, error: null }, capture);
   });
@@ -682,6 +689,43 @@ describe('GET /adobe-sign/oauth/callback', () => {
       expect(captured(db, 'org_integrations', 'upsert')).toHaveLength(0);
     });
 
+    it('retires previous resources only after the replacement is persisted', async () => {
+      const oldName = 'projects/test-project/secrets/previous-refresh';
+      const db = connectDb({ previousIntegration: { id: TEST_INTEGRATION_ID,
+        token_secret_name: oldName, webhook_id: 'previous-webhook', base_uri: API_ACCESS_POINT } });
+      const state = await mintState(db);
+      const store = refreshTokenStoreDouble();
+      store.delete.mockImplementation(async ({ name }: { name: string }) => {
+        if (name === oldName) expect(captured(db, 'org_integrations', 'upsert')).toHaveLength(1);
+      });
+      const adobe = adobeFetchDouble();
+      const res = await request(createApp(db, { fetchImpl: adobe.impl, refreshTokenStore: store }))
+        .get('/api/v1/integrations/adobe-sign/oauth/callback').query({ state, code: 'auth-code' });
+      expect(res.headers.location).toContain('adobe_sign=connected');
+      expect(store.delete).toHaveBeenCalledWith({ name: oldName });
+      expect(adobe.calls.some(c => c.init?.method === 'DELETE' && c.url.endsWith('/previous-webhook'))).toBe(true);
+      const row = captured(db, 'org_integrations', 'upsert')[0] as Record<string, unknown>;
+      expect(row.token_secret_name).not.toBe(oldName);
+    });
+
+    it('preserves the existing connection secret when a reconnect cannot register its webhook', async () => {
+      const db = connectDb();
+      const state = await mintState(db);
+      const oldName = buildAdobeSignRefreshTokenSecretName({ projectId: 'test-project', orgId: TEST_ORG_ID, accountId: 'adobe-user-1' });
+      const values = new Map([[oldName, 'prior-working-refresh-token']]);
+      const store = {
+        get: vi.fn(async ({ name }: { name: string }) => values.get(name) ?? null),
+        put: vi.fn(async ({ name, value }: { name: string; value: string }) => { values.set(name, value); }),
+        delete: vi.fn(async ({ name }: { name: string }) => { values.delete(name); }),
+      };
+      const adobe = adobeFetchDouble({ webhookCreate: () => new Response('{}', { status: 500 }) });
+      const res = await request(createApp(db, { fetchImpl: adobe.impl, refreshTokenStore: store }))
+        .get('/api/v1/integrations/adobe-sign/oauth/callback').query({ state, code: 'auth-code' });
+      expect(res.headers.location).toContain('webhook_registration_failed');
+      expect(values.get(oldName)).toBe('prior-working-refresh-token');
+      expect(values.size).toBe(1);
+    });
+
     it('cleans up the stranded refresh-token secret when the webhook create fails', async () => {
       const db = connectDb();
       const state = await mintState(db);
@@ -859,6 +903,23 @@ describe('POST /adobe-sign/disconnect', () => {
     expect(deleteIdx).toBeGreaterThan(refreshIdx);
     const del = adobe.calls[deleteIdx];
     expect((del.init?.headers as Record<string, string>).Authorization).toBe('Bearer refreshed-access-token');
+  });
+
+  it('deletes the webhook before revoking the credential needed for deletion', async () => {
+    const db = disconnectDb();
+    let revoked = false;
+    const adobe = adobeFetchDouble({
+      revoke: () => { revoked = true; return new Response('{}', { status: 200 }); },
+      webhookDelete: () => new Response('{}', { status: revoked ? 401 : 200 }),
+    });
+    const res = await request(createApp(db, { fetchImpl: adobe.impl }))
+      .post('/api/v1/integrations/adobe-sign/disconnect')
+      .send({ org_id: TEST_ORG_ID });
+    expect(res.body.adobe_webhook_removed).toBe(true);
+    const deletion = adobe.calls.findIndex(c => c.init?.method === 'DELETE');
+    const revocation = adobe.calls.findIndex(c => c.url.endsWith('/oauth/v2/revoke'));
+    expect(deletion).toBeGreaterThanOrEqual(0);
+    expect(revocation).toBeGreaterThan(deletion);
   });
 
   it('revokes the refresh token at Adobe and deletes the Secret Manager secret', async () => {

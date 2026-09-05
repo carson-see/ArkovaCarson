@@ -12,6 +12,7 @@
  */
 import { z } from 'zod';
 import { boundedErrorDetail } from '../../utils/byte-safety.js';
+import { BodyReadTimeoutError, readTextBounded } from '../../utils/body-read-timeout.js';
 import { verifyHmacSha256Base64 } from './hmac.js';
 
 /**
@@ -279,7 +280,15 @@ function requireAdobeClientId(env: NodeJS.ProcessEnv): string {
 }
 
 async function parseAdobeJson(res: Response): Promise<unknown> {
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await readTextBounded(res, 'Adobe Sign API', ADOBE_SIGN_API_TIMEOUT_MS);
+  } catch (error) {
+    if (error instanceof BodyReadTimeoutError) {
+      throw new AdobeSignApiError('Adobe Sign response body timed out', 408);
+    }
+    throw error;
+  }
   if (!text) return null;
   try {
     return JSON.parse(text);

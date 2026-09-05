@@ -338,3 +338,21 @@ describe('deleteAdobeSignWebhook', () => {
     ).rejects.toThrow(AdobeSignApiError);
   });
 });
+
+
+describe('Adobe response-body deadline', () => {
+  it('settles a token refresh whose headers arrive but body never finishes', async () => {
+    vi.useFakeTimers();
+    try {
+      const response = new Response(new ReadableStream({ start() {} }), { status: 200 });
+      let failure: unknown;
+      void refreshAdobeSignAccessToken({ refreshToken: 'secret-refresh',
+        deps: { env: ENV, fetchImpl: vi.fn(async () => response) as unknown as typeof fetch },
+      }).catch(error => { failure = error; });
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(failure).toBeInstanceOf(AdobeSignApiError);
+      expect((failure as AdobeSignApiError).status).toBe(408);
+      expect(String(failure)).not.toContain('secret-refresh');
+    } finally { vi.useRealTimers(); }
+  });
+});

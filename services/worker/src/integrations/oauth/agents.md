@@ -79,3 +79,7 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 ## PR #2474 release review — 2026-09-05
 
 Environment classification parses the base URI hostname. A vendor string in a path, query, or attacker-controlled domain suffix cannot determine demo/prod. Invalid and non-vendor URIs retain the documented environment fallback.
+
+## 2026-09-05 — Adobe OAuth response body deadlines
+
+The request AbortController was cleared when headers arrived, leaving parseAdobeJson awaiting an unbounded text read. A stalled-token-response regression failed before the fix. All Adobe JSON response paths now use the existing readTextBounded helper with a fixed safe label and ten-second body deadline, translated to AdobeSignApiError 408 without secret-bearing URLs or body content.
