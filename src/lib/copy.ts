@@ -2543,12 +2543,12 @@ export const DEVELOPER_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
-// BETA GATE
+// AUTHENTICATION FORMS
 // =============================================================================
 
 export const AUTH_FORM_LABELS = {
   SIGNUP_TITLE: 'Create your account',
-  SIGNUP_DESCRIPTION: 'Join the closed beta and start securing your documents',
+  SIGNUP_DESCRIPTION: 'Secure and verify your records with Arkova',
   ALREADY_HAVE_ACCOUNT: 'Already have an account?',
   SIGN_IN: 'Sign in',
   CREATE_ACCOUNT: 'Create account',
@@ -2654,14 +2654,6 @@ export const AUTH_CALLBACK_LABELS = {
     'Something went wrong verifying this link. Try again, or request a new link.',
   REQUEST_NEW_LINK: 'Request a new link',
   BACK_TO_SIGN_IN: 'Back to sign in',
-} as const;
-
-export const BETA_GATE_LABELS = {
-  DESCRIPTION: 'Arkova is in closed beta. Enter your invite code to create an account.',
-  CODE_LABEL: 'Invite code',
-  CODE_PLACEHOLDER: 'Enter your invite code',
-  CONTINUE: 'Continue',
-  INVALID_CODE: 'Invalid invite code. Please check your invitation email and try again.',
 } as const;
 
 // =============================================================================
@@ -3189,14 +3181,15 @@ export const THIRD_PARTY_NOTICES_LABELS = {
     'Arkova is built with open-source software. This page lists the third-party components included in our applications and their license terms, including the components with obligations beyond a standard permissive license.',
   COPYLEFT_SECTION_HEADING: 'Components with additional license obligations',
   COPYLEFT_SECTION_INTRO:
-    'These components carry license terms beyond a standard permissive license (MIT/ISC/BSD/Apache-2.0). Each entry states what is used, how, and links the full license text.',
+    'These components carry license terms beyond a standard permissive license (MIT/ISC/BSD/Apache-2.0). Each entry states what is used, how, and includes or links the full license text.',
   PENDING_BADGE: 'In development — not yet shipped',
   UNMODIFIED_LABEL: 'Used unmodified from the published upstream release.',
   SOURCE_LINK_LABEL: 'Unmodified upstream source',
   LICENSE_TEXT_LABEL: 'License text',
+  LICENSE_TEXT_TOGGLE: 'View license text',
   GENERAL_SECTION_HEADING: 'Open-source components',
   GENERAL_SECTION_INTRO:
-    'The following components are used under their respective permissive licenses (MIT, ISC, BSD, Apache-2.0, and similar). This list is generated from our dependency tree.',
+    'The following components are used under their respective permissive licenses (MIT, ISC, BSD, Apache-2.0, and similar). This list is generated from our dependency tree. Where a component publishes a license file, its copyright notice and full license text are included below.',
   GENERATED_AT_PREFIX: 'List generated',
   REPOSITORY_LABEL: 'Repository',
 } as const;

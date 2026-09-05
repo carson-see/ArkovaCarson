@@ -14,6 +14,10 @@
 
 ## Now
 
+### UAT-01 — public signup released (2026-09-05, SCRUM-4031)
+
+[PR #2653](https://github.com/carson-see/ArkovaCarson/pull/2653) merged via Mergify at 16:49:30 UTC (`3954ca54d5d44cc15902756af0a70b44df79c6be`). Vercel production deployment `dpl_7g6sgAjbDxiuWfog58gZTL8krFJu` was independently verified READY with `app.arkova.ai` on that merge at 16:52 UTC. Later main deployments retain the signup change. Logged-out signup passed actual headless Chrome checks at 1280/375: immediate registration controls, retired beta gate absent, keyboard/error/navigation behavior and no horizontal overflow. No account writes. [Production metadata, screenshots and independent CTO verification](https://arkova.atlassian.net/wiki/spaces/A/pages/137134081); [merge-candidate CI passed](https://github.com/carson-see/ArkovaCarson/actions/runs/33976208584) (18,992 tests and 349 E2E cases). API, worker, webhook, MCP and SDK authentication were unchanged by this frontend fix. OAuth branding/mailbox verification and MFA retain their separate UAT ownership. Final close-out is tracked in SCRUM-4031 after the required observation deadline of 17:19:30 UTC.
+
 ### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
 
 **711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
@@ -2203,3 +2207,5 @@ PR #2529 coverage follow-up: the shared-counter failed-response refund is exerci
 PR #2519 documentation verification: both staging guide snapshots retain the added Adobe webhook seed section and all prior sections. The prior two snapshot failures were reproduced locally; qualification remains pending.
 
 _Last refreshed: 2026-09-05 by Codex — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-05 by Codex CTO — claims verified against gcloud/MCP/CI output._
