@@ -169,6 +169,89 @@ export function resolveEdgeMcpBase(env: { STAGING_EDGE_MCP_BASE?: string }): str
   return out;
 }
 
+// ─── secret redaction (pure) ────────────────────────────────────────────
+
+export const REDACTION_PLACEHOLDER = '[REDACTED]';
+
+/** Cap on any single captured body retained in evidence (chars). */
+export const CAPTURE_MAX_SNIPPET = 2048;
+
+/**
+ * Replace every occurrence of every non-empty secret in `text`.
+ *
+ * split/join, NOT `new RegExp(secret, 'g')`: a secret is arbitrary bytes and
+ * routinely contains regex metacharacters (`.` `+` `$` `?` are all legal
+ * base64url / JWT / API-key material), which the RegExp form would interpret
+ * as a pattern — over-redacting some strings and, worse, silently failing to
+ * redact the literal secret. Longest-first so an overlapping pair (a token and
+ * a shorter prefix of it) cannot leave the longer one half-exposed.
+ */
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+  const ordered = [...new Set(secrets)].filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const secret of ordered) out = out.split(secret).join(REDACTION_PLACEHOLDER);
+  return out;
+}
+
+/**
+ * Process-wide registry of the credential material this run holds: the rig API
+ * key, the service-role key, the GoTrue password, and every access token
+ * obtained during the run. Registered at the point each value is read, so a
+ * later log line or captured error can be scrubbed without threading the
+ * values through every call site.
+ */
+const knownSecrets = new Set<string>();
+
+export function registerSecret(value: string | undefined | null): void {
+  if (typeof value === 'string' && value.length > 0) knownSecrets.add(value);
+}
+
+/** Test seam — forget every registered secret. */
+export function clearRegisteredSecrets(): void {
+  knownSecrets.clear();
+}
+
+export function currentSecrets(): string[] {
+  return [...knownSecrets];
+}
+
+/** Redact every REGISTERED secret out of an arbitrary string. */
+export function scrubSecrets(text: string): string {
+  return redactSecrets(text, [...knownSecrets]);
+}
+
+/**
+ * Normalize one value on its way into `capturedBody`: scrub registered
+ * secrets, then bound its size. Evidence exists to prove a branch was reached,
+ * not to archive a megabyte of upstream error text.
+ */
+export function captureField(body: JsonBody, maxChars = CAPTURE_MAX_SNIPPET): JsonBody {
+  if (typeof body === 'string') {
+    const scrubbed = scrubSecrets(body);
+    return scrubbed.length > maxChars ? `${scrubbed.slice(0, maxChars)}…[truncated]` : scrubbed;
+  }
+  if (body === null || body === undefined) return body ?? null;
+  const serialized = scrubSecrets(JSON.stringify(body));
+  if (serialized.length > maxChars) return `${serialized.slice(0, maxChars)}…[truncated]`;
+  return JSON.parse(serialized) as JsonBody;
+}
+
+/**
+ * Last line of defence: one pass over the SERIALIZED evidence document just
+ * before it is written, so a secret that reached `capturedBody` by a path that
+ * skipped `captureField` (an upstream error body echoing the key, say) still
+ * cannot land on disk. Both the raw and the JSON-escaped form of each secret
+ * are redacted, since `JSON.stringify` escapes quotes and backslashes and the
+ * raw bytes would otherwise not appear literally in the serialized form.
+ */
+export function redactEvidenceDocument<T>(doc: T, secrets: readonly string[]): T {
+  const forms = secrets.flatMap((secret) => {
+    const jsonEscaped = JSON.stringify(secret).slice(1, -1);
+    return jsonEscaped === secret ? [secret] : [secret, jsonEscaped];
+  });
+  return JSON.parse(redactSecrets(JSON.stringify(doc), forms)) as T;
+}
+
 // ─── JSON-RPC helpers (pure) ────────────────────────────────────────────
 
 export interface JsonRpcRequestBody {
@@ -898,9 +981,10 @@ async function runHostedBearerSection(ctx: {
     accessToken = await fetchGoTrueAccessToken(supabaseUrl, anonKey, email, password);
   } catch (err) {
     ctx.evidence.bearerSkipped = 'gotrue-auth-failed';
-    ctx.log(`bearer-jwt: GoTrue password grant failed (non-fatal, section skipped): ${err instanceof Error ? err.message : String(err)}`);
+    ctx.log(scrubSecrets(`bearer-jwt: GoTrue password grant failed: ${err instanceof Error ? err.message : String(err)}`));
     return;
   }
+  registerSecret(accessToken);
   ctx.evidence.bearerAlg = decodeJwtHeaderAlg(accessToken);
   ctx.evidence.bearerSkipped = null;
   ctx.log(`bearer-jwt: obtained GoTrue session, header alg=${ctx.evidence.bearerAlg}`);
@@ -941,12 +1025,14 @@ async function runHostedBearerSection(ctx: {
   });
 
   const tamperedReq = buildJsonRpcRequest('tools/list', undefined, 502);
+  const tamperedToken = tamperJwtSignature(accessToken);
+  registerSecret(tamperedToken);
   await callHosted({
     stats: ctx.stats,
     label: 'hosted:bearer:tampered-signature',
     url: mcpUrl,
     endpoint: '/mcp',
-    headers: { ...bearerHeaders, Authorization: `Bearer ${tamperJwtSignature(accessToken)}` },
+    headers: { ...bearerHeaders, Authorization: `Bearer ${tamperedToken}` },
     body: JSON.stringify(tamperedReq),
     okStatuses: [401],
   });
@@ -1018,7 +1104,7 @@ async function runHostedCycle(ctx: {
   try {
     before = await fetchAuditCount(ctx.supabaseUrl, ctx.supabaseKey, 'MCP_TOOL_CALL');
   } catch (err) {
-    ctx.log(`audit-count (before) failed: ${err instanceof Error ? err.message : String(err)}`);
+    ctx.log(scrubSecrets(`audit-count (before) failed: ${err instanceof Error ? err.message : String(err)}`));
   }
 
   // A3 — tools/call for every READ tool
@@ -1041,7 +1127,7 @@ async function runHostedCycle(ctx: {
   try {
     after = await fetchAuditCount(ctx.supabaseUrl, ctx.supabaseKey, 'MCP_TOOL_CALL');
   } catch (err) {
-    ctx.log(`audit-count (after) failed: ${err instanceof Error ? err.message : String(err)}`);
+    ctx.log(scrubSecrets(`audit-count (after) failed: ${err instanceof Error ? err.message : String(err)}`));
   }
   ctx.evidence.auditRowsBefore = before;
   ctx.evidence.auditRowsAfter = after;
@@ -1391,7 +1477,7 @@ async function runTsSdkSmoke(ctx: {
           status: 0,
           latencyMs: Date.now() - start,
           expected: false,
-          capturedBody: String(err instanceof Error ? err.message : err),
+          capturedBody: captureField(String(err instanceof Error ? err.message : err)),
         });
       }
       ctx.log(`${label} done`);
@@ -1442,7 +1528,7 @@ export async function runPySdkSmoke(ctx: {
       status: 0,
       latencyMs: Date.now() - start,
       expected: false,
-      capturedBody: String(err instanceof Error ? err.message : err),
+      capturedBody: captureField(String(err instanceof Error ? err.message : err)),
     });
   } finally {
     await proxy.close();
@@ -1502,6 +1588,12 @@ async function main(): Promise<void> {
   const apiKey = requireEnv('STAGING_API_KEY', 'mcp-sdk-surface driver');
   const supabaseUrl = requireEnv('STAGING_SUPABASE_URL', 'mcp-sdk-surface driver (audit control)');
   const supabaseKey = requireEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY', 'mcp-sdk-surface driver (audit control)');
+  // Everything this run holds that must never reach a log line or an evidence
+  // file. Access tokens are registered as they are obtained (§D).
+  registerSecret(apiKey);
+  registerSecret(supabaseKey);
+  registerSecret(process.env.STAGING_JWT_PASSWORD);
+  registerSecret(process.env.STAGING_GCP_IDENTITY?.trim());
   const fx: HostedFixtures = {
     publicId: requireEnv('STAGING_FIXTURE_PUBLIC_ID', 'mcp-sdk-surface driver'),
     fingerprint: requireEnv('STAGING_FIXTURE_FINGERPRINT', 'mcp-sdk-surface driver'),
@@ -1565,7 +1657,7 @@ async function main(): Promise<void> {
 
   const base: DriverEvidence = summarizeEvidence(stats, { ...MCP_SDK_DRIVER, apiBase });
   const enriched = { ...base, mcp: evidence, edgeMcpBase: edgeBase, cycles: cycle };
-  writeEvidenceFile(args.evidenceOut, enriched);
+  writeEvidenceFile(args.evidenceOut, redactEvidenceDocument(enriched, currentSecrets()));
   if (!base.allExpected) process.exitCode = 1;
   log(`done: ${base.totalRequests} requests across ${cycle} cycle(s), allExpected=${base.allExpected}`);
   for (const [label, s] of Object.entries(base.byLabel)) {

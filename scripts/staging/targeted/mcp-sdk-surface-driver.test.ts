@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { newDriverStats, recordOutcome, summarizeEvidence } from './driver-core';
 
 import {
   MCP_SDK_DRIVER,
@@ -24,6 +26,14 @@ import {
   buildAuditCountUrl,
   parseCountFromContentRange,
   parseMcpSdkDriverArgs,
+  redactSecrets,
+  redactEvidenceDocument,
+  registerSecret,
+  clearRegisteredSecrets,
+  currentSecrets,
+  scrubSecrets,
+  captureField,
+  REDACTION_PLACEHOLDER,
   HOSTED_REQUIRED_TOOLS,
   HOSTED_NOTE_TOOLS,
   STDIO_REQUIRED_TOOLS,
@@ -474,5 +484,120 @@ describe('mcp-sdk-surface-driver: parseMcpSdkDriverArgs', () => {
 
   it('parses --evidence-out', () => {
     expect(parseMcpSdkDriverArgs(['--evidence-out', 'docs/staging/x.json']).evidenceOut).toBe('docs/staging/x.json');
+  });
+});
+
+
+// Obviously-fake credential material: an `ak_test_` prefix plus 64 zeros can
+// never be a live Arkova key (real keys are `ak_live_`/`ak_test_` + random hex).
+const FAKE_API_KEY = `ak_test_${'0'.repeat(64)}`;
+const FAKE_SERVICE_ROLE = `eyJhbGciOiJIUzI1NiJ9.${'0'.repeat(40)}.${'0'.repeat(43)}`;
+
+describe('mcp-sdk-surface-driver: redactSecrets', () => {
+  it('replaces every occurrence of a secret', () => {
+    const text = `key=${FAKE_API_KEY} again=${FAKE_API_KEY}`;
+    const out = redactSecrets(text, [FAKE_API_KEY]);
+    expect(out).toBe(`key=${REDACTION_PLACEHOLDER} again=${REDACTION_PLACEHOLDER}`);
+    expect(out).not.toContain(FAKE_API_KEY);
+  });
+
+  it('is a no-op for an empty secret list', () => {
+    expect(redactSecrets('nothing to hide', [])).toBe('nothing to hide');
+  });
+
+  it('ignores empty-string entries rather than replacing between every character', () => {
+    expect(redactSecrets('abc', ['', FAKE_API_KEY])).toBe('abc');
+  });
+
+  it('treats regex metacharacters literally (a secret is bytes, not a pattern)', () => {
+    const metachar = 'a.b*c+d(e)f[g]h$i^j|k?';
+    expect(redactSecrets(`x ${metachar} y`, [metachar])).toBe(`x ${REDACTION_PLACEHOLDER} y`);
+    // The pattern must NOT match a string that only the REGEX form would match.
+    expect(redactSecrets('aXbcccdef g h$i^j|k?', [metachar])).toBe('aXbcccdef g h$i^j|k?');
+  });
+
+  it('redacts longest-first so an overlapping prefix cannot leave the longer secret partly exposed', () => {
+    const prefix = 'ak_test_0000';
+    const out = redactSecrets(`full=${FAKE_API_KEY}`, [prefix, FAKE_API_KEY]);
+    expect(out).toBe(`full=${REDACTION_PLACEHOLDER}`);
+    expect(out).not.toContain('0000');
+  });
+
+  it('handles a secret that is a substring of another occurrence in the same text', () => {
+    const out = redactSecrets(`${FAKE_API_KEY} and ak_test_0000`, [FAKE_API_KEY, 'ak_test_0000']);
+    expect(out).toBe(`${REDACTION_PLACEHOLDER} and ${REDACTION_PLACEHOLDER}`);
+  });
+});
+
+describe('mcp-sdk-surface-driver: secret registry', () => {
+  afterEach(() => clearRegisteredSecrets());
+
+  it('registers non-empty values only and scrubs them out of arbitrary text', () => {
+    registerSecret(FAKE_API_KEY);
+    registerSecret(undefined);
+    registerSecret('');
+    expect(currentSecrets()).toEqual([FAKE_API_KEY]);
+    expect(scrubSecrets(`boom: ${FAKE_API_KEY}`)).toBe(`boom: ${REDACTION_PLACEHOLDER}`);
+  });
+
+  it('scrubs nothing when no secret has been registered', () => {
+    expect(scrubSecrets(`boom: ${FAKE_API_KEY}`)).toBe(`boom: ${FAKE_API_KEY}`);
+  });
+});
+
+describe('mcp-sdk-surface-driver: evidence never carries a registered secret', () => {
+  afterEach(() => clearRegisteredSecrets());
+
+  it('a simulated child failure whose message contains the API key yields evidence with ZERO occurrences', () => {
+    registerSecret(FAKE_API_KEY);
+    registerSecret(FAKE_SERVICE_ROLE);
+    const stats = newDriverStats();
+    // The exact shape the SDK-smoke catch blocks record: a child-process error
+    // whose message echoes the argv/env it was handed.
+    const err = new Error(
+      `Command failed: python3 -c "..." (ARKOVA_SMOKE_API_KEY=${FAKE_API_KEY}) ` +
+        `upstream said {"apikey":"${FAKE_SERVICE_ROLE}"}`,
+    );
+    recordOutcome(stats, {
+      label: 'sdk:py:verify',
+      endpoint: 'sdk:py:verify',
+      method: 'SDK',
+      status: 0,
+      latencyMs: 12,
+      expected: false,
+      capturedBody: captureField(String(err.message)),
+    });
+    const evidence = summarizeEvidence(stats, { driver: 'mcp-sdk-surface', pr: '#2589', apiBase: 'https://rig.test' });
+    const serialized = JSON.stringify(redactEvidenceDocument(evidence, currentSecrets()));
+    expect(serialized).not.toContain(FAKE_API_KEY);
+    expect(serialized).not.toContain(FAKE_SERVICE_ROLE);
+    expect(serialized).toContain(REDACTION_PLACEHOLDER);
+  });
+
+  it('redactEvidenceDocument is a belt-and-braces net for a body that bypassed captureField', () => {
+    const stats = newDriverStats();
+    recordOutcome(stats, {
+      label: 'hosted:neg:bogus-key',
+      endpoint: '/mcp',
+      method: 'POST',
+      status: 500,
+      latencyMs: 3,
+      // Not routed through captureField — an upstream error body that echoed the key.
+      expected: false,
+      capturedBody: { error: 'upstream', detail: `X-API-Key: ${FAKE_API_KEY}` },
+    });
+    const evidence = summarizeEvidence(stats, { driver: 'mcp-sdk-surface', pr: '#2589', apiBase: 'https://rig.test' });
+    expect(JSON.stringify(evidence)).toContain(FAKE_API_KEY);
+    const cleaned = redactEvidenceDocument(evidence, [FAKE_API_KEY]);
+    expect(JSON.stringify(cleaned)).not.toContain(FAKE_API_KEY);
+    // Still a well-formed evidence document, not a mangled string.
+    expect(cleaned.capturedBodies[0].label).toBe('hosted:neg:bogus-key');
+  });
+
+  it('redacts a secret whose JSON-escaped form differs from its raw form', () => {
+    const quoted = 'pw"with\\escapes';
+    const doc = { note: `login failed for ${quoted}` };
+    const cleaned = redactEvidenceDocument(doc, [quoted]);
+    expect(JSON.stringify(cleaned)).not.toContain('with');
   });
 });
