@@ -2198,4 +2198,6 @@ Held for current-base T3 verification. 0424 alone permits a recent legacy nonce 
 
 The Adobe challenge now reads the existing validated worker configuration. The real main-target CI run exposed the direct environment read; targeted regressions cover startup configuration authority and fail-closed behavior. This is source preparation; the combined staging build and qualification remain pending. CI evidence: https://github.com/carson-see/ArkovaCarson/actions/runs/33976897351 .
 
+PR #2529 coverage follow-up: the shared-counter failed-response refund is exercised through success, refund, retry and refusal. Focused rate-limiter function coverage rose from 76.92% to 84.61% against the unchanged 80% requirement. The combined Adobe staging window has not started.
+
 _Last refreshed: 2026-09-05 by Codex — claims verified against gcloud/MCP/CI output._
