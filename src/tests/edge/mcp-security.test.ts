@@ -55,6 +55,7 @@ import {
   shouldFailClosedWhenSigningKeyMissing,
   validateBearer,
   withTelemetry,
+  buildApiOverviewText,
   type RequestTelemetryContext,
 } from '../../../services/edge/src/mcp-server';
 import { unwrapSignedEntry } from '../../../services/edge/src/mcp-origin-allowlist';
@@ -819,5 +820,41 @@ describe('mcp-server — withTelemetry scrubs a THROWN tool error (review 2026-0
     await expect(ok({ public_id: 'ARK-DEG-ABC123' })).resolves.toEqual({
       content: [{ type: 'text', text: '{"ok":true}' }],
     });
+  });
+});
+
+describe('mcp-server — api-overview resource is derived, not hand-typed (review 2026-09-05)', () => {
+  // The listing used to be hand-typed literals. `arkova_verify_batch` was
+  // registered as a tool but missing from the overview, so an agent reading
+  // the resource never learned it existed.
+  it('lists every TOOL_DEFINITIONS name', () => {
+    const text = buildApiOverviewText(true);
+    for (const tool of TOOL_DEFINITIONS) {
+      expect(text).toContain(tool.name);
+    }
+    expect(text).toContain('arkova_verify_batch');
+  });
+
+  it('keeps the anchor_document enabled/disabled conditional', () => {
+    expect(buildApiOverviewText(true)).toContain(
+      'Submit a document fingerprint for anchoring to the public ledger.',
+    );
+    const disabled = buildApiOverviewText(false);
+    expect(disabled).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
+    expect(disabled).toContain('arkova_anchor_document');
+  });
+
+  it('keeps nessie_query marked DISABLED and search_anchors described lexically', () => {
+    const text = buildApiOverviewText(true);
+    expect(text).toContain('DISABLED');
+    expect(text).not.toContain('semantic (vector) similarity matching');
+  });
+
+  it('pads every tool name to one column', () => {
+    const text = buildApiOverviewText(true);
+    const toolLines = text.split('\n').filter((line) => /^ {2}arkova_|^ {2}nessie_/.test(line));
+    expect(toolLines).toHaveLength(TOOL_DEFINITIONS.length);
+    const separatorColumns = new Set(toolLines.map((line) => line.indexOf('—')));
+    expect(separatorColumns.size).toBe(1);
   });
 });

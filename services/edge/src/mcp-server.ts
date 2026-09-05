@@ -100,6 +100,60 @@ const SERVER_VERSION = '1.0.0';
 /** Map tool name → description from the single source of truth */
 const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
 
+/**
+ * First sentence of a tool description, for the one-line api-overview listing.
+ *
+ * A very short lead sentence carries its follow-on so the line still says
+ * something — `nessie_query` leads with "DISABLED." and the disabled contract
+ * is the part an agent has to read.
+ */
+function firstSentence(description: string): string {
+  const sentences = description.match(/[^.!?]+[.!?]+/g);
+  if (!sentences || sentences.length === 0) return description.trim();
+  let out = sentences[0].trim();
+  for (let i = 1; i < sentences.length && out.length < 40; i++) {
+    out = `${out} ${sentences[i].trim()}`;
+  }
+  return out;
+}
+
+/**
+ * Render the `arkova://api/overview` resource text.
+ *
+ * DERIVED from `TOOL_DEFINITIONS` — do not hand-type the listing. It used to
+ * be a literal block, which drifted: `arkova_verify_batch` was registered as a
+ * tool but absent from the overview, so an agent reading the resource never
+ * learned it existed, and the name column was padded inconsistently. Deriving
+ * it also means the BUG-026 class (a published claim disagreeing with the
+ * canonical description) cannot reappear on this surface.
+ */
+export function buildApiOverviewText(anchorDocumentEnabled: boolean): string {
+  const width = Math.max(...TOOL_DEFINITIONS.map((t) => t.name.length));
+  const toolLines = TOOL_DEFINITIONS.map((t) => {
+    const summary = t.name === 'arkova_anchor_document' && !anchorDocumentEnabled
+      ? 'Disabled for read-only launch unless MCP_ENABLE_ANCHOR_DOCUMENT=true and caller has write:anchors or anchor:write'
+      : firstSentence(t.description);
+    return `  ${t.name.padEnd(width)} — ${summary}`;
+  });
+
+  return [
+    'Arkova Verification API — Overview',
+    '',
+    'Arkova anchors document fingerprints (SHA-256 hashes) to the public ledger',
+    'for tamper-proof verification. Documents never leave the user\'s device —',
+    'only their cryptographic fingerprints are submitted.',
+    '',
+    'Available tools:',
+    ...toolLines,
+    '',
+    'Authentication: API key via X-API-Key header, or a Supabase session JWT via',
+    'Authorization: Bearer. OAuth authorization-code flow is not supported.',
+    'Get your API key at https://app.arkova.ai/settings/api-keys',
+    '',
+    'Rate limits: 1,000 req/min per API key. Batch: 10 req/min.',
+  ].join('\n');
+}
+
 // Leaf validators live in mcp-tool-schemas.ts; the registry is the
 // canonical per-tool boundary validator. `withTelemetry` runs the
 // registry's strict validator before any handler fires.
@@ -569,41 +623,10 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
       contents: [{
         uri: 'arkova://api/overview',
         mimeType: 'text/plain',
-        text: [
-          'Arkova Verification API — Overview',
-          '',
-          'Arkova anchors document fingerprints (SHA-256 hashes) to the public ledger',
-          'for tamper-proof verification. Documents never leave the user\'s device —',
-          'only their cryptographic fingerprints are submitted.',
-          '',
-          'Available tools:',
-          '  arkova_search        — Agent-friendly v2 search across orgs, records, fingerprints, and documents',
-          '  arkova_verify        — Verify a document fingerprint by SHA-256 hash',
-          '  arkova_list_orgs            — List organizations available to the authenticated caller',
-          '  arkova_get_anchor           — Fetch redacted public anchor metadata by Arkova public ID',
-          '  arkova_get_organization     — Fetch organization details by public ID',
-          '  arkova_get_record           — Fetch record details by Arkova public ID',
-          '  arkova_get_fingerprint      — Fetch record details by SHA-256 fingerprint',
-          '  arkova_get_document         — Fetch document details by Arkova public ID',
-          '  arkova_verify_anchor    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
-          // BUG-026 / BUG-008 / R-1: this listing is a published claim. Keep it
-          // matched to what the tools actually do — arkova_search_anchors is served
-          // lexically, and nessie_query is disabled.
-          '  arkova_search_anchors   — Keyword (substring) search across the anchored records corpus',
-          '  arkova_oracle_batch_verify  — Batch-verify up to 25 credentials with query-envelope metadata',
-          '  nessie_query         — DISABLED: returns an explicit nessie_disabled error, never results',
-          ...(telemetry.anchorDocumentEnabled
-            ? ['  arkova_anchor_document      — Submit a SHA-256 fingerprint for batch anchoring']
-            : ['  arkova_anchor_document      — Disabled for read-only launch unless MCP_ENABLE_ANCHOR_DOCUMENT=true and caller has write:anchors or anchor:write']),
-          '  arkova_verify_document      — Check if a document fingerprint has been anchored',
-          '  arkova_list_agents          — List registered AI agents for the organization',
-          '',
-          'Authentication: API key via X-API-Key header, or a Supabase session JWT via',
-          'Authorization: Bearer. OAuth authorization-code flow is not supported.',
-          'Get your API key at https://app.arkova.ai/settings/api-keys',
-          '',
-          'Rate limits: 1,000 req/min per API key. Batch: 10 req/min.',
-        ].join('\n'),
+        // DERIVED from TOOL_DEFINITIONS — see buildApiOverviewText. Do not
+        // re-inline the tool listing here: the literal version drifted from
+        // the registered tool set (arkova_verify_batch was missing entirely).
+        text: buildApiOverviewText(telemetry.anchorDocumentEnabled),
       }],
     }),
   );
