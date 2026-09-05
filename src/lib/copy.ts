@@ -2527,12 +2527,12 @@ export const DEVELOPER_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
-// BETA GATE
+// AUTHENTICATION FORMS
 // =============================================================================
 
 export const AUTH_FORM_LABELS = {
   SIGNUP_TITLE: 'Create your account',
-  SIGNUP_DESCRIPTION: 'Join the closed beta and start securing your documents',
+  SIGNUP_DESCRIPTION: 'Secure and verify your records with Arkova',
   ALREADY_HAVE_ACCOUNT: 'Already have an account?',
   SIGN_IN: 'Sign in',
   CREATE_ACCOUNT: 'Create account',
@@ -2638,14 +2638,6 @@ export const AUTH_CALLBACK_LABELS = {
     'Something went wrong verifying this link. Try again, or request a new link.',
   REQUEST_NEW_LINK: 'Request a new link',
   BACK_TO_SIGN_IN: 'Back to sign in',
-} as const;
-
-export const BETA_GATE_LABELS = {
-  DESCRIPTION: 'Arkova is in closed beta. Enter your invite code to create an account.',
-  CODE_LABEL: 'Invite code',
-  CODE_PLACEHOLDER: 'Enter your invite code',
-  CONTINUE: 'Continue',
-  INVALID_CODE: 'Invalid invite code. Please check your invitation email and try again.',
 } as const;
 
 // =============================================================================
