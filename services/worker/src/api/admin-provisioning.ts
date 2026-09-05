@@ -457,11 +457,11 @@ async function generateSetPasswordLink(
 ): Promise<string | null> {
   const { db, logger } = deps;
   try {
-    const { buildLoginUrl } = await import('../lib/urls.js');
+    const { buildSetPasswordUrl } = await import('../lib/urls.js');
     const { data, error } = await db.auth.admin.generateLink({
       type: 'recovery',
       email,
-      options: { redirectTo: buildLoginUrl() },
+      options: { redirectTo: buildSetPasswordUrl() },
     });
     const link = (data as { properties?: { action_link?: string } } | null)?.properties?.action_link;
     if (error || !link) {

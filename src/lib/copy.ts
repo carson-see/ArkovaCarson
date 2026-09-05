@@ -4513,3 +4513,20 @@ export const ADMIN_PROVISION_USER_LABELS = {
   EMAIL_FAILED_WARNING:
     'The email could not be sent. Copy the sign-in link below and deliver it yourself — it is shown once.',
 } as const;
+
+/** SCRUM-3873: recipient password creation after a recovery link. */
+export const SET_PASSWORD_LABELS = {
+  TITLE: 'Choose your password',
+  DESCRIPTION: 'Set a password to keep access to your Arkova account.',
+  CHECKING: 'Checking your sign-in link…',
+  MISSING: 'This sign-in link is missing or expired. Please request a new link from your administrator.',
+  PASSWORD: 'New password',
+  CONFIRMATION: 'Confirm password',
+  SAVE: 'Save password',
+  SAVING: 'Saving…',
+  INVALID: 'Choose a password between 8 and 128 characters.',
+  MISMATCH: 'The passwords do not match.',
+  FAILED: 'Unable to save your password. Try again or request a new link.',
+  SAVED: 'Your password is ready. Use it the next time you sign in.',
+  CONTINUE: 'Continue',
+} as const;

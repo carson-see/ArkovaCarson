@@ -10,6 +10,7 @@ import type { RouteDestination } from '@/hooks/useProfile';
 export const ROUTES = {
   // Public routes (no auth required)
   LOGIN: '/login',
+  SET_PASSWORD: '/set-password',
   SIGNUP: '/signup',
   VERIFY: '/verify/:publicId',
   VERIFY_FORM: '/verify',

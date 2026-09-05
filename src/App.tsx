@@ -34,6 +34,7 @@ import { AuthLinkErrorRedirect } from '@/components/auth/AuthLinkErrorRedirect';
 import { shouldDismissToastsForLocationChange, type ToastLocation } from '@/lib/toastNavigation';
 
 // ── Lazy-loaded page components (AUDIT-13: route-level code splitting) ──────
+const SetPasswordPage = lazyWithRetry(() => import('@/pages/SetPasswordPage').then(m => ({ default: m.SetPasswordPage })));
 const LoginPage = lazyWithRetry(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
 const SignUpPage = lazyWithRetry(() => import('@/pages/SignUpPage').then(m => ({ default: m.SignUpPage })));
 const DashboardPage = lazyWithRetry(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -227,6 +228,7 @@ export function App() {
         ) : (
         <Routes>
           {/* Public routes — no auth required */}
+          <Route path={ROUTES.SET_PASSWORD} element={<SetPasswordPage />} />
           <Route path={ROUTES.LOGIN} element={<PublicOnly><LoginPage /></PublicOnly>} />
           <Route path={ROUTES.SIGNUP} element={<PublicOnly><SignUpPage /></PublicOnly>} />
           <Route path={ROUTES.VERIFY} element={<RouteErrorBoundary section="PublicVerify"><PublicVerifyPage /></RouteErrorBoundary>} />

@@ -446,13 +446,18 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const result = await runCycle({
+  let result: CycleResult;
+  try {
+    result = await runCycle({
     targetUrl: args.targetUrl!,
     bearerToken: args.bearerToken!,
     nonAdminToken: args.nonAdminToken!,
     collisionDomain: args.collisionDomain!,
     supabaseUrl: args.supabaseUrl!, serviceRoleKey: args.serviceRoleKey!, anonKey: args.anonKey!, expectedHead: args.expectedHead!,
-  });
+    });
+  } catch {
+    result = { counts: { checks_total: 1, checks_passed: 0 }, checks: { cycle_completed: 'FAIL unexpected probe exception' }, ok: false };
+  }
   const row = buildRow('live', result, args.targetUrl);
   if (args.evidenceJsonl) appendFileSync(args.evidenceJsonl, `${JSON.stringify(row)}\n`);
   console.log('Provisioning probe complete:', row.status === 'pass' ? 'pass' : 'fail');

@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockSendEmail } = vi.hoisted(() => ({ mockSendEmail: vi.fn() }));
 vi.mock('../email/sender.js', () => ({ sendEmail: mockSendEmail }));
-vi.mock('../lib/urls.js', () => ({ buildLoginUrl: () => 'https://app.arkova.test/login' }));
+vi.mock('../lib/urls.js', () => ({ buildSetPasswordUrl: () => 'https://app.arkova.test/set-password' }));
 
 import {
   createOrganization,
