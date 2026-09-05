@@ -613,8 +613,8 @@ export function SecureDocumentDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className={step === 'bulk' || step === 'mixed-batch' ? 'max-w-3xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg max-h-[90vh] overflow-y-auto'}>
-        <DialogHeader>
+      <DialogContent className={`w-[calc(100%_-_2rem)] max-h-[calc(100dvh_-_2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto overscroll-contain [overflow-wrap:anywhere] p-4 sm:p-6 ${step === 'bulk' || step === 'mixed-batch' ? 'max-w-3xl' : 'max-w-lg'}`}>
+        <DialogHeader className="min-w-0 pr-6">
           {/* SCRUM-1755 — title is stable across single + bulk paths. The user
               clicked "Secure Document" and is securing one or many; the system
               detects the shape, no separate "Bulk Upload" affordance. */}
@@ -627,7 +627,7 @@ export function SecureDocumentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="py-4">
+        <div className="min-w-0 py-4">
           {step === 'upload' && (
             <FileUpload
               onFileSelect={handleFileSelect}
@@ -1087,7 +1087,7 @@ export function SecureDocumentDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="min-w-0 gap-2">
           {step === 'upload' && (
             <>
               <Button variant="outline" onClick={handleClose}>
@@ -1195,7 +1195,7 @@ export function SecureDocumentDialog({
           )}
 
           {step === 'success' && (
-            <div className="flex w-full gap-2">
+            <div className="flex w-full flex-col gap-2 sm:flex-row">
               <Button
                 variant="outline"
                 onClick={handleCopyLink}

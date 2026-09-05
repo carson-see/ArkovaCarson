@@ -1,5 +1,9 @@
 # agents.md — components/anchor
 
+## SCRUM-4448 — securing dialog layout
+
+`SecureDocumentDialog` keeps a 16px viewport gutter and a dynamic viewport height limit. Its single grid column and body can shrink below intrinsic text widths; long references wrap, and the whole dialog scrolls vertically. Mobile success actions stack. `TemplateSelector` cards explicitly shrink within the picker. Keep these constraints local to the securing flow; global dialog primitives are unchanged. Real browser geometry and actionability are covered by `e2e/secure-dialog-layout.spec.ts` across desktop, phone and reduced heights. No securing state, request, capability or authorization changes.
+
 _Last updated: 2026-08-29 (DocuSign record deep links, bilateral rollout, frontend-targeted T2)_
 
 ## 2026-08-29 — DocuSign record deep links in `AssetDetailView.tsx` (bilateral rollout, frontend-targeted T2)

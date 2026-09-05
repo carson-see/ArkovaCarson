@@ -14,6 +14,10 @@
 
 ## Now
 
+### UAT-10 — securing dialog layout (SCRUM-4448, September 5)
+
+The review candidate constrains the shared securing dialog to the viewport, wraps long identifiers, and stacks mobile actions and spreadsheet mapping controls. Deterministic headless tests cover the real rendering across desktop/mobile and reduced heights; boundary mocks make this client-layout evidence only. [Story and canonical test plan](https://arkova.atlassian.net/wiki/spaces/A/pages/137298648). Release remains pending independent review, CI and frontend-only T2 evidence approval. No production or shared staging state changed.
+
 ### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
 
 **711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
@@ -2187,3 +2191,5 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against the Supabase Management API project list/config, `scripts/ci/staging-honesty-preflight.ts` artifacts, psql ledger queries, and the harness logs under `~/arkova-soak/mfa-3167/`._
+
+_Last refreshed: 2026-09-05 by Codex UAT-10 — this entry verified against local tests and the linked Confluence evidence; no production claim._
