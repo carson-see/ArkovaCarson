@@ -180,3 +180,7 @@ vi.mock('../config.js', () => ({
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
+
+## 2026-09-05 — PR #2547 transitive dependency audit
+
+The grouped worker update still resolved vulnerable brace-expansion 5.0.6/2.1.0 and protobufjs 7.6.4. Targeted lockfile resolution updated only these three nodes to 5.0.9/2.1.4 and 7.6.6; npm audit then reported zero vulnerabilities. Audit evidence: GHSA-rgw5-rvv9-x895 and GHSA-j3f2-48v5-ccww. Keep worker dependency verification isolated from dependency directories used by frozen staging probes.
