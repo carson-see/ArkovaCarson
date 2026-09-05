@@ -17,6 +17,8 @@ import {
   checkClaimRules,
   applyBaseline,
   CLAIM_RULES,
+  BARE_TOOL_NAMES,
+  checkSkillBareToolNames,
   type ClaimRule,
   type ClaimSurface,
   type ToolDescriptor,
@@ -409,5 +411,73 @@ describe('CLAIM_RULES (the SHIPPED table, not a fixture)', () => {
     const registered = new Set(TOOL_DEFINITIONS.map((t) => t.name));
     const orphaned = CLAIM_RULES.flatMap((r) => r.tools.filter((t) => !registered.has(t)).map((t) => `${r.id} -> ${t}`));
     expect(orphaned).toEqual([]);
+  });
+});
+
+describe('checkSkillBareToolNames', () => {
+  const SKILL = 'public/.well-known/agent-skills/verify-record/SKILL.md';
+
+  const skill = (body: string): ClaimSurface[] => [{ path: SKILL, text: body }];
+
+  it('FAILS a bare tool name in an MCP call instruction', () => {
+    const found = checkSkillBareToolNames(skill([
+      '## MCP',
+      '',
+      'Call `get_anchor` at <https://edge.arkova.ai/mcp> with:',
+    ].join('\n')));
+    expect(found).toHaveLength(1);
+    expect(found[0].rule).toBe('skill-bare-tool-name');
+    expect(found[0].subject).toBe('get_anchor');
+  });
+
+  it('FAILS the single-token names that are also English words', () => {
+    // `search` and `verify` are the two that a reviewer skims past. In a
+    // backticked code span inside an MCP section they are tool invocations.
+    const found = checkSkillBareToolNames(skill('## MCP\n\nCall `search` at <https://edge.arkova.ai/mcp>.'));
+    expect(found.map((v) => v.subject)).toEqual(['search']);
+  });
+
+  it('FAILS a bare name on a line that names MCP without being under an MCP heading', () => {
+    const found = checkSkillBareToolNames(skill('Use a returned `public_id` with the `get_anchor` MCP tool.'));
+    expect(found).toHaveLength(1);
+  });
+
+  it('PASSES the prefixed name — that is the whole point of the rename', () => {
+    expect(checkSkillBareToolNames(skill(
+      '## MCP\n\nCall `arkova_get_anchor` at <https://edge.arkova.ai/mcp> with:',
+    ))).toEqual([]);
+  });
+
+  it('PASSES a bare word used as prose or as a REST parameter, outside any MCP context', () => {
+    expect(checkSkillBareToolNames(skill([
+      '## HTTP',
+      '',
+      'GET /v2/search?q={query}',
+      '',
+      'Use `search` semantics: the `type` filter narrows the result set.',
+    ].join('\n')))).toEqual([]);
+  });
+
+  it('does not fire on an unbackticked word inside an MCP section', () => {
+    expect(checkSkillBareToolNames(skill(
+      '## MCP\n\nThe MCP server can search records and verify them.',
+    ))).toEqual([]);
+  });
+
+  it('reports one violation per name per file, not per occurrence', () => {
+    const found = checkSkillBareToolNames(skill([
+      '## MCP',
+      '',
+      'Call `get_anchor` at <https://edge.arkova.ai/mcp>.',
+      'Then call `get_anchor` again for the superseding record.',
+    ].join('\n')));
+    expect(found).toHaveLength(1);
+  });
+
+  it('covers every bare name the rename produced', () => {
+    for (const name of BARE_TOOL_NAMES) {
+      const found = checkSkillBareToolNames(skill(`## MCP\n\nCall \`${name}\` at <https://edge.arkova.ai/mcp>.`));
+      expect(found.map((v) => v.subject), name).toEqual([name]);
+    }
   });
 });

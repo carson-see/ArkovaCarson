@@ -521,7 +521,9 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     // NOTE 2026-04-20 MCP security audit: description previously claimed
     // "HMAC-signed results for tamper detection" — implementation did no
     // such signing. Claim removed; real HMAC signing tracked as MCP-SEC-02.
-    'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
+    // The text lives in TOOL_DEFINITIONS (mcp-tools.ts), the CI-guarded
+    // source of truth; an inline literal here is an unguarded sixth copy.
+    TOOL_DESC['arkova_oracle_batch_verify'],
     {
       public_ids: z.array(publicIdSchema).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),
     },
@@ -577,7 +579,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
 
   tool(
     'arkova_list_agents',
-    'List AI agents registered to the authenticated caller\'s organization. Returns agent names, types, scopes, and status.',
+    TOOL_DESC['arkova_list_agents'],
     {},
     withTelemetry(
       'arkova_list_agents',

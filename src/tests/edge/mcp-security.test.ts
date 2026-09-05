@@ -858,3 +858,29 @@ describe('mcp-server — api-overview resource is derived, not hand-typed (revie
     expect(separatorColumns.size).toBe(1);
   });
 });
+
+describe('mcp-server — every tool registers the canonical description (review 2026-09-05)', () => {
+  // `TOOL_DEFINITIONS` in mcp-tools.ts is the single source of truth for tool
+  // description text and is CI-guarded against the five published surfaces
+  // (check-mcp-claim-parity.ts). A registration that inlines its own literal
+  // is a sixth, unguarded copy — that is how the BUG-026 `oracle_batch_verify`
+  // / `list_agents` one-word drift got in.
+  it('passes TOOL_DESC, never an inline string literal, as the description argument', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(
+      new URL('../../../services/edge/src/mcp-server.ts', import.meta.url),
+      'utf8',
+    );
+
+    // `tool(` registrations: name argument on its own line, description
+    // argument next. `arkova_anchor_document` is nested one level deeper
+    // inside the `anchorDocumentEnabled` conditional, hence the loose indent.
+    const registrations = [...source.matchAll(/\n {2,4}tool\(\n\s*'([a-z0-9_]+)',\n([\s\S]*?)\n\s*\{/g)];
+    expect(registrations.length).toBe(TOOL_DEFINITIONS.length);
+
+    const inlined = registrations
+      .filter(([, , descriptionArg]) => !descriptionArg.includes('TOOL_DESC'))
+      .map(([, name]) => name);
+    expect(inlined).toEqual([]);
+  });
+});
