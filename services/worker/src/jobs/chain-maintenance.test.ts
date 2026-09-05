@@ -184,6 +184,28 @@ describe('Chain Maintenance Jobs', () => {
       expect(mockLogger.error).toHaveBeenCalled();
     });
 
+    it.each(['', '100oops', '-1', '1.5', '9007199254740992'])('rejects malformed chain tip %j before querying anchors', async (tip) => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => tip } as Response);
+      mockDb.from.mockReturnValue(mockDbChain([], null));
+      const result = await detectReorgs();
+      expect(result).toMatchObject({ completed: false, reason: 'tip_unavailable' });
+      expect(mockDb.from).not.toHaveBeenCalled();
+    });
+
+    it.each(['http503', 'timeout', 'missing-confirmed', 'missing-height', 'missing-block-hash'])('reports incomplete transaction evidence for %s without reverting', async (fault) => {
+      const chain = mockDbChain([{ id: 'a1', org_id: 'o1', chain_tx_id: 'tx1', chain_block_height: 99, chain_block_hash: 'stored' }], null);
+      mockDb.from.mockReturnValue(chain);
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, text: async () => '100' });
+      if (fault === 'timeout') fetchMock.mockRejectedValueOnce(new Error('network timeout'));
+      else if (fault === 'http503') fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+      else fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ status: fault === 'missing-confirmed' ? {} : fault === 'missing-height' ? { confirmed: true } : { confirmed: true, block_height: 99 } }) });
+      global.fetch = fetchMock;
+      const result = await detectReorgs();
+      expect(result).toMatchObject({ completed: false, reason: 'transaction_check_failed', reverted: 0 });
+      expect(chain.update).not.toHaveBeenCalled();
+      expect(mockLogger.info).not.toHaveBeenCalledWith(expect.anything(), 'Reorg detection complete — no reorgs');
+    });
+
     it('reports completed when the window is genuinely empty', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true, text: async () => '100',
@@ -291,6 +313,7 @@ describe('Chain Maintenance Jobs', () => {
       tipHeight: number;
       txStatus: { confirmed: boolean; block_height?: number; block_hash?: string };
       credentialTypeRows?: Array<{ public_id: string; credential_type: string }>;
+      updateError?: { code: string; message: string };
     }) {
       const updateChains: Array<ReturnType<typeof mockDbChain>> = [];
       const auditInsert = vi.fn(() => Promise.resolve({ data: null, error: null }));
@@ -329,7 +352,7 @@ describe('Chain Maintenance Jobs', () => {
         return {
           select: vi.fn(() => makeSelectBuilder()),
           update: vi.fn((...args: unknown[]) => {
-            const updateChain = mockDbChain({ id: 'updated' }, null);
+            const updateChain = mockDbChain(opts.updateError ? null : { id: 'updated' }, opts.updateError ?? null);
             const updateFn = updateChain.update as (...a: unknown[]) => unknown;
             updateFn(...args);
             updateChains.push(updateChain);
@@ -351,6 +374,16 @@ describe('Chain Maintenance Jobs', () => {
 
       return { updateChains, auditInsert };
     }
+
+    it('reports incomplete when a required reorg status revert fails', async () => {
+      mockReorgRun({
+        anchors: [{ id: 'a1', org_id: 'o1', chain_tx_id: 'tx1', chain_block_height: 99, chain_block_hash: 'old' }],
+        tipHeight: 100,
+        txStatus: { confirmed: true, block_height: 99, block_hash: 'new' },
+        updateError: { code: '57014', message: 'statement timeout' },
+      });
+      expect(await detectReorgs()).toMatchObject({ completed: false, reason: 'transaction_check_failed', reorgsDetected: 1, reverted: 0 });
+    });
 
     it('reverts SECURED → SUBMITTED on a same-height reorg (different block_hash) (BUG-A)', async () => {
       const anchor = {
@@ -383,6 +416,7 @@ describe('Chain Maintenance Jobs', () => {
         ),
       );
       expect(revertUpdate).toBeDefined();
+      expect(revertUpdate!.eq).toHaveBeenCalledWith('legal_hold', false);
       expect(revertUpdate!.update).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'SUBMITTED' }),
       );

@@ -181,7 +181,7 @@ async function releaseLock(_lockId: number): Promise<void> {
  * reported healthy for 1,108 consecutive runs while inspecting zero anchors.
  * Any new early return MUST set `completed: false` and a `reason`.
  */
-type ReorgIncompleteReason = 'tip_unavailable' | 'candidate_query_failed';
+type ReorgIncompleteReason = 'tip_unavailable' | 'candidate_query_failed' | 'transaction_check_failed';
 
 interface ReorgCheckResult {
   checked: number;
@@ -221,27 +221,30 @@ type ReorgCandidateAnchor = {
  *      dispatch outcome counts (mirrors the check-confirmations bulk pattern —
  *      failures are recorded, never silently dropped).
  *
- * Returns the number of anchors whose status was actually reverted.
+ * Returns actual reverts and failed writes separately; failed writes leave the scan incomplete.
  */
 async function revertReorgedAnchors(
   affected: ReorgCandidateAnchor[],
   txId: string,
   auditReason: string,
   logMessage: string,
-): Promise<number> {
-  if (affected.length === 0) return 0;
+): Promise<{ reverted: number; failed: number }> {
+  if (affected.length === 0) return { reverted: 0, failed: 0 };
 
   // Step 1: compare-and-set each anchor SECURED → SUBMITTED.
   const revertedAnchors: ReorgCandidateAnchor[] = [];
+  let failed = 0;
   for (const anchor of affected) {
     const { data: updatedRow, error: updateError } = await db.from('anchors')
       .update({ status: 'SUBMITTED' })
       .eq('id', anchor.id)
       .eq('status', 'SECURED')
+      .eq('legal_hold', false)
       .select('id')
       .maybeSingle();
 
     if (updateError) {
+      failed++;
       logger.error(
         { anchorId: anchor.id, txId, error: updateError },
         'Failed to revert reorged anchor SECURED → SUBMITTED',
@@ -260,7 +263,7 @@ async function revertReorgedAnchors(
     logger.warn({ anchorId: anchor.id, txId }, logMessage);
   }
 
-  if (revertedAnchors.length === 0) return 0;
+  if (revertedAnchors.length === 0) return { reverted: 0, failed };
 
   // Step 2: look up credential_type for the reverted anchors so we can also
   // dispatch credential.status_changed (which requires credential_type).
@@ -372,7 +375,7 @@ async function revertReorgedAnchors(
     logger.warn({ txId, error: auditError }, 'anchor.reorg_reverted audit insert threw');
   }
 
-  return revertedAnchors.length;
+  return { reverted: revertedAnchors.length, failed };
 }
 
 /**
@@ -439,7 +442,17 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
         completed: false, reason: 'tip_unavailable',
       };
     }
-    const tipHeight = parseInt(await tipResp.text(), 10);
+    let tipHeight: number;
+    try {
+      const rawTip = (await tipResp.text()).trim();
+      tipHeight = Number(rawTip);
+      if (!/^\d+$/.test(rawTip) || !Number.isSafeInteger(tipHeight) || tipHeight < 0) {
+        throw new Error('Invalid chain tip height');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Reorg detection could not read a valid chain tip');
+      return { checked: 0, reorgsDetected: 0, reverted: 0, completed: false, reason: 'tip_unavailable' };
+    }
     const minBlockHeight = tipHeight - REORG_CHECK_DEPTH_BLOCKS;
 
     // Fetch recently SECURED anchors within the check depth.
@@ -487,6 +500,12 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
     let checked = 0;
     let reorgsDetected = 0;
     let reverted = 0;
+    let failedChecks = 0;
+    const revert = async (...args: Parameters<typeof revertReorgedAnchors>): Promise<number> => {
+      const result = await revertReorgedAnchors(...args);
+      failedChecks += result.failed;
+      return result.reverted;
+    };
 
     for (const txId of txIds.slice(0, 20)) {
       checked++;
@@ -501,22 +520,33 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
           if (resp.status === 404) {
             // TX not found — potential reorg or mempool drop
             reorgsDetected++;
-            reverted += await revertReorgedAnchors(
+            reverted += await revert(
               affected,
               txId,
               `TX ${txId} not found (potential reorg or mempool drop)`,
               'REORG DETECTED: TX not found — reverted SECURED → SUBMITTED',
             );
+          } else {
+            failedChecks++;
+            logger.error({ txId, status: resp.status }, 'Reorg transaction lookup unavailable');
           }
           continue;
         }
 
-        const txData = await resp.json() as { status: { confirmed: boolean; block_height?: number; block_hash?: string } };
+        const txData = z.object({
+          status: z.discriminatedUnion('confirmed', [
+            z.object({ confirmed: z.literal(false) }),
+            z.object({ confirmed: z.literal(true), block_height: z.number().int().nonnegative().safe(), block_hash: z.string().min(1).optional() }),
+          ]),
+        }).parse(await resp.json());
+        if (txData.status.confirmed && !txData.status.block_hash && affected.some(a => a.chain_block_hash != null)) {
+          throw new Error('Confirmed transaction is missing the block identity needed for comparison');
+        }
 
         if (!txData.status.confirmed) {
           // TX exists but no longer confirmed — reorg
           reorgsDetected++;
-          reverted += await revertReorgedAnchors(
+          reverted += await revert(
             affected,
             txId,
             `TX ${txId} no longer confirmed (reorg)`,
@@ -546,7 +576,7 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
             // Same-height (or any-height) block-hash divergence — the proof's
             // block no longer matches the chain. Revert + retract.
             reorgsDetected++;
-            reverted += await revertReorgedAnchors(
+            reverted += await revert(
               affected,
               txId,
               `TX ${txId} re-mined into a different block (stored hash ${storedHash} != confirmed hash ${newHash} at height ${newHeight})`,
@@ -558,7 +588,7 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
             // signal and revert (stricter than the old "just update the height"
             // behavior, which silently accepted the new block).
             reorgsDetected++;
-            reverted += await revertReorgedAnchors(
+            reverted += await revert(
               affected,
               txId,
               `TX ${txId} re-mined at a different height (stored ${storedHeight} != confirmed ${newHeight})`,
@@ -567,8 +597,14 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
           }
         }
       } catch (err) {
-        logger.debug({ txId, error: err }, 'Failed to check TX for reorg — will retry next run');
+        failedChecks++;
+        logger.error({ txId, error: err }, 'Failed to check TX for reorg — scan incomplete');
       }
+    }
+
+    if (failedChecks > 0) {
+      logger.error({ checked, failedChecks, reorgsDetected, reverted }, 'Reorg detection incomplete');
+      return { checked, reorgsDetected, reverted, completed: false, reason: 'transaction_check_failed' };
     }
 
     if (reorgsDetected > 0) {
