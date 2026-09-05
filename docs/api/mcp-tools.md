@@ -474,10 +474,10 @@ curl -X POST https://edge.arkova.ai/mcp \
 
 | Version | Date | Story | Change |
 |---|---|---|---|
-| v1.2 | 2026-05-03 | SCRUM-1132 + SCRUM-1584 | Added v2 detail aliases `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`, plus `arkova_oracle_batch_verify` and `arkova_list_agents`. Total tools: 16. |
-| v1.1 | 2026-04-11 | INT-02 (SCRUM-643) | Added `arkova_verify_batch` tool (cle_verify deferred to INT-02b) |
-| v1.0 | 2026-03-22 | PH1-SDK-03 | Added `nessie_query`, `arkova_anchor_document`, `arkova_verify_document` |
 | v3.0 | 2026-09-02 | SCRUM-3894 | Every tool renamed with the `arkova_` prefix (`nessie_query` keeps its namespace); `verify_credential`/`search_credentials` → `arkova_verify_anchor`/`arkova_search_anchors`, no aliases — the old names caused an agent to sweep local secrets (BUG-2026-09-02-001). OAuth no longer advertised (D3); Bearer accepts ES256 via JWKS (BUG-2026-09-02-002). |
+| v1.2 | 2026-05-03 | SCRUM-1132 + SCRUM-1584 | Added v2 detail aliases `get_organization`, `get_record`, `get_fingerprint`, `get_document`, plus `oracle_batch_verify` and `list_agents`. Total tools: 16. |
+| v1.1 | 2026-04-11 | INT-02 (SCRUM-643) | Added `verify_batch` tool (cle_verify deferred to INT-02b) |
+| v1.0 | 2026-03-22 | PH1-SDK-03 | Added `nessie_query`, `anchor_document`, `verify_document` |
 | v0.9 | 2026-03-08 | P8-S19 | Initial release with `verify_credential` + `search_credentials` |
 
 ---
