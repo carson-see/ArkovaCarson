@@ -78,6 +78,10 @@ export const AnchorInsertPayload = z
     filename: z.string().min(1).max(255),
     credential_type: z.literal('CONTRACT_POSTSIGNING'),
     metadata: z.record(z.string(), z.unknown()),
+    // Both connector paths materialize here. Outbound fingerprints were
+    // measured upstream from fetched bytes; inbound fingerprints are declared.
+    // Require an explicit evidence class on every newly materialized row.
+    fingerprint_source: z.enum(['document_bytes', 'issuer_record_attestation']),
   })
   .strict();
 
@@ -397,6 +401,15 @@ export async function defaultMaterializeAnchor(
     metadataString(row.metadata, 'external_filename') ??
     `${row.source}:${row.external_ref}`.slice(0, 255);
 
+  // docusign-bilateral-2026-08: the INBOUND declared-hash webhook path
+  // (services/worker/src/api/v1/webhooks/docusign.ts) writes `_direction:
+  // 'inbound'` onto the connector_artifact's own metadata before this row is
+  // ever drained — see that handler for the classification logic. Every
+  // OTHER connector path (today: DocuSign outbound, Google Drive) never sets
+  // `_direction`, so `isInboundDeclaredHash` is false for 100% of existing
+  // traffic — this branch is additive and does not change any prior behavior.
+  const isInboundDeclaredHash = metadataString(row.metadata, '_direction') === 'inbound';
+
   const insertPayload = {
     fingerprint: row.fingerprint_sha256,
     status: 'PENDING' as const,
@@ -414,6 +427,11 @@ export async function defaultMaterializeAnchor(
       connector_artifact_id: row.id,
       external_ref: row.external_ref,
     },
+    // The service-authored direction selects the evidence class; a declared
+    // inbound fingerprint must never be represented as measured document bytes.
+    fingerprint_source: isInboundDeclaredHash
+      ? 'issuer_record_attestation' as const
+      : 'document_bytes' as const,
   };
 
   // Validate the persisted row before insert (§1.2). Parse failures throw into
@@ -1338,8 +1356,10 @@ export async function defaultListDrainableOrgIds(
 /**
  * Cron entrypoint (QUEUE-06). Cloud Scheduler → `POST /jobs/drain-connector-artifacts`.
  *
- * In-process node-cron is dormant under Cloud Run CPU throttling (proven by the
- * PROOF-03 soak), so prod drives this via HTTP. No-ops (`skipped:true`) when the
+ * Prod drives this via HTTP because Cloud Scheduler is the trigger with retries
+ * and an attempt deadline; the in-process registration in routes/scheduled.ts is
+ * a backup that also fires on every warm prod instance (SCRUM-3384), which the
+ * per-row compare-and-set claim makes safe. No-ops (`skipped:true`) when the
  * flag is off. Per-org drains are isolated: one org throwing alerts (scope=cycle)
  * and the remaining orgs still drain — no silent drop.
  */

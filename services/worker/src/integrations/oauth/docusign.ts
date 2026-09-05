@@ -52,6 +52,17 @@ const EnvelopeDocument = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
 });
 
+// docusign-bilateral-2026-08: `accountId` here is the envelope's DECLARED
+// owning/sending account (DocuSign's `sender.accountId`), distinct from the
+// top-level `accountId` (the account whose Connect config delivered this
+// webhook). Optional — absent on every payload shape that predates the
+// inbound feasibility spike. See DocusignEnvelopeCompleted in
+// integrations/connectors/schemas.ts for the full rationale.
+const SenderShape = z.object({
+  email: z.string().email().optional(),
+  accountId: z.string().trim().min(1).optional(),
+}).passthrough().optional();
+
 const RawConnectPayload = z.object({
   event: z.string().trim().min(1),
   eventId: z.string().trim().min(1).optional(),
@@ -69,7 +80,7 @@ const RawConnectPayload = z.object({
       envelopeId: z.string().trim().min(1).optional(),
       accountId: z.string().trim().min(1).optional(),
       status: z.string().trim().min(1).optional(),
-      sender: z.object({ email: z.string().email().optional() }).passthrough().optional(),
+      sender: SenderShape,
       envelopeDocuments: z.array(EnvelopeDocument).max(100).optional(),
     }).passthrough().optional(),
   }).passthrough().optional(),
@@ -77,10 +88,10 @@ const RawConnectPayload = z.object({
     envelopeId: z.string().trim().min(1).optional(),
     accountId: z.string().trim().min(1).optional(),
     status: z.string().trim().min(1).optional(),
-    sender: z.object({ email: z.string().email().optional() }).passthrough().optional(),
+    sender: SenderShape,
     envelopeDocuments: z.array(EnvelopeDocument).max(100).optional(),
   }).passthrough().optional(),
-  sender: z.object({ email: z.string().email().optional() }).passthrough().optional(),
+  sender: SenderShape,
   envelopeDocuments: z.array(EnvelopeDocument).max(100).optional(),
 }).passthrough();
 
@@ -133,6 +144,36 @@ export class DocusignApiError extends Error {
 function getAuthBase(env: NodeJS.ProcessEnv): string {
   const demo = (env.DOCUSIGN_DEMO ?? 'true').toLowerCase() !== 'false';
   return demo ? DOCUSIGN_DEMO_AUTH_BASE : DOCUSIGN_PROD_AUTH_BASE;
+}
+
+/** CTO Decision Record (docusign-bilateral-2026-08, ruling R6/R7): the environment tag
+ * persisted alongside a captured envelope so the frontend can compose the correct
+ * DocuSign deep-link base (`apps.docusign.com` prod / `apps-d.docusign.com` demo). */
+export type DocusignEnvironmentTag = 'prod' | 'demo';
+
+/**
+ * Resolve prod vs demo from a connection's API `base_uri` — DocuSign's demo/sandbox
+ * datacenter is always `demo.docusign.net`; every production datacenter (`na1`,
+ * `na2`, `na3`, `eu`, ...) is `<region>.docusign.net`. Falls back to the same
+ * `DOCUSIGN_DEMO` convention `getAuthBase` uses (default demo=true unless the env
+ * var is exactly `'false'`) only when `base_uri` itself doesn't identify an
+ * environment — e.g. missing, or a non-docusign.net host in a test/mock config.
+ */
+export function resolveDocusignEnvironment(
+  baseUri: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): DocusignEnvironmentTag {
+  if (baseUri) {
+    try {
+      const host = new URL(baseUri).hostname.toLowerCase();
+      if (host === 'demo.docusign.net') return 'demo';
+      if (host.endsWith('.docusign.net')) return 'prod';
+    } catch {
+      // An invalid/non-vendor URI uses the explicit environment fallback.
+    }
+  }
+  const demo = (env.DOCUSIGN_DEMO ?? 'true').toLowerCase() !== 'false';
+  return demo ? 'demo' : 'prod';
 }
 
 function requireClient(env: NodeJS.ProcessEnv): { integrationKey: string; clientSecret: string } {
@@ -550,6 +591,13 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
   const nested = parsed.data?.envelopeSummary;
   const envelopeId = parsed.envelopeId ?? parsed.data?.envelopeId ?? parsed.envelopeSummary?.envelopeId ?? nested?.envelopeId;
   const accountId = parsed.accountId ?? parsed.data?.accountId ?? parsed.envelopeSummary?.accountId ?? nested?.accountId;
+  // docusign-bilateral-2026-08: the envelope's DECLARED owning/sending account,
+  // read from the same nesting fallback chain as `sender` itself below. Absent
+  // on every payload shape that predates this field — the classifier falls
+  // back to `accountId` in that case (see DocusignEnvelopeCompleted's doc
+  // comment for why that reproduces today's outbound-only behavior exactly).
+  const senderAccountId =
+    parsed.sender?.accountId ?? parsed.envelopeSummary?.sender?.accountId ?? nested?.sender?.accountId;
   // Minimal SIM deliveries (dashboard-created listeners without eventData
   // includes) carry NO status field at any nesting level — the event name is
   // the completion assertion (prod evidence 2026-07-27, envelope 624c1d84…,
@@ -571,6 +619,7 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
     accountId,
     status: 'completed',
     sender: parsed.sender ?? parsed.envelopeSummary?.sender ?? nested?.sender,
+    ...(senderAccountId ? { senderAccountId } : {}),
     envelopeDocuments: parsed.envelopeDocuments ?? parsed.envelopeSummary?.envelopeDocuments ?? nested?.envelopeDocuments ?? [],
     generatedDateTime: parsed.generatedDateTime,
   });

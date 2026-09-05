@@ -14,16 +14,51 @@ import { z } from 'zod';
 import { boundedErrorDetail } from '../../utils/byte-safety.js';
 import { verifyHmacSha256Base64 } from './hmac.js';
 
+/**
+ * Code/constraint parity with `organization_rule_events` (baseline migration).
+ *
+ * Every field below is copied into that row by the webhook handler's
+ * `enqueue_rule_event` call, and the row carries hard CHECK constraints:
+ *   `agreement.id`               -> external_file_id  (char_length <= 500)
+ *   `agreement.name`             -> filename          (char_length <= 500)
+ *   `agreement.senderInfo.email` -> sender_email      (char_length <= 320)
+ *
+ * Neither over-long value used to be caught HERE, and the two failed differently
+ * — both badly:
+ *   - `agreement.id` was caught late, by `NonEmptyString` (`.max(500)`) inside
+ *     `adaptAdobeSign`. That throw happens AFTER the replay nonce is committed,
+ *     so the handler DLQs and returns **500**, and the retry — identical body,
+ *     identical `payload_hash` — is answered `200 {duplicate:true}`. A value we
+ *     always intended to reject cost us the event and told Adobe it succeeded.
+ *   - `senderInfo.email` was not caught at all: `MaybeEmail` in
+ *     `connectors/schemas.ts` is `z.string().trim().toLowerCase().email()` with
+ *     NO length cap, so a >320-char address reached Postgres and raised SQLSTATE
+ *     23514 inside the RPC — same 500, same swallowed retry, same silent loss.
+ *
+ * Bounding both at the parse layer moves the rejection BEFORE the nonce insert,
+ * where the handler's existing 400 + DLQ-audit branch handles it: bounded,
+ * auditable, and not a 5xx. Keep these in step with the migration set — the
+ * webhook test asserts them against the constraints it reads from
+ * `supabase/migrations/`, so narrowing a CHECK fails CI rather than production.
+ *
+ * NOT fixed here (other handlers' surface): `MaybeEmail` is shared, so the
+ * DocuSign (`sender.email`) and Checkr (`candidate.email`) adapters still feed
+ * an unbounded address into the same 320-char column.
+ */
+const EXTERNAL_FILE_ID_MAX = 500;
+const FILENAME_MAX = 500;
+const SENDER_EMAIL_MAX = 320;
+
 const RawAdobeWebhookPayload = z
   .object({
     event: z.string().trim().min(1),
     eventDate: z.string().optional(),
     agreement: z
       .object({
-        id: z.string().trim().min(1),
-        name: z.string().trim().max(500).optional(),
+        id: z.string().trim().min(1).max(EXTERNAL_FILE_ID_MAX),
+        name: z.string().trim().max(FILENAME_MAX).optional(),
         senderInfo: z
-          .object({ email: z.string().email().optional() })
+          .object({ email: z.string().trim().max(SENDER_EMAIL_MAX).email().optional() })
           .partial()
           .optional(),
         // Adobe sends the SHA256 of each constituent document if requested.

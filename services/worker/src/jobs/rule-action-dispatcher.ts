@@ -136,6 +136,41 @@ const AnchorInsertSchema = z.object({
   ),
   credential_type: z.literal('CONTRACT_POSTSIGNING'),
   metadata: z.record(z.string(), z.unknown()),
+  // R19 evidence-class column (migration 0376). On THIS path it is deliberately
+  // and permanently NULL — a required `z.null()`, not `.optional()` — so the
+  // honest classification is enforced at the write path, not left to omission.
+  //
+  // WHY NULL (and NOT either enum value): every anchor this module creates comes
+  // from a fingerprint DECLARED by DocuSign in the trigger payload (see
+  // extractAnchorFingerprint; rules-engine.ts passes payload.document_sha256
+  // through verbatim — no fetch, no server-side hash). docusign-anchor-
+  // reconciliation.ts is explicit that this declared hash is "ASSERTED, not
+  // measured". Neither 0376 enum value can describe that honestly (§1.5):
+  //   - 'document_bytes' asserts a real file's bytes were fingerprinted by
+  //     Arkova/the client ("generated on your device"). Arkova never touched the
+  //     bytes here — that §1.6A FETCH is what the connector-artifact-drain path
+  //     does, NOT this one. Reaching for its class is the natural mistake; it
+  //     would be a false measurement claim. (For the record: that sibling sets
+  //     NO fingerprint_source today — 'document_bytes' is PR-2's write, not an
+  //     existing value to copy.)
+  //   - 'issuer_record_attestation' asserts NO source document exists ("this
+  //     record was never in document form"). A signed contract demonstrably
+  //     exists; DocuSign hashed it. So that value lies in the other direction.
+  // The correct positive class for a vendor-declared document hash
+  // (issuer_record_attestation + a DECLARED_UNVERIFIED re-derivability note per
+  // CTO Decision Record R2/R3) does not exist yet and is owned by the inbound
+  // declared-hash workstream (PR-4). Until it lands, NULL ("unclassified",
+  // rendered as nothing — FingerprintSourceDisplay) is the only value that
+  // asserts nothing false.
+  //
+  // On 0384's immutability, precisely: it refuses post-insert changes for
+  // NON-service_role callers only. This module writes as service_role, so the
+  // DB does NOT guard it — the z.null() below and its tests ARE the guard, and a
+  // wrong value written here would be permanent for every practical purpose.
+  // That same service_role carve-out is what keeps NULL backfill-compatible: a
+  // future coordinated migration can still set the correct positive class.
+  // Full rationale: docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md
+  fingerprint_source: z.null(),
 });
 
 type AnchorInsertPayload = z.infer<typeof AnchorInsertSchema>;
@@ -488,6 +523,14 @@ async function buildAnchorInsertPayload(args: {
     filename: source.filename,
     credential_type: 'CONTRACT_POSTSIGNING' as const,
     metadata,
+    // R19 evidence class — explicitly NULL. Rationale lives once, on
+    // AnchorInsertSchema above; do not restate it here.
+    //
+    // Worth repeating only because the two sit twelve lines apart: this is the
+    // TOP-LEVEL anchors.fingerprint_source COLUMN, NOT the free-text
+    // `metadata.fingerprint_source` debug label set above (which records WHICH
+    // payload field the hash was read from). Same name, unrelated meanings.
+    fingerprint_source: null,
   };
 
   const parsed = AnchorInsertSchema.safeParse(insertPayload);

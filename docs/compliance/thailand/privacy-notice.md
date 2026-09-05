@@ -74,7 +74,7 @@ Arkova processes data in the United States. PDPA §28–§29 require one of:
 |-----------|--------|
 | Encryption in transit | TLS 1.2+ |
 | Encryption at rest | AES-256 (Supabase Postgres) |
-| Access control | Row-level security (multi-tenant isolation) + MFA required on all admin access |
+| Access control | Row-level security (multi-tenant isolation); MFA available (opt-in) — administrator enforcement in progress, not yet in effect |
 | Logging | Audit-trail with append-only semantics (immutable RLS) |
 | Client-side processing | Documents stay on the device — only hashes + metadata leave |
 | Incident response | Breach notification runbook targeting PDPA 72-hour window |

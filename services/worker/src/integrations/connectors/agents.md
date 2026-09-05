@@ -20,6 +20,7 @@ needs to move to a neutral module, move it — do not copy it.
 providers would collide onto ONE secret and each connect would clobber the other's refresh token.
 `adobe-sign-token-store.test.ts` asserts the two names differ for identical `(org, account)` inputs
 rather than merely asserting the Adobe name matches a regex.
+_Last updated: 2026-08-29 (docusign-bilateral PR-2: `DocusignCapturedSigner` schema + job-payload `_signers`/`docusignEnv` threading)._
 
 ## 2026-08-03 — PR #1944 review rounds 2-3 on top of the Lane 3 bug blitz
 
@@ -55,10 +56,10 @@ Vendor connector services and canonical event adapters. Each connector owns OAut
 
 | File | Purpose |
 |------|---------|
-| `schemas.ts` | Zod schemas for all vendor webhook payloads (Drive, DocuSign, Adobe, Checkr, Veremark) |
+| `schemas.ts` | Zod schemas for all vendor webhook payloads (Drive, DocuSign, Adobe, Checkr, Veremark). **2026-08-29 (R6):** `DocusignCapturedSigner` — pseudonymous-only signer shape (`recipient_id_guid`, `user_id?`, `status`, `signed_at?`); non-`.passthrough()` object mode strips name/email by construction. `MAX_CAPTURED_DOCUSIGN_SIGNERS = 20` |
 | `adapters.ts` | Pure-function adapters: vendor payload -> canonical `TriggerEvent` for rules engine |
 | `googleDrive.ts` | Google Drive connector — OAuth, Secret Manager tokens, 7-day watch channels, event shaping |
-| `docusign.ts` | DocuSign connector — retryable signed-document fetch, account token resolution. DS-04: `DocusignResolvedConnection` + the `enqueueSignedDocument` sink now carry `scope` (`'org'`/`'member'`) + `ownerUserId` for personal-queue routing |
+| `docusign.ts` | DocuSign connector — retryable signed-document fetch, account token resolution. DS-04: `DocusignResolvedConnection` + the `enqueueSignedDocument` sink now carry `scope` (`'org'`/`'member'`) + `ownerUserId` for personal-queue routing. **2026-08-29 (R6/R7):** `DocusignEnvelopeCompletedJobPayload` gained optional `_signers`; `processDocusignEnvelopeCompletedJob` derives `docusignEnv` (`resolveDocusignEnvironment(connection.baseUri)`) and threads both into `enqueueSignedDocument`'s input — see `jobs/agents.md` for the metadata-write side |
 | `docusign-connection-resolver.ts` | Sub-org connection resolution (SCRUM-2045). DS-04 (SCRUM-2364): resolves `scope`/`ownerUserId` — a `member_integrations` row's `owner_user_id` ⇒ `scope='member'` (personal queue); org-owned / inherited connections ⇒ `scope='org'` |
 | `docusign-token-store.ts` | DocuSign refresh-token Secret Manager store — org + member-level naming (SCRUM-2044) |
 | `docusign-rule-seed.ts` | **SCRUM-3027**: auto-seed the "DocuSign Completion" rule (`ESIGN_COMPLETED` → `AUTO_ANCHOR`, queue-mode, **enabled**) on a successful org DocuSign connect. `seedDocusignCompletionRule()` is idempotent + **non-stomping** — if the org already has ANY `ESIGN_COMPLETED` rule (any action) it seeds nothing, never overriding an admin's choice. NEVER throws (failure-isolated: loud `logger.error` + Sentry, PII-safe = orgId only; fails CLOSED on an ambiguous lookup error). Config shapes are Zod-validated (`TriggerConfigEsignCompleted` / `ActionConfigAutoAnchor`); row is built from the canonical `rule-templates-data.ts` `docusign-completion` template. WIRED into `api/v1/integrations/docusign-oauth.ts` callback (fire-and-forget, after the integration upsert) — surfaces `docusign_completion_rule_seeded` / `_seed_failed` `integration_events`. `enabled=true` is intentional (explicit human connect action, no NL-authoring surface — distinct from the SEC-02 `enabled=false` CRUD path) |
@@ -81,7 +82,7 @@ Two rules out of it:
 This branch also had **no test** — the only branch in the module without one, and the one that shipped the defect. Both are covered now.
 | `drive-watch-bootstrap.ts` | **DRIVE-02 (SCRUM-2367)**: folder-watch bootstrap → persists initial page token, channel id/expiry, owner scope (my_drive vs shared_drive), status, `last_renewal_error` into `drive_watch_state` (mig 0351) via `upsert_drive_watch_state`. `persist()` forwards `p_last_renewal_error` — the RPC MUST declare that param (fixed in 0351: `p_last_renewal_error text DEFAULT NULL`, written on INSERT + ON CONFLICT UPDATE). Folder-permission failures → `status='permission_denied'` (no throw); folder id mismatch → `failed`. `folder_path`/`owner_email` are sensitive — persisted to the RLS row ONLY, never logged. |
 | `drive-change-dedupe.ts` | **DRIVE-03 (SCRUM-2368)**: pure change classifier + revision dedupe key + bounded/PII-scrubbed audit projection. Ignores removed/trashed/unsupported-MIME; each `(file_id, revision)` queues once (backed by `drive_revision_ledger` UNIQUE). Companion to `drive-changes-processor.ts`. |
-| `drive-channel-renewal.ts` | **DRIVE-06 (SCRUM-2371)**: pure channel-renewal sweep — renews before expiry, alerts + marks `degraded` on failure (token-revoked + renewal-failed paths), recovers expired channels idempotently, STOPS a watch whose org lost entitlement. **NO cron** — cadence is a HANDOFF to Lane 2's Cloud Scheduler → HTTP `/jobs/*` (node-cron does not fire on throttled Cloud Run). Status vocabulary the sweep + bootstrap write MUST all be permitted by the 0351 `drive_watch_state_status_check` CHECK: `active \| permission_denied \| expired \| stopped \| degraded \| failed` (`degraded` added 2026-07-01 — it was previously omitted and the first renewal failure would have violated the constraint). `drive-watch-state-rpc.test.ts` is the SQL-contract guard that keeps code↔CHECK vocabulary from drifting (mock-DB renewal tests can't catch a real constraint mismatch). |
+| `drive-channel-renewal.ts` | **DRIVE-06 (SCRUM-2371)**: pure channel-renewal sweep — renews before expiry, alerts + marks `degraded` on failure (token-revoked + renewal-failed paths), recovers expired channels idempotently, STOPS a watch whose org lost entitlement. **NO cron** — cadence is a HANDOFF to Lane 2's Cloud Scheduler → HTTP `/jobs/*` (the trigger with retries and an attempt deadline; SCRUM-3384). Status vocabulary the sweep + bootstrap write MUST all be permitted by the 0351 `drive_watch_state_status_check` CHECK: `active \| permission_denied \| expired \| stopped \| degraded \| failed` (`degraded` added 2026-07-01 — it was previously omitted and the first renewal failure would have violated the constraint). `drive-watch-state-rpc.test.ts` is the SQL-contract guard that keeps code↔CHECK vocabulary from drifting (mock-DB renewal tests can't catch a real constraint mismatch). |
 
 ## Do / Don't Rules
 
@@ -203,3 +204,8 @@ consumer's unit test. Denials are logged by the route via `logConnectDenial`, on
 ## 2026-08-15 Drive OAuth scope minimality (FULLSOAK finding)
 
 `buildGoogleDriveAuthorizationUrl` inherits its scope set + URL params from `oauth/drive.ts` `buildAuthorizationUrl`. That URL no longer sends `include_granted_scopes` (it let a connect inherit a 33-scope grant from the shared OAuth client) and the scope set is the exact three-scope allowlist in `DRIVE_DEFAULT_SCOPES`. Pinned in `googleDrive.test.ts`; do not loosen either assertion.
+
+
+## PR #2474 release review — 2026-09-05
+
+Signer status values are restricted to documented DocuSign recipient status codes; signed_at accepts only numeric ISO datetimes, including fractional seconds, offsets and timezone-less vendor values. This closes PII persistence through correctly named status/timestamp fields. Regression tests reject email/name text in both fields. Recipient status reference: https://developers.docusign.com/docs/esign-rest-api/esign101/concepts/recipients/status-codes/

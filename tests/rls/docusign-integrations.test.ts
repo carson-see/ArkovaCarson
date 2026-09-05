@@ -123,9 +123,9 @@ describe('RLS: org_integrations', () => {
       .delete()
       .eq('account_id', 'rls-test-beta-docusign');
 
-    await adminClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
-    await userClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
   });
 
   it('ORG_ADMIN can read their own org integrations', async () => {
@@ -179,7 +179,7 @@ describe('RLS: org_integrations', () => {
   });
 
   it('anon cannot read org_integrations', async () => {
-    const { data, error } = await (anonClient as unknown as FromableClient)
+    const { data } = await (anonClient as unknown as FromableClient)
       .from('org_integrations')
       .select('*')
       .limit(1);
@@ -284,7 +284,7 @@ describe('RLS: docusign_webhook_nonces (service_role only)', () => {
   });
 
   afterAll(async () => {
-    await authClient.auth.signOut();
+    await authClient.auth.signOut({ scope: 'local' });
   });
 
   it('service_role can SELECT docusign_webhook_nonces (sanity)', async () => {
@@ -363,7 +363,7 @@ describe('RLS: docusign_reconciliation_gaps (service_role only)', () => {
   });
 
   afterAll(async () => {
-    await authClient.auth.signOut();
+    await authClient.auth.signOut({ scope: 'local' });
   });
 
   it('service_role can SELECT docusign_reconciliation_gaps (sanity)', async () => {
@@ -518,9 +518,9 @@ describe('RLS: integration_events', () => {
       .delete()
       .eq('event_type', 'rls_test_event');
 
-    await adminClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
-    await userClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
   });
 
   it('ORG_ADMIN can read their own org events', async () => {
@@ -574,7 +574,7 @@ describe('RLS: integration_events', () => {
   });
 
   it('anon cannot read integration_events', async () => {
-    const { data, error } = await (anonClient as unknown as FromableClient)
+    const { data } = await (anonClient as unknown as FromableClient)
       .from('integration_events')
       .select('*')
       .limit(1);
@@ -675,7 +675,7 @@ describe('RLS: connector_alert_state (service_role only)', () => {
   });
 
   afterAll(async () => {
-    await authClient.auth.signOut();
+    await authClient.auth.signOut({ scope: 'local' });
   });
 
   it('service_role can SELECT connector_alert_state (sanity)', async () => {
@@ -774,8 +774,15 @@ describe('RLS: member_integrations', () => {
   let anonClient: TypedClient;
   let serviceClient: TypedClient;
 
-  let adminUserId: string;
-  let memberUserId: string;
+  // Fixture identities are the PINNED seed IDs (same pattern as p7.test.ts /
+  // rls-extended.test.ts), never derived from auth.getUser(): supabase-js
+  // signOut() defaults to scope "global", so whenever ANOTHER suite's afterAll
+  // signed the shared demo user out first, a mid-run getUser() here failed
+  // ("Auth session missing!"), the `?? ''` fallback poisoned these IDs to '',
+  // and the then-unchecked seeds below died with 22P02 — the cross-file
+  // full-parallel flake tracked as SCRUM-3618 / SCRUM-3577.
+  const adminUserId = DEMO_CREDENTIALS.adminId;
+  const memberUserId = DEMO_CREDENTIALS.userId;
 
   beforeAll(async () => {
     serviceClient = createServiceClient();
@@ -784,15 +791,18 @@ describe('RLS: member_integrations', () => {
     memberClient = await withIndividualUser();
     anonClient = createAnonClient();
 
-    // Resolve user IDs for seeding
-    const { data: adminProfile } = await adminClient.auth.getUser();
-    adminUserId = adminProfile.user?.id ?? '';
+    // Idempotent, file-scoped setup: clear leftovers of a crashed prior run
+    // (account_id is this file's unique fixture key), then seed. Seeds THROW
+    // on failure — a silently missing fixture row turns the read assertions
+    // below into count flakes instead of a clear fixture error.
+    for (const accountId of ['rls-test-member-admin', 'rls-test-member-individual']) {
+      await (serviceClient as unknown as FromableClient)
+        .from('member_integrations')
+        .delete()
+        .eq('account_id', accountId);
+    }
 
-    const { data: memberProfile } = await memberClient.auth.getUser();
-    memberUserId = memberProfile.user?.id ?? '';
-
-    // Seed member_integrations rows via service_role
-    await (serviceClient as unknown as FromableClient)
+    const { error: adminSeedError } = await (serviceClient as unknown as FromableClient)
       .from('member_integrations')
       .insert({
         user_id: adminUserId,
@@ -801,8 +811,13 @@ describe('RLS: member_integrations', () => {
         account_id: 'rls-test-member-admin',
         account_label: 'Admin Member Integration',
       });
+    if (adminSeedError) {
+      throw new Error(
+        `fixture: member_integrations admin row insert failed — ${adminSeedError.message}`,
+      );
+    }
 
-    await (serviceClient as unknown as FromableClient)
+    const { error: memberSeedError } = await (serviceClient as unknown as FromableClient)
       .from('member_integrations')
       .insert({
         user_id: memberUserId,
@@ -811,6 +826,11 @@ describe('RLS: member_integrations', () => {
         account_id: 'rls-test-member-individual',
         account_label: 'Individual Member Integration',
       });
+    if (memberSeedError) {
+      throw new Error(
+        `fixture: member_integrations member row insert failed — ${memberSeedError.message}`,
+      );
+    }
   });
 
   afterAll(async () => {
@@ -823,9 +843,9 @@ describe('RLS: member_integrations', () => {
       .delete()
       .eq('account_id', 'rls-test-member-individual');
 
-    await adminClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
-    await memberClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
+    await memberClient.auth.signOut({ scope: 'local' });
   });
 
   it('member can read their own member_integrations row', async () => {

@@ -658,6 +658,7 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'anchor.secured': 'A document record was secured and its Anchor Receipt details are available.',
   'anchor.revoked': 'A secured document record was revoked by its issuer.',
   'anchor.expired': 'A secured document record passed its expiration date.',
+  'anchor.superseded': 'A secured document record was replaced by a newer version.',
   'anchor.batch_secured': 'A group of document records was secured together in one Network Receipt.',
   'credential.issued': 'A credential was issued by a verified organization.',
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
@@ -3819,6 +3820,25 @@ export const CTDL_DATA_LINK_LABELS = {
   LINK_TEXT: 'CTDL data (JSON-LD)',
 } as const;
 
+// ─── DocuSign Record Deep Links (bilateral rollout, frontend-targeted T2) ────
+// Authenticated record-detail metadata section ONLY — the public
+// verification page is explicitly out of scope for this rollout and is not
+// touched by the consuming components. Account/envelope id metadata values
+// and dedicated signer rows link into DocuSign's own console — built by
+// accountUrl/envelopeUrl/signerUrl (src/lib/docusignLinks.ts), which
+// validate a candidate value as a strict UUID BEFORE composing any URL and
+// return null otherwise (falls back to the pre-existing plain-text render,
+// so a non-UUID value or a non-DocuSign anchor is completely unaffected).
+// Signer rows read ONLY `recipient_id_guid` for display and for the link —
+// never `user_id`, even when present on an entry — per the data-minimization
+// ruling (R6) this PR was scoped against.
+export const DOCUSIGN_RECORD_LINKS_LABELS = {
+  SIGNERS_SECTION_LABEL: 'Signers',
+  SIGNER_PREFIX: 'Signer',
+  VERIFIED_VIA_DOCUSIGN: 'Verified via DocuSign',
+  MORE_SIGNED_SUFFIX: 'more signed via DocuSign',
+} as const;
+
 // ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────
 
 export const LINKEDIN_SHARE_LABELS = {
@@ -3909,9 +3929,26 @@ export const FINGERPRINT_SOURCE_LABELS = {
   issuer_record_attestation: 'Issuer-Attested Record',
 } as const satisfies Record<FingerprintSource, string>;
 
+// SCRUM-3818 (docusign-bilateral-2026-08): `issuer_record_attestation` has a
+// SECOND real origin as of this cycle — the DocuSign Recipient-Connect
+// INBOUND declared-hash path sets the same `fingerprint_source` value
+// server-side (connector-artifact-drain's inbound branch) for an envelope
+// Arkova never fetched. Unlike CSV bulk-import (no document ever existed —
+// row content was fingerprinted directly), a real document DOES exist for
+// that path and WAS fingerprinted — by DocuSign, not Arkova, who only relays
+// the declared value. The copy below is written to be true for BOTH origins
+// without naming either: it scopes every claim to what ARKOVA measured
+// (nothing, for this tier) rather than asserting a document never existed —
+// the previous "This record was never in document form" line was accurate
+// for CSV but false for a DocuSign-inbound record, and "the issuing
+// organization asserted this" misattributed a third-party-declared value to
+// the securing org (R-7). This page cannot distinguish the two origins today
+// — `get_public_anchor` does not project `metadata->>'connector_source'`
+// (deliberately service_role-write-guarded) — so the copy stays honest and
+// general rather than naming a vendor it cannot verify from available data.
 export const FINGERPRINT_SOURCE_DESCRIPTIONS = {
   document_bytes: "A source document's fingerprint was generated on your device and secured. Arkova never received the document itself.",
-  issuer_record_attestation: 'No source document was supplied. The issuing organization asserted this record’s content directly, and that content — not a document — was fingerprinted and secured.',
+  issuer_record_attestation: 'No source document was supplied. The asserted content — issuer-submitted record data, or a value declared by a connected third-party service — was fingerprinted and secured, not a document Arkova retrieved or reviewed.',
 } as const satisfies Record<FingerprintSource, string>;
 
 /** Measured / asserted / NOT-asserted triad per §1.5, for the public verify page. */
@@ -3922,9 +3959,9 @@ export const FINGERPRINT_SOURCE_TRIAD = {
     notAsserted: 'Who authored the document or whether its contents are accurate.',
   },
   issuer_record_attestation: {
-    measured: 'The fingerprint of the record content the issuing organization submitted.',
-    asserted: 'That the issuing organization submitted this exact record content — no source document was provided to Arkova.',
-    notAsserted: 'That a source document exists, was reviewed, or was fingerprinted. This record was never in document form.',
+    measured: 'The fingerprint value asserted for this record — either issuer-submitted record content, or a value declared by a connected third-party service.',
+    asserted: 'That the issuing organization or a connected third-party service asserted this fingerprint — no source document was provided to Arkova.',
+    notAsserted: 'That Arkova retrieved, reviewed, or independently fingerprinted a source document for this record.',
   },
 } as const satisfies Record<FingerprintSource, { measured: string; asserted: string; notAsserted: string }>;
 
@@ -3952,6 +3989,28 @@ export const CONNECTOR_FINGERPRINT_LABELS = {
   /** Appended to the re-verify mismatch alert for connector-sourced records. */
   REVERIFY_MISMATCH_HINT:
     'This document came from a connected source. Some services regenerate the file on every download, so a freshly downloaded copy can carry a different fingerprint even when nothing changed. A mismatch here is not, on its own, evidence the document was altered. To match this record, use the exact file as originally retrieved.',
+  /**
+   * SCRUM-3818 (docusign-bilateral-2026-08): shown INSTEAD OF REVERIFY_NOTE
+   * for the DECLARED_UNVERIFIED class — a connector-sourced record whose
+   * `fingerprintSource` is 'issuer_record_attestation' (set only by the
+   * inbound declared-hash path, e.g. DocuSign Recipient Connect). Materially
+   * different from REVERIFY_NOTE's premise: Arkova never retrieved or hashed
+   * this document at all, so there is no "originally retrieved copy" to
+   * verify against. R-7: must never say the fingerprint "matches the exact
+   * file as retrieved" — nothing was retrieved.
+   */
+  DECLARED_UNVERIFIED_REVERIFY_NOTE:
+    'Arkova did not retrieve this document or fingerprint it. This fingerprint was declared by the connected source and relayed by Arkova, not measured from document bytes Arkova received. Dropping your file below compares it only against that declared value — a match or mismatch here does not confirm Arkova ever verified a document.',
+  /**
+   * SCRUM-3818: appended to the mismatch alert instead of
+   * REVERIFY_MISMATCH_HINT for the DECLARED_UNVERIFIED class. Unlike
+   * REVERIFY_MISMATCH_HINT (which frames a mismatch as an expected side
+   * effect of a source that re-renders files), this class has no Arkova-
+   * measured fingerprint to re-render FROM — a mismatch says only that your
+   * file doesn't match the declared value, not that this record is suspect.
+   */
+  DECLARED_UNVERIFIED_REVERIFY_MISMATCH_HINT:
+    'This record’s fingerprint was never measured by Arkova from a document — it is a value declared by the connected source. A mismatch here does not, on its own, indicate this record is invalid; it means your file does not match the declared value, which Arkova has not independently verified either way.',
 } as const;
 
 /** Measured / asserted / NOT-asserted triad per §1.5 for connector-sourced records. */

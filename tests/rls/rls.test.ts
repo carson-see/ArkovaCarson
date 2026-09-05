@@ -27,6 +27,7 @@ export async function createAuthenticatedClient(
   email: string,
   _password: string
 ): Promise<TypedClient> {
+  void _password;
   // withUser determines password internally from DEMO_CREDENTIALS
   return withUser(email, email.includes('admin') ? 'ORG_ADMIN' : 'INDIVIDUAL');
 }
@@ -56,8 +57,8 @@ describe('RLS: Profiles', () => {
   });
 
   afterAll(async () => {
-    await userClient.auth.signOut();
-    await adminClient.auth.signOut();
+    await userClient.auth.signOut({ scope: 'local' });
+    await adminClient.auth.signOut({ scope: 'local' });
   });
 
   it('users can only read their own profile', async () => {
@@ -149,9 +150,9 @@ describe('RLS: Organizations', () => {
   });
 
   afterAll(async () => {
-    await adminClient.auth.signOut();
-    await userClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
   });
 
   it('ORG_ADMIN can only see their own organization', async () => {
@@ -233,9 +234,9 @@ describe('RLS: Anchors', () => {
   });
 
   afterAll(async () => {
-    await userClient.auth.signOut();
-    await adminClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
+    await userClient.auth.signOut({ scope: 'local' });
+    await adminClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
   });
 
   it('users can insert anchors for themselves with PENDING status', async () => {
@@ -316,7 +317,7 @@ describe('RLS: Anchors', () => {
 
     expect(error).toBeNull();
     expect(data).toHaveLength(0);
-    await betaAdmin.auth.signOut();
+    await betaAdmin.auth.signOut({ scope: 'local' });
   });
 });
 
@@ -342,8 +343,8 @@ describe('RLS: Audit Events', () => {
   });
 
   afterAll(async () => {
-    await userClient.auth.signOut();
-    await adminClient.auth.signOut();
+    await userClient.auth.signOut({ scope: 'local' });
+    await adminClient.auth.signOut({ scope: 'local' });
   });
 
   it('users can only read their own audit events', async () => {
