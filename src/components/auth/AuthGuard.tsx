@@ -10,6 +10,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../hooks/useAuth';
+import { isEmailConfirmationPending } from '../../lib/oauthConfirmation';
 import { ROUTES } from '../../lib/routes';
 import { NAV_POLISH_LABELS } from '../../lib/copy';
 
@@ -19,7 +20,7 @@ interface AuthGuardProps {
 }
 
 export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
-  const { user, loading } = useAuth();
+  const { user, session, loading } = useAuth();
   const location = useLocation();
   const toastShown = useRef(false);
   const hadUser = useRef(false);
@@ -66,6 +67,10 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
 
     // Redirect to login, preserving the intended destination
     return <Navigate to={ROUTES.LOGIN} state={{ from: location }} replace />;
+  }
+
+  if (isEmailConfirmationPending(session)) {
+    return <Navigate to={ROUTES.SIGNUP} replace />;
   }
 
   return <>{children}</>;

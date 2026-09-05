@@ -52,3 +52,11 @@ IdentityVerification helper copy scrubbed ("your records and attestations"). Int
 Regression coverage: `AuthLinkErrorRedirect.test.tsx` drives a **real** `MemoryRouter` (react-router-dom is deliberately not mocked — a mocked `useNavigate` never changes the location, so the re-fire is invisible) and asserts the CTA still lands on `/login` from both entry paths. The pure-predicate tests in `src/lib/authLinkRedirect.test.ts` cannot catch this: `shouldRedirectToAuthCallback` is correct in isolation; the defect was in how often it is called.
 
 Note: `eslint-rules/no-unscoped-service-test.cjs` flags any test-file variable whose name merely *contains* "from" (substring match), so a mock named `mockAuthLinkErrorFromUrl` trips it spuriously. Mock state here is named `stubbedAuthLinkError` to avoid the false positive.
+
+## SCRUM-4035 — OAuth mailbox confirmation
+
+`OAuthEmailConfirmation` owns the separate post-OAuth mailbox step; `SignUpPage` selects it
+without coupling `SignUpForm` to provider behavior. `AuthGuard` redirects signed pending
+sessions before mounting protected content. This UI is not the security boundary: the
+worker/edge verifiers and database role enforce the same state. Preserve the checked local
+sign-out + `arkova_signed_out` flag + hard navigation convention to avoid profile teardown races.

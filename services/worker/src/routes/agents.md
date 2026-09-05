@@ -251,3 +251,10 @@ Note `scripts/staging/fullsoak-cron-exerciser.sh` documented the old 30/min glob
 RATE LIMIT header; that comment is corrected in the same change. Its 6 s pacing across distinct job
 paths is still safe under both new limiters, but `--only <one-path>` at that interval would now
 exhaust that single job's 10/min bucket.
+## SCRUM-4035 — pending OAuth identity
+
+`email-confirmation.ts` provides status/send/complete; `email-confirmation-runtime.ts` wires
+Supabase and audited delivery. Only this router imports `verifyEmailConfirmationToken`.
+Product routes retain `verifyAuthToken`, whose pending-role denial is terminal. Never use
+`getDb().auth.verifyOtp` or `refreshSession`: even with persistence disabled, these replace the
+shared client's Authorization with a user token. Proof clients must be fresh per operation.

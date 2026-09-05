@@ -74,6 +74,28 @@ _Last refreshed: 2026-09-05 by Claude Fable 5.1 (CTO session) — claims verifie
 
 [PR #2653](https://github.com/carson-see/ArkovaCarson/pull/2653) merged via Mergify at 16:49:30 UTC (`3954ca54d5d44cc15902756af0a70b44df79c6be`). Vercel production deployment `dpl_7g6sgAjbDxiuWfog58gZTL8krFJu` was independently verified READY with `app.arkova.ai` on that merge at 16:52 UTC. Later main deployments retain the signup change. Logged-out signup passed actual headless Chrome checks at 1280/375: immediate registration controls, retired beta gate absent, keyboard/error/navigation behavior and no horizontal overflow. No account writes. [Production metadata, screenshots and independent CTO verification](https://arkova.atlassian.net/wiki/spaces/A/pages/137134081); [merge-candidate CI passed](https://github.com/carson-see/ArkovaCarson/actions/runs/33976208584) (18,992 tests and 349 E2E cases). API, worker, webhook, MCP and SDK authentication were unchanged by this frontend fix. OAuth branding/mailbox verification and MFA retain their separate UAT ownership. Final close-out is tracked in SCRUM-4031 after the required observation deadline of 17:19:30 UTC.
 
+### SCRUM-4035 / UAT-03 — OAuth mailbox confirmation candidate (2026-09-05)
+
+Implementation is on `cto/uat03-oauth-confirmation-20260905`; **not released in production**.
+See [the scope, evidence, and rollout gates](docs/uat03-email-confirmation.md).
+Migration 0436 was applied to the owned PR preview and keeps activation NULL; its automatic
+preview check passed. The driver’s path and exact released-rig binding guards pass locally.
+CI at `bc128c4` passed root, worker, SDK and edge suites but failed the new RLS setup:
+multi-command `psql -c` hid intermediate results. Feeding scripts through stdin passes
+19 native SQL cases with `SHOW_ALL_RESULTS=off`, retaining exact primary-error assertions.
+The narrow ES256 verifier dependency from PR #2589 commit `69e24d83` is composed with the
+signed pending-role guard; unrelated tool/SDK names remain unchanged. Final-head CI and
+release approval remain pending. The isolated `bc128c4` worker passed real mailbox and
+rollback controls; earlier 63e50 UI and expiry evidence is linked by runtime-byte equality.
+Audited-account fixture cleanup exposed existing SCRUM-4458 and required bounded operator
+cleanup. Hosted CDC ordinary-user recovery is not proven; its owner is diagnosing the
+positive-control failure. No formal T3 clock has started.
+Root resolved the initial Auth-config403 and read both
+production/owned preview hooks disabled with URI NULL; recheck before installation. UAT-02 owns
+Google consent branding; UAT-04 owns
+MFA; UAT-17 owns verified-domain policy. The retired beta env sample cleanup belongs to
+SCRUM-4031/PR #2653 and is carried with this auth configuration change by CTO assignment.
+
 ### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
 
 **711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
@@ -2236,6 +2258,10 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
+_Last refreshed: 2026-09-05 by Codex CTO — claims verified against gcloud/MCP/CI output._
+
 _Last refreshed: 2026-09-05 by CTO session (Claude) — claims verified against `gh pr view` (#2635 merged, #2637 head/body), the harness evidence under `~/arkova-soak/mfa-3167/`, and the Supabase Management API project list._
 
 _Last refreshed: 2026-09-05 by Claude-Fable-5.1-CTO-session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-05 by Codex CTO UAT-03 — claims verified against gcloud/MCP/CI output (candidate local checks and read-only production ledger/ACL; full PR CI and hosted release remain pending)._
