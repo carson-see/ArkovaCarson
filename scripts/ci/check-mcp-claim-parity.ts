@@ -411,7 +411,13 @@ export function applyBaseline(
 export const CLAIM_RULES: ClaimRule[] = [
   {
     id: 'retrieval-mechanism-claim',
-    tools: ['search_anchors'],
+    // The LIVE registered name. It carried the pre-rename `search_anchors`
+    // through the `arkova_` prefixing, which made the rule dead rather than
+    // failing: `mentionRegex` excludes `_` on both sides of the boundary, so
+    // `search_anchors` matches nothing inside `arkova_search_anchors`, no
+    // region was ever scoped to it, and the gate reported a clean pass while
+    // checking nothing. Pinned by the CLAIM_RULES orphan test.
+    tools: ['arkova_search_anchors'],
     pattern: /\bsemantic(?:ally)?\b|\bvector\b|\bembeddings?\b|\brelevance scores?\b|\bnearest[- ]neighbou?rs?\b/i,
     qualifier: /\bsearch_mode\b|\blexical\b|\bsubstring\b/i,
     reason:

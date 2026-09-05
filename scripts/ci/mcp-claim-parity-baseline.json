@@ -43,36 +43,6 @@
       "key": "card-description-parity::public/.well-known/mcp/server-card.json::arkova_list_agents",
       "owner": "UNOWNED — needs a follow-up PR at the tier of whichever surface it corrects",
       "reason": "Hand-copy drift: canonical 'the authenticated caller organization', manifest 'the authenticated caller's organization'. The manifest's wording is the correct English; the fix belongs in services/edge/src/mcp-tools.ts (T2). Same tier constraint as arkova_oracle_batch_verify above."
-    },
-    {
-      "key": "retrieval-mechanism-claim::public/.well-known/mcp/server-card.json::arkova_search_anchors",
-      "owner": "PR #2236 (BUG-026)",
-      "reason": "BUG-026 residue: 'Uses semantic similarity matching against the credential database. Returns ranked results with verification status and relevance scores.' No search_mode / lexical disclosure."
-    },
-    {
-      "key": "retrieval-mechanism-claim::public/AGENTS.md::arkova_search_anchors",
-      "owner": "PR #2236 (BUG-026)",
-      "reason": "BUG-026 residue: the arkova_search_anchors section repeats the manifest's unqualified semantic claim."
-    },
-    {
-      "key": "retrieval-mechanism-claim::docs/api/mcp-tools.md::arkova_search_anchors",
-      "owner": "PR #2236 (BUG-026)",
-      "reason": "BUG-026 residue: tool-index row 10 reads 'Semantic search across credentials'."
-    },
-    {
-      "key": "disabled-capability-claim::services/edge/src/mcp-tools.ts::nessie_query",
-      "owner": "PR #2236 (R-1 / BUG-008 / BUG-027)",
-      "reason": "The canonical description says Nessie 'Searches anchored public records ... using semantic similarity' in the present tense. Nessie is off by standing founder directive and off in prod. #2236 makes the description lead with DISABLED."
-    },
-    {
-      "key": "disabled-capability-claim::public/.well-known/mcp/server-card.json::nessie_query",
-      "owner": "PR #2236 (R-1)",
-      "reason": "Same present-tense capability claim, hand-copied into the discovery manifest."
-    },
-    {
-      "key": "disabled-capability-claim::docs/api/mcp-tools.md::nessie_query",
-      "owner": "PR #2236 (R-1)",
-      "reason": "Same present-tense capability claim in the per-tool reference section and the tool-index row."
     }
   ]
 }

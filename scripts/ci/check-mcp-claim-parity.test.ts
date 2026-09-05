@@ -16,10 +16,12 @@ import {
   toolRegions,
   checkClaimRules,
   applyBaseline,
+  CLAIM_RULES,
   type ClaimRule,
   type ClaimSurface,
   type ToolDescriptor,
 } from './check-mcp-claim-parity.js';
+import { TOOL_DEFINITIONS } from '../../services/edge/src/mcp-tools';
 
 const CARD = 'public/.well-known/mcp/server-card.json';
 const REF = 'docs/api/mcp-tools.md';
@@ -340,5 +342,72 @@ describe('applyBaseline', () => {
     const { unbaselined, stale } = applyBaseline([], baseline);
     expect(unbaselined).toEqual([]);
     expect(stale).toHaveLength(1);
+  });
+});
+
+describe('CLAIM_RULES (the SHIPPED table, not a fixture)', () => {
+  // The rules above are exercised through synthetic fixtures, which is what
+  // lets them construct a failing repo. That leaves one thing unproven and it
+  // is the thing that actually broke: whether the tool names the SHIPPED rules
+  // are scoped to still exist. `checkClaimRules` silently finds no regions for
+  // a name no surface mentions, so a rule scoped to a renamed tool passes
+  // everything forever — indistinguishable, in the exit code, from a clean
+  // repo. The BUG-026 rule sat dead this way after the `arkova_` prefixing.
+  const rule = (id: string): ClaimRule => {
+    const found = CLAIM_RULES.find((r) => r.id === id);
+    if (!found) throw new Error(`CLAIM_RULES no longer declares ${id}`);
+    return found;
+  };
+
+  it('fires the BUG-026 retrieval-mechanism rule on the LIVE tool name', () => {
+    const surfaces: ClaimSurface[] = [{
+      path: CARD,
+      descriptions: {
+        arkova_search_anchors: 'Uses semantic vector similarity with relevance scores.',
+      },
+    }];
+    const found = checkClaimRules([rule('retrieval-mechanism-claim')], ['arkova_search_anchors'], surfaces);
+    expect(found).toHaveLength(1);
+    expect(found[0].subject).toBe('arkova_search_anchors');
+  });
+
+  it('fires that rule on a PROSE region scoped by the live tool name', () => {
+    const surfaces: ClaimSurface[] = [{
+      path: REF,
+      text: [
+        '## `arkova_search_anchors`',
+        '',
+        'Uses semantic vector similarity with relevance scores.',
+        '',
+        '## `arkova_get_anchor`',
+        '',
+        'Fetches one anchor by id.',
+      ].join('\n'),
+    }];
+    const found = checkClaimRules([rule('retrieval-mechanism-claim')], ['arkova_search_anchors'], surfaces);
+    expect(found).toHaveLength(1);
+    expect(found[0].surface).toBe(REF);
+  });
+
+  it('still passes the same prose once it discloses the lexical fallback', () => {
+    const surfaces: ClaimSurface[] = [{
+      path: CARD,
+      descriptions: {
+        arkova_search_anchors:
+          'Uses semantic vector similarity with relevance scores when search_mode allows; '
+          + 'the served path is lexical substring matching.',
+      },
+    }];
+    expect(checkClaimRules([rule('retrieval-mechanism-claim')], ['arkova_search_anchors'], surfaces)).toEqual([]);
+  });
+
+  it('scopes every shipped rule to a tool name the registry actually registers', () => {
+    // Guards the whole table, not just the one rule that went dead. A rule
+    // naming a tool that no longer exists cannot fire and must be renamed (or
+    // deleted with the behaviour change that justifies it) in the same PR as
+    // the rename.
+    const registered = new Set(TOOL_DEFINITIONS.map((t) => t.name));
+    const orphaned = CLAIM_RULES.flatMap((r) => r.tools.filter((t) => !registered.has(t)).map((t) => `${r.id} -> ${t}`));
+    expect(orphaned).toEqual([]);
   });
 });
