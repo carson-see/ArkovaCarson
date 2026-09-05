@@ -15,7 +15,20 @@ class LocalPostgres:
         self.output.mkdir(parents=True, exist_ok=False, mode=0o700)
         self.binaries = Path(binaries).resolve()
         self.data = self.output / "data"
-        self.socket = Path(tempfile.mkdtemp(prefix="arkova-pg-test-", dir="/tmp"))
+        # Sonar python:S5443 — do not hardcode a world-writable directory.
+        # `tempfile.gettempdir()` honours TMPDIR (a per-user, non-world-writable
+        # path on macOS) and `ARKOVA_PG_SOCKET_DIR` lets an operator point at a
+        # short path explicitly. The literal "/tmp" was only ever here because
+        # a Unix socket path must fit in `sockaddr_un.sun_path`, so assert that
+        # bound instead of hardcoding the shortest possible directory.
+        socket_base = os.environ.get("ARKOVA_PG_SOCKET_DIR") or tempfile.gettempdir()
+        self.socket = Path(tempfile.mkdtemp(prefix="arkova-pg-test-", dir=socket_base))
+        sun_path = self.socket / ".s.PGSQL.55438"
+        if len(str(sun_path).encode()) > 100:
+            raise RuntimeError(
+                f"Unix socket path {sun_path} exceeds the sun_path limit; "
+                "set ARKOVA_PG_SOCKET_DIR to a shorter directory"
+            )
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("PG")}
         self.env.update(
             PGHOST=str(self.socket),
