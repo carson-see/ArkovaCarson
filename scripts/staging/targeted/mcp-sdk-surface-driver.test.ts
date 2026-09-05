@@ -46,10 +46,10 @@ import {
   MAX_CAPTURES_PER_LABEL,
   CAPTURE_MAX_SNIPPET,
   type GoTrueTokenBox,
-  HOSTED_REQUIRED_TOOLS,
-  HOSTED_NOTE_TOOLS,
-  STDIO_REQUIRED_TOOLS,
-  STDIO_NOTE_TOOLS,
+  RENAMED_TOOLS,
+  HOSTED_ALLOWED_NAME_PREFIXES,
+  STDIO_ALLOWED_NAME_PREFIXES,
+  STDIO_EXPECTED_TOOL_NAMES,
   type McpToolSummary,
 } from './mcp-sdk-surface-driver';
 
@@ -194,17 +194,17 @@ describe('mcp-sdk-surface-driver: SCRUM-2589 tool-naming assertions', () => {
   });
 
   it('assertRequiredToolsPresent passes when both required tools exist', () => {
-    expect(assertRequiredToolsPresent(cleanTools, HOSTED_REQUIRED_TOOLS)).toBeNull();
+    expect(assertRequiredToolsPresent(cleanTools, RENAMED_TOOLS)).toBeNull();
   });
 
   it('assertRequiredToolsPresent flags a missing required tool', () => {
-    const err = assertRequiredToolsPresent([{ name: 'get_anchor', description: '' }], HOSTED_REQUIRED_TOOLS);
+    const err = assertRequiredToolsPresent([{ name: 'get_anchor', description: '' }], RENAMED_TOOLS);
     expect(err).toMatch(/verify_anchor/);
     expect(err).toMatch(/search_anchors/);
   });
 
   it('assertApiOnlyNotePresent passes when both tools carry the note', () => {
-    expect(assertApiOnlyNotePresent(cleanTools, HOSTED_NOTE_TOOLS)).toBeNull();
+    expect(assertApiOnlyNotePresent(cleanTools, RENAMED_TOOLS)).toBeNull();
   });
 
   it('assertApiOnlyNotePresent flags a tool missing the note', () => {
@@ -212,7 +212,7 @@ describe('mcp-sdk-surface-driver: SCRUM-2589 tool-naming assertions', () => {
       { name: 'arkova_verify_anchor', description: 'Verify an anchor, no note here.' },
       { name: 'arkova_search_anchors', description: 'Search, does NOT read local files.' },
     ];
-    const err = assertApiOnlyNotePresent(missingNote, HOSTED_NOTE_TOOLS);
+    const err = assertApiOnlyNotePresent(missingNote, RENAMED_TOOLS);
     expect(err).toMatch(/verify_anchor/);
     expect(err).not.toMatch(/search_anchors/);
   });
@@ -223,10 +223,54 @@ describe('mcp-sdk-surface-driver: SCRUM-2589 tool-naming assertions', () => {
       id: 2,
       result: { tools: [{ name: 'search_credentials', description: 'old, no note' }] },
     };
-    const a = assertToolsList(body, HOSTED_REQUIRED_TOOLS, HOSTED_NOTE_TOOLS);
+    const a = assertToolsList(body, { required: RENAMED_TOOLS, note: RENAMED_TOOLS });
     expect(a.errors.length).toBeGreaterThan(0);
     expect(a.credentialNamedCount).toBe(1);
     expect(a.apiOnlyNotePresent).toBe(false);
+  });
+
+  it('RENAMED_TOOLS is the single list both surfaces require AND note-check', () => {
+    expect(RENAMED_TOOLS).toEqual(['arkova_verify_anchor', 'arkova_search_anchors']);
+  });
+
+  it('assertToolsList applies the optional D4 prefix rule only when namePrefixes is given', () => {
+    const body = {
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        tools: [
+          { name: 'arkova_verify_anchor', description: 'does NOT read local files' },
+          { name: 'arkova_search_anchors', description: 'does NOT read local files' },
+          { name: 'legacy_unprefixed', description: 'does NOT read local files' },
+        ],
+      },
+    };
+    expect(assertToolsList(body, { required: RENAMED_TOOLS, note: RENAMED_TOOLS }).errors).toEqual([]);
+    const withPrefixes = assertToolsList(body, {
+      required: RENAMED_TOOLS,
+      note: RENAMED_TOOLS,
+      namePrefixes: HOSTED_ALLOWED_NAME_PREFIXES,
+    });
+    expect(withPrefixes.errors.join(' ')).toMatch(/legacy_unprefixed/);
+  });
+
+  it('assertToolsList applies the optional D5 exact-set rule only when exactNames is given', () => {
+    const body = {
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        tools: STDIO_EXPECTED_TOOL_NAMES.map((name) => ({ name, description: 'does NOT read local files' })),
+      },
+    };
+    const opts = {
+      required: RENAMED_TOOLS,
+      note: RENAMED_TOOLS,
+      namePrefixes: STDIO_ALLOWED_NAME_PREFIXES,
+      exactNames: STDIO_EXPECTED_TOOL_NAMES,
+    };
+    expect(assertToolsList(body, opts).errors).toEqual([]);
+    const short = { ...body, result: { tools: body.result.tools.slice(0, 5) } };
+    expect(assertToolsList(short, opts).errors.join(' ')).toMatch(/exactly 6 tools/);
   });
 
   it('assertToolsList is clean on the stdio arkova_* renamed set', () => {
@@ -240,7 +284,7 @@ describe('mcp-sdk-surface-driver: SCRUM-2589 tool-naming assertions', () => {
         ],
       },
     };
-    const a = assertToolsList(body, STDIO_REQUIRED_TOOLS, STDIO_NOTE_TOOLS);
+    const a = assertToolsList(body, { required: RENAMED_TOOLS, note: RENAMED_TOOLS });
     expect(a.errors).toEqual([]);
     expect(a.credentialNamedCount).toBe(0);
     expect(a.apiOnlyNotePresent).toBe(true);

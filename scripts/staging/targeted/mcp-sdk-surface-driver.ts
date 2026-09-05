@@ -101,6 +101,7 @@ import { parseArgs, promisify } from 'node:util';
 import { resolveStagingApiBase } from '../load-harness-env';
 import {
   newDriverStats,
+  classifyStatus,
   recordOutcome,
   summarizeEvidence,
   bodySnippet,
@@ -442,57 +443,66 @@ export function assertExactToolSet(tools: readonly McpToolSummary[], expectedNam
 export interface ToolsListAssertion {
   errors: string[];
   tools: McpToolSummary[];
+  /** Names still containing "credential" — the count SCRUM-2589 must drive to zero. */
   credentialNamedCount: number;
   apiOnlyNotePresent: boolean;
 }
 
+export interface ToolsListExpectation {
+  /** Tools that must be present. */
+  required: readonly string[];
+  /** Tools whose descriptions must carry the API-only note. */
+  note: readonly string[];
+  /** When given, EVERY tool name must carry one of these prefixes (D4, hosted). */
+  namePrefixes?: readonly string[];
+  /** When given, the tool set must be EXACTLY this list (D5, stdio). */
+  exactNames?: readonly string[];
+}
+
 /**
- * Combined tools/list assertion shared by BOTH the hosted and stdio
- * surfaces. `requiredNamePrefixes`, when given, additionally asserts EVERY
- * tool name carries one of the allowed prefixes (D4, hosted-only).
- * `expectedExactNames`, when given, additionally asserts the tool set is
- * EXACTLY that closed list — no more, no fewer (D5, stdio-only).
+ * Combined tools/list assertion shared by BOTH the hosted and stdio surfaces.
+ * Takes an options object rather than four positional lists — the two
+ * optional tails were surface-specific and, positionally, indistinguishable
+ * at the call site.
  */
-export function assertToolsList(
-  body: JsonBody,
-  requiredTools: readonly string[],
-  noteTools: readonly string[],
-  requiredNamePrefixes?: readonly string[],
-  expectedExactNames?: readonly string[],
-): ToolsListAssertion {
+export function assertToolsList(body: JsonBody, expect: ToolsListExpectation): ToolsListAssertion {
   const tools = extractToolList(body) ?? [];
   const errors: string[] = [];
-  const credErr = assertNoCredentialNamedTools(tools);
-  if (credErr) errors.push(credErr);
-  const reqErr = assertRequiredToolsPresent(tools, requiredTools);
+  // Computed once and reused for both the error string and the evidence count.
+  const credentialNamed = tools.filter((t) => t.name.toLowerCase().includes('credential')).map((t) => t.name);
+  if (credentialNamed.length) errors.push(`tool name(s) still contain "credential": ${credentialNamed.join(', ')}`);
+  const reqErr = assertRequiredToolsPresent(tools, expect.required);
   if (reqErr) errors.push(reqErr);
-  const noteErr = assertApiOnlyNotePresent(tools, noteTools);
+  const noteErr = assertApiOnlyNotePresent(tools, expect.note);
   if (noteErr) errors.push(noteErr);
-  if (requiredNamePrefixes) {
-    const prefixErr = assertToolNamePrefixes(tools, requiredNamePrefixes);
+  if (expect.namePrefixes) {
+    const prefixErr = assertToolNamePrefixes(tools, expect.namePrefixes);
     if (prefixErr) errors.push(prefixErr);
   }
-  if (expectedExactNames) {
-    const exactErr = assertExactToolSet(tools, expectedExactNames);
+  if (expect.exactNames) {
+    const exactErr = assertExactToolSet(tools, expect.exactNames);
     if (exactErr) errors.push(exactErr);
   }
   return {
     errors,
     tools,
-    credentialNamedCount: tools.filter((t) => t.name.toLowerCase().includes('credential')).length,
+    credentialNamedCount: credentialNamed.length,
     apiOnlyNotePresent: noteErr === null,
   };
 }
 
+/**
+ * The two tools SCRUM-2589 renamed. Both surfaces require them present AND
+ * carrying the API-only note, so one constant covers all four former
+ * HOSTED_/STDIO_ × REQUIRED_/NOTE_ lists, which held identical contents.
+ */
+export const RENAMED_TOOLS = ['arkova_verify_anchor', 'arkova_search_anchors'] as const;
+
 // D4: hosted tool names now match the npm/stdio package's arkova_-prefixed
 // namespace (nessie_-prefixed capability tools are the sole exception).
-export const HOSTED_REQUIRED_TOOLS = ['arkova_verify_anchor', 'arkova_search_anchors'] as const;
-export const HOSTED_NOTE_TOOLS = ['arkova_verify_anchor', 'arkova_search_anchors'] as const;
 export const HOSTED_ALLOWED_NAME_PREFIXES = ['arkova_', 'nessie_'] as const;
-
-export const STDIO_REQUIRED_TOOLS = ['arkova_verify_anchor', 'arkova_search_anchors'] as const;
-export const STDIO_NOTE_TOOLS = ['arkova_verify_anchor', 'arkova_search_anchors'] as const;
 export const STDIO_ALLOWED_NAME_PREFIXES = ['arkova_'] as const;
+
 // D5: the four nessie_* tools were removed from the npm package — an EXACT,
 // closed 6-tool set (arkova_create_attestation + arkova_verify_signature are
 // advertised but never CALLED by this driver — the former is a write, the
@@ -505,7 +515,6 @@ export const STDIO_EXPECTED_TOOL_NAMES = [
   'arkova_batch_verify',
   'arkova_verify_signature',
 ] as const;
-export const STDIO_EXPECTED_TOOL_COUNT = STDIO_EXPECTED_TOOL_NAMES.length;
 
 // ─── OAuth discovery assertion (pure) ───────────────────────────────────
 
@@ -1068,7 +1077,9 @@ async function callHosted(o: HostedCallOpts): Promise<HostedCallResult> {
     clearTimeout(t);
   }
   let semanticFailure: string | null = null;
-  const httpOk = status !== 0 && o.okStatuses.includes(status);
+  // driver-core's shared rule, not a local re-derivation: status 0 (transport
+  // failure) is NEVER expected, even if a caller allows it.
+  const httpOk = classifyStatus(status, o.okStatuses);
   if (httpOk && o.assert) semanticFailure = o.assert(parsed);
   const expected = httpOk && semanticFailure === null;
   recordOutcome(o.stats, {
@@ -1282,7 +1293,12 @@ async function runHostedCycle(ctx: {
 
   // A2 — tools/list
   const listReq = buildJsonRpcRequest('tools/list', undefined, 2);
-  const listResult = await callHosted({
+  // The assert callback runs against the parsed body, so it also carries the
+  // assertion out — evaluating assertToolsList twice on the same body was pure
+  // duplicate work. `box` (not a plain `let`) because TypeScript cannot see a
+  // closure assignment and would narrow the variable back to `null`.
+  const box: { value: ToolsListAssertion | null } = { value: null };
+  await callHosted({
     stats: ctx.stats,
     label: 'hosted:tools/list',
     url: mcpUrl,
@@ -1291,20 +1307,26 @@ async function runHostedCycle(ctx: {
     body: JSON.stringify(listReq),
     okStatuses: [200],
     assert: (b) => {
-      const a = assertToolsList(b, HOSTED_REQUIRED_TOOLS, HOSTED_NOTE_TOOLS, HOSTED_ALLOWED_NAME_PREFIXES);
+      const a = assertToolsList(b, {
+        required: RENAMED_TOOLS,
+        note: RENAMED_TOOLS,
+        namePrefixes: HOSTED_ALLOWED_NAME_PREFIXES,
+      });
+      box.value = a;
       return a.errors.length ? a.errors.join('; ') : null;
     },
   });
-  const listAssertion = assertToolsList(
-    listResult.body,
-    HOSTED_REQUIRED_TOOLS,
-    HOSTED_NOTE_TOOLS,
-    HOSTED_ALLOWED_NAME_PREFIXES,
-  );
-  ctx.evidence.hostedToolNames = listAssertion.tools.map((t) => t.name);
-  ctx.evidence.credentialNamedTools = listAssertion.credentialNamedCount;
-  ctx.evidence.apiOnlyNotePresent = listAssertion.apiOnlyNotePresent;
-  ctx.log(`hosted tools/list: ${listAssertion.tools.length} tools, credential-named=${listAssertion.credentialNamedCount}`);
+  // Null only when the HTTP status itself was unexpected, so `assert` never ran
+  // — the failure is already recorded; leave the evidence fields untouched.
+  const listAssertion = box.value;
+  if (listAssertion) {
+    ctx.evidence.hostedToolNames = listAssertion.tools.map((t) => t.name);
+    ctx.evidence.credentialNamedTools = listAssertion.credentialNamedCount;
+    ctx.evidence.apiOnlyNotePresent = listAssertion.apiOnlyNotePresent;
+    ctx.log(`hosted tools/list: ${listAssertion.tools.length} tools, credential-named=${listAssertion.credentialNamedCount}`);
+  } else {
+    ctx.log('hosted tools/list: unexpected HTTP status — tool-set assertions did not run this cycle.');
+  }
 
   // A6 (before half) — audit_events MCP_TOOL_CALL count BEFORE the tools/call batch
   let before = -1;
@@ -1544,13 +1566,12 @@ async function runStdioCycle(ctx: {
     // tools/list
     const listReq = buildJsonRpcRequest('tools/list', undefined, 2);
     const listBody = await stdioRequest(child, buf, listReq);
-    const listAssertion = assertToolsList(
-      listBody,
-      STDIO_REQUIRED_TOOLS,
-      STDIO_NOTE_TOOLS,
-      STDIO_ALLOWED_NAME_PREFIXES,
-      STDIO_EXPECTED_TOOL_NAMES,
-    );
+    const listAssertion = assertToolsList(listBody, {
+      required: RENAMED_TOOLS,
+      note: RENAMED_TOOLS,
+      namePrefixes: STDIO_ALLOWED_NAME_PREFIXES,
+      exactNames: STDIO_EXPECTED_TOOL_NAMES,
+    });
     recordOutcome(ctx.stats, {
       label: 'stdio:tools/list',
       endpoint: 'stdio:tools/list',
