@@ -32,15 +32,19 @@
 #      path, .github/workflows/publish-sdk.yml, which covers packages/sdk
 #      only and is tag-triggered).
 #
-# OPERATOR NOTE 1 — NPM_TOKEN's scope is not the package's scope.
-#   The CI path (.github/workflows/publish-sdk.yml, triggered by an `sdk-v*`
-#   tag) publishes packages/sdk using `secrets.NPM_TOKEN`. That token was
-#   provisioned while the package was `@carsonarkova/sdk`, so it was scoped to
-#   the `carsonarkova` org. The package is now the UNSCOPED name `arkova`,
-#   which is a different ownership record entirely — an org-scoped token has no
-#   rights on it. CONFIRM the token can publish `arkova` BEFORE pushing an
-#   `sdk-v3.0.0` tag: a tag push that fails on E403 has already burned the tag,
-#   and re-tagging the same version is the messiest possible recovery.
+# OPERATOR NOTE 1 — the CI publish identity (verified 2026-09-05).
+#   .github/workflows/publish-sdk.yml (tag `sdk-v*`) publishes packages/sdk with
+#   `secrets.NPM_TOKEN`. That token is mirrored from GCP Secret Manager
+#   `arkova1/NPM` (single version, 2026-07-22) and authenticates as npm user
+#   `crseeger`, who is the SOLE registry maintainer of both `arkova` and
+#   `arkova-mcp-server` (checked with `npm view <pkg> maintainers`). It is a
+#   user token, not an org-scoped one, so the unscoped names are publishable
+#   with it. Caveat: `npm access list packages` answers 403 with this token
+#   while `npm access get status arkova` succeeds, which is the signature of a
+#   granular token; a package allow-list is only proven by a publish. If a
+#   publish 403s, check the token's package scope on npmjs.com before anything
+#   else. Rotating it means: new version on `arkova1/NPM` AND
+#   `gh secret set NPM_TOKEN` — the two are not linked.
 #
 # OPERATOR NOTE 2 — sdks/mcp-server has NO CI publish workflow.
 #   `.github/workflows/` contains publish-sdk.yml (packages/sdk) and
