@@ -2,7 +2,7 @@
 
 _This notice supplements our global privacy policy to address the specific rights and disclosures required by the Kenya Data Protection Act, 2019._
 
-_Last updated: 2026-04-11 | Effective: pending first Kenyan customer_
+_Last updated: 2026-09-03 | Effective: pending first Kenyan customer | MFA wording corrected to reflect production state (R-7 claims gate)_
 
 ---
 
@@ -153,7 +153,7 @@ Full analysis: see our DPIA at `../kenya/dpia.md`.
 - TLS 1.3 encryption in transit
 - AES-256 encryption at rest
 - Row-level security on every database table
-- Multi-factor authentication for all administrative access
+- Role-based access control with audit logging; multi-factor authentication (TOTP authenticator app) available to every account as an opt-in setting — enforcement for administrator roles is being rolled out and is not yet in effect
 - SOC 2 Type II controls
 - Annual third-party penetration testing
 - 72-hour breach notification to the ODPC (Section 43)
