@@ -10,7 +10,7 @@
  * AuthGuard MFA gate, which only runs on a real UI login.
  */
 
-import type { Page } from '@playwright/test';
+import type { Page, Response } from '@playwright/test';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SEED_USERS } from '../fixtures/supabase';
 import { uniqueTestId } from './unique';
@@ -263,19 +263,51 @@ export async function submitTotpCodeWithBoundaryRetry(
   secret: string,
   opts: { codeTestId: string; submitTestId: string; errorTestId: string },
 ): Promise<void> {
-  await page.getByTestId(opts.codeTestId).fill(computeTotpAvoidingBoundary(secret));
-  await page.getByTestId(opts.submitTestId).click();
+  const input = page.getByTestId(opts.codeTestId);
+  let verification: Promise<{ code?: string } | null> | null = null;
+  const observeVerification = (response: Response) => {
+    if (/\/auth\/v1\/factors\/[^/]+\/verify$/.test(new URL(response.url()).pathname)) {
+      // Keep only the rejection code; never log or retain successful JWTs.
+      verification = response.ok() ? Promise.resolve(null) : response.json().then(
+        (body: { code?: string }) => ({ code: body.code }),
+        () => null,
+      );
+    }
+  };
+  page.on('response', observeVerification);
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      verification = null;
+      await input.fill(computeTotpAvoidingBoundary(secret));
+      await page.getByTestId(opts.submitTestId).click();
+      // isVisible({ timeout }) is an immediate snapshot, not an async wait.
+      // Wait for the actual outcome before permitting the next action.
+      const outcome = await Promise.race([
+        input.waitFor({ state: 'hidden', timeout: 20_000 }).then(() => 'complete'),
+        page.getByTestId(opts.errorTestId).waitFor({ state: 'visible', timeout: 20_000 }).then(() => 'error'),
+      ]);
+      if (outcome === 'complete') return;
+      const rejection = await verification as { code?: string } | null;
+      if (attempt !== 0 || !['mfa_verification_failed', 'mfa_verification_rejected', 'mfa_challenge_expired'].includes(rejection?.code ?? '')) {
+        throw new Error('MFA verification failed; probe will not retry a platform error');
+      }
+      // A fresh RFC6238 step is necessary; do not spend an unconditional
+      // 30-second sleep inside the suite's former 30-second total budget.
+      const retryAt = Math.floor(Date.now() / TOTP_STEP_MS) * TOTP_STEP_MS + TOTP_STEP_MS + 100;
+      await page.waitForFunction((readyAt) => Date.now() >= readyAt, retryAt, { timeout: TOTP_STEP_MS + 1_000 });
+    }
+  } finally {
+    page.off('response', observeVerification);
+  }
+}
 
-  const failed = await page
-    .getByTestId(opts.errorTestId)
-    .isVisible({ timeout: 3_000 })
-    .catch(() => false);
-  if (!failed) return;
-
-  // One deterministic retry: wait out a full step so the freshly computed
-  // code cannot straddle the same boundary the first attempt did, then
-  // resubmit. Bounded to exactly one retry — see the doc comment above.
-  await page.waitForTimeout(TOTP_STEP_MS);
-  await page.getByTestId(opts.codeTestId).fill(totp(secret, { now: Date.now() }));
-  await page.getByTestId(opts.submitTestId).click();
+/** Wait for either result of an asynchronous management action before branching. */
+export async function waitForMfaManagementOutcome(page: Page, readyTestId: string): Promise<'ready' | 'stepUp'> {
+  const outcome = await Promise.race([
+    page.getByTestId(readyTestId).waitFor({ state: 'visible', timeout: 20_000 }).then(() => 'ready' as const),
+    page.getByTestId('twofactor-stepup').waitFor({ state: 'visible', timeout: 20_000 }).then(() => 'stepUp' as const),
+    page.getByTestId('twofactor-error').waitFor({ state: 'visible', timeout: 20_000 }).then(() => 'error' as const),
+  ]);
+  if (outcome === 'error') throw new Error('MFA management failed');
+  return outcome;
 }

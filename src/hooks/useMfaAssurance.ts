@@ -193,6 +193,7 @@ const REASSURANCE_INTERVAL_MS = 60_000;
 export function useMfaAssurance(
   userId: string | null,
   sessionKey: string | null = null,
+  refreshKey: string | null = sessionKey,
 ): UseMfaAssuranceResult {
   // R11: seed synchronously from the module cache when this exact
   // (userId, sessionKey) pair was already resolved by a PRIOR instance
@@ -209,8 +210,8 @@ export function useMfaAssurance(
     return { userId: null, sessionKey: null, ...SATISFIED_NO_FACTOR };
   });
 
-  // `check()` is called from three places (initial mount / userId change,
-  // the 60s interval, and the visibilitychange handler) and must always act
+  // `check()` runs on mount/identity changes, token refresh, the 60s interval,
+  // and visibility changes, and must always act
   // on the LATEST userId/sessionKey, not whatever it closed over when it
   // was created. Synced in an effect (never assigned during render —
   // react-hooks/refs) declared BEFORE the userId-change effect further
@@ -321,6 +322,17 @@ export function useMfaAssurance(
     }
     void check();
   }, [userId, sessionKey, check]);
+
+  // A refreshed JWT still rechecks the refreshed factor state immediately,
+  // but the same login/AAL must not replace protected children with a spinner.
+  const lastRefreshKey = useRef(refreshKey);
+  useEffect(() => {
+    const previous = lastRefreshKey.current;
+    lastRefreshKey.current = refreshKey;
+    if (previous !== refreshKey && userId && readModuleCache(userId, sessionKey)) {
+      void check();
+    }
+  }, [userId, sessionKey, refreshKey, check]);
 
   // LIVE RE-EVALUATION (A4-11): re-run the same check on a 60s interval and
   // whenever the tab regains foreground, via the shared hook both MFA

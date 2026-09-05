@@ -1,6 +1,14 @@
 # agents.md — hooks
 _Last updated: 2026-09-03_
 
+## PR #2637 refresh without remounting MFA setup (2026-09-05)
+
+`useMfaAssurance` accepts a separate refresh trigger from its stable session/AAL
+cache identity. Token rotation runs an immediate background recheck, retaining
+the last known state while it resolves; it does not unmount an in-progress QR.
+New sign-in and AAL-change identities still report loading until checked. Existing
+known-factor fail-closed behavior and 60s/visibility polling remain active.
+
 ## 2026-09-04 — release review: preserve an established MFA challenge on failed rechecks
 
 `useMfaAssurance` now preserves the current session's known-factor state when a

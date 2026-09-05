@@ -574,6 +574,22 @@ describe('useMfaAssurance', () => {
       __resetMfaAssuranceCacheForTests();
     });
 
+    it('rechecks a refreshed token without replacing the current UI with loading', async () => {
+      mockGetAAL.mockResolvedValue({ data: { currentLevel: 'aal2', nextLevel: 'aal2' }, error: null });
+      const { useMfaAssurance } = await import('./useMfaAssurance');
+      const { result, rerender } = renderHook(({ token }) => useMfaAssurance('user-cache', 'same-session-aal2', token), {
+        initialProps: { token: 'jwt-one' },
+      });
+      await waitFor(() => expect(result.current.status).toBe('satisfied'));
+      const next = deferred<{ data: { currentLevel: string; nextLevel: string }; error: null }>();
+      mockGetAAL.mockReturnValue(next.promise);
+      rerender({ token: 'jwt-two' });
+      expect(result.current.status).toBe('satisfied');
+      await waitFor(() => expect(mockGetAAL).toHaveBeenCalledTimes(2));
+      await act(async () => next.resolve({ data: { currentLevel: 'aal1', nextLevel: 'aal2' }, error: null }));
+      expect(result.current.status).toBe('challenge_required');
+    });
+
     it('a second mount for the SAME (userId, sessionKey) renders synchronously from cache — NO second getAuthenticatorAssuranceLevel call', async () => {
       mockGetAAL.mockResolvedValue({
         data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },

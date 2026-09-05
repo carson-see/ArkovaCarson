@@ -87,6 +87,7 @@ import { armMfaCapabilityCooldown, isMfaCapabilityCooldownActive } from '../../l
 import { MfaChallenge } from './MfaChallenge';
 import { MfaEnrollmentRequired } from './MfaEnrollmentRequired';
 import { MfaGraceNudge } from './MfaGraceNudge';
+import { mfaAssuranceSessionKey } from '../../lib/mfaSessionKey';
 
 interface AuthGuardProps {
   children: ReactNode;
@@ -107,14 +108,9 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   const toastShown = useRef(false);
   const hadUser = useRef(false);
   const userId = user?.id ?? null;
-  // R11: threaded into useMfaAssurance's optional module-scope cache — the
-  // access token rotates on every genuinely new sign-in (and on Supabase's
-  // periodic refresh, which is fine: that just means a route change right
-  // after a token refresh re-fetches once rather than serving a
-  // technically-stale cache entry — a bounded correctness/efficiency
-  // trade-off, not a security one). `session?.expires_at` would work too;
-  // access_token is preferred since it changes on more than just expiry.
-  const sessionKey = session?.access_token ?? null;
+  // Ordinary token refresh must not discard an in-progress backup QR.
+  // New sign-ins and AAL changes still force a fresh assurance check.
+  const sessionKey = mfaAssuranceSessionKey(session?.access_token ?? null, userId);
 
   // SECURITY (pre-pentest hardening, founder directive 2026-08-03 "MFA
   // needs to be mandatory" + "enforced everytime you login"; phase-1
@@ -132,6 +128,7 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   const { status: mfaStatus, hasVerifiedFactor, markVerified, markBypassed } = useMfaAssurance(
     userId,
     sessionKey,
+    session?.access_token ?? null,
   );
   const {
     loading: mfaRequirementLoading,

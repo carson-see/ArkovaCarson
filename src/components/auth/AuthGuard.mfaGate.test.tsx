@@ -58,7 +58,7 @@ vi.mock('@/lib/sentry', () => ({
   Sentry: { captureMessage: (...args: unknown[]) => mockCaptureMessage(...args) },
 }));
 
-const authState: { user: { id: string } | null; loading: boolean } = {
+const authState: { user: { id: string } | null; loading: boolean; session?: { access_token: string } } = {
   user: { id: 'user-1' },
   loading: false,
 };
@@ -75,8 +75,12 @@ const mfaState: {
 };
 const markVerified = vi.fn();
 const markBypassed = vi.fn();
+const mockAssuranceKey = vi.fn();
 vi.mock('../../hooks/useMfaAssurance', () => ({
-  useMfaAssurance: () => ({ ...mfaState, markVerified, markBypassed }),
+  useMfaAssurance: (userId: string, sessionKey: string) => {
+    mockAssuranceKey(userId, sessionKey);
+    return { ...mfaState, markVerified, markBypassed };
+  },
 }));
 
 const requirementState: {
@@ -144,6 +148,7 @@ vi.mock('react-router-dom', async () => {
 });
 
 function resetToDefaults() {
+  delete authState.session;
   authState.user = { id: 'user-1' };
   authState.loading = false;
   mfaState.status = 'satisfied';
@@ -162,6 +167,25 @@ describe('AuthGuard — MFA session gate (SCRUM-3167)', () => {
     // not mocked — reset it so one test's fail-open trip doesn't leak a
     // cooldown window into the next test in this file.
     __resetMfaCapabilityCooldownForTests();
+  });
+
+  it('keeps the assurance identity stable when GoTrue refreshes the same AAL2 session', () => {
+    const token = (iat: number, aal = 'aal2', sessionId = 'session-one') =>
+      `header.${btoa(JSON.stringify({ sub: 'user-1', session_id: sessionId, aal, iat }))}.signature`;
+    authState.session = { access_token: token(100) };
+    const { rerender } = render(<AuthGuard><div>Enrollment in progress</div></AuthGuard>);
+    const original = mockAssuranceKey.mock.lastCall?.[1];
+    authState.session = { access_token: token(101) };
+    rerender(<AuthGuard><div>Enrollment in progress</div></AuthGuard>);
+    expect(mockAssuranceKey.mock.lastCall?.[1]).toBe(original);
+
+    authState.session = { access_token: token(102, 'aal1') };
+    rerender(<AuthGuard><div>Enrollment in progress</div></AuthGuard>);
+    expect(mockAssuranceKey.mock.lastCall?.[1]).not.toBe(original);
+
+    authState.session = { access_token: token(103, 'aal2', 'new-login') };
+    rerender(<AuthGuard><div>Enrollment in progress</div></AuthGuard>);
+    expect(mockAssuranceKey.mock.lastCall?.[1]).not.toBe(original);
   });
 
   it('LOCKOUT-PREVENTION GUARD: renders children for a user with no MFA enrolled on a role that does not require it — this must never regress', () => {

@@ -2,6 +2,13 @@
 
 _Last updated: 2026-09-03_
 
+## PR #2637 MFA assurance identity (2026-09-05)
+
+`mfaSessionKey.ts` derives a UI cache key from a current user's GoTrue session_id
+and AAL; JWT rotation does not destroy enrollment state. New sign-ins and assurance
+downgrades change the key. Unsupported/malformed/cross-user tokens retain their
+whole-token identity. This decoder is not signature verification or authorization.
+
 ## 2026-09-03 SCRUM-3167 — `mfaPolicy.ts` (new): MFA enforcement date policy
 
 New module, the single source of truth `AuthGuard`/`useMfaEnrollmentRequirement`/`MfaGraceNudge` all read for "is MFA required, and from when." Phase 1 is role-based only — see `src/components/auth/agents.md` and `src/hooks/agents.md`'s dated SCRUM-3167 entries for the full gate design; this entry covers the policy module itself.

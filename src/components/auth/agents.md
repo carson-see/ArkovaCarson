@@ -1,6 +1,17 @@
 # agents.md — components/auth
 _Last updated: 2026-09-03_
 
+## PR #2637 backup QR lost during token refresh (2026-09-05)
+
+Real GoTrue traces reproduced successful backup-factor creation followed by a
+missing QR and an incomplete factor. The verify and refresh responses carry
+different JWTs for the same session_id/aal2. Whole-token cache identity forced
+AuthGuard to show a spinner and unmount Settings during enrollment. Cache identity
+now uses session_id plus AAL, bound to the current user. Token refresh still
+rechecks immediately in the background; new sign-ins and AAL changes invalidate
+the identity. Red-first tests cover refresh preservation and new-login/downgrade
+isolation. The prior 12h UI soak remains failed evidence and is not reused.
+
 ## What This Folder Contains
 Authentication and identity components: login, signup, route guards, identity verification, 2FA, data rights (export/delete/correction).
 

@@ -17,3 +17,10 @@ Shared utility functions for E2E Playwright tests.
 - Profile sessions create real Supabase auth users via `admin.createUser`; clean up after tests.
 - **Never hardcode a Supabase auth storage key.** `profile-session.ts` inlined `sb-127-auth-token`, which is not a constant: supabase-js derives `sb-<first host label>-auth-token`, and `127` is just the first label of `127.0.0.1`. Against a hosted project the app reads `sb-<project-ref>-auth-token`, so the injected session was invisible and 15 tests across `onboarding` / `identity` / `route-guards` could only ever run against a local Supabase. Derive it from the URL the APP uses (`VITE_SUPABASE_URL`, falling back to `E2E_SUPABASE_URL`). The same applies to the `storageState` **origin** — Playwright matches by origin, so it must be `E2E_BASE_URL` when set, not a hardcoded `http://localhost:5173`.
 - **A spec that deletes a SEEDED row must restore it.** CI runs against a `db reset` database, so destroying seed data is invisible there and permanent on a persistent rig or daily runner. Snapshot with `captureRows()` in `beforeAll` — before the first destructive statement — and `restore()` in `afterAll`. Cleaning up only "rows the test created" is not sufficient when the test deletes rows it did not create.
+
+## PR #2637 asynchronous MFA probe outcomes (2026-09-05)
+
+`mfa.ts` waits for successful UI transition or an explicit error after submitting.
+Only a GoTrue wrong-code rejection permits one retry at the next RFC6238 step;
+platform errors fail the probe. `waitForMfaManagementOutcome` waits for QR, step-up,
+or error before branching; `locator.isVisible({ timeout })` never waits.

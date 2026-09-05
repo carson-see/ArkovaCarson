@@ -405,3 +405,17 @@ E2E job is low-risk.
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
+
+## PR #2637 soak closeout timing correction (2026-09-05)
+
+The 12h UI window contained three failures and is preserved as failed evidence.
+`mfa-harness-timing.spec.ts` reproduces premature helper completion on delayed
+success/error using real browser DOM timing. MFA scenarios wait for completed
+verification and asynchronous step-up outcomes. Their total 90s budget permits
+two real RFC6238 step changes; individual action deadlines remain bounded.
+
+The closeout suite additionally rotates a real GoTrue token through the browser
+BroadcastChannel while the backup QR is visible, asserts the same QR/secret
+survive, and requires the AAL downgrade challenge after factor removal. It covers
+platform-admin enrollment plus ordinary-user and org-admin platform-route and
+foreign-private-profile denials. Enrollment screenshots mask QR and secret data.
