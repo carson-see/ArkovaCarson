@@ -1,5 +1,12 @@
 # services/worker/src/jobs/agents.md
 
+
+## 2026-09-05 — PR #2565 JSONB CAS transport correction
+
+The Supabase client interpolates `.eq()` values into URL filters. Passing the metadata object directly produced `eq.[object Object]` and PostgreSQL rejected every enrichment update as invalid JSON. The backfill now serializes the exact fresh snapshot with `JSON.stringify`. Real-client RED/GREEN tests inspect the outgoing PATCH and exercise both successful watermark persistence and rejection after a concurrent metadata writer. Existing unit mocks now decode the JSON filter instead of accepting a transport shape PostgREST cannot send.
+
+This repair does not claim release qualification. `_signers_backfilled_at` was introduced by this PR and remains outside PR #2472's frozen 0423 guarded-key family; protection must be additive without editing that active-soak migration. Durable per-envelope attempt pacing is also required before claiming repeated/concurrent runs respect the polling interval. Follow-on implementation is being prepared under the same release task; Ready status enables review/CI and `do-not-merge` remains required until qualification closes.
+
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
 ## 2026-08-31 — `docusign-signer-backfill.ts` + `-deps.ts`: enrich pre-existing DocuSign anchors with `_signers` (follow-on to PR #2474 signer capture; supersedes the mis-targeted PR #2521)

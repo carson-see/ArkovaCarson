@@ -299,7 +299,7 @@ export function makeDocusignSignerBackfillDeps(
       };
 
       // Org-scoped (§1.6A/agents.md DO rule: every service_role write filters
-      // .eq('org_id', ...)). `.eq('metadata', fresh)` is a compare-and-swap on
+      // .eq('org_id', ...)). `.eq('metadata', JSON.stringify(fresh))` is a compare-and-swap on
       // the EXACT value just read: Postgres `jsonb =` is a deep-equality
       // comparison, so if ANY key changed — not just `_signers` — between the
       // read above and this UPDATE, the WHERE clause matches zero rows and
@@ -310,18 +310,16 @@ export function makeDocusignSignerBackfillDeps(
       // suspenders. A row this loses a race on is left for the next run to
       // pick up — a no-op, not a clobber.
       //
-      // True DB-side atomicity (`metadata = COALESCE(metadata,'{}'::jsonb) ||
-      // jsonb_build_object(...)` in a SECURITY DEFINER RPC) would remove even
-      // this narrow read-then-write window, but needs a new migration —
-      // deferred (see connector-artifact-drain.ts's `markFailed` for the
-      // same accepted tradeoff on the same bug class) so this PR does not
-      // touch supabase/migrations/ and stays T2.
+      // PostgREST eq() formats its value with string interpolation. Serialize
+      // the object explicitly, otherwise it sends eq.[object Object] and every
+      // update fails with invalid JSON. PostgreSQL evaluates this JSONB CAS
+      // under the row lock; a concurrent metadata change matches zero rows.
       const { data, error } = (await db
         .from('anchors')
         .update({ metadata: merged })
         .eq('id', anchorId)
         .eq('org_id', orgId)
-        .eq('metadata', fresh)
+        .eq('metadata', JSON.stringify(fresh))
         .is('metadata->>_signers', null)
         .is('metadata->>_signers_backfilled_at', null)
         .select('id')

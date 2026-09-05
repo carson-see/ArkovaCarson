@@ -7,6 +7,7 @@
  * fetchImpl — no real Supabase or DocuSign calls.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
 
 vi.mock('../config.js', () => ({
   config: {},
@@ -316,7 +317,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
 
       expect(writeChain.calls).toContainEqual({ method: 'eq', args: ['id', 'anchor-1'] });
       expect(writeChain.calls).toContainEqual({ method: 'eq', args: ['org_id', 'org-1'] });
-      expect(writeChain.calls).toContainEqual({ method: 'eq', args: ['metadata', freshMetadata] });
+      expect(writeChain.calls).toContainEqual({ method: 'eq', args: ['metadata', JSON.stringify(freshMetadata)] });
       expect(writeChain.calls).toContainEqual({ method: 'is', args: ['metadata->>_signers', null] });
       expect(writeChain.calls).toContainEqual({ method: 'is', args: ['metadata->>_signers_backfilled_at', null] });
     });
@@ -393,6 +394,42 @@ describe('makeDocusignSignerBackfillDeps', () => {
           docusignEnv: 'demo',
         }),
       ).rejects.toThrow(/write boom/);
+    });
+  });
+
+  describe('real PostgREST JSONB compare-and-swap transport', () => {
+    it.each([false, true])('serializes the captured metadata and preserves a concurrent writer=%s', async (concurrentWrite) => {
+      const original = { connector_source: 'docusign', external_ref: 'envelope-1', filename: 'a,b.pdf' };
+      let stored: Record<string, unknown> = structuredClone(original);
+      let sentFilter: string | null = null;
+      const fetchImpl: typeof fetch = async (request, init) => {
+        const url = new URL(String(request));
+        expect(url.pathname).toBe('/rest/v1/anchors');
+        if (init?.method === 'GET') {
+          return new Response(JSON.stringify({ metadata: original }), { status: 200 });
+        }
+        expect(init?.method).toBe('PATCH');
+        sentFilter = url.searchParams.get('metadata');
+        let expected: unknown;
+        try { expected = JSON.parse(sentFilter!.slice(3)); }
+        catch { return new Response(JSON.stringify({ code: '22P02', message: 'invalid input syntax for type json' }), { status: 400 }); }
+        if (concurrentWrite) stored = { ...stored, fraud_flag: true };
+        const matches = JSON.stringify(stored) === JSON.stringify(expected);
+        if (matches) stored = JSON.parse(String(init?.body)).metadata;
+        return new Response(JSON.stringify(matches ? [{ id: testGuid(1) }] : []), { status: 200 });
+      };
+      const client = createClient('https://pr2565.invalid', 'fixture-test-key', { global: { fetch: fetchImpl }, auth: { persistSession: false } });
+      const deps = makeDocusignSignerBackfillDeps({ db: client });
+      const result = await deps.updateAnchorSigners({ anchorId: testGuid(1), orgId: testGuid(2), metadata: original, signers: [], docusignEnv: 'demo' });
+      expect(sentFilter).toBe(`eq.${JSON.stringify(original)}`);
+      expect(result.updated).toBe(!concurrentWrite);
+      if (concurrentWrite) {
+        expect(stored).toEqual({ ...original, fraud_flag: true });
+        expect(stored).not.toHaveProperty('_signers_backfilled_at');
+      } else {
+        expect(stored).toMatchObject(original);
+        expect(stored._signers_backfilled_at).toEqual(expect.any(String));
+      }
     });
   });
 
@@ -473,7 +510,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
             return builder;
           },
           eq(col: string, val: unknown) {
-            eqFilters.push([col === 'metadata' ? '__metadata_cas__' : col, val]);
+            eqFilters.push([col === 'metadata' ? '__metadata_cas__' : col, col === 'metadata' && typeof val === 'string' ? JSON.parse(val) : val]);
             return builder;
           },
           is(col: string, val: unknown) {
