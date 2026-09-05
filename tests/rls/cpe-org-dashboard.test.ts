@@ -178,7 +178,7 @@ describe('SCRUM-2380 — org CPE dashboard RLS (anchors SECURITY INVOKER read)',
       await svc.from('organizations').delete().eq('id', orgId);
     }
     for (const u of [orgAAdmin, orgAMember, orgBAdmin]) {
-      await u?.client.auth.signOut();
+      await u?.client.auth.signOut({ scope: 'local' });
     }
   }, 60_000);
 
