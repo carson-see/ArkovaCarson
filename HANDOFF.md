@@ -129,7 +129,11 @@ closing out.
 - **Design ruling in force:** challenge path fails CLOSED; fail-open enrolment-only (see `### Auth — MFA enforcement design ruling`);
   server-side aal2 enforcement = SCRUM-4026.
 
-### Soaks — DocuSign **guard** T3 (RUNNING — do not touch)
+### Soaks — DocuSign **guard** T3 (SEALED 2026-09-04T13:49Z — rig since DELETED; #2472 now owned by the Codex oldest-first batch)
+
+> **Window closed clean.** 552 cycles, 3,312 probes OK, 0 fail, guard exactly `1111` on every cycle, worker uptime monotonic 0.02h → 47.93h with 0 resets. Triggers A (direct log) and B (by elimination) both fired 2026-09-03. Sealed with a sha256 over the cycle bytes: `docs/staging/docusign-guard/SEAL.json`, commit `9e3fa3aa`.
+> **Rig deleted 2026-09-05T15:10:13Z by `270018525501-compute@developer.gserviceaccount.com`** — ~25h after close, no teardown log entry, not this session. Evidence unaffected (captured live before deletion).
+> **#2472 has since been re-based and re-soaked by the Codex oldest-first release session** at head `ee083ef7` on rig `zjwtnkwnwjpcmclkuvdf` (window from 2026-09-05T14:57Z, `do-not-merge` = window marker). That block is the merge-grade one; the window below is supporting evidence at the prior head. Do not touch that PR's body, labels, or head.
 
 - **Rig:** isolated Supabase `kyaecvotcbalsfahwslt` (`arkova-soak-docusign-guard`, us-east-2), ledger head **0423**, preflight **`clean_mirror`**. Cloud Run `arkova-worker-docusign-guard-staging` rev **00003-hwq**, image `sha256:4aa5e8cd…`, source head `bfd0aaf5b32ad24db9717f8da1dbcb5ba2dee006`.
 - **Covers PR #2472 only** (migration 0423, the DocuSign metadata key write-authority trigger). Deliberately narrower than the discarded RC-2 window: #2474/#2476 are NOT in this branch and are not soaked here.
