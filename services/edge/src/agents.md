@@ -155,7 +155,7 @@ See `services/edge/agents.md` (same date) for the full entry. File-level notes:
 - **`mcp-tools.ts`** — all `TOOL_DEFINITIONS` names `arkova_`-prefixed except `nessie_query`; `API_ONLY_NOTE` appended to `arkova_verify_anchor` / `arkova_search_anchors` (do not drop it); every catch block returns `safeErrorText(...)`.
 - **`mcp-tool-schemas.ts`** — registry keys follow the new names.
 - **`mcp-server.ts`** — `TOOL_DESC` keys renamed; `handleProtectedResourceMetadata` has no `authorization_servers` (D3); `validateBearer` tolerates a missing `SUPABASE_JWT_SECRET` (ES256 path needs none).
-- **`mcp-jwt-verify.ts`** — ES256 via JWKS + HS256 fallback; exports `jwksUrlFor`, `resetJwksCacheForTests`, `JwksFetcher`. `supabase-jwt.ts` still pins HS256 and has no non-test importer — candidate for removal, not touched here.
+- **`mcp-jwt-verify.ts`** — ES256 via JWKS + HS256 fallback; exports `jwksUrlFor`, `resetJwksCacheForTests`, `JwksFetcher`. (`supabase-jwt.ts`, the HS256-only duplicate this line flagged for removal, was deleted 2026-09-05 — see below.)
 - **`mcp-error-utils.ts`** — `safeErrorText` home (was in `mcp-server.ts`; moved to avoid an import cycle).
 
 ## 2026-09-05 — unauthenticated JWKS refreshes must be bounded (PR #2589)
@@ -174,3 +174,72 @@ outage retries, and verify the timeout, legitimate rotation, and outage recovery
 The current review and release record is Confluence page `137101729`; the same
 finding is recorded in master bug tracker `88768514`. Auth changes require T3
 qualification on the final frozen source; older T2 wording is superseded.
+
+## 2026-09-05 — review fixes on PR #2589 (edge MCP surface)
+
+Six findings from the code review of `5bd5f754b`. All are in this directory
+plus `src/tests/edge/` and `tests/infra/edge-wrangler-vars-parity.test.ts`.
+
+**A malformed bearer token must not reach the runtime as a thrown exception.**
+`base64UrlDecode` in `mcp-jwt-verify.ts` called `atob` unguarded. Every byte of
+a bearer token is attacker-controlled and `atob` raises a DOMException on a
+non-base64url segment; the HS256 branch had no try/catch, and neither
+`validateBearer`, `handleMcpRequest`, nor `index.ts` catches above it, so
+`<HS256 header>.<payload>.$$$$` produced a generic Workers error instead of the
+401 the auth contract promises. The decoder now returns `null` and both
+signature branches read that as `bad_signature`. The ES256 path decodes
+**before** any JWKS work, so an undecodable signature also cannot buy an
+unauthenticated caller a request to the authentication service.
+
+**The ES256-only pin is deliberate and asymmetric with the worker.**
+`services/worker/src/auth.ts` accepts `ASYMMETRIC_ALGS = ['ES256', 'RS256']` on
+its JWKS path. This module accepts ES256 (JWKS) and legacy HS256 (secret) only:
+RS256 is rejected as `wrong_alg` before any JWKS fetch. That is not drift to
+"fix" by widening — Supabase signs with ES256, RS256 buys the edge nothing, and
+the narrower set means one fewer alg an attacker can steer an unauthenticated
+request into. A test pins it.
+
+**A thrown tool error was published verbatim.** `withTelemetry` re-threw the
+handler's error, and the MCP SDK's `createToolError`
+(`@modelcontextprotocol/sdk` `server/mcp.js`) copies `err.message` onto the
+wire. It now returns the `safeErrorText` envelope, the same one every other
+tool-error path uses. Four raw upstream bodies in `mcp-tools.ts` went the same
+way — the two search fallbacks and both anchor-submission paths interpolated
+the PostgREST response body, which names columns and can echo row content. The
+body goes to Logpush; the client gets `{error, code:'TOOL_ERROR'}`. **Never
+interpolate a response body, an `Error.message`, or `String(err)` into
+`content[0].text`.**
+
+**`TOOL_LIMITS_RPM` is exported so a test can pin it.** A key that is not a real
+tool name falls through to `default: 1000` in silence — the per-tool cap simply
+never applies. The 2026-09-02 `arkova_` rename is exactly the edit that strands
+one. A test asserts every key but `default` is a `TOOL_DEFINITIONS` name.
+
+**The `api-overview` resource is derived, not typed.** It listed tools as hand-
+written literals and had already drifted: `arkova_verify_batch` was registered
+but absent, so an agent reading the resource never learned it existed.
+`buildApiOverviewText` renders padded name + first sentence of the canonical
+description (a very short lead sentence carries its follow-on, so `nessie_query`
+still reads "DISABLED. …"), keeping the `anchor_document` enabled/disabled
+conditional. `arkova_oracle_batch_verify` and `arkova_list_agents` also stopped
+passing inline description literals and now read `TOOL_DESC[...]` like the other
+13. **Do not re-inline either one** — an inline literal is a sixth, unguarded
+copy of text `check-mcp-claim-parity.ts` pins across five published surfaces,
+and it is the shape the baselined BUG-026 one-word drift took. Canonical
+descriptions in `mcp-tools.ts` were not touched, and the gate still exits 0 with
+the same 3 baselined violations.
+
+**`supabase-jwt.ts` is gone.** It was a second Supabase JWT verifier, HS256-only,
+whose sole importer was `src/tests/edge/mcp-security.test.ts`. It would have
+rejected every current Supabase token (BUG-2026-09-02-002) — and because it was
+what the tests exercised, they could stay green while the shipped verifier
+broke. Those tests now run against `mcp-jwt-verify.ts` with the specific
+failure reason asserted, not just "returns null".
+
+**`wrangler.soak.toml` `[vars]` keys are pinned to `wrangler.toml`'s**
+(`tests/infra/edge-wrangler-vars-parity.test.ts`, keys only — values differ per
+environment). Nothing compared them. A var present only in prod makes the rig
+take the other branch of a gate read as `env.X === 'true'`, since an absent var
+is `undefined`; `EDGE_REQUIRE_MCP_SIGNING` is the worked example, where the rig
+would emit unsigned oracle envelopes while prod fails closed and the soak still
+reports green (§1.11A: a hollow soak).
