@@ -3,10 +3,9 @@
  *
  * The downloadable audit certificate (`generateAuditReport.ts`) is the artifact
  * people hand to an auditor. It needs a scannable pointer to the live
- * verification page, encoding EXACTLY the same URL the in-app QR encodes —
- * `verifyUrl(publicId)` (see `ShareSheet.tsx` / `AssetDetailView.tsx`) — so a
- * printed certificate and the screen can never send a reader to two different
- * places.
+ * verification page. The certificate caller supplies
+ * `canonicalVerifyUrl(publicId)`, pinned to the production origin so an
+ * archived PDF never retains a preview or localhost address.
  *
  * ─── Why a second QR library, when `qrcode.react` is already a dependency ───
  *

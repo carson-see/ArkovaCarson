@@ -622,7 +622,17 @@ export function generateAuditReport(data: AuditReportData): void {
   doc.save(filename);
 }
 
+/** Advance before painting content that would cross the printable page edge. */
+function pageForContent(doc: jsPDF, y: number, height: number, margin: number): number {
+  if (y + height > doc.internal.pageSize.getHeight() - margin) {
+    doc.addPage();
+    return margin;
+  }
+  return y;
+}
+
 function addSection(doc: jsPDF, title: string, y: number, margin: number): number {
+  y = pageForContent(doc, y, 12, margin);
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(0, 0, 0);
@@ -658,33 +668,45 @@ function addField(
   const labelX = margin + FIELD_INSET_MM;
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(80, 80, 80);
-  doc.text(label, labelX, y);
-
-  let fieldHeight = 5;
-  if (value) {
-    // Measure BEFORE switching faces, advance widths only — the width the
-    // label just painted at.
-    const paintedLabelWidth =
-      (doc.getStringUnitWidth(label, { doKerning: false }) * doc.getFontSize()) /
-      doc.internal.scaleFactor;
-    const valueX = labelX + paintedLabelWidth + FIELD_LABEL_GAP_MM;
-    // Same right-hand inset as the label's left-hand one.
-    const valueMaxWidth = margin + contentWidth - FIELD_INSET_MM - valueX;
-
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    const lines: string[] = doc.splitTextToSize(value, valueMaxWidth);
-    doc.text(lines, valueX, y);
-    // Reserve every painted line before the next field starts.
-    fieldHeight = Math.max(fieldHeight, lines.length * doc.getLineHeight() / doc.internal.scaleFactor);
-  }
-
-  return y + fieldHeight;
+  // Measure in the label's painted face before selecting the value face.
+  const paintedLabelWidth =
+    (doc.getStringUnitWidth(label, { doKerning: false }) * doc.getFontSize()) /
+    doc.internal.scaleFactor;
+  const valueX = labelX + paintedLabelWidth + FIELD_LABEL_GAP_MM;
+  const valueMaxWidth = margin + contentWidth - FIELD_INSET_MM - valueX;
+  doc.setFont('helvetica', 'normal');
+  const lines: string[] = value ? doc.splitTextToSize(value, valueMaxWidth) : [];
+  const lineHeight = doc.getLineHeight() / doc.internal.scaleFactor;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const fieldHeight = Math.max(5, lines.length * lineHeight);
+  // Keep a field together when it fits one page; otherwise split its value
+  // into page-sized chunks and repeat the label without dropping any lines.
+  y = pageForContent(doc, y, Math.min(fieldHeight, pageHeight - margin * 2), margin);
+  let offset = 0;
+  do {
+    const capacity = Math.max(1, Math.floor((pageHeight - margin - y) / lineHeight));
+    const chunk = lines.slice(offset, offset + capacity);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(80, 80, 80);
+    doc.text(label, labelX, y);
+    if (chunk.length) {
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(0, 0, 0);
+      doc.text(chunk, valueX, y);
+    }
+    y += Math.max(5, chunk.length * lineHeight);
+    offset += chunk.length;
+    if (offset < lines.length) {
+      doc.addPage();
+      y = margin;
+    }
+  } while (offset < lines.length);
+  return y;
 }
 
 /** Render a value on its own line in monospace (fingerprints, roots, etc.). */
 function addMono(doc: jsPDF, value: string, y: number, margin: number): number {
+  y = pageForContent(doc, y, 6, margin);
   doc.setFontSize(7);
   doc.setFont('courier', 'normal');
   doc.setTextColor(0, 0, 0);

@@ -581,6 +581,69 @@ describe('audit certificate — field label / value spacing as painted', () => {
     expect(next.y - lastBaseline).toBeGreaterThanOrEqual(3);
   });
 
+  /** Read initial and continued text baselines from the actual PDF operators. */
+  function paintedTextLines(doc: jsPDF) {
+    const lines: { text: string; y: number }[] = [];
+    for (const block of doc.output().match(/^BT\r?\n[\s\S]*?^ET\r?$/gm) ?? []) {
+      const leading = Number(block.match(/([\d.]+) TL/)?.[1] ?? 0) / PT_PER_MM;
+      // jsPDF's emitted shape is one initial position, then T* continuations.
+      // Fail explicitly if a future renderer starts emitting relative Td moves.
+      expect([...block.matchAll(/^(-?[\d.]+) (-?[\d.]+) Td$/gm)]).toHaveLength(1);
+      let y = 0;
+      const operators = /(-?[\d.]+) (-?[\d.]+) Td|T\*|\(((?:\\.|[^\\)])*)\) Tj/g;
+      for (const match of block.matchAll(operators)) {
+        if (match[2] !== undefined) {
+          y = doc.internal.pageSize.getHeight() - Number(match[2]) / PT_PER_MM;
+        } else if (match[0] === 'T*') {
+          y += leading;
+        } else {
+          const text = match[3].replace(/\\([\\()])/g, '$1');
+          lines.push({ text, y });
+        }
+      }
+    }
+    return lines;
+  }
+
+  it('reads text containing operator names and escaped PDF string delimiters', () => {
+    const filename = 'BETA (draft) \\ copy.pdf';
+    const { doc } = buildAuditReport(securedData({ filename }));
+    expect(paintedTextLines(doc).some(line => line.text === filename)).toBe(true);
+  });
+
+  it('keeps every field on the page with a maximum filename and a full batch proof', () => {
+    const data = securedData({ filename: 'w'.repeat(251) + '.pdf' });
+    const branch: MerkleProofEntry[] = Array.from({ length: 14 }, (_, i) => ({
+      hash: i.toString(16).repeat(64),
+      position: i % 2 ? 'right' : 'left',
+    }));
+    data.proof = {
+      ...data.proof!,
+      leaf_count: 10000,
+      merkle_proof: branch,
+    };
+    const { doc } = buildAuditReport(data);
+    const lines = paintedTextLines(doc);
+    expect(lines.some(line => line.text === CERTIFICATE_COPY.FIELD_SECURED)).toBe(true);
+    expect(lines.filter(line => /^(left|right): /.test(line.text)).map(line => line.text))
+      .toEqual(branch.map(step => `${step.position}: ${step.hash}`));
+    expect(lines.filter(line => line.y < 20 - EPS || line.y > doc.internal.pageSize.getHeight() - 20 + EPS)).toEqual([]);
+  });
+
+  it('preserves every line of a multiline revocation reason across page breaks', () => {
+    const expected = Array.from({ length: 120 }, (_, i) => `r${String(i).padStart(3, '0')}`);
+    const { doc } = buildAuditReport(securedData({
+      status: 'REVOKED',
+      proof: undefined,
+      revokedAt: '2026-06-03T03:00:00Z',
+      revocationReason: expected.join('\n'),
+    }));
+    const lines = paintedTextLines(doc);
+    expect(lines.filter(line => /^r\d{3}$/.test(line.text)).map(line => line.text)).toEqual(expected);
+    expect(lines.filter(line => line.text === CERTIFICATE_COPY.FIELD_REVOCATION_REASON).length).toBeGreaterThan(1);
+    expect(lines.filter(line => line.y < 20 - EPS || line.y > doc.internal.pageSize.getHeight() - 20 + EPS)).toEqual([]);
+  });
+
   it('jsPDF measures Helvetica-Bold with its own AFM widths, wider than regular (guards the fix)', () => {
     // jsPDF's standard-14 tables carry the Adobe AFM advance widths at 10 per
     // mille resolution. Summed for "Network Observed Time": Helvetica-Bold

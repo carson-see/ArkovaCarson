@@ -533,3 +533,7 @@ worker map on every PR, in the required root `Tests` job.
 ## 2026-09-05 — Certificate wrapped field spacing
 
 `generateAuditReport.addField` reserves the height of every wrapped value line. A long filename previously overlapped the next field because the helper always advanced 5 mm. The regression test reads the PDF text operators and checks the next baseline against the last painted filename line. Keep horizontal label spacing and vertical wrapping covered together.
+
+## 2026-09-05 — Certificate pagination at supported input limits
+
+Field, section and proof-line helpers reserve page space before painting. Wrapped values that exceed one printable page continue on subsequent pages with their label repeated; no value or proof step is truncated. Keep the maximum-length filename plus a full batch proof covered together, and exercise a multiline reason long enough to cross pages. The tests read actual PDF text operators and assert both printable bounds and complete text preservation. Certificate QR callers supply the canonical production URL; pointer regression tests reject alternate Arkova domains even when their host begins with `app.`.

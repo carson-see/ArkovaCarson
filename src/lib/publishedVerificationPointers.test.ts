@@ -58,11 +58,11 @@ function everyPublishedString(): Array<{ path: string; value: string }> {
  * that serves a verification UI. Requires the scheme so it cannot match an
  * email address like `privacy@arkova.ai`.
  */
-const NON_APP_ARKOVA_URL = /https?:\/\/(?!app\.)(?:[\w-]+\.)*arkova\.(?:ai|io)(?![\w.-])/i;
+const NON_APP_ARKOVA_URL = /https?:\/\/(?!app\.arkova\.ai(?:[/:?#]|$))(?:[\w-]+\.)*arkova\.(?:ai|io)(?![\w.-])/i;
 
 /** …and the narrower original: such a host carrying a `/verify` path. */
 const NON_APP_VERIFY_URL =
-  /https?:\/\/(?!app\.)(?:[\w-]+\.)*arkova\.(?:ai|io)\/verify/i;
+  /https?:\/\/(?!app\.arkova\.ai\/)(?:[\w-]+\.)*arkova\.(?:ai|io)\/verify/i;
 
 /** Does this string read like it is telling someone how to verify something? */
 const VERIFICATION_CONTEXT = /verif/i;
@@ -104,6 +104,8 @@ describe('published verification pointers — host correctness', () => {
       ),
     ).toBe(true);
     expect(NON_APP_VERIFY_URL.test('https://www.arkova.ai/verify')).toBe(true);
+    expect(NON_APP_VERIFY_URL.test('https://app.arkova.io/verify')).toBe(true);
+    expect(NON_APP_ARKOVA_URL.test('Go to https://app.arkova.io to verify')).toBe(true);
     expect(NON_APP_ARKOVA_URL.test('Go to https://arkova.ai to verify')).toBe(true);
     // …and do NOT flag the correct host, or an email address.
     expect(NON_APP_VERIFY_URL.test('https://app.arkova.ai/verify/independent')).toBe(false);

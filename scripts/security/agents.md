@@ -4,6 +4,8 @@ Security scanning scripts for dependency and license compliance.
 
 ## 2026-08-31 — `thirdPartyNotices.generated.json` carries ONE hand-inserted entry, because the generator cannot run
 
+Historical incident: the following failure and manual insertion describe the pre-fix state. The resolved coverage and required freshness check under Files and Conventions describe current behavior; successful generation now reproduces the QR dependency entry. Preserve the incident evidence, but do not follow its obsolete manual-edit guidance.
+
 `npm run license:notices:generate` currently **fails closed**:
 
 ```
