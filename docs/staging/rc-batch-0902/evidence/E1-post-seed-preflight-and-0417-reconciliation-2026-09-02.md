@@ -1,0 +1,15 @@
+# E1 — RC batch rig: fixture seeding, the 0417 replay gap, and reconciliation
+
+**Rig.** Supabase `rvdgwynxoapdzysoaayr` (`arkova-soak-rc-batch-0902`, us-east-2), Cloud Run `arkova-worker-rc-batch-0902-staging` rev `00001-p4l` (single instance, minScale 1), RC head `78621249595e37398170da9b298ae13cd753a801` (`/health` reports that exact `git_sha`).
+
+**Sequence (all times UTC, 2026-09-02).**
+1. 19:25:47 — admission preflight from the RC head checkout: `environment_type=clean_mirror` 7/7 (`clean-mirror-preflight-rc-batch-0902.json`). Revision ready 19:49:18; window opened 19:49:27.
+2. ~20:23 — fixture `scripts/staging/seed-rc-batch-0902-fixture.sql` applied through the session pooler (`psql -v ON_ERROR_STOP=1`): 11 anchors SECURED on real mainnet receipts, 11 proofs, 10 attestations at two per status across two orgs. Re-runnable; the seed's own guards refuse a non-isolated database.
+3. 20:25:35 — `rc-live-01`: 17/17 assertions pass, `evidenceForSoak=true` (`rc-live-01.jsonl`).
+4. 20:27 — post-seed preflight, run from the RC head checkout: `environment_type=soak_artifact`, single failing check `prod_divergence: Repo migrations missing from rig: [0417]` (`post-seed-preflight-rc-batch-0902.json`). The fixture itself passed `known_artifacts`. Direct inspection confirmed the gap was real, not a ledger-only artifact: `schema_migrations` had no `0417` row and `public.cleanup_expired_data()` had no advisory lock in its body. `supabase db push --linked --dry-run` listed exactly one pending file, `0417_cleanup_expired_data_singleton_advisory_lock.sql`, and explained why the standup replay skipped it: the file sorts before the remote head (`0419`) and the CLI refuses such files without `--include-all`. 0417 is in the RC head tree and has been live in prod since 2026-08-22.
+5. 20:31:13 — reconciled with `npx supabase db push --linked --include-all` from the RC head checkout (one migration applied, `CREATE OR REPLACE FUNCTION`, no hot-table DDL). Verified: ledger row `0417` present (119 rows), function body now carries the advisory lock.
+6. 20:31:20 — preflight again from the RC head checkout: `environment_type=clean_mirror` 7/7 with the fixture present (`post-reconcile-preflight-rc-batch-0902.json`).
+
+**Reading.** The admission preflight at 19:25 reported `prod_divergence` as reconciled although the rig never received 0417; the post-seed run caught it. The rig was therefore not a byte-for-byte mirror of the RC head for the first 42 minutes of the window and during `rc-live-01`. None of the four PRs under test touches `cleanup_expired_data()` (an in-process nightly cron), and the driver does not exercise it, so `rc-live-01` remains valid evidence for the changed behavior; cycles from `rc-live-02` onward run on the reconciled rig. The soak clock (worker uptime) was not affected: no Cloud Run change was made.
+
+**Defects filed.** Provisioning replay gap: see the Jira bug referenced from the Bug Tracker addendum (BUG-2026-09-02-004). The admission preflight false-pass on `prod_divergence` is recorded there as well.

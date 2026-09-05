@@ -84,7 +84,7 @@ The binding contractual clauses must include:
   - Row-Level Security on all database tables
   - Zero Trust network ingress (Cloudflare Tunnel)
   - GCP KMS for cryptographic key management
-  - MFA on administrative access
+  - MFA available (opt-in) — administrator enforcement in progress (SCRUM-3167), NOT yet enforced
   - Annual penetration testing
 
 **4. Sub-processing**
@@ -195,4 +195,4 @@ BCRs are an alternative to per-contract SCCs, suitable when:
 
 ---
 
-_Last updated: 2026-04-14 | Status: NOT STARTED — SCC annex drafted, execution and legal review pending_
+_Last updated: 2026-09-03 | Status: NOT STARTED — SCC annex drafted, execution and legal review pending | MFA wording corrected to reflect production state (R-7 claims gate)_
