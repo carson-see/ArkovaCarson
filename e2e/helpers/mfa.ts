@@ -11,6 +11,7 @@
  */
 
 import type { Page, Response } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SEED_USERS } from '../fixtures/supabase';
 import { uniqueTestId } from './unique';
@@ -110,7 +111,12 @@ export async function createDisposableOrg(
 
   const { data, error } = await serviceClient
     .from('organizations')
-    .insert({ display_name: name, legal_name: name })
+    .insert({
+      display_name: name, legal_name: name,
+      // The production prefix trigger uses a check-then-insert fallback.
+      // Parallel disposable fixtures must own an explicit unique prefix.
+      org_prefix: `MFA${randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`,
+    })
     .select('id')
     .single();
 

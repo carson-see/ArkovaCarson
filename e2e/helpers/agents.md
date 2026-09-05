@@ -24,3 +24,9 @@ Shared utility functions for E2E Playwright tests.
 Only a GoTrue wrong-code rejection permits one retry at the next RFC6238 step;
 platform errors fail the probe. `waitForMfaManagementOutcome` waits for QR, step-up,
 or error before branching; `locator.isVisible({ timeout })` never waits.
+
+Concurrent MFA org fixtures provide a UUID-derived `org_prefix`. The production
+auto-prefix trigger checks then inserts, so two simultaneous E2E-prefixed names
+can otherwise race on `idx_organizations_org_prefix`. The MFA suite exercises
+role isolation; it does not test that separate prefix allocator. Live batches
+must also respect shared-IP GoTrue MFA/token burst limits;429 remains a failure.
