@@ -65,3 +65,9 @@ The declared-hash driver previously logged semantic failures without failing the
 The measured control requires fetch_time_snapshot AND a nonempty accompanying
 note. Presence of either field alone cannot qualify the driver. Four malformed
 or misclassified response cases failed before this stricter judge.
+
+## 2026-09-05 — PR 2499 real verify identity
+
+The ordinary verify body identifies a record via record_uri; the proof route uses
+public_id. The driver verifies the expected URI host/path without accepting an
+arbitrary suffix or an error response as a positive control.

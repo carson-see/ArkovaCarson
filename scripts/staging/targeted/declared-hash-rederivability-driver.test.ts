@@ -149,3 +149,18 @@ describe('measured control semantics', () => {
     expect(verdict.deviations.join(' ')).toContain('measured class/note');
   });
 });
+
+describe('live verify response identity', () => {
+  it('accepts the real verify record_uri while requiring public_id on proof', () => {
+    const v = judgeRederivability({
+      'declared-hash': ok({ record_uri: 'https://app.arkova.ai/verify/' + DECLARED_PUBLIC_ID, verified: true }),
+      measured: ok({ ...measured, public_id: undefined, record_uri: 'https://app.arkova.ai/verify/' + MEASURED_PUBLIC_ID }),
+      'cached-declared': ok({ record_uri: 'https://app.arkova.ai/verify/' + DECLARED_PUBLIC_ID, verified: true }),
+      'declared-proof-surface': ok(declaredFixed),
+    });
+    expect(v.deviations).toEqual([]);
+  });
+  it.each(['https://app.arkova.ai/verify/WRONG', 'https://attacker.invalid/verify/' + DECLARED_PUBLIC_ID])('rejects a mismatched record URI %s', (uri) => {
+    expect(judgeRederivability({ 'declared-hash': ok({ record_uri: uri }), measured: ok(measured), 'cached-declared': ok(declaredFixed), 'declared-proof-surface': ok(declaredFixed) }).deviations.join(' ')).toContain('POSITIVE CONTROL FAILED');
+  });
+});

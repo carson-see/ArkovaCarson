@@ -150,7 +150,7 @@ async function loadAnchor(externalFileId: string | null, orgId: string): Promise
   const { data, error } = await (db as any)
     .from('anchors')
     .select(
-      'id, public_id, status, fingerprint, bitcoin_tx_id, block_height, revoked_at, revocation_reason, parent_anchor_id, version_number, fingerprint_source, metadata',
+      'id, public_id, status, fingerprint, bitcoin_tx_id:chain_tx_id, block_height:chain_block_height, revoked_at, revocation_reason, parent_anchor_id, version_number, fingerprint_source, metadata',
     )
     .eq('org_id', orgId)
     .eq('metadata->>external_file_id', externalFileId)
@@ -159,7 +159,7 @@ async function loadAnchor(externalFileId: string | null, orgId: string): Promise
     .maybeSingle();
   if (error) {
     logger.warn({ error, externalFileId }, 'proof-packet: anchor lookup failed');
-    return null;
+    throw new Error('anchor_lookup_failed');
   }
   return (data as AnchorRow | null) ?? null;
 }
@@ -292,7 +292,13 @@ export async function handleProofPacketExport(
 
   // Anchor lookup is best-effort: queued/unanchored executions return a
   // sentinel "not_anchored" status without breaking packet generation.
-  const anchor = await loadAnchor(ruleEvent?.external_file_id ?? null, orgId);
+  let anchor: AnchorRow | null;
+  try {
+    anchor = await loadAnchor(ruleEvent?.external_file_id ?? null, orgId);
+  } catch {
+    res.status(500).json({ error: { code: 'anchor_lookup_failed' } });
+    return;
+  }
 
   const verificationUri = anchor?.public_id
     ? `${VERIFICATION_BASE_URL}/${anchor.public_id}`

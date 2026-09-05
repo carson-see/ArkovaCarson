@@ -22,6 +22,7 @@ const executionsMaybeSingle = vi.fn();
 const ruleEventMaybeSingle = vi.fn();
 const ruleMaybeSingle = vi.fn();
 const anchorMaybeSingle = vi.fn();
+const anchorSelectColumns: string[] = [];
 // SCRUM-1593 AC4/AC5: supersede chain walk + parent walk.
 // Both query the `anchors` table with different `.eq('id'|'parent_anchor_id', ...)` filters.
 // We dispatch by inspecting the eq-call args to keep one mock per query type.
@@ -68,7 +69,7 @@ vi.mock('../utils/db.js', () => {
   // null)` filter so soft-deleted anchors don't surface in lineage / supersede
   // responses. Mock chain extended to support it.
   const anchorsChain = {
-    select: () => ({
+    select: (columns: string) => (anchorSelectColumns.push(columns), {
       eq: (_orgCol: string, _orgVal: string) => ({
         eq: (col: string, val: string) => {
           if (col === 'metadata->>external_file_id') {
@@ -594,5 +595,23 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
     const packet = ctx.body as { lineage: { previous: unknown[] } };
     // Cycle guard — at most 2 unique entries (B, A) before the cycle is detected.
     expect(packet.lineage.previous.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('proof packet live schema and failure handling', () => {
+  it('maps actual chain columns into the existing receipt keys', async () => {
+    anchorSelectColumns.length = 0;
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    expect(anchorSelectColumns[0]).toContain('bitcoin_tx_id:chain_tx_id');
+    expect(anchorSelectColumns[0]).toContain('block_height:chain_block_height');
+    expect(ctx.body).toMatchObject({ anchor_receipt: { bitcoin_tx_id: 'txid_abc', block_height: 800001 } });
+  });
+  it('does not describe a failed anchor lookup as not anchored', async () => {
+    anchorMaybeSingle.mockResolvedValueOnce({ data: null, error: { code: '42703' } });
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    expect(ctx.status).toHaveBeenCalledWith(500);
+    expect(ctx.body).toEqual({ error: { code: 'anchor_lookup_failed' } });
   });
 });

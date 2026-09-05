@@ -120,7 +120,15 @@ export function judgeRederivability(
     const b = o.body;
     if (b === null || typeof b !== 'object' || Array.isArray(b)) return false;
     const expectedId = label === 'measured' ? MEASURED_PUBLIC_ID : DECLARED_PUBLIC_ID;
-    return b.public_id === expectedId && !('error' in b);
+    if ('error' in b) return false;
+    if (label === 'declared-proof-surface') return b.public_id === expectedId;
+    if (b.public_id === expectedId) return true;
+    if (typeof b.record_uri !== 'string') return false;
+    try {
+      const uri = new URL(b.record_uri);
+      return uri.protocol === 'https:' && ['app.arkova.ai', 'app.arkova.io'].includes(uri.hostname)
+        && uri.pathname === `/verify/${expectedId}` && !uri.search && !uri.hash;
+    } catch { return false; }
   };
   for (const [label, outcome] of Object.entries(bodies)) {
     if (claimsFetchTimeMeasurement(outcome.body)) claimed.push(label);

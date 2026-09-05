@@ -356,3 +356,10 @@ only other records with a recognized connector marker and artifact stamp may emi
 fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
 and authenticated packet exports load the typed source; the signable proof bundle
 is unchanged. Regression reproduced before the fix; local validation is not soak evidence.
+
+## 2026-09-05 — PR 2499 real export lookup
+
+Live authenticated export exposed legacy DB column names in loadAnchor. Select
+chain_tx_id and chain_block_height using aliases for the existing public receipt
+keys; keep that response contract unchanged. A failed anchor query returns 500,
+never the not_anchored sentinel reserved for a successful empty lookup.
