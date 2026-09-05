@@ -14,6 +14,62 @@
 
 ## Now
 
+### State as of 2026-09-05T19:05Z (CTO session, Claude) — read this block first; everything below it in `## Now` is dated and superseded where it disagrees
+
+**Verified live this session:** `curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health`, `gcloud run services describe arkova-worker --project arkova1 --region us-central1`, `gh variable list`, Supabase MCP `list_projects` / `list_migrations` / `execute_sql` on `vzwyaatejekddvltxyye`, `gcloud scheduler jobs list --location us-central1`, `gcloud logging read`, Sentry `search_issues`, `gh pr view` on every open PR, and the driver `status.json` files of the running soaks.
+
+#### Prod
+- **Worker DEPLOYED to main this session.** `arkova-worker-01330-boz` serves 100% with `git_sha 8cc0843d95564c7faf7128f9e8376789310ecace` = `origin/main` head; `/health` at 2026-09-05T19:2xZ `{"status":"healthy","network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`; zero non-cron ERROR log lines in the first 10 min. Landed by deploy-worker run [33985772306](https://github.com/carson-see/ArkovaCarson/actions/runs/33985772306) (`workflow_dispatch`, all three jobs success; the zk-artifact cache hit, which is what failed the 09-03 push run). Previous revision `arkova-worker-01327-vok` / `8147ed3a` (dispatched 2026-08-31) is the rollback target. `DEPLOY_WORKER_PAUSED=true` is still set — it gates only the push path; the dispatch is the documented intentional-deploy escape.
+- 29 worker files / 5,222 insertions were waiting behind the pause (health-probe honesty fixes, in-process cron double-fire audit #2429, cleanup_expired_data singleton #2335, two Dependabot bumps); all had merged through the evidence gate.
+- Anchoring is healthy: 29,936 anchors reached SECURED in the 24 h to 18:00Z, 0 SUBMITTED, 1 PENDING (`execute_sql` on prod, this session).
+- Frontend: `app.arkova.ai` serves main `00c67fb0a` — Vercel Production deployments `aeb448c2a` (#2528) and `00c67fb0a` (#2654) both `success` at 18:53–18:54Z (`gh api repos/carson-see/ArkovaCarson/deployments`).
+- Migration ledger head `0419` = `main` head `0419`. Prod also carries `0415` (PR #2314, applied 2026-09-03, exempted). No timestamp-format rows.
+- **Three prod defects found and logged (Bug Tracker rows BUG-2026-09-05-002/003/004, page version 43; Jira SCRUM-4475, SCRUM-4476):**
+  1. `/jobs/*` sits behind a 30/min GLOBAL limiter (`services/worker/src/routes/cron.ts`) while 66 Scheduler jobs collide at :00, so runs are refused with 429 (~250 in 48 h). The nightly `daily-anchor-flush` (`/jobs/batch-anchors?force=true`, 07:00Z) was refused 09-04 and 09-05 — Scheduler execution log `RESOURCE_EXHAUSTED … Original HTTP response code number = 429`. Fix is a T2 worker PR (SCRUM-4475); nothing applied.
+  2. Anchor `ARK-ACD-NSD9EU` (user upload, `org_id NULL`) PENDING since 09-03; the stuck-pipeline monitor reports age and count from different predicates (SCRUM-4476).
+  3. `fetch-uspto` (196× 502/48 h) and `fetch-courtlistener` (193× 504/502) failed 100% — **both PAUSED in Cloud Scheduler at 18:20Z** (`gcloud scheduler jobs pause`, state read back `PAUSED`).
+- Sentry `ARKOVA-FRONTEND-D` (xmldom "w:t junk" on `/legal/third-party-notices`) is a HeadlessChrome probe from a Mac in America/Detroit, i.e. a session verifying #2619 against prod, not a user error.
+
+#### Rules changed today
+- **No T0 PR, no exceptions** — `CLAUDE.md` §0 rule 8 / §1.12 / §1.13 at `6ae7d46ff30f314ae23eda48dad6d2db261c9223` (founder directive 2026-09-05). Gate logic and `CLAUDE.md` itself now land direct with the mandatory local checks named there. `.github/workflows/**` stays a PR because the detector classifies it T1.
+
+#### Soaks — RUNNING (do not touch; drivers are detached Python processes, `ps -ef | grep -E 'soak_|soak2|security-soak'`)
+A Codex "oldest-first release queue" session started these on 2026-09-05. **No driver rewrites a PR body or removes a label at close** — each writes `status: window_complete_pending_review` / `completed_pending_review` to its `status.json` and exits; the close-out is a human/CTO step (verified by reading every driver, this session).
+
+| Window (rig → driver) | PRs | Closes (UTC) | At 18:20Z |
+|---|---|---|---|
+| `bzzmjnfrzqkxihdtsbyl` → `soak2314-recovery.py` | #2314 | 2026-09-07T15:54:54Z | 142 cycles / 0 fail |
+| `bzzmjnfrzqkxihdtsbyl` → local workerd edge (`edge-runtime/status.json`) | #2434 (12 h T2) | **2026-09-06T03:59:45Z** | 32 / 0 — `~/arkova-soak/cto-closeouts/close2434.py` (pid 12399, log alongside) lifts `do-not-merge` and asks Mergify to refresh once status is clean |
+| `txvvrxngyfnnqahujbld` → `soak_worker_batch.py` | #2436 #2437 #2438 | 2026-09-07T16:13:58Z | 22–28 / 0 |
+| `euyzkmmstcyuuwhwtbqz` → `soak_migration_batch.py` | #2440 #2442 | 2026-09-07T16:13:59Z | 0 fail |
+| `zjwtnkwnwjpcmclkuvdf` → `soak_esign_batch.py` | #2472 #2476 #2485 #2486 #2496 (#2474 `included_but_not_qualified`) | 2026-09-07T16:13:58Z | 0 fail |
+| `itenuyhkhktferocxgwa` → `soak_reorg2495.py` | #2495 | 2026-09-07T16:13:58Z | 0 fail |
+| `iyswrdnxitoyxavrlmmz` → `soak_evidence2499.py` | #2499 | 2026-09-07T16:13:59Z | 0 fail |
+| `hlbddnfpxisjlthmklig` → `soak_attest2525.py` | #2525 (12 h) | see driver | 0 fail |
+| `bajuefkqhizsyycaeqff` + `arkova-release-proof-provider-0905-staging` → `soak_proof_batch.py` | #2524 #2527 | 2026-09-07 | 0 fail |
+| `ixekmrkkhqyqtycerihq` → Adobe batch (esign) | #2519 #2529 #2569 | see PR bodies | — |
+| `nesuwjlscilzzbhpvbkt` → `security-soak-supervisor.py` | #2637 (T3) | 2026-09-07T16:32:46Z | running |
+| `jpdhektjeawfjkznmpfe` → `docs/staging/suborg-3863/run-soak.sh` | #2572 | see PR body | running |
+
+**Landing order Monday (runbook: CTO session scratchpad `MONDAY-RUNBOOK-laneA.md`, 597 lines, plus `2476-tests-fix.patch`):** 2314 → 2440 (`0421`, `0433`) → 2442 (`0420`, `0434`) → 2472 (`0423`) → 2476 (`0424`, `0435`) → 2499 → 2495 (`0425`, `CREATE INDEX CONCURRENTLY` — cannot go through MCP `apply_migration`, use `execute_sql` + manual ledger row) → the rest. Per PR: verify the driver's terminal status, apply the migration to prod and reconcile the ledger (§0 rule 10), fix the stale `PR head SHA:` line (2314/2434/2440/2442), union-resolve the HANDOFF.md-only conflicts (2442/2476/2499) and add the `_Last refreshed_` footer the Policy Lints job wants, apply the 2476 Tests patch, remove `do-not-merge`, `@mergify refresh`. The `Check supabase/migrations vs prod` failures on every migration PR are the **PR numeric ledger drift** sub-check (the PR's own migration is absent from prod) — NOT the 0415 orphan; editing the exempt regex would not help.
+
+#### PR board (merged today: #2528 `aeb448c2a` 18:53:01Z, #2654 `00c67fb0a` 18:53:42Z, both via Mergify after the CTO lifted `do-not-merge`; #2619 `32d6fcb39` 17:07Z, #2653 `3954ca54d` 16:49Z by other sessions)
+- **Need only their window:** #2436 #2437 #2438 #2485 #2486 #2496.
+- **Need window + prod-apply:** #2440 #2442 #2472 #2476 #2495 #2499 (#2499 is stacked on 2472+2476).
+- **Need own window:** #2474 (detector forces T3 via `connector-artifact-drain.ts`; no evidence block; head `9b46ff001c4431607d2b81735361b516edbcca61` after the agents.md wording fix, Tests now green locally 16/16). #2655 (draft, T3, migration `0436`, conflict resolved, head `9ce3f8b050272b5a8fb5d3f16fc3c192c41e6f36`, Tests still red on the RLS fixture — see below). #2658 (draft, T3, migration `0440`; **blocker F1**: `seed_free_tier_org_credits()` never writes `cap_enforced`, so every new signup would get an inert cap — review posted on the PR; branch owned by another live session).
+- **Lane B (2519, 2524, 2525, 2527, 2529, 2547, 2564, 2565, 2566, 2569, 2570, 2571, 2572, 2589, 2637):** audit still running when this block was written; results land in the next refresh. Known now: #2637 is in a 48 h window on `nesuwjlscilzzbhpvbkt` closing 2026-09-07T16:32:46Z; #2572 has the suborg soak running; #2565 says its 48 h window has not started; #2569 is admitted to the Adobe release candidate; #2547 carries a stale 09-03 T1 body with head-SHA mismatch.
+
+#### Cost (read-only report: CTO session scratchpad `COST-REPORT-2026-09-05.md`)
+~$92/mo reclaimable now with no blocker (`cft-webhook-sink`, `arkova-s33-rig-b1-bitcoin-core-signet` VM, registry retention), ~$332/mo more as the queue clears (14 per-soak Supabase projects + 14 Cloud Run rigs, every non-prod rig at `minScale>=1`), $262/mo `sekura-arkova` VM is a business decision. Vertex AI: zero deployed endpoints in us-central1 and us-east1 (§0 rule 7 clean). 136 of 297 Secret Manager secrets belong to dead rigs. Cloud Billing API is not enabled on `arkova1`, so figures are list-price estimates. Nothing was deleted this session.
+
+#### Hygiene (this session)
+- Mac mini Data volume: 938 MB free → ~20 GB free (stale session scratchpads, Docker prune, caches, 60 stale worktrees).
+- GitHub ↔ SSD: 60 worktrees removed (232 → 179 registered), 365 merged remote branches deleted (750 → 378 heads), 595 local merged branches deleted. 1,806 orphaned `refs/remotes/{pr,prmerge,prtmp,prs}/*` refs remain (local only) — `git remote prune` / manual ref deletion still owed. 29 untracked soak-evidence docs committed to main (`c579026fc`); 8 expired OIDC `idtoken` files deleted rather than committed.
+- August weekly release reports (W31–W35) are in Drive `Sprints/Release Reports` (folder `1wAT8RSk609_fsghR4ub6IBNqo9ujw7mf`).
+
+_Last refreshed: 2026-09-05 by Claude Fable 5.1 (CTO session) — claims verified against gcloud/MCP/CI output._
+
+
 ### UAT-01 — public signup released (2026-09-05, SCRUM-4031)
 
 [PR #2653](https://github.com/carson-see/ArkovaCarson/pull/2653) merged via Mergify at 16:49:30 UTC (`3954ca54d5d44cc15902756af0a70b44df79c6be`). Vercel production deployment `dpl_7g6sgAjbDxiuWfog58gZTL8krFJu` was independently verified READY with `app.arkova.ai` on that merge at 16:52 UTC. Later main deployments retain the signup change. Logged-out signup passed actual headless Chrome checks at 1280/375: immediate registration controls, retired beta gate absent, keyboard/error/navigation behavior and no horizontal overflow. No account writes. [Production metadata, screenshots and independent CTO verification](https://arkova.atlassian.net/wiki/spaces/A/pages/137134081); [merge-candidate CI passed](https://github.com/carson-see/ArkovaCarson/actions/runs/33976208584) (18,992 tests and 349 E2E cases). API, worker, webhook, MCP and SDK authentication were unchanged by this frontend fix. OAuth branding/mailbox verification and MFA retain their separate UAT ownership. Final close-out is tracked in SCRUM-4031 after the required observation deadline of 17:19:30 UTC.
@@ -133,39 +189,29 @@ Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` /
 before any session can write to Jira/Confluence; whoever picks this up should file it before
 closing out.
 
-### Soaks — MFA enforcement (SCRUM-3167 / SCRUM-3584): PR #2635 exercise RUNNING, PR #2637 pending — do not touch rig `nesuwjlscilzzbhpvbkt`
+### Soaks — MFA enforcement (SCRUM-3167 / SCRUM-3584): PR #2635 MERGED; PR #2637 in the release session's 48 h T3 window — rig `nesuwjlscilzzbhpvbkt` IN USE, do not tear down
 
-- **Rig:** isolated Supabase project **`nesuwjlscilzzbhpvbkt`** (`arkova-soak-mfa-3167`, us-east-2, PG 17, created
-  2026-09-03T06:31Z by the CTO session). **No Cloud Run service** — PR #2637 is frontend-only and PR #2635 is an operator
-  CLI; neither touches the worker. Schema replayed from origin/main `17f24e26c` (`db push --include-all` to 0380, then
-  psql over the session pooler for 0381→0419 because the CLI pipeline cannot run `CREATE INDEX CONCURRENTLY`; dry-run
-  "up to date"; 119 ledger rows; baseline fixture seeded). Preflight **`clean_mirror`** at 2026-09-03T06:37:42Z →
-  `~/arkova-soak/mfa-3167/evidence/preflight-iso-open-20260903T063740Z.json`. TOTP enroll/verify ON (Management API);
-  a real enrol→challenge→verify→aal2→unenrol round trip passed at 06:38:03Z.
-- **Why not the standing rig:** an honest preflight of `fizyjojbebyalirtjjht` (run from an origin/main checkout WITH
-  `--prod-project-ref`) classifies it **`soak_artifact`** — PR-only ledger row `0420 scrum2538_check_unified_credits_fail_closed`
-  from open PR #2442's soak (`~/arkova-soak/mfa-3167/evidence/preflight-standing-rig-honest-*.json`). The earlier
-  "clean_mirror" reading of that rig used the script's hardcoded default prod versions and a lagging checkout. The standing
-  rig was left untouched.
-- **PR #2635 (break-glass CLI, T1-declared, 12 h exercise):** head **`bccc24a09f274484f0079afac0ab7f30905d7233`** (post-`/simplify`),
-  frozen checkout `~/arkova-soak/mfa-3167/checkouts/wt-pr-b`. Clock **2026-09-03T07:05:25Z → 19:05:25Z** (a first window on
-  `ab5b7d2bb`, 06:40:30Z→06:57Z, was discarded when the cleanup commit changed the head — `bg-window1-ab5b7d2bb-discarded/`), supervisor
-  `~/arkova-soak/mfa-3167/break-glass-supervisor.sh` (detached), 10-min cycles: disposable user → enrol+verify → dry run →
-  negative probes (CONFIRM mismatch, foreign factor id, `--all` without `CONFIRM_MFA_BREAK_GLASS_ALL`) → apply → factor gone →
-  both audit rows → re-enrol → cleanup. Per-cycle JSON `~/arkova-soak/mfa-3167/bg-evidence/`; pre-clock validation cycle
-  (ok=34 fail=0 on each head) quarantined under `bg-validation-2026-09-03/`, not evidence. PR stays **draft**; `Human approver:` is Carson's.
-- **PR #2637 (enforcement, frontend-only T2, 12 h):** head **`1a24af93e6c132597005796861ffc2657d14f33f`** (R1–R26; the
-  last delta is e2e-only), frozen checkout `~/arkova-soak/mfa-3167/checkouts/wt-pr-a`. Clock **2026-09-03T12:51:18Z →
-  2026-09-04T00:51:18Z**: API-leg driver `supervisor.sh` (10-min cycles, `evidence/load-*.json`, each bound to `pr_head`) +
-  continuous UI leg `ui-soak-supervisor.sh` (one `vite preview` of the head on :4173 for the window, Playwright spec every
-  30 min, `evidence/ui/run-*.json`). A first window on `7bef48bbc` (09:08:33Z→12:50:16Z, 22 API cycles + 8 UI runs, one
-  UI run lost to a Playwright sign-out→login navigation race in the helper) is quarantined under
-  `pr-a-window-20260903T125027Z-7bef48bbc-discarded/`. Mid-soak preflight of the rig at 10:44:42Z: still `clean_mirror`.
-  Pre-clock validation on the new head: spec 6/6. PR stays **draft**; RM line and Ready are Carson's.
-- **Teardown:** delete `nesuwjlscilzzbhpvbkt` when BOTH soaks close (§7 sweep). It appears in the Supabase project list; do not
-  sweep it before then.
+- **Rig:** isolated Supabase project **`nesuwjlscilzzbhpvbkt`** (`arkova-soak-mfa-3167`, us-east-2), created 2026-09-03T06:31Z by
+  the CTO session (schema replayed from origin/main; preflight `clean_mirror` 06:37:42Z and again mid-window 10:44:42Z). It is
+  now the staging project of PR #2637's **current** window (see the PR body: T3, head `7016f0aa70c09cfff3e54c3b0955d0122740f8d0`,
+  clock 2026-09-05T16:32:46Z → no earlier than 2026-09-07T16:32:46Z, run by the release session). **Teardown only after that
+  window closes** (§7 sweep).
+- **PR #2635 (break-glass CLI): MERGED 2026-09-05T00:33:02Z** at head `bccc24a09f274484f0079afac0ab7f30905d7233` after the 12 h
+  exercise 2026-09-03T07:05:22Z → 19:05:23Z: **71 cycles, 0 failing**. Evidence persisted under
+  `docs/staging/mfa-enforcement-2026-09/break-glass-2026-09-03/` (per-cycle JSON bound to `pr_head` + rig ref).
+- **PR #2637 (enforcement): the 09-03 window on head `1a24af93e…` closed clean** — 2026-09-03T12:51:11Z → 2026-09-04T00:51:12Z,
+  API leg 72/72 cycles, Playwright leg 24/24 runs (`docs/staging/mfa-enforcement-2026-09/enforcement-2026-09-03/`). It is
+  **superseded**: the release session added five commits on 2026-09-05 (token-refresh enrolment preservation, pending-challenge
+  preservation, mobile sign-out spec), re-tiered the PR **T3** and started the 48 h window above. PR #2637 is frozen evidence
+  (`do-not-merge` = window marker); the RM line and Ready remain Carson's.
+- **Design ruling in force:** challenge path fails CLOSED; fail-open enrolment-only (see `### Auth — MFA enforcement design ruling`);
+  server-side aal2 enforcement = SCRUM-4026.
 
-### Soaks — DocuSign **guard** T3 (RUNNING — do not touch)
+### Soaks — DocuSign **guard** T3 (SEALED 2026-09-04T13:49Z — rig since DELETED; #2472 now owned by the Codex oldest-first batch)
+
+> **Window closed clean.** 552 cycles, 3,312 probes OK, 0 fail, guard exactly `1111` on every cycle, worker uptime monotonic 0.02h → 47.93h with 0 resets. Triggers A (direct log) and B (by elimination) both fired 2026-09-03. Sealed with a sha256 over the cycle bytes: `docs/staging/docusign-guard/SEAL.json`, commit `9e3fa3aa`.
+> **Rig deleted 2026-09-05T15:10:13Z by `270018525501-compute@developer.gserviceaccount.com`** — ~25h after close, no teardown log entry, not this session. Evidence unaffected (captured live before deletion).
+> **#2472 has since been re-based and re-soaked by the Codex oldest-first release session** at head `ee083ef7` on rig `zjwtnkwnwjpcmclkuvdf` (window from 2026-09-05T14:57Z, `do-not-merge` = window marker). That block is the merge-grade one; the window below is supporting evidence at the prior head. Do not touch that PR's body, labels, or head.
 
 - **Rig:** isolated Supabase `kyaecvotcbalsfahwslt` (`arkova-soak-docusign-guard`, us-east-2), ledger head **0423**, preflight **`clean_mirror`**. Cloud Run `arkova-worker-docusign-guard-staging` rev **00003-hwq**, image `sha256:4aa5e8cd…`, source head `bfd0aaf5b32ad24db9717f8da1dbcb5ba2dee006`.
 - **Covers PR #2472 only** (migration 0423, the DocuSign metadata key write-authority trigger). Deliberately narrower than the discarded RC-2 window: #2474/#2476 are NOT in this branch and are not soaked here.
@@ -2213,5 +2259,9 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-05 by Codex CTO — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-05 by CTO session (Claude) — claims verified against `gh pr view` (#2635 merged, #2637 head/body), the harness evidence under `~/arkova-soak/mfa-3167/`, and the Supabase Management API project list._
+
+_Last refreshed: 2026-09-05 by Claude-Fable-5.1-CTO-session — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-05 by Codex CTO UAT-03 — claims verified against gcloud/MCP/CI output (candidate local checks and read-only production ledger/ACL; full PR CI and hosted release remain pending)._

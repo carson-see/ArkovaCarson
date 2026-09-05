@@ -192,12 +192,12 @@ export function AIExtractionStep({
         </div>
       )}
 
-      <div className="flex justify-between pt-4">
+      <div className="flex flex-col gap-2 pt-4 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={onBack} disabled={state === 'extracting'}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back
         </Button>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <Button variant="ghost" onClick={onSkip} disabled={state === 'extracting'}>
             <SkipForward className="mr-2 h-4 w-4" />
             Skip
