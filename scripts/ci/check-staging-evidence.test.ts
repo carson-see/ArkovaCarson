@@ -184,6 +184,27 @@ describe('check-staging-evidence', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
     });
 
+    it('returns T0 for the src/tests/rls/ test-helper subtree (SCRUM-3618)', () => {
+      // src/tests/rls/ is the canonical RLS test-helper module tree CLAUDE.md
+      // §1.7 itself names (`withUser()` / `withAuth()` / `cleanupClient()`).
+      // It is imported ONLY by *.test.ts files — verified no src/ runtime
+      // importer — so a change to it has no surface a soak could exercise.
+      // Without this, the tests-only SCRUM-3618 parallel-safety fix
+      // (tests/rls/** sweep + the shared sign-out helper) classified T1 via
+      // the frontend default: a 2 h soak of a file prod never reads.
+      expect(requiredTierFor(['src/tests/rls/helpers.ts']).tier).toBe('T0');
+      // The full SCRUM-3618 change-set shape stays T0 with the helper included.
+      expect(
+        requiredTierFor([
+          'src/tests/rls/agents.md',
+          'src/tests/rls/helpers.ts',
+          'tests/infra/rls-suite-parallel-safety.test.ts',
+          'tests/rls/docusign-integrations.test.ts',
+          'tests/rls/credential-source-providers.test.ts',
+        ]).tier,
+      ).toBe('T0');
+    });
+
     it('returns T0 for the S0-E4 release-pipeline CI tooling scripts', () => {
       expect(
         requiredTierFor([

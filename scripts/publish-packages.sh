@@ -1,22 +1,34 @@
 #!/usr/bin/env bash
 #
-# Publish @carsonarkova/sdk and @arkova/embed to npm (INT-01 / INT-03).
+# Publish arkova (TS SDK) and @arkova/embed to npm (INT-01 / INT-03).
 #
-# NOTE: the two packages currently live under DIFFERENT npm scopes.
-#   - @carsonarkova/sdk uses the `carsonarkova` org (SCRUM npm-scope
-#     founder ruling 2026-08-01: the `arkova` scope was never the
-#     intended org — `carsonarkova` is, and the NPM secret's token is
-#     scoped to it). See packages/sdk/agents.md.
-#   - @arkova/embed still targets the `arkova` scope pending the same
-#     decision being extended to it (not yet ruled on).
+# NOTE: the two packages are on DIFFERENT footings as of 2026-08-18.
+#   - `arkova` (packages/sdk) is UNSCOPED as of the 2026-08-18 CTO ruling —
+#     parity with the PyPI package, which already publishes unscoped as
+#     `arkova`. This supersedes the 2026-08-01 `@carsonarkova/sdk` scoped
+#     rename (historical record: HANDOFF.md `## History`); an unscoped name
+#     needs no npm org at all. See packages/sdk/agents.md. For this package
+#     specifically, prefer scripts/release/publish-npm.sh — it also covers
+#     sdks/mcp-server (unscoped `arkova-mcp-server`) and checks `npm whoami`
+#     up front. This script remains the path for packages/embed and for
+#     publishing both in one pass.
+#   - @arkova/embed still targets the `arkova` scope; unaffected by the
+#     2026-08-18 ruling (that decision was scoped to the TS SDK only, not
+#     extended to embed).
 #
 # Prerequisites:
-#   1. The relevant npm scope (`carsonarkova` for sdk, `arkova` for embed)
-#      exists and you have owner/maintainer permissions on it.
-#      If not: `npm org create <scope>` (as the scope owner).
-#   2. NPM_TOKEN exported with publish permission for that scope.
-#      Or: `npm login` interactively before running this script.
-#   3. First publish of a scoped package requires --access public.
+#   1. arkova (sdk): no org needed, just an authenticated npm user
+#      (`npm login`) that hasn't been beaten to the name (it wasn't, as of
+#      2026-08-18 — confirmed via `npm view arkova` returning E404).
+#      @arkova/embed: the `arkova` npm scope must exist and you need
+#      owner/maintainer permissions on it. If not: `npm org create arkova`
+#      (as the scope owner).
+#   2. NPM_TOKEN exported with publish permission for the relevant
+#      package/scope. Or: `npm login` interactively before running this
+#      script.
+#   3. First publish of a SCOPED package requires --access public
+#      (harmless no-op for the unscoped `arkova` package; this script
+#      passes it unconditionally below).
 #
 # Usage:
 #   scripts/publish-packages.sh               # live publish
