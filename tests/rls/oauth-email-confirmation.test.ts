@@ -40,6 +40,15 @@ const enable = "UPDATE private.oauth_email_confirmation_policy SET enabled_at=no
 // Recreate only inside the rolled-back fixture so an existing hosted-style
 // postgres creator grant cannot mask the deliberately injected invalid grant.
 const freshPendingRole = 'DROP ROLE arkova_email_pending; CREATE ROLE arkova_email_pending NOLOGIN NOINHERIT';
+// Production builds the public.profiles row from an auth.users signup trigger
+// (`on_auth_user_created`, archived at docs/migrations-archive/0072_auto_create_
+// profile_on_signup.sql). The squashed baseline no longer ships auth-schema
+// triggers, so a bare auth.users INSERT leaves no profile in this fixture and a
+// profile assertion would silently pass over an empty result set. Reinstate the
+// production trigger inside the rolled-back transaction and let the real
+// public.handle_new_user() build the row, so the fixture tracks that function.
+const signupProfileTrigger = 'CREATE OR REPLACE TRIGGER on_auth_user_created AFTER INSERT ON auth.users '
+  + 'FOR EACH ROW EXECUTE FUNCTION public.handle_new_user()';
 
 describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
   beforeAll(() => {
@@ -124,7 +133,7 @@ describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
   it('defers new-user domain membership until completion and associates exactly once', () => {
     const id = randomUUID(); const org = randomUUID(); const digest = 'c'.repeat(64);
     const email = `${id}@${org}.invalid`;
-    const output = sql(`${enable};
+    const output = sql(`${enable}; ${signupProfileTrigger};
       INSERT INTO public.organizations(id,legal_name,display_name,domain,domain_verified,verification_status)
         VALUES('${org}','UAT03 isolated fixture LLC','UAT03 isolated fixture','${org}.invalid',true,'VERIFIED');
       INSERT INTO auth.users(id,email,raw_app_meta_data,created_at,email_confirmed_at)
