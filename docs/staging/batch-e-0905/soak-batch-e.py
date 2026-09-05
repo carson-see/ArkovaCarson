@@ -278,8 +278,8 @@ def cycle(i, tag, ev):
 
     # ---- #2529 I: 0426 partial unique index enforces one active claim -----
     dup_sql = (
-        "INSERT INTO public.org_integrations (org_id, provider, webhook_id, status) "
-        "VALUES ('%s','adobe_sign','%s','active')" % (RIG['org_b'], RIG['webhook_id_a']))
+        "INSERT INTO public.org_integrations (org_id, provider, webhook_id) "
+        "VALUES ('%s','adobe_sign','%s')" % (RIG['org_b'], RIG['webhook_id_a']))
     try:
         sql(dup_sql)
         raise AssertionError('duplicate ACTIVE adobe_sign webhook_id was accepted — 0426 index not enforcing')
@@ -289,8 +289,9 @@ def cycle(i, tag, ev):
         ev['webhook_id_unique_index'] = 'rejected duplicate active claim'
 
     # ---- #2529 F/G/H: OAuth connect flow ---------------------------------
+    start_body_bytes = json.dumps({'org_id': RIG['org_a']}).encode()
     st_unauth, _, _ = worker('POST', '/api/v1/integrations/adobe-sign/oauth/start',
-                             {'Content-Type': 'application/json'}, b'{}')
+                             {'Content-Type': 'application/json'}, start_body_bytes)
     assert st_unauth == 401, \
         'unauthenticated start expected 401 (503 means ENABLE_ADOBE_SIGN_OAUTH is off) got %s' % st_unauth
     if time.time() - STATE.get('user_token_at', 0) > 1800:
@@ -299,7 +300,7 @@ def cycle(i, tag, ev):
     st_start, _, text_start = worker('POST', '/api/v1/integrations/adobe-sign/oauth/start', {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + STATE['user_token'],
-    }, b'{}')
+    }, start_body_bytes)
     assert st_start in (200, 201), 'authenticated start expected 2xx got %s %s' % (st_start, text_start[:300])
     start_body = json.loads(text_start)
     auth_url = start_body.get('authorizationUrl') or start_body.get('url') or ''
