@@ -28,3 +28,8 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 - Never import these scripts from the worker runtime (`services/worker/src/`).
 - Tests must mock LLM and Stripe calls — no real API calls in test runs.
 - Budget guardrails (`--limit N`, `--dry-run`) are mandatory on scripts that spend provider budget.
+
+
+## 2026-09-05 — PR #2565 owned PostgreSQL regression harness
+
+`test-docusign-backfill-attempts.py --pg-bin PATH --output NEW_DIRECTORY` creates a private PostgreSQL cluster via `lib/local_postgres.py`, uses a private Unix socket, loads the actual0438 SQL and tests role authority plus real concurrent attempt claims. It refuses an existing output directory and always stops its owned cluster. It does not use a running database or spend provider budget. The small fixture schema is explicit focused evidence; it is not a full-schema replay, generated-types proof or staging soak.

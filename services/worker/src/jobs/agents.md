@@ -1,5 +1,14 @@
 # services/worker/src/jobs/agents.md
 
+## 2026-09-05 — PR #2565 durable attempt and provenance repair
+
+This update supersedes the earlier unresolved marker/pacing note and the historical T2/no-migration description below. Migration0438 adds a service-only completion-marker trigger without editing frozen0423, a FORCE-RLS attempt table keyed by org/envelope, and service-only candidate/claim RPCs. A claim reserves15 minutes even after a failed provider request or lost write CAS. Completed envelopes stay excluded; failed attempts can retry after cooldown. There is no claim that an envelope is never polled twice or that this grants provider approval.
+
+Candidate RPCs filter cooling rows before LIMIT and bind the selected active DocuSign account. Rows with no account identity are eligible only if the org has one distinct active account; ambiguous legacy rows fail closed. After the provider responds, the worker rereads and verifies envelope, account metadata, outbound classification, fingerprint authority and deletion state. Its serialized metadata CAS also checks fingerprint_source and deletion under the update lock. Concurrent unrelated metadata survives, while an old provider response cannot enrich a repurposed row.
+
+Verification includes real-client transport against the migration's declared RPC parameter names, concurrent orchestration, and owned PostgreSQL17 sessions proving authenticated marker forgery fails, duplicate/concurrent attempts have one winner, cooldown fairness, and wrong/revoked/ambiguous account denial. Focused local schemas are not full-schema or staging qualification. This security/concurrency migration makes the candidate T3; Ready enables CI while do-not-merge remains until exact-head clean-baseline qualification and root review close.
+
+
 
 ## 2026-09-05 — PR #2565 JSONB CAS transport correction
 
@@ -1475,3 +1484,10 @@ Three changes, each with tests that fail without it:
 **Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
+
+
+## 2026-09-05 — PR #2565 complete staging preparation
+
+After guarded baseline restoration and retention on existing vofhfzyosxlneupohsem, migration0438 was actually applied and all eight repository preflight checks passed. Full type generation covers both public and graphql_public schemas, with identical root and worker copies. Ten live scenarios cover Auth/client denials, concurrent claims from the same candidate snapshot, persistent404 cooldown, candidate fairness, provider-time envelope replacement, and real read-to-PATCH metadata/fingerprint/deletion interleavings. Operational rollback actually removed the three RPCs, confirmed HTTP unavailability, retained marker protection and cooldown data, then restored exact definitions/ACLs and proved a still-active cooldown rejects a second claim. Provider responses are deterministic injected fixtures; no real DocuSign polling approval or completed48h qualification is claimed.
+
+The final account-eligibility regression also covers a valid inherited org-integration marker with NULL credentials plus one active member grant. Credential-free marker rows are not DocuSign accounts and are excluded from the distinct-account count; otherwise legacy envelopes are falsely classified as ambiguous. The defect reproduced against both PostgreSQL fixtures and the complete staged hierarchy/integration constraints, then passed after correction.

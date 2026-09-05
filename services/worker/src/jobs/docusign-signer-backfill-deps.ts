@@ -18,6 +18,7 @@ import {
   type DocusignRefreshTokenStore,
 } from '../integrations/connectors/docusign-token-store.js';
 import { ENVELOPE_ID_METADATA_KEYS } from './docusign-anchor-reconciliation.js';
+import { isOutboundBackfillCandidate } from './docusign-signer-backfill.js';
 import type {
   DocusignSignerBackfillDeps,
   DocusignSignerBackfillIntegration,
@@ -113,40 +114,18 @@ function toCandidate(row: AnchorCandidateRow): DocusignSignerBackfillCandidate |
   };
 }
 
-/**
- * ONE indexed point lookup per ENVELOPE_ID_METADATA_KEYS key — never a single
- * `.or()` across all three. Mirrors `findExistingEnvelopeAnchor`'s established
- * reasoning (docusign-anchor-reconciliation.ts): a 3-branch `.or()` across
- * unindexed-together JSONB expressions mis-costs on a multi-million-row org
- * and can exceed statement_timeout, while migration 0381's three per-key
- * partial expression indexes each make a single-key equality/`IS NOT NULL`
- * filter a cheap, plan-stable Index Scan.
- */
+/** Query each indexed envelope key separately; the RPC applies cooldown and
+ * connected-account eligibility before LIMIT, under a server-only ACL. */
 async function selectCandidatesForKey(
   db: AnyDb,
   orgId: string,
+  accountId: string,
   key: string,
   limit: number,
 ): Promise<AnchorCandidateRow[]> {
-  const { data, error } = (await db
-    .from('anchors')
-    .select('id, org_id, metadata, fingerprint_source')
-    .eq('org_id', orgId)
-    .is('deleted_at', null)
-    .eq('metadata->>connector_source', 'docusign')
-    .is('metadata->>_signers', null)
-    // Separate completion watermark from `_signers` itself (see the WRITE
-    // SAFETY section in docusign-signer-backfill.ts): a candidate that was
-    // already processed and legitimately yielded zero signers has
-    // `_signers_backfilled_at` set but `_signers` still absent. Without this
-    // second filter such a row stays a "candidate" forever and is re-fetched
-    // from DocuSign on every run. NOTE: `_signers_backfilled_at` needs to be
-    // added to migration 0423's guarded metadata-key family once that
-    // (separate, not-yet-merged) migration lands — see agents.md.
-    .is('metadata->>_signers_backfilled_at', null)
-    .not(`metadata->>${key}`, 'is', null)
-    .limit(limit)) as DbQueryResult<AnchorCandidateRow[]>;
-
+  const { data, error } = (await db.rpc('list_docusign_signer_backfill_candidates', {
+    p_org_id: orgId, p_metadata_key: key, p_limit: limit, p_account_id: accountId,
+  })) as DbQueryResult<AnchorCandidateRow[]>;
   if (error) throw new Error(`candidate_query_failed(${key}): ${dbErrorMessage(error)}`);
   return data ?? [];
 }
@@ -227,11 +206,11 @@ export function makeDocusignSignerBackfillDeps(
       return result.access_token;
     },
 
-    async listCandidateAnchors({ orgId, limit }): Promise<DocusignSignerBackfillCandidate[]> {
+    async listCandidateAnchors({ orgId, accountId, limit }): Promise<DocusignSignerBackfillCandidate[]> {
       const seen = new Map<string, AnchorCandidateRow>();
       for (const key of ENVELOPE_ID_METADATA_KEYS) {
         if (seen.size >= limit) break;
-        const rows = await selectCandidatesForKey(db, orgId, key, limit);
+        const rows = await selectCandidatesForKey(db, orgId, accountId, key, limit);
         for (const row of rows) {
           if (typeof row.id !== 'string') continue;
           if (!seen.has(row.id)) seen.set(row.id, row);
@@ -245,6 +224,15 @@ export function makeDocusignSignerBackfillDeps(
         });
     },
 
+    async claimEnvelopeAttempt({ orgId, anchorId, envelopeId, accountId }) {
+      const { data, error } = (await db.rpc('claim_docusign_signer_backfill_attempt', {
+        p_org_id: orgId, p_anchor_id: anchorId, p_envelope_id: envelopeId, p_account_id: accountId,
+      })) as DbQueryResult<boolean>;
+      if (error) throw new Error(`attempt_claim_failed: ${dbErrorMessage(error)}`);
+      if (typeof data !== 'boolean') throw new Error('attempt_claim_invalid_response');
+      return data;
+    },
+
     async fetchEnvelopeSigners({ baseUri, accountId, envelopeId, accessToken }) {
       return fetchDocusignEnvelopeRecipients({
         baseUri,
@@ -255,7 +243,7 @@ export function makeDocusignSignerBackfillDeps(
       });
     },
 
-    async updateAnchorSigners({ anchorId, orgId, signers, docusignEnv }) {
+    async updateAnchorSigners({ anchorId, orgId, envelopeId, accountId, fingerprintSource, signers, docusignEnv }) {
       // The `metadata` snapshot the caller passes in was captured back at
       // candidate-SELECT time and can be MINUTES stale by now (candidates in
       // one run are processed sequentially with a pacing delay between
@@ -266,10 +254,10 @@ export function makeDocusignSignerBackfillDeps(
       // one query round trip rather than up to this run's entire duration.
       const { data: freshRow, error: readError } = (await db
         .from('anchors')
-        .select('metadata')
+        .select('metadata, fingerprint_source, deleted_at')
         .eq('id', anchorId)
         .eq('org_id', orgId)
-        .maybeSingle()) as DbQueryResult<{ metadata: unknown }>;
+        .maybeSingle()) as DbQueryResult<{ metadata: unknown; fingerprint_source: string | null; deleted_at: string | null }>;
       if (readError) throw new Error(`anchor_reread_failed: ${dbErrorMessage(readError)}`);
       if (!freshRow) return { updated: false }; // deleted/moved between SELECT and here — no-op.
 
@@ -277,6 +265,17 @@ export function makeDocusignSignerBackfillDeps(
         freshRow.metadata && typeof freshRow.metadata === 'object' && !Array.isArray(freshRow.metadata)
           ? (freshRow.metadata as Record<string, unknown>)
           : {};
+
+      if (freshRow.deleted_at != null || freshRow.fingerprint_source !== fingerprintSource ||
+          fresh['connector_source'] !== 'docusign' || extractEnvelopeId(fresh) !== envelopeId ||
+          !isOutboundBackfillCandidate({ metadata: fresh, fingerprintSource: freshRow.fingerprint_source })) {
+        return { updated: false };
+      }
+      for (const key of ['account_id', '_sending_account_id']) {
+        if (fresh[key] != null && (typeof fresh[key] !== 'string' || (fresh[key] as string).trim() !== accountId)) {
+          return { updated: false };
+        }
+      }
 
       // Already completed by a concurrent run (backfill or, for `_signers`,
       // the live webhook path) — no-op, not an error. Checked against the
@@ -314,7 +313,7 @@ export function makeDocusignSignerBackfillDeps(
       // the object explicitly, otherwise it sends eq.[object Object] and every
       // update fails with invalid JSON. PostgreSQL evaluates this JSONB CAS
       // under the row lock; a concurrent metadata change matches zero rows.
-      const { data, error } = (await db
+      let write = db
         .from('anchors')
         .update({ metadata: merged })
         .eq('id', anchorId)
@@ -322,8 +321,11 @@ export function makeDocusignSignerBackfillDeps(
         .eq('metadata', JSON.stringify(fresh))
         .is('metadata->>_signers', null)
         .is('metadata->>_signers_backfilled_at', null)
-        .select('id')
-        .maybeSingle()) as DbQueryResult<{ id: string }>;
+        .is('deleted_at', null);
+      write = fingerprintSource === null
+        ? write.is('fingerprint_source', null)
+        : write.eq('fingerprint_source', fingerprintSource);
+      const { data, error } = (await write.select('id').maybeSingle()) as DbQueryResult<{ id: string }>;
 
       if (error) throw new Error(`anchor_update_failed: ${dbErrorMessage(error)}`);
       return { updated: data != null };

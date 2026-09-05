@@ -14,6 +14,10 @@
 
 ## Now
 
+### Scoped PR #2565 release review — 2026-09-05
+
+Migration0438 protects the service-owned completion marker and persists15-minute org/envelope attempt cooldowns, with active-account selection and post-fetch provenance revalidation. Complete staging baseline/catalog verification, actual migration apply and rollback/reapply, full type regeneration, ten live Auth/PostgREST concurrency/authority scenarios, and root/worker build typechecks pass on owned vofhfzyosxlneupohsem. Scoped evidence is retained in the release-review packet and linked from the PR. The candidate remains Ready with do-not-merge; its exact final-head T3 worker window, dependency integration, final CI and release review remain pending. No production deployment is claimed.
+
 ### Soaks — DocuSign bilateral T3 (RUNNING, started 2026-08-30)
 
 - **Rig:** isolated Supabase `aqikotdkmhxmznonwmwk` (`arkova-soak-docusign-bilateral`, us-east-2), ledger head **0424**. Cloud Run `arkova-worker-docusign-bilateral-staging` rev **00003-kt9**, image `sha256:642487e3…`, source head `2a676981cfcc337f87f42169b2d2085fdb886c87` (branch `rc/docusign-bilateral-2026-08-30`).

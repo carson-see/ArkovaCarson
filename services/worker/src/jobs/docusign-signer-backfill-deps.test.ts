@@ -8,6 +8,7 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import { readFileSync } from 'node:fs';
 
 vi.mock('../config.js', () => ({
   config: {},
@@ -56,11 +57,13 @@ function makeChainable(queryResult: { data: unknown; error: unknown }, singleRes
 
 describe('makeDocusignSignerBackfillDeps', () => {
   let fromMock: ReturnType<typeof vi.fn>;
-  let db: { from: typeof fromMock };
+  let rpcMock: ReturnType<typeof vi.fn>;
+  let db: { from: typeof fromMock; rpc: typeof rpcMock };
 
   beforeEach(() => {
     fromMock = vi.fn();
-    db = { from: fromMock };
+    rpcMock = vi.fn();
+    db = { from: fromMock, rpc: rpcMock };
   });
 
   describe('listActiveIntegrations', () => {
@@ -147,69 +150,85 @@ describe('makeDocusignSignerBackfillDeps', () => {
   });
 
   describe('listCandidateAnchors', () => {
-    it('scopes by org_id, connector_source=docusign, _signers IS NULL, and unions per-key envelope-id queries', async () => {
-      const sourceKeyChain = makeChainable({
-        data: [{ id: 'anchor-1', org_id: 'org-1', metadata: { connector_source: 'docusign', source_envelope_id: 'env-a' }, fingerprint_source: null }],
-        error: null,
-      });
-      const envelopeKeyChain = makeChainable({
-        data: [{ id: 'anchor-2', org_id: 'org-1', metadata: { connector_source: 'docusign', envelope_id: 'env-b' }, fingerprint_source: 'document_bytes' }],
-        error: null,
-      });
-      const externalRefKeyChain = makeChainable({ data: [], error: null });
-      let call = 0;
-      const chains = [sourceKeyChain, envelopeKeyChain, externalRefKeyChain];
-      fromMock.mockImplementation(() => chains[call++ % chains.length].chain);
-
-      const deps = makeDocusignSignerBackfillDeps({ db: db as never });
-      const candidates = await deps.listCandidateAnchors({ orgId: 'org-1', limit: 50 });
-
-      expect(candidates.map((c) => c.anchorId).sort()).toEqual(['anchor-1', 'anchor-2']);
-      const c1 = candidates.find((c) => c.anchorId === 'anchor-1')!;
-      expect(c1.envelopeId).toBe('env-a');
-      expect(c1.orgId).toBe('org-1');
-      const c2 = candidates.find((c) => c.anchorId === 'anchor-2')!;
-      expect(c2.envelopeId).toBe('env-b');
-      expect(c2.fingerprintSource).toBe('document_bytes');
-
-      expect(sourceKeyChain.calls).toContainEqual({ method: 'eq', args: ['org_id', 'org-1'] });
-      expect(sourceKeyChain.calls).toContainEqual({ method: 'eq', args: ['metadata->>connector_source', 'docusign'] });
-      expect(sourceKeyChain.calls).toContainEqual({ method: 'is', args: ['metadata->>_signers', null] });
+    it('serializes RPC argument names that the actual migration declares', async () => {
+      const sql = readFileSync(new URL('../../../../supabase/migrations/0438_docusign_backfill_attempt_authority.sql', import.meta.url), 'utf8');
+      const signature = /FUNCTION public.list_docusign_signer_backfill_candidates\(([^)]*)\)/.exec(sql)![1];
+      const declared = signature.split(',').map(parameter => parameter.trim().split(/\s+/)[0]).sort();
+      const fetchImpl: typeof fetch = async (request, init) => {
+        expect(new URL(String(request)).pathname).toBe('/rest/v1/rpc/list_docusign_signer_backfill_candidates');
+        expect(Object.keys(JSON.parse(String(init?.body))).sort()).toEqual(declared);
+        return new Response('[]', { status: 200 });
+      };
+      const client = createClient('https://example.supabase.co', 'test-key', { global: { fetch: fetchImpl }, auth: { persistSession: false } });
+      const deps = makeDocusignSignerBackfillDeps({ db: client });
+      expect(await deps.listCandidateAnchors({ orgId: testGuid(2), accountId: 'acct-1', limit: 50 })).toEqual([]);
     });
 
-    it('dedupes an anchor that matches more than one envelope-id key', async () => {
-      const row = { id: 'anchor-dup', org_id: 'org-1', metadata: { connector_source: 'docusign', envelope_id: 'env-x', external_ref: 'env-x' }, fingerprint_source: 'document_bytes' };
-      const chain = makeChainable({ data: [row], error: null });
-      fromMock.mockImplementation(() => chain.chain);
-
-      const deps = makeDocusignSignerBackfillDeps({ db: db as never });
-      const candidates = await deps.listCandidateAnchors({ orgId: 'org-1', limit: 50 });
-
-      expect(candidates).toHaveLength(1);
+    it('passes the org, active account and each allowed key to the due-candidate RPC', async () => {
+      const row = { id: 'anchor-1', org_id: 'org-1', metadata: { source_envelope_id: 'env-a' }, fingerprint_source: 'document_bytes' };
+      rpcMock.mockResolvedValueOnce({ data: [row], error: null })
+        .mockResolvedValueOnce({ data: [row, { ...row, id: 'anchor-2', metadata: { envelope_id: 'env-b' } }], error: null })
+        .mockResolvedValueOnce({ data: [], error: null });
+      const deps = makeDocusignSignerBackfillDeps({ db });
+      const candidates = await deps.listCandidateAnchors({ orgId: 'org-1', accountId: 'acct-1', limit: 50 });
+      expect(candidates.map(c => [c.anchorId, c.envelopeId])).toEqual([['anchor-1', 'env-a'], ['anchor-2', 'env-b']]);
+      expect(rpcMock.mock.calls).toEqual(['source_envelope_id', 'envelope_id', 'external_ref'].map(key => [
+        'list_docusign_signer_backfill_candidates', { p_org_id: 'org-1', p_metadata_key: key, p_limit: 50, p_account_id: 'acct-1' },
+      ]));
+      expect(fromMock).not.toHaveBeenCalled();
     });
-
-    it('caps the returned candidate set at the requested limit', async () => {
-      const rows = Array.from({ length: 10 }, (_, i) => ({
-        id: `anchor-${i}`,
-        org_id: 'org-1',
-        metadata: { connector_source: 'docusign', envelope_id: `env-${i}` },
-        fingerprint_source: 'document_bytes',
-      }));
-      const chain = makeChainable({ data: rows, error: null });
-      fromMock.mockImplementation(() => chain.chain);
-
-      const deps = makeDocusignSignerBackfillDeps({ db: db as never });
-      const candidates = await deps.listCandidateAnchors({ orgId: 'org-1', limit: 3 });
-
-      expect(candidates).toHaveLength(3);
+    it('caps the union at the requested limit', async () => {
+      rpcMock.mockResolvedValue({ data: Array.from({ length: 10 }, (_, i) => ({ id: `anchor-${i}`, org_id: 'org-1', metadata: { envelope_id: `env-${i}` } })), error: null });
+      const deps = makeDocusignSignerBackfillDeps({ db });
+      expect(await deps.listCandidateAnchors({ orgId: 'org-1', accountId: 'acct-1', limit: 3 })).toHaveLength(3);
+      expect(rpcMock).toHaveBeenCalledTimes(1);
     });
+    it('fails on a database error rather than falling back to unreserved selection', async () => {
+      rpcMock.mockResolvedValue({ data: null, error: { message: 'permission denied' } });
+      const deps = makeDocusignSignerBackfillDeps({ db });
+      await expect(deps.listCandidateAnchors({ orgId: 'org-1', accountId: 'acct-1', limit: 50 })).rejects.toThrow(/permission denied/);
+      expect(fromMock).not.toHaveBeenCalled();
+    });
+  });
 
-    it('throws when a per-key query errors', async () => {
-      const chain = makeChainable({ data: null, error: { message: 'query failed' } });
-      fromMock.mockImplementation(() => chain.chain);
+  describe('claimEnvelopeAttempt', () => {
+    it.each([true, false])('uses the actual PostgREST RPC transport and preserves a %s result', async granted => {
+      const fetchImpl: typeof fetch = async (request, init) => {
+        expect(new URL(String(request)).pathname).toBe('/rest/v1/rpc/claim_docusign_signer_backfill_attempt');
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({ p_org_id: testGuid(2), p_anchor_id: testGuid(1), p_envelope_id: 'env-1', p_account_id: 'acct-1' });
+        return new Response(JSON.stringify(granted), { status: 200 });
+      };
+      const client = createClient('https://example.supabase.co', 'test-key', { global: { fetch: fetchImpl }, auth: { persistSession: false } });
+      const deps = makeDocusignSignerBackfillDeps({ db: client });
+      expect(await deps.claimEnvelopeAttempt({ anchorId: testGuid(1), orgId: testGuid(2), envelopeId: 'env-1', accountId: 'acct-1' })).toBe(granted);
+    });
+    it.each([{ data: null, error: { message: 'permission denied' } }, { data: 'true', error: null }])('fails closed on an error or malformed claim result', async result => {
+      rpcMock.mockResolvedValue(result);
+      const deps = makeDocusignSignerBackfillDeps({ db });
+      await expect(deps.claimEnvelopeAttempt({ anchorId: 'anchor-1', orgId: 'org-1', envelopeId: 'env-1', accountId: 'acct-1' })).rejects.toThrow(/attempt_claim/);
+    });
+  });
 
-      const deps = makeDocusignSignerBackfillDeps({ db: db as never });
-      await expect(deps.listCandidateAnchors({ orgId: 'org-1', limit: 50 })).rejects.toThrow(/query failed/);
+  describe('post-fetch provenance revalidation', () => {
+    it.each([
+      ['envelope changed', { metadata: { connector_source: 'docusign', envelope_id: 'env-new' }, fingerprint_source: 'document_bytes', deleted_at: null }],
+      ['direction changed', { metadata: { connector_source: 'docusign', envelope_id: 'env-1', _direction: 'inbound' }, fingerprint_source: 'document_bytes', deleted_at: null }],
+      ['fingerprint authority changed', { metadata: { connector_source: 'docusign', envelope_id: 'env-1' }, fingerprint_source: 'issuer_record_attestation', deleted_at: null }],
+      ['record deleted', { metadata: { connector_source: 'docusign', envelope_id: 'env-1' }, fingerprint_source: 'document_bytes', deleted_at: '2026-09-05T00:00:00Z' }],
+      ['account changed', { metadata: { connector_source: 'docusign', envelope_id: 'env-1', account_id: 'foreign-account' }, fingerprint_source: 'document_bytes', deleted_at: null }],
+    ])('does not attach an old provider response after %s', async (_label, freshRow) => {
+      let writes = 0;
+      const fetchImpl: typeof fetch = async (_input, init) => {
+        if ((init?.method ?? 'GET') === 'GET') return new Response(JSON.stringify(freshRow), { status: 200 });
+        writes += 1;
+        return new Response(JSON.stringify({ id: testGuid(1) }), { status: 200 });
+      };
+      const client = createClient('https://example.supabase.co', 'test-key', { global: { fetch: fetchImpl }, auth: { persistSession: false } });
+      const deps = makeDocusignSignerBackfillDeps({ db: client });
+      const result = await deps.updateAnchorSigners({ anchorId: testGuid(1), orgId: testGuid(2), envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes', metadata: { connector_source: 'docusign', envelope_id: 'env-1' }, signers: [], docusignEnv: 'demo' });
+      expect(result).toEqual({ updated: false });
+      expect(writes).toBe(0);
     });
   });
 
@@ -229,7 +248,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
 
     it('re-reads current metadata (ignoring the passed-in stale snapshot) and merges _signers + _docusign_env without clobbering other keys', async () => {
       const freshMetadata = { connector_source: 'docusign', envelope_id: 'env-1', filename: 'contract.pdf', unrelated_key: 'keep-me' };
-      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata }, error: null });
+      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata, fingerprint_source: 'document_bytes', deleted_at: null }, error: null });
       const writeChain = makeChainable({ data: null, error: null }, { data: { id: 'anchor-1' }, error: null });
       fromMock.mockImplementation(sequentialFrom([readChain.chain, writeChain.chain]));
 
@@ -237,6 +256,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       const result = await deps.updateAnchorSigners({
         anchorId: 'anchor-1',
         orgId: 'org-1',
+        envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
         // Deliberately stale/different from freshMetadata — proves the merge
         // base is the fresh read, not this passed-in snapshot.
         metadata: { connector_source: 'docusign' },
@@ -260,7 +280,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
 
     it('never persists _signers as [] when the envelope had zero signers, but still stamps the watermark', async () => {
       const freshMetadata = { connector_source: 'docusign', envelope_id: 'env-1' };
-      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata }, error: null });
+      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata, fingerprint_source: 'document_bytes', deleted_at: null }, error: null });
       const writeChain = makeChainable({ data: null, error: null }, { data: { id: 'anchor-1' }, error: null });
       fromMock.mockImplementation(sequentialFrom([readChain.chain, writeChain.chain]));
 
@@ -268,6 +288,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       const result = await deps.updateAnchorSigners({
         anchorId: 'anchor-1',
         orgId: 'org-1',
+        envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
         metadata: freshMetadata,
         signers: [],
         docusignEnv: 'demo',
@@ -281,8 +302,8 @@ describe('makeDocusignSignerBackfillDeps', () => {
     });
 
     it('does not overwrite an existing _docusign_env value', async () => {
-      const freshMetadata = { connector_source: 'docusign', _docusign_env: 'prod' };
-      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata }, error: null });
+      const freshMetadata = { connector_source: 'docusign', envelope_id: 'env-1', _docusign_env: 'prod' };
+      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata, fingerprint_source: 'document_bytes', deleted_at: null }, error: null });
       const writeChain = makeChainable({ data: null, error: null }, { data: { id: 'anchor-1' }, error: null });
       fromMock.mockImplementation(sequentialFrom([readChain.chain, writeChain.chain]));
 
@@ -290,6 +311,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       await deps.updateAnchorSigners({
         anchorId: 'anchor-1',
         orgId: 'org-1',
+        envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
         metadata: freshMetadata,
         signers: [{ recipient_id_guid: testGuid(2), status: 'completed' }],
         docusignEnv: 'demo',
@@ -301,8 +323,8 @@ describe('makeDocusignSignerBackfillDeps', () => {
     });
 
     it('scopes the write with .eq(id)/.eq(org_id), a metadata compare-and-swap, and both is-null completion guards', async () => {
-      const freshMetadata = {};
-      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata }, error: null });
+      const freshMetadata = { connector_source: 'docusign', envelope_id: 'env-1' };
+      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata, fingerprint_source: 'document_bytes', deleted_at: null }, error: null });
       const writeChain = makeChainable({ data: null, error: null }, { data: { id: 'anchor-1' }, error: null });
       fromMock.mockImplementation(sequentialFrom([readChain.chain, writeChain.chain]));
 
@@ -310,6 +332,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       await deps.updateAnchorSigners({
         anchorId: 'anchor-1',
         orgId: 'org-1',
+        envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
         metadata: freshMetadata,
         signers: [{ recipient_id_guid: testGuid(3), status: 'completed' }],
         docusignEnv: 'demo',
@@ -333,6 +356,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       const result = await deps.updateAnchorSigners({
         anchorId: 'anchor-1',
         orgId: 'org-1',
+        envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
         metadata: {},
         signers: [{ recipient_id_guid: testGuid(4), status: 'completed' }],
         docusignEnv: 'demo',
@@ -343,8 +367,8 @@ describe('makeDocusignSignerBackfillDeps', () => {
     });
 
     it('reports updated:false (not an error) when the CAS write matches zero rows — metadata changed between the fresh read and the write', async () => {
-      const freshMetadata = { connector_source: 'docusign' };
-      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata }, error: null });
+      const freshMetadata = { connector_source: 'docusign', envelope_id: 'env-1' };
+      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata, fingerprint_source: 'document_bytes', deleted_at: null }, error: null });
       // The CAS lost: zero rows matched (a concurrent writer changed metadata
       // in the gap between this call's own read and its write).
       const writeChain = makeChainable({ data: null, error: null }, { data: null, error: null });
@@ -354,6 +378,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       const result = await deps.updateAnchorSigners({
         anchorId: 'anchor-1',
         orgId: 'org-1',
+        envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
         metadata: freshMetadata,
         signers: [{ recipient_id_guid: testGuid(6), status: 'completed' }],
         docusignEnv: 'demo',
@@ -371,6 +396,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
         deps.updateAnchorSigners({
           anchorId: 'anchor-1',
           orgId: 'org-1',
+          envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
           metadata: {},
           signers: [{ recipient_id_guid: testGuid(5), status: 'completed' }],
           docusignEnv: 'demo',
@@ -379,8 +405,8 @@ describe('makeDocusignSignerBackfillDeps', () => {
     });
 
     it('throws anchor_update_failed on a genuine DB error during the write', async () => {
-      const freshMetadata = { connector_source: 'docusign' };
-      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata }, error: null });
+      const freshMetadata = { connector_source: 'docusign', envelope_id: 'env-1' };
+      const readChain = makeChainable({ data: null, error: null }, { data: { metadata: freshMetadata, fingerprint_source: 'document_bytes', deleted_at: null }, error: null });
       const writeChain = makeChainable({ data: null, error: null }, { data: null, error: { message: 'write boom' } });
       fromMock.mockImplementation(sequentialFrom([readChain.chain, writeChain.chain]));
 
@@ -389,6 +415,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
         deps.updateAnchorSigners({
           anchorId: 'anchor-1',
           orgId: 'org-1',
+          envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
           metadata: freshMetadata,
           signers: [{ recipient_id_guid: testGuid(5), status: 'completed' }],
           docusignEnv: 'demo',
@@ -406,7 +433,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
         const url = new URL(String(request));
         expect(url.pathname).toBe('/rest/v1/anchors');
         if (init?.method === 'GET') {
-          return new Response(JSON.stringify({ metadata: original }), { status: 200 });
+          return new Response(JSON.stringify({ metadata: original, fingerprint_source: 'document_bytes', deleted_at: null }), { status: 200 });
         }
         expect(init?.method).toBe('PATCH');
         sentFilter = url.searchParams.get('metadata');
@@ -420,7 +447,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       };
       const client = createClient('https://pr2565.invalid', 'fixture-test-key', { global: { fetch: fetchImpl }, auth: { persistSession: false } });
       const deps = makeDocusignSignerBackfillDeps({ db: client });
-      const result = await deps.updateAnchorSigners({ anchorId: testGuid(1), orgId: testGuid(2), metadata: original, signers: [], docusignEnv: 'demo' });
+      const result = await deps.updateAnchorSigners({ anchorId: testGuid(1), orgId: testGuid(2), envelopeId: 'envelope-1', accountId: 'acct-1', fingerprintSource: 'document_bytes', metadata: original, signers: [], docusignEnv: 'demo' });
       expect(sentFilter).toBe(`eq.${JSON.stringify(original)}`);
       expect(result.updated).toBe(!concurrentWrite);
       if (concurrentWrite) {
@@ -534,7 +561,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
               return { data: { id: row.id }, error: null };
             }
             if (matched.length === 0) return { data: null, error: null };
-            return { data: { metadata: matched[0].metadata }, error: null };
+            return { data: { metadata: matched[0].metadata, fingerprint_source: matched[0].fingerprint_source, deleted_at: null }, error: null };
           },
           then(resolve: (v: { data: unknown; error: null }) => void) {
             const matched = matchRows().slice(0, limitN);
@@ -553,9 +580,13 @@ describe('makeDocusignSignerBackfillDeps', () => {
         { id: 'anchor-1', org_id: 'org-1', metadata: { connector_source: 'docusign', envelope_id: 'env-1' }, fingerprint_source: 'document_bytes' },
       ]);
       fromMock.mockImplementation(() => table.query());
+      rpcMock.mockImplementation((_name: string, args: { p_org_id: string; p_metadata_key: string; p_limit: number }) =>
+        table.query().eq('org_id', args.p_org_id).eq('metadata->>connector_source', 'docusign')
+          .is('metadata->>_signers', null).is('metadata->>_signers_backfilled_at', null)
+          .not('metadata->>' + args.p_metadata_key, 'is', null).limit(args.p_limit));
       const deps = makeDocusignSignerBackfillDeps({ db: db as never });
 
-      const firstRunCandidates = await deps.listCandidateAnchors({ orgId: 'org-1', limit: 50 });
+      const firstRunCandidates = await deps.listCandidateAnchors({ orgId: 'org-1', accountId: 'acct-1', limit: 50 });
       expect(firstRunCandidates.map((c) => c.anchorId)).toEqual(['anchor-1']);
 
       // Simulates docusign-signer-backfill.ts's zero-signers path: still
@@ -563,6 +594,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       const updateResult = await deps.updateAnchorSigners({
         anchorId: 'anchor-1',
         orgId: 'org-1',
+        envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
         metadata: firstRunCandidates[0].metadata,
         signers: [],
         docusignEnv: 'demo',
@@ -575,7 +607,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       expect(table.getMetadata('anchor-1')?._signers_backfilled_at).toEqual(expect.any(String));
 
       // Second run: the SAME query this job always issues now excludes it.
-      const secondRunCandidates = await deps.listCandidateAnchors({ orgId: 'org-1', limit: 50 });
+      const secondRunCandidates = await deps.listCandidateAnchors({ orgId: 'org-1', accountId: 'acct-1', limit: 50 });
       expect(secondRunCandidates).toEqual([]);
     });
 
@@ -589,9 +621,13 @@ describe('makeDocusignSignerBackfillDeps', () => {
         },
       ]);
       fromMock.mockImplementation(() => table.query());
+      rpcMock.mockImplementation((_name: string, args: { p_org_id: string; p_metadata_key: string; p_limit: number }) =>
+        table.query().eq('org_id', args.p_org_id).eq('metadata->>connector_source', 'docusign')
+          .is('metadata->>_signers', null).is('metadata->>_signers_backfilled_at', null)
+          .not('metadata->>' + args.p_metadata_key, 'is', null).limit(args.p_limit));
       const deps = makeDocusignSignerBackfillDeps({ db: db as never });
 
-      const candidates = await deps.listCandidateAnchors({ orgId: 'org-1', limit: 50 });
+      const candidates = await deps.listCandidateAnchors({ orgId: 'org-1', accountId: 'acct-1', limit: 50 });
       const staleMetadataSnapshot = candidates[0].metadata; // captured at "SELECT time"
 
       // A concurrent writer (fraud tagging, an admin annotation, another
@@ -602,6 +638,7 @@ describe('makeDocusignSignerBackfillDeps', () => {
       const result = await deps.updateAnchorSigners({
         anchorId: 'anchor-1',
         orgId: 'org-1',
+        envelopeId: 'env-1', accountId: 'acct-1', fingerprintSource: 'document_bytes',
         metadata: staleMetadataSnapshot, // the stale snapshot — deliberately does NOT carry fraud_flag
         signers: [{ recipient_id_guid: testGuid(9), status: 'completed' }],
         docusignEnv: 'demo',

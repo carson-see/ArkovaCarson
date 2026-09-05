@@ -67,6 +67,7 @@ function makeDeps(overrides: Partial<DocusignSignerBackfillDeps> = {}): Docusign
     listActiveIntegrations: vi.fn().mockResolvedValue([INTEGRATION]),
     getAccessToken: vi.fn().mockResolvedValue('at-1'),
     listCandidateAnchors: vi.fn().mockResolvedValue([outboundCandidate()]),
+    claimEnvelopeAttempt: vi.fn().mockResolvedValue(true),
     fetchEnvelopeSigners: vi.fn().mockResolvedValue(SIGNERS),
     updateAnchorSigners: vi.fn().mockResolvedValue({ updated: true }),
     sleep: vi.fn().mockResolvedValue(undefined),
@@ -116,6 +117,41 @@ describe('isOutboundBackfillCandidate', () => {
 });
 
 describe('runDocusignSignerBackfill', () => {
+  it('durable attempt rejection prevents an API request or completion marker', async () => {
+    const deps = makeDeps();
+    const claim = vi.fn().mockResolvedValue(false);
+    Object.assign(deps, { claimEnvelopeAttempt: claim });
+    const result = await runDocusignSignerBackfill(deps);
+    expect(claim).toHaveBeenCalledWith({ orgId: 'org-1', anchorId: 'anchor-1', envelopeId: 'env-1', accountId: 'acct-1' });
+    expect(deps.fetchEnvelopeSigners).not.toHaveBeenCalled();
+    expect(deps.updateAnchorSigners).not.toHaveBeenCalled();
+    expect(result.anchorsUpdated).toBe(0);
+  });
+
+  it('two concurrent runs sharing the same durable attempt permit only one recipients request', async () => {
+    let claimed = false;
+    const claim = vi.fn(async () => { if (claimed) return false; claimed = true; return true; });
+    const fetchSigners = vi.fn().mockResolvedValue(SIGNERS);
+    const first = makeDeps({ fetchEnvelopeSigners: fetchSigners });
+    const second = makeDeps({ fetchEnvelopeSigners: fetchSigners });
+    Object.assign(first, { claimEnvelopeAttempt: claim });
+    Object.assign(second, { claimEnvelopeAttempt: claim });
+    await Promise.all([runDocusignSignerBackfill(first), runDocusignSignerBackfill(second)]);
+    expect(claim).toHaveBeenCalledTimes(2);
+    expect(fetchSigners).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed recipients request retains the attempt and cannot be immediately polled again', async () => {
+    let claimed = false;
+    const claim = vi.fn(async () => { if (claimed) return false; claimed = true; return true; });
+    const deps = makeDeps({ fetchEnvelopeSigners: vi.fn().mockRejectedValue(Object.assign(new Error('not found'), { status: 404 })) });
+    Object.assign(deps, { claimEnvelopeAttempt: claim });
+    await runDocusignSignerBackfill(deps);
+    await runDocusignSignerBackfill(deps);
+    expect(deps.fetchEnvelopeSigners).toHaveBeenCalledTimes(1);
+    expect(deps.updateAnchorSigners).not.toHaveBeenCalled();
+  });
+
   it('enriches an eligible outbound anchor: fetches signers and writes them merged onto existing metadata', async () => {
     const deps = makeDeps();
 
@@ -130,6 +166,9 @@ describe('runDocusignSignerBackfill', () => {
     expect(deps.updateAnchorSigners).toHaveBeenCalledWith({
       anchorId: 'anchor-1',
       orgId: 'org-1',
+      envelopeId: 'env-1',
+      accountId: 'acct-1',
+      fingerprintSource: 'document_bytes',
       metadata: { connector_source: 'docusign', envelope_id: 'env-1' },
       signers: SIGNERS,
       docusignEnv: 'demo',
@@ -255,6 +294,9 @@ describe('runDocusignSignerBackfill', () => {
     expect(deps.updateAnchorSigners).toHaveBeenCalledWith({
       anchorId: 'anchor-1',
       orgId: 'org-1',
+      envelopeId: 'env-1',
+      accountId: 'acct-1',
+      fingerprintSource: 'document_bytes',
       metadata: { connector_source: 'docusign', envelope_id: 'env-1' },
       signers: [],
       docusignEnv: 'demo',
@@ -291,7 +333,7 @@ describe('runDocusignSignerBackfill', () => {
 
     await runDocusignSignerBackfill(deps, { pageSize: 7 });
 
-    expect(deps.listCandidateAnchors).toHaveBeenCalledWith({ orgId: 'org-1', limit: 7 });
+    expect(deps.listCandidateAnchors).toHaveBeenCalledWith({ orgId: 'org-1', accountId: 'acct-1', limit: 7 });
   });
 
   it('clamps an over-large pageSize to the hard max', async () => {

@@ -95,16 +95,15 @@
  * RATE LIMITING
  * ═════════════════════════════════════════════════════════════════════════
  * DocuSign's anti-polling policy requires >=15 minutes between polls of the
- * SAME object, and gates sustained polling behind app approval. This job
- * satisfies both by construction, not by a timer:
- *   - It is a ONE-TIME backfill per envelope. Once `_signers_backfilled_at`
- *     is written, the deps-layer candidate query's filter (both
- *     `metadata._signers IS NULL` AND `metadata._signers_backfilled_at IS
- *     NULL`) permanently excludes that anchor from every future run — the
- *     field itself is the watermark, so this job is naturally
- *     idempotent/resumable with no separate run-state to track, and no
- *     envelope is EVER polled twice by this job regardless of how often the
- *     cron fires.
+ * SAME object, and gates sustained polling behind app approval. Before each
+ * recipients request, a service-only database RPC atomically reserves the
+ * org/envelope for 15 minutes. Concurrent runs, duplicate anchors and failed
+ * fetches share this durable cooldown; failed attempts are not released.
+ * Completed anchors also carry the protected `_signers_backfilled_at` marker.
+ * A failed fetch or lost write CAS can retry after the cooldown. This does
+ * not claim that an envelope is never requested twice or grant provider app
+ * approval. The RPC filters cooling envelopes before the page limit so an
+ * unavailable first page cannot starve later eligible records.
  *   - Requests to DIFFERENT envelopes within one run are made SEQUENTIALLY
  *     (never concurrently), with a conservative fixed delay between them
  *     (`options.requestDelayMs`, default `DEFAULT_BACKFILL_REQUEST_DELAY_MS`
@@ -172,8 +171,16 @@ export interface DocusignSignerBackfillDeps {
   getAccessToken(integration: DocusignSignerBackfillIntegration): Promise<string>;
   listCandidateAnchors(args: {
     orgId: string;
+    accountId: string;
     limit: number;
   }): Promise<DocusignSignerBackfillCandidate[]>;
+  /** Durable, service-only reservation; false means no provider call or completion write. */
+  claimEnvelopeAttempt(args: {
+    orgId: string;
+    anchorId: string;
+    envelopeId: string;
+    accountId: string;
+  }): Promise<boolean>;
   /** The ONLY function in this job that calls the DocuSign API. */
   fetchEnvelopeSigners(args: {
     baseUri: string;
@@ -184,6 +191,9 @@ export interface DocusignSignerBackfillDeps {
   updateAnchorSigners(args: {
     anchorId: string;
     orgId: string;
+    envelopeId: string;
+    accountId: string;
+    fingerprintSource: string | null;
     /**
      * The candidate-SELECT-time metadata snapshot. Informational for the
      * caller/tests only — the production implementation
@@ -325,7 +335,7 @@ export async function runDocusignSignerBackfill(
 
     let candidates: DocusignSignerBackfillCandidate[];
     try {
-      candidates = await deps.listCandidateAnchors({ orgId: integration.org_id, limit });
+      candidates = await deps.listCandidateAnchors({ orgId: integration.org_id, accountId: integration.account_id, limit });
     } catch (err) {
       const msg = errMsg(err);
       logger.error(
@@ -361,6 +371,25 @@ export async function runDocusignSignerBackfill(
 
       if (!candidate.envelopeId) {
         result.anchorsSkippedNoEnvelopeId += 1;
+        continue;
+      }
+
+      if (candidate.orgId !== integration.org_id) {
+        result.errors.push({ anchor_id: candidate.anchorId, error: 'candidate_org_mismatch' });
+        result.ok = false;
+        continue;
+      }
+      try {
+        const claimed = await deps.claimEnvelopeAttempt({
+          orgId: integration.org_id,
+          anchorId: candidate.anchorId,
+          envelopeId: candidate.envelopeId,
+          accountId: integration.account_id,
+        });
+        if (!claimed) continue;
+      } catch (err) {
+        result.errors.push({ anchor_id: candidate.anchorId, error: `attempt_claim: ${errMsg(err)}` });
+        result.ok = false;
         continue;
       }
 
@@ -409,6 +438,9 @@ export async function runDocusignSignerBackfill(
         const updateResult = await deps.updateAnchorSigners({
           anchorId: candidate.anchorId,
           orgId: candidate.orgId,
+          envelopeId: candidate.envelopeId,
+          accountId: integration.account_id,
+          fingerprintSource: candidate.fingerprintSource,
           metadata: candidate.metadata,
           signers,
           docusignEnv,
@@ -424,7 +456,7 @@ export async function runDocusignSignerBackfill(
           // a race against a concurrent metadata write (a concurrent
           // run/webhook, or an unrelated writer) — a no-op, not a failure.
           // The row stays a candidate (if not yet marked done) and is picked
-          // up again on the next run.
+          // up again after the durable attempt cooldown.
           result.anchorsAlreadyEnriched += 1;
         }
       } catch (err) {
