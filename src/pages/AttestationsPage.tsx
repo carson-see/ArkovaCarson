@@ -455,14 +455,14 @@ export function AttestationsPage() {
     <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
       <div className="space-y-6 p-4 md:p-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-bold font-display tracking-tight">{ATTESTATION_LABELS.PAGE_TITLE}</h1>
             <p className="text-sm text-muted-foreground mt-1">
               {ATTESTATION_LABELS.PAGE_SUBTITLE}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               className="border-[#00d4ff]/20"

@@ -540,3 +540,7 @@ presence so this change cannot be misread as having quietly resolved R-2. Do not
 `scripts/ci/config-drift/flag-inventory.json` also still carries the two `ENABLE_SEMANTIC_SEARCH`
 `claimedBy` entries pointing at this file (lines 65 and 240); `flagInventory.test.ts` asserts that
 finding still fires, so deleting them turns that test red.
+
+## 2026-09-05 — PR #2525 attestation actions on narrow screens
+
+Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Attestation outside the viewport. Document scrollWidth did not detect it because the shell clips overflow. Stack the heading and action group below lg and allow the actions to wrap. The staging browser regression checks every action bounding box at 375px and 1280px; it failed before this fix. Preserve this geometry check alongside actual database loading/error/retry and tenant-isolation checks.
