@@ -570,6 +570,16 @@ ADOBE_SIGN_CLIENT_ID=               # Adobe Sign OAuth client id; GET /webhooks/
                                     # returns 2XX echoing this exact value in an X-AdobeSign-ClientId response header,
                                     # so without it no org_integrations.webhook_id can ever be minted. Never echoed
                                     # blindly — an unrecognized id is refused 403 per Adobe's own guidance.
+ADOBE_SIGN_OAUTH_BASE_URL=          # Adobe OAuth host for the connect flow; default https://secure.na1.adobesign.com.
+                                    # This is the APPLICATION's registered region, not the customer's shard — every
+                                    # post-token REST call uses the `api_access_point` the token response returns
+                                    # (persisted as org_integrations.base_uri), never this value.
+ENABLE_ADOBE_SIGN_OAUTH=false       # Adobe Sign connect flow on /api/v1/integrations/adobe-sign; default OFF.
+                                    # Keep it off until an Adobe Acrobat Sign application is registered AND its
+                                    # account tier is confirmed to grant webhook_read / webhook_write /
+                                    # webhook_retention. Without webhook_write the connect fails at registration
+                                    # (webhook_registration_failed) and nothing is saved; without
+                                    # webhook_retention, disconnect cannot remove the Adobe-side webhook.
 CHECKR_WEBHOOK_SECRET=              # Checkr Connect webhook HMAC; route 503s without it
 VEREMARK_WEBHOOK_SECRET=            # Veremark webhook HMAC; gated by ENABLE_VEREMARK_WEBHOOK
 ENABLE_VEREMARK_WEBHOOK=false       # default off; flip per-customer when wired
