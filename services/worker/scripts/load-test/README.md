@@ -11,12 +11,13 @@ behavior.
 
 ## Targets
 
-| Profile        | Description                                                  | rps  | duration |
-|----------------|--------------------------------------------------------------|------|----------|
-| baseline       | Current production traffic mix at \~5 rps sustained.         | 5    | 60s      |
-| 10k-dau        | 10K DAU-equivalent: 100 rps sustained, 500 rps burst.        | 100  | 5m       |
-| backpressure   | Sustained rule-event ingestion to verify 503 + Retry-After   | 200  | 90s      |
-| docusign-volume| DocuSign Connect volume profile (SCRUM-2094): signed intake. | 100  | 30m      |
+| Profile           | Description                                                        | rps  | duration |
+|-------------------|---------------------------------------------------------------------|------|----------|
+| baseline          | Current production traffic mix at \~5 rps sustained.                | 5    | 60s      |
+| 10k-dau           | 10K DAU-equivalent: 100 rps sustained, 500 rps burst.                | 100  | 5m       |
+| backpressure      | Sustained rule-event ingestion to verify 503 + Retry-After           | 200  | 90s      |
+| docusign-volume   | DocuSign Connect volume profile (SCRUM-2094): signed intake.         | 100  | 30m      |
+| docusign-bilateral-soak | Bilateral (outbound + inbound) DocuSign correctness/security mix (CTO Decision Record R9). Not a throughput profile — a T3 continuous-soak correctness/security profile. | 2 (configurable) | 30m (configurable; 48h for the real soak) |
 
 The 10K-DAU profile distributes traffic across the high-volume intake routes
 (DocuSign Connect, anchor verification, health/diagnostics) in the same ratio
@@ -43,6 +44,48 @@ Set these envs for signed DocuSign traffic (both `10k-dau` and `docusign-volume`
 | `DOCUSIGN_ACCOUNT_ID` | account_id of a seeded staging DocuSign integration (else the receiver takes the 200-orphan path: signature + parse exercised, no enqueue). |
 | `DOCUSIGN_NOTARY_RATE`| `docusign-volume` only: fraction `0..1` of envelopes carrying a notary recipient (exercises the SCRUM-1872 notary leg). Default `0`. |
 
+## DocuSign BILATERAL soak (CTO Decision Record R9, docusign-bilateral-2026-08)
+
+`docusign-bilateral-soak.js` drives a realistic + adversarial mix of DocuSign
+Connect deliveries that exercises every changed path in the 4-PR bilateral
+feature: PR #2472 (metadata write-authority guard), PR #2474 (outbound signer
+capture, R6/R7), PR #2476 (inbound Recipient-Connect classification, R3/R4/R5,
+plus the F1 security-review provenance-conflict detector), and migration 0424
+(tenant-scoped nonce). **All four are open/unmerged as of 2026-08-30** — this
+harness is tooling built ahead of that merge, ready for the isolated rig once
+it's provisioned. See `agents.md`'s "PR-state caveat" before the first real run.
+
+This is a **correctness/security mix, not a throughput profile** — it runs at
+a modest steady RPS for the full T3 soak window (48h+, CLAUDE.md §1.12), not a
+burst. Roughly a third of its 15 named families (`wrong_hmac`,
+`malformed_not_json`, `malformed_missing_envelope_id`,
+`malformed_oversized`, and half of `self_forgery`/`self_forgery_provenance_conflict`
+depending on race outcome) are EXPECTED to return non-2xx statuses — that is
+the point, not a failure. See `lib/docusign-synth.js`'s `BILATERAL_MIX` for
+the full family list + mix shares, and each family's own comment in
+`buildBilateralRequest` for exactly what it exercises and why.
+
+Requires a rig seeded with **TWO** DocuSign integrations (org A + org B), each
+with its own `hmac_keys` entry:
+
+| Env                          | Purpose                                                              |
+|-------------------------------|-----------------------------------------------------------------------|
+| `DOCUSIGN_ORG_A_ACCOUNT_ID`   | account_id of the first seeded staging DocuSign integration.          |
+| `DOCUSIGN_ORG_A_HMAC_KEY`     | That integration's own Connect HMAC key (its `hmac_keys` entry).      |
+| `DOCUSIGN_ORG_B_ACCOUNT_ID`   | account_id of the SECOND seeded staging DocuSign integration.         |
+| `DOCUSIGN_ORG_B_HMAC_KEY`     | That integration's own Connect HMAC key.                              |
+| `DOCUSIGN_HMAC_KEY`           | The shared/env-var-fallback key — used ONLY for `unknown_account_orphan`. Must NOT equal either org's real key. |
+| `DOCUSIGN_SOAK_RPS`           | Optional, default `2`.                                                |
+| `DOCUSIGN_SOAK_DURATION`      | Optional, default `30m` — set to `48h` for the real T3 soak.          |
+
+After a soak, run `docusign-bilateral-evidence.sql` against the SAME rig's
+database for the SOC2 evidence assertions (per-org isolation, signer-capture
+PII discipline, F1 provenance-conflict detection, guard-strip confirmation,
+nonce replay integrity — see that file's own header for the full list and
+`agents.md` for a summary). Run `docusign-guard-probe.js` separately (it is a
+direct DB probe, not part of the k6 HTTP traffic) to exercise the PR #2472
+metadata write-authority guard specifically.
+
 ## Running
 
 Install k6: `brew install k6` (macOS) or `apt-get install k6` (Debian).
@@ -64,6 +107,22 @@ k6 run services/worker/scripts/load-test/backpressure.js
 export DOCUSIGN_HMAC_KEY=…           # Connect HMAC key for the seeded integration
 export DOCUSIGN_ACCOUNT_ID=…         # account_id of that seeded integration
 k6 run services/worker/scripts/load-test/docusign-volume.js
+
+# DocuSign BILATERAL soak (CTO Decision Record R9) — ISOLATED STAGING ONLY,
+# requires TWO seeded integrations. Set DOCUSIGN_SOAK_DURATION=48h for the
+# real T3 soak; the default 30m is for a smoke run.
+export DOCUSIGN_ORG_A_ACCOUNT_ID=…
+export DOCUSIGN_ORG_A_HMAC_KEY=…
+export DOCUSIGN_ORG_B_ACCOUNT_ID=…
+export DOCUSIGN_ORG_B_HMAC_KEY=…
+export DOCUSIGN_HMAC_KEY=…           # shared fallback key, distinct from both orgs' real keys
+k6 run services/worker/scripts/load-test/docusign-bilateral-soak.js
+
+# Evidence + guard probe, after (or during) the soak
+psql "$DATABASE_URL" -v org_a_account_id="$DOCUSIGN_ORG_A_ACCOUNT_ID" \
+  -v org_b_account_id="$DOCUSIGN_ORG_B_ACCOUNT_ID" \
+  -f services/worker/scripts/load-test/docusign-bilateral-evidence.sql
+node services/worker/scripts/load-test/docusign-guard-probe.js
 ```
 
 ## Acceptance thresholds
@@ -97,3 +156,11 @@ The k6 scripts encode the SCRUM-1024 DoD thresholds:
   window. Use staging.
 - Chaos test (kill 50% of worker instances): paired Cloud Run command lives in
   the runbook at the Confluence "Worker Scaling & Backpressure" page. Human-only.
+- **docusign-bilateral-soak.js PR-state caveat (2026-08-30):** built while PRs
+  #2472, #2474, #2476 were ALL open/unmerged. It has not been run against any
+  live rig — there is no rig yet. Before the first real soak, confirm all
+  three merged (`gh pr view <n>`) and re-verify `lib/docusign-bilateral-synth.test.ts`'s
+  PINNED CONTRACT blocks against the real merged code (each block documents
+  exactly what to swap to a real import). This profile intentionally does NOT
+  threshold on zero errors — see its own header comment and `agents.md` for
+  why several families are supposed to return 401/413/200-duplicate.

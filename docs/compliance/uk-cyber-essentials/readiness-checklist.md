@@ -61,7 +61,7 @@ Arkova targets CE+ because UK universities, NHS trusts, and UK government procur
 | Requirement | Arkova status | Evidence |
 |------------|---------------|----------|
 | Unique user accounts | ✅ Met | SSO-backed accounts per person; no shared credentials |
-| MFA on internet-facing admin services | ✅ Met | Google Workspace SSO + mandatory FIDO2 security keys; Supabase admin requires SSO + hardware key |
+| MFA on internet-facing admin services | ✅ Met | Google Workspace SSO + mandatory FIDO2 security keys; Supabase project dashboard (staff cloud-console access) requires SSO + hardware key. Scope note: this is staff access to cloud provider consoles, distinct from the Arkova application's own admin/organization roles, where MFA is opt-in and enforcement is in progress under SCRUM-3167 |
 | Separate admin vs standard accounts | ✅ Met | Elevated roles granted per-action via Supabase RBAC + GCP IAM; no always-on admin |
 | User access reviewed on leaver | ✅ Met | Offboarding runbook revokes SSO, GitHub, Supabase, GCP, Cloudflare within 4 hours |
 

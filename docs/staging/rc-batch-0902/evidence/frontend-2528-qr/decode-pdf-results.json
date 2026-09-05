@@ -1,0 +1,289 @@
+{
+  "renderers": {
+    "pdfjs": "pdfjs-dist 6.2.108 + @napi-rs/canvas 1.0.8",
+    "quicklook": "/usr/bin/qlmanage -t (macOS CoreGraphics)"
+  },
+  "decoder": "jsqr 1.4.0",
+  "fullPageScales": [
+    2,
+    3,
+    4
+  ],
+  "cropScale": 4,
+  "quickLookPx": 2400,
+  "ids": {
+    "ARK-DOC-9G5HQZ": {
+      "expected": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+      "pdfBytes": 24752,
+      "pages": 2,
+      "pageSizePt": {
+        "width": 595.28,
+        "height": 841.89
+      },
+      "pageText": [
+        {
+          "page": 1,
+          "hasVerifyOnlineText": true,
+          "urlInTextLayer": true
+        },
+        {
+          "page": 2,
+          "hasVerifyOnlineText": false,
+          "urlInTextLayer": false
+        }
+      ],
+      "qrPage": 1,
+      "paintedGeometry": {
+        "rectOps": 290,
+        "moduleMm": 0.7879,
+        "sideMm": 26,
+        "leftMm": 27.152,
+        "topMm": 237.152,
+        "quietZoneMm": 3.152
+      },
+      "pdfjs": {
+        "fullPage": [
+          {
+            "scale": 2,
+            "page": 1,
+            "widthPx": 1191,
+            "heightPx": 1684,
+            "decoded": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+            "textEqual": true,
+            "bytesEqual": true,
+            "qrVersion": 4
+          },
+          {
+            "scale": 2,
+            "page": 2,
+            "widthPx": 1191,
+            "heightPx": 1684,
+            "decoded": null,
+            "textEqual": false,
+            "bytesEqual": false,
+            "qrVersion": null
+          },
+          {
+            "scale": 3,
+            "page": 1,
+            "widthPx": 1786,
+            "heightPx": 2526,
+            "decoded": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+            "textEqual": true,
+            "bytesEqual": true,
+            "qrVersion": 4
+          },
+          {
+            "scale": 3,
+            "page": 2,
+            "widthPx": 1786,
+            "heightPx": 2526,
+            "decoded": null,
+            "textEqual": false,
+            "bytesEqual": false,
+            "qrVersion": null
+          },
+          {
+            "scale": 4,
+            "page": 1,
+            "widthPx": 2382,
+            "heightPx": 3368,
+            "decoded": null,
+            "textEqual": false,
+            "bytesEqual": false,
+            "qrVersion": null
+          },
+          {
+            "scale": 4,
+            "page": 2,
+            "widthPx": 2382,
+            "heightPx": 3368,
+            "decoded": null,
+            "textEqual": false,
+            "bytesEqual": false,
+            "qrVersion": null
+          }
+        ],
+        "crop": {
+          "page": 1,
+          "cropPx": {
+            "sx": 272,
+            "sy": 2653,
+            "sw": 367,
+            "sh": 367
+          },
+          "png": "/private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/8fbf42c9-9710-4f41-a2f7-356a3b6a14d9/scratchpad/evidence-2528-qr/certificate-ARK-DOC-9G5HQZ-qr-crop.png",
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "qrVersion": 4
+        }
+      },
+      "quicklook": {
+        "png": "/private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/8fbf42c9-9710-4f41-a2f7-356a3b6a14d9/scratchpad/evidence-2528-qr/quicklook/certificate-ARK-DOC-9G5HQZ.pdf.png",
+        "widthPx": 1696,
+        "heightPx": 2400,
+        "pxPerPt": 2.8507,
+        "fullPage": {
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "qrVersion": 4
+        },
+        "crop": {
+          "cropPx": {
+            "sx": 193,
+            "sy": 1890,
+            "sw": 262,
+            "sh": 262
+          },
+          "png": "/private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/8fbf42c9-9710-4f41-a2f7-356a3b6a14d9/scratchpad/evidence-2528-qr/certificate-ARK-DOC-9G5HQZ-quicklook-crop.png",
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "qrVersion": 4
+        }
+      },
+      "pdfjsCropDecodeEqual": true,
+      "quicklookCropDecodeEqual": true,
+      "anyFullPageDecodeEqual": true
+    },
+    "ARK-DOC-ZZZZZZ": {
+      "expected": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+      "pdfBytes": 24607,
+      "pages": 2,
+      "pageSizePt": {
+        "width": 595.28,
+        "height": 841.89
+      },
+      "pageText": [
+        {
+          "page": 1,
+          "hasVerifyOnlineText": true,
+          "urlInTextLayer": true
+        },
+        {
+          "page": 2,
+          "hasVerifyOnlineText": false,
+          "urlInTextLayer": false
+        }
+      ],
+      "qrPage": 1,
+      "paintedGeometry": {
+        "rectOps": 287,
+        "moduleMm": 0.7879,
+        "sideMm": 26,
+        "leftMm": 27.152,
+        "topMm": 237.152,
+        "quietZoneMm": 3.152
+      },
+      "pdfjs": {
+        "fullPage": [
+          {
+            "scale": 2,
+            "page": 1,
+            "widthPx": 1191,
+            "heightPx": 1684,
+            "decoded": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+            "textEqual": true,
+            "bytesEqual": true,
+            "qrVersion": 4
+          },
+          {
+            "scale": 2,
+            "page": 2,
+            "widthPx": 1191,
+            "heightPx": 1684,
+            "decoded": null,
+            "textEqual": false,
+            "bytesEqual": false,
+            "qrVersion": null
+          },
+          {
+            "scale": 3,
+            "page": 1,
+            "widthPx": 1786,
+            "heightPx": 2526,
+            "decoded": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+            "textEqual": true,
+            "bytesEqual": true,
+            "qrVersion": 4
+          },
+          {
+            "scale": 3,
+            "page": 2,
+            "widthPx": 1786,
+            "heightPx": 2526,
+            "decoded": null,
+            "textEqual": false,
+            "bytesEqual": false,
+            "qrVersion": null
+          },
+          {
+            "scale": 4,
+            "page": 1,
+            "widthPx": 2382,
+            "heightPx": 3368,
+            "decoded": null,
+            "textEqual": false,
+            "bytesEqual": false,
+            "qrVersion": null
+          },
+          {
+            "scale": 4,
+            "page": 2,
+            "widthPx": 2382,
+            "heightPx": 3368,
+            "decoded": null,
+            "textEqual": false,
+            "bytesEqual": false,
+            "qrVersion": null
+          }
+        ],
+        "crop": {
+          "page": 1,
+          "cropPx": {
+            "sx": 272,
+            "sy": 2653,
+            "sw": 367,
+            "sh": 367
+          },
+          "png": "/private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/8fbf42c9-9710-4f41-a2f7-356a3b6a14d9/scratchpad/evidence-2528-qr/certificate-ARK-DOC-ZZZZZZ-qr-crop.png",
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "qrVersion": 4
+        }
+      },
+      "quicklook": {
+        "png": "/private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/8fbf42c9-9710-4f41-a2f7-356a3b6a14d9/scratchpad/evidence-2528-qr/quicklook/certificate-ARK-DOC-ZZZZZZ.pdf.png",
+        "widthPx": 1696,
+        "heightPx": 2400,
+        "pxPerPt": 2.8507,
+        "fullPage": {
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "qrVersion": 4
+        },
+        "crop": {
+          "cropPx": {
+            "sx": 193,
+            "sy": 1890,
+            "sw": 262,
+            "sh": 262
+          },
+          "png": "/private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/8fbf42c9-9710-4f41-a2f7-356a3b6a14d9/scratchpad/evidence-2528-qr/certificate-ARK-DOC-ZZZZZZ-quicklook-crop.png",
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "qrVersion": 4
+        }
+      },
+      "pdfjsCropDecodeEqual": true,
+      "quicklookCropDecodeEqual": true,
+      "anyFullPageDecodeEqual": true
+    }
+  },
+  "failures": 0
+}

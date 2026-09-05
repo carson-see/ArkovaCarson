@@ -76,7 +76,7 @@ Terms used but not otherwise defined in this Agreement have the same meaning as 
 **3.2** Without limiting the foregoing, Business Associate shall:
 - (a) Implement administrative, physical, and technical safeguards that reasonably and appropriately protect the confidentiality, integrity, and availability of ePHI;
 - (b) Use SHA-256 cryptographic fingerprinting for document integrity verification, with document processing performed client-side only (no PHI stored on servers);
-- (c) Enforce multi-factor authentication for access to healthcare credential types per Section 164.312(d);
+- (c) Make multi-factor authentication (TOTP authenticator app) available to every account as an opt-in setting per Section 164.312(d); enforcement for administrator roles accessing healthcare credential types is in progress under an active engineering program and is not yet in effect as of the Effective Date;
 - (d) Implement automatic session timeout after 15 minutes of inactivity per Section 164.312(a)(2)(iii);
 - (e) Maintain audit controls that record and examine activity in systems containing ePHI per Section 164.312(b);
 - (f) Encrypt ePHI in transit (TLS 1.2+) and at rest.

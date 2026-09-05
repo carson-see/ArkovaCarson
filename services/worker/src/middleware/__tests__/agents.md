@@ -9,6 +9,7 @@ Tests for middleware modules that use a shared test directory rather than co-loc
 - **x402PayerRateLimit.test.ts** — Tests for x402 payer rate limiting.
 - **x402PaymentLogger.test.ts** — Tests for x402 payment settlement logging.
 - **x402LaunchScope.test.ts** — Tests for x402 launch scope restrictions.
+- **phiScopeMount.test.ts** — Structural ratchet (SCRUM-1272 / SCRUM-3514) over `api/v1/router.ts`: every PHI / student-PII mount (`/ferpa`, `/directory-opt-out`, `/hipaa/audit`, `/emergency-access`) must carry `requireScopeAnyAuth('compliance:read')` AFTER `requireAuth`, and must NOT be "guarded" by the API-key-only `requireScope`, which no-ops for a JWT caller. Source-level on purpose — a refactor that drops the guard fails here rather than silently in prod.
 
 ## Rules
 
