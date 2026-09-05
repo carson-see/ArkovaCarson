@@ -40,6 +40,11 @@ import {
   ensureGoTrueToken,
   newMcpEvidence,
   GOTRUE_REGRANT_MARGIN_MS,
+  newCaptureBudget,
+  captureFor,
+  buildMcpEvidenceDocument,
+  MAX_CAPTURES_PER_LABEL,
+  CAPTURE_MAX_SNIPPET,
   type GoTrueTokenBox,
   HOSTED_REQUIRED_TOOLS,
   HOSTED_NOTE_TOOLS,
@@ -738,5 +743,115 @@ describe('mcp-sdk-surface-driver: ensureGoTrueToken', () => {
     await ensureGoTrueToken(h.deps);
     const evidence = summarizeEvidence(h.stats, { driver: 'mcp-sdk-surface', pr: '#2589', apiBase: 'https://rig.test' });
     expect(JSON.stringify(evidence)).not.toContain(FAKE_API_KEY);
+  });
+});
+
+
+describe('mcp-sdk-surface-driver: captured-body budget (§4b)', () => {
+  afterEach(() => clearRegisteredSecrets());
+
+  it('admits up to MAX_CAPTURES_PER_LABEL bodies for one label, then drops and counts', () => {
+    const budget = newCaptureBudget();
+    let admitted = 0;
+    for (let i = 0; i < MAX_CAPTURES_PER_LABEL + 7; i++) {
+      if (captureFor(budget, 'hosted:call:verify_anchor', { i }).capturedBody !== undefined) admitted++;
+    }
+    expect(admitted).toBe(MAX_CAPTURES_PER_LABEL);
+    expect(budget.dropped).toBe(7);
+  });
+
+  it('budgets PER LABEL — a noisy branch cannot starve a quiet one', () => {
+    const budget = newCaptureBudget(2);
+    captureFor(budget, 'noisy', { a: 1 });
+    captureFor(budget, 'noisy', { a: 2 });
+    expect(captureFor(budget, 'noisy', { a: 3 }).capturedBody).toBeUndefined();
+    expect(captureFor(budget, 'quiet', { a: 1 }).capturedBody).toEqual({ a: 1 });
+    expect(budget.dropped).toBe(1);
+  });
+
+  it('truncates an oversized captured body to CAPTURE_MAX_SNIPPET', () => {
+    const budget = newCaptureBudget();
+    const huge = 'x'.repeat(CAPTURE_MAX_SNIPPET * 4);
+    const captured = captureFor(budget, 'hosted:call:search', huge).capturedBody;
+    expect(typeof captured).toBe('string');
+    expect((captured as string).length).toBeLessThanOrEqual(CAPTURE_MAX_SNIPPET + 32);
+    expect(captured as string).toMatch(/truncated/);
+  });
+
+  it('truncates an oversized JSON body too, rather than retaining megabytes of it', () => {
+    const budget = newCaptureBudget();
+    const captured = captureFor(budget, 'hosted:tools/list', { blob: 'y'.repeat(CAPTURE_MAX_SNIPPET * 2) }).capturedBody;
+    expect(typeof captured).toBe('string');
+    expect((captured as string).length).toBeLessThanOrEqual(CAPTURE_MAX_SNIPPET + 32);
+  });
+
+  it('scrubs registered secrets on the way into the budgeted capture', () => {
+    registerSecret(FAKE_API_KEY);
+    const budget = newCaptureBudget();
+    const captured = captureFor(budget, 'sdk:py:verify', `child failed with ${FAKE_API_KEY}`).capturedBody;
+    expect(captured).toBe(`child failed with ${REDACTION_PLACEHOLDER}`);
+  });
+
+  it('a dropped capture still records the outcome — only the body is shed', () => {
+    const budget = newCaptureBudget(1);
+    const stats = newDriverStats();
+    for (let i = 0; i < 3; i++) {
+      recordOutcome(stats, {
+        label: 'stdio:hygiene',
+        endpoint: 'stdio:stdout',
+        method: 'STDIO',
+        status: 599,
+        latencyMs: 0,
+        expected: false,
+        ...captureFor(budget, 'stdio:hygiene', { nonJsonLines: ['banner'] }),
+      });
+    }
+    const evidence = summarizeEvidence(stats, { driver: 'mcp-sdk-surface', pr: '#2589', apiBase: 'https://rig.test' });
+    expect(evidence.byLabel['stdio:hygiene'].unexpected).toBe(3);
+    expect(evidence.capturedBodies).toHaveLength(1);
+    expect(budget.dropped).toBe(2);
+  });
+});
+
+describe('mcp-sdk-surface-driver: buildMcpEvidenceDocument (§4a checkpointing)', () => {
+  function doc(complete: boolean) {
+    const stats = newDriverStats();
+    recordOutcome(stats, {
+      label: 'hosted:initialize', endpoint: '/mcp', method: 'POST', status: 200, latencyMs: 5, expected: true,
+    });
+    return buildMcpEvidenceDocument({
+      stats,
+      apiBase: 'https://rig.test',
+      edgeMcpBase: 'https://edge-mcp.test',
+      mcp: { ...newMcpEvidence(), droppedCaptures: 4 },
+      cycles: 3,
+      complete,
+    });
+  }
+
+  it('a mid-run write is marked checkpoint:true / complete:false', () => {
+    const d = doc(false);
+    expect(d.checkpoint).toBe(true);
+    expect(d.complete).toBe(false);
+  });
+
+  it('the final write flips to checkpoint:false / complete:true', () => {
+    const d = doc(true);
+    expect(d.checkpoint).toBe(false);
+    expect(d.complete).toBe(true);
+  });
+
+  it('carries the driver summary, the MCP extension, the cycle count and the dropped-capture count', () => {
+    const d = doc(false);
+    expect(d.driver).toBe('mcp-sdk-surface');
+    expect(d.pr).toBe('#2589');
+    expect(d.edgeMcpBase).toBe('https://edge-mcp.test');
+    expect(d.cycles).toBe(3);
+    expect(d.totalRequests).toBe(1);
+    expect(d.mcp.droppedCaptures).toBe(4);
+  });
+
+  it('newMcpEvidence starts with a zero dropped-capture count', () => {
+    expect(newMcpEvidence().droppedCaptures).toBe(0);
   });
 });

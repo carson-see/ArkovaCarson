@@ -237,6 +237,62 @@ export function captureField(body: JsonBody, maxChars = CAPTURE_MAX_SNIPPET): Js
 }
 
 /**
+ * Per-label cap on retained captured bodies. A 48h T3 soak cycles every 30s;
+ * without a cap, one persistently-failing branch retains ~5,760 full response
+ * bodies in memory and in the evidence file. Fifty samples of any one branch
+ * prove it as well as five thousand do.
+ */
+export const MAX_CAPTURES_PER_LABEL = 50;
+
+export interface CaptureBudget {
+  limit: number;
+  /** Bodies retained so far, per label. */
+  used: Record<string, number>;
+  /** Bodies deliberately shed once a label hit its cap. Surfaced in evidence. */
+  dropped: number;
+}
+
+export function newCaptureBudget(limit = MAX_CAPTURES_PER_LABEL): CaptureBudget {
+  return { limit, used: {}, dropped: 0 };
+}
+
+/**
+ * Produce the `capturedBody` spread for one `recordOutcome`, honouring the
+ * per-label budget. Budgeted PER LABEL so a noisy branch cannot starve a quiet
+ * one of its evidence. When the cap is hit the OUTCOME is still recorded in
+ * full — only the body is shed — so counts, statuses and percentiles stay
+ * exact and `droppedCaptures` says how much body text was elided.
+ */
+export function captureFor(budget: CaptureBudget, label: string, body: JsonBody): { capturedBody?: JsonBody } {
+  const used = budget.used[label] ?? 0;
+  if (used >= budget.limit) {
+    budget.dropped++;
+    return {};
+  }
+  budget.used[label] = used + 1;
+  return { capturedBody: captureField(body) };
+}
+
+/** Driver-scope budget, shared by every capture site in this run. */
+const driverCaptureBudget: CaptureBudget = newCaptureBudget();
+
+/** Test seam — reset the driver-scope budget. */
+export function resetDriverCaptureBudget(limit = MAX_CAPTURES_PER_LABEL): void {
+  driverCaptureBudget.limit = limit;
+  driverCaptureBudget.used = {};
+  driverCaptureBudget.dropped = 0;
+}
+
+export function droppedCaptureCount(): number {
+  return driverCaptureBudget.dropped;
+}
+
+/** Budgeted, scrubbed, size-bounded `capturedBody` spread against the driver-scope budget. */
+export function budgetedCapture(label: string, body: JsonBody): { capturedBody?: JsonBody } {
+  return captureFor(driverCaptureBudget, label, body);
+}
+
+/**
  * Last line of defence: one pass over the SERIALIZED evidence document just
  * before it is written, so a secret that reached `capturedBody` by a path that
  * skipped `captureField` (an upstream error body echoing the key, say) still
@@ -820,7 +876,7 @@ export async function ensureGoTrueToken(deps: EnsureGoTrueTokenDeps): Promise<st
       status: 0,
       latencyMs: (deps.now ?? Date.now)() - startedAt,
       expected: false,
-      capturedBody: captureField({ error: detail }),
+      ...budgetedCapture('hosted:bearer:gotrue-grant', { error: detail }),
     });
     deps.log(`bearer-jwt: GoTrue password grant FAILED (recorded as an unexpected outcome): ${detail}`);
     return null;
@@ -944,6 +1000,8 @@ export interface McpEvidenceExtension {
   auditRowsAfter: number;
   stdioNonJsonLines: string[];
   stdioStderrTail: string;
+  /** Captured bodies deliberately shed once a label hit MAX_CAPTURES_PER_LABEL. */
+  droppedCaptures: number;
   /** JWT header `alg` of the GoTrue session token used for the Bearer-JWT
    * probe (expected `ES256` on the rig — the edge verifier was HS256-only
    * before this fix). Null when the section was skipped or auth failed. */
@@ -965,6 +1023,7 @@ export function newMcpEvidence(): McpEvidenceExtension {
     auditRowsAfter: -1,
     stdioNonJsonLines: [],
     stdioStderrTail: '',
+    droppedCaptures: 0,
     bearerAlg: null,
     bearerSkipped: null,
   };
@@ -1019,7 +1078,7 @@ async function callHosted(o: HostedCallOpts): Promise<HostedCallResult> {
     status,
     latencyMs: Date.now() - start,
     expected,
-    ...(expected ? {} : { capturedBody: parsed }),
+    ...(expected ? {} : budgetedCapture(o.label, parsed)),
   });
   return { status, body: parsed, headers, expected };
 }
@@ -1286,7 +1345,7 @@ async function runHostedCycle(ctx: {
     status: before >= 0 && after >= 0 ? 200 : 0,
     latencyMs: 0,
     expected: before >= 0 && after > before,
-    ...(before >= 0 && after > before ? {} : { capturedBody: { before, after } }),
+    ...(before >= 0 && after > before ? {} : budgetedCapture('hosted:audit-control', { before, after })),
   });
   ctx.log(`audit_events MCP_TOOL_CALL count: before=${before} after=${after}`);
 
@@ -1475,7 +1534,7 @@ async function runStdioCycle(ctx: {
       status: spawnErr ? 0 : initBody ? 200 : 0,
       latencyMs: 0,
       expected: !spawnErr && classifyMcpOutcome(initBody) === 'jsonrpc-result',
-      ...(initBody ? {} : { capturedBody: { spawnErr: String(spawnErr ?? 'no response') } }),
+      ...(initBody ? {} : budgetedCapture('stdio:initialize', { spawnErr: String(spawnErr ?? 'no response') })),
     });
 
     // notifications/initialized — a notification, no response expected
@@ -1499,7 +1558,7 @@ async function runStdioCycle(ctx: {
       status: listBody ? 200 : 0,
       latencyMs: 0,
       expected: listBody !== null && listAssertion.errors.length === 0,
-      ...(listAssertion.errors.length ? { capturedBody: { errors: listAssertion.errors } } : {}),
+      ...(listAssertion.errors.length ? budgetedCapture('stdio:tools/list', { errors: listAssertion.errors }) : {}),
     });
     ctx.evidence.stdioToolNames = listAssertion.tools.map((t) => t.name);
     ctx.evidence.credentialNamedTools = Math.max(ctx.evidence.credentialNamedTools, listAssertion.credentialNamedCount);
@@ -1516,7 +1575,7 @@ async function runStdioCycle(ctx: {
         status: body ? 200 : 0,
         latencyMs: 0,
         expected: semanticFailure === null,
-        ...(semanticFailure ? { capturedBody: { error: semanticFailure } } : {}),
+        ...(semanticFailure ? budgetedCapture(`stdio:call:${spec.label}`, { error: semanticFailure }) : {}),
       });
       ctx.log(`stdio:call:${spec.label} -> ${semanticFailure ?? 'ok'}`);
     }
@@ -1532,7 +1591,7 @@ async function runStdioCycle(ctx: {
       status: nonJsonLines.length === 0 ? 200 : 599,
       latencyMs: 0,
       expected: nonJsonLines.length === 0,
-      ...(nonJsonLines.length ? { capturedBody: { nonJsonLines: nonJsonLines.slice(0, 20) } } : {}),
+      ...(nonJsonLines.length ? budgetedCapture('stdio:hygiene', { nonJsonLines: nonJsonLines.slice(0, 20) }) : {}),
     });
     ctx.log(`stdio hygiene: ${nonJsonLines.length} non-JSON stdout line(s)`);
   } finally {
@@ -1625,7 +1684,7 @@ async function runTsSdkSmoke(ctx: {
           status: 0,
           latencyMs: Date.now() - start,
           expected: false,
-          capturedBody: captureField(String(err instanceof Error ? err.message : err)),
+          ...budgetedCapture(label, String(err instanceof Error ? err.message : err)),
         });
       }
       ctx.log(`${label} done`);
@@ -1676,7 +1735,7 @@ export async function runPySdkSmoke(ctx: {
       status: 0,
       latencyMs: Date.now() - start,
       expected: false,
-      capturedBody: captureField(String(err instanceof Error ? err.message : err)),
+      ...budgetedCapture('sdk:py:verify', String(err instanceof Error ? err.message : err)),
     });
   } finally {
     await proxy.close();
@@ -1705,6 +1764,43 @@ export function buildPySdist(pkgDir: string, venvDir: string, log: (m: string) =
   execFileSync(venvPython, ['-m', 'pip', 'install', '--quiet', sdist], { stdio: 'pipe' });
   log(`python SDK installed from ${sdist} into ${venvDir}`);
   return venvDir;
+}
+
+// ─── evidence document (pure) ────────────────────────────────────────────
+
+export interface McpEvidenceDocument extends DriverEvidence {
+  mcp: McpEvidenceExtension;
+  edgeMcpBase: string;
+  cycles: number;
+  /** True on a mid-run checkpoint write; false on the final one. */
+  checkpoint: boolean;
+  /** True ONLY on the final write, after the run finished its planned cycles. */
+  complete: boolean;
+}
+
+/**
+ * Assemble the evidence document written after every cycle and once more at
+ * the end. `checkpoint`/`complete` are the pair a reader needs to tell a
+ * partial artefact from a finished one: a file left at `checkpoint: true` means
+ * the driver died mid-soak, which is itself evidence, not a missing file.
+ */
+export function buildMcpEvidenceDocument(opts: {
+  stats: DriverStats;
+  apiBase: string;
+  edgeMcpBase: string;
+  mcp: McpEvidenceExtension;
+  cycles: number;
+  complete: boolean;
+}): McpEvidenceDocument {
+  const base = summarizeEvidence(opts.stats, { ...MCP_SDK_DRIVER, apiBase: opts.apiBase });
+  return {
+    ...base,
+    mcp: opts.mcp,
+    edgeMcpBase: opts.edgeMcpBase,
+    cycles: opts.cycles,
+    checkpoint: !opts.complete,
+    complete: opts.complete,
+  };
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────
@@ -1756,6 +1852,23 @@ async function main(): Promise<void> {
   const evidence = newMcpEvidence();
   let cycle = 0;
 
+  // Evidence durability: a 48h T3 soak that dies in hour 47 must not lose 47
+  // hours of evidence because the only write was after the loop. Checkpoint
+  // after every cycle and once more in `finally`, atomically (runtime.ts
+  // temp+rename), so the file on disk is always a complete JSON document.
+  const writeCheckpoint = (complete: boolean): void => {
+    if (!args.evidenceOut) return;
+    evidence.droppedCaptures = droppedCaptureCount();
+    const doc = buildMcpEvidenceDocument({ stats, apiBase, edgeMcpBase: edgeBase, mcp: evidence, cycles: cycle, complete });
+    try {
+      writeEvidenceFile(args.evidenceOut, redactEvidenceDocument(doc, currentSecrets()), { quiet: !complete });
+    } catch (err) {
+      // A failed checkpoint must never abort the soak — the run itself is the
+      // evidence, and the next cycle will try again.
+      log(scrubSecrets(`evidence checkpoint failed: ${err instanceof Error ? err.message : String(err)}`));
+    }
+  };
+
   try {
     log(`npm pack + install ${mcpPkgDir} (once)`);
     const mcpInstall = npmPackAndInstall(mcpPkgDir, join(tmpRoot, 'mcp-server'), log);
@@ -1793,6 +1906,8 @@ async function main(): Promise<void> {
         await runPySdkSmoke({ stats, pyPkgDir: 'packages/arkova-py', venvDir: pyVenv, apiKey, apiBase, fx, log });
       }
 
+      writeCheckpoint(false);
+
       if (shouldContinue()) {
         const remaining = endAt !== undefined ? endAt - Date.now() : undefined;
         const sleepMs = remaining !== undefined ? Math.max(0, Math.min(30_000, remaining)) : 30_000;
@@ -1801,14 +1916,21 @@ async function main(): Promise<void> {
     }
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
+    // Crash path: a throw, an unhandled rejection, or an operator SIGTERM
+    // unwinds through here, so whatever was gathered still reaches disk —
+    // still flagged `checkpoint: true`, because the run did not finish.
+    writeCheckpoint(false);
   }
 
-  const base: DriverEvidence = summarizeEvidence(stats, { ...MCP_SDK_DRIVER, apiBase });
-  const enriched = { ...base, mcp: evidence, edgeMcpBase: edgeBase, cycles: cycle };
-  writeEvidenceFile(args.evidenceOut, redactEvidenceDocument(enriched, currentSecrets()));
-  if (!base.allExpected) process.exitCode = 1;
-  log(`done: ${base.totalRequests} requests across ${cycle} cycle(s), allExpected=${base.allExpected}`);
-  for (const [label, s] of Object.entries(base.byLabel)) {
+  evidence.droppedCaptures = droppedCaptureCount();
+  const final = buildMcpEvidenceDocument({
+    stats, apiBase, edgeMcpBase: edgeBase, mcp: evidence, cycles: cycle, complete: true,
+  });
+  writeEvidenceFile(args.evidenceOut, redactEvidenceDocument(final, currentSecrets()));
+  if (!final.allExpected) process.exitCode = 1;
+  log(`done: ${final.totalRequests} requests across ${cycle} cycle(s), allExpected=${final.allExpected}`);
+  if (final.mcp.droppedCaptures > 0) log(`  captured bodies shed at the per-label cap: ${final.mcp.droppedCaptures}`);
+  for (const [label, s] of Object.entries(final.byLabel)) {
     log(`  ${label}: ok=${s.expected} bad=${s.unexpected} p95=${s.p95Ms}ms`);
   }
 }
