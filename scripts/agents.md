@@ -8,7 +8,7 @@ Operational, CI, deployment, and security scripts. Run manually or from CI workf
 - **`agent/`** — local agent bootstrap helpers, including the `CLAUDE.md` acknowledgement required before staging/prod-sensitive commands.
 - **`gcp-setup/`** — GCP infrastructure provisioning (service accounts, BigQuery, SLOs, Cloud Scheduler).
 - **`healthcheck/`** — credential + external-service smoke tests.
-- **`ops/`** — operational scripts (pg_cron management, pipeline dashboard cache).
+- **`ops/`** — operational scripts (pg_cron management, pipeline dashboard cache, MFA break-glass factor removal — see `scripts/ops/agents.md` and `docs/runbooks/mfa-break-glass.md`).
 - **`security/`** — license denylist scanner (blocks AGPL/GPL/SSPL).
 - **`staging/`** — staging environment tooling (deploy, migrations).
 - **`uat/`** — UAT screenshot capture scripts.
