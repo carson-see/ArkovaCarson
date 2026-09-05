@@ -538,9 +538,10 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## `fullsoak-daily-check.sh` — daily rig/prod parity for the 2026-08 7-day soak (2026-08-12)',
       '## `fullsoak-daily-probes.sh` — daily BEHAVIOURAL probes for the 2026-08 7-day soak (2026-08-12)',
       '## Orphan tag cleanup covers EVERY tag, not just `pr-<N>` (BUG-2026-08-22-001, 2026-08-22)',
+      '## `seed.ts` seeds `org_integrations.webhook_id` for adobe_sign rows (2026-08-30)',
       '## Provisioner repairs found by standing up a real rig (consolidated-mm-2026-08, 2026-08-30)',
     ]);
-    expect(new Set(headings).size).toBe(17);
+    expect(new Set(headings).size).toBe(18);
   });
 
   it('preserves each authoritative Team2 section body exactly once', () => {
