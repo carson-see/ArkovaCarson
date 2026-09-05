@@ -1,0 +1,61 @@
+### PR #2481 targeted check — Mergify Policy Lints gate + prose do-not-merge hold
+captured_at: 2026-08-30T22:09:23Z
+
+== (a) Policy Lints listed as a queue gate on the SOAK HEAD ==
+89:      - check-success = Policy Lints
+139:      - check-success = Policy Lints
+222:      - check-success = Policy Lints
+  -> occurrences on soak head: 3
+  -> occurrences on origin/main (dca9edb40): 0
+  (main = 0 means the job reported on every PR but blocked nothing — the defect)
+
+== (a2) pinning test (mergify-policy-lints-gate.test.ts) on the soak head ==
+      at _createServer (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vite/dist/node/chunks/node.js:26631:84) {
+    code: 'ERR_LOAD_URL',
+    runnerError: Error: RunnerError
+        at reviveInvokeError (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vite/dist/node/module-runner.js:557:64)
+        at Object.invoke (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vite/dist/node/module-runner.js:572:33)
+        at ServerModuleRunner.getModuleInformation (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vite/dist/node/module-runner.js:1213:7)
+        at ServerModuleRunner.import (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vite/dist/node/module-runner.js:1134:23)
+        at loadCustomReporterModule (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vitest/dist/chunks/cli-api.CnMVyzaz.js:11427:26)
+        at file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vitest/dist/chunks/cli-api.CnMVyzaz.js:11445:23
+        at async Promise.all (index 0)
+        at Vitest._setServer (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vitest/dist/chunks/cli-api.CnMVyzaz.js:13244:138)
+        at BasicMinimalPluginContext.handler (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vitest/dist/chunks/cli-api.CnMVyzaz.js:14258:5)
+        at _createServer (file:///private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/node_modules/vite/dist/node/chunks/node.js:26631:84)
+  }
+}
+
+
+
+
+== (b) prose hold on a REAL PR body (carson-see/ArkovaCarson#2461, body fetched live) ==
+-- body line carrying the hold --
+54:**Tier:** T2 — **soak IN PROGRESS, closes 2026-08-31T09:52:56Z. Do not merge before then.**
+
+-- b1: non-draft, NO do-not-merge label -> gate must FAIL --
+::error::Non-draft PR body declares a merge hold ("do not merge") but the 'do-not-merge' label is not applied. Prose holds are INERT to Mergify (the #2240 pattern) — only the label blocks the queue. Apply the 'do-not-merge' label (labels are read live, so a re-run of this job honors it), convert the PR to draft, or remove the phrase from the body.
+EXIT=1
+
+-- b2: same body, do-not-merge label applied -> gate must PASS --
+::notice::PR body declares a merge hold and the 'do-not-merge' label backs it — the hold is real.
+do-not-merge body/label parity OK.
+EXIT=0
+
+-- b3: same body, still DRAFT (its real state today) -> gate must PASS --
+do-not-merge body/label parity OK.
+EXIT=0
+
+== (a2) RE-RUN: pinning tests on the soak head (default reporter) ==
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:57:25). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft
+
+
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+   Start at  18:09:33
+   Duration  779ms (transform 53ms, setup 163ms, import 41ms, tests 6ms, environment 1.05s)
+

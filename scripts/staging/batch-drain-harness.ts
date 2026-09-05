@@ -73,6 +73,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { resolveStagingApiBase } from './load-harness-env';
+import { cleanupSyntheticOrg, type CleanupClient } from './batch-drain-cleanup';
 import { resolveRigTarget, runOrgId } from './batch-drain-harness-lib';
 
 const BASELINE_FIXTURE_PROFILE_ID = '5eed0000-0000-4000-8000-0000000000a1';
@@ -505,16 +506,19 @@ async function assertReconcileNoDoubleBroadcast(
 
 async function cleanup(client: SupabaseClient, orgId: string): Promise<number> {
   // Remove proofs first (FK-safe), then anchors, then the synthetic org.
+  // SCRUM-3531: EVERY delete is checked and fatal, and zero-residual is
+  // re-asserted afterwards — a silently failed delete leaves synthetic rows
+  // on the rig and contaminates every later soak's evidence (§1.11A).
   const ids = await anchorIdsForOrg(client, orgId);
-  const CHUNK = 50;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    await client.from('anchor_proofs').delete().in('anchor_id', ids.slice(i, i + CHUNK));
+  try {
+    // Structural adaptation: SupabaseClient's deep generics exceed TS's
+    // instantiation depth when checked against the narrow CleanupClient
+    // surface (TS2589); the runtime shapes are identical.
+    const result = await cleanupSyntheticOrg(client as unknown as CleanupClient, orgId, ids);
+    return result.removedAnchors;
+  } catch (err) {
+    die(err instanceof Error ? err.message : String(err));
   }
-  const { error } = await client.from('anchors').delete().eq('org_id', orgId);
-  if (error) die(`cleanup anchors delete failed: ${error.message}`);
-  await client.from('org_credits').delete().eq('org_id', orgId);
-  await client.from('organizations').delete().eq('id', orgId);
-  return ids.length;
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -582,8 +586,8 @@ async function main(): Promise<void> {
   if (runCleanup) {
     console.log('── CLEANUP ──');
     const removed = await cleanup(client, orgId);
-    evidence.phases.cleanup = { removedAnchors: removed };
-    console.log(`  removed ${removed} anchors + proofs + org`);
+    evidence.phases.cleanup = { removedAnchors: removed, residualVerified: true };
+    console.log(`  removed ${removed} anchors + proofs + org (zero residual verified)`);
   }
 
   evidence.endedAt = new Date().toISOString();

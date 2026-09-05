@@ -1,0 +1,19 @@
+### PR #2484 targeted check — typecheck-parity `if:` scan must cover the whole step block
+captured_at: 2026-08-30T22:08:34Z
+
+--- adversarial edit applied to .github/workflows/ci.yml (real workflow file) ---
+      - name: Typecheck worker (deploy-gate parity)
+        working-directory: services/worker
+        run: node_modules/.bin/tsc --noEmit
+        if: ${{ github.event_name == 'push' }}
+
+
+--- OLD scanner (origin/main @ dca9edb40) against the edited workflow ---
+OLD_SCANNER_EXIT=0
+
+--- NEW scanner (soak head, PR #2484) against the same edited workflow ---
+::error::Worker TYPECHECK-command parity drift (deploy gate ≢ PR-time gate):
+  - ci.yml - name: Typecheck worker (deploy-gate parity) carries an `if:` guard — the worker typecheck must run unconditionally, or a test-only edit slips past the path filter and reaches main uncompiled.
+Fix: keep a services/worker step named "*Typecheck*" running `node_modules/.bin/tsc --noEmit` in BOTH deploy-worker.yml and the ci.yml `typecheck-lint` job, unconditionally.
+If intentional, label the PR `ci-config-change` and update this check.
+NEW_SCANNER_EXIT=1

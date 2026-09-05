@@ -30,6 +30,13 @@
  *
  * NOTE this fix LOOSENS enforcement (30/min -> the intended 60/min). It is a
  * change in enforcement numbers, not a pure cleanup.
+ *
+ * SCRUM-3418 (later, separate): bucket KEYS are now always
+ * `${bucketScope}:${keyGenerator(req)}`, and an unscoped limiter gets a private
+ * per-instance namespace instead of the bare keyGenerator output. That is a
+ * different axis from this file's subject — scoping separates DISTINCT
+ * limiters, COUNTED_LIMITERS de-duplicates ONE limiter's mounts — and both are
+ * pinned below.
  */
 
 import { describe, it, expect, vi, afterAll } from 'vitest';
@@ -164,13 +171,47 @@ describe('apiIpShadowGuard double-mount', () => {
     expect(seen).toEqual([9, 8, 7, 6]);
   });
 
-  it('does not suppress counting by a DIFFERENT limiter instance sharing the key', async () => {
-    // index.ts deliberately shares one per-IP bucket across limiter instances
-    // (the F5 fix keys purely on scope + keyGenerator). De-duping must be
-    // per-instance, or a second limiter silently stops enforcing.
+  it('does not suppress counting by a DIFFERENT limiter instance sharing the bucket', async () => {
+    // De-duping must be per-INSTANCE, not global: two limiters that genuinely
+    // share a bucket must each still charge it, or the second one silently
+    // stops enforcing.
+    //
+    // SCRUM-3418 changed how two limiters come to share a bucket. Keys are now
+    // always `${bucketScope}:${keyGenerator(req)}` and an unscoped limiter gets
+    // a PRIVATE per-instance namespace, so a matching keyGenerator alone no
+    // longer collides (see the companion test below). The only way to share a
+    // bucket now is a matching explicit `scope` — which is exactly the
+    // deliberate arrangement between api/v1/router.ts's `batchRateLimiter` and
+    // attestations.ts's `attestationBatchRateLimiter`, both `scope: 'batch'`.
     const app = express();
     app.set('trust proxy', true);
     const key = () => 'shared:two-instances';
+    const sharedScope = 'double-mount-shared-bucket';
+
+    const first = rateLimit({ windowMs: 60_000, maxRequests: 10, scope: sharedScope, keyGenerator: key });
+    const second = rateLimit({ windowMs: 60_000, maxRequests: 10, scope: sharedScope, keyGenerator: key });
+    app.use(first);
+    app.use(second);
+    app.get('/probe', (_req, res) => {
+      res.status(200).json({ ok: true });
+    });
+
+    const res = await supertest(app).get('/probe').expect(200);
+
+    // Two distinct limiters, one shared bucket: 2 counts, so remaining is 8.
+    expect(remaining(res)).toBe(8);
+  });
+
+  it('gives two UNSCOPED limiters separate buckets even on a matching key (SCRUM-3418)', async () => {
+    // The counterpart to the test above, and the reason it had to be rewritten:
+    // before SCRUM-3418 an unscoped limiter keyed on the bare keyGenerator
+    // output, so every unscoped limiter that defaulted to `req.ip` shared ONE
+    // per-IP entry — the 60/min IP guard, the 10/min checkout limiter and the
+    // 100/min v1 anon limiter were one counter with three different opinions
+    // about its ceiling. Each limiter now owns its own namespace.
+    const app = express();
+    app.set('trust proxy', true);
+    const key = () => 'unscoped:two-instances';
 
     const first = rateLimit({ windowMs: 60_000, maxRequests: 10, keyGenerator: key });
     const second = rateLimit({ windowMs: 60_000, maxRequests: 10, keyGenerator: key });
@@ -182,7 +223,7 @@ describe('apiIpShadowGuard double-mount', () => {
 
     const res = await supertest(app).get('/probe').expect(200);
 
-    // Two distinct limiters, one shared bucket: 2 counts, so remaining is 8.
-    expect(remaining(res)).toBe(8);
+    // Separate buckets: each charged once, so the last writer reports 9, not 8.
+    expect(remaining(res)).toBe(9);
   });
 });

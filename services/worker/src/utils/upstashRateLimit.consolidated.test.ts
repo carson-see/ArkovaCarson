@@ -204,11 +204,15 @@ describe('consolidated rate-limit cluster (#2223 + #2224 + #2231 + #2238 merged 
     const store = instanceOf(STAGING_NS);
     setRateLimitStore(store);
 
-    const guardKey = 'guard:consolidated-fallthrough';
+    // SCRUM-3418: bucket keys are `${scope}:${keyGenerator(req)}`, so the
+    // Redis counter this test peeks at is the scoped key, not the bare one.
+    const guardScope = 'consolidated-guard';
+    const guardKey = `${guardScope}:guard:consolidated-fallthrough`;
     const guard = rateLimit({
       windowMs: 60_000,
       maxRequests: 10,
-      keyGenerator: () => guardKey,
+      scope: guardScope,
+      keyGenerator: () => 'guard:consolidated-fallthrough',
     });
 
     // index.ts's exact mount shape: prefixed mount whose router falls through,
@@ -252,9 +256,16 @@ describe('consolidated rate-limit cluster (#2223 + #2224 + #2231 + #2238 merged 
     const store = instanceOf(STAGING_NS);
     setRateLimitStore(store);
 
-    const sharedKey = 'guard:consolidated-shared-bucket';
-    const first = rateLimit({ windowMs: 60_000, maxRequests: 10, keyGenerator: () => sharedKey });
-    const second = rateLimit({ windowMs: 60_000, maxRequests: 10, keyGenerator: () => sharedKey });
+    // SCRUM-3418: an UNSCOPED limiter now gets a private per-instance
+    // namespace, so a matching keyGenerator alone no longer shares a bucket.
+    // A matching explicit `scope` is what makes two limiters share one — the
+    // deliberate arrangement between api/v1/router.ts's `batchRateLimiter` and
+    // attestations.ts's `attestationBatchRateLimiter` (both `scope: 'batch'`).
+    const sharedScope = 'consolidated-shared';
+    const sharedKey = `${sharedScope}:guard:consolidated-shared-bucket`;
+    const keyGenerator = () => 'guard:consolidated-shared-bucket';
+    const first = rateLimit({ windowMs: 60_000, maxRequests: 10, scope: sharedScope, keyGenerator });
+    const second = rateLimit({ windowMs: 60_000, maxRequests: 10, scope: sharedScope, keyGenerator });
 
     const app = express();
     app.use(first);
