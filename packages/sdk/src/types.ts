@@ -88,7 +88,15 @@ export interface ArkovaConfig {
   apiKey?: string;
   /** Base URL for the Arkova API (default: https://arkova-worker-270018525501.us-central1.run.app) */
   baseUrl?: string;
-  /** Built-in retry handling for 429/5xx responses. Set retries=0 to disable. */
+  /**
+   * Built-in retry handling for 429/5xx responses and network errors.
+   *
+   * A request is retried only when its HTTP method is safe (GET/HEAD/OPTIONS)
+   * OR the call is idempotent: `verifyBatch` (a read expressed as POST),
+   * `anchor`, and `anchorBulk` (idempotent on the fingerprint server-side).
+   * Non-idempotent writes — `webhooks.create`/`update`/`delete`/`test` — never
+   * retry. Set retries=0 to disable retrying entirely.
+   */
   retry?: RetryConfig;
   /** Enable x402 auto-payment (requires a USDC-capable on-chain signer) */
   x402?: {

@@ -842,6 +842,181 @@ describe('retry safety (non-idempotent methods must not be retried on 5xx/429)',
   });
 });
 
+describe('idempotent-call retry opt-in (safe method OR idempotent call)', () => {
+  it('retries verifyBatch (POST) on 429 and honours Retry-After', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 2, sleep } });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: new Headers({ 'Retry-After': '3' }),
+        json: async () => ({ error: 'rate_limited' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({
+          results: [{ public_id: 'ARK-1', found: true, status: 'SECURED' }],
+        }),
+      });
+
+    const results = await client.verifyBatch(['ARK-1']);
+
+    expect(results).toHaveLength(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(3000);
+  });
+
+  it('retries anchor (POST) on 503 before succeeding', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 2, sleep } });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        json: async () => ({ error: 'internal_error' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({
+          public_id: 'ARK-2026-002',
+          fingerprint: 'abc123',
+          status: 'PENDING',
+          created_at: '2026-01-01T00:00:00Z',
+        }),
+      });
+
+    const receipt = await client.anchor('retry me');
+
+    expect(receipt.publicId).toBe('ARK-2026-002');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries anchorBulk (POST) on 503 before succeeding', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 2, sleep } });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        json: async () => ({ error: 'internal_error' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({
+          batch_id: null,
+          validated: 1,
+          queued: 1,
+          duplicates: [],
+          errors: [],
+          dry_run: false,
+          anchors: [],
+        }),
+      });
+
+    const result = await client.anchorBulk([{ fingerprint: 'f'.repeat(64) }]);
+
+    expect(result.validated).toBe(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry webhooks.create (POST) on 503', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 2, sleep } });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      headers: new Headers(),
+      json: async () => ({ error: 'internal_error' }),
+    });
+
+    await expect(
+      client.webhooks.create({ url: 'https://example.com/hooks' }),
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+});
+
+describe('discarded retry responses release their body', () => {
+  it('cancels the body of each retried response and never the returned one', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const cancelA = vi.fn().mockResolvedValue(undefined);
+    const cancelB = vi.fn().mockResolvedValue(undefined);
+    const cancelFinal = vi.fn().mockResolvedValue(undefined);
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 2, sleep } });
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        body: { cancel: cancelA },
+        json: async () => ({ error: 'internal_error' }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        body: { cancel: cancelB },
+        json: async () => ({ error: 'internal_error' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        body: { cancel: cancelFinal },
+        json: async () => ({ results: [], next_cursor: null }),
+      });
+
+    await client.search('acme');
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(cancelA).toHaveBeenCalledTimes(1);
+    expect(cancelB).toHaveBeenCalledTimes(1);
+    expect(cancelFinal).not.toHaveBeenCalled();
+  });
+
+  it('swallows a rejected body.cancel() and still retries', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const cancel = vi.fn().mockRejectedValue(new Error('already locked'));
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 1, sleep } });
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        body: { cancel },
+        json: async () => ({ error: 'internal_error' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({ results: [], next_cursor: null }),
+      });
+
+    const result = await client.search('acme');
+
+    expect(result.results).toEqual([]);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('getAttestation', () => {
   it('preserves the default v1 path without credential include or null jurisdiction materialization', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });

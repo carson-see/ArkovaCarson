@@ -96,3 +96,41 @@ the no-inline-comments-in-bash-fences convention for this pass.
   longer advertise a capability we do not serve. Do not remove the methods or types: existing installs
   need to recognise and handle the disabled response. **Republishing to npm is founder-reserved** — this
   edit updates the in-repo docs only.
+
+## 2026-09-05 — retry rule: safe method OR idempotent call (PR #2589 review)
+
+The 3.0.0 "retry-safety fix" above was correct about non-idempotent writes and **over-corrected**
+everything else. Gating the HTTP-status branch on `isSafeRetryMethod(method)` alone silently
+dropped 429/5xx retry for *every* `POST` — including three calls that are idempotent server-side
+and were retrying before the fix. Against `origin/main` that is a behaviour regression on the
+rate-limited paths, not a hardening.
+
+**The rule, in both branches (status and network-error):** retry when the method is safe
+(`GET`/`HEAD`/`OPTIONS`) **OR** the call site opts in with `{ idempotent: true }`, the private
+`fetch()` wrapper's new third argument. `private fetch(path, init?, options?)`; `options.idempotent`
+never reaches `globalThis.fetch`.
+
+Opted in:
+- **`verifyBatch`** — a read expressed as `POST` (the body carries the ID list) served on the
+  10 req/min batch tier, i.e. the call most likely to see a `429`. Retrying creates nothing.
+- **`anchor`** / **`anchorBulk`** — idempotent on the fingerprint server-side (`README.md`
+  "Idempotency: the same fingerprint returns the same `publicId`"). A retried anchor cannot
+  double-create.
+
+Left non-retrying (unchanged, and the whole point of the 3.0.0 fix): `webhooks.create`,
+`webhooks.update`, `webhooks.delete`, `webhooks.test`.
+
+Stated in three places so the contract cannot drift: `README.md` config comment + the "Retries are
+built in" paragraph, and the `RetryConfig` JSDoc in `src/types.ts`. Tests:
+`client.test.ts` `describe('idempotent-call retry opt-in ...')` — verifyBatch retries a 429 and
+honours `Retry-After` (asserts `sleep(3000)`), anchor and anchorBulk retry a 503, `webhooks.create`
+does not. The pre-existing `describe('retry safety ...')` block still passes untouched.
+
+**Discarded retry bodies are released.** The status branch now does
+`await response.body?.cancel().catch(() => {})` before sleeping. A retried response was previously
+dropped on the floor with its body unread, holding the connection until GC — in Node's undici that
+is a real socket leak under repeated 429s, which is exactly the regime retries put you in. The
+`catch` swallows an already-locked/errored stream; optional chaining keeps mocked responses (no
+`body`) working. Tests: `describe('discarded retry responses release their body')` — cancel fires
+once per retried attempt and never on the returned response, and a rejected `cancel()` still
+retries.

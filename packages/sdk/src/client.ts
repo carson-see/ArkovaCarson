@@ -118,10 +118,12 @@ export class Arkova {
   async anchor(data: string | ArrayBuffer): Promise<AnchorReceipt> {
     const fp = await this.fingerprint(data);
 
+    // Idempotent server-side: the same fingerprint returns the same publicId
+    // (README "Idempotency"), so a transient 429/5xx is safe to retry.
     const response = await this.fetch('/api/v1/anchor', {
       method: 'POST',
       body: JSON.stringify({ fingerprint: fp }),
-    });
+    }, { idempotent: true });
 
     const result = await jsonOrThrow<{
       public_id: string;
@@ -203,6 +205,8 @@ export class Arkova {
 
     const rows = await Promise.all(inputs.map((input, i) => this.buildBulkAnchorRow(input, i)));
 
+    // Idempotent server-side on fingerprint (same rule as `anchor`), so a
+    // transient 429/5xx is safe to retry.
     const response = await this.fetch('/api/v1/anchor/bulk', {
       method: 'POST',
       body: JSON.stringify({
@@ -211,7 +215,7 @@ export class Arkova {
         duplicate_strategy: options.duplicateStrategy,
         batch_id: options.batchId,
       }),
-    });
+    }, { idempotent: true });
 
     const result = await jsonOrThrow<{
       batch_id: string | null;
@@ -311,10 +315,12 @@ export class Arkova {
       );
     }
 
+    // A read expressed as POST (the body carries the ID list) and served on
+    // the 10 req/min batch tier — retrying a 429/5xx creates nothing.
     const response = await this.fetch('/api/v1/verify/batch', {
       method: 'POST',
       body: JSON.stringify({ public_ids: publicIds }),
-    });
+    }, { idempotent: true });
 
     // Server returns 202 with { job_id, total, expires_at } for async jobs.
     // This should not happen given the client-side cap above, but guard
@@ -687,7 +693,21 @@ export class Arkova {
 
   // ── Internal fetch wrapper ──────────────────────────────────────────
 
-  private async fetch(path: string, init?: RequestInit): Promise<Response> {
+  /**
+   * Internal fetch wrapper with retry handling.
+   *
+   * Retry rule: a request is retried on a transient response (429/500/502/
+   * 503/504) or a network error when its method is safe (GET/HEAD/OPTIONS)
+   * **or** the call site opts in with `{ idempotent: true }`. The opt-in
+   * exists for reads and writes that are expressed as POST but are
+   * idempotent server-side (`verifyBatch`, `anchor`, `anchorBulk`).
+   * Non-idempotent writes (webhook create/update/delete/test) never retry.
+   */
+  private async fetch(
+    path: string,
+    init?: RequestInit,
+    options?: { idempotent?: boolean },
+  ): Promise<Response> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -700,18 +720,22 @@ export class Arkova {
 
     const requestInit = { ...init, headers };
     const method = (requestInit.method ?? 'GET').toUpperCase();
+    const retryable = isSafeRetryMethod(method) || options?.idempotent === true;
     let attempt = 0;
 
     while (true) {
       try {
         const response = await globalThis.fetch(url, requestInit);
-        if (!isSafeRetryMethod(method) || !shouldRetryResponse(response) || attempt >= this.retry.retries) {
+        if (!retryable || !shouldRetryResponse(response) || attempt >= this.retry.retries) {
           return response;
         }
+        // The retried response is discarded — release its body so the
+        // connection is not held open until GC.
+        await response.body?.cancel().catch(() => {});
         await this.sleep(retryDelayMs(response, attempt, this.retry));
         attempt += 1;
       } catch (err) {
-        if (!isSafeRetryMethod(method) || attempt >= this.retry.retries) {
+        if (!retryable || attempt >= this.retry.retries) {
           throw err;
         }
         await this.sleep(backoffDelayMs(attempt, this.retry));
