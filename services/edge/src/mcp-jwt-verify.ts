@@ -75,18 +75,34 @@ async function getHmacKey(secret: string): Promise<CryptoKey> {
   return key;
 }
 
-function base64UrlDecode(input: string): Uint8Array {
+/**
+ * Decode one base64url JWT segment, or return null when it is not base64url.
+ *
+ * Returns null rather than throwing: every byte of a bearer token is
+ * attacker-controlled, `atob` throws a DOMException on a non-base64 segment,
+ * and there is no try/catch between the HS256 branch below and the Worker's
+ * fetch handler. A thrown DOMException there became a generic runtime error
+ * instead of the 401 the auth contract promises. Callers MUST treat null as a
+ * verification failure.
+ */
+function base64UrlDecode(input: string): Uint8Array | null {
   const pad = input.length % 4 === 0 ? '' : '='.repeat(4 - (input.length % 4));
   const b64 = (input + pad).replace(/-/g, '+').replace(/_/g, '/');
-  const bin = atob(b64);
+  let bin: string;
+  try {
+    bin = atob(b64);
+  } catch {
+    return null;
+  }
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
 }
 
 function decodeJsonSegment<T>(segment: string): T | null {
+  const bytes = base64UrlDecode(segment);
+  if (!bytes) return null;
   try {
-    const bytes = base64UrlDecode(segment);
     return JSON.parse(DECODER.decode(bytes)) as T;
   } catch {
     return null;
@@ -98,8 +114,10 @@ async function hmacSignatureMatches(
   signatureSegment: string,
   secret: string,
 ): Promise<boolean> {
-  const key = await getHmacKey(secret);
   const sig = base64UrlDecode(signatureSegment);
+  // A non-base64url signature segment is a bad signature, not a server fault.
+  if (!sig) return false;
+  const key = await getHmacKey(secret);
   // Cast to BufferSource — TS 5.7+ types Uint8Array as Uint8Array<ArrayBufferLike>
   // which doesn't satisfy crypto.subtle.verify's BufferSource arg even though
   // Uint8Array is a valid BufferSource at runtime.
@@ -209,6 +227,11 @@ async function es256SignatureMatches(
   fetchJwks: JwksFetcher,
 ): Promise<boolean | 'unknown_kid'> {
   if (!kid) return 'unknown_kid';
+  // Decode BEFORE any JWKS work: an undecodable signature is a bad signature,
+  // and refusing it here also denies an unauthenticated caller a free network
+  // request to the authentication service.
+  const sig = base64UrlDecode(signatureSegment);
+  if (!sig) return false;
   const url = jwksUrlFor(supabaseUrl);
   let byKid = await loadJwks(url, fetchJwks, false);
   let key = byKid.get(kid);
@@ -218,7 +241,6 @@ async function es256SignatureMatches(
     key = byKid.get(kid);
     if (!key) return 'unknown_kid';
   }
-  const sig = base64UrlDecode(signatureSegment);
   // JWS ES256 signatures are raw r||s (64 bytes) — exactly what WebCrypto ECDSA expects.
   if (sig.length !== 64) return false;
   return crypto.subtle.verify(
