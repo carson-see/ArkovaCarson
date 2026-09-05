@@ -2190,4 +2190,4 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
-_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against the Supabase Management API project list/config, `scripts/ci/staging-honesty-preflight.ts` artifacts, psql ledger queries, and the harness logs under `~/arkova-soak/mfa-3167/`._
+_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against gcloud/MCP/CI output: the Supabase Management API project list/config, `scripts/ci/staging-honesty-preflight.ts` artifacts, psql ledger queries, and the harness logs under `~/arkova-soak/mfa-3167/`._
