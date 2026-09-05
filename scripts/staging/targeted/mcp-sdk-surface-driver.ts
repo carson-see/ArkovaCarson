@@ -1438,8 +1438,17 @@ export function resolveInstalledTool(configured: string | undefined, candidates:
 }
 
 function resolveNpmCli(): string {
+  // `npm_execpath` is set by npm itself when this driver is launched through an
+  // npm script; it is the one path guaranteed to be THIS machine's npm. The
+  // execPath sibling covers actions/setup-node and nvm layouts; the Homebrew
+  // literal covers macOS where `process.execPath` resolves into the Cellar
+  // (which carries no npm) while npm lives under the prefix's lib/.
+  const fromNpm = process.env.npm_execpath;
   return resolveInstalledTool(process.env.STAGING_NPM_CLI, [
+    ...(fromNpm && fromNpm.endsWith('npm-cli.js') ? [fromNpm] : []),
     resolve(dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js'),
+    '/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
+    '/usr/local/lib/node_modules/npm/bin/npm-cli.js',
     '/usr/share/nodejs/npm/bin/npm-cli.js',
   ], 'STAGING_NPM_CLI');
 }
