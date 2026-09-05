@@ -1,5 +1,12 @@
 # services/worker/src/jobs/agents.md
 
+
+## 2026-09-05 — PR #2566 concurrent provenance-heal CAS repair
+
+The F1 heal must revalidate its declared-row authorization in the UPDATE, not only in the prior read. Two outbound jobs can read the same inbound row; after the first commits measured provenance, the second must not overwrite it as another "declared" heal. The write now filters id, org_id, the captured fingerprint, full captured metadata and anchor_id IS NULL. PostgREST `.eq()` interpolates its value, so JSONB equality must pass `JSON.stringify(metadata)`; a JavaScript object would become `eq.[object Object]`.
+
+Validation: two RED/GREEN interleavings cover different-fingerprint and equal-fingerprint metadata reclassification; the real Supabase client test captures the serialized PATCH filters and verifies the first winner survives. Local PostgreSQL sessions additionally observed the second writer waiting on the first row lock then affecting zero rows. The residual anchor-publication race remains owned by PR #2570 / migration 0437; this repair does not make PR #2566 independently release-ready or claim new staging evidence.
+
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
 ## 2026-09-01 — CRITICAL: `connector-artifact-drain.ts` materialized anchors from a STALE batch-read snapshot, bypassing the F1-heal (code review)

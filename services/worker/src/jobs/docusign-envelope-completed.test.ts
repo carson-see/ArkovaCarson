@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const processNextJobMock = vi.hoisted(() => vi.fn());
@@ -156,6 +157,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     };
 
     interface MakeDbOpts {
+      supersedeCurrent?: Record<string, unknown>;
       artifactResult?: { data: string | null; error: unknown };
       auditResult?: { data: { id: string } | null; error: unknown };
       // F1 (security review, docusign-bilateral-2026-08): override the
@@ -189,6 +191,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         insertedRow?: Record<string, unknown>;
         insertCalled: boolean;
         supersedeCalled: boolean;
+        supersedeApplied: boolean;
         supersedePayload?: Record<string, unknown>;
         provenanceAuditInsertCalled: boolean;
         provenanceAuditInsertedRow?: Record<string, unknown>;
@@ -196,6 +199,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       } = {
         insertCalled: false,
         supersedeCalled: false,
+        supersedeApplied: false,
         provenanceAuditInsertCalled: false,
         connectorArtifactFromCallCount: 0,
       };
@@ -231,16 +235,25 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
             // SECOND+ call: the F1-heal atomic conditional UPDATE, only ever
             // reached when a conflict was detected on the first call.
             const supersedeResult = opts.supersedeResult ?? { data: { id: 'artifact-1' }, error: null };
+            const filters: Array<[string, unknown]> = [];
             const supersedeQuery = {
               update: vi.fn((value: Record<string, unknown>) => {
                 state.supersedeCalled = true;
                 state.supersedePayload = value;
                 return supersedeQuery;
               }),
-              eq: vi.fn(() => supersedeQuery),
-              is: vi.fn(() => supersedeQuery),
+              eq: vi.fn((key: string, value: unknown) => { filters.push([key, value]); return supersedeQuery; }),
+              is: vi.fn((key: string, value: unknown) => { filters.push([key, value]); return supersedeQuery; }),
               select: vi.fn(() => supersedeQuery),
-              maybeSingle: vi.fn().mockResolvedValue(supersedeResult),
+              maybeSingle: vi.fn(async () => {
+                if (!opts.supersedeCurrent) return supersedeResult;
+                const matches = filters.every(([key, value]) =>
+                  JSON.stringify(opts.supersedeCurrent![key]) === JSON.stringify(key === 'metadata' && typeof value === 'string' ? JSON.parse(value) : value));
+                if (!matches) return { data: null, error: null };
+                Object.assign(opts.supersedeCurrent, state.supersedePayload);
+                state.supersedeApplied = true;
+                return supersedeResult;
+              }),
               insert: vi.fn(),
             };
             return supersedeQuery;
@@ -616,6 +629,65 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
 
         // Refused before the normal success breadcrumb — no partial state.
         expect(state.insertCalled).toBe(false);
+      });
+
+      it.each([false, true])('a second heal cannot overwrite a first measured winner (equal hash=%s)', async (equalHash) => {
+        const declaredMetadata = { _direction: 'inbound', queue_scope: 'org' };
+        const current = {
+          id: 'forged-inbound-artifact', org_id: ORG_ID, anchor_id: null,
+          fingerprint_sha256: equalHash ? FORGED_HASH : 'e'.repeat(64),
+          metadata: { queue_scope: 'org', _superseded_reason: 'first-measured-winner' },
+        };
+        const before = structuredClone(current);
+        const { db, state } = makeDb({
+          artifactResult: { data: 'forged-inbound-artifact', error: null },
+          provenanceResult: { data: { fingerprint_sha256: FORGED_HASH, metadata: declaredMetadata }, error: null },
+          // Client B read the declared snapshot; client A committed a measured
+          // heal before B's UPDATE. Both remain unlinked, so anchor_id alone
+          // cannot preserve measured-vs-measured refusal.
+          supersedeCurrent: current,
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+          'docusign_connector_artifact_provenance_conflict_unresolved');
+        expect(state.supersedeApplied).toBe(false);
+        expect(current).toEqual(before);
+        expect(state.provenanceAuditInsertedRow?.event_type).toBe('docusign_connector_artifact_provenance_conflict_unresolved');
+      });
+
+      it('the actual PostgREST request guards org, fingerprint and serialized metadata', async () => {
+        const declaredMetadata = { _direction: 'inbound', queue_scope: 'org' };
+        const metadataAfterFirstHeal = { queue_scope: 'org', _superseded_reason: 'first-winner' };
+        const current = { fingerprint_sha256: FORGED_HASH, metadata: metadataAfterFirstHeal };
+        let patchUrl: URL | undefined;
+        const fetchImpl: typeof fetch = async (request, init) => {
+          const url = new URL(String(request));
+          if (url.pathname.endsWith('/rpc/enqueue_connector_artifact')) {
+            return new Response(JSON.stringify('forged-inbound-artifact'), { status: 200 });
+          }
+          if (url.pathname.endsWith('/connector_artifact') && init?.method === 'GET') {
+            // Both jobs observed this declared row. The first heal committed
+            // before the second worker's independently awaited PATCH below.
+            return new Response(JSON.stringify({ fingerprint_sha256: FORGED_HASH, metadata: declaredMetadata }), { status: 200 });
+          }
+          if (url.pathname.endsWith('/connector_artifact') && init?.method === 'PATCH') {
+            patchUrl = url;
+            const expectedMetadata = JSON.parse(url.searchParams.get('metadata')!.slice(3));
+            const matches = JSON.stringify(current.metadata) === JSON.stringify(expectedMetadata);
+            if (matches) Object.assign(current, JSON.parse(String(init.body)));
+            return new Response(JSON.stringify(matches ? [{ id: 'forged-inbound-artifact' }] : []), { status: 200 });
+          }
+          if (url.pathname.endsWith('/audit_events')) return new Response('[]', { status: 200 });
+          throw new Error(`unexpected test request ${url.pathname}`);
+        };
+        const db = createClient('https://pr2566.invalid', 'fixture-test-key', { global: { fetch: fetchImpl }, auth: { persistSession: false } });
+        const deps = makeDocusignEnvelopeJobDeps({ db: db as unknown as NonNullable<DocusignEnvelopeJobRuntimeDeps['db']> });
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow('docusign_connector_artifact_provenance_conflict_unresolved');
+        expect(patchUrl?.searchParams.get('org_id')).toBe(`eq.${ORG_ID}`);
+        expect(patchUrl?.searchParams.get('fingerprint_sha256')).toBe(`eq.${FORGED_HASH}`);
+        expect(patchUrl?.searchParams.get('metadata')).toBe(`eq.${JSON.stringify(declaredMetadata)}`);
+        expect(patchUrl?.searchParams.get('anchor_id')).toBe('is.null');
+        expect(current.metadata).toEqual(metadataAfterFirstHeal);
       });
 
       it('a failed provenance audit_events insert does not block a successful heal (awaited-but-non-fatal, mirrors the audit_events convention elsewhere)', async () => {

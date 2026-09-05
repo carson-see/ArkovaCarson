@@ -501,6 +501,7 @@ export function makeDocusignEnvelopeJobDeps(
         .from('connector_artifact')
         .select('fingerprint_sha256, metadata')
         .eq('id', artifactId)
+        .eq('org_id', input.orgId)
         .maybeSingle();
 
       if (readBackError || !persistedArtifact) {
@@ -610,6 +611,11 @@ export function makeDocusignEnvelopeJobDeps(
         // the drain later reads the corrected fingerprint and never sees a
         // conflict; materialize-first means this UPDATE matches zero rows and
         // the refusal branch below fires instead of rewriting a live anchor.
+        // The declared-row license must still hold at UPDATE time. Two jobs
+        // may read the same inbound row before either heals it. Compare the
+        // entire captured metadata and fingerprint so the second cannot
+        // overwrite a now-measured winner. PostgREST eq() interpolates values;
+        // JSONB equality therefore needs serialized JSON, never a JS object.
         let healed = false;
         let supersedeError: { message?: string } | null = null;
         if (autoHealLicensed) {
@@ -649,6 +655,9 @@ export function makeDocusignEnvelopeJobDeps(
               updated_at: new Date().toISOString(),
             })
             .eq('id', artifactId)
+            .eq('org_id', input.orgId)
+            .eq('fingerprint_sha256', persistedArtifact.fingerprint_sha256)
+            .eq('metadata', JSON.stringify(persistedArtifact.metadata))
             .is('anchor_id', null)
             .select('id')
             .maybeSingle();
