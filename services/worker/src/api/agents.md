@@ -339,3 +339,20 @@ Two things in this folder are worth not re-litigating:
 ## 2026-08-30 — CORRECTION: the fetch-time caveat is NOT unconditional (declared-hash fix)
 
 The entry above was WRONG that "every packet anchor is connector-materialized BY CONSTRUCTION." A packet anchor is resolved via `metadata->>external_file_id` — a key the **declared-hash rules dispatcher** (`jobs/rule-action-dispatcher.ts`) sets — so a packet anchor is frequently a hash DocuSign **declared**, NOT one Arkova fetched. The unconditional `...connectorFingerprintRederivabilityFields()` therefore asserted a false "Measured: Arkova computed…" caveat to auditors on declared anchors (§1.5/R-7). Fixed: `proof-packet.ts` now loads `metadata` and emits via `...connectorFingerprintRederivabilityFieldsFor(anchor.metadata)`, which gates on POSITIVE server-fetch evidence (a non-empty `connector_artifact_id`, stamped only by `connector-artifact-drain.ts`). Declared anchor → omit both fields (silence). Same gate now used by `verify.ts` and `verify-proof.ts`. NOTE the gate proves nothing against a self-asserted metadata blob — no DB trigger guards either key; see the honesty boundary in `constants/agents.md` (2026-08-30). SCRUM-3299 / SCRUM-3825.
+## 2026-08-30 SCRUM-3818 — DECLARED_UNVERIFIED disclosure propagated to `verify-proof.ts` + `proof-packet.ts` (go-live blocker for `ENABLE_DOCUSIGN_INBOUND`)
+
+A security review found that `verify-proof.ts`'s `buildProofResponse` and `proof-packet.ts`'s `anchor_receipt` both called `connectorFingerprintRederivabilityFields()` with NO argument, which always defaults to the stronger `FETCH_TIME_SNAPSHOT` class (`services/worker/src/constants/connectorFingerprint.ts`, added on branch `feat/docusign-inbound-recipient-connect` / PR #2476, not yet merged to `main` at the time of this fix — this fix branch is stacked on top of it). So an INBOUND declared-hash anchor (`fingerprint_source: 'issuer_record_attestation'`, set only by `jobs/connector-artifact-drain.ts`'s inbound branch) rendered the false "Arkova computed its fingerprint from the document bytes" claim on `GET /proof` and in audit proof packets, even though Arkova never fetched or hashed that document — a §1.5 / R-7 claims-gate violation.
+
+**Fix:** both call sites now resolve the class from the anchor's OWN `fingerprint_source` column (not metadata) —
+`verify-proof.ts` via the new `resolveFingerprintRederivabilityClass(connectorSource, fingerprintSource)` helper (mirrors `verify.ts`'s existing correct pattern exactly; `ProofAnchorData` gained an optional `fingerprint_source` field, and the production `anchors` select now includes it), `proof-packet.ts` via a direct `fingerprint_source === 'issuer_record_attestation'` ternary (it already unconditionally emits the pair by construction, so no new gate was added — only the class picked changed; `AnchorRow` gained the same optional field + select column). `proof-packet-verification-view.ts`'s `ProofPacketAnchorReceipt` / `VerificationView` types gained the additive-nullable `fingerprint_rederivability` / `_note` pass-through fields — they were silently dropped by that mapping layer before this fix.
+
+**Regression proof (both surfaces):** a fixture with `fingerprint_source` absent or `'document_bytes'` still renders the unchanged `FETCH_TIME_SNAPSHOT` class byte-identically — see `verify-connector-fingerprint.test.ts` and `proof-packet.test.ts`.
+
+## 2026-09-05 — PR 2499 integration with inbound artifacts
+
+Inbound issuer attestations have artifact IDs too. The combined gate checks the
+explicit fingerprint_source first and emits declared_unverified with its note;
+only other records with a recognized connector marker and artifact stamp may emit
+fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
+and authenticated packet exports load the typed source; the signable proof bundle
+is unchanged. Regression reproduced before the fix; local validation is not soak evidence.

@@ -20,51 +20,20 @@
  * tampering — nor that this differs from a client-uploaded document (§1.6),
  * where recomputing the fingerprint of the retained file always reproduces it.
  *
- * WHAT IS MEASURED
+ * EVIDENCE BOUNDARY
  *
- * The classification is keyed on TWO metadata keys together — a recognised
- * `connector_source` marker AND `connector_artifact_id` — see
- * {@link isServerFetchedConnectorAnchor}. `connector_source` ALONE is NOT
- * sufficient and keying on it was the original defect: BOTH the server-fetch
- * drain (`jobs/connector-artifact-drain.ts`, which fetches and hashes real
- * bytes → MEASURED) and the declared-hash rules dispatcher
- * (`jobs/rule-action-dispatcher.ts`, which anchors a hash the vendor DECLARED
- * in the trigger payload and fetches nothing → ASSERTED) write the same marker.
- * Only the closed marker set below is recognised — free text never routes here,
- * and the note never echoes the marker, so a spoofed metadata value can only
- * attach the weakening caveat to the spoofer's own record, never a vendor
- * provenance claim (R-7).
- *
- * HONESTY BOUNDARY — WHAT IS *NOT* PROVEN (§1.5). The same boundary that
- * applies to `verification_level` / `source_provider` (SCRUM-2481) applies
- * here, and requiring two keys narrows it without closing it. `anchors.metadata`
- * is a free-form, org-writable blob on the direct-PostgREST insert path
- * (`anchors_insert_own` constrains `user_id` / `status` / `org_id` and NOTHING
- * about `metadata`) and `bulk_create_anchors` copies it verbatim; the 0384 /
- * 0394 evidence-authority triggers guard `verification_level`,
- * `fingerprint_source` and the CE provenance keys, and do NOT cover
- * `connector_source` or `connector_artifact_id`. So an authenticated caller can
- * still self-assert both keys on its own row. This classification is therefore
- * a RECORDED classification, not an independently provable fetch event —
- * do not lean on it as forgery-proof. Closing that gap is a DB-trigger change
- * (0384-family, service_role-only authority over both keys) and is tracked
- * separately; it is deliberately out of scope for this API-surface fix, which
- * only stops the platform's OWN honest paths from over-claiming.
+ * A recognized connector marker alone does not establish a fetch. Fetch-time
+ * claims require the artifact-drain stamp and must exclude explicit issuer
+ * attestations. Inbound attestations also have artifact IDs; those records
+ * emit the weaker declared class. Unclassified rules records emit neither.
+ * These are recorded classifications, not independent proof against forged
+ * legacy metadata. Public notes never interpolate arbitrary metadata.
  */
 
 /**
- * The server-written `metadata.connector_source` values that mean "Arkova
- * fetched these bytes from a connected third-party source" (§1.6A).
- *
- * Deliberately EXCLUDES `manual_upload` / `batch_upload` (also legal
- * `connector_artifact.source` values): those bytes were supplied by the user,
- * so their fingerprints ARE reproducible from the user's retained file and the
- * fetch-time caveat would be a false weakening. `connector` is the
- * rule-action-dispatcher's vendor fallback marker, retained here for the
- * vendor-unresolved FETCH case only: membership in this set is necessary but
- * NOT sufficient, and a dispatcher-written anchor carries no
- * `connector_artifact_id`, so it never reaches an emission
- * ({@link isServerFetchedConnectorAnchor} is the operative gate).
+ * Closed connector marker vocabulary. Recognition is only one part of the
+ * evidence gate; a marker never establishes that Arkova fetched bytes.
+ * User-upload markers are excluded because their retained bytes are reproducible.
  */
 export const CONNECTOR_FETCH_SOURCE_MARKERS: ReadonlySet<string> = new Set([
   'docusign',
@@ -99,14 +68,27 @@ export function resolveConnectorFetchSource(
  *   from a connected third-party source at fetch time. Re-fetching the source
  *   document is NOT expected to reproduce it (source systems may regenerate
  *   the file per request).
+ * - `declared_unverified` (docusign-bilateral-2026-08, INBOUND / Recipient
+ *   Connect path — flag ENABLE_DOCUSIGN_INBOUND, default false, not going
+ *   live this cycle): the fingerprint was NEVER fetched or hashed by Arkova
+ *   at all. It is the per-document `sha256` DECLARED on a DocuSign Connect
+ *   notification for an envelope Arkova did not send (a different, foreign
+ *   DocuSign account owns it) — Arkova cannot call the document-fetch API for
+ *   a foreign-owned envelope (DocuSign 26.3 is locking down cross-account
+ *   fetch regardless), so there is no bytes-in-hand measurement to make. This
+ *   is strictly WEAKER evidence than `fetch_time_snapshot` (which is at least
+ *   a real Arkova-side hash of real bytes) and MUST NEVER be confused with it
+ *   — conflating the two would let a forged/self-signed "inbound" delivery
+ *   read as if Arkova had independently verified the document (the exact R-7
+ *   claims-gate failure mode this class exists to prevent).
  *
- * One value today, an enum by design (mirrors PROOF_AVAILABILITY): a future
- * class (e.g. for retained-bytes uploads) is additive per §1.8. The class is
- * only ever EMITTED when it is measured; absence means "no re-derivability
+ * An enum by design (mirrors PROOF_AVAILABILITY): additive per §1.8. A class
+ * is only ever EMITTED when it is measured; absence means "no re-derivability
  * statement", never "re-derivable".
  */
 export const FINGERPRINT_REDERIVABILITY = {
   FETCH_TIME_SNAPSHOT: 'fetch_time_snapshot',
+  DECLARED_UNVERIFIED: 'declared_unverified',
 } as const;
 
 export type FingerprintRederivability =
@@ -144,6 +126,20 @@ export const FINGERPRINT_REDERIVABILITY_NOTE: Record<FingerprintRederivability, 
     + 'altered; reproducing this fingerprint requires the exact bytes as '
     + 'originally retrieved. This differs from a client-uploaded document, where '
     + 'recomputing the fingerprint of the same retained file always reproduces it.',
+  [FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED]:
+    'Measured: nothing — Arkova did NOT retrieve or hash this document. This '
+    + 'record originates from a DocuSign notification describing an envelope '
+    + 'owned by a different, third-party DocuSign account, not one connected by '
+    + 'the securing organization. '
+    + 'Asserted: the fingerprint shown is the per-document checksum DocuSign '
+    + "declared in that notification — DocuSign's assertion, relayed by Arkova, "
+    + 'not a value Arkova independently computed. '
+    + 'Not asserted: that this fingerprint was measured from real document bytes '
+    + 'by Arkova, that Arkova has ever had access to the underlying document, or '
+    + 'that retrieving the document from any source would reproduce this value. '
+    + 'This is a materially weaker evidence class than a connector-fetched '
+    + 'record (Arkova performs no independent measurement here at all) and must '
+    + 'not be read as equivalent to one.',
 };
 
 /** The public field pair. Always produced together — see below. */
@@ -157,59 +153,39 @@ export interface FingerprintRederivabilityFields {
  * travels without its meaning" construction as proofAvailabilityFields — a
  * §1.5 statement must not be separable from the class it explains).
  *
- * Callers must gate on `resolveConnectorFetchSource(...)` first; records that
- * did not measure a connector marker must OMIT both fields entirely (never
- * null — frozen schema, CLAUDE.md §6).
+ * Prefer connectorFingerprintRederivabilityFieldsFor for loaded metadata.
+ * Hydrated API callers must establish the fetch or declared class before using
+ * this formatter; it does not itself verify evidence.
  */
-export function connectorFingerprintRederivabilityFields(): FingerprintRederivabilityFields {
+export function connectorFingerprintRederivabilityFields(
+  rederivabilityClass: FingerprintRederivability = FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT,
+): FingerprintRederivabilityFields {
   return {
-    fingerprint_rederivability: FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT,
-    fingerprint_rederivability_note:
-      FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT],
+    fingerprint_rederivability: rederivabilityClass,
+    fingerprint_rederivability_note: FINGERPRINT_REDERIVABILITY_NOTE[rederivabilityClass],
   };
 }
 
 /**
- * Resolve the connector-fetch marker for an anchor whose metadata carries
- * evidence of an actual server-side connector FETCH (§1.6A) — returning the
- * marker only on that evidence and `null` otherwise. This is the single
- * implementation of the rule; the boolean and field-pair forms below derive
- * from it.
- *
- * A fetch is the ONLY basis on which a `FETCH_TIME_SNAPSHOT`
- * ("Measured: Arkova computed…") claim is honest.
- *
- * `connector_source` ALONE is NOT sufficient and keying the measurement claim
- * on it was a §1.5 / R-7 over-claim: TWO paths write `connector_source='docusign'`
- * — the server-fetch drain (`jobs/connector-artifact-drain.ts`, §1.6A: fetches
- * + hashes the real bytes → MEASURED) and the declared-hash rules dispatcher
- * (`jobs/rule-action-dispatcher.ts`, which anchors a hash DocuSign DECLARED in
- * the trigger payload and never fetches anything → ASSERTED, see
- * `jobs/docusign-anchor-reconciliation.ts`). Emitting FETCH_TIME_SNAPSHOT for
- * the latter tells a verifier Arkova computed a fingerprint it never computed.
- *
- * The discriminator is `connector_artifact_id`: the drain stamps it on every
- * anchor it materializes from a fetched `connector_artifact` row; the declared-
- * hash dispatcher never does, and the drain writes it AFTER spreading the
- * artifact's own metadata so an attacker-influenced key cannot win. Requiring
- * BOTH a recognised fetch marker AND this stamp means the measurement claim
- * rides positive evidence of a fetch rather than an ambiguous source string.
- *
- * It does NOT make the claim unforgeable, and nothing here should be read as
- * saying so: neither key is covered by the 0384 / 0394 evidence-authority
- * triggers, and `anchors.metadata` is org-writable on the direct-PostgREST and
- * `bulk_create_anchors` paths — see the HONESTY BOUNDARY in the module header.
- * This gate closes the platform's own over-claim (our honest declared-hash path
- * asserting a measurement we never made); a self-asserted metadata blob remains
- * a recorded classification, not proof.
- *
- * The declared-hash path's OWN honest re-derivability class (`DECLARED_UNVERIFIED`)
- * is tracked separately (SCRUM-3825); until it ships, a declared anchor emits NO
- * re-derivability statement — silence is not a claim (§1.5).
+ * Class selection for an already validated connector source. This helper does
+ * not establish fetch evidence. Callers with raw metadata must use
+ * connectorFingerprintRederivabilityFieldsFor instead.
  */
+export function resolveFingerprintRederivabilityClass(
+  connectorSource: unknown,
+  fingerprintSource: unknown,
+): FingerprintRederivability | null {
+  if (!isConnectorFetchSource(connectorSource)) return null;
+  return fingerprintSource === 'issuer_record_attestation'
+    ? FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED
+    : FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT;
+}
+
 export function resolveServerFetchedConnectorSource(
   metadata: Record<string, unknown> | null | undefined,
+  fingerprintSource?: unknown,
 ): string | null {
+  if (fingerprintSource === 'issuer_record_attestation') return null;
   const marker = resolveConnectorFetchSource(metadata);
   if (marker === null) return null;
   const artifactId = metadata?.connector_artifact_id;
@@ -223,23 +199,24 @@ export function resolveServerFetchedConnectorSource(
  */
 export function isServerFetchedConnectorAnchor(
   metadata: Record<string, unknown> | null | undefined,
+  fingerprintSource?: unknown,
 ): boolean {
-  return resolveServerFetchedConnectorSource(metadata) !== null;
+  return resolveServerFetchedConnectorSource(metadata, fingerprintSource) !== null;
 }
 
 /**
- * The re-derivability field pair for an anchor's metadata, gated on ACTUAL
- * server-fetch evidence ({@link isServerFetchedConnectorAnchor}). Returns the
- * indivisible class+note pair for a genuinely fetched connector anchor, and an
- * EMPTY object (omit — never null, frozen schema §6/§1.8) for everything else,
- * including the declared-hash rules path. This is the ONE gate every emission
- * site must route through so the "Measured" claim can never outrun the fetch
- * that justifies it.
+ * Return an inseparable class/note pair: explicit issuer attestations remain
+ * declared even with an artifact ID; other records require the fetch stamp.
+ * Missing evidence omits both fields, without implying reproducibility.
  */
 export function connectorFingerprintRederivabilityFieldsFor(
   metadata: Record<string, unknown> | null | undefined,
+  fingerprintSource?: unknown,
 ): FingerprintRederivabilityFields | Record<string, never> {
-  return isServerFetchedConnectorAnchor(metadata)
+  if (resolveConnectorFetchSource(metadata) && fingerprintSource === 'issuer_record_attestation') {
+    return connectorFingerprintRederivabilityFields(FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED);
+  }
+  return isServerFetchedConnectorAnchor(metadata, fingerprintSource)
     ? connectorFingerprintRederivabilityFields()
     : {};
 }

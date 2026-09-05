@@ -1076,3 +1076,12 @@ without ever fetching, so both now gate on positive fetch evidence — `resolveS
   this change REMOVES response fields for declared-hash anchors, and a pre-deploy cache entry would otherwise
   keep serving the false claim for the full TTL. `invalidateVerificationCache` does not help (the row is
   unchanged, so nothing re-fires). Ratchet test in `utils/verifyCache.namespace.test.ts`.
+
+## 2026-09-05 — PR 2499 integration with inbound artifacts
+
+Inbound issuer attestations have artifact IDs too. The combined gate checks the
+explicit fingerprint_source first and emits declared_unverified with its note;
+only other records with a recognized connector marker and artifact stamp may emit
+fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
+and authenticated packet exports load the typed source; the signable proof bundle
+is unchanged. Regression reproduced before the fix; local validation is not soak evidence.

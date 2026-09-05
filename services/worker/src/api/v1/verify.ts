@@ -26,6 +26,8 @@ import {
 import {
   connectorFingerprintRederivabilityFields,
   isConnectorFetchSource,
+  resolveConnectorFetchSource,
+  FINGERPRINT_REDERIVABILITY,
   resolveServerFetchedConnectorSource,
   type FingerprintRederivability,
 } from '../../constants/connectorFingerprint.js';
@@ -384,10 +386,12 @@ export interface AnchorByPublicId {
    *   `null`    — measured, not a fetched connector anchor (declared-hash,
    *               non-connector, or unrecognised marker)
    *   absent    — NOT MEASURED (paths that never load metadata) → stay silent
-   * Both `null` and absent omit the fields; the distinction is documentary —
-   * either way no §1.5 statement is emitted without proof of a fetch.
+   * Null/absent suppress the fetch-time claim. An explicit issuer attestation
+   * may separately emit the weaker declared class via connector_source.
    */
   server_fetched_connector_source?: string | null;
+  /** Recognized connector marker used only for the weaker declared-source class. */
+  connector_source?: string | null;
 }
 
 /**
@@ -574,25 +578,12 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     Object.assign(result, proofAvailabilityFields(anchor.has_stored_proof_branch));
   }
 
-  // BUG-2026-08-13-010 (§1.5 / §1.6A): a server-FETCHED connector fingerprint
-  // commits the exact bytes fetched at that moment — re-fetching the source
-  // document is NOT expected to reproduce it (source systems may re-render per
-  // request). Emitted as an indivisible class+note pair, keyed on
-  // `server_fetched_connector_source`, which mapAnchorRow sets ONLY when
-  // `resolveServerFetchedConnectorSource` returned a marker (marker + artifact id). The
-  // declared-hash rules path — same raw marker, no fetch — resolves to null and
-  // never keys a "Measured…" claim. Anchors without a fetched marker (client
-  // uploads, CSV row-mode, declared-hash, batch/oracle paths that never load
-  // metadata) OMIT both fields — silence is not a claim (§1.5). Additive —
-  // Constitution 1.8.
-  //
-  // The `isConnectorFetchSource` re-check here is a closed-set string guard, NOT
-  // a re-derivation of fetch evidence — it cannot see metadata and so cannot
-  // re-prove the fetch. The fetch proof lives entirely in the constructor; this
-  // only stops an unvalidated free-text string from keying a public §1.5
-  // statement if some other constructor sets the field. Both halves matter: the
-  // constructor owns "was it fetched", this owns "is it a recognised marker".
-  if (isConnectorFetchSource(anchor.server_fetched_connector_source)) {
+  // Explicit issuer attestations remain declared even when an artifact exists.
+  // Other records require the hydrated fetch evidence; a raw marker is never
+  // sufficient. Class and note are always emitted together.
+  if (anchor.fingerprint_source === 'issuer_record_attestation' && isConnectorFetchSource(anchor.connector_source)) {
+    Object.assign(result, connectorFingerprintRederivabilityFields(FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED));
+  } else if (anchor.fingerprint_source !== 'issuer_record_attestation' && isConnectorFetchSource(anchor.server_fetched_connector_source)) {
     Object.assign(result, connectorFingerprintRederivabilityFields());
   }
 
@@ -849,8 +840,9 @@ export function mapAnchorRow(row: AnchorSelectRow): AnchorByPublicId {
     // but never fetched/hashed the bytes, so it must not key the
     // FETCH_TIME_SNAPSHOT "Measured…" claim at emission. The resolver returns a
     // marker ONLY for a genuinely fetched anchor (connector_artifact_id
-    // present); a declared anchor resolves to null → the gate stays silent.
-    server_fetched_connector_source: resolveServerFetchedConnectorSource(row.metadata),
+    // present and not issuer-attested); declared records use the separate weaker gate.
+    server_fetched_connector_source: resolveServerFetchedConnectorSource(row.metadata, row.fingerprint_source),
+    connector_source: resolveConnectorFetchSource(row.metadata),
   };
 }
 

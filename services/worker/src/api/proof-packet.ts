@@ -75,6 +75,7 @@ interface AnchorRow {
   // Needed to gate the fetch-time re-derivability caveat on POSITIVE server-fetch
   // evidence (connector_artifact_id) rather than emitting it for every packet.
   metadata: Record<string, unknown> | null;
+  fingerprint_source?: string | null;
 }
 
 interface LineagePreviousEntry {
@@ -149,7 +150,7 @@ async function loadAnchor(externalFileId: string | null, orgId: string): Promise
   const { data, error } = await (db as any)
     .from('anchors')
     .select(
-      'id, public_id, status, fingerprint, bitcoin_tx_id, block_height, revoked_at, revocation_reason, parent_anchor_id, version_number, metadata',
+      'id, public_id, status, fingerprint, bitcoin_tx_id, block_height, revoked_at, revocation_reason, parent_anchor_id, version_number, fingerprint_source, metadata',
     )
     .eq('org_id', orgId)
     .eq('metadata->>external_file_id', externalFileId)
@@ -354,15 +355,10 @@ export async function handleProofPacketExport(
           bitcoin_tx_id: anchor.bitcoin_tx_id,
           block_height: anchor.block_height,
           verification_uri: verificationUri,
-          // BUG-2026-08-13-010 (§1.5/§1.6A) + declared-hash fix: a packet anchor
-          // is resolved via metadata->>external_file_id — a key the DECLARED-hash
-          // rules path (rule-action-dispatcher.ts) sets, so a packet anchor is
-          // frequently a DECLARED hash that Arkova never fetched. Emit the
-          // fetch-time caveat ONLY on positive server-fetch evidence
-          // (connector_artifact_id, stamped only by connector-artifact-drain.ts);
-          // for a declared anchor this omits the pair rather than asserting the
-          // false "Measured: Arkova computed…" claim to an auditor (§1.5 / R-7).
-          ...connectorFingerprintRederivabilityFieldsFor(anchor.metadata),
+          // Artifact IDs alone cannot establish measurement: inbound artifacts
+          // carry declared checksums. Preserve their weaker class; omit the
+          // pair for unclassified rules records with no fetch evidence.
+          ...connectorFingerprintRederivabilityFieldsFor(anchor.metadata, anchor.fingerprint_source),
         }
       : {
           public_id: null,
