@@ -196,3 +196,14 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 - Ambiguous account-to-org mappings fail closed.
 - Sanitized rule-event payloads may include provider IDs needed for idempotency, but not raw documents or raw webhook bodies.
 - Connector payloads that carry PII must hash values before storing long-lived operational metadata. PII scrubbing is mandatory; do not persist emails, document fingerprints, or API keys.
+
+## 2026-09-05 — PR 2519 orphan durability and schema integration
+
+An orphan response may acknowledge 200 only after webhook_dlq persistence succeeds.
+Returned DB errors and thrown transport errors both reproduced false 200 before
+the fix; they now produce 500 for provider retry. Other failure branches already
+return 500 and keep DLQ recording best effort. This candidate uses the dedicated
+webhook_id introduced by its 0426 migration, matching the dependent OAuth writer
+in PR 2529; PR 2496's earlier subscription_id repair is interim. Production was
+queried read-only: subscription_id exists, webhook_id and migration 0426 do not.
+Schema application and isolated verification remain required before deployment.

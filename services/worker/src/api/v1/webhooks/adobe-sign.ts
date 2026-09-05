@@ -220,7 +220,7 @@ async function dlqInsert(args: {
   agreementId: string | null;
   reason: string;
   payloadHash: string;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any).from('webhook_dlq').insert({
@@ -231,10 +231,13 @@ async function dlqInsert(args: {
       payload_hash: args.payloadHash,
     });
     if (error) {
-      logger.warn({ error }, 'Adobe Sign webhook: DLQ insert failed (non-fatal)');
+      logger.warn({ error }, 'Adobe Sign webhook: DLQ insert failed');
+      return false;
     }
+    return true;
   } catch (err) {
-    logger.warn({ error: err }, 'Adobe Sign webhook: DLQ insert threw (non-fatal)');
+    logger.warn({ error: err }, 'Adobe Sign webhook: DLQ insert threw');
+    return false;
   }
 }
 
@@ -346,17 +349,15 @@ adobeSignWebhookRouter.post('/', async (req: Request, res: Response) => {
     const integration = await findIntegration(event.webhookId);
     if (!integration) {
       logger.warn({ webhookId: event.webhookId }, 'Adobe Sign webhook: unknown connected webhook');
-      // No org_integrations write path exists for adobe_sign yet (no connect
-      // flow populates webhook_id), so this branch is the live path for
-      // every delivery today. Ack Adobe with 200 (retrying won't help — the
-      // webhook_id will never resolve), but still record it: silently
-      // dropping this left no trace of a total, permanent processing gap.
-      await dlqInsert({
+      // Acknowledge an orphan only after its bounded failure record is durable.
+      // Otherwise return 500 so the provider retains responsibility for retry.
+      const recorded = await dlqInsert({
         webhookId: event.webhookId,
         agreementId: event.agreementId,
         reason: 'unregistered_webhook_id',
         payloadHash,
       });
+      if (!recorded) throw new Error('orphan_dlq_persistence_failed');
       res.status(200).json({ ok: true, orphaned: true });
       return;
     }

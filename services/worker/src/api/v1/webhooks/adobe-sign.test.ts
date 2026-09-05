@@ -209,12 +209,28 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
   it('200 + orphaned=true when webhook_id has no connected integration', async () => {
     dbFromMock.mockImplementation((table: string) => {
       if (table === 'org_integrations') return integrationLookup(null);
+      if (table === 'webhook_dlq') return dlqInsertMock();
       throw new Error(`unexpected: ${table}`);
     });
     const body = validBody();
     const res = await postSignedBody(body);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
+  });
+
+  it.each(['returned', 'thrown'])('retries an orphan when its DLQ persistence fails (%s)', async (failure) => {
+    const insert = failure === 'returned'
+      ? vi.fn().mockResolvedValue({ error: { code: '08006' } })
+      : vi.fn().mockRejectedValue(new Error('synthetic database unavailable'));
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') return integrationLookup(null);
+      if (table === 'webhook_dlq') return { insert };
+      throw new Error(`unexpected: ${table}`);
+    });
+    const res = await postSignedBody(validBody());
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: { code: 'webhook_processing_failed' } });
+    expect(rpcMock).not.toHaveBeenCalled();
   });
 
   it('orphaned webhook_id is recorded to the DLQ, not silently dropped', async () => {
