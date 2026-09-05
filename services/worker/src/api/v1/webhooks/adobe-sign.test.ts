@@ -9,6 +9,9 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { configMock } = vi.hoisted(() => ({ configMock: { adobeSignClientId: undefined as string | undefined } }));
+vi.mock('../../../config.js', () => ({ config: configMock }));
+
 const dbFromMock = vi.fn();
 const rpcMock = vi.fn();
 
@@ -137,6 +140,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.ADOBE_SIGN_CLIENT_SECRET = TEST_SECRET;
   process.env.ADOBE_SIGN_CLIENT_ID = TEST_CLIENT_ID;
+  configMock.adobeSignClientId = TEST_CLIENT_ID;
 });
 
 // Adobe will not create a webhook at all until the endpoint answers its
@@ -148,6 +152,16 @@ beforeEach(() => {
 // https://helpx.adobe.com/sign/developer/webhook/create.html
 describe('GET /webhooks/adobe-sign — Adobe registration challenge', () => {
   it('echoes the client id and returns 200 when the client id is recognized', async () => {
+    const res = await request(createApp())
+      .get('/webhooks/adobe-sign')
+      .set('X-AdobeSign-ClientId', TEST_CLIENT_ID);
+    expect(res.status).toBe(200);
+    expect(res.headers['x-adobesign-clientid']).toBe(TEST_CLIENT_ID);
+    expect(dbFromMock).not.toHaveBeenCalled();
+  });
+
+  it('recognizes the validated client ID when the raw environment changes after startup', async () => {
+    process.env.ADOBE_SIGN_CLIENT_ID = 'unvalidated-runtime-value';
     const res = await request(createApp())
       .get('/webhooks/adobe-sign')
       .set('X-AdobeSign-ClientId', TEST_CLIENT_ID);
@@ -171,7 +185,7 @@ describe('GET /webhooks/adobe-sign — Adobe registration challenge', () => {
   });
 
   it('503s (never echoes) when ADOBE_SIGN_CLIENT_ID is not configured', async () => {
-    delete process.env.ADOBE_SIGN_CLIENT_ID;
+    configMock.adobeSignClientId = undefined;
     const res = await request(createApp())
       .get('/webhooks/adobe-sign')
       .set('X-AdobeSign-ClientId', TEST_CLIENT_ID);

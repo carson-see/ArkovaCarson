@@ -15,6 +15,7 @@
 import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { db } from '../../../utils/db.js';
+import { config } from '../../../config.js';
 import { logger } from '../../../utils/logger.js';
 import { adaptAdobeSign } from '../../../integrations/connectors/adapters.js';
 import {
@@ -72,7 +73,7 @@ function safeEqual(a: string, b: string): boolean {
  * https://helpx.adobe.com/sign/developer/webhook/create.html
  */
 adobeSignWebhookRouter.get('/', (req: Request, res: Response) => {
-  const expectedClientId = process.env.ADOBE_SIGN_CLIENT_ID;
+  const expectedClientId = config.adobeSignClientId;
   if (!expectedClientId) {
     logger.error('ADOBE_SIGN_CLIENT_ID not set — registration challenge cannot be answered');
     res.status(503).json({ error: { code: 'webhook_unconfigured' } });

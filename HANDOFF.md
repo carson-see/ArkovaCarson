@@ -2192,3 +2192,10 @@ _Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against 
 ## PR #2476 release review — 2026-09-05
 
 Held for current-base T3 verification. 0424 alone permits a recent legacy nonce to be replayed with a non-NULL account id. 0435 serializes the vendor tuple and preserves legacy/global collision behavior across mixed old/new workers while keeping distinct known accounts independent. Seven real PostgreSQL checks cover replay, both concurrent writer orders across session timezones, tenant separation, same-account duplicates and non-destructive rollback/reapply. Keep both additive migrations during worker rollback; exact old-schema rollback refuses nonempty nonce tables. No production change or inbound enablement has occurred.
+
+
+## PR #2519 release preparation — 2026-09-05
+
+The Adobe challenge now reads the existing validated worker configuration. The real main-target CI run exposed the direct environment read; targeted regressions cover startup configuration authority and fail-closed behavior. This is source preparation; the combined staging build and qualification remain pending. CI evidence: https://github.com/carson-see/ArkovaCarson/actions/runs/33976897351 .
+
+_Last refreshed: 2026-09-05 by Codex — claims verified against gcloud/MCP/CI output._
