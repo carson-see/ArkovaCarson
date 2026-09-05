@@ -294,6 +294,16 @@ BEGIN
 END;
 $function$;
 
+-- 0327 created this SECURITY DEFINER function without an explicit REVOKE, so on
+-- a fresh replay Supabase's ALTER DEFAULT PRIVILEGES hands anon and
+-- authenticated EXECUTE at CREATE time, and REVOKE FROM PUBLIC would not remove
+-- those direct grants. Closing that here while the function is being replaced.
+-- Safe for the trigger: PostgreSQL checks EXECUTE on a trigger function at
+-- CREATE TRIGGER time, not on each fire, so signups by an authenticated role
+-- still seed their credit row. No service_role GRANT is added — nothing calls
+-- this directly; it only ever runs as trg_seed_free_tier_org_credits.
+REVOKE ALL ON FUNCTION public.seed_free_tier_org_credits() FROM PUBLIC, anon, authenticated;
+
 COMMENT ON FUNCTION public.seed_free_tier_org_credits() IS
   'SCRUM-2225 / SCRUM-4474: stamp every new top-level org with an ENFORCED free-tier cap (is_test=true, anchor_quota=10, cap_enforced=true) so no signup can anchor unlimited free. Platform admin lifts/changes it via admin_set_org_cap.';
 
