@@ -3,18 +3,28 @@ import { promisify } from 'node:util';
 import { execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
-const dbUrl = process.env.UAT03_DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
+// Role-corruption fixtures need the local bootstrap administrator. Supabase's
+// normal postgres principal cannot perform every adversarial role setup below.
+// This stock CLI credential is accepted only on the owned loopback ports.
+const dbUrl = process.env.UAT03_DATABASE_URL ?? 'postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres';
 const fixtureUrl = new URL(dbUrl);
 if (!['postgres:', 'postgresql:'].includes(fixtureUrl.protocol)
   || !['127.0.0.1', 'localhost', '[::1]'].includes(fixtureUrl.hostname)
-  || !['54322', '55503'].includes(fixtureUrl.port)) {
-  throw new Error('OAuth confirmation regression requires the owned loopback PostgreSQL fixture (54322 or 55503)');
+  || !['54322', '55503', '15422', '16422', '17422', '18422', '19422'].includes(fixtureUrl.port)) {
+  throw new Error('OAuth confirmation regression requires an owned loopback PostgreSQL fixture or repository CI port block');
 }
 function sql(body: string) {
-  return execFileSync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', `BEGIN; ${body}; ROLLBACK;`], { encoding: 'utf8' });
+  try {
+    return execFileSync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', `BEGIN; ${body}; ROLLBACK;`], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    // Node's default error contains the command, including every expected RAISE
+    // message in roleGuard. Match actual server stderr, never that supplied SQL.
+    const stderr = (error as { stderr?: string }).stderr;
+    throw new Error(stderr?.trim() || 'Local PostgreSQL fixture command failed');
+  }
 }
 function user(id: string, provider = 'google', age = '0 seconds') {
   return `INSERT INTO auth.users(id,email,raw_app_meta_data,created_at,email_confirmed_at) VALUES ('${id}','${id}@example.invalid','{"provider":"${provider}"}',now()-interval '${age}',now())`;
@@ -22,13 +32,30 @@ function user(id: string, provider = 'google', age = '0 seconds') {
 const roleGuard = readFileSync(new URL('../../supabase/migrations/0436_scrum4035_oauth_email_confirmation.sql', import.meta.url), 'utf8').match(/DO \$\$[\s\S]+?END \$\$;/)?.[0];
 if (!roleGuard) throw new Error('Pending-role installation guard was not found');
 const enable = "UPDATE private.oauth_email_confirmation_policy SET enabled_at=now()-interval '1 second' WHERE singleton";
+// Recreate only inside the rolled-back fixture so an existing hosted-style
+// postgres creator grant cannot mask the deliberately injected invalid grant.
+const freshPendingRole = 'DROP ROLE arkova_email_pending; CREATE ROLE arkova_email_pending NOLOGIN NOINHERIT';
 
 describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
+  beforeAll(() => {
+    // A refused connection or ordinary migration principal must fail setup,
+    // not accidentally satisfy a negative assertion about a permission error.
+    expect(sql('SELECT rolsuper FROM pg_roles WHERE rolname=current_user')).toContain('\nt\n');
+  });
+  it('reports the server error without matching supplied SQL text', () => {
+    let failure: unknown;
+    try { sql("SELECT 'Pending email role must have no runtime members'; SELECT 1/0"); }
+    catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('division by zero');
+    expect((failure as Error).message).not.toContain('Pending email role must have no runtime members');
+  });
   it('installs the role under a hosted-style non-superuser migration principal', () => {
     const owner = `uat03_owner_${randomUUID().replaceAll('-', '')}`;
     const output = sql(`DROP ROLE arkova_email_pending;
       CREATE ROLE ${owner} CREATEROLE BYPASSRLS;
-      SET ROLE ${owner}; ${roleGuard}; SELECT 'creator_guard_passed'; RESET ROLE`);
+      SET SESSION AUTHORIZATION ${owner}; ${roleGuard};
+      SELECT 'creator_guard_passed'; RESET SESSION AUTHORIZATION`);
     expect(output).toContain('creator_guard_passed');
   });
   it('installs under a superuser with no creator membership', () => {
@@ -36,25 +63,25 @@ describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
       .toContain('superuser_guard_passed');
   });
   it.each(['authenticator', 'authenticated'])('rejects pending-role membership for %s', (member) => {
-    expect(() => sql(`GRANT arkova_email_pending TO ${member}; ${roleGuard}`))
+    expect(() => sql(`${freshPendingRole}; GRANT arkova_email_pending TO ${member}; ${roleGuard}`))
       .toThrow(/Pending email role must have no runtime members/);
   });
   it('rejects a parent role that would give pending identities inherited authority', () => {
-    expect(() => sql(`GRANT authenticated TO arkova_email_pending; ${roleGuard}`))
+    expect(() => sql(`${freshPendingRole}; GRANT authenticated TO arkova_email_pending; ${roleGuard}`))
       .toThrow(/Pending email role must have no parent roles/);
   });
 
   it('rejects a migration-principal grant that can assume the role', () => {
     const owner = `uat03_owner_${randomUUID().replaceAll('-', '')}`;
     expect(() => sql(`DROP ROLE arkova_email_pending; CREATE ROLE ${owner} CREATEROLE BYPASSRLS;
-      SET ROLE ${owner}; CREATE ROLE arkova_email_pending NOLOGIN NOINHERIT;
-      RESET ROLE; DO $grant$ BEGIN
+      SET SESSION AUTHORIZATION ${owner}; CREATE ROLE arkova_email_pending NOLOGIN NOINHERIT;
+      RESET SESSION AUTHORIZATION; DO $grant$ BEGIN
         IF current_setting('server_version_num')::int >= 160000 THEN
           EXECUTE 'GRANT arkova_email_pending TO ${owner} WITH SET TRUE';
         ELSE
           EXECUTE 'GRANT arkova_email_pending TO ${owner} WITH ADMIN OPTION';
         END IF;
-      END $grant$; SET ROLE ${owner}; ${roleGuard}`))
+      END $grant$; SET SESSION AUTHORIZATION ${owner}; ${roleGuard}`))
       .toThrow(/Pending email role must have no runtime members/);
   });
   it('still rejects elevated attributes on an existing pending role', () => {

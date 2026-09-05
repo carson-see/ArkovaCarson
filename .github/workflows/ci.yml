@@ -930,11 +930,16 @@ jobs:
           SUPABASE_URL=$(supabase status --output json | jq -r '.API_URL')
           SUPABASE_ANON_KEY=$(supabase status --output json | jq -r '.ANON_KEY')
           SUPABASE_SERVICE_ROLE_KEY=$(supabase status --output json | jq -r '.SERVICE_ROLE_KEY')
+          # SQL role-corruption tests need the local bootstrap administrator and
+          # the actual free port selected by ci-supabase-start.sh (instead of the default port 54322).
+          UAT03_DATABASE_URL=$(supabase status --output json | jq -r '.DB_URL | sub("://postgres:"; "://supabase_admin:")')
           echo "::add-mask::$SUPABASE_ANON_KEY"
           echo "::add-mask::$SUPABASE_SERVICE_ROLE_KEY"
+          echo "::add-mask::$UAT03_DATABASE_URL"
           echo "url=$SUPABASE_URL" >> "$GITHUB_OUTPUT"
           echo "anon_key=$SUPABASE_ANON_KEY" >> "$GITHUB_OUTPUT"
           echo "service_role_key=$SUPABASE_SERVICE_ROLE_KEY" >> "$GITHUB_OUTPUT"
+          echo "uat03_database_url=$UAT03_DATABASE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Run database reset
         id: db-reset
@@ -998,6 +1003,7 @@ jobs:
           SUPABASE_ANON_KEY: ${{ steps.supabase-keys.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-keys.outputs.service_role_key }}
           RLS_TEST_PASSWORD: Arkova2026!
+          UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
 
       - name: Install worker dependencies
         id: worker-deps

@@ -724,3 +724,5 @@ Note the gate is **not** in `.mergify.yml merge_conditions` and `main` carries n
 ## 2026-09-05 — SCRUM-4035 owned OAuth confirmation UI fixture
 
 The E2E job now runs `playwright.uat03.config.ts` after Chromium installation and before Supabase setup. Seven real-app routing/recovery cases use owned mocked external Auth/worker boundaries on loopback, fail the existing E2E job on error, and upload 1280/375 screenshots. The default Playwright config excludes this separately executed file; no skip or hosted seed mutation is needed. Hosted Auth/mailbox proof remains a separate release requirement.
+
+The SQL confirmation regressions receive the masked local DB URL from `supabase status`, including the actual CI port selected by the startup helper. Their role-corruption setup uses the local bootstrap administrator; a connection/administrator check precedes assertions, and failures match PostgreSQL stderr rather than SQL text embedded in a failed command.

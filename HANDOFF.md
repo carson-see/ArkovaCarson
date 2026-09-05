@@ -20,7 +20,11 @@ Implementation is on `cto/uat03-oauth-confirmation-20260905`; **not released or 
 See [the scope, evidence, and rollout gates](docs/uat03-email-confirmation.md).
 Migration 0436 was applied to the owned PR preview and keeps activation NULL; its automatic
 preview check passed. The driver’s path and exact released-rig binding guards pass locally.
-Full final-head CI, hosted mailbox/authorization proof and release approval remain pending.
+Full CI exposed stale documentation pins and a hardcoded SQL-fixture port; the correction
+keeps all prior document invariants, reads the actual local CI database URL, and fails
+setup before negative SQL assertions can pass on a broken connection. Final-head CI
+and release approval remain pending. Hosted functional UI checks passed on the earlier
+63e50 candidate; audited-account fixture cleanup exposed existing SCRUM-4458.
 Root resolved the initial Auth-config403 and read both
 production/owned preview hooks disabled with URI NULL; recheck before installation. UAT-02 owns
 Google consent branding; UAT-04 owns
