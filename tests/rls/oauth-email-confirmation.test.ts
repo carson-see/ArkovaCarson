@@ -20,10 +20,11 @@ function sql(body: string) {
   try {
     return execFileSync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', `BEGIN; ${body}; ROLLBACK;`], { encoding: 'utf8', stdio: 'pipe' });
   } catch (error) {
-    // Node's default error contains the command, including every expected RAISE
-    // message in roleGuard. Match actual server stderr, never that supplied SQL.
+    // Neither Node's echoed command nor psql's LINE/CONTEXT excerpts prove a
+    // server denial. Match only the primary ERROR diagnostic, exactly.
     const stderr = (error as { stderr?: string }).stderr;
-    throw new Error(stderr?.trim() || 'Local PostgreSQL fixture command failed');
+    const primaryError = stderr?.match(/^ERROR:[ \t]+([^\r\n]+)/m)?.[1];
+    throw new Error(primaryError || stderr?.split(/\r?\n/, 1)[0]?.trim() || 'Local PostgreSQL fixture command failed');
   }
 }
 function user(id: string, provider = 'google', age = '0 seconds') {
@@ -50,6 +51,14 @@ describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
     expect((failure as Error).message).toContain('division by zero');
     expect((failure as Error).message).not.toContain('Pending email role must have no runtime members');
   });
+  it('excludes supplied guard text from syntax-error LINE excerpts', () => {
+    let failure: unknown;
+    try { sql("SELECT 'Pending email role must have no runtime members' xxx xxx"); }
+    catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe('syntax error at or near "xxx"');
+    expect((failure as Error).message).not.toContain('Pending email role must have no runtime members');
+  });
   it('installs the role under a hosted-style non-superuser migration principal', () => {
     const owner = `uat03_owner_${randomUUID().replaceAll('-', '')}`;
     const output = sql(`DROP ROLE arkova_email_pending;
@@ -64,11 +73,11 @@ describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
   });
   it.each(['authenticator', 'authenticated'])('rejects pending-role membership for %s', (member) => {
     expect(() => sql(`${freshPendingRole}; GRANT arkova_email_pending TO ${member}; ${roleGuard}`))
-      .toThrow(/Pending email role must have no runtime members/);
+      .toThrow(/^Pending email role must have no runtime members$/);
   });
   it('rejects a parent role that would give pending identities inherited authority', () => {
     expect(() => sql(`${freshPendingRole}; GRANT authenticated TO arkova_email_pending; ${roleGuard}`))
-      .toThrow(/Pending email role must have no parent roles/);
+      .toThrow(/^Pending email role must have no parent roles$/);
   });
 
   it('rejects a migration-principal grant that can assume the role', () => {
@@ -82,11 +91,11 @@ describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
           EXECUTE 'GRANT arkova_email_pending TO ${owner} WITH ADMIN OPTION';
         END IF;
       END $grant$; SET SESSION AUTHORIZATION ${owner}; ${roleGuard}`))
-      .toThrow(/Pending email role must have no runtime members/);
+      .toThrow(/^Pending email role must have no runtime members$/);
   });
   it('still rejects elevated attributes on an existing pending role', () => {
     expect(() => sql(`ALTER ROLE arkova_email_pending LOGIN; ${roleGuard}`))
-      .toThrow(/Pending email role must have no elevated role attributes/);
+      .toThrow(/^Pending email role must have no elevated role attributes$/);
   });
   it('enrolls a new OAuth identity but preserves existing and email-signup users', () => {
     const pending = randomUUID(); const existing = randomUUID(); const email = randomUUID();
