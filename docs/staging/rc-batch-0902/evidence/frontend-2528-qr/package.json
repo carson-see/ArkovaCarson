@@ -1,0 +1,19 @@
+{
+  "name": "evidence-2528-qr",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@napi-rs/canvas": "1.0.8",
+    "jsqr": "1.4.0",
+    "pdfjs-dist": "6.2.108",
+    "pngjs": "7.0.0"
+  }
+}

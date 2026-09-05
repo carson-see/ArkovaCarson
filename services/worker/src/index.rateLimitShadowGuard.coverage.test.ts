@@ -1,24 +1,34 @@
 /**
- * F-2 coverage completion — index.ts branch coverage.
+ * F-2 coverage completion — the shadow guard as it is actually mounted.
  *
- * `rateLimitShadowGuard.test.ts` proves the shadow-guard *behavior* but does
- * so against a locally-reconstructed middleware chain (its own copy of
- * `hasApiKeyCredential`), not the real `apiIpShadowGuard` defined in
- * index.ts:391-401. `index.test.ts` mocks `./utils/rateLimit.js` wholesale
- * (`rateLimit: () => passthrough`), so the real `skip` predicate built there
- * is constructed but never invoked — 0% branch coverage on index.ts:392-395
- * and :400, which dragged src/index.ts below the 60% branch threshold
+ * `index.test.ts` mocks `./utils/rateLimit.js` wholesale
+ * (`rateLimit: () => passthrough`), so the real `skip` predicate is
+ * constructed but never invoked — 0% branch coverage on the guard's
+ * credential check, which dragged src/index.ts below the 60% branch threshold
  * (CI run 30466372409: 52.63%).
  *
  * This file imports the real `./utils/rateLimit.js` (no mock) and drives
- * actual HTTP requests at the real exported `app` so `hasApiKeyCredential`'s
- * two branches and the `skip` predicate's `startsWith('/api/v1/') && ...`
- * short-circuit both execute with every truthy/falsy combination.
+ * actual HTTP requests at the real exported `app`, so `hasApiKeyCredential`'s
+ * two branches and the skip predicate's `startsWith('/api/v1/') && …`
+ * short-circuit both execute with every truthy/falsy combination — through the
+ * real mount chain in `index.ts`, not a reconstruction of it.
+ *
+ * SCRUM-2603/3418 moved the guard itself out of `index.ts` into
+ * `middleware/apiIpShadowGuard.ts`, and deleted the old
+ * `rateLimitShadowGuard.test.ts`, which asserted the same behaviour against a
+ * local copy of the predicate and stand-in caps (so it stayed green whatever
+ * production did). Division of labour now:
+ *
+ *   - `middleware/apiIpShadowGuard.test.ts` — the predicate and both limiters
+ *     in isolation, at their real caps, plus a source-scanning mount guard over
+ *     `index.ts`.
+ *   - THIS file — the same predicate reached through the real `app`, which is
+ *     the only place the mount chain itself is executed.
  *
  * Route used: `GET /api/badge/:publicId`, mounted directly behind
- * `apiIpShadowGuard` (index.ts:402). The badge lookup itself 404s without a
- * real anchor — irrelevant here, since only the guard's decision to call
- * `next()` vs. enforce the bucket is under test.
+ * `apiIpShadowGuard`. The badge lookup itself 404s without a real anchor —
+ * irrelevant here, since only the guard's decision to call `next()` vs. enforce
+ * the bucket is under test.
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';

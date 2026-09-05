@@ -1,0 +1,30 @@
+{
+  "$comment": "Paths cited by a scanned doc that are deliberately absent from the tree. Read scripts/ci/check-doc-pointers.ts first. An exemption is NOT a way to keep a rotten pointer: check-doc-pointers.test.ts fails if an exempted path starts resolving (stale entry) or if a reason is missing, so the list can only shrink by accident.",
+  "exemptions": [
+    {
+      "doc": "scripts/ci/agents.md",
+      "path": "src/lib/sonar-project.properties",
+      "reason": "Negative example. The sentence exists to say this path is REJECTED by the root-anchored T2 carve-out regex; the whole point is that it does not resolve."
+    },
+    {
+      "doc": "scripts/ci/agents.md",
+      "path": "services/worker/.sonarcloud.properties",
+      "reason": "Negative example, same sentence as src/lib/sonar-project.properties — a path the root-anchored carve-out regex must keep rejecting."
+    },
+    {
+      "doc": "scripts/ci/agents.md",
+      "path": "services/worker/.gitleaksignore",
+      "reason": "Negative example. Cited to show the exact-anchored gitleaksignore carve-out still rejects a non-root copy; a real file here would defeat the entry it documents."
+    },
+    {
+      "doc": "scripts/staging/targeted/agents.md",
+      "path": "docs/staging/soak-pr-1439.json",
+      "reason": "Output path in a documented command line (--evidence-out). The driver WRITES this file when run; it is evidence for one soak, not a tracked file."
+    },
+    {
+      "doc": "services/worker/src/api/v1/agents.md",
+      "path": "scripts/ci/check-verification-status-writers.ts",
+      "reason": "Named planned work. The line itself says the census rule is prose-only until this lint exists; deleting the pointer would delete the TODO."
+    }
+  ]
+}

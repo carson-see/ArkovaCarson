@@ -6,7 +6,7 @@
  * hard-refuses any arkova.* host so a misconfigured `--rpc` can never silently
  * route the confirmation back through us.
  *
- * The on-chain confirmation itself is delegated to `@arkova/verifier`'s
+ * The on-chain confirmation itself is delegated to `arkova-verifier`'s
  * `confirmInclusion` + `createEsploraFetch` (the SHARED, correct Esplora decode +
  * inclusion logic — see verify.ts). This module only owns the host policy: the
  * CLI must never be pointed at an Arkova-operated endpoint.

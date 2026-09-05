@@ -96,6 +96,16 @@ persistence.
 - Migration `0217_nca03_compliance_audits.sql` (NCA-03): `compliance_audits`
   table storing full audit history.
 
+## 2026-08-15 — FD-15: `professional-education.ts` `anchorId` is DB-sourced, so shape-only
+
+`ProfessionalEducationExtractionJobPayloadSchema.anchorId` is built from `anchor.id` — a row read
+out of `anchors` — by `buildProfessionalEducationJobPayload`, and re-parsed by
+`jobs/professional-education-extraction.ts` off `job.payload`. It never carries client input.
+
+Strict `z.string().uuid()` (Zod 4.x, RFC 9562) rejects UUIDs that Postgres `uuid` legitimately
+stores — the zero version/variant nibbles of our seeded fixtures are the live example — so
+validating our own stored id more harshly than the column that stores it could only false-reject.
+Now uses `dbUuid()` from `../utils/db-row-validation.ts`. See BUG-2026-08-12-003 / FD-15.
 ## 2026-08-15 — `ExpiryAnchor` fields now match the real schema (BUG-002)
 
 `ExpiryAnchor` declared `id` and `title`. The only caller
@@ -112,3 +122,44 @@ The interface now reads `public_id` / `label`, and `credential_type` is
 
 `categorizeExpiringDocuments` / `groupByOrg` are pure and unchanged; only the
 field names moved.
+
+## 2026-08-23 email redaction is @-anchored, not address-anchored
+
+`stripSensitiveString` no longer runs a single address regex. The previous
+pattern — `\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi` — is quadratic (Sonar
+`typescript:S8786`), and it runs on arbitrary, **uncapped** `Jsonish` values on
+the way into the CPE/CLE extraction prompts (`ai/prompts/*-extraction-prompt.ts`)
+on a single-threaded worker. Measured on `'a.'.repeat(40000)`: 3,245 ms, versus
+0.02 ms now.
+
+**Bounding the local-part quantifier — the fix PR #2346 used for the browser's
+`src/lib/piiStripper.ts` — is NOT sufficient here, and that is the whole point of
+this note.** That pattern has no `\b`; this one did. Both ways of porting it
+UNDER-REDACT, and both were measured, not reasoned about:
+
+- **Keep `\b`, bound the local part:** a local-part run longer than 64 characters
+  cannot reach the `@` from the only offset `\b` allows, so the pattern matches
+  NOTHING and the entire address survives in the clear. 5,661 such cases in a
+  362,100-case differential fuzz.
+- **Drop `\b`, bound the local part:** the scan can now start earlier and match a
+  SHORTER address, which moves `lastIndex` and desynchronises the `/g` iteration,
+  so a longer address later in the string is missed. 387 such cases in an
+  842,500-case fuzz.
+
+No bounded regex variant tried reached zero. Enumerating `@` positions removes
+both failure modes by construction: the domain class excludes `@`, so every `@`
+is visited exactly once and the total forward scan is bounded by the input
+length, while the backward walk is bounded by `MAX_LOCAL_PART`. A 982,500-case
+differential fuzz over seven adversarial alphabets found **zero** inputs where an
+`@`, or any domain character, that the old pattern redacted survives this one.
+
+One intended divergence, matching #2346: on a local-part run longer than 64
+characters only the trailing 64 are redacted, so the leading excess survives. A
+>64-octet local-part is not a legal address, and the `@` and the entire domain
+still go.
+
+`redactEmails` absorbs an `@domain` run that butts directly against the previous
+redaction — its local part was consumed by that address, and without the absorb
+step `@domain` is left behind in the clear. That case is pinned in
+`professional-education.adversarial.test.ts`; it is the exact shape that made the
+naive "drop `\b`" port leak.

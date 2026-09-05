@@ -17,11 +17,22 @@ the full subdirectory table). This file carries the cross-cutting rules.
   still traverse public `mempool.space`. Read the path-by-path table below
   before changing chain code or making a sovereignty claim in customer-facing
   material.
-- **In-process `node-cron` does NOT fire on Cloud Run.** Proven by the
-  real-network soak: schedulers registered in `routes/scheduled.ts` go dormant
-  under CPU throttling. Production cron is **Cloud Scheduler -> HTTP** against
-  `routes/cron.ts`. A job wired only in-process silently never runs. Wire both,
-  and treat the HTTP endpoint as the one that actually executes.
+- **In-process `node-cron` fires on every warm instance — it is not inert in
+  prod** (SCRUM-3384; this bullet previously claimed the opposite and several
+  safety arguments rested on it). A node-cron timer only stops firing once its
+  revision has scaled to ZERO, which is what the real-network soak observed on a
+  scale-to-zero rig. Prod `arkova-worker` deploys `--min-instances 2
+  --max-instances 10`, so every job in `routes/scheduled.ts` runs on 2-10
+  instances concurrently, alongside the Cloud Scheduler call. Two consequences,
+  both live:
+  - Production cron is still **Cloud Scheduler -> HTTP** against `routes/cron.ts`
+    — that is the trigger with retries, an attempt deadline and run history. A
+    job wired only in-process has no durable trigger and will not run at all on
+    a scale-to-zero deployment. Wire both.
+  - A job registered in `routes/scheduled.ts` needs a real concurrency answer.
+    `routes/in-process-cron-audit.ts` records that answer per job and its test
+    fails the build if a new registration lands without one. Seven jobs are
+    currently recorded `unguarded`; read that file before adding an eighth.
 - **§1.6A connector-byte controls are enforced, not aspirational** (SCRUM-2492,
   2026-06-16). Six coupled mechanisms keep connector-fetched document bytes out
   of every leak sink: the `eslint-rules/no-connector-bytes-to-sink.cjs` rule,
