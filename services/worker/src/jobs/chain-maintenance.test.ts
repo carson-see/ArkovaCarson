@@ -206,6 +206,26 @@ describe('Chain Maintenance Jobs', () => {
       expect(mockLogger.info).not.toHaveBeenCalledWith(expect.anything(), 'Reorg detection complete — no reorgs');
     });
 
+    it.each(['tip', 'transaction'])('bounds a stalled %s response body and reports incomplete', async (stage) => {
+      vi.useFakeTimers();
+      try {
+        const stalled = () => new Promise<never>(() => {});
+        const chain = mockDbChain([{ id: 'a1', org_id: 'o1', chain_tx_id: 'tx1', chain_block_height: 99, chain_block_hash: 'stored' }], null);
+        mockDb.from.mockReturnValue(chain);
+        global.fetch = stage === 'tip'
+          ? vi.fn().mockResolvedValue({ ok: true, text: stalled })
+          : vi.fn().mockResolvedValueOnce({ ok: true, text: async () => '100' }).mockResolvedValueOnce({ ok: true, json: stalled });
+        let settled = false;
+        const result = detectReorgs().then((value) => { settled = true; return value; });
+        await vi.advanceTimersByTimeAsync(10001);
+        expect(settled).toBe(true);
+        expect(await result).toMatchObject({ completed: false, reason: stage === 'tip' ? 'tip_unavailable' : 'transaction_check_failed' });
+        expect(chain.update).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('reports completed when the window is genuinely empty', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true, text: async () => '100',

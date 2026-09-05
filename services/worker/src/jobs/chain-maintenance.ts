@@ -24,6 +24,7 @@ import { config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { resolveMempoolHostBase } from '../utils/mempool-url.js';
 import { z } from 'zod';
+import { readJsonBounded, readTextBounded } from '../utils/body-read-timeout.js';
 import type { Json } from '../types/database.types.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────
@@ -444,7 +445,7 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
     }
     let tipHeight: number;
     try {
-      const rawTip = (await tipResp.text()).trim();
+      const rawTip = (await readTextBounded(tipResp, 'reorg chain tip', 10000)).trim();
       tipHeight = Number(rawTip);
       if (!/^\d+$/.test(rawTip) || !Number.isSafeInteger(tipHeight) || tipHeight < 0) {
         throw new Error('Invalid chain tip height');
@@ -538,7 +539,7 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
             z.object({ confirmed: z.literal(false) }),
             z.object({ confirmed: z.literal(true), block_height: z.number().int().nonnegative().safe(), block_hash: z.string().min(1).optional() }),
           ]),
-        }).parse(await resp.json());
+        }).parse(await readJsonBounded(resp, 'reorg transaction status', 10000));
         if (txData.status.confirmed && !txData.status.block_hash && affected.some(a => a.chain_block_hash != null)) {
           throw new Error('Confirmed transaction is missing the block identity needed for comparison');
         }
