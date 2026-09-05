@@ -18,8 +18,27 @@ DO $$ BEGIN
     AND (rolsuper OR rolbypassrls OR rolcanlogin OR rolinherit OR rolcreaterole OR rolcreatedb OR rolreplication)) THEN
     RAISE EXCEPTION 'Pending email role must have no elevated role attributes';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid WHERE r.rolname='arkova_email_pending') THEN
-    RAISE EXCEPTION 'Pending email role must have no members';
+  -- PostgreSQL 16+ automatically gives a non-superuser creator ADMIN membership,
+  -- granted by the bootstrap superuser, with SET/INHERIT both false. Supabase's
+  -- postgres migration principal receives this grant. It cannot assume the role.
+  -- Permit only that administration-only grant to this trusted migration principal.
+  -- JSON catalog access keeps PG15 compatibility; absent option fields fail closed.
+  IF EXISTS (
+    SELECT 1 FROM pg_auth_members m
+    JOIN pg_roles r ON r.oid=m.roleid
+    JOIN pg_roles member_role ON member_role.oid=m.member
+    JOIN pg_roles grantor_role ON grantor_role.oid=m.grantor
+    WHERE r.rolname='arkova_email_pending'
+      AND NOT (member_role.rolname=current_user AND member_role.rolcreaterole
+        AND member_role.rolbypassrls AND grantor_role.rolsuper AND m.admin_option
+        AND (to_jsonb(m)->>'set_option')::boolean IS FALSE
+        AND (to_jsonb(m)->>'inherit_option')::boolean IS FALSE)
+  ) THEN
+    RAISE EXCEPTION 'Pending email role must have no runtime members';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member
+    WHERE r.rolname='arkova_email_pending') THEN
+    RAISE EXCEPTION 'Pending email role must have no parent roles';
   END IF;
 END $$;
 -- Intentionally NO GRANT arkova_email_pending TO authenticator. This prevents

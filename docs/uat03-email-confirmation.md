@@ -83,8 +83,10 @@ Local fixtures are not hosted Google consent, actual email receipt, or productio
    worker/edge/app code, and verify positive and negative product paths, cross-device email completion,
    real email receipt, expiry, resend, account switching and rollback at the exact candidate commit.
 3. Read the existing hosted custom access-token-hook configuration and compose any existing behavior.
-   Production `/config/auth` returned 403 during this work; its current hook is UNKNOWN. Never replace
-   an unknown hook. Provider/domain configuration belongs to UAT-02 and may change JWT issuer handling.
+   The initial 403 was resolved by the release-review User-Agent: root read production and owned
+   preview Auth configuration successfully on 2026-09-05. Both custom access-token hooks are disabled
+   with URI NULL; no existing hook behavior needs composition at that read. Recheck before installation.
+   Provider/domain configuration belongs to UAT-02 and may change JWT issuer handling.
 4. Install and verify the hook while enrollment remains disabled. Then set `enabled_at` to current
    server `clock_timestamp()`. Do not backdate: accounts that received pre-hook ordinary JWTs are
    deliberately grandfathered. Confirm hook propagation before activation.
@@ -100,3 +102,15 @@ The actual beta form removal belongs to PR #2653; this branch does not claim tha
 ## Browser integration evidence
 
 Seven cases run against the actual App/PublicOnly/AuthGuard/signup components with external Auth/worker boundaries mocked. Pending users reach signup before any profile query; a confirmed token resumes profile loading and existing onboarding. Normal authenticated signup/login routes preserve their destination. Recovery clears local auth before navigating to the actual login form. Desktop 1280px and mobile 375px captures show all actions with no horizontal overflow. Run `node_modules/.bin/playwright test --config playwright.uat03.config.ts`; CI invokes this dedicated fixture before hosted-stack setup and uploads screenshots. These UI mocks complement, but do not replace, the real local GoTrue/SQL and required hosted release evidence.
+
+## Guarded hosted driver
+
+`python3 scripts/staging/uat03_mailbox_driver.py --manifest <owned-manifest.json>` defaults to a no-network dry run. The manifest contains only `kind` (`preview` or `standalone`), `projectRef`, `workerUrl`, `appUrl`, exact `head`, and the reviewed `hookUri`; preview additionally requires the independently identified `branchId`. Only PR2655's exact preview or the planned named standalone project can pass identity checks. Production/shared references and arbitrary worker URLs are rejected. Execution also compares committed driver bytes, hosted project identity, enabled reviewed hook configuration and `/health` head before creating fixture users.
+
+`--execute --evidence-out <artifact.json>` runs actual GoTrue and worker requests with real mailbox receipt. Default `--mailbox-mode stdin` prints only the unique recipient, app origin and issue time, then accepts one JSON line (`recipient`, `appOrigin`, `receivedAtMs`, `messageId`, `token`) from the operator Gmail adapter. The adapter must retrieve that exact newly received test email and verify its link origin; the runner validates those metadata bindings and disables PTY echo before input. Optional `--mailbox-mode imap` reads the mailbox directly. Required environment: `STAGING_SUPABASE_SERVICE_ROLE_KEY`, `STAGING_SUPABASE_ANON_KEY`, `SUPABASE_ACCESS_TOKEN`, `UAT03_TEST_MAILBOX` (owned mailbox supporting plus aliases, currently Carson’s `carson@arkova.ai` via Gmail). Only IMAP mode additionally requires `UAT03_IMAP_HOST`, `UAT03_IMAP_USER`, `UAT03_IMAP_PASSWORD`. Cloud Run IAM comes from captured `gcloud auth print-identity-token`; optional `STAGING_GCP_IDENTITY` is limited to short runs. Credentials, mailbox links and provider response bodies are never written to evidence.
+
+The runner checks pending/ordinary Auth and Data API behavior, key-mint denial versus ordinary request validation, real resend timing, superseded proof, concurrent completion, replay, old pending-session denial and refreshed access, changed email, and actual 15-minute expiry. `--duration-minutes 2880` repeats pending/ordinary authorization controls after that sequence. Fixtures are OAuth-shaped admin-created test identities, so this is not a Google consent roundtrip. Cleanup deletes only the Auth IDs created in this run. Evidence always leaves `hostedReleaseComplete` false: hosted browser account switching, Storage/Realtime/MCP protocol controls, rollback, full CI and independent release approval remain explicit gates. The driver never provisions infrastructure, installs hooks or changes enrollment policy. It has not been executed against hosted services.
+
+## Hosted role-creation compatibility
+
+Hosted PostgreSQL17 creates an administration-only membership for its non-superuser `postgres` migration principal: grantor `supabase_admin`, ADMIN true, SET false, INHERIT false. A rollback-only preview probe confirmed that difference from the native superuser fixture. The guard permits only that grant to the current CREATEROLE/BYPASSRLS migration principal from a superuser grantor; runtime members, parent roles and elevated pending-role attributes remain rejected. Missing membership-option columns on PostgreSQL15 do not satisfy the exception. Sixteen SQL cases now include superuser and hosted-style non-superuser creation plus authenticator/authenticated and parent-role rejection. See PostgreSQL's [role attribute documentation](https://www.postgresql.org/docs/17/role-attributes.html).

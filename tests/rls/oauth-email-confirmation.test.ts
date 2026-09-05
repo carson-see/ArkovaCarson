@@ -2,6 +2,7 @@
 import { promisify } from 'node:util';
 import { execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
@@ -18,9 +19,48 @@ function sql(body: string) {
 function user(id: string, provider = 'google', age = '0 seconds') {
   return `INSERT INTO auth.users(id,email,raw_app_meta_data,created_at,email_confirmed_at) VALUES ('${id}','${id}@example.invalid','{"provider":"${provider}"}',now()-interval '${age}',now())`;
 }
+const roleGuard = readFileSync(new URL('../../supabase/migrations/0436_scrum4035_oauth_email_confirmation.sql', import.meta.url), 'utf8').match(/DO \$\$[\s\S]+?END \$\$;/)?.[0];
+if (!roleGuard) throw new Error('Pending-role installation guard was not found');
 const enable = "UPDATE private.oauth_email_confirmation_policy SET enabled_at=now()-interval '1 second' WHERE singleton";
 
 describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
+  it('installs the role under a hosted-style non-superuser migration principal', () => {
+    const owner = `uat03_owner_${randomUUID().replaceAll('-', '')}`;
+    const output = sql(`DROP ROLE arkova_email_pending;
+      CREATE ROLE ${owner} CREATEROLE BYPASSRLS;
+      SET ROLE ${owner}; ${roleGuard}; SELECT 'creator_guard_passed'; RESET ROLE`);
+    expect(output).toContain('creator_guard_passed');
+  });
+  it('installs under a superuser with no creator membership', () => {
+    expect(sql(`DROP ROLE arkova_email_pending; ${roleGuard}; SELECT 'superuser_guard_passed'`))
+      .toContain('superuser_guard_passed');
+  });
+  it.each(['authenticator', 'authenticated'])('rejects pending-role membership for %s', (member) => {
+    expect(() => sql(`GRANT arkova_email_pending TO ${member}; ${roleGuard}`))
+      .toThrow(/Pending email role must have no runtime members/);
+  });
+  it('rejects a parent role that would give pending identities inherited authority', () => {
+    expect(() => sql(`GRANT authenticated TO arkova_email_pending; ${roleGuard}`))
+      .toThrow(/Pending email role must have no parent roles/);
+  });
+
+  it('rejects a migration-principal grant that can assume the role', () => {
+    const owner = `uat03_owner_${randomUUID().replaceAll('-', '')}`;
+    expect(() => sql(`DROP ROLE arkova_email_pending; CREATE ROLE ${owner} CREATEROLE BYPASSRLS;
+      SET ROLE ${owner}; CREATE ROLE arkova_email_pending NOLOGIN NOINHERIT;
+      RESET ROLE; DO $grant$ BEGIN
+        IF current_setting('server_version_num')::int >= 160000 THEN
+          EXECUTE 'GRANT arkova_email_pending TO ${owner} WITH SET TRUE';
+        ELSE
+          EXECUTE 'GRANT arkova_email_pending TO ${owner} WITH ADMIN OPTION';
+        END IF;
+      END $grant$; SET ROLE ${owner}; ${roleGuard}`))
+      .toThrow(/Pending email role must have no runtime members/);
+  });
+  it('still rejects elevated attributes on an existing pending role', () => {
+    expect(() => sql(`ALTER ROLE arkova_email_pending LOGIN; ${roleGuard}`))
+      .toThrow(/Pending email role must have no elevated role attributes/);
+  });
   it('enrolls a new OAuth identity but preserves existing and email-signup users', () => {
     const pending = randomUUID(); const existing = randomUUID(); const email = randomUUID();
     const output = sql(`${enable}; ${user(pending)}; ${user(existing, 'google', '1 day')}; ${user(email, 'email')};

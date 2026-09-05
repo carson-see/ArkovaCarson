@@ -18,8 +18,9 @@
 
 Implementation is on `cto/uat03-oauth-confirmation-20260905`; **not released or activated**.
 See [the scope, evidence, and rollout gates](docs/uat03-email-confirmation.md).
-Migration 0436 keeps activation NULL; existing production Auth hook configuration is unknown
-(read returned 403), so never overwrite it. UAT-02 owns Google consent branding; UAT-04 owns
+Migration 0436 keeps activation NULL. Root resolved the initial Auth-config403 and read both
+production/owned preview hooks disabled with URI NULL; recheck before installation. UAT-02 owns
+Google consent branding; UAT-04 owns
 MFA; UAT-17 owns verified-domain policy. The retired beta env sample cleanup belongs to
 SCRUM-4031/PR #2653 and is carried with this auth configuration change by CTO assignment.
 
