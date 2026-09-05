@@ -111,37 +111,23 @@ Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` /
 before any session can write to Jira/Confluence; whoever picks this up should file it before
 closing out.
 
-### Soaks — MFA enforcement (SCRUM-3167 / SCRUM-3584): PR #2635 exercise RUNNING, PR #2637 pending — do not touch rig `nesuwjlscilzzbhpvbkt`
+### Soaks — MFA enforcement (SCRUM-3167 / SCRUM-3584): PR #2635 MERGED; PR #2637 in the release session's 48 h T3 window — rig `nesuwjlscilzzbhpvbkt` IN USE, do not tear down
 
-- **Rig:** isolated Supabase project **`nesuwjlscilzzbhpvbkt`** (`arkova-soak-mfa-3167`, us-east-2, PG 17, created
-  2026-09-03T06:31Z by the CTO session). **No Cloud Run service** — PR #2637 is frontend-only and PR #2635 is an operator
-  CLI; neither touches the worker. Schema replayed from origin/main `17f24e26c` (`db push --include-all` to 0380, then
-  psql over the session pooler for 0381→0419 because the CLI pipeline cannot run `CREATE INDEX CONCURRENTLY`; dry-run
-  "up to date"; 119 ledger rows; baseline fixture seeded). Preflight **`clean_mirror`** at 2026-09-03T06:37:42Z →
-  `~/arkova-soak/mfa-3167/evidence/preflight-iso-open-20260903T063740Z.json`. TOTP enroll/verify ON (Management API);
-  a real enrol→challenge→verify→aal2→unenrol round trip passed at 06:38:03Z.
-- **Why not the standing rig:** an honest preflight of `fizyjojbebyalirtjjht` (run from an origin/main checkout WITH
-  `--prod-project-ref`) classifies it **`soak_artifact`** — PR-only ledger row `0420 scrum2538_check_unified_credits_fail_closed`
-  from open PR #2442's soak (`~/arkova-soak/mfa-3167/evidence/preflight-standing-rig-honest-*.json`). The earlier
-  "clean_mirror" reading of that rig used the script's hardcoded default prod versions and a lagging checkout. The standing
-  rig was left untouched.
-- **PR #2635 (break-glass CLI, T1-declared, 12 h exercise):** head **`bccc24a09f274484f0079afac0ab7f30905d7233`** (post-`/simplify`),
-  frozen checkout `~/arkova-soak/mfa-3167/checkouts/wt-pr-b`. Clock **2026-09-03T07:05:25Z → 19:05:25Z** (a first window on
-  `ab5b7d2bb`, 06:40:30Z→06:57Z, was discarded when the cleanup commit changed the head — `bg-window1-ab5b7d2bb-discarded/`), supervisor
-  `~/arkova-soak/mfa-3167/break-glass-supervisor.sh` (detached), 10-min cycles: disposable user → enrol+verify → dry run →
-  negative probes (CONFIRM mismatch, foreign factor id, `--all` without `CONFIRM_MFA_BREAK_GLASS_ALL`) → apply → factor gone →
-  both audit rows → re-enrol → cleanup. Per-cycle JSON `~/arkova-soak/mfa-3167/bg-evidence/`; pre-clock validation cycle
-  (ok=34 fail=0 on each head) quarantined under `bg-validation-2026-09-03/`, not evidence. PR stays **draft**; `Human approver:` is Carson's.
-- **PR #2637 (enforcement, frontend-only T2, 12 h):** head **`1a24af93e6c132597005796861ffc2657d14f33f`** (R1–R26; the
-  last delta is e2e-only), frozen checkout `~/arkova-soak/mfa-3167/checkouts/wt-pr-a`. Clock **2026-09-03T12:51:18Z →
-  2026-09-04T00:51:18Z**: API-leg driver `supervisor.sh` (10-min cycles, `evidence/load-*.json`, each bound to `pr_head`) +
-  continuous UI leg `ui-soak-supervisor.sh` (one `vite preview` of the head on :4173 for the window, Playwright spec every
-  30 min, `evidence/ui/run-*.json`). A first window on `7bef48bbc` (09:08:33Z→12:50:16Z, 22 API cycles + 8 UI runs, one
-  UI run lost to a Playwright sign-out→login navigation race in the helper) is quarantined under
-  `pr-a-window-20260903T125027Z-7bef48bbc-discarded/`. Mid-soak preflight of the rig at 10:44:42Z: still `clean_mirror`.
-  Pre-clock validation on the new head: spec 6/6. PR stays **draft**; RM line and Ready are Carson's.
-- **Teardown:** delete `nesuwjlscilzzbhpvbkt` when BOTH soaks close (§7 sweep). It appears in the Supabase project list; do not
-  sweep it before then.
+- **Rig:** isolated Supabase project **`nesuwjlscilzzbhpvbkt`** (`arkova-soak-mfa-3167`, us-east-2), created 2026-09-03T06:31Z by
+  the CTO session (schema replayed from origin/main; preflight `clean_mirror` 06:37:42Z and again mid-window 10:44:42Z). It is
+  now the staging project of PR #2637's **current** window (see the PR body: T3, head `7016f0aa70c09cfff3e54c3b0955d0122740f8d0`,
+  clock 2026-09-05T16:32:46Z → no earlier than 2026-09-07T16:32:46Z, run by the release session). **Teardown only after that
+  window closes** (§7 sweep).
+- **PR #2635 (break-glass CLI): MERGED 2026-09-05T00:33:02Z** at head `bccc24a09f274484f0079afac0ab7f30905d7233` after the 12 h
+  exercise 2026-09-03T07:05:22Z → 19:05:23Z: **71 cycles, 0 failing**. Evidence persisted under
+  `docs/staging/mfa-enforcement-2026-09/break-glass-2026-09-03/` (per-cycle JSON bound to `pr_head` + rig ref).
+- **PR #2637 (enforcement): the 09-03 window on head `1a24af93e…` closed clean** — 2026-09-03T12:51:11Z → 2026-09-04T00:51:12Z,
+  API leg 72/72 cycles, Playwright leg 24/24 runs (`docs/staging/mfa-enforcement-2026-09/enforcement-2026-09-03/`). It is
+  **superseded**: the release session added five commits on 2026-09-05 (token-refresh enrolment preservation, pending-challenge
+  preservation, mobile sign-out spec), re-tiered the PR **T3** and started the 48 h window above. PR #2637 is frozen evidence
+  (`do-not-merge` = window marker); the RM line and Ready remain Carson's.
+- **Design ruling in force:** challenge path fails CLOSED; fail-open enrolment-only (see `### Auth — MFA enforcement design ruling`);
+  server-side aal2 enforcement = SCRUM-4026.
 
 ### Soaks — DocuSign **guard** T3 (RUNNING — do not touch)
 
@@ -2190,4 +2176,4 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
-_Last refreshed: 2026-09-05 by Codex CTO — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-05 by CTO session (Claude) — claims verified against `gh pr view` (#2635 merged, #2637 head/body), the harness evidence under `~/arkova-soak/mfa-3167/`, and the Supabase Management API project list._
