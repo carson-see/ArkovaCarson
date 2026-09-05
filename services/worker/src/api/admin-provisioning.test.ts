@@ -245,6 +245,28 @@ describe('createUserAccount', () => {
     }));
   });
 
+  it.each([false, true])('returns a usable link after confirmation when email is attempted=%s', async (attemptEmail) => {
+    // GoTrue confirmation clears auth.one_time_tokens, including previously
+    // generated recovery links. A stale action_link must never be returned.
+    const usableLinks = new Set<string>();
+    let sequence = 0;
+    mockSendEmail.mockResolvedValue({ success: false });
+    const deps = makeDeps(userQueues(), {
+      updateUserById: vi.fn(async () => {
+        usableLinks.clear();
+        return { data: { user: { id: 'new-user-id' } }, error: null };
+      }),
+      generateLink: vi.fn(async () => {
+        const link = `https://app.arkova.test/set-password?fixture=${++sequence}`;
+        usableLinks.add(link);
+        return { data: { properties: { action_link: link } }, error: null };
+      }),
+    });
+    const result = await createUserAccount(deps, ACTOR, userInput({ send_invite_email: attemptEmail }));
+    expect(result.invite_email_sent).toBe(false);
+    expect(usableLinks.has(result.activation_link ?? '')).toBe(true);
+  });
+
   it('rolls back when no activation link can be delivered', async () => {
     const deps = makeDeps(userQueues(), {
       generateLink: vi.fn(async () => ({ data: null, error: { code: 'unexpected_failure', message: 'secret-person@example.com' } })),
@@ -349,6 +371,7 @@ describe('createUserAccount', () => {
     expect(mockSendEmail).toHaveBeenCalledTimes(1);
     expect(r.invite_email_sent).toBe(true);
     expect(r.activation_link).toBeNull();
+    expect(deps.db.auth.admin.updateUserById).not.toHaveBeenCalled();
   });
 
   it('F6: opting out sends nothing, confirms the email, and returns the link for manual delivery', async () => {

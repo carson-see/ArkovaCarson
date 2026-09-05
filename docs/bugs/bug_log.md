@@ -1268,3 +1268,7 @@ Brand assets were never created/integrated. `index.html` has minimal `<head>` wi
 | 2026-03-11 ~12:30 AM EST | E2E testing + stress testing sprint complete (116 new tests). No new bugs found. Documentation audit: updated stale CRIT-1/4/5/6 references across 9 story docs + 3 confluence docs. |
 | 2026-03-12 | Full audit: 3 new bugs (BUG-AUDIT-01 toast system, BUG-AUDIT-02 dead footer links, BUG-AUDIT-03 missing brand assets). Active: 5, Resolved: 15. Linked to MVP-02, MVP-03, MVP-04 stories. |
 | 2026-03-11 | SonarQube remediation sprint complete (8 batches). Fixed: S2068 hard-coded credentials, S6437 ReDoS, S8215 Express disclosure, S2004 nested functions, 24 security hotspots, HIGH/MEDIUM/LOW severity issues across ~30 files. 66 MAJOR/MINOR issues verified as already fixed (stale). 2 false positives marked (S3776 csvParser + check-copy-terms). All worker type errors resolved. Branch: `fix/sonarqube-security-hotspots`. |
+
+### 2026-09-05 — SCRUM-4460: confirmation invalidated returned activation link
+
+The real worker-created recipient probe returned immediate `otp_expired`: `auth.users.recovery_token` still matched the link, but confirmation after link generation had removed its `auth.one_time_tokens` row. Manual and failed-email delivery now confirm after placement, then mint the returned recovery link. Successful email delivery remains unconfirmed until the recipient acts. Both fallback paths have stateful regression tests; failed browser/DB receipts are preserved. The direct-GoTrue password-page test alone did not establish this full workflow.

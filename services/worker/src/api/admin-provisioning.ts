@@ -351,37 +351,27 @@ async function activateAccount(
   deps: AdminProvisioningDeps, userId: string, input: CreateUserAccountInput,
 ): Promise<{ activationLink: string | null; inviteEmailSent: boolean }> {
   const { db } = deps;
-  let activationLink: string | null = null;
-  let inviteEmailSent = false;
-  const link = await generateSetPasswordLink(deps, input.email);
-  if (!link) throw new ProvisioningError('Failed to create an activation link for the account.', 'internal_error');
-
   if (input.send_invite_email) {
-    inviteEmailSent = await sendProvisioningEmail(deps, {
+    const emailLink = await generateSetPasswordLink(deps, input.email);
+    if (!emailLink) throw new ProvisioningError('Failed to create an activation link for the account.', 'internal_error');
+    const sent = await sendProvisioningEmail(deps, {
       email: input.email,
       orgId: input.org_id,
-      link,
+      link: emailLink,
     });
+    if (sent) return { activationLink: null, inviteEmailSent: true };
   }
 
-  // F6, both branches: if no email actually went out — because the admin
-  // opted out OR because the send failed — nobody has been told this account
-  // exists. Hand the link back for out-of-band delivery and make the account
-  // immediately usable. Reporting a send that did not happen is the silent
-  // failure this whole flow exists to avoid, so this is keyed on the ACTUAL
-  // send result, never on the caller's intent.
-  if (!inviteEmailSent) {
-    activationLink = link;
-    // Confirming AFTER role and org are written makes the auto-association
-    // profile update a no-op.
-    const { error: confirmError } = await db.auth.admin.updateUserById(userId, {
-      email_confirm: true,
-    });
-    if (confirmError) {
-      throw confirmError;
-    }
-  }
-  return { activationLink, inviteEmailSent };
+  // Manual delivery and failed email delivery confirm only AFTER placement.
+  // GoTrue confirmation deletes one-time tokens, including recovery links.
+  // Mint the returned link AFTER confirmation so it survives that operation.
+  const { error: confirmError } = await db.auth.admin.updateUserById(userId, {
+    email_confirm: true,
+  });
+  if (confirmError) throw confirmError;
+  const activationLink = await generateSetPasswordLink(deps, input.email);
+  if (!activationLink) throw new ProvisioningError('Failed to create an activation link for the account.', 'internal_error');
+  return { activationLink, inviteEmailSent: false };
 }
 
 export async function createUserAccount(
