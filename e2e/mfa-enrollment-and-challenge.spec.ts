@@ -127,7 +127,7 @@ test.describe('MFA enrollment and login challenge', () => {
       // back in: the fresh aal1 session must now be challenged.
       // The compact header shows initials at mobile widths; target the actual
       // user-menu trigger, whose full display name is visually hidden there.
-      await page.getByRole('banner').locator('button[aria-haspopup="menu"]').click();
+      await page.getByRole('banner').getByRole('button').filter({ hasText: fullName }).click();
       await page
         .getByRole('menuitem', { name: 'Sign out' })
         .or(page.getByRole('button', { name: 'Sign out' }))
