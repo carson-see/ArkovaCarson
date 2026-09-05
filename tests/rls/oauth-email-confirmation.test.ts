@@ -125,8 +125,8 @@ describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
     const id = randomUUID(); const org = randomUUID(); const digest = 'c'.repeat(64);
     const email = `${id}@${org}.invalid`;
     const output = sql(`${enable};
-      INSERT INTO public.organizations(id,display_name,domain,domain_verified,verification_status)
-        VALUES('${org}','UAT03 isolated fixture','${org}.invalid',true,'VERIFIED');
+      INSERT INTO public.organizations(id,legal_name,display_name,domain,domain_verified,verification_status)
+        VALUES('${org}','UAT03 isolated fixture LLC','UAT03 isolated fixture','${org}.invalid',true,'VERIFIED');
       INSERT INTO auth.users(id,email,raw_app_meta_data,created_at,email_confirmed_at)
         VALUES('${id}','${email}','{"provider":"google"}',now(),now());
       SELECT 'before='||count(*) FROM public.org_members WHERE user_id='${id}';
