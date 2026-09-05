@@ -51,7 +51,7 @@ It is intended to be re-reviewed annually and re-executed whenever there is a ma
 | RLS multi-tenant isolation | Database-level enforcement of org boundary | Prevents cross-tenant government-compelled disclosure from affecting unrelated exporters |
 | Encryption at rest + in transit | AES-256 / TLS 1.2+ | Mitigates bulk collection risk |
 | Hardware-backed key management | GCP Cloud KMS (HSM-backed) for signing keys | Compels lawful process to reach discrete keys rather than bulk key material |
-| MFA on admin access | FIDO2 hardware keys required | Mitigates account takeover |
+| MFA available (opt-in) | TOTP authenticator app; administrator enforcement in progress (SCRUM-3167), NOT yet enforced | Mitigates account takeover once enforcement ships |
 | Append-only audit log | Immutable RLS-protected events | Enables reconstruction of any disclosure |
 
 ---

@@ -80,6 +80,18 @@ content_path = "./supabase/templates/magic_link.html"
 enable_signup = false
 enable_confirmations = false
 
+
+# Multi-factor authentication (SCRUM-3167). The Supabase CLI default is enroll_enabled=false /
+# verify_enabled=false, so the local + CI stack (`supabase start`) could not exercise TOTP at all.
+# This mirrors the production project setting and lets the Playwright MFA specs run in CI.
+# `enroll_enabled` requires `verify_enabled` (CLI validation).
+[auth.mfa]
+max_enrolled_factors = 10
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
 [analytics]
 enabled = false
 port = 54327
