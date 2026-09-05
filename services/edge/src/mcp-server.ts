@@ -458,7 +458,14 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     // NOTE 2026-04-20 MCP security audit: description previously claimed
     // "HMAC-signed results for tamper detection" — implementation did no
     // such signing. Claim removed; real HMAC signing tracked as MCP-SEC-02.
-    'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
+    // SCRUM-3818 (2026-08-30): this was a hardcoded string literal, so the
+    // fingerprint_source evidence-strength caveat added to
+    // TOOL_DEFINITIONS['oracle_batch_verify'].description in mcp-tools.ts
+    // never reached the live registration — every other evidence-carrying
+    // tool below sources its description from TOOL_DESC (built from
+    // TOOL_DEFINITIONS), this one alone did not. See
+    // mcp-server.registrations.test.ts for the regression guard.
+    TOOL_DESC['oracle_batch_verify'],
     {
       public_ids: z.array(publicIdSchema).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),
     },

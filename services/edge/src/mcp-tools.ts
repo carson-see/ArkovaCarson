@@ -282,7 +282,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: 'verify_credential',
     description:
       'Verify a credential\'s authenticity and current status by its public identifier. ' +
-      'Returns verification status, issuer information, credential type, dates, and network anchoring proof.',
+      'Returns verification status, issuer information, credential type, dates, and network anchoring proof. ' +
+      'Evidence strength is not uniform: check the returned fingerprint_source — ' +
+      '"issuer_record_attestation" means Arkova did not independently measure the fingerprint ' +
+      'from a document (fingerprint_evidence_note explains why); only "document_bytes" is a ' +
+      'fingerprint Arkova computed from document bytes itself.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -413,7 +417,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: 'verify_document',
     description:
       'Verify a document by its SHA-256 fingerprint. Checks if the document has been ' +
-      'anchored and returns the anchor proof including the network receipt and timestamp.',
+      'anchored and returns the anchor proof including the network receipt and timestamp. ' +
+      'Check the returned fingerprint_source before treating every match as equally strong: ' +
+      '"issuer_record_attestation" means Arkova never independently measured this fingerprint ' +
+      'from a document.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -430,7 +437,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       'Verify multiple credentials in a single call. Accepts up to 100 public IDs ' +
       'and returns each result in input order. Use this when an agent needs to validate ' +
-      'a list of credentials (e.g., a candidate portfolio, a screening pipeline batch).',
+      'a list of credentials (e.g., a candidate portfolio, a screening pipeline batch). ' +
+      'Evidence strength varies per record — check each result\'s fingerprint_source rather ' +
+      'than assuming every entry in the batch was verified the same way.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -475,7 +484,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'verify',
     description:
-      'Agent-friendly v2 verification tool. Verify whether a SHA-256 document fingerprint has been anchored.',
+      'Agent-friendly v2 verification tool. Verify whether a SHA-256 document fingerprint has been anchored. ' +
+      'Check the returned fingerprint_source: "issuer_record_attestation" means Arkova did not ' +
+      'independently measure this fingerprint from a document.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -500,7 +511,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_anchor',
     description:
-      'Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id.',
+      'Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id. ' +
+      'Check the returned fingerprint_source: "issuer_record_attestation" means Arkova did not ' +
+      'independently measure this fingerprint from a document.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -527,7 +540,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_record',
     description:
-      'Get public-safe record metadata by Arkova public ID. Use after search returns a record public_id.',
+      'Get public-safe record metadata by Arkova public ID. Use after search returns a record public_id. ' +
+      'Check the returned fingerprint_source: "issuer_record_attestation" means Arkova did not ' +
+      'independently measure this fingerprint from a document.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -539,7 +554,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_fingerprint',
     description:
-      'Get public-safe record metadata by SHA-256 fingerprint. Use after search returns a fingerprint result.',
+      'Get public-safe record metadata by SHA-256 fingerprint. Use after search returns a fingerprint result. ' +
+      'Check the returned fingerprint_source: "issuer_record_attestation" means Arkova did not ' +
+      'independently measure this fingerprint from a document.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -551,7 +568,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_document',
     description:
-      'Get public-safe document metadata by Arkova public ID. Use after search returns a document public_id.',
+      'Get public-safe document metadata by Arkova public ID. Use after search returns a document public_id. ' +
+      'Check the returned fingerprint_source: "issuer_record_attestation" means Arkova did not ' +
+      'independently measure this fingerprint from a document.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -563,7 +582,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'oracle_batch_verify',
     description:
-      'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
+      'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed. ' +
+      'Evidence strength varies per record — check each result\'s fingerprint_source rather ' +
+      'than assuming every entry was verified the same way.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -621,12 +642,52 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 // to NULL for PENDING anchors exactly like anchor_timestamp / network_receipt_id,
 // so it defaults to null here — surfacing which block confirmed the anchor in
 // the public verification envelope.
+//
+// SCRUM-3818 (docusign-bilateral-2026-08, go-live blocker): `fingerprint_source`
+// is an EIGHTH real key the RPC emits (migration 0376 / R19, still projected by
+// the current function body — `0385_public_anchor_academic_record_pii_projection.sql`
+// line ~605) that this mapper also silently dropped. Every tool that funnels
+// through this function (verify_credential, get_anchor, get_record,
+// get_document, get_fingerprint, verify, verify_batch, oracle_batch_verify)
+// therefore read as UNIFORMLY strong evidence — an anchor whose fingerprint was
+// never independently measured by Arkova from a document (`fingerprint_source:
+// 'issuer_record_attestation'` — set for CSV bulk-import issuer attestation AND
+// for the DocuSign Recipient-Connect inbound declared-hash path) was
+// indistinguishable from a real document-bytes anchor to a calling agent.
+//
+// NOTE ON SCOPE: `get_public_anchor` does NOT project `metadata->>'connector_source'`
+// (deliberately — that key family is service_role-write-guarded per the
+// docusign-bilateral CTO decision record R1), so this mapper cannot compute the
+// finer worker-side `fingerprint_rederivability` class (FETCH_TIME_SNAPSHOT vs
+// DECLARED_UNVERIFIED, services/worker/src/constants/connectorFingerprint.ts) —
+// that distinction needs to know the record is connector-sourced AT ALL, which
+// is not available here. `fingerprint_source` alone is sufficient for the claim
+// this fixes (never assert Arkova measured a fingerprint it did not), so this
+// emits a source-agnostic honest caveat rather than a DocuSign-specific one.
+// Extending the RPC to also project a connector signal is a follow-up requiring
+// a migration — flagged, not written here.
+//
+// `fingerprint_evidence_note` (like `jurisdiction` above) is OMITTED, never
+// `null`, for both an absent/unclassified source AND the strong `document_bytes`
+// class — it is emitted ONLY to explain the ONE class that weakens the claim.
+const FINGERPRINT_EVIDENCE_NOTE_ISSUER_RECORD_ATTESTATION =
+  'Measured: nothing was independently computed by Arkova from a source document for '
+  + 'this record. Asserted: this fingerprint is the value declared for the record — '
+  + 'either issuer-submitted record content with no source document, or a value '
+  + 'declared by a connected third-party service — and it is committed by the '
+  + 'referenced anchor. Not asserted: that Arkova retrieved, reviewed, or '
+  + 'independently fingerprinted a source document for this record. Do not treat '
+  + 'this result as equivalent in strength to a `fingerprint_source: "document_bytes"` '
+  + 'result.';
+
 export function shapeAnchorRow(
   data: Record<string, unknown>,
   publicId?: string,
 ): Record<string, unknown> {
   const status = data?.status as string | null | undefined;
   const resolvedPublicId = publicId ?? (data?.public_id as string | undefined) ?? '';
+  const fingerprintSource = data?.fingerprint_source;
+  const isIssuerRecordAttestation = fingerprintSource === 'issuer_record_attestation';
   return {
     ...(publicId !== undefined ? { public_id: publicId } : {}),
     verified: status === 'SECURED' || status === 'ACTIVE',
@@ -641,6 +702,10 @@ export function shapeAnchorRow(
     network_receipt_id: (data?.network_receipt_id as string | null) ?? null,
     record_uri: `https://app.arkova.ai/verify/${resolvedPublicId}`,
     ...(data?.jurisdiction ? { jurisdiction: data.jurisdiction as string } : {}),
+    ...(typeof fingerprintSource === 'string' ? { fingerprint_source: fingerprintSource } : {}),
+    ...(isIssuerRecordAttestation
+      ? { fingerprint_evidence_note: FINGERPRINT_EVIDENCE_NOTE_ISSUER_RECORD_ATTESTATION }
+      : {}),
   };
 }
 

@@ -28,3 +28,7 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 - Never import these scripts from the worker runtime (`services/worker/src/`).
 - Tests must mock LLM and Stripe calls — no real API calls in test runs.
 - Budget guardrails (`--limit N`, `--dry-run`) are mandatory on scripts that spend provider budget.
+
+## PR #2476 rollout replay regression
+
+`check-docusign-nonce-rollout.py` uses a disposable network-isolated PostgreSQL container. It verifies legacy-row replay denial, both orders of concurrent old/new writers across different session timezones, same-account deduplication, and acceptance for distinct known accounts. `--baseline` reproduces the replay gap in 0424 alone. No application database is touched.

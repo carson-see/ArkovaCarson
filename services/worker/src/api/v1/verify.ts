@@ -25,8 +25,8 @@ import {
 } from '../../constants/proofAvailability.js';
 import {
   connectorFingerprintRederivabilityFields,
-  isConnectorFetchSource,
   resolveConnectorFetchSource,
+  resolveFingerprintRederivabilityClass,
   type FingerprintRederivability,
 } from '../../constants/connectorFingerprint.js';
 import { hasServableProofBranch } from '../../utils/proofBranch.js';
@@ -570,8 +570,19 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   // Re-validated at emission (not just in mapAnchorRow): AnchorByPublicId has
   // other constructors (test lookups, oracle), and an unvalidated string must
   // never key a public §1.5 statement.
-  if (isConnectorFetchSource(anchor.connector_source)) {
-    Object.assign(result, connectorFingerprintRederivabilityFields());
+  {
+    // docusign-bilateral-2026-08: `fingerprint_source` (a real `anchors`
+    // column, not metadata) picks FETCH_TIME_SNAPSHOT vs the new
+    // DECLARED_UNVERIFIED class — see resolveFingerprintRederivabilityClass's
+    // doc comment. `isConnectorFetchSource` is still the emission-time GATE,
+    // re-validated here exactly as before this PR.
+    const rederivabilityClass = resolveFingerprintRederivabilityClass(
+      anchor.connector_source,
+      anchor.fingerprint_source,
+    );
+    if (rederivabilityClass) {
+      Object.assign(result, connectorFingerprintRederivabilityFields(rederivabilityClass));
+    }
   }
 
   return result;
