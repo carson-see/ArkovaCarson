@@ -131,13 +131,19 @@ function assembleMerkleBlockHex(parts: {
 }
 
 /**
- * Build the serialized `CMerkleBlock` (== `gettxoutproof` output) for a single
- * matched tx, given the full ordered list of LE leaf hashes in the block, and
- * return its decomposed pieces + the ground-truth bit/hash consumption counts.
+ * Build the serialized `CMerkleBlock` (== `gettxoutproof` output) for the
+ * matched tx (or txs), given the full ordered list of LE leaf hashes in the
+ * block, and return its decomposed pieces + the ground-truth bit/hash
+ * consumption counts.
  *
  * Mirrors Bitcoin's CPartialMerkleTree::TraverseAndBuild.
+ *
+ * `matchIndex` accepts an ARRAY because a real `CPartialMerkleTree` can mark
+ * more than one leaf — `gettxoutproof` takes a txid LIST. A single-match
+ * builder cannot express that class at all, which is exactly why the
+ * multi-match branch defect (B0) was invisible to the original suite.
  */
-function buildMerkleBlock(allLeavesLE: Buffer[], matchIndex: number): BuiltMerkleBlock {
+function buildMerkleBlock(allLeavesLE: Buffer[], matchIndex: number | number[]): BuiltMerkleBlock {
   const totalTx = allLeavesLE.length;
   const merkleRootLE = computeMerkleRootLE(allLeavesLE);
   const header = buildHeader(merkleRootLE);
@@ -146,7 +152,8 @@ function buildMerkleBlock(allLeavesLE: Buffer[], matchIndex: number): BuiltMerkl
   let height = 0;
   while ((1 << height) < totalTx) height++;
 
-  const matches = allLeavesLE.map((_, i) => i === matchIndex);
+  const matchedSet = new Set(Array.isArray(matchIndex) ? matchIndex : [matchIndex]);
+  const matches = allLeavesLE.map((_, i) => matchedSet.has(i));
 
   const bits: number[] = [];
   const hashesLE: Buffer[] = [];
@@ -420,6 +427,74 @@ describe('parseTxOutProof', () => {
     // The recomputed root matches the header merkleroot and the matched leaf is
     // the target, so the only thing that may reject this is the CVE check.
     expect(parseTxOutProof(built.hex, target)).toBeNull();
+  });
+
+  // ── B0: the EMITTED branch must fold to the root the parser VERIFIED ──
+  //
+  // `parseTxOutProof` runs TWO independent passes over the same streams.
+  // `walkMerkleTree` (pass 1) is what `verifyRecoveredRoot`, the
+  // full-consumption parity check and the CVE-2012-2459 guard all validate.
+  // `extractBranchForIndex` (pass 2) produces the array we now PERSIST to
+  // `anchor_proofs.tx_inclusion_branch` and PUBLISH in `proof_bundle` — and
+  // nothing checked that pass 2's output folds to the root pass 1 verified.
+  //
+  // A CPartialMerkleTree whose flag stream marks TWO leaves, with the target
+  // last in traversal order, passes every pass-1 guard: `matchedIndex` is
+  // overwritten on each matched leaf so it ends on the target, and the
+  // recomputed root equals the header merkleroot. But pass 2 pushes a
+  // `collected` entry at EVERY node with `isParentOfMatch === 1`, which now
+  // includes the OTHER matched leaf's subtree — so the emitted branch is
+  // longer than the tree is tall and folds to something that is NOT the
+  // merkleroot. We would persist that next to `verified: true` and publish a
+  // bundle that refutes itself.
+  it.each([
+    { totalTx: 4, matched: [0, 3], target: 3 },
+    { totalTx: 8, matched: [1, 6], target: 6 },
+    { totalTx: 16, matched: [2, 13], target: 13 },
+  ])(
+    'rejects a multi-match proof whose emitted branch does not fold to the merkleroot ($totalTx txs, matched $matched)',
+    ({ totalTx, matched, target }) => {
+      const leaves = Array.from({ length: totalTx }, (_, i) => makeTxidLE(i + 0xb000));
+      const built = buildMerkleBlock(leaves, matched);
+      const targetDisplay = displayHex(leaves[target]);
+
+      // Fixture sanity: this really is a multi-match tree, and the target is
+      // the LAST matched leaf in traversal order (so pass 1's `matchedIndex`
+      // lands on it and `verifyRecoveredRoot` passes).
+      expect(matched.length).toBeGreaterThan(1);
+      expect(Math.max(...matched)).toBe(target);
+
+      // The ONLY thing that may reject this is the emitted-branch fold.
+      expect(parseTxOutProof(built.hex, targetDisplay)).toBeNull();
+    },
+  );
+
+  // The mirror image: honest SINGLE-match proofs must keep parsing, and the
+  // branch they emit must fold to the merkleroot at header bytes [36,68) —
+  // across every leaf count and every index, including the odd-row duplicate
+  // boundary. Without this the B0 guard could "pass" by rejecting everything.
+  it('every honest single-match proof (1..17 leaves, every index) still parses and folds to the merkleroot', () => {
+    for (let totalTx = 1; totalTx <= 17; totalTx++) {
+      const leaves = Array.from({ length: totalTx }, (_, i) => makeTxidLE(i + totalTx * 1000));
+      for (let idx = 0; idx < totalTx; idx++) {
+        const built = buildMerkleBlock(leaves, idx);
+        const targetDisplay = displayHex(leaves[idx]);
+        const parsed = parseTxOutProof(built.hex, targetDisplay);
+        expect(parsed, `totalTx=${totalTx} idx=${idx}`).not.toBeNull();
+        expect(parsed!.txIndex).toBe(idx);
+        // Branch length is exactly the tree height for an honest proof.
+        let height = 0;
+        while (1 << height < totalTx) height++;
+        expect(parsed!.merkleBranch, `totalTx=${totalTx} idx=${idx}`).toHaveLength(height);
+        // …and it folds to the merkleroot the persisted header commits.
+        const headerMerkleRoot = Buffer.from(parsed!.blockHeader, 'hex')
+          .subarray(36, 68)
+          .reverse()
+          .toString('hex');
+        expect(parsed!.blockMerkleRoot).toBe(headerMerkleRoot);
+        expect(recomputeFromBranch(targetDisplay, parsed!.merkleBranch)).toBe(headerMerkleRoot);
+      }
+    }
   });
 });
 

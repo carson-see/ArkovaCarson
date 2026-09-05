@@ -1068,3 +1068,96 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
+
+## 2026-08-30 — R1: `proof_bundle` carries tx-inclusion evidence
+
+`ProofBundle` gained `tx_inclusion_branch` + `tx_block_index` (migration `0427`)
+so a verifier can confirm the anchor transaction's inclusion in its block
+locally instead of fetching an inclusion proof from a node. Additive and
+nullable per §1.8; **`proof_schema_version` is NOT bumped** — a nullable
+addition to an existing shape does not need one, and a consumer that ignores the
+fields behaves exactly as before.
+
+- **They are NOT part of the bundle completeness gate, deliberately.** Gating on
+  them would retroactively withdraw `proof_bundle` from every record confirmed
+  before `0427` — a breaking change wearing an addition's clothes. Absent ⇒
+  emitted as `null`, never fabricated (§1.5).
+- **`tx_inclusion_branch` is not `merkle_proof`.** `merkle_proof` is the layer-1
+  APP tree over document fingerprints; this is the layer-2 BITCOIN tree over
+  transactions, byte-reversed (display) hex under Bitcoin's double-SHA256
+  positional rule. Two trees, two orientations — one name for both is how a
+  verifier ends up folding one tree with the other's rule and checking nothing.
+  The full fold rule is on the interface docstring and in the column comment.
+- `tx_inclusion_branch` is a jsonb column, so Postgres does not constrain its
+  shape: `readTxInclusionBranch` validates on read and degrades a malformed
+  value to `null`. It reuses `isValidProofArray` — the same predicate the
+  app-tree branch is held to — so the two layers cannot drift into two different
+  ideas of a well-formed branch. An empty array is preserved, not collapsed to
+  null.
+- The redaction guard test pins the bundle's exact key set. It now lists 15
+  keys. That pin is the allowlist ratchet — extend it deliberately when you add
+  a field, never delete it to make a diff green.
+
+## 2026-08-31 — `/proof` review fixes (B2 / H3 / H4 / M1 / M5)
+
+- **B2 — a swallowed select error 404'd the entire catalogue.** The
+  `anchor_proofs` read discarded `error`, so a failing read collapsed to
+  `proofData = null` — the same value as "this record has no proof row" — and the
+  route answered 404 `NO_BATCH_PROOF` carrying `proof_availability: root_only`.
+  No 5xx, nothing in Sentry, and a §1.5 "measured" claim the route never measured.
+  The realistic trigger is DEPLOY ORDERING, not a freak fault: this revision
+  selects `tx_inclusion_branch` / `tx_block_index`, and deploy and migration-apply
+  are separate steps, so in between (or before PostgREST reloads its schema cache)
+  PostgREST answers `42703 column does not exist` for EVERY anchored document.
+  Same family as the hollow-200 swallowed `statement_timeout`. The error is now
+  handled and answered 500, and `noBatchProofBody()`'s comment records that its
+  "root_only is a measurement here" sentence is only true BECAUSE of that guard.
+  New suite: `verify-proof.db-path.test.ts` — the first tests to exercise the real
+  db branch (every other suite injects `_testLookup` and skips it entirely).
+- **H3/H4/M5 — the two 0427 columns are read as ONE fact.** They were read
+  independently, so an incoherent pair (a 2-entry branch labelled
+  `tx_block_index: 17`) shipped as a coherent one — three lines below where the
+  APP tree already suppresses a bundle whose index and tree size are mutually
+  impossible. `readTxInclusionEvidence` replaces `readTxInclusionBranch` and
+  enforces: both-or-neither; every sibling exactly 64 hex (the shared structural
+  predicate only asks `typeof hash === 'string'`, so `{"hash":""}` was being
+  emitted as genuine evidence); `0 <= index < 2^length`; and each level's sibling
+  side matching that level's index bit — the cross-check the `tx_block_index`
+  column comment promises a verifier. Any violation ⇒ BOTH null. This also removes
+  M5's unreachable `!Array.isArray` / `length === 0` guards and the 16-line
+  docblock defending a special case that did nothing.
+- **M1 — a false CVE-2012-2459 claim is withdrawn.** The `tx_block_index`
+  docstring (and the 0427 column comment) said the index arms the duplicate-node
+  guard. It cannot: that needs the block's TOTAL TRANSACTION COUNT, which is
+  parsed in `parseMerkleBlockFields` but never returned from `parseTxOutProof` and
+  never persisted. The guard is enforced on the WRITE side, at parse time, where
+  the count is in hand. Both texts now say so (§1.5).
+- The bundle's exact-key-set redaction pin stays the allowlist ratchet — 15 keys.
+## 2026-08-30 — `fingerprint_rederivability` (FETCH_TIME_SNAPSHOT) is gated on PROOF of a fetch
+
+`verify.ts` (`mapAnchorRow`) and `verify-proof.ts` no longer emit the fetch-time "Measured…" caveat on
+`connector_source` alone. The declared-hash rules dispatcher writes the same `connector_source='docusign'`
+without ever fetching, so both now gate on positive fetch evidence — `resolveServerFetchedConnectorSource` /
+`connectorFingerprintRederivabilityFieldsFor` (requires a non-empty `connector_artifact_id`, stamped only by
+`connector-artifact-drain.ts`). See `constants/agents.md` (2026-08-30), SCRUM-3299 / SCRUM-3825.
+
+- **`AnchorByPublicId.connector_source` was RENAMED to `server_fetched_connector_source`.** Internal transport
+  field only — never a response key, not in `API_RICH_KEYS`, so no §1.8 surface change. Renamed because the
+  old name invited exactly the bug that was fixed: assigning the raw `metadata.connector_source` marker to it
+  re-arms the false "Measured…" claim. The name now states the invariant, and the only two writers are
+  `mapAnchorRow` (via the resolver) and `EMPTY_API_RICH_FIELDS` (null). **Never assign the raw marker to it.**
+- The `isConnectorFetchSource(...)` re-check at the emission site is a closed-set STRING guard, not a
+  re-derivation of fetch evidence — it cannot see metadata. Fetch proof lives entirely in the constructor.
+- **`verifyCache.ts` `KEY_PREFIX` bumped `verify:v6:` → `verify:v7:`** — mandatory per the standing rule below:
+  this change REMOVES response fields for declared-hash anchors, and a pre-deploy cache entry would otherwise
+  keep serving the false claim for the full TTL. `invalidateVerificationCache` does not help (the row is
+  unchanged, so nothing re-fires). Ratchet test in `utils/verifyCache.namespace.test.ts`.
+
+## 2026-09-05 — PR 2499 integration with inbound artifacts
+
+Inbound issuer attestations have artifact IDs too. The combined gate checks the
+explicit fingerprint_source first and emits declared_unverified with its note;
+only other records with a recognized connector marker and artifact stamp may emit
+fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
+and authenticated packet exports load the typed source; the signable proof bundle
+is unchanged. Regression reproduced before the fix; local validation is not soak evidence.

@@ -81,6 +81,24 @@ export interface VerifyReport {
   /** The server's own claim, surfaced for comparison — NOT used for the verdict. */
   serverClaimedVerified: boolean | null;
   /**
+   * B3 (migration 0427): the layer-2 BITCOIN-tree inclusion evidence the PACKET
+   * carries, surfaced so an auditor can see it exists at all. `null` when the
+   * packet carries no usable pair.
+   *
+   * §1.5, precisely:
+   *   MEASURED     — that the packet contains a structurally coherent branch +
+   *                  index pair (every sibling 64-hex; `0 <= index < 2^length`;
+   *                  each level's sibling side matching that level's index bit).
+   *   ASSERTED     — nothing beyond that.
+   *   NOT ASSERTED — that the branch folds to any real block's merkleroot.
+   *                  This verifier does NOT fold it. Folding it here would only
+   *                  establish that the packet agrees with a header the packet
+   *                  itself supplies; the transaction-inclusion VERDICT comes
+   *                  from `confirmInclusion` against an INDEPENDENT node, which
+   *                  is strictly stronger evidence.
+   */
+  packetTxInclusion: { branchLength: number; blockIndex: number } | null;
+  /**
    * Frozen machine reason for a NOT-VERIFIED verdict (S3-B enum,
    * `fixtures/manifest.json` reason_codes): the FIRST failing required step's
    * code, or the signature failure class when only the explicitly-requested
@@ -175,8 +193,46 @@ export async function verifyProof(
     steps,
     signature,
     serverClaimedVerified: typeof packet.verified === 'boolean' ? packet.verified : null,
+    packetTxInclusion: readPacketTxInclusion(packet),
     reasonCode: ok ? null : selectReasonCode(steps, signature),
   };
+}
+
+/** A 32-byte hash in display hex — the only shape a bitcoin-tree sibling takes. */
+const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
+
+/**
+ * B3: read the packet's layer-2 BITCOIN-tree inclusion evidence as ONE fact.
+ *
+ * The branch and the index are a single claim about where the receipt sits in
+ * its block, and either half alone is unusable. Coherence is checked with the
+ * SAME rules the API applies on read — both halves present, every sibling
+ * exactly 64 hex characters, `0 <= index < 2^length`, and each level's sibling
+ * side matching that level's bit of the index — so the CLI and the server
+ * cannot disagree about whether one record's branch is well-formed.
+ *
+ * Deliberately NOT graded: this feeds {@link VerifyReport.packetTxInclusion}
+ * for the auditor's information and never the verdict. An EMPTY branch with
+ * index 0 is COMPLETE evidence (a single-transaction block has no siblings).
+ */
+function readPacketTxInclusion(
+  packet: ProofPacket,
+): { branchLength: number; blockIndex: number } | null {
+  const branch = packet.tx_inclusion_branch;
+  const index = packet.tx_block_index;
+  if (!Array.isArray(branch)) return null;
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return null;
+  if (branch.length > 31) return null;
+  if (index >= 1 << branch.length) return null;
+  for (let level = 0; level < branch.length; level++) {
+    const entry = branch[level];
+    if (entry == null || typeof entry.hash !== 'string' || !SIBLING_HASH_HEX_RE.test(entry.hash)) {
+      return null;
+    }
+    const expected = ((index >> level) & 1) === 0 ? 'right' : 'left';
+    if (entry.position !== expected) return null;
+  }
+  return { branchLength: branch.length, blockIndex: index };
 }
 
 /** Build the step-0 schema gate: only version 1 (or absent = legacy) is understood. */

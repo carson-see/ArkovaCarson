@@ -61,6 +61,43 @@ export interface ProofPacket {
    * Absent/null ⇒ interpreted as version 1 (legacy packets predate the stamp).
    */
   proof_schema_version?: number | null;
+  /**
+   * OPTIONAL raw 80-byte block header as plain 160-hex, as published in the
+   * bundle. The verifier does NOT trust this for its verdict — the
+   * authoritative header is the one the INDEPENDENT node serves and
+   * `@arkova/verifier` recomputes. Carried so a holder inspecting the packet
+   * offline has the bytes `tx_inclusion_branch` folds toward (the merkleroot
+   * lives at header bytes [36,68), stored little-endian).
+   */
+  block_header?: string | null;
+  /**
+   * OPTIONAL layer-2 BITCOIN-tree inclusion branch (migration 0427): the
+   * sibling path proving `tx_id` is committed by the merkleroot inside
+   * `block_header`.
+   *
+   * NOT interchangeable with `merkle_proof`. Identical `{hash, position}`
+   * shape, opposite convention: these hashes are BYTE-REVERSED (display) hex
+   * folded with Bitcoin's double-SHA256 positional rule, while `merkle_proof`
+   * is the layer-1 APP tree in its stored orientation. Folding one with the
+   * other's rule typechecks and proves nothing — hence the distinct name.
+   *
+   * NOT YET FOLDED BY THIS VERIFIER. It is carried so the evidence reaches a
+   * holder at all (before this it was persisted server-side and dropped by
+   * every shipped client), but the CLI's transaction-inclusion verdict still
+   * comes from `confirmInclusion` against an INDEPENDENT node. Folding it
+   * locally would only establish that the packet agrees with the header the
+   * packet itself supplies — real evidence needs that header cross-checked
+   * against a node, which is exactly what the chain step already does. Adding
+   * it as a graded step also means a new frozen reason code, which bumps
+   * `reason_enum_version` across the manifest and the Python verifier.
+   */
+  tx_inclusion_branch?: MerkleProofEntry[] | null;
+  /**
+   * OPTIONAL 0-based index of `tx_id` within its block (migration 0427). Pairs
+   * indivisibly with `tx_inclusion_branch`: its bit at each level fixes that
+   * level's sibling side. `0` is a real position (the coinbase), not a blank.
+   */
+  tx_block_index?: number | null;
 }
 
 /** One published key entry in a keys.json set. */

@@ -74,6 +74,26 @@ describe('getFingerprintSourceTriad — §1.5 measured/asserted/NOT-asserted', (
   it('returns null for unclassified', () => {
     expect(getFingerprintSourceTriad(null)).toBeNull();
   });
+
+  // SCRUM-3818 (docusign-bilateral-2026-08): `issuer_record_attestation` is
+  // now ALSO set server-side for the DocuSign Recipient-Connect INBOUND
+  // declared-hash path (connector-artifact-drain's inbound branch) — a case
+  // where a real document DOES exist and WAS fingerprinted, just not by
+  // Arkova (DocuSign declared the hash in its own notification). The prior
+  // copy's "This record was never in document form" is true for CSV
+  // bulk-import issuer attestation but FALSE for that case, and "the issuing
+  // organization asserted this" misattributes a DocuSign-relayed value to the
+  // securing org. The claim must be scoped to what ARKOVA measured, not to
+  // whether a document exists anywhere or who specifically declared the value.
+  it('is scoped to what ARKOVA measured, not to whether a document exists anywhere (R-7, imprecise-misattribution fix)', () => {
+    const triad = getFingerprintSourceTriad('issuer_record_attestation');
+    expect(triad?.notAsserted.toLowerCase()).not.toContain('never in document form');
+    const description = getFingerprintSourceDescription('issuer_record_attestation') ?? '';
+    // Must not claim the ONLY source of this class is "the issuing
+    // organization" asserting record content — a connected third-party
+    // service's own declared value is a second, real origin for this class.
+    expect(description.toLowerCase()).toContain('third-party');
+  });
 });
 
 describe('isRecordDerived / isDocumentDerived', () => {

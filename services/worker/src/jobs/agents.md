@@ -1,6 +1,34 @@
 # services/worker/src/jobs/agents.md
 
+## 2026-09-05 — oldest DocuSign release candidate integration
+
+PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
+
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
+
+## 2026-08-31 — F1-heal (SCRUM-3818 go-live gate, follow-up to PR #2476): `docusign-envelope-completed.ts` auto-heals a declared/forged provenance conflict instead of only detecting it
+
+PR #2476's `enqueueSignedDocument` detected a `connector_artifact` provenance conflict (a forged/declared INBOUND row winning the `ON CONFLICT DO NOTHING` race against this outbound job's real, server-measured fingerprint) and threw — its own header called this "detection only... automatic outbound-supersedes-inbound reconciliation is separate, go-live-gated follow-up work." This closes that item, per a CTO precedence ruling: a fingerprint Arkova MEASURED from fetched document bytes ALWAYS supersedes one merely DECLARED by a notification, never the reverse — UNLESS the declared row already materialized a live anchor, which is a SEPARATE integrity event, not an auto-heal target.
+
+**Mechanism — no migration, no new RPC.** ONE atomic conditional `UPDATE connector_artifact SET fingerprint_sha256=:real, metadata=:healed, updated_at=now() WHERE id=:id AND anchor_id IS NULL`. `anchor_id IS NULL` is the authoritative "not yet materialized" signal — `connector-artifact-drain.ts`'s `markStatus` sets `status='materialized'` and `anchor_id` together, atomically, never independently, so there is no intermediate state to race. Under Postgres READ COMMITTED, a concurrent drain-job UPDATE on the same row forces this UPDATE to re-evaluate its WHERE clause against the post-commit row version (EvalPlanQual) before applying — whichever write actually happens first is the correct outcome, with no separate read-then-write TOCTOU window. Authorization: `connector_artifact_service_all` (migration 0343) already grants `service_role` unrestricted access to this table; this file authenticates as `service_role` (confirmed by migration 0423's OWN header, which names this file as one of only three legitimate writers — 0423's *trigger* itself is irrelevant here, it guards `anchors.metadata`, a different table).
+
+**Healed:** strips `_direction`/`_sending_account_id` (so a later drain read takes the SAME path as any other outbound-owned artifact — `defaultMaterializeAnchor`'s `isInboundDeclaredHash` check reads `_direction` fresh at drain time), records `_superseded_declared_fingerprint`/`_superseded_at`/`_superseded_reason`, and the call proceeds to its normal success return — the verified write now durably stands, exactly as if the RPC's own INSERT had won outright.
+
+**Refused (already materialized):** the conditional UPDATE matches zero rows. Left exactly as-is — never silently rewrite a live anchor's fingerprint, possibly already SUBMITTED/SECURED on-chain. Throws `docusign_connector_artifact_provenance_conflict_unresolved` (renamed from the old bare `docusign_connector_artifact_provenance_conflict`, which now fires only as the unconditional DETECTION signal for both outcomes — no other consumer depended on the old throw's exact string, grep-verified).
+
+**Audit — every outcome, both fingerprints, org, envelope, which won, why.** Written to `audit_events` (event_category `ANCHOR`, `target_type: 'connector_artifact'`) via a direct `await ... insert(...)` — NOT the `recordAuditEvent` helper (`utils/auditEvent.ts`), because this file already awaits its writes directly (the helper exists for the DIFFERENT, unrelated `void db.from('audit_events').insert(...)` fire-and-forget bug class it documents). Awaited-but-non-fatal on failure, matching the established convention elsewhere (`jobs/revocation.ts`, `jobs/chain-maintenance.ts`): a lost audit row must never turn a successful heal (or a correctly refused rewrite) into a job failure/retry loop over an unrelated audit-table hiccup, but IS always logged at `error` so the gap is visible. `DbClient` gained an `audit_events` overload on the existing `integration_events` insert shape, plus a separately-cast `ConnectorArtifactUpdateClient`/`DbUpdateQuery` (same convention as the pre-existing `ConnectorArtifactRpcClient` cast) so the existing select-only `connector_artifact` mocks stay valid.
+
+See `machines/docusignInboundDedup.machine.ts`'s F1-heal extension (`machines/agents.md`) for the formal model, and `docusign-envelope-completed.test.ts`'s `describe('F1-heal — auto-heal supersedes a declared/forged fingerprint with the verified one')` for the heal / refusal / audit-failure-is-non-fatal tests (the pre-existing F1 detection tests were updated in place to reflect that a conflict now heals rather than always throwing).
+
+## 2026-08-30 — F1 (security review of PR #2476): `docusign-envelope-completed.ts` verifies its own enqueue result before trusting it
+
+`enqueueSignedDocument` used to treat any non-null id returned by `enqueue_connector_artifact` as success. The RPC is `ON CONFLICT DO NOTHING` on `(org_id, source, external_ref, revision)` — the SAME key the INBOUND declared-hash webhook path (`api/v1/webhooks/docusign.ts`) writes to for the SAME envelope with an UNVERIFIED, attacker-declarable fingerprint. A same-tenant attacker who self-POSTs a forged inbound event for this org's own real outbound envelope, racing the real async fetch, can win the INSERT — after which this call's own real, measured write silently loses (DO NOTHING) and the returned id is the FORGED row's, not this call's own.
+
+Fix: after the RPC returns a non-null id, read the persisted row back (`connector_artifact.fingerprint_sha256, metadata`) and compare against what THIS call just measured. Two independent tells, either disqualifying: the persisted hash isn't the one this call computed, or the persisted row is `metadata._direction === 'inbound'` at all (this IS the org's own outbound envelope — an inbound-marked row here is anomalous regardless of hash match, belt-and-suspenders against the vanishing chance of a hash collision). On either, throws a DISTINCTLY-named error (`docusign_connector_artifact_provenance_conflict`) after a loud structured-log signal (`docusign_connector_artifact_provenance_conflict: true`) — never the silent-success path, never the existing silent-orphan path. Detection only: `ON CONFLICT DO NOTHING` means this code cannot UPDATE-supersede the pre-existing row here; automatic outbound-supersedes-inbound reconciliation is separate, go-live-gated follow-up work. `DbClient` gained a `connector_artifact` read overload. See `machines/docusignInboundDedup.machine.ts`'s F1 extension (`machines/agents.md`) for the formal model of this exact property, and `docusign-envelope-completed.test.ts`'s `describe('F1 — connector_artifact provenance conflict detection')` for the race + fail-closed-on-readback-error tests.
+
+## 2026-08-30 — docusign-bilateral-2026-08 (flag-off, not going live this cycle): `defaultMaterializeAnchor` sets `fingerprint_source` for inbound declared-hash rows
+
+`connector-artifact-drain.ts`'s `defaultMaterializeAnchor` (documented at length below) reads `row.metadata._direction` — written ONLY by the webhook classifier's new inbound branch (`api/v1/webhooks/docusign.ts`, see that folder's agents.md) — and, when it equals `'inbound'`, sets `anchors.fingerprint_source = 'issuer_record_attestation'` (migration 0376 CHECK enum) on the `AnchorInsertPayload`. Every other row (100% of traffic today: DocuSign outbound, Google Drive) omits the field entirely (`undefined`, never `'document_bytes'` — this file never fetches bytes itself either; that measurement, when it happens, is upstream in `docusign-envelope-completed.ts`, which this materializer has no visibility into). `AnchorInsertPayload` gained the field as `.optional()`; the `.strict()` schema still rejects anything else. See `constants/connectorFingerprint.ts` for the downstream `FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED` class this enables on the public verify response.
 
 ## 2026-08-15 — the `*Fetcher.ts` family cannot report failure as success any more (BUG-020/022/023)
 
@@ -945,6 +973,7 @@ No new migration (worker-code-only). No anchor-lifecycle semantic change. Requir
 
 ## 2026-06-29 — Lane 2 s2: connector_artifact drain consumer (QUEUE-06 / SCRUM-2352)
 
+`connector-artifact-drain.ts` is the loop-closer for the `connector_artifact` queue (mig 0343). Drains `pending|queued` rows via a **compare-and-set claim** (`UPDATE … SET status='processing' WHERE id=:id AND org_id=:org AND status IN ('pending','queued')`) — atomically under a row lock, so two concurrent cycles never double-anchor a row (exactly-once **without a new migration**, equivalent to `FOR UPDATE SKIP LOCKED`; the loser's UPDATE matches zero rows → skips). Per claimed row: **materialize** a `PENDING` anchor from the server-computed `fingerprint_sha256` (§1.6A — fingerprint only, never bytes; `user_id` resolved to an org owner/admin actor, `credential_type='CONTRACT_POSTSIGNING'`, `(user_id, fingerprint)` 23505 → reuse existing), then **charge ONLY at SECURING** via `debit_and_enqueue_anchor` (mig 0341 — itself idempotent on the anchor id, so a crash-replay re-drives the same single debit, never a double-charge), then batch-anchor via `processBatchAnchors({force:true, orgId})`. **No charge at enqueue/claim.** Per-row failure → `status='failed'` + bounded PII-scrubbed Sentry alert (ids+reason only); cycle-level select failure alerts (`scope='cycle'`) + throws so Cloud Scheduler retries — **no silent drop**. `runConnectorArtifactDrain()` is the cron entrypoint: flag-gated (`ENABLE_CONNECTOR_ARTIFACT_DRAIN`, default false → `skipped:true`), enumerates distinct orgs with drainable rows, drains each with per-org isolation. Strictly org-scoped (every read/claim/write filters `org_id`). Wired via `POST /jobs/drain-connector-artifacts` (prod trigger — in-process node-cron is dormant under Cloud Run throttling) + `*/5` in-process backup in `routes/scheduled.ts` (added to the anchor-table maintenance allowlist). T3. **R2 (2026-08-29, docusign-bilateral PR-2):** `defaultMaterializeAnchor`'s insert now always stamps `anchors.fingerprint_source='document_bytes'` (`AnchorInsertPayload` gained a required `z.literal('document_bytes')` field) — every row this drain materializes was fetched + hashed server-side, never a declared/asserted hash, so it always classifies as the measured evidence class (migration 0376/0384). Previously unset (NULL/"unclassified") on this path.
 `connector-artifact-drain.ts` is the loop-closer for the `connector_artifact` queue (mig 0343). Drains `pending|queued` rows via a **compare-and-set claim** (`UPDATE … SET status='processing' WHERE id=:id AND org_id=:org AND status IN ('pending','queued')`) — atomically under a row lock, so two concurrent cycles never double-anchor a row (exactly-once **without a new migration**, equivalent to `FOR UPDATE SKIP LOCKED`; the loser's UPDATE matches zero rows → skips). Per claimed row: **materialize** a `PENDING` anchor from the server-computed `fingerprint_sha256` (§1.6A — fingerprint only, never bytes; `user_id` resolved to an org owner/admin actor, `credential_type='CONTRACT_POSTSIGNING'`, `(user_id, fingerprint)` 23505 → reuse existing), then **charge ONLY at SECURING** via `debit_and_enqueue_anchor` (mig 0341 — itself idempotent on the anchor id, so a crash-replay re-drives the same single debit, never a double-charge), then batch-anchor via `processBatchAnchors({force:true, orgId})`. **No charge at enqueue/claim.** Per-row failure → `status='failed'` + bounded PII-scrubbed Sentry alert (ids+reason only); cycle-level select failure alerts (`scope='cycle'`) + throws so Cloud Scheduler retries — **no silent drop**. `runConnectorArtifactDrain()` is the cron entrypoint: flag-gated (`ENABLE_CONNECTOR_ARTIFACT_DRAIN`, default false → `skipped:true`), enumerates distinct orgs with drainable rows, drains each with per-org isolation. Strictly org-scoped (every read/claim/write filters `org_id`). Wired via `POST /jobs/drain-connector-artifacts` (prod trigger — the one with retries and an attempt deadline) + `*/5` in-process backup in `routes/scheduled.ts` (which per SCRUM-3384 also fires on every warm prod instance; the compare-and-set claim is what makes that safe) (added to the anchor-table maintenance allowlist). T3.
 
 ## 2026-06-29 — Lane 2 QUEUE-09: fair server-side connector-drain org enum (migration 0350, stacked on QUEUE-06)
@@ -988,7 +1017,7 @@ depends on supabase-js `.eq()` path-string tolerance and warrants its own verifi
 - **`rules-engine.ts` / `rule-action-dispatcher.ts` (SCRUM-1649)** — DocuSign `ESIGN_COMPLETED` rule executions carry allowlisted connector metadata into `input_payload`; raw provider payload fields stay out of execution storage, and raw DocuSign account IDs are hashed before persistence. `AUTO_ANCHOR` and credit-denied `FAST_TRACK_ANCHOR` materialize org-scoped `anchors.status=PENDING` rows with `credential_type=CONTRACT_POSTSIGNING`. Paid fast-track also materializes the anchor before enqueueing `anchor.fast_track`; dispatcher outputs and fast-track job payloads include `anchor_public_id` so downstream consumers can reference the created anchor. FAST_TRACK retries are keyed by the execution id for org-credit idempotency and reuse an existing `anchor.fast_track` job instead of enqueueing duplicates after a crash/finalization retry.
 - `publicRecordEmbedder.ts` (PH1-INT-01) — `embedPublicRecords()` generates vector embeddings for unembedded public records. Uses Gemini embedding model via AI provider abstraction. Batched with bounded concurrency (25) and exponential backoff on rate limits. Gated by `ENABLE_PUBLIC_RECORD_EMBEDDINGS` flag.
 - `professional-education-extraction.ts` — PR #841 CPE/CLE metadata extraction job. Must remain default-disabled through `ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY=false` until prod has the #841 schema columns/tables and ledger reconciliation.
-- `docusign-envelope-completed.ts` — DocuSign completed-envelope document fetch cron. Uses the DocuSign outbound rate-limit wrapper so token refresh and combined-document fetch calls spend the same per-account 3,000/hour budget and honor `Retry-After` on 429. **DS-04 (SCRUM-2364):** the fetch job supports `member_integrations` (personal connections), not only `org_integrations`. `fetchDirectDocusignRow` selects `member_integrations.user_id` and threads it as `owner_user_id`; the resolver maps a set owner to `scope='member'` (org rows / inherited connections stay `scope='org'`). `enqueueSignedDocument` stamps `queue_scope` + (member-only) `owner_user_id` into `connector_artifact.metadata` so a member-owned completed envelope materializes into the owning user's **personal** queue while org-policy envelopes route to the org queue (org precedence mirrors the webhook `findIntegration`). A `scope='member'` with no `owner_user_id` **fails closed** (`docusign_member_scope_missing_owner`, no RPC). Duplicate/replay handling is unchanged — the 0343 dedupe covers both paths. §1.6A byte-safety unchanged (metadata carries only the user uuid, never a fingerprint/bytes). **FK fix (SCRUM-2364):** `integration_events.integration_id` has a FK to `org_integrations(id)` ONLY; a member envelope's `integrationId` is a `member_integrations` id, so the audit insert **NULLs `integration_id` for member scope** and carries the member id as `details.member_integration_id` (+ `details.queue_scope`) instead — writing it into the FK column FK-fails at runtime. _(Extended 2026-07-28 — the DS-04 clause was lost by the union-merge-driver incident; see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`.)_
+- `docusign-envelope-completed.ts` — DocuSign completed-envelope document fetch cron. Uses the DocuSign outbound rate-limit wrapper so token refresh and combined-document fetch calls spend the same per-account 3,000/hour budget and honor `Retry-After` on 429. **DS-04 (SCRUM-2364):** the fetch job supports `member_integrations` (personal connections), not only `org_integrations`. `fetchDirectDocusignRow` selects `member_integrations.user_id` and threads it as `owner_user_id`; the resolver maps a set owner to `scope='member'` (org rows / inherited connections stay `scope='org'`). `enqueueSignedDocument` stamps `queue_scope` + (member-only) `owner_user_id` into `connector_artifact.metadata` so a member-owned completed envelope materializes into the owning user's **personal** queue while org-policy envelopes route to the org queue (org precedence mirrors the webhook `findIntegration`). A `scope='member'` with no `owner_user_id` **fails closed** (`docusign_member_scope_missing_owner`, no RPC). Duplicate/replay handling is unchanged — the 0343 dedupe covers both paths. §1.6A byte-safety unchanged (metadata carries only the user uuid, never a fingerprint/bytes). **FK fix (SCRUM-2364):** `integration_events.integration_id` has a FK to `org_integrations(id)` ONLY; a member envelope's `integrationId` is a `member_integrations` id, so the audit insert **NULLs `integration_id` for member scope** and carries the member id as `details.member_integration_id` (+ `details.queue_scope`) instead — writing it into the FK column FK-fails at runtime. _(Extended 2026-07-28 — the DS-04 clause was lost by the union-merge-driver incident; see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`.)_ **R6/R7 (2026-08-29, docusign-bilateral PR-2):** `enqueueSignedDocument` also stamps `_signers` (a THIRD independent name/email-stripping allow-list gate — copies only `recipient_id_guid`/`user_id`/`status`/`signed_at` into a fresh object, never spreads `input.signers`) and `_docusign_env` (`'prod'|'demo'`, from `resolveDocusignEnvironment(connection.baseUri)` in `integrations/oauth/docusign.ts`) into `connector_artifact.metadata` — both underscore-prefixed so the SQL public sanitizer strips them and (once PR-1's migration 0422 lands) they become service_role-write-only. See `api/v1/webhooks/agents.md` for the webhook-side `extractSigners` half.
 - `drive-file-changed.ts` (**SCRUM-2903 GD-PROD**, #1654) — Google Drive twin of `docusign-envelope-completed.ts`. `runDriveFileChangedJobs()` drains the `google_drive.file_changed` queue; `makeDriveFileChangedJobDeps()` wires the token resolver (`loadDriveAccessToken`), byte-fetch (`fetchDriveFileBytes`), and the §1.6A sink: SHA-256 in memory → `enqueue_connector_artifact` (source `google_drive`, ids-only metadata, no bytes/PII) → ids-only `integration_events` audit. Feature-gated by `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` (default off). Covered by the `arkova/no-connector-bytes-to-sink` lint. `DRIVE_FILE_CHANGED_JOB_TYPE` is owned by `integrations/connectors/drive-artifact-producer.ts` (this file re-exports it) so `drive-changes-runner.ts` imports the same constant without a cycle. Drain registered at `POST /jobs/drive-file-changed` in `routes/cron.ts` (prod trigger) + `routes/scheduled.ts` (dev/test in-process backup). Flag flip to `true` is a separate, founder-gated launch decision.
   - **The flag is checked BEFORE the token resolve and the byte fetch** (`processDriveFileChangedJob`), not only in the sink. Guarding only the sink meant a disabled connector still decrypted a KMS token, called Drive, and buffered the document — every 5 minutes, per changed file — just to discard it.
   - **KNOWN GAP:** a change skipped while the flag is off is NOT replayed on flip. The job completes and the `drive_revision_ledger` row stands, so there is no backlog to drain. Leaving jobs pending (or rescheduling) is the fix if "accumulate while off" is the intent — product decision, not yet made.
@@ -1367,3 +1396,174 @@ Three changes, each with tests that fail without it:
 **Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
+
+## 2026-08-30 — R1: the confirmation-proof watermark is a SET of columns
+
+`confirmation-proof-populate.ts` now persists the bitcoin-tree inclusion branch
+and the tx's block index (migration `0427`: `tx_inclusion_branch`,
+`tx_block_index`) alongside `block_header` / `block_hash`.
+`fetchConfirmationProof` had been computing and validating both on every pass
+and the job dropped them on the floor — a prod census of
+`anchor_proofs.raw_response` found 0 rows carrying either.
+
+Three things to know before touching this job:
+
+- **The scan watermark is `.or('block_header.is.null,tx_inclusion_branch.is.null')`,
+  not `.is('block_header', null)`.** The single-column form was correct only
+  while `block_header` was the only bitcoin-tree column. The moment a second one
+  existed it became a trap: every row a previous pass had already given a header
+  was permanently invisible, so the new columns could only ever be filled for
+  anchors confirmed *after* the deploy and the entire back catalogue would never
+  backfill. **If you add a third bitcoin-tree column, add it to the OR** —
+  otherwise you have re-created the same bug one column over. `tx_block_index`
+  is deliberately absent from the OR: it is written in the same UPDATE as the
+  branch, so it is never independently null.
+- **The scan selects and threads `block_hash` as `expectedBlockHash`.** It used
+  to pass `null` with a comment explaining that nothing was recorded yet — true
+  when the scan could only ever see virgin rows. Now that already-populated rows
+  are back in scope, `block_hash` is the ONLY thing that distinguishes a
+  legitimate branch backfill from overwriting evidence recorded under a block
+  the tx has since left. Do not "simplify" it back to null.
+- **There are TWO reorg gates, on purpose.** `fetchConfirmationProof` refuses to
+  return `confirmed` when the tx moved blocks, but it is handed ONE
+  `expectedBlockHash` for a whole tx group. If anchors in a group disagree about
+  the recorded block, the group gate can only arm for one of them — so the
+  write-set build re-checks per anchor and counts the skips in
+  `anchorsBlockMismatch`. A non-zero value there is a reorg or a corrupted row,
+  and it is a counted result field precisely so it is not inferred from a gap
+  between `txConfirmed` and `anchorsUpdated`.
+
+**Operational note on the widened watermark.** Fixing K3 deliberately re-opens a
+backfill: every `anchor_proofs` row that already has a header now matches the
+scan again until its branch is written. Two things follow.
+
+- There is **no index on `block_header` and none on `tx_inclusion_branch`** —
+  `git grep 'INDEX.*anchor_proofs'` shows only `anchor_id`, `batch_id`,
+  `receipt_id`, `materialize_run_id` and the supplementary partial. So this is
+  not an index regression (the old single-column form was equally unindexed),
+  but the usual backfill tail applies: while most rows still match, `LIMIT 2000`
+  is satisfied almost immediately; once nearly all are populated, the scan has
+  to look further for each remaining row. If that tail ever bites, the fix is a
+  partial index on the incomplete set — which needs `CREATE INDEX CONCURRENTLY`
+  in its OWN migration file outside the transaction wrapper (see
+  `supabase/migrations/agents.md`), not a change to this predicate.
+- RPC load stays bounded regardless: the job fans in by unique `chain_tx_id`
+  before fetching, so a 2000-row page of a merkle batch is a handful of
+  `gettxoutproof` calls, not 2000.
+
+## 2026-08-31 — review fixes on `confirmation-proof-populate.ts` (B1 / H1 / H2 / H4 / M6)
+
+- **B1 — one stale row could starve its entire tx group, forever.** The group-level
+  reorg guard took `group.find((g) => g.expectedBlockHash)` — the FIRST non-null
+  recorded hash, decided by heap order. If that row was stale,
+  `fetchConfirmationProof` returned `stale`, the `confirmed` branch never ran, and
+  NOTHING was written for any anchor sharing that tx (up to 10,000 in a merkle
+  batch) — on every tick, with `anchorsBlockMismatch` stuck at 0 because the
+  per-anchor gate below was never reached. The guard now arms only on UNANIMOUS
+  agreement (`unanimousBlockHash`): any disagreement, or any anchor with nothing
+  recorded, disarms it and hands the decision to the per-anchor K1 gate, which is
+  strictly stronger. The old test passed only because it happened to list the good
+  anchor first; it now runs BOTH orderings and demands the same result.
+- **H1 — an unordered `LIMIT` let unpopulatable rows wedge the backfill.** No
+  `ORDER BY` over ~667k candidates means stable heap order, so rows that can never
+  complete came back first every run; once `maxRows` accumulated, the backfill
+  stopped advancing AND newly-SECURED anchors stopped receiving even
+  `block_header`. Now `.order('anchor_id', {ascending:true})` with a keyset
+  cursor — `anchor_id` is UNIQUE and btree-indexed, so it is a cheap total order
+  (unlike `created_at`, which is neither here). Honest limit: the cursor is
+  in-process, so a restart or a second Cloud Run instance sweeps from its own
+  start — still bounded forward progress, NOT a durable checkpoint. Callers
+  needing determinism pass `startAfterAnchorId`.
+
+  **Two ways this was got WRONG first; both are load-bearing, do not undo them.**
+
+  1. **The cursor filter is CONDITIONAL.** `anchor_id` is a Postgres `uuid`, so
+     there is no "start of keyspace" sentinel value: `.gt('anchor_id', '')` makes
+     PostgREST emit `anchor_id=gt.` and Postgres answers **400 `22P02 invalid
+     input syntax for type uuid: ""`**. The scan's error branch returns all-zero
+     counters and returns BEFORE assigning the cursor, so an empty-string seed is
+     not a bad first run — it is a permanent one, for the life of the process, in
+     every environment, with counters that read exactly like "no candidates".
+     A 48-hour T3 soak on that build would have produced a hollow pass. Omit the
+     filter when there is no cursor, exactly as `proofJobScan.ts:109` and
+     `proof-branch-backfill.ts:109` already do.
+  2. **The wrap condition is "the page came back EMPTY", never "shorter than
+     `maxRows`".** PostgREST truncates at the server's `db-max-rows` (the repo's
+     own `POSTGREST_ROW_LIMIT` is 1000) while `maxRows` defaults to 2000, so
+     `rows.length === maxRows` can be false on EVERY run — the cursor resets each
+     time and the rotation becomes a silent no-op, restoring the exact starvation
+     H1 exists to fix. This job does not control the row cap and must not assume
+     it does. (`api/v1/agents.md` records this class as a defect already paid for
+     once.)
+
+  The tests type-check `anchor_id` the way the column does, so a non-uuid
+  comparison fails the suite instead of passing it — a mock that only records
+  arguments cannot catch either bug.
+- **H2 — a header-present / hash-NULL row disarmed BOTH reorg gates.** That state
+  is schema-permitted and genuinely producible (`upsertAnchorProofs` and
+  `backfillProofCompleteness` write the two columns independently). Both gates
+  tested `expectedBlockHash` for truthiness, so such a row let the job fetch the
+  tx's CURRENT block and overwrite the stored 80-byte header with a DIFFERENT
+  block's — publishing a header for a block that never contained the commitment,
+  counted as success. A header identifies its own block, so the scan now selects
+  `block_header` and the guard falls back to `blockHashFromHeaderHex(...)`.
+
+  **An UNREADABLE header is a THIRD case and must NOT be treated as a mismatch.**
+  A first pass skipped those rows and counted them as `anchorsBlockMismatch`,
+  which converted a self-healing row into a permanent wedge: the row still
+  matches the scan predicate, so it is re-fetched from the RPC node every sweep,
+  never completes, and inflates a REORG metric each time. `block_header` has no
+  CHECK bounding its length and a pre-BUG-4 row holds the header as 160 ASCII
+  bytes rather than the raw 80, so the class is real. A value that cannot be
+  parsed as a header names no block and therefore cannot contradict the block the
+  tx is in — it is not weak evidence, it is no evidence. Such a row falls through
+  and is OVERWRITTEN (baseline behaviour, which repaired it), logged distinctly,
+  and the reorg counter stays a reorg counter. A READABLE header for a different
+  block is still refused.
+- **H4 — the write precondition did not name the values the write exists to
+  persist.** `proof.status === 'confirmed' && blockHeader && blockHash` said
+  nothing about `merkleBranch` / `txIndex`, both independently optional on
+  `ConfirmationProof`. A conforming producer could write a header-only row the
+  scan then re-selects forever. Now checked; a `confirmed` proof without inclusion
+  evidence counts as pending (so it retries) and logs a warn. The scan watermark
+  also gained `tx_block_index.is.null`, so a legacy half-pair row is repairable
+  instead of invisible.
+- **M6 — `tx_inclusion_branch` was selected and never read.** Dropped from the
+  select (filtering on a column does not require selecting it). The one thing the
+  stored branch could save is an RPC on a branch-without-index row, and the only
+  zero-RPC repair is to DERIVE the index from the branch's own positions — which
+  manufactures a pair the reader's index/side cross-check can never reject.
+  Re-deriving both halves from the chain is strictly better evidence.
+## `rule-action-dispatcher.ts` — `fingerprint_source` is deliberately NULL (R19 §1.5)
+
+The anchor-creating actions (`AUTO_ANCHOR` / `FAST_TRACK_ANCHOR` / `INSTANT_SECURE`) set the top-level
+`anchors.fingerprint_source` column (migration `0376`) to **`NULL`**, enforced by a required `z.null()`
+in the module's local `AnchorInsertSchema` and pinned by the `fingerprint_source evidence class
+(R19 §1.5)` tests. It is a decision, not an oversight — **do not "fix the gap."**
+
+**Why neither enum value works.** This path anchors a DocuSign-**declared** hash: asserted, never
+fetched or hashed by Arkova (`docusign-anchor-reconciliation.ts` path A; `rules-engine.ts` passes the
+payload hash through verbatim). So `document_bytes` (a measurement claim we cannot make) and
+`issuer_record_attestation` ("no source document exists" — one demonstrably does) are BOTH false, in
+opposite directions. `NULL` renders as nothing and asserts nothing.
+
+**The trap.** The instinct is to reach for `document_bytes` because the sibling
+`connector-artifact-drain.ts` genuinely does fetch and hash real bytes (§1.6A). Two problems: that class
+does not describe *this* path, and that sibling sets no `fingerprint_source` at all today — grep it,
+zero occurrences. `document_bytes` there is **PR-2**'s write, not an existing value to copy.
+
+**Nothing else stops a wrong value.** `0384` freezes `fingerprint_source` post-insert for
+**non-`service_role`** callers only; this module writes as `service_role`, so the DB waves it through.
+The schema + tests ARE the guard. (That same carve-out is what keeps a future backfill possible.)
+
+**Two unrelated things share the name.** The typed top-level column vs. the free-text
+`metadata.fingerprint_source` debug label (which payload field the hash was read from). Never conflate.
+
+**If you need to find these anchors later** — e.g. the backfill to `issuer_record_attestation` +
+`DECLARED_UNVERIFIED` once PR-4 lands — the discriminator is `metadata->>'rule_action_type'`, written on
+every anchor this module has ever created. Not `connector_source`: the drain path writes `'docusign'`
+there too.
+
+Full rationale, plus the separate and higher-severity `FETCH_TIME_SNAPSHOT` mis-classification these same
+anchors still emit on three public surfaces:
+`docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.
