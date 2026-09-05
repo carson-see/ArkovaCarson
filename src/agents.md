@@ -71,3 +71,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 - `zod` — validation
 - `pdf.js` + `tesseract.js` — client-side OCR
 - `vite` — bundler
+
+## PR #2619 generated notices refresh (2026-09-05)
+
+Regenerated `data/thirdPartyNotices.generated.json` with the installed xmldom 0.8.15 tree after incorporating PR #2493's license-body generator. The dependency is used by mammoth for on-device DOCX extraction, so verification covers actual document parsing as well as the rendered notice. No raw document bytes are sent to a backend.
