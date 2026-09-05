@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-05T15:35:44.119Z",
+  "generatedAt": "2026-09-05T15:41:53.105Z",
   "generalDependencies": [
     {
       "name": "@babel/runtime",
@@ -688,7 +688,7 @@
     },
     {
       "name": "@xmldom/xmldom",
-      "version": "0.8.13",
+      "version": "0.8.15",
       "license": "MIT",
       "repository": "https://github.com/xmldom/xmldom",
       "copyright": "Copyright 2019 - present Christopher J. Brody and other contributors, as listed in: https://github.com/xmldom/xmldom/graphs/contributors. Copyright 2012 - 2017 @jindw <jindw@xidea.org> and other contributors, as listed in: https://github.com/jindw/xmldom/graphs/contributors",
