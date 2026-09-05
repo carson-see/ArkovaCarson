@@ -9,10 +9,12 @@
  * being broken. Every assertion below targets behaviour that can only regress
  * BECAUSE of 0428.
  *
- * The RPCs are invoked over PostgREST with the service-role key — the exact
+ * C1–C3 invoke the RPCs over PostgREST with the service-role key — the exact
  * path services/worker/src/api/admin-actions.ts uses (its `db` client is
  * service_role over PostgREST), so the trigger-visible session state
- * (`request.jwt.claims`, the `role` GUC) is identical to production.
+ * (`request.jwt.claims`, the `role` GUC) is identical to production. C4–C8
+ * use SQL sessions with explicit service-role claims; C10–C11 use independent
+ * persistent PostgreSQL connections to establish controlled overlap.
  *
  * Per cycle:
  *   C1  admin_change_user_role   flips a role, and the DB reflects it
@@ -33,33 +35,41 @@
  *       role change. This is the invariant the flag design introduces, and a
  *       sequential probe cannot establish it.
  *   C11 the REAL controlled lock experiment — hold a conflicting writer open,
- *       fire the RPC, then time an innocent write to an UNRELATED row and scan
- *       pg_locks. Before 0428 that write waited ~4.95 s; after, it is not
- *       blocked. (An earlier cut of this driver ran both in ONE sequential
- *       transaction with no writer held, which measured nothing.)
+ *       fire each changed RPC, then time an innocent write to a THIRD row
+ *       inside PostgreSQL and observe pg_locks/pg_blocking_pids. The old
+ *       functions queue a table-wide barrier; the replacement must not.
  *
  * Writes one JSON line per cycle. Any assertion failure sets ok=false and is
  * a soak kill criterion (see docs/staging/admin-rpc-ddl-0428/PRE-MORTEM.md).
  */
 
+import { runFlagIsolation, runLockExperiment, validateProbeTarget } from './admin-rpc-0428-lock-probe.js';
+
 const REF = process.env.RIG_PROJECT_REF ?? '';
 const MGMT = process.env.SUPABASE_ACCESS_TOKEN ?? '';
+const SERVICE_KEY = process.env.RIG_SERVICE_ROLE_KEY ?? '';
+const MAX_CYCLES = Number(process.env.MAX_CYCLES ?? 0);
+const DB_ENV = { PGHOST: process.env.RIG_DB_HOST, PGPORT: process.env.RIG_DB_PORT ?? '5432', PGUSER: process.env.RIG_DB_USER ?? 'postgres', PGPASSWORD: process.env.RIG_DB_PASSWORD, PGDATABASE: 'postgres', PGSSLMODE: 'verify-full', PGSSLROOTCERT: process.env.RIG_DB_SSLROOTCERT ?? 'system' };
 const WORKER = process.env.RIG_WORKER_URL ?? '';
 const WORKER_ID_TOKEN = process.env.RIG_WORKER_ID_TOKEN ?? '';
 const CYCLE_MS = Number(process.env.CYCLE_MS ?? 15 * 60 * 1000);
 const LOCK_EXPERIMENT_EVERY = Number(process.env.LOCK_EXPERIMENT_EVERY ?? 4);
 const MANAGEMENT_API_TIMEOUT_MS = Number(process.env.MANAGEMENT_API_TIMEOUT_MS ?? 60_000);
 
-if (!REF || !MGMT) {
-  console.error('RIG_PROJECT_REF and SUPABASE_ACCESS_TOKEN are required');
+if (!REF || !MGMT || !SERVICE_KEY) {
+  console.error('RIG_PROJECT_REF, SUPABASE_ACCESS_TOKEN and RIG_SERVICE_ROLE_KEY are required');
   process.exit(2);
 }
 
+validateProbeTarget(REF, DB_ENV);
+if (!Number.isSafeInteger(MAX_CYCLES) || MAX_CYCLES < 0 || !Number.isSafeInteger(LOCK_EXPERIMENT_EVERY) || LOCK_EXPERIMENT_EVERY < 1 || !Number.isFinite(CYCLE_MS) || CYCLE_MS < 1) throw new Error('Invalid bounded cycle settings');
+
 const TARGET = '0428a11d-0000-4000-8000-000000000002';
 const INDIV = '0428a11d-0000-4000-8000-000000000003';
+const INNOCENT = '0428a11d-0000-4000-8000-000000000004';
 const ORG = '0428a11d-0000-4000-8000-0000000000ff';
 
-/** Read-only-ish SQL over the Supabase Management API. */
+/** Privileged fixture SQL over the Management API, scoped to the admitted isolated rig. */
 async function sql(query: string): Promise<{ rows: unknown[]; error?: string }> {
   // Bounded: this driver is unattended for 48 h and its whole output contract
   // is one JSON line per cycle. A hung Management API call with no timeout
@@ -69,7 +79,7 @@ async function sql(query: string): Promise<{ rows: unknown[]; error?: string }> 
   try {
     res = await fetch(`https://api.supabase.com/v1/projects/${REF}/database/query`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${MGMT}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${MGMT}`, 'Content-Type': 'application/json', 'User-Agent': 'Arkova-release-review/1.0' },
       body: JSON.stringify({ query }),
       signal: AbortSignal.timeout(MANAGEMENT_API_TIMEOUT_MS),
     });
@@ -83,6 +93,16 @@ async function sql(query: string): Promise<{ rows: unknown[]; error?: string }> 
   } catch {
     return { rows: [], error: `unparseable: ${text.slice(0, 200)}` };
   }
+}
+
+/** Exercise the actual PostgREST RPC transport used by the worker. */
+async function postgrestRpc(name: string, args: Record<string, unknown>): Promise<void> {
+  const response = await fetch(`https://${REF}.supabase.co/rest/v1/rpc/${name}`, {
+    method: 'POST', headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args), signal: AbortSignal.timeout(MANAGEMENT_API_TIMEOUT_MS),
+  });
+  await response.arrayBuffer();
+  if (!response.ok) throw new Error(`${name}: PostgREST returned ${response.status}`);
 }
 
 /**
@@ -168,7 +188,7 @@ async function withFreshProfile<T>(n: number, fn: (id: string) => Promise<T>): P
   try {
     return await fn(id);
   } finally {
-    await sql(purge);
+    await expectOk('fresh profile cleanup', purge);
   }
 }
 
@@ -177,22 +197,23 @@ async function cycle(n: number): Promise<Record<string, unknown>> {
   await resetFixture();
 
   // C1 — the RPC changes a role, with no DDL.
-  await expectOk('C1 admin_change_user_role', asServiceRole(`SELECT admin_change_user_role('${TARGET}','ORG_ADMIN');`));
+  await postgrestRpc('admin_change_user_role', { p_user_id: TARGET, p_new_role: 'ORG_ADMIN' });
   const role = await scalar('C1 role readback', `SELECT role::text FROM public.profiles WHERE id='${TARGET}'`);
   if (role !== 'ORG_ADMIN') throw new Error(`C1: role did not land, got ${role}`);
   rec.c1_role = role;
 
   // C2 — the flag flips, and the read-back assertion did not spuriously fire.
-  await expectOk('C2 admin_set_platform_admin', asServiceRole(`SELECT admin_set_platform_admin('${TARGET}',true);`));
+  await postgrestRpc('admin_set_platform_admin', { p_user_id: TARGET, p_is_admin: true });
   const flag = await scalar('C2 flag readback', `SELECT is_platform_admin::text FROM public.profiles WHERE id='${TARGET}'`);
   if (flag !== 'true') throw new Error(`C2: flag did not land, got ${flag}`);
   rec.c2_flag = flag;
 
   // C3 — org assignment + org_members upsert.
-  await expectOk('C3 admin_set_user_org', asServiceRole(`SELECT admin_set_user_org('${TARGET}','${ORG}','admin');`));
+  await postgrestRpc('admin_set_user_org', { p_user_id: TARGET, p_org_id: ORG, p_org_role: 'admin' });
   const orgId = await scalar('C3 org readback', `SELECT coalesce(org_id::text,'<null>') FROM public.profiles WHERE id='${TARGET}'`);
   if (orgId !== ORG) throw new Error(`C3: org_id did not land, got ${orgId}`);
   const memberRole = await scalar('C3 member readback', `SELECT role::text FROM public.org_members WHERE user_id='${TARGET}' AND org_id='${ORG}'`);
+  if (memberRole !== 'admin') throw new Error('C3: org_members admin role did not land');
   rec.c3_org = orgId;
   rec.c3_member_role = memberRole;
 
@@ -242,76 +263,27 @@ async function cycle(n: number): Promise<Record<string, unknown>> {
   rec.c8_share_row_exclusive_locks = Number(srx);
   if (Number(srx) > 0) throw new Error('C8: ShareRowExclusiveLock observed on profiles — kill criterion');
 
-  // C9 — worker health (supporting evidence only).
+  // C9 — supporting worker health, fail visibly. A MAX_CYCLES=1 supervisor can
+  // supply a freshly minted identity token each invocation; a stale token must fail.
   if (WORKER) {
-    try {
-      const headers: Record<string, string> = {};
-      if (WORKER_ID_TOKEN) headers.Authorization = `Bearer ${WORKER_ID_TOKEN}`;
-      const h = await fetch(`${WORKER}/health`, { headers });
-      rec.c9_worker_health = h.status;
-    } catch (e) {
-      rec.c9_worker_health = `unreachable: ${(e as Error).message}`;
-    }
+    const headers: Record<string, string> = {};
+    if (WORKER_ID_TOKEN) headers.Authorization = `Bearer ${WORKER_ID_TOKEN}`;
+    const h = await fetch(`${WORKER}/health`, { headers, signal: AbortSignal.timeout(MANAGEMENT_API_TIMEOUT_MS) });
+    await h.arrayBuffer();
+    rec.c9_worker_health = h.status;
+    if (h.status !== 200) throw new Error(`C9 worker health returned ${h.status}`);
   }
 
-  // C10 — CONCURRENT flag isolation. This is the invariant the flag design
-  // introduces and the one thing a sequential probe cannot establish: while one
-  // session holds `arkova.allow_role_change='on'` inside a live transaction,
-  // a DIFFERENT concurrent session must still be refused a direct role change.
-  // If the flag were ever global rather than transaction-local, this is where
-  // it would show, and every direct role write in the system would be exempt.
-  {
-    const holder = sql(
-      asServiceRole(
-        `SELECT set_config('arkova.allow_role_change','on',true);
-         SELECT pg_sleep(6);
-         SELECT admin_change_user_role('${TARGET}','ORG_ADMIN');`,
-      ),
-    );
-    await new Promise((r) => setTimeout(r, 1500));
-    await expectRejected(
-      'C10 concurrent intruder while another session holds the flag',
-      asServiceRole(`UPDATE public.profiles SET role='ORG_ADMIN' WHERE id='${INDIV}';`),
-      'Role cannot be changed once set',
-    );
-    const held = await holder;
-    if (held.error) throw new Error(`C10: flag holder failed: ${held.error.slice(0, 160)}`);
-    rec.c10_concurrent_flag_isolated = true;
-  }
+  // C10 — the holder's query has completed and its transaction stays open
+  // until the independent backend's rejection is observed. No fixed sleep.
+  await runFlagIsolation(REF, DB_ENV, INDIV);
+  rec.c10_concurrent_flag_isolated = true;
 
-  // C11 — the REAL controlled lock experiment. An earlier version of this
-  // driver ran the RPC and an update in ONE sequential transaction with no
-  // concurrent writer held, which measures nothing about a FIFO barrier. To
-  // observe the barrier at all you must hold a conflicting writer open while
-  // the RPC runs, then time an innocent write to an UNRELATED row.
-  //   before 0428: that innocent write waited ~4.95 s (ShareRowExclusive queued)
-  //   after  0428: it is not blocked at all
-  if (n % LOCK_EXPERIMENT_EVERY === 0) {
-    const holder = sql(
-      asServiceRole(`UPDATE public.profiles SET updated_at=now() WHERE id='${INDIV}';
-                     SELECT pg_sleep(5);`),
-    );
-    await new Promise((r) => setTimeout(r, 1500));
-    const rpc = sql(asServiceRole(`SELECT admin_change_user_role('${TARGET}','ORG_MEMBER');`));
-    await new Promise((r) => setTimeout(r, 1000));
-    const modes = await sql(
-      `SELECT mode, granted FROM pg_locks WHERE relation='public.profiles'::regclass ORDER BY granted DESC;`,
-    );
-    const sawBarrierLock = JSON.stringify(modes.rows).includes('ShareRowExclusiveLock');
-    rec.c11_barrier_lock_seen = sawBarrierLock;
-    const t0 = Date.now();
-    const innocent = await sql(asServiceRole(`UPDATE public.profiles SET updated_at=now() WHERE id='${TARGET}';`));
-    const waitedMs = Date.now() - t0;
-    await Promise.all([holder, rpc]);
-    if (sawBarrierLock) {
-      throw new Error('C11: ShareRowExclusiveLock observed on profiles while the RPC ran — kill criterion');
-    }
-    if (innocent.error) throw new Error(`C11: innocent unrelated write failed: ${innocent.error.slice(0, 160)}`);
-    rec.c11_innocent_unrelated_write_ms = waitedMs;
-    // Generous ceiling: this is a network round trip, not a lock wait.
-    if (waitedMs > 3000) {
-      throw new Error(`C11: innocent unrelated write waited ${waitedMs}ms — barrier may have returned`);
-    }
+  // C11 — separate holder/RPC/innocent rows, persistent backends and actual
+  // lock-manager observations. Clock starts inside PostgreSQL BEFORE UPDATE.
+  // Each of the three changed RPCs must pass while both other sessions are held.
+  if (n === 1 || n % LOCK_EXPERIMENT_EVERY === 0) {
+    rec.c11_lock_experiments = await runLockExperiment(REF, DB_ENV, INDIV, TARGET, INNOCENT);
   }
 
   rec.ok = true;
@@ -327,9 +299,12 @@ async function main() {
       console.log(JSON.stringify(await cycle(n)));
     } catch (e) {
       console.log(JSON.stringify({ cycle: n, at: new Date().toISOString(), ok: false, error: (e as Error).message }));
+      process.exitCode = 1;
+      return; // A failed sample terminates this window; never silently continue.
     }
+    if (MAX_CYCLES > 0 && n >= MAX_CYCLES) return;
     await new Promise((r) => setTimeout(r, CYCLE_MS));
   }
 }
 
-void main();
+void main().catch(error => { console.error(error instanceof Error ? error.message : 'Driver failed'); process.exitCode = 1; });
