@@ -389,3 +389,5 @@ script. Source: `docs/staging/consolidated-mm-2026-08/soak-start-2026-08-30T1546
   pooler tenant lagging just after the project comes up. Exhausting either budget
   **exits non-zero** — a rig that never linked must never reach a deploy, and the
   failure message says the project exists, is billable, and names teardown.
+
+2026-09-05, PR #2519: the two exact documentation snapshots now include the Adobe webhook seed section above. Preserve every prior section, its order, and the existing per-section byte pins when updating either snapshot.

@@ -2198,4 +2198,6 @@ Held for current-base T3 verification. 0424 alone permits a recent legacy nonce 
 
 The Adobe challenge now reads the existing validated worker configuration. The real main-target CI run exposed the direct environment read; targeted regressions cover startup configuration authority and fail-closed behavior. This is source preparation; the combined staging build and qualification remain pending. CI evidence: https://github.com/carson-see/ArkovaCarson/actions/runs/33976897351 .
 
+PR #2519 documentation verification: both staging guide snapshots retain the added Adobe webhook seed section and all prior sections. The prior two snapshot failures were reproduced locally; qualification remains pending.
+
 _Last refreshed: 2026-09-05 by Codex — claims verified against gcloud/MCP/CI output._
