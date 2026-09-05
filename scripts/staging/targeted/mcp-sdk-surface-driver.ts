@@ -708,6 +708,24 @@ export function decodeJwtHeaderAlg(token: string): string | null {
 }
 
 /**
+ * Read `exp` (seconds since epoch) out of a JWT's PAYLOAD segment and return
+ * it in milliseconds, with no signature verification and no logging of the
+ * token. Sibling of `decodeJwtHeaderAlg` (which reads segment 0); this reads
+ * segment 1, so the driver can reuse one GoTrue session across cycles instead
+ * of re-granting on every pass. Null on any malformed input or missing claim.
+ */
+export function decodeJwtExpMs(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as { exp?: unknown };
+    return typeof payload.exp === 'number' && Number.isFinite(payload.exp) ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Flip one base64url character in a JWT's signature segment so the token
  * fails signature verification while staying syntactically well-formed
  * (three dot-separated segments) — used only for the tampered-signature
@@ -720,6 +738,98 @@ export function tamperJwtSignature(token: string): string {
   const lastChar = sig[sig.length - 1];
   const replacement = lastChar === 'A' ? 'B' : 'A';
   return `${parts[0]}.${parts[1]}.${sig.slice(0, -1)}${replacement}`;
+}
+
+// ─── GoTrue session cache (pure predicate + injectable orchestrator) ─────
+
+/**
+ * How close to `exp` a cached session may run before the driver re-grants.
+ * Two minutes comfortably covers one cycle's worth of hosted Bearer probes
+ * plus clock skew between this host and the rig's GoTrue.
+ */
+export const GOTRUE_REGRANT_MARGIN_MS = 120_000;
+
+export interface GoTrueTokenCache {
+  token: string;
+  /** Decoded `exp` in ms, or null when the payload did not carry a usable one. */
+  expMs: number | null;
+}
+
+/** Driver-scope holder so the cache survives across cycles without a module global in the run path. */
+export interface GoTrueTokenBox {
+  current: GoTrueTokenCache | null;
+}
+
+/**
+ * A cached session is reusable while it is more than `marginMs` from expiry.
+ * An UNDECODABLE `exp` re-grants every time: an unprovable lifetime is not a
+ * reusable one, and that is exactly the pre-caching behaviour, so the fallback
+ * is never worse than what it replaces.
+ */
+export function tokenNeedsRegrant(
+  cache: GoTrueTokenCache | null,
+  nowMs: number,
+  marginMs = GOTRUE_REGRANT_MARGIN_MS,
+): boolean {
+  if (!cache) return true;
+  if (cache.expMs === null) return true;
+  return cache.expMs - nowMs <= marginMs;
+}
+
+export interface EnsureGoTrueTokenDeps {
+  box: GoTrueTokenBox;
+  stats: DriverStats;
+  evidence: McpEvidenceExtension;
+  log: (m: string) => void;
+  /** Performs the actual GoTrue password grant. Injected so this is unit-testable. */
+  grant: () => Promise<string>;
+  now?: () => number;
+  /** Skip the cache — used after the hosted surface 401s a token we believed live. */
+  forceRegrant?: boolean;
+}
+
+/**
+ * Return a usable GoTrue access token, granting one only when the cache is
+ * empty, near expiry, or explicitly invalidated.
+ *
+ * A FAILED grant is never silent: it records an UNEXPECTED
+ * `hosted:bearer:gotrue-grant` outcome (so `allExpected` goes false and the
+ * soak cannot be read as green) while still setting `bearerSkipped`, which is
+ * what tells an evidence reader that the §D probes did not run. Returns null
+ * in that case; the caller must not proceed.
+ */
+export async function ensureGoTrueToken(deps: EnsureGoTrueTokenDeps): Promise<string | null> {
+  const nowMs = (deps.now ?? Date.now)();
+  const cached = deps.box.current;
+  if (!deps.forceRegrant && !tokenNeedsRegrant(cached, nowMs) && cached) {
+    return cached.token;
+  }
+
+  const startedAt = nowMs;
+  let token: string;
+  try {
+    token = await deps.grant();
+  } catch (err) {
+    const detail = scrubSecrets(err instanceof Error ? err.message : String(err));
+    deps.box.current = null;
+    deps.evidence.bearerSkipped = 'gotrue-grant-failed';
+    recordOutcome(deps.stats, {
+      label: 'hosted:bearer:gotrue-grant',
+      endpoint: '/auth/v1/token?grant_type=password',
+      method: 'POST',
+      status: 0,
+      latencyMs: (deps.now ?? Date.now)() - startedAt,
+      expected: false,
+      capturedBody: captureField({ error: detail }),
+    });
+    deps.log(`bearer-jwt: GoTrue password grant FAILED (recorded as an unexpected outcome): ${detail}`);
+    return null;
+  }
+
+  registerSecret(token);
+  deps.box.current = { token, expMs: decodeJwtExpMs(token) };
+  deps.evidence.bearerSkipped = null;
+  return token;
 }
 
 // ─── audit-control helpers (pure) ────────────────────────────────────────
@@ -844,7 +954,7 @@ export interface McpEvidenceExtension {
   bearerSkipped: string | null;
 }
 
-function newMcpEvidence(): McpEvidenceExtension {
+export function newMcpEvidence(): McpEvidenceExtension {
   return {
     hostedToolNames: [],
     stdioToolNames: [],
@@ -929,7 +1039,8 @@ async function fetchAuditCount(supabaseUrl: string, supabaseKey: string, eventTy
 /**
  * GoTrue password-grant login. Used ONLY to obtain a real Supabase session
  * JWT for the Bearer-auth probe against the hosted MCP surface — never
- * logged, never persisted, discarded at the end of the cycle.
+ * logged, never persisted. Called through `ensureGoTrueToken`, which caches
+ * the result across cycles rather than re-granting on every pass.
  */
 async function fetchGoTrueAccessToken(
   supabaseUrl: string,
@@ -960,34 +1071,24 @@ async function fetchGoTrueAccessToken(
  * fixture is a heavier precondition than the rest of this driver's env
  * contract and may not exist on every rig.
  */
-async function runHostedBearerSection(ctx: {
-  stats: DriverStats;
-  edgeBase: string;
-  evidence: McpEvidenceExtension;
-  log: (m: string) => void;
-}): Promise<void> {
-  const email = process.env.STAGING_JWT_EMAIL;
-  const password = process.env.STAGING_JWT_PASSWORD;
-  const anonKey = process.env.STAGING_SUPABASE_ANON_KEY;
-  const supabaseUrl = process.env.STAGING_SUPABASE_URL;
-  if (!email || !password || !anonKey || !supabaseUrl) {
-    ctx.evidence.bearerSkipped = 'no STAGING_JWT_EMAIL';
-    ctx.log('bearer-jwt section skipped: STAGING_JWT_EMAIL/STAGING_JWT_PASSWORD/STAGING_SUPABASE_ANON_KEY not fully set.');
-    return;
-  }
+/** Driver-scope GoTrue session, reused across cycles (§D). */
+const goTrueTokenBox: GoTrueTokenBox = { current: null };
 
-  let accessToken: string;
-  try {
-    accessToken = await fetchGoTrueAccessToken(supabaseUrl, anonKey, email, password);
-  } catch (err) {
-    ctx.evidence.bearerSkipped = 'gotrue-auth-failed';
-    ctx.log(scrubSecrets(`bearer-jwt: GoTrue password grant failed: ${err instanceof Error ? err.message : String(err)}`));
-    return;
-  }
-  registerSecret(accessToken);
+/** Test seam — forget the cached GoTrue session. */
+export function clearGoTrueTokenCache(): void {
+  goTrueTokenBox.current = null;
+}
+
+/**
+ * One pass of the §D Bearer probes with the given session token. Returns the
+ * `initialize` HTTP status so the caller can detect a 401 (the one signal that
+ * a token we believed live has actually been rejected) and re-grant.
+ */
+async function fireBearerProbes(
+  ctx: { stats: DriverStats; edgeBase: string; evidence: McpEvidenceExtension; log: (m: string) => void },
+  accessToken: string,
+): Promise<number> {
   ctx.evidence.bearerAlg = decodeJwtHeaderAlg(accessToken);
-  ctx.evidence.bearerSkipped = null;
-  ctx.log(`bearer-jwt: obtained GoTrue session, header alg=${ctx.evidence.bearerAlg}`);
 
   const mcpUrl = `${ctx.edgeBase}/mcp`;
   const bearerHeaders = {
@@ -1001,7 +1102,7 @@ async function runHostedBearerSection(ctx: {
     { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'arkova-targeted-soak-bearer', version: '1.0.0' } },
     500,
   );
-  await callHosted({
+  const initResult = await callHosted({
     stats: ctx.stats,
     label: 'hosted:bearer:initialize',
     url: mcpUrl,
@@ -1011,6 +1112,10 @@ async function runHostedBearerSection(ctx: {
     okStatuses: [200],
     assert: (b) => (classifyMcpOutcome(b) === 'jsonrpc-result' ? null : `unexpected bearer-initialize outcome: ${JSON.stringify(b).slice(0, 200)}`),
   });
+  // A 401 here means the cached session is dead earlier than its own `exp`
+  // claimed. Bail before the remaining probes so the caller can re-grant and
+  // re-run the section, rather than recording three doomed outcomes.
+  if (initResult.status === 401) return 401;
 
   const listReq = buildJsonRpcRequest('tools/list', undefined, 501);
   await callHosted({
@@ -1037,6 +1142,49 @@ async function runHostedBearerSection(ctx: {
     okStatuses: [401],
   });
   ctx.log('bearer-jwt: initialize + tools/list ok with a real session JWT; tampered-signature copy rejected.');
+  return initResult.status;
+}
+
+async function runHostedBearerSection(ctx: {
+  stats: DriverStats;
+  edgeBase: string;
+  evidence: McpEvidenceExtension;
+  log: (m: string) => void;
+}): Promise<void> {
+  const email = process.env.STAGING_JWT_EMAIL;
+  const password = process.env.STAGING_JWT_PASSWORD;
+  const anonKey = process.env.STAGING_SUPABASE_ANON_KEY;
+  const supabaseUrl = process.env.STAGING_SUPABASE_URL;
+  if (!email || !password || !anonKey || !supabaseUrl) {
+    ctx.evidence.bearerSkipped = 'no STAGING_JWT_EMAIL';
+    ctx.log('bearer-jwt section skipped: STAGING_JWT_EMAIL/STAGING_JWT_PASSWORD/STAGING_SUPABASE_ANON_KEY not fully set.');
+    return;
+  }
+
+  const grant = () => fetchGoTrueAccessToken(supabaseUrl, anonKey, email, password);
+
+  // At most two attempts: the cached session, then — only if the hosted
+  // surface 401s it — one forced re-grant. A soak cycles every 30s for up to
+  // 48h, so re-granting per cycle was thousands of needless password grants
+  // against the rig's GoTrue.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const accessToken = await ensureGoTrueToken({
+      box: goTrueTokenBox,
+      stats: ctx.stats,
+      evidence: ctx.evidence,
+      log: ctx.log,
+      grant,
+      forceRegrant: attempt > 0,
+    });
+    if (!accessToken) return; // already recorded as an unexpected outcome
+
+    const status = await fireBearerProbes(ctx, accessToken);
+    if (status !== 401) return;
+    if (attempt === 0) {
+      ctx.log('bearer-jwt: hosted surface rejected the cached session (401) — invalidating and re-granting once.');
+      goTrueTokenBox.current = null;
+    }
+  }
 }
 
 async function runHostedCycle(ctx: {

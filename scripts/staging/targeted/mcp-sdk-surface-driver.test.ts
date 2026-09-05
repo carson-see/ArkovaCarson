@@ -34,6 +34,13 @@ import {
   scrubSecrets,
   captureField,
   REDACTION_PLACEHOLDER,
+  decodeJwtHeaderAlg,
+  decodeJwtExpMs,
+  tokenNeedsRegrant,
+  ensureGoTrueToken,
+  newMcpEvidence,
+  GOTRUE_REGRANT_MARGIN_MS,
+  type GoTrueTokenBox,
   HOSTED_REQUIRED_TOOLS,
   HOSTED_NOTE_TOOLS,
   STDIO_REQUIRED_TOOLS,
@@ -599,5 +606,137 @@ describe('mcp-sdk-surface-driver: evidence never carries a registered secret', (
     const doc = { note: `login failed for ${quoted}` };
     const cleaned = redactEvidenceDocument(doc, [quoted]);
     expect(JSON.stringify(cleaned)).not.toContain('with');
+  });
+});
+
+
+// ── §D Bearer-JWT: GoTrue grant caching ──────────────────────────────────
+// A syntactically real, cryptographically meaningless JWT: the signature is
+// literal zeros, so this can never authenticate anywhere.
+function fakeJwt(expSeconds: number | undefined, alg = 'ES256'): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o), 'utf8').toString('base64url');
+  const payload: Record<string, unknown> = { sub: 'tsoak-user', role: 'authenticated' };
+  if (expSeconds !== undefined) payload.exp = expSeconds;
+  return `${b64({ alg, typ: 'JWT' })}.${b64(payload)}.${'0'.repeat(43)}`;
+}
+
+describe('mcp-sdk-surface-driver: decodeJwtExpMs', () => {
+  it('reads `exp` (seconds) out of the payload and returns milliseconds', () => {
+    expect(decodeJwtExpMs(fakeJwt(1_800_000_000))).toBe(1_800_000_000_000);
+  });
+
+  it('shares its decoding with the header `alg` read on the same token', () => {
+    const token = fakeJwt(1_800_000_000, 'ES256');
+    expect(decodeJwtHeaderAlg(token)).toBe('ES256');
+    expect(decodeJwtExpMs(token)).toBe(1_800_000_000_000);
+  });
+
+  it('returns null when the payload has no exp, or is malformed', () => {
+    expect(decodeJwtExpMs(fakeJwt(undefined))).toBeNull();
+    expect(decodeJwtExpMs('not-a-jwt')).toBeNull();
+    expect(decodeJwtExpMs('aaa.!!!not-base64-json!!!.bbb')).toBeNull();
+  });
+});
+
+describe('mcp-sdk-surface-driver: tokenNeedsRegrant', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('needs a grant when nothing is cached', () => {
+    expect(tokenNeedsRegrant(null, NOW)).toBe(true);
+  });
+
+  it('REUSES a cached token that is comfortably inside its lifetime', () => {
+    expect(tokenNeedsRegrant({ token: 't', expMs: NOW + 3_600_000 }, NOW)).toBe(false);
+  });
+
+  it('reuses right up to the margin boundary, then re-grants', () => {
+    expect(tokenNeedsRegrant({ token: 't', expMs: NOW + GOTRUE_REGRANT_MARGIN_MS + 1 }, NOW)).toBe(false);
+    expect(tokenNeedsRegrant({ token: 't', expMs: NOW + GOTRUE_REGRANT_MARGIN_MS }, NOW)).toBe(true);
+  });
+
+  it('re-grants once the token has actually expired', () => {
+    expect(tokenNeedsRegrant({ token: 't', expMs: NOW - 1 }, NOW)).toBe(true);
+  });
+
+  it('re-grants when exp could not be decoded — an unprovable lifetime is not a reusable one', () => {
+    expect(tokenNeedsRegrant({ token: 't', expMs: null }, NOW)).toBe(true);
+  });
+});
+
+describe('mcp-sdk-surface-driver: ensureGoTrueToken', () => {
+  afterEach(() => clearRegisteredSecrets());
+
+  const NOW = 1_800_000_000_000;
+  const liveToken = fakeJwt(NOW / 1000 + 3600);
+
+  function harness(box: GoTrueTokenBox, grant: () => Promise<string>) {
+    const stats = newDriverStats();
+    return {
+      stats,
+      deps: { box, stats, evidence: newMcpEvidence(), log: () => {}, grant, now: () => NOW },
+    };
+  }
+
+  it('grants once, then REUSES the cached token on the next cycle without calling GoTrue again', async () => {
+    const box: GoTrueTokenBox = { current: null };
+    let grants = 0;
+    const grant = async () => { grants++; return liveToken; };
+    const h = harness(box, grant);
+    expect(await ensureGoTrueToken(h.deps)).toBe(liveToken);
+    expect(await ensureGoTrueToken(h.deps)).toBe(liveToken);
+    expect(await ensureGoTrueToken(h.deps)).toBe(liveToken);
+    expect(grants).toBe(1);
+  });
+
+  it('re-grants once the cached token is inside the 120s expiry margin', async () => {
+    const nearExpiry = fakeJwt(NOW / 1000 + 60); // 60s left — inside the margin
+    const box: GoTrueTokenBox = { current: null };
+    let grants = 0;
+    const tokens = [nearExpiry, liveToken];
+    const grant = async () => tokens[grants++];
+    const h = harness(box, grant);
+    expect(await ensureGoTrueToken(h.deps)).toBe(nearExpiry);
+    expect(await ensureGoTrueToken(h.deps)).toBe(liveToken);
+    expect(grants).toBe(2);
+  });
+
+  it('forceRegrant bypasses a still-live cache (the post-401 path)', async () => {
+    const box: GoTrueTokenBox = { current: null };
+    let grants = 0;
+    const grant = async () => { grants++; return liveToken; };
+    const h = harness(box, grant);
+    await ensureGoTrueToken(h.deps);
+    await ensureGoTrueToken({ ...h.deps, forceRegrant: true });
+    expect(grants).toBe(2);
+  });
+
+  it('registers the granted token as a secret so it can never reach evidence', async () => {
+    const box: GoTrueTokenBox = { current: null };
+    const h = harness(box, async () => liveToken);
+    await ensureGoTrueToken(h.deps);
+    expect(currentSecrets()).toContain(liveToken);
+  });
+
+  it('a FAILED grant records an unexpected `hosted:bearer:gotrue-grant` outcome — it is not silent', async () => {
+    const box: GoTrueTokenBox = { current: null };
+    const h = harness(box, async () => { throw new Error('GoTrue password grant failed: HTTP 400'); });
+    expect(await ensureGoTrueToken(h.deps)).toBeNull();
+
+    const evidence = summarizeEvidence(h.stats, { driver: 'mcp-sdk-surface', pr: '#2589', apiBase: 'https://rig.test' });
+    expect(evidence.allExpected).toBe(false);
+    expect(evidence.byLabel['hosted:bearer:gotrue-grant'].unexpected).toBe(1);
+    // …while still marking the section skipped, so downstream evidence readers
+    // can tell "Bearer probes did not run" from "Bearer probes failed".
+    expect(h.deps.evidence.bearerSkipped).toMatch(/gotrue/);
+    expect(box.current).toBeNull();
+  });
+
+  it('a failed grant does not leak the GoTrue error text into evidence unredacted', async () => {
+    registerSecret(FAKE_API_KEY);
+    const box: GoTrueTokenBox = { current: null };
+    const h = harness(box, async () => { throw new Error(`grant failed for key ${FAKE_API_KEY}`); });
+    await ensureGoTrueToken(h.deps);
+    const evidence = summarizeEvidence(h.stats, { driver: 'mcp-sdk-surface', pr: '#2589', apiBase: 'https://rig.test' });
+    expect(JSON.stringify(evidence)).not.toContain(FAKE_API_KEY);
   });
 });
