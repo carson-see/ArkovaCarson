@@ -319,4 +319,46 @@ describe('BullhornWebhookHandler — inbound auth (SCRUM-3901)', () => {
     expect(constantTimeEqual('abc', 'abd')).toBe(false);
     expect(constantTimeEqual('abc', 'abcd')).toBe(false);
   });
+
+  // Failing closed on an unset secret is correct, but silent: a deploy that
+  // simply forgot to set BULLHORN_WEBHOOK_SECRET rejects 100% of real events
+  // as `rejected_unauthenticated` and looks, from the outside, exactly like
+  // an attacker being turned away. Say so once, at construction.
+  it('warns once at construction when no webhook secret is configured', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      new BullhornWebhookHandler({ ...TEST_CONFIG, webhookSecret: undefined });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = String(warn.mock.calls[0][0]);
+      expect(message).toContain('webhookSecret');
+      expect(message).toContain('rejected_unauthenticated');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not warn when a webhook secret IS configured, and never prints it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      new BullhornWebhookHandler(TEST_CONFIG);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('never includes the secret value in the construction warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // Even the empty-string case (falsy, so it warns) must not echo config.
+      new BullhornWebhookHandler({ ...TEST_CONFIG, webhookSecret: '' });
+      const printed = warn.mock.calls.flat().map(String).join(' ');
+      expect(printed).not.toContain(TEST_CONFIG.webhookSecret as string);
+      expect(printed).not.toContain('bh-test-token');
+      expect(printed).not.toContain('ak_test_bullhorn');
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
