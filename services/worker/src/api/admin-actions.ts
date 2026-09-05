@@ -391,9 +391,8 @@ export async function handleAdjustOrgCredit(
 // platform-admin middleware on '/admin', so a future handler that forgets the
 // check is still not reachable unauthenticated.
 //
-// Shape note for the next handler author: unlike the five RPC-dispatching
-// handlers above, these take zero DDL and no `(db as any).rpc(...)` — the logic
-// is a pure module that is unit-testable without a database. Prefer this shape.
+// Organization provisioning uses0439's atomic, service-only RPC. Account
+// creation uses the Auth admin API with a protected explicit-placement marker.
 
 /**
  * POST /api/admin/organizations

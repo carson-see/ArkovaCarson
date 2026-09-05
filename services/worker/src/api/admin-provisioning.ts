@@ -20,15 +20,10 @@
  *    means that race cannot happen — correctness by construction for the
  *    PROFILE half of that trigger.
  *
- *    It does NOT close the trigger's other half: its
- *    `INSERT INTO org_members (…, 'member') ON CONFLICT DO NOTHING` is
- *    UNCONDITIONAL and still fires whenever the address is eventually
- *    confirmed. An account provisioned into org A whose email domain is
- *    claimed by org B will additionally acquire an org_members row in B, and
- *    `get_user_org_ids()` feeds RLS off that table. That is pre-existing
- *    platform behaviour for every signup, not something this module
- *    introduces, and changing it belongs with the trigger — but do not read
- *    the paragraph above as covering it.
+ *    The service-written `app_metadata.admin_provisioned` marker makes the
+ *    0439 domain helper preserve this explicit placement on confirmation too.
+ *    That guard also preserves0436's pending OAuth mailbox restriction; a
+ *    client's user_metadata cannot set the protected marker.
  *
  * 2. **No DDL, ever.** The neighbouring `admin_change_user_role` /
  *    `admin_set_platform_admin` RPCs run `ALTER TABLE profiles DISABLE TRIGGER`
@@ -50,7 +45,6 @@
  * PII: never log the email address or full name — user id and org id only (§1.4).
  */
 
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from '../utils/logger.js';
@@ -63,6 +57,7 @@ export interface AdminProvisioningDeps {
 export type ProvisioningErrorCode =
   | 'invalid_input'
   | 'org_exists'
+  | 'idempotency_key_conflict'
   | 'account_exists'
   | 'role_conflict'
   | 'internal_error';
@@ -82,24 +77,17 @@ export class ProvisioningError extends Error {
 export const PROVISIONING_ERROR_STATUS: Record<ProvisioningErrorCode, number> = {
   invalid_input: 400,
   org_exists: 409,
+  idempotency_key_conflict: 409,
   account_exists: 409,
   role_conflict: 409,
   internal_error: 500,
 };
 
-/**
- * Postgres surfaces the offending value in `details` — a unique violation on
- * `profiles.email` reads `Key (email)=(person@example.com) already exists`.
- * Handing the raw error to pino would put that address in Cloud Run logs and
- * Sentry, against §1.4. Keep the code and message; drop everything else.
- */
-function sanitizeError(err: unknown): { code?: string; message?: string } | undefined {
+/** Upstream messages can contain addresses, links and PostgreSQL detail values. */
+function sanitizeError(err: unknown): { code?: string } | undefined {
   if (err === null || err === undefined) return undefined;
-  const e = err as { code?: unknown; message?: unknown };
-  return {
-    code: typeof e.code === 'string' ? e.code : undefined,
-    message: typeof e.message === 'string' ? e.message.slice(0, 200) : undefined,
-  };
+  const code = (err as { code?: unknown }).code;
+  return { code: typeof code === 'string' && /^[A-Z0-9_]{1,40}$/i.test(code) ? code : undefined };
 }
 
 /** Supabase reports an already-registered address without a stable code. */
@@ -126,8 +114,8 @@ const CreateOrganizationSchema = z
   .object({
     display_name: z.string().trim().min(1).max(MAX_NAME_LEN),
     legal_name: z.string().trim().max(MAX_NAME_LEN).optional(),
-    anchor_quota: z.number().int().min(0).nullable().default(10),
-    credits: z.number().int().min(0).default(0),
+    anchor_quota: z.number().int().min(0).max(2147483647).nullable().default(10),
+    credits: z.number().int().min(0).max(2147483647).default(0),
     is_test: z.boolean().default(true),
     allow_duplicate_name: z.boolean().default(false),
     // REQUIRED. The display_name pre-check below is SELECT-then-INSERT and so
@@ -198,145 +186,43 @@ export async function createOrganization(
 ): Promise<CreateOrganizationResult> {
   const { db, logger } = deps;
 
-  // F3: `organizations.display_name` carries no unique constraint, and a DB
-  // constraint would be wrong — two unrelated legal entities can share a name.
-  // So this is an explicit, overridable guard against the double-submit case.
-  if (!input.allow_duplicate_name) {
-    // limit(1), NOT maybeSingle(): once an admin has used
-    // allow_duplicate_name, two rows share the name and maybeSingle() would
-    // raise PGRST116 — turning the intended 409 into a 500 that the override
-    // cannot get past.
-    const { data: existingRows, error: lookupError } = await db
-      .from('organizations')
-      .select('id')
-      .eq('display_name', input.display_name)
-      .limit(1);
-    if (lookupError) {
-      logger.error({ error: sanitizeError(lookupError) }, 'Admin provisioning: duplicate-org lookup failed');
-      throw new ProvisioningError('Failed to create the organization.', 'internal_error');
-    }
-    const existing = (existingRows as Array<{ id: string }> | null)?.[0];
-    if (existing) {
-      throw new ProvisioningError(
-        'An organization with this name already exists. Re-submit with allow_duplicate_name to create it anyway.',
-        'org_exists',
-        existing.id,
-      );
-    }
-  }
-
-  const { data: created, error: insertError } = await db
-    .from('organizations')
-    .insert({
-      display_name: input.display_name,
-      legal_name: input.legal_name,
-      verification_status: 'UNVERIFIED',
-      tier: 'FREE',
-      creation_idempotency_key: input.idempotency_key,
-    })
-    .select('id, public_id, org_prefix, display_name')
-    .single();
-
-  let orgRow = created as { id: string; public_id: string | null; org_prefix: string | null } | null;
-
-  // 23505 on the partial unique index = this exact submission already created
-  // an organization. That is a REPLAY, not a failure: return the organization
-  // the first request made. This is the atomic half of the duplicate guard —
-  // the display_name pre-check above only catches the slow, sequential case.
-  if ((insertError as { code?: string } | null)?.code === '23505') {
-    const { data: prior, error: priorError } = await db
-      .from('organizations')
-      .select('id, public_id, org_prefix, display_name')
-      .eq('creation_idempotency_key', input.idempotency_key)
-      .limit(1);
-    const priorRow = (prior as Array<{ id: string; public_id: string | null; org_prefix: string | null }> | null)?.[0];
-    if (priorError || !priorRow) {
-      logger.error({ error: sanitizeError(priorError ?? insertError) }, 'Admin provisioning: idempotent replay lookup failed');
-      throw new ProvisioningError('Failed to create the organization.', 'internal_error');
-    }
-    logger.info({ orgId: priorRow.id, actorId }, 'Admin provisioning: idempotent replay of organization creation');
-    orgRow = priorRow;
-  } else if (insertError || !orgRow) {
-    logger.error({ error: sanitizeError(insertError) }, 'Admin provisioning: organization insert failed');
+  const { data, error } = await db.rpc('admin_provision_organization', {
+    p_actor: actorId,
+    p_idempotency_key: input.idempotency_key,
+    p_display_name: input.display_name,
+    p_legal_name: input.legal_name,
+    p_anchor_quota: input.anchor_quota,
+    p_credits: input.credits,
+    p_is_test: input.is_test,
+    p_allow_duplicate_name: input.allow_duplicate_name,
+  });
+  if (error) {
+    logger.error({ error: sanitizeError(error) }, 'Admin provisioning: atomic organization creation failed');
     throw new ProvisioningError('Failed to create the organization.', 'internal_error');
   }
-
-  // F8: `trg_seed_free_tier_org_credits` has normally already inserted
-  // (is_test=true, anchor_quota=10); always overwrite so "uncapped" is real
-  // rather than silently defaulted.
-  //
-  // UPSERT, not UPDATE: PostgREST reports a zero-row UPDATE as success, and the
-  // seed trigger skips orgs with a parent (`parent_org_id IS NOT NULL`). A bare
-  // update would then return success for an org with NO org_credits row at all
-  // and we would report a balance the org does not have — the same silent
-  // default this write exists to prevent.
-  const { error: creditsError } = await db
-    .from('org_credits')
-    .upsert({
-      org_id: orgRow.id,
-      is_test: input.is_test,
-      anchor_quota: input.anchor_quota,
-      balance: 0,
-      purchased: 0,
-      monthly_allocation: 0,
-    }, { onConflict: 'org_id' });
-
-  if (creditsError) {
-    logger.error({ error: sanitizeError(creditsError), orgId: orgRow.id }, 'Admin provisioning: org_credits write failed');
-    throw new ProvisioningError('Organization created but credit setup failed.', 'internal_error');
-  }
-
-  // Starting credits go through the existing audited ledger path
-  // (`admin_adjust_org_credit`, migration 0375) rather than being written
-  // straight onto the balance. Writing `purchased = credits` directly would
-  // keep the conservation invariant balanced only by booking a founder grant
-  // as revenue; the RPC books it as a GRANT row instead, which is what it is.
-  if (input.credits > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: grantError } = await (db as any).rpc('admin_adjust_org_credit', {
-      p_org_id: orgRow.id,
-      p_amount: input.credits,
-      p_reason: 'Starting credits at organization provisioning',
-      p_idempotency_key: randomUUID(),
-      p_actor: actorId,
-    });
-    if (grantError) {
-      logger.error({ error: sanitizeError(grantError), orgId: orgRow.id }, 'Admin provisioning: starting-credit grant failed');
-      throw new ProvisioningError('Organization created but the starting credit grant failed.', 'internal_error');
+  const result = data as {
+    success?: boolean;
+    error?: string;
+    existing_org_id?: string;
+    organization?: CreateOrganizationResult;
+  } | null;
+  if (result?.success !== true || !result.organization) {
+    if (result?.error === 'org_exists') {
+      throw new ProvisioningError(
+        'An organization with this name already exists. Re-submit with allow_duplicate_name to create it anyway.',
+        'org_exists', result.existing_org_id,
+      );
     }
+    if (result?.error === 'idempotency_key_conflict') {
+      throw new ProvisioningError(
+        'This submission key belongs to a different or incomplete request. Review the existing organization before submitting again.',
+        'idempotency_key_conflict',
+      );
+    }
+    throw new ProvisioningError('Failed to create the organization.', 'internal_error');
   }
-
-  const { error: auditError } = await db.from('audit_events').insert({
-    event_type: 'ORGANIZATION_PROVISIONED',
-    event_category: 'ORGANIZATION',
-    actor_id: actorId,
-    target_type: 'organization',
-    target_id: orgRow.id,
-    org_id: orgRow.id,
-    details: JSON.stringify({
-      anchor_quota: input.anchor_quota,
-      credits: input.credits,
-      is_test: input.is_test,
-    }),
-  });
-  if (auditError) {
-    logger.warn({ error: sanitizeError(auditError), orgId: orgRow.id }, 'Admin provisioning: org audit emit failed');
-  }
-
-  logger.info(
-    { orgId: orgRow.id, actorId, anchorQuota: input.anchor_quota, credits: input.credits },
-    'Admin provisioning: organization created',
-  );
-
-  return {
-    org_id: orgRow.id,
-    public_id: orgRow.public_id,
-    org_prefix: orgRow.org_prefix,
-    display_name: input.display_name,
-    anchor_quota: input.anchor_quota,
-    credits_balance: input.credits,
-    is_test: input.is_test,
-  };
+  logger.info({ orgId: result.organization.org_id, actorId }, 'Admin provisioning: organization creation committed');
+  return result.organization;
 }
 
 export interface CreateUserAccountResult {
@@ -378,6 +264,7 @@ export async function createUserAccount(
   const { data: createdUser, error: createError } = await db.auth.admin.createUser({
     email: input.email,
     email_confirm: false,
+    app_metadata: { admin_provisioned: true },
     user_metadata: input.full_name ? { full_name: input.full_name } : undefined,
   });
 
@@ -460,20 +347,8 @@ export async function createUserAccount(
       if (memberError) throw memberError;
     }
 
-    const { error: auditError } = await db.from('audit_events').insert({
-      event_type: 'ACCOUNT_PROVISIONED',
-      event_category: 'PROFILE',
-      actor_id: actorId,
-      target_type: 'profile',
-      target_id: userId,
-      org_id: input.org_id,
-      details: JSON.stringify({ role: input.role, org_role: input.org_id ? input.org_role : null }),
-    });
-    if (auditError) {
-      logger.warn({ error: sanitizeError(auditError), userId }, 'Admin provisioning: account audit emit failed');
-    }
-
     const link = await generateSetPasswordLink(deps, input.email);
+    if (!link) throw new ProvisioningError('Failed to create an activation link for the account.', 'internal_error');
 
     if (input.send_invite_email) {
       inviteEmailSent = await sendProvisioningEmail(deps, {
@@ -497,9 +372,23 @@ export async function createUserAccount(
         email_confirm: true,
       });
       if (confirmError) {
-        logger.warn({ error: sanitizeError(confirmError), userId }, 'Admin provisioning: email auto-confirm failed');
+        throw confirmError;
       }
     }
+    const { error: auditError } = await db.from('audit_events').insert({
+      event_type: 'ACCOUNT_PROVISIONED',
+      event_category: 'PROFILE',
+      actor_id: actorId,
+      target_type: 'profile',
+      target_id: userId,
+      org_id: input.org_id,
+      details: JSON.stringify({ role: input.role, org_role: input.org_id ? input.org_role : null }),
+    });
+    if (auditError) {
+      logger.warn({ error: sanitizeError(auditError), userId }, 'Admin provisioning: account audit emit failed');
+    }
+
+
   } catch (err) {
     logger.error(
       { error: err instanceof ProvisioningError ? err.code : sanitizeError(err), userId },
@@ -556,7 +445,7 @@ async function generateSetPasswordLink(
     }
     return link;
   } catch (err) {
-    logger.error({ error: err }, 'Admin provisioning: set-password link generation threw');
+    logger.error({ error: sanitizeError(err) }, 'Admin provisioning: set-password link generation threw');
     return null;
   }
 }
@@ -596,7 +485,7 @@ async function sendProvisioningEmail(
     });
     return result.success;
   } catch (err) {
-    logger.error({ error: err }, 'Admin provisioning: invite email send threw');
+    logger.error({ error: sanitizeError(err) }, 'Admin provisioning: invite email send threw');
     return false;
   }
 }

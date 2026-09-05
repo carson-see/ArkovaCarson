@@ -32,7 +32,7 @@ describe('validateLiveArgs', () => {
 
   it('blocks a live run with no target or tokens', () => {
     const b = validateLiveArgs({ mode: 'live' });
-    expect(b.length).toBe(4);
+    expect(b.length).toBe(6);
   });
 
   it('requires the non-admin token — the 403 assertion is the point of this driver', () => {
@@ -68,7 +68,7 @@ describe('validateLiveArgs', () => {
   it('accepts a fully-specified live run', () => {
     expect(validateLiveArgs({
       mode: 'live', targetUrl: 'https://rig.run.app', bearerToken: 't', nonAdminToken: 'n',
-      collisionDomain: 'collide.test',
+      collisionDomain: 'collide.test', supabaseUrl: 'https://owieixqcnigfpiowptop.supabase.co', serviceRoleKey: 'test', anonKey: 'test', expectedHead: 'a'.repeat(40),
     })).toEqual([]);
   });
 });

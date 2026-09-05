@@ -174,128 +174,48 @@ describe('validateCreateUserAccountInput', () => {
 // ─────────────────────────── createOrganization ───────────────────────────
 
 describe('createOrganization', () => {
-  it('creates the org and explicitly writes the resolved credit state (F8)', async () => {
-    const creditsChain = chain({ data: null, error: null });
-    const deps = makeDeps({
-      organizations: [chain({ data: [], error: null }), chain({ data: ORG_ROW, error: null })],
-      org_credits: [creditsChain],
-      audit_events: [chain({ data: null, error: null })],
-    });
+  function rpcDeps(data: unknown, error: unknown = null) {
+    const deps = makeDeps({});
+    vi.mocked(deps.db.rpc).mockResolvedValue({ data, error } as never);
+    return deps;
+  }
+  const organization = { org_id: ORG_ROW.id, public_id: ORG_ROW.public_id,
+    org_prefix: ORG_ROW.org_prefix, display_name: 'PlanBook', anchor_quota: 31,
+    credits_balance: 18, is_test: true };
 
-    const result = await createOrganization(deps, ACTOR, orgInput({
-      display_name: 'PlanBook', legal_name: 'PlanBook', anchor_quota: 10, credits: 2, is_test: true,
+  it('returns the persisted balance, including credits added after the original request', async () => {
+    const deps = rpcDeps({ success: true, organization });
+    const result = await createOrganization(deps, ACTOR, orgInput({ credits: 7 }));
+    expect(result.credits_balance).toBe(18);
+    expect(deps.db.from).not.toHaveBeenCalled();
+  });
+
+  it('passes explicit uncapped quota and the actor to the atomic operation', async () => {
+    const deps = rpcDeps({ success: true, organization });
+    await createOrganization(deps, ACTOR, orgInput({ anchor_quota: null, is_test: false }));
+    expect(deps.db.rpc).toHaveBeenCalledWith('admin_provision_organization', expect.objectContaining({
+      p_actor: ACTOR, p_anchor_quota: null, p_is_test: false,
+      p_idempotency_key: '99999999-9999-4999-8999-999999999999',
     }));
-
-    expect(result.org_id).toBe('22222222-2222-4222-8222-222222222222');
-    expect(result.anchor_quota).toBe(10);
-    expect(result.credits_balance).toBe(2);
-    expect(creditsChain.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ anchor_quota: 10, is_test: true }),
-      expect.objectContaining({ onConflict: 'org_id' }),
-    );
-    // Starting credits go through the audited ledger RPC, never straight onto
-    // the balance — booking a grant as `purchased` would call it revenue.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((deps.db as any).rpc).toHaveBeenCalledWith(
-      'admin_adjust_org_credit',
-      expect.objectContaining({ p_amount: 2, p_actor: ACTOR }),
-    );
   });
 
-  it('is idempotent: a replayed submission returns the first org, not a second one', async () => {
-    // The unique index on creation_idempotency_key (0422) is what makes the
-    // guard atomic — the display_name pre-check cannot be.
-    const prior = { id: 'org-first', public_id: 'pub1', org_prefix: 'PLA', display_name: 'PlanBook' };
-    const deps = makeDeps({
-      organizations: [
-        chain({ data: [], error: null }),                                   // dup-name probe: clear
-        chain({ data: null, error: { code: '23505', message: 'duplicate key' } }), // insert: replay
-        chain({ data: [prior], error: null }),                              // fetch the original
-      ],
-      org_credits: [chain({ data: null, error: null })],
-      audit_events: [chain({ data: null, error: null })],
-    });
-
-    const r = await createOrganization(deps, ACTOR, orgInput());
-    expect(r.org_id).toBe('org-first');
+  it('reports a changed-payload or incomplete legacy replay as a conflict', async () => {
+    const deps = rpcDeps({ success: false, error: 'idempotency_key_conflict' });
+    await expect(createOrganization(deps, ACTOR, orgInput())).rejects.toMatchObject({ code: 'idempotency_key_conflict' });
   });
 
-  it('surfaces internal_error when the replay lookup finds nothing', async () => {
-    const deps = makeDeps({
-      organizations: [
-        chain({ data: [], error: null }),
-        chain({ data: null, error: { code: '23505', message: 'duplicate key' } }),
-        chain({ data: [], error: null }),
-      ],
-    });
+  it('preserves the explicit duplicate-name override workflow', async () => {
+    const deps = rpcDeps({ success: false, error: 'org_exists', existing_org_id: ORG_ROW.id });
+    await expect(createOrganization(deps, ACTOR, orgInput())).rejects.toMatchObject({ code: 'org_exists', existingOrgId: ORG_ROW.id });
+  });
+
+  it.each([null, { success: false }, { success: true }])('fails closed on an incomplete database result %j', async (data) => {
+    await expect(createOrganization(rpcDeps(data), ACTOR, orgInput())).rejects.toMatchObject({ code: 'internal_error' });
+  });
+
+  it('does not report a rolled-back operation as a successful creation', async () => {
+    const deps = rpcDeps(null, { code: 'P0001', message: 'transaction failed' });
     await expect(createOrganization(deps, ACTOR, orgInput())).rejects.toMatchObject({ code: 'internal_error' });
-  });
-
-  it('F3: rejects a duplicate display_name with org_exists and surfaces the existing id', async () => {
-    // .limit(1) resolves to an ARRAY (see the maybeSingle finding below).
-    const deps = makeDeps({
-      organizations: [chain({ data: [{ id: 'org-existing' }], error: null })],
-    });
-
-    await expect(
-      createOrganization(deps, ACTOR, orgInput({ display_name: 'PlanBook', credits: 0 })),
-    ).rejects.toMatchObject({ code: 'org_exists', existingOrgId: 'org-existing' });
-  });
-
-  it('F8: an uncapped org writes anchor_quota null and is_test false, overriding the seed trigger', async () => {
-    const creditsChain = chain({ data: null, error: null });
-    const deps = makeDeps({
-      organizations: [chain({ data: [], error: null }), chain({ data: ORG_ROW, error: null })],
-      org_credits: [creditsChain],
-      audit_events: [chain({ data: null, error: null })],
-    });
-
-    await createOrganization(deps, ACTOR, orgInput({ display_name: 'BigCo', anchor_quota: null, is_test: false, credits: 0 }));
-
-    expect(creditsChain.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ anchor_quota: null, is_test: false }),
-      expect.objectContaining({ onConflict: 'org_id' }),
-    );
-  });
-
-  it('upserts org_credits so a sub-org with no seeded row is not a silent success', async () => {
-    // trg_seed_free_tier_org_credits skips orgs with a parent, and PostgREST
-    // reports a zero-row UPDATE as success.
-    const creditsChain = chain({ data: null, error: null });
-    const deps = makeDeps({
-      organizations: [chain({ data: [], error: null }), chain({ data: ORG_ROW, error: null })],
-      org_credits: [creditsChain],
-      audit_events: [chain({ data: null, error: null })],
-    });
-
-    await createOrganization(deps, ACTOR, orgInput({ display_name: 'SubCo', credits: 0 }));
-
-    expect(creditsChain.upsert).toHaveBeenCalled();
-    expect(creditsChain.update).not.toHaveBeenCalled();
-  });
-
-  it('writes an audit event naming the actor', async () => {
-    const audit = chain({ data: null, error: null });
-    const deps = makeDeps({
-      organizations: [chain({ data: [], error: null }), chain({ data: ORG_ROW, error: null })],
-      org_credits: [chain({ data: null, error: null })],
-      audit_events: [audit],
-    });
-
-    await createOrganization(deps, ACTOR, orgInput({ display_name: 'PlanBook', credits: 0 }));
-
-    expect(audit.insert).toHaveBeenCalledWith(
-      expect.objectContaining({ actor_id: ACTOR, org_id: '22222222-2222-4222-8222-222222222222' }),
-    );
-  });
-
-  it('surfaces internal_error when the org insert fails', async () => {
-    const deps = makeDeps({
-      organizations: [chain({ data: null, error: null }), chain({ data: null, error: { message: 'boom' } })],
-    });
-    await expect(
-      createOrganization(deps, ACTOR, orgInput({ display_name: 'PlanBook', credits: 0 })),
-    ).rejects.toMatchObject({ code: 'internal_error' });
   });
 });
 
@@ -316,6 +236,31 @@ describe('createUserAccount', () => {
       ...over,
     };
   }
+
+  it('uses protected app metadata to preserve the explicit account placement', async () => {
+    const deps = makeDeps(userQueues());
+    await createUserAccount(deps, ACTOR, userInput({ send_invite_email: false }));
+    expect(deps.db.auth.admin.createUser).toHaveBeenCalledWith(expect.objectContaining({
+      app_metadata: { admin_provisioned: true },
+    }));
+  });
+
+  it('rolls back when no activation link can be delivered', async () => {
+    const deps = makeDeps(userQueues(), {
+      generateLink: vi.fn(async () => ({ data: null, error: { code: 'unexpected_failure', message: 'secret-person@example.com' } })),
+    });
+    await expect(createUserAccount(deps, ACTOR, userInput({ send_invite_email: false }))).rejects.toMatchObject({ code: 'internal_error' });
+    expect(deps.db.auth.admin.deleteUser).toHaveBeenCalledWith('new-user-id');
+    expect(JSON.stringify(vi.mocked(deps.logger.error).mock.calls)).not.toContain('secret-person@example.com');
+  });
+
+  it('rolls back when manual-delivery email confirmation fails', async () => {
+    const deps = makeDeps(userQueues(), {
+      updateUserById: vi.fn(async () => ({ data: null, error: { code: 'unexpected_failure' } })),
+    });
+    await expect(createUserAccount(deps, ACTOR, userInput({ send_invite_email: false }))).rejects.toMatchObject({ code: 'internal_error' });
+    expect(deps.db.auth.admin.deleteUser).toHaveBeenCalledWith('new-user-id');
+  });
 
   it('F2: always creates the auth user with email_confirm false so auto-association cannot pre-set the role', async () => {
     const deps = makeDeps(userQueues());
@@ -537,15 +482,5 @@ describe('createUserAccount — send-failure and orphan handling', () => {
   });
 });
 
-describe('createOrganization — duplicate lookup', () => {
-  it('returns org_exists (not a 500) when two orgs already share the name', async () => {
-    // limit(1) returns an array; maybeSingle() would have raised PGRST116 here.
-    const deps = makeDeps({
-      organizations: [chain({ data: [{ id: 'org-a' }], error: null })],
-    });
-
-    await expect(
-      createOrganization(deps, ACTOR, orgInput({ display_name: 'Acme Corp' })),
-    ).rejects.toMatchObject({ code: 'org_exists', existingOrgId: 'org-a' });
-  });
-});
+// Duplicate-name concurrency and multiple existing names are exercised against
+// the real database in the provisioning qualification driver.

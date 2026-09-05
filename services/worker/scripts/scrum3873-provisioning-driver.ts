@@ -15,6 +15,7 @@
 
 import { appendFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
 
 export interface DriverArgs {
   mode: 'self-test' | 'live';
@@ -24,6 +25,10 @@ export interface DriverArgs {
   evidenceJsonl?: string;
   /** Domain claimed by a pre-seeded org, used to force the F2 collision. */
   collisionDomain?: string;
+  supabaseUrl?: string;
+  serviceRoleKey?: string;
+  anonKey?: string;
+  expectedHead?: string;
 }
 
 export interface DriverRow {
@@ -43,8 +48,8 @@ export interface DriverRow {
 export const CHANGED_BEHAVIOR =
   'SCRUM-3873 platform-admin provisioning: create-organization and create-account endpoints, '
   + 'the platform-admin gate (per-handler and router-level), duplicate-name 409 + override, '
-  + 'org_credits upsert with resolved quota/credit state, starting credits booked through the '
-  + 'admin_adjust_org_credit ledger, and delivery reported on the ACTUAL send result';
+  + 'atomic initial ledger grant and stable replay with existing credits, real persisted quota/balance, '
+  + 'explicit account placement verified through authenticated RLS, and honest activation delivery';
 
 export function parseDriverArgs(argv: string[]): DriverArgs {
   const get = (flag: string): string | undefined => {
@@ -59,6 +64,10 @@ export function parseDriverArgs(argv: string[]): DriverArgs {
     nonAdminToken: get('--non-admin-token'),
     evidenceJsonl: get('--evidence-jsonl'),
     collisionDomain: get('--collision-domain'),
+    supabaseUrl: process.env.SUPABASE_URL,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    anonKey: process.env.SUPABASE_ANON_KEY,
+    expectedHead: process.env.EXPECTED_SOURCE_HEAD,
   };
 }
 
@@ -82,6 +91,16 @@ export function validateLiveArgs(args: DriverArgs): string[] {
     // is the single mechanism the whole design is built around. A soak that
     // skips it is not evidence for this PR.
     blockers.push('--collision-domain is required in live mode: without it F2 is never exercised');
+  }
+  if (!args.supabaseUrl || !args.serviceRoleKey || !args.anonKey) {
+    blockers.push('SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and SUPABASE_ANON_KEY are required for persisted-state and RLS checks');
+  }
+  if (args.supabaseUrl && (!/^https:\/\/[a-z]{20}\.supabase\.co$/.test(args.supabaseUrl)
+      || /vzwyaatejekddvltxyye|fizyjojbebyalirtjjht/.test(args.supabaseUrl))) {
+    blockers.push('SUPABASE_URL must identify an isolated project, not production/shared staging');
+  }
+  if (!args.expectedHead || !/^[0-9a-f]{40}$/.test(args.expectedHead)) {
+    blockers.push('EXPECTED_SOURCE_HEAD is required to bind the live runtime to the reviewed source');
   }
   return blockers;
 }
@@ -131,13 +150,19 @@ async function call(
  * regression shows up as a named check rather than a generic 500 count.
  */
 export async function runCycle(
-  args: Required<Pick<DriverArgs, 'targetUrl' | 'bearerToken' | 'nonAdminToken' | 'collisionDomain'>>,
+  args: Required<Omit<DriverArgs, 'mode' | 'evidenceJsonl'>>,
 ): Promise<CycleResult> {
   const { targetUrl, bearerToken, nonAdminToken, collisionDomain } = args;
   const counts: Record<string, number | boolean> = {};
   const checks: Record<string, string> = {};
   const stamp = randomUUID().slice(0, 8);
   const orgName = `Soak Org ${stamp}`;
+  const db = createClient(args.supabaseUrl, args.serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const healthResponse = await fetch(`${targetUrl}/health`);
+  const health = await healthResponse.json() as { git_sha?: string };
+  checks.exact_runtime_head = healthResponse.ok && health.git_sha === args.expectedHead ? 'pass' : 'FAIL runtime source identity mismatch';
+  if (checks.exact_runtime_head !== 'pass') return { counts, checks, ok: false };
+  const createKey = randomUUID();
 
   // F1 — the platform-admin gate. Highest-value assertion: this endpoint mints
   // accounts, so an unauthorized 2xx here is a P0, not a test failure.
@@ -150,7 +175,7 @@ export async function runCycle(
   // Happy path — org with an explicit quota and starting credits.
   const created = await call(targetUrl, '/api/admin/organizations', bearerToken, {
     display_name: orgName, anchor_quota: 10, credits: 2, is_test: true,
-    idempotency_key: randomUUID(),
+    idempotency_key: createKey,
   });
   const org = (created.json.organization ?? {}) as Record<string, unknown>;
   checks.org_created = created.status === 201 ? 'pass' : `FAIL got ${created.status}`;
@@ -254,18 +279,85 @@ export async function runCycle(
   const raceName = `Race Org ${randomUUID().slice(0, 8)}`;
   const raceKey = randomUUID();
   const [r1, r2] = await Promise.all([
-    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName, idempotency_key: raceKey }),
-    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName, idempotency_key: raceKey }),
+    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName, idempotency_key: raceKey, credits: 5 }),
+    call(targetUrl, '/api/admin/organizations', bearerToken, { display_name: raceName, idempotency_key: raceKey, credits: 5 }),
   ]);
   const ids = new Set(
     [r1, r2]
       .filter((r) => r.status === 201)
       .map((r) => String(((r.json.organization ?? {}) as Record<string, unknown>).org_id)),
   );
-  checks.concurrent_duplicate_guard = ids.size === 1
+  checks.concurrent_duplicate_guard = ids.size === 1 && r1.status === 201 && r2.status === 201
     ? 'pass'
     : `FAIL ${ids.size} distinct orgs from one double-submit (statuses ${r1.status}/${r2.status})`;
   counts.concurrent_distinct_orgs = ids.size;
+
+  // Read persistence independently of the HTTP response. The old run3 driver
+  // passed while replay reset balances and account confirmation granted B.
+  const persisted = await db.from('org_credits').select('balance,anchor_quota').eq('org_id', orgId).single();
+  checks.persisted_initial_credits_quota = !persisted.error && persisted.data?.balance === 2
+    && persisted.data.anchor_quota === 10 ? 'pass' : 'FAIL persisted initial credit/quota mismatch';
+  const raceId = [...ids][0];
+  const raceCredits = await db.from('org_credits').select('balance').eq('org_id', raceId).single();
+  const raceLedger = await db.from('org_credit_deductions').select('amount').eq('org_id', raceId);
+  checks.concurrent_single_grant = !raceCredits.error && !raceLedger.error && raceCredits.data?.balance === 5
+    && raceLedger.data?.length === 1 && raceLedger.data[0].amount === 5 ? 'pass' : 'FAIL repeated or missing concurrent grant';
+  // Obtain the actor from the authenticated admin token, not a fixture label.
+  const actor = await db.auth.getUser(bearerToken);
+  const extraGrant = await db.rpc('admin_adjust_org_credit', { p_org_id: orgId, p_amount: 11,
+    p_reason: 'Provisioning qualification existing-balance fixture', p_idempotency_key: randomUUID(), p_actor: actor.data.user?.id });
+  const replay = await call(targetUrl, '/api/admin/organizations', bearerToken, {
+    display_name: orgName, anchor_quota: 10, credits: 2, is_test: true, idempotency_key: createKey,
+  });
+  const afterReplay = await db.from('org_credits').select('balance').eq('org_id', orgId).single();
+  const ledger = await db.from('org_credit_deductions').select('amount').eq('org_id', orgId);
+  checks.replay_preserves_existing_balance = !extraGrant.error && extraGrant.data?.success === true
+    && replay.status === 201 && !afterReplay.error && afterReplay.data?.balance === 13
+    && !ledger.error && ledger.data?.length === 2 && ledger.data.reduce((sum, r) => sum + r.amount, 0) === 13
+    ? 'pass' : 'FAIL replay changed persisted balance or ledger';
+  const conflict = await call(targetUrl, '/api/admin/organizations', bearerToken, {
+    display_name: orgName, anchor_quota: 10, credits: 3, is_test: true, idempotency_key: createKey,
+  });
+  checks.replay_payload_conflict = conflict.status === 409 && conflict.json.code === 'idempotency_key_conflict'
+    ? 'pass' : 'FAIL conflicting replay was not rejected';
+  const domainOrgs = await db.from('organizations').select('id').ilike('domain', collisionDomain);
+  const foreignIds = (domainOrgs.data ?? []).map((r) => r.id);
+  checks.collision_fixture_exists = !domainOrgs.error && foreignIds.length > 0 ? 'pass' : 'FAIL collision fixture absent';
+  async function tenantCheck(userId: unknown, expectedOrg: string | null, name: string): Promise<void> {
+    if (typeof userId !== 'string') { checks[name] = 'FAIL missing created account'; return; }
+    const profile = await db.from('profiles').select('org_id,is_platform_admin').eq('id', userId).single();
+    const memberships = await db.from('org_members').select('org_id').eq('user_id', userId);
+    const memberIds = (memberships.data ?? []).map((r) => r.org_id);
+    checks[name + '_persistence'] = !profile.error && !memberships.error && profile.data?.org_id === expectedOrg
+      && profile.data.is_platform_admin === false && memberIds.length === (expectedOrg ? 1 : 0)
+      && (!expectedOrg || memberIds[0] === expectedOrg) ? 'pass' : 'FAIL explicit account placement not preserved';
+    const password = randomUUID() + randomUUID();
+    const updated = await db.auth.admin.updateUserById(userId, { password });
+    const client = createClient(args.supabaseUrl, args.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const signed = await client.auth.signInWithPassword({ email: updated.data.user?.email ?? '', password });
+    const visible = await client.from('organizations').select('id').in('id', foreignIds);
+    checks[name + '_authenticated_rls'] = !updated.error && !signed.error && !visible.error
+      && visible.data.length === 0 ? 'pass' : 'FAIL foreign tenant visible to created account';
+    if (expectedOrg) {
+      const own = await client.from('organizations').select('id').eq('id', expectedOrg);
+      checks[name + '_own_org_visible'] = !own.error && own.data.length === 1 ? 'pass' : 'FAIL selected org missing';
+    }
+    await client.auth.signOut();
+  }
+  await tenantCheck(collideAccount.user_id, orgId ?? null, 'selected_org');
+  const individual = await call(targetUrl, '/api/admin/users', bearerToken, {
+    email: `individual-${stamp}@${collisionDomain}`, role: 'INDIVIDUAL', send_invite_email: false,
+  });
+  await tenantCheck((individual.json.account as Record<string, unknown> | undefined)?.user_id, null, 'individual');
+  const privilege = await db.from('profiles').select('is_platform_admin').eq('id', escAccount.user_id).single();
+  checks.no_persisted_admin_escalation = !privilege.error && privilege.data?.is_platform_admin === false ? 'pass' : 'FAIL admin escalation';
+  // An ordinary verified domain signup must still join its domain organization.
+  // Forging user_metadata.admin_provisioned must not activate the trusted guard.
+  const ordinary = await db.auth.admin.createUser({ email: `ordinary-${stamp}@${collisionDomain}`,
+    email_confirm: true, user_metadata: { admin_provisioned: true } });
+  const ordinaryMembership = await db.from('org_members').select('org_id').eq('user_id', ordinary.data.user?.id);
+  checks.ordinary_domain_signup_preserved = !ordinary.error && !ordinaryMembership.error
+    && ordinaryMembership.data?.some((r) => foreignIds.includes(r.org_id)) ? 'pass' : 'FAIL ordinary signup or metadata authority';
 
   const ok = Object.values(checks).every((v) => v === 'pass');
   counts.checks_total = Object.keys(checks).length;
@@ -302,14 +394,12 @@ async function main(): Promise<void> {
     // Shape-only validation: proves the driver runs and its row schema is
     // well-formed. Deliberately NOT evidence.
     const row = buildRow('self-test', { counts: { checks_total: 0 }, checks: {}, ok: true });
-    // eslint-disable-next-line no-console
     console.log(JSON.stringify(row));
     return;
   }
 
   if (blockers.length > 0) {
     const row = buildRow('live', { counts: {}, checks: {}, ok: false }, args.targetUrl, blockers);
-    // eslint-disable-next-line no-console
     console.error(JSON.stringify(row, null, 2));
     process.exit(1);
   }
@@ -319,10 +409,10 @@ async function main(): Promise<void> {
     bearerToken: args.bearerToken!,
     nonAdminToken: args.nonAdminToken!,
     collisionDomain: args.collisionDomain!,
+    supabaseUrl: args.supabaseUrl!, serviceRoleKey: args.serviceRoleKey!, anonKey: args.anonKey!, expectedHead: args.expectedHead!,
   });
   const row = buildRow('live', result, args.targetUrl);
   if (args.evidenceJsonl) appendFileSync(args.evidenceJsonl, `${JSON.stringify(row)}\n`);
-  // eslint-disable-next-line no-console
   console.log(JSON.stringify(row));
   if (!result.ok) process.exit(1);
 }
@@ -330,7 +420,6 @@ async function main(): Promise<void> {
 const invokedDirectly = process.argv[1]?.endsWith('scrum3873-provisioning-driver.ts');
 if (invokedDirectly) {
   main().catch((err: unknown) => {
-    // eslint-disable-next-line no-console
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   });

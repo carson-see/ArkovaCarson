@@ -1,6 +1,15 @@
 # Arkova Bug Log
 _Last updated: 2026-05-15 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 64 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dep-bump sprint + 8 from 2026-04-21 top-10 UAT sprint batch 1 + 5 from 2026-04-21 batch 2 + 1 from 2026-04-21 10-story sprint + 1 SCRUM-952 trust-surface closure)_
 
+## 2026-09-05 — PR #2571 independent release review
+
+| Issue | Severity | Reproduction | Remediation and qualification |
+|---|---|---|---|
+| [SCRUM-4455](https://arkova.atlassian.net/browse/SCRUM-4455) | P1 | Original isolated runtime: initial7 + separate11 = balance18/ledger18; same-key replay gives balance7/ledger25. Four concurrent grants5 all return201, balance15/ledger20. | 0439 atomic organization/quota/grant/receipt; current persisted balance on replay, payload/actor conflict rejection, service-only authority and rollback tests. Fresh48h qualification required. |
+| [SCRUM-4456](https://arkova.atlassian.net/browse/SCRUM-4456) | P1 | Account provisioned intoA receives membershipB through email-domain auto-association. INDIVIDUAL/null silently getsB too. Both authenticated users can readB through real RLS. | Service-written Auth app_metadata marker +0439 domain guard preserving0436 pending-email restriction. VerifyA-only/no-org, ordinary verified membership and forged-user-metadata negative controls. Fresh48h qualification required. |
+
+Original704-cycle run3 evidence is retained unchanged. Its zero-credit concurrency and response-only tenant assertions do not qualify these invariants. Production remains unchanged.
+
 ## 2026-05-15 — SCRUM-952 Public Verification Trust-Surface Closure
 
 SCRUM-952 closed the UAT trust-surface bug where public `/verify/:publicId` could mix final-verification language with an awaiting-confirmation badge. The historical Jira/Confluence reference is BUG-2026-05-15-001.
