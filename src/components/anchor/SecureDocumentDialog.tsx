@@ -37,7 +37,7 @@ import { TemplateReviewPanel } from './TemplateReviewPanel';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
-import { runExtraction, fetchTemplateReconstruction, type ExtractionField, type ExtractionProgress, type TemplateReconstructionResult } from '@/lib/aiExtraction';
+import { runExtraction, fetchTemplateReconstruction, type ExtractionField, type ExtractionFailureReason, type ExtractionProgress, type TemplateReconstructionResult } from '@/lib/aiExtraction';
 import { detectFraudForDocument, fraudResultToMetadata } from '@/lib/fraudDetection';
 import { applyTemplate } from '@/lib/templateMapper';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
@@ -46,7 +46,7 @@ import { useProfile } from '@/hooks/useProfile';
 import { useSecuringCapability } from '@/hooks/useSecuringCapability';
 import { exposedSecuringPaths, type SecuringPath } from '@/lib/queueContract';
 import { toast } from 'sonner';
-import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, PRIVACY_FAIL_CLOSED_LABELS, CONFIRMATION_PROGRESS_LABELS, SECURING_CHOICE_LABELS, SECURING_CHOICE_HINTS, SECURE_QUEUE_LABELS } from '@/lib/copy';
+import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, EXTRACTION_FAILURE_REASON_COPY, PRIVACY_FAIL_CLOSED_LABELS, CONFIRMATION_PROGRESS_LABELS, SECURING_CHOICE_LABELS, SECURING_CHOICE_HINTS, SECURE_QUEUE_LABELS } from '@/lib/copy';
 import { ROUTES, verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
@@ -110,6 +110,13 @@ export function SecureDocumentDialog({
   // AI extraction state
   const [aiEnabled, setAiEnabled] = useState(false);
   const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | null>(null);
+  /**
+   * Why the last extraction failed, as the orchestrator's bounded code.
+   * Held separately from `extractionProgress` because the recovery step clears
+   * progress before it renders (see handleStartExtraction), which is exactly
+   * how the computed reason used to be discarded.
+   */
+  const [extractionFailureReason, setExtractionFailureReason] = useState<ExtractionFailureReason | null>(null);
   const [extractedFields, setExtractedFields] = useState<ExtractionField[]>([]);
   // SCRUM-2914 (Founder UI findings, 2026-07-22): the AI-03 confidence-driven
   // review gate was removed — extraction confidence scoring is unreliable and
@@ -422,12 +429,19 @@ export function SecureDocumentDialog({
     // progress callback synchronously before returning null; React state is
     // async, so we latch it in a local to branch reliably afterward.
     let failedClosed = false;
+    // The orchestrator reports WHY it failed through the same synchronous
+    // progress callback, and the recovery step clears `extractionProgress`
+    // before it renders — so latch the reason in a local, exactly as
+    // `failedClosed` is latched above.
+    let failureReason: ExtractionFailureReason | undefined;
+    setExtractionFailureReason(null);
     const result = await runExtraction(
       fileData.file,
       fileData.fingerprint,
       selectedTemplate?.credential_type ?? 'OTHER',
       (progress) => {
         if (progress.failClosed) failedClosed = true;
+        if (progress.reasonCode) failureReason = progress.reasonCode;
         setExtractionProgress(progress);
       },
     );
@@ -477,6 +491,7 @@ export function SecureDocumentDialog({
       // enter metadata manually, or skip. Never silently save with zero metadata.
       toast.warning(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
       setExtractionProgress(null);
+      setExtractionFailureReason(failureReason ?? null);
       await autoSelectTemplate('OTHER');
       setStep('extraction-failed');
       return;
@@ -759,7 +774,25 @@ export function SecureDocumentDialog({
                 <AlertCircle className="h-4 w-4 text-amber-600" />
                 <AlertDescription className="text-sm">
                   <p className="font-medium mb-1">{EXTRACTION_RECOVERY_LABELS.TITLE}</p>
-                  <p className="text-muted-foreground">{EXTRACTION_RECOVERY_LABELS.DESCRIPTION}</p>
+                  {/* Founder report 2026-08-27: this line used to be a FIXED
+                      string blaming "image quality or an unsupported format"
+                      — a cause the dialog could not know, and false for the
+                      timeout that actually dominates (the reported case was a
+                      supported .xml). It now reflects the reason the
+                      orchestrator computed.
+
+                      §1.6: the reason is rendered by LOOKING UP a bounded code
+                      in EXTRACTION_FAILURE_REASON_COPY — never by printing
+                      `extractionProgress.message`, whose worker-error-body and
+                      generic `err.message` branches carry text we do not
+                      control and which can reference document-derived
+                      content. An absent or unrecognized code falls back to the
+                      generic description, so no free-form text can reach the
+                      DOM through this path. */}
+                  <p className="text-muted-foreground">
+                    {(extractionFailureReason && EXTRACTION_FAILURE_REASON_COPY[extractionFailureReason])
+                      || EXTRACTION_RECOVERY_LABELS.DESCRIPTION}
+                  </p>
                 </AlertDescription>
               </Alert>
               <div className="flex flex-col gap-2">

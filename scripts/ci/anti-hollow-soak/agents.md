@@ -31,6 +31,10 @@ wall-time while the changed behavior is never exercised.
    (base-drift, #1367/#1380 family).
 
 ## CI wiring (REPORT-ONLY / non-gating)
+> ⚠️ **SUPERSEDED 2026-08-23 — this section describes wiring that no longer exists.**
+> Kept verbatim because `agents.md` is append-only (union-merge drop backstop).
+> The current wiring is **fail-closed**; see "CI wiring (FAIL-CLOSED)" below.
+
 Wired into `.github/workflows/ci.yml` as the `anti-hollow-soak-report` job under
 the W3-freeze CTO carve-out: report-only / warn mode only. The CLI `--report-only`
 flag makes `main()` ALWAYS exit 0 (prints `::notice::`/`::warning::` annotations,
@@ -39,6 +43,34 @@ never `::error::`); the job step also carries `continue-on-error: true`. It scan
 no-op). Fail-closed activation (dropping `--report-only`) is DEFERRED until >=1
 real green soak calibrates the guards, mirroring the #1617 T0-CI-infra precedent.
 
+## CI wiring (FAIL-CLOSED) — CURRENT as of 2026-08-23 (SCRUM-2977)
+Wired into `.github/workflows/ci.yml` as the `anti-hollow-soak` job (renamed from
+`anti-hollow-soak-report`). It still scans `docs/staging/soak-preflight/*.json`
+(a convention; none committed yet → notice + no-op), but a hollow signature now
+reds the job **and blocks the merge**.
+
+Activation required removing all four hollow mechanisms together — dropping fewer
+than all four leaves the gate decorative:
+
+1. the CLI `--report-only` flag (makes `main()` ALWAYS exit 0),
+2. the `|| true` on the invocation (discards a non-zero exit),
+3. the step's `continue-on-error: true` (a failed step still greens the job),
+4. the check's absence from `.mergify.yml` `merge_conditions` — a check Mergify
+   does not evaluate can be red while Mergify merges anyway (the same class
+   already documented for `Orphaned Export Lint`).
+
+`scripts/ci/soak-integrity-gates-failclosed.test.ts` pins every one of them.
+
+⚠️ Fail-closed `main()` returns the USAGE code **2** when given no `--input`, so
+the "no preflight committed" branch in ci.yml must NOT invoke the CLI at all — it
+emits a `::notice::` and exits 0. `--report-only` survives only as a local
+dry-run opt-in.
+
+Branch-protection required-check status is repo-admin state and is NOT set by
+this repo's config — this gate blocks the **Mergify** path; verify branch
+protection separately before claiming it blocks anything else.
+
 Run locally:
 - unit tests: `npx vitest run scripts/ci/anti-hollow-soak/guards.test.ts`
 - CLI report-only: `npx tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input <preflight.json>`
+- CLI as CI runs it (fail-closed): `npx tsx scripts/ci/anti-hollow-soak/guards.ts --input <preflight.json>`

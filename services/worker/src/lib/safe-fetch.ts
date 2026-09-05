@@ -321,19 +321,33 @@ export function createSafeFetchImpl(
  * preserving the Host header and TLS SNI/servername. This guarantees
  * resolve-time IP === connect-time IP.
  *
- * We use `globalThis.fetch` (Node's built-in, undici-backed) rather than
- * importing undici's `fetch` directly for two reasons: (1) Node's global fetch
- * honours the `dispatcher` RequestInit option, so the Agent still pins the IP;
- * (2) test suites that `vi.stubGlobal('fetch', …)` continue to intercept the
- * call (the stub simply ignores the dispatcher, which is fine — tests supply
- * their own DNS/guard mocks and do not exercise real socket pinning). The Agent
- * is built lazily so unit tests that inject stub deps never load undici.
+ * The Agent AND the `fetch` that consumes it MUST come from the same undici
+ * realm. This used to call `globalThis.fetch` (Node's built-in, backed by
+ * Node's *internal* bundled undici) while passing an Agent from the *npm*
+ * `undici` package. undici 7 still accepted that mix, because its dispatcher
+ * tolerated the legacy handler interface (`onConnect`/`onHeaders`/`onData`/
+ * `onComplete`/`onError`) that Node's internal fetch supplies. undici 8 removed
+ * the legacy shim: `Agent.dispatch` now asserts the NEW handler interface
+ * (`onRequestStart`/`onResponseStart`/…) and rejects Node's internal handler
+ * with `InvalidArgumentError: invalid onRequestStart method`
+ * (`UND_ERR_INVALID_ARG`), which fails 100% of real egress through this path.
+ *
+ * So we import undici's own `fetch` and pair it with the npm-undici Agent —
+ * the same single-realm pattern `utils/db.ts` already uses for the Supabase
+ * client. Both are loaded lazily so unit tests that inject stub deps never
+ * load undici at all.
+ *
+ * NOTE: because the prod dispatch no longer routes through `globalThis.fetch`,
+ * `vi.stubGlobal('fetch', …)` does NOT intercept it. Tests that need to fake
+ * this layer must inject `SafeFetchDeps.dispatch` (or the caller's own fetch
+ * override, e.g. `__setCredentialSourceFetchForTests`) instead of stubbing the
+ * global.
  */
 export function defaultSafeFetchDeps(): SafeFetchDeps {
   return {
     resolve: resolveHostToIps,
     async dispatch(pinnedIp: string, url: string, init: RequestInit): Promise<SafeFetchResponse> {
-      const { Agent } = await import('undici');
+      const { Agent, fetch: undiciFetch } = await import('undici');
       const parsed = new URL(url);
       const servername = parsed.hostname;
 
@@ -361,17 +375,20 @@ export function defaultSafeFetchDeps(): SafeFetchDeps {
       });
 
       try {
-        const res = await globalThis.fetch(url, {
+        const res = await undiciFetch(url, {
           ...init,
           redirect: 'manual',
-          // Node's global fetch forwards `dispatcher` to undici; typed loosely
-          // because the DOM RequestInit lib type omits it.
+          // `dispatcher` is undici's own option; the DOM RequestInit lib type
+          // omits it, and `init` is typed as a DOM RequestInit, so the whole
+          // bag is cast across to undici's request-init shape.
           dispatcher: agent,
-        } as RequestInit);
+        } as never);
 
         return {
+          // undici's Response is spec-shaped; the fields below are the whole of
+          // SafeFetchResponse. Headers is structurally the DOM Headers.
           status: res.status,
-          headers: res.headers,
+          headers: res.headers as unknown as Headers,
           url: res.url,
           arrayBuffer: () => res.arrayBuffer(),
         };

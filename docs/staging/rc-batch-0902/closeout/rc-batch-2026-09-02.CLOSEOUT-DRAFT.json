@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-02-batch",
+  "created_at": "2026-09-02T19:30:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "approval_status": "approved",
+  "train_launch_sha": "78621249595e37398170da9b298ae13cd753a801",
+  "target_main_sha": "e128f1fb507da9ede08e4960d0a83e071beb6fd5",
+  "allowed_base_shas": [
+    "4b3db0c0c4aaa28b1df5506c59357835f6f995a7",
+    "5c145df5cd72d10060f1c84308b72bda74d29c9a",
+    "8147ed3a719c93112ddbfcee3889ec30bc26f4ec",
+    "b5e823c3a2b43f0b6c6c329161c9d593a1462539"
+  ],
+  "covered_main_shas": [
+    "e128f1fb507da9ede08e4960d0a83e071beb6fd5"
+  ],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "supabase_project_ref": "rvdgwynxoapdzysoaayr",
+    "cloud_run_service": "arkova-worker-rc-batch-0902-staging",
+    "cloud_run_revision": "arkova-worker-rc-batch-0902-staging-00001-p4l",
+    "staging_api_base": "https://arkova-worker-rc-batch-0902-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://arkova-worker-rc-batch-0902-staging-kvojbeutfa-uc.a.run.app",
+    "image_digest": "sha256:55c34e1fdf0423562159569c31d775343ef73f13394ff084ce7e62471caf5ccf",
+    "soak_window": "2026-09-02T19:49:27Z to 2026-09-03T07:49:27Z (12h T2)",
+    "preflight_result": "environment_type=clean_mirror (7/7) — docs/staging/rc-batch-0902/clean-mirror-preflight-rc-batch-0902.json",
+    "revision": "arkova-worker-rc-batch-0902-staging-00001-p4l",
+    "deploy_tag": "arkova-worker-rc-batch-0902-staging (isolated service URL; no traffic tag)",
+    "deploy_log_id": "cloud-run rev arkova-worker-rc-batch-0902-staging-00001-p4l created 2026-09-02T19:48:33Z (Cloud Build id <<FILL AT CLOSE-OUT: cloud-build-id>>); no staging_deploy_log row — deployed directly, not via scripts/staging/deploy.sh"
+  },
+  "included_prs": [
+    {
+      "number": 2525,
+      "head_sha": "24fbb72cccbfe6ca929200ffa7a8d11d4ade8403",
+      "base_sha": "8147ed3a719c93112ddbfcee3889ec30bc26f4ec",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "branch": "fix/attestation-verify-dead-table",
+      "soak_train": "rc-batch-2026-09-02",
+      "soak_window": "2026-09-02T19:49:27Z to 2026-09-03T07:49:27Z (12h T2)",
+      "maturity_record": "docs/staging/rc-batch-0902/evidence/",
+      "ci_summary": "fix(security): gate attestation verification disclosure by status. Public anonymous /api/v1/verify/attestation/:id now discloses only notarized/anchored; all other statuses return the identical not-found body (no existence oracle). Hollow-404 on DB error replaced with 500. Follow-up commits: park below rate limiters; soak driver must not score Cloud Run capacity as an application 5xx. Head is a verified ancestor of the soaked RC tree 78621249595e.",
+      "rollback_note": "Revert the status filter in services/worker/src/api/v1/verify/attestation.ts; no schema change, no data rewrite.",
+      "migration_files": []
+    },
+    {
+      "number": 2526,
+      "head_sha": "c646d18e8e27cc7bf290a3225ed3a80bf4718b3f",
+      "base_sha": "19d7adfbdd48ba87d9980364c2699c73317dffd4",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "branch": "fix/detect-reorgs-deadman-monitoring",
+      "soak_train": "rc-batch-2026-09-02",
+      "soak_window": "2026-09-02T19:49:27Z to 2026-09-03T07:49:27Z (12h T2)",
+      "maturity_record": "docs/staging/rc-batch-0902/evidence/",
+      "ci_summary": "fix(observability): register detect-reorgs in scheduler dead-man manifest. Adds detect-reorgs to SCHEDULER_MANIFEST; budget derived from its coverage band. No runtime behaviour change: neither manifest consumer has a live trigger and the silence signal has no producer (pre-existing, repo-wide). Head is a verified ancestor of the soaked RC tree 78621249595e.",
+      "rollback_note": "Remove the manifest entry; no schema, no data.",
+      "migration_files": []
+    },
+    {
+      "number": 2527,
+      "head_sha": "2cb005850919d3af2fea443382ebc0d77f20851e",
+      "base_sha": "4b3db0c0c4aaa28b1df5506c59357835f6f995a7",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "branch": "feat/proof-verdict-tri-state",
+      "soak_train": "rc-batch-2026-09-02",
+      "soak_window": "2026-09-02T19:49:27Z to 2026-09-03T07:49:27Z (12h T2)",
+      "maturity_record": "docs/staging/rc-batch-0902/evidence/",
+      "ci_summary": "feat(proof): three-state verification verdict. Additive verdict ∈ {valid,invalid,unverifiable} + verdict_note on GET /api/v1/verify/:publicId/proof; boolean verified unchanged. Follow-up commit: armed-but-uninspected branch never claims valid. One known merge conflict with #2524 in docs.ts (union resolves). Head is a verified ancestor of the soaked RC tree 78621249595e.",
+      "rollback_note": "Remove the two additive fields; consumers ignoring unknown keys are unaffected.",
+      "migration_files": []
+    },
+    {
+      "number": 2528,
+      "head_sha": "7781bf0eb67df38d576e28f038003d7e3210dbd3",
+      "base_sha": "b5e823c3a2b43f0b6c6c329161c9d593a1462539",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "branch": "fix/published-verification-pointers",
+      "soak_train": "rc-batch-2026-09-02",
+      "soak_window": "2026-09-02T19:49:27Z to 2026-09-03T07:49:27Z (12h T2)",
+      "maturity_record": "docs/staging/rc-batch-0902/evidence/",
+      "ci_summary": "fix(proof): working verification pointers + certificate QR. Certificate copy pointed at arkova.ai/verify (marketing redirect) and a nonexistent verify.sh; now points at /verify/independent with build steps verified from a clean clone. Certificate PDF gains a QR encoding canonicalVerifyUrl(publicId), env-free. New dep qrcode-generator@2.0.4 (MIT, 0 deps). Frontend-only: T1 targeted evidence path, not worker soak. Head is a verified ancestor of the soaked RC tree 78621249595e.",
+      "rollback_note": "Revert copy.ts strings and remove the QR block; no schema.",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [
+    {
+      "number": 2524,
+      "reason": "T3 migration PR (0427); soaking separately on its own isolated rig uqobkjhlnqmcpjidngxr per §1.11A exclusive-clean-state rule"
+    }
+  ],
+  "exceptions": [],
+  "notes": "Four no-migration PRs sharing one clean rig. RC tree is a clean merge of all four CURRENT heads onto main (rebuilt after another session pushed follow-up commits to all four branches). Nothing broadcasts: only populate-confirmation-proofs and check-confirmations Scheduler jobs are wired; batch-anchors deliberately absent.",
+  "approval_actor": "Carson",
+  "approval_time": "<<FILL AT CLOSE-OUT: approval-time>>",
+  "soak": {
+    "start": "2026-09-02T19:49:27Z",
+    "end": "2026-09-03T07:49:27Z",
+    "duration_hours": 12,
+    "harness_version": "services/worker/scripts/rc-batch-0902-driver.ts@31569f76e044894dd747804a6b9e13a5a850f1d2 (sha256 29fd4c4d3824cb887464ba9e28befa334a529b966989c9783452f9b33bd994df) + e2e/rc-batch-0902-frontend-evidence.spec.ts@31569f76e for #2528",
+    "result": "pass — <<FILL AT CLOSE-OUT: cycle-count>> two-hourly cycles, 17/17 assertions each, evidenceForSoak=true; rc-live-01 20:25:35Z and rc-live-02 20:32:08Z committed; #2528 targeted evidence verdict YES",
+    "evidence_links": [
+      "docs/staging/rc-batch-0902/evidence/rc-live-01.jsonl",
+      "docs/staging/rc-batch-0902/evidence/rc-live-02.jsonl",
+      "docs/staging/rc-batch-0902/evidence/E1-post-seed-preflight-and-0417-reconciliation-2026-09-02.md",
+      "docs/staging/rc-batch-0902/evidence/E2-rollback-rehearsal-2026-09-02.md",
+      "docs/staging/rc-batch-0902/evidence/frontend-2528-qr/frontend-2528-qr-e2e.md"
+    ],
+    "expires_at": "<<FILL AT CLOSE-OUT: expires-at>>"
+  }
+}

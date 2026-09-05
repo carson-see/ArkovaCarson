@@ -1,6 +1,6 @@
 # Verifier fixtures
 
-Self-describing golden vectors for the `@arkova/verifier-cli` conformance suite.
+Self-describing golden vectors for the `arkova-verifier-cli` conformance suite.
 
 ## PROOF-08 dependency
 
@@ -20,7 +20,7 @@ picked up automatically; no test changes required.
 `node fixtures/generate-fixtures.mjs` to re-emit it. The generator builds real
 double-SHA256 block headers + inclusion proofs and the canonical
 `OP_RETURN <push> ARKV(4)‖root(32)` (no version byte), so the on-chain path is
-exercised for real by `@arkova/verifier`'s `confirmInclusion`.
+exercised for real by `arkova-verifier`'s `confirmInclusion`.
 
 ## Fixture interface (`VerifierFixture`, see `src/types.ts`)
 
@@ -65,5 +65,5 @@ production key material.
 
 The synthetic responses use Esplora's REST shapes (`GET /tx/:txid`,
 `GET /block-height/:h`, `GET /block/:hash/header`, `GET /tx/:txid/merkle-proof`;
-Blockstream/mempool.space), the exact paths `@arkova/verifier`'s
+Blockstream/mempool.space), the exact paths `arkova-verifier`'s
 `createEsploraFetch` hits against a real independent node in production.

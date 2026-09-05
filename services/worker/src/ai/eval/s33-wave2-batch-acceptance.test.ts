@@ -4,7 +4,7 @@ import {
   generateKeyPairSync,
 } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -28,6 +28,8 @@ import {
   type S33Wave2AuthenticatedBatchAcceptance,
 } from './s33-wave2-acceptance-envelope.js';
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
+
+import { removeTempRoot } from './testing/remove-temp-root.js';
 
 const repositoryRoot = execFileSync('/usr/bin/git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 const verificationHeadSha = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -248,7 +250,7 @@ function loadSnapshotFixture(): Readonly<{
     defaultRawDiff,
     cleanup: () => {
       gitRun(trustedMainRoot, ['worktree', 'remove', '--force', candidateRoot]);
-      rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      removeTempRoot(fixtureRoot);
     },
   };
 }

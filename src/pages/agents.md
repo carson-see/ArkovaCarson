@@ -1,5 +1,90 @@
 # agents.md — pages
-_Last updated: 2026-08-15_
+_Last updated: 2026-08-30_
+
+## 2026-08-30 SCRUM-3532 / SCRUM-3670 — fetch failures no longer masquerade as empty data
+
+Two page-level consumption gaps (deferred surfaces documented by SCRUM-1999, which bounded
+itself to OrgRegistryTable/ReportsList):
+
+- `DashboardPage.tsx` — `useAnchors` has exposed `error` since the React-Query migration but
+  the page never destructured it, so a failed anchors fetch fell through to the "secure your
+  first document" onboarding empty state. Now renders the canonical `DataErrorBanner`
+  (`data-testid="records-fetch-error-banner"`, title `DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE`,
+  message `TOAST.RECORDS_FETCH_FAILED`, Retry → `refreshAnchors`) inside the records
+  CardContent; the empty state and the filter no-results block are gated on `!recordsError`,
+  and stale records from a previous successful fetch stay visible below the banner
+  (React-Query keeps `data` on refetch error). The raw hook `error` string is deliberately
+  NOT rendered — generic copy only (§1.4; the hook's error is raw PostgREST text). Same
+  treatment in `src/components/vault/VaultDashboard.tsx`. Tests:
+  `DashboardPage.fetch-error.test.tsx` (4 cases, red-first).
+- `ComplianceDashboardPage.tsx` — `useJurisdictionRules()` now exposes `error`/`refetch`
+  (see `src/hooks/agents.md`); the page renders a retryable `DataErrorBanner`
+  (`data-testid="compliance-rules-error-banner"`) above the jurisdiction/industry selectors
+  when the public rules fetch fails, instead of silently empty pickers. The selects stay
+  mounted — their US-CA/accounting fallback options still drive the score card during retry.
+  Copy is local `RULES_ERROR_COPY` (§1.3-clean; copy.ts locked under concurrent PRs — same
+  precedent as `ReportsList.tsx`'s `REPORTS_STATE_COPY`). Both pre-existing suites' hook
+  mocks updated to the full new return shape. Tests:
+  `ComplianceDashboardPage.rulesError.test.tsx` (3 cases, red-first). Known remaining gap,
+  on the record: the page still does not consume `useComplianceScore().error` (score/gap
+  fetch failures render as "No data") — out of SCRUM-3670's scope, untracked.
+## 2026-08-30 SCRUM-3524 — `OrgProfilePage.tsx` `handleInvite` propagates the invite result
+
+`useInviteMember.inviteMember` never rethrows (SCRUM-1979 toast-safety) — it
+toasts and resolves `false` — so a `handleInvite` that discarded the boolean
+left `InviteMemberModal` closing and resetting on FAILURE, with its inline
+error Alert unreachable. `handleInvite` now returns the boolean (modal prop
+`onInvite` is `Promise<boolean>`) and calls `refreshInvitations()` only on
+success, mirroring the `handleConfirmRevoke` pattern above it.
+`OrgProfilePage.test.tsx` probes the wired `onInvite` for both outcomes.
+Deliberately NOT touched: `handleResendInvitation` (same discarded boolean, but
+it isn't modal-driven — the hook's toast is its feedback, and a no-op refresh
+is harmless) and the SCRUM-3012 backend invite-flow defects (separate story).
+
+## 2026-08-23 CLE-R1 — `RecordDetailPage.tsx` now feeds `cleMetadata` (SCRUM-1869 was Done with no user-visible outcome)
+
+`AssetDetailView` has declared `cleMetadata` since CLE-R1, calls
+`extractCleMetadataView(anchor.cleMetadata, …)` and renders the result — but
+`RecordDetailPage` passed only `cpeMetadata` and silently dropped
+`cle_metadata`, so the CLE detail section rendered nothing for **every** record.
+The prop was wired and waiting with nothing feeding it; the story was marked Done
+on the strength of the components existing. `src/components/credentials/agents.md`
+had listed this exact line as an open prereq since 2026-05-31.
+
+The fix is one line mirroring the `cpeMetadata` line directly above it (same
+`useAnchor` `select('*')` source, same entitlement gate). **Keep the two lines
+together** — they are a pair, and the failure mode here was one of them being
+added alone. `RecordDetailPage.cle-metadata.test.tsx` captures the props handed to
+`AssetDetailView` and asserts both columns arrive, so dropping either fails.
+
+Still true after this change: the section stays invisible until the
+`credential_source_import` entitlement is seeded (nothing writes that row yet —
+`useHasCredentialImportEntitlement` fails closed for everyone), so this un-blocks
+the path rather than lighting it up. The PUBLIC verification path was never
+affected — `PublicVerification.tsx` reads `cle_metadata` off the RPC directly.
+
+## 2026-08-23 R-7 — traction figures on `/about` + `/developers` are single-sourced and dated
+
+Both pages hardcoded `1.39M+` "Records Secured" as a bare JSX literal while prod
+held at least 3.3M SECURED records. Figures now come from `PLATFORM_METRICS` in
+`copy.ts` (see `src/lib/agents.md` for the measurement method and the
+"never date a figure you did not measure" rule), and each page renders
+`PLATFORM_METRICS_AS_OF` beneath the tiles.
+
+`PlatformMetrics.claims.test.ts` is the ratchet, and like the sibling
+`DevelopersPage.claims.test.ts` it reads **source, not render** — a figure behind
+a flag or in a collapsed section is still a published claim. It fails on any bare
+`>N.NM+<` JSX text node in either page, so the fix cannot be undone by someone
+re-typing a number inline. Do not "simplify" the pages by inlining the values.
+
+Review addendum 2026-08-23: that `>N.NM+<` pattern only recognises an `M`/`K`
+suffixed figure, so the `21` and `87.2%` tiles could still have been re-typed
+inline undetected. A second assertion now derives its needles from
+`PLATFORM_METRICS` itself — every current `value` must not ALSO appear as a JSX
+text node — so all four tiles are covered and changing a value in `copy.ts`
+moves the assertion with it instead of adding another magic number to maintain.
+UAT 2026-08-23 at 1280px and 375px on both routes: correct figures, as-of line
+present, no horizontal overflow, 0 console errors.
 
 ## 2026-08-15 — `RecordDetailPage.test.tsx` new (BUG-2026-08-13-017 not-found flash)
 

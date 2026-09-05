@@ -14,6 +14,8 @@ v2 agent-tool API surface. Designed for AI agents + future MCP parity. Per-scope
 ## Conventions
 - `auth.ts` records key usage via `touchApiKeyLastUsed` (exported from `middleware/apiKeyAuth.ts`) — a single implementation shared with the v1 middleware. Do NOT inline `void db.from('api_keys').update(...)` here: supabase-js builders are lazy and a discarded builder never issues its request (see `middleware/agents.md`, 2026-08-01 silent-write note).
 - Every endpoint: `requireScopeV2('<scope>')` + `createV2ScopeRateLimit('<scope>')` middleware pair.
+- **BUG-018 (2026-08-15): `UpstashV2RateLimitStore` keys are `arkova:v2:ratelimit:<env>:<key>`.** The `<env>` segment comes from `utils/environmentNamespace.ts` (derived from `K_SERVICE`, never `NODE_ENV` — rigs run `NODE_ENV=production`). Prod, shared staging and the side-rig all bind the SAME Upstash database, and unlike the v1 limiter this store has always read and written Redis on the hot path, so before this change an API key's staging burst spent its production budget. Never derive the namespace from anything instance-local; every instance of one service must land on one bucket.
+- **`UpstashV2RateLimitStore.increment` self-heals TTL-less keys (2026-08-18).** PEXPIRE arms on `count === 1` AND whenever `PTTL` reports no expiry — the second arm is the heal for a key orphaned by a crash between INCR and PEXPIRE, which `count === 1` alone never revisits (pre-fix: the count grew forever and permanently locked out that bucket once past the limit). Same idiom as the v1 store (`utils/upstashRateLimit.ts`); regression pinned in `rateLimit.test.ts` ("crash-orphaned TTL-less keys self-heal").
 - Zod schemas live in `mcpParity.ts` and are imported by both REST handlers and (eventually) MCP tool handlers — single source of truth.
 - Response sort: when emitting field-name lists in errors, use `localeCompare` (SonarCloud S2871 — fixed in PR #737).
 
@@ -21,3 +23,16 @@ v2 agent-tool API surface. Designed for AI agents + future MCP parity. Per-scope
 - SCRUM-1731 (PR #735) — contract-lock test pinned the 5 limits to the published partner brief §6.
 - SCRUM-1733 (PR #737) — APPROVED, awaiting Carson merge.
 - SCRUM-1731 (PR #735) — CodeRabbit re-review blocked on credit pool.
+
+## v1/v2 store parity reached, and it is LIVE IN PROD (2026-08-27)
+
+The `UpstashV2RateLimitStore.increment` design documented above (single pipelined `INCR`+`PTTL`,
+`PEXPIRE` only to arm a new window, plus the TTL-less self-heal) is no longer v2-only. PR #2269
+brought the **v1** store in `services/worker/src/utils/upstashRateLimit.ts` to the same design and
+merged as `c22f586cb`; it is live in prod `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`,
+revision `arkova-worker-01322-tol` at 100% traffic (`gcloud run services describe` + live `/health`,
+2026-08-27T21:00Z).
+
+So the older framing — "v2 already ships the correct design, v1 does not" — is now stale. **The two
+stores are at parity and must be changed together.** A fix applied to one and not the other
+re-opens the divergence this PR closed; `utils/agents.md` carries the v1-side note.

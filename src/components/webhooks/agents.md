@@ -1,12 +1,13 @@
 # agents.md — components/webhooks
-_Last updated: 2026-07-21_
+_Last updated: 2026-08-23_
 
 ## What This Folder Contains
 Webhook configuration UI for ORG_ADMIN users: endpoint CRUD, event catalog, signed test ping, delivery history + failed deliveries (DLQ).
 
 ## Key Files
 - `WebhookSettings.tsx` — Webhook endpoint CRUD: create with server-generated secret (shown once, then write-only), list active endpoints, delete with confirmation. WH-02 (SCRUM-2397): optional `onTestPing` prop renders a per-endpoint "Send test event" button (ACTIVE endpoints only) with an in-flight double-click guard and an inline consumer-side verification result (`TEST_PING_SUCCESS`/`TEST_PING_FAILURE` with the receiver's HTTP status). The button is omitted entirely when `onTestPing` is not passed.
-- `WebhookEventCatalog.tsx` — WH-01 (SCRUM-2396) read-only event catalog. `WEBHOOK_EVENT_CATALOG` derives its order from `AVAILABLE_EVENTS` (test-enforced lockstep) and carries per-event `live` + `fields`. **Honesty contract (§1.13 R-7):** `live: true` only for events with a real worker emit point (all five `anchor.*` — verified against `services/worker/src/webhooks/agents.md` producer table); `credential.*` render a "Not yet active" badge + note. `fields` mirror the strict Zod schemas in `services/worker/src/webhooks/payload-schemas.ts` — update BOTH when a schema changes. Redaction-rules note (`CATALOG_REDACTION_NOTE`) is part of the WH-01 AC; don't drop it.
+- `WebhookEventCatalog.tsx` — WH-01 (SCRUM-2396) read-only event catalog. `WEBHOOK_EVENT_CATALOG` derives its order from `AVAILABLE_EVENTS` (test-enforced lockstep) and carries per-event `live` + `fields`. **Honesty contract (§1.13 R-7):** `live: true` only for events with a real worker emit point (every `anchor.*`, plus `compliance.document_expiring` — verified against the `services/worker/src/webhooks/agents.md` producer table, NOT inferred from the `anchor.` prefix); `credential.*` render a "Not yet active" badge + note. `fields` mirror the strict Zod schemas in `services/worker/src/webhooks/payload-schemas.ts` — update BOTH when a schema changes. Redaction-rules note (`CATALOG_REDACTION_NOTE`) is part of the WH-01 AC; don't drop it.
+- `WebhookEventCatalog.tsx` — WH-01 (SCRUM-2396) read-only event catalog. `WEBHOOK_EVENT_CATALOG` derives its order from `AVAILABLE_EVENTS` (test-enforced lockstep) and carries per-event `live` + `fields`. **Honesty contract (§1.13 R-7, both directions):** `live: true` only for events with a real, reachable worker emit point — the five `anchor.*`, `credential.issued` (SCRUM-1798 Phase 2a), `credential.status_changed` (SCRUM-1800, four producers), and `compliance.document_expiring`; the badge must equally never say "Not yet active" for an event orgs are already receiving. `credential.verified` is the one deferred entry: wired but flag-gated dark in prod (`ENABLE_CREDENTIAL_VERIFIED_WEBHOOK`, default false) — verify the prod flag (prod-state-check skill), not just the code path, before flipping it. Liveness is verified against the `services/worker/src/webhooks/agents.md` producer table AND the dispatch sites themselves (`git grep "dispatchWebhookEvent("`); that table went stale once and produced this exact false badge. `fields` mirror the strict Zod schemas in `services/worker/src/webhooks/payload-schemas.ts` — update BOTH when a schema changes. Redaction-rules note (`CATALOG_REDACTION_NOTE`) is part of the WH-01 AC; don't drop it.
 - `WebhookDeliveryLog.tsx` — WH-03 (SCRUM-2398) delivery history table + failed-deliveries (DLQ) section. Renders delivery METADATA only (status label, response code, attempt count, endpoint URL, time; DLQ rows add bounded worker-generated `error_message`) — the event payload never reaches this component (the hook never selects it). Resend appears only on `status === 'failed'` rows and disables while in flight (the UI half of replay idempotency — the worker half is `replayDelivery`'s always-new-row model). Delivery statuses map through `DELIVERY_STATUS_LABELS` (a separate enum domain from `statusDisplay.ts` — do not merge them).
 - `index.ts` — Barrel exports
 
@@ -39,5 +40,58 @@ so no endpoint could subscribe. Worker-side detail (including why registering it
 is what stops an internal UUID reaching the wire) is in
 `services/worker/src/webhooks/agents.md`.
 
+Pre-existing drift left alone at the time: `anchor.superseded` is in the worker's
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but not in `AVAILABLE_EVENTS`. **Closed
+2026-08-23 — see below.**
+
+## 2026-08-23 — `anchor.superseded` registered (DI-775 / SCRUM-3538)
+
+The drift noted above is fixed. Same shape as BUG-002, reversed: the worker end
+was already complete (schema registered, so the CRUD allowlist accepted a
+subscription, and `services/worker/src/api/anchor-lineage.ts` really dispatches
+it on `POST /api/anchor/:id/supersede`, SCRUM-2937) — only the registration
+surfaces were missing it. An org whose record got superseded was sent an event
+it had no way to subscribe to.
+
+Added to `AVAILABLE_EVENTS` (label `Anchor Superseded`, §1.3-clean), `CATALOG_DATA`
+(`live: true` — verified emit point; fields mirror `AnchorSupersededPayloadSchema`,
+including the `superseded_by_public_id` lineage pointer), and
+`WEBHOOK_EVENT_DESCRIPTIONS` in `src/lib/copy.ts`. The pinned drift-guard list in
+`WebhookSettings.test.tsx`, the `LIVE_EVENT_IDS` set in
+`WebhookEventCatalog.test.tsx`, and the payload-field assertion moved in the same
+commit. No worker code changed — the wire contract and the allowlist were already
+correct, so nothing new leaves Arkova.
+
+Position matters: `AVAILABLE_EVENTS` order mirrors the worker's
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` declaration order (`anchor.superseded` sits
+between `anchor.expired` and `anchor.batch_secured`), because the pinned guard
+compares with `toEqual` on an array, not a set.
+
+The pin in `WebhookSettings.test.tsx` is a hardcoded list, so it only fires when
+someone edits `AVAILABLE_EVENTS` and forgets to update it — it stays green when
+the worker map grows and this file stands still, which is how this drift
+happened. `scripts/ci/check-webhook-event-registration-drift.ts` is the guard
+that keys off `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` itself and covers this file,
+`WebhookEventCatalog.tsx` and `src/lib/copy.ts` alongside the SDK, Zapier and
+docs mirrors. Keep both: the pin gives the local diff a readable failure, the
+drift check gives the class a real ratchet.
 Pre-existing drift left alone: `anchor.superseded` is in the worker's
 `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but not in `AVAILABLE_EVENTS`.
+
+## 2026-08-29 — `credential.issued` + `credential.status_changed` badges corrected (were falsely "Not yet active")
+
+The catalog (and the picker's "(coming soon)" labels) still claimed no
+`credential.*` event had an emit point, per SCRUM-1743's original state. That
+had been false since SCRUM-1798 Phase 2a (`credential.issued`, connector
+credential import) and SCRUM-1800 (`credential.status_changed`, four
+producers: revoke / supersede / bulk-confirm / reorg-revert) — orgs with
+subscriptions were receiving events the dashboard called inactive. Flipped
+`CATALOG_DATA` liveness for those two, dropped their "(coming soon)" label
+suffixes in `WebhookSettings.tsx`, and replaced the test that PINNED the false
+claim (`keeps every credential.* event deferred`) with one pinning
+`credential.verified` — the only genuinely dark entry (both dispatch sites
+flag-gated on `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK`, default false, verified
+unset in prod 2026-08-29). Root cause chain: the worker
+`services/worker/src/webhooks/agents.md` producer table (this catalog's cited
+verification source) had never gained the `credential.*` rows — fixed in the
+same PR. Verify liveness against dispatch sites, not prose.

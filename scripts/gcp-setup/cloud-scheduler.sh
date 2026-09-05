@@ -26,8 +26,9 @@ ATTEMPT_DEADLINE="${ATTEMPT_DEADLINE:-600s}"
 # COVERAGE CONTRACT (pinned by cloud-scheduler.test.ts): every cronRouter.post
 # route in services/worker/src/routes/cron.ts must appear either here in JOBS
 # or in NOT_SCHEDULED below with a reason. A route in neither set has NO
-# trigger in production (in-process node-cron is dormant on Cloud Run —
-# PROOF-03) and the test fails.
+# trigger in production (in-process node-cron has no retry or attempt deadline,
+# and does not fire at all on a revision scaled to zero — PROOF-03, as narrowed
+# by SCRUM-3384) and the test fails.
 JOBS=(
   "monthly-allocation-rollover|0 0 1 * *|/jobs/monthly-allocation-rollover|NO_RETRY"
   "grace-expiry-sweep|*/15 * * * *|/jobs/grace-expiry-sweep|NO_RETRY"

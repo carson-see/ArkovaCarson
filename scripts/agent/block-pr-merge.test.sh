@@ -260,6 +260,139 @@ run_case "refspec: + in a pathspec"         $ALLOWED 'git add "src/a+main.ts"'
 run_case "refspec: + in a log range"        $ALLOWED 'git log --grep="+main" --oneline'
 
 echo ""
+echo "--- BYPASS: whole-repo force push names no branch ---------------"
+# Rules 2 and 2b both decide on a NAME -- rule 2 needs a literal main/master on
+# the line, rule 2b needs main/master as a `+`-refspec destination. These two
+# forms force-update every branch on the remote, main included, and name none
+# of them, so neither rule could fire. Both returned exit 0 against the pre-fix
+# hook (probed, not theorised). First recorded as open in PR #2178/#2181; the
+# fix in #2181 merged into a stacked base and never reached main (SCRUM-3492).
+run_case "whole-repo: --force --all"            $BLOCKED 'git push --force --all origin'
+run_case "whole-repo: --all --force"            $BLOCKED 'git push --all --force origin'
+run_case "whole-repo: -f --all"                 $BLOCKED 'git push -f --all origin'
+run_case "whole-repo: --force-with-lease --all" $BLOCKED \
+  'git push --force-with-lease --all origin'
+# --mirror needs no force flag: it force-updates every ref by definition, and
+# additionally DELETES remote refs that are absent locally.
+run_case "whole-repo: --mirror"                 $BLOCKED 'git push --mirror origin'
+run_case "whole-repo: --mirror, no remote"      $BLOCKED 'git push --mirror'
+run_case "whole-repo: --mirror at end of line"  $BLOCKED 'git push origin --mirror'
+# Composes with the global-option normalization, same as rule 2b does.
+run_case "whole-repo: -c global then --mirror"  $BLOCKED \
+  'git -c user.name=x push --mirror origin'
+run_case "whole-repo: -C global then --all"     $BLOCKED \
+  'git -C /some/path push --force --all origin'
+run_case "whole-repo: after &&"                 $BLOCKED \
+  'npm test && git push --force --all origin'
+# A shell OPERATOR may follow the flag with no space in between -- bash ends the
+# word at `;`, `&`, `|`, `>`, `<` and `)` on its own. Terminating the flag on
+# whitespace-or-end-of-line alone therefore left the whole rule bypassable by
+# typing one extra character: `git push --mirror;echo done` is the same
+# whole-repo force push as `git push --mirror`, and returned exit 0. Found in
+# review of this change; the flag boundary is a negated ref-name class instead.
+run_case "whole-repo: --mirror then &&"         $BLOCKED 'git push --mirror&&echo done'
+run_case "whole-repo: --mirror then ;"          $BLOCKED 'git push --mirror;echo done'
+run_case "whole-repo: --mirror then |"          $BLOCKED 'git push --mirror|tee log'
+run_case "whole-repo: --mirror then redirect"   $BLOCKED 'git push --mirror>log'
+run_case "whole-repo: --mirror in a subshell"   $BLOCKED '(git push --mirror)'
+run_case "whole-repo: --all then &&"            $BLOCKED 'git push --force --all&&echo done'
+run_case "whole-repo: --all then redirect"      $BLOCKED 'git push --force --all>log 2>&1'
+# `--mirror` takes no value, so `--mirror=x` is not valid git -- but the guard
+# must not be the thing that decides that. Fail closed on the prefix.
+run_case "whole-repo: --mirror=x"               $BLOCKED 'git push --mirror=x origin'
+
+echo ""
+echo "--- the whole-repo rule must not over-match ---------------------"
+# An UNFORCED push of every branch is not destructive -- it is still rejected
+# non-fast-forward -- so `--all` blocks only alongside a force flag.
+run_case "whole-repo: --all, no force flag" $ALLOWED 'git push --all origin'
+run_case "whole-repo: --tags"               $ALLOWED 'git push --tags origin'
+# The flag boundary widened above must still end at the FLAG. A longer option
+# that merely starts with the same letters is a different option and must not
+# be read as `--all` / `--mirror`.
+run_case "whole-repo: longer --all* flag"   $ALLOWED 'git push --force --allow-x origin'
+run_case "whole-repo: longer --mirror* flag" $ALLOWED 'git push --mirrored origin'
+# `--mirror` is a clone flag too, and there it is read-only.
+run_case "whole-repo: clone --mirror"       $ALLOWED \
+  'git clone --mirror https://example.invalid/r.git'
+# The rule keeps each match inside ONE shell command, so a later unrelated
+# `git clone --mirror` is not attributed back to the push before it.
+run_case "whole-repo: push then clone"      $ALLOWED \
+  'git push origin feature && git clone --mirror https://example.invalid/r.git'
+run_case "whole-repo: message mentioning it" $ALLOWED \
+  'git commit -m "docs: explain push --mirror"'
+
+echo ""
+echo "--- BYPASS: a wildcard destination expands to main --------------"
+# The same "no name on the line" gap as above, one step subtler. Rule 2b
+# requires a literal main/master destination COMPONENT, so a refspec whose
+# destination is a glob at branch level slipped past it while expanding to
+# every branch on the remote. Each case returned exit 0 against the pre-fix
+# hook. Recovered from the orphaned PR #2181 diff and re-probed here.
+run_case "wildcard: +refs/heads/*:refs/heads/*" $BLOCKED \
+  'git push origin +refs/heads/*:refs/heads/*'
+run_case "wildcard: +refs/*:refs/*"             $BLOCKED 'git push origin +refs/*:refs/*'
+run_case "wildcard: +refs/heads/*"              $BLOCKED 'git push origin +refs/heads/*'
+run_case "wildcard: +*:*"                       $BLOCKED 'git push origin +*:*'
+run_case "wildcard: quoted"                     $BLOCKED \
+  'git push origin "+refs/heads/*:refs/heads/*"'
+run_case "wildcard: -c global then +refs/*"     $BLOCKED \
+  'git -c a=b push origin +refs/heads/*:refs/heads/*'
+# Forced by FLAG instead of by `+` -- the same push, spelled the other way.
+run_case "wildcard: force flag, no +"           $BLOCKED \
+  'git push --force origin refs/heads/*:refs/heads/*'
+run_case "wildcard: -f, no +"                   $BLOCKED 'git push -f origin refs/*:refs/*'
+run_case "wildcard: force flag after refspec"   $BLOCKED \
+  'git push origin refs/heads/*:refs/heads/* --force'
+
+echo ""
+echo "--- the wildcard rule must not over-match -----------------------"
+# Branch LEVEL is what decides, not the mere presence of a `*`. The wildcard
+# has to sit where the branch's own name sits -- bare `*`, `refs/*`,
+# `refs/heads/*` -- to be able to expand to main. One level deeper it cannot.
+run_case "wildcard: unforced refs/heads/*"  $ALLOWED \
+  'git push origin refs/heads/*:refs/heads/*'
+run_case "wildcard: dst below branch level" $ALLOWED \
+  'git push origin +feature:refs/heads/feature/*'
+run_case "wildcard: dst below level, flag"  $ALLOWED \
+  'git push --force origin refs/heads/feature/*:refs/heads/feature/*'
+run_case "wildcard: +refs/heads/feature/*"  $ALLOWED 'git push origin +refs/heads/feature/*'
+# Tags are not branches; this cannot touch main's history.
+run_case "wildcard: tags glob"              $ALLOWED 'git push origin +refs/tags/*:refs/tags/*'
+# A shell glob in a LATER command must not be read as this push's destination.
+run_case "wildcard: glob in a later command" $ALLOWED \
+  'git push --force origin claude/my-feature && ls *.ts'
+run_case "wildcard: glob after a ;"         $ALLOWED \
+  'git push --force origin claude/my-feature; echo *'
+run_case "wildcard: glob in a message"      $ALLOWED 'git commit -m "ci: match refs/heads/*"'
+
+echo ""
+echo "--- BYPASS: a backslash-newline continuation splits the line ----"
+# Every rule here greps, and grep is LINE-oriented. A shell line continuation
+# is one command to bash but two lines to grep, so the anchor and the flag land
+# on opposite sides of the split and no rule can see both. This defeats every
+# rule family in the file at once, rule 1 included. Probed: all exit 0.
+run_case "continuation: before +main"       $BLOCKED $'git push origin \\\n  +main'
+run_case "continuation: before --force"     $BLOCKED $'git push \\\n  --force origin main'
+run_case "continuation: before --no-verify" $BLOCKED $'git commit -m x \\\n  --no-verify'
+run_case "continuation: inside gh pr merge" $BLOCKED $'gh pr \\\n  merge 123 --squash'
+run_case "continuation: after git"          $BLOCKED $'git \\\n  push --force origin main'
+run_case "continuation: before --mirror"    $BLOCKED $'git push \\\n  --mirror origin'
+
+echo ""
+echo "--- joining continuations must not join separate commands -------"
+# Only a BACKSLASH-newline is a continuation. A bare newline is a command
+# SEPARATOR, and joining those too would splice unrelated commands into one
+# line -- the case below would become "...claude/my-feature git log main" and
+# trip rule 2. That is the difference between a stricter guard and a broken one.
+run_case "separator: two commands, no backslash" $ALLOWED \
+  $'git push --force origin claude/my-feature\ngit log main'
+run_case "separator: benign continuation"        $ALLOWED \
+  $'git push --set-upstream \\\n  origin claude/my-feature'
+run_case "separator: continuation in a commit"   $ALLOWED \
+  $'git commit -m "wip" \\\n  --allow-empty'
+
+echo ""
 echo "--- the normalizer itself is present and parses -----------------"
 # The hook falls back to the raw command when the normalizer cannot be run, so
 # a missing or syntactically broken normalize-git-command.py silently returns
@@ -301,6 +434,185 @@ run_case_bounded "200 global options, no subcommand"     $ALLOWED \
   "git ${big_flags}!" 10
 run_case_bounded "200 global options then benign work"   $ALLOWED \
   "git ${big_flags}status --porcelain" 10
+
+# Rules 2c and 2d scan forward from `git push` with `[^;&|]*` before matching,
+# so a long single-command push line is the shape that exercises THEM (the
+# cases above exit at rule 2, or never reach a push at all). A long refspec
+# list that matches nothing forces the full failed scan.
+big_refspecs=""
+for _ in $(seq 1 200); do big_refspecs+="claude/feature-branch "; done
+run_case_bounded "200 refspecs, none of them main"       $ALLOWED \
+  "git push origin ${big_refspecs}" 10
+run_case_bounded "200 refspecs then a wildcard dst"      $BLOCKED \
+  "git push --force origin ${big_refspecs}refs/heads/*" 10
+
+echo ""
+echo "--- rule 1: the read-only help form must not block --------------"
+# SCRUM-3656. `gh pr merge --help` prints usage and merges nothing, and the
+# guard blocking it broke ordinary doc work (it fired on any command merely
+# CONTAINING the merge string). The carve-out is token-exact in the
+# next-token position ONLY; every blocked case below pins why it is narrow.
+run_case "merge --help allowed"             $ALLOWED 'gh pr merge --help'
+run_case "merge -h allowed"                 $ALLOWED 'gh pr merge -h'
+run_case "merge --help piped"               $ALLOWED 'gh pr merge --help | cat'
+run_case "merge -h then &&"                 $ALLOWED 'gh pr merge -h && echo done'
+run_case "subshell merge --help allowed"    $ALLOWED '(gh pr merge --help)'
+# A selector before --help still shows help in gh, but this guard cannot
+# cheaply tell that from a flag VALUE, so anything but the immediate
+# next-token form stays blocked -- over-block, the safe direction.
+run_case "merge 123 --help still blocked"   $BLOCKED 'gh pr merge 123 --squash --help'
+# --help in a VALUE position is a REAL merge (its body is "--help").
+run_case "merge --body --help blocked"      $BLOCKED 'gh pr merge 123 --body --help'
+# --help=false DISABLES help and the merge runs: exact-token match, never a
+# prefix match.
+run_case "merge --help=false blocked"       $BLOCKED 'gh pr merge --help=false'
+# A quoted token is not the exact token; over-block, safe direction.
+run_case "merge quoted --help blocked"      $BLOCKED 'gh pr merge "--help"'
+# A newline is a command SEPARATOR: line one is a real merge of the current
+# branch's PR. The gap before the help token is space/tab only.
+run_case "merge then newline --help"        $BLOCKED $'gh pr merge\n--help'
+# EVERY merge occurrence on the line must be the help form.
+run_case "help then a real merge"           $BLOCKED 'gh pr merge --help && gh pr merge 123 --merge'
+run_case "bare merge still blocked"         $BLOCKED 'gh pr merge'
+# The anchor class gained `(`: a subshell wrapper is the same command, and
+# `(gh pr merge 123 --squash)` returned exit 0 against the pre-fix hook
+# (probed 2026-08-30) because `(` was not in the separator class.
+run_case "subshell merge blocked"           $BLOCKED '(gh pr merge 123 --squash)'
+
+echo ""
+echo "--- BYPASS: a transient user alias resolves inside git ----------"
+# SCRUM-3702. `git -c alias.p=push p --force origin main`: the definition is
+# a global option the normalizer used to STRIP, and `p` only becomes `push`
+# inside git -- so every rule saw `git p ...` and the whole force-push family
+# was fail-open behind one flag. Each case below returned exit 0 against the
+# pre-fix hook.
+run_case "alias: -c alias.p=push"               $BLOCKED 'git -c alias.p=push p --force origin main'
+run_case "alias: attached -calias.p=push"       $BLOCKED 'git -calias.p=push p -f origin main'
+run_case "alias: whole def quoted"              $BLOCKED "git -c 'alias.fp=push --force' fp origin main"
+run_case "alias: value quoted"                  $BLOCKED "git -c alias.fp='push --force' fp origin main"
+run_case "alias: chain a->b->push"              $BLOCKED 'git -c alias.a=b -c alias.b=push a --force origin main'
+run_case "alias: chain tail keeps flags"        $BLOCKED 'git -c alias.a="b --force" -c alias.b=push a origin main'
+run_case "alias: commit --no-verify"            $BLOCKED 'git -c alias.ci=commit ci --no-verify -m x'
+run_case "alias: shell (!) expansion"           $BLOCKED "git -c 'alias.x=!git push --force origin main' x"
+run_case "alias: quoted invocation"             $BLOCKED 'git -c alias.p=push "p" --force origin main'
+run_case "alias: after &&"                      $BLOCKED 'npm test && git -c alias.p=push p --force origin main'
+run_case "alias: +refspec via alias"            $BLOCKED 'git -c alias.p=push p origin +main'
+run_case "alias: stacked with other globals"    $BLOCKED 'git --no-pager -c alias.p=push p --force origin main'
+# Chasing a chain INTO a shadowing alias must stop at the builtin: git
+# ignores alias.push, so `a` expands to the REAL push here.
+run_case "alias: chain into shadowed push"      $BLOCKED 'git -c alias.push=status -c alias.a=push a --force origin main'
+# An env-indirect definition cannot be resolved by a text hook; fail CLOSED
+# on the construction itself.
+run_case "alias: --config-env= def"             $BLOCKED 'git --config-env=alias.p=EV p --force origin main'
+run_case "alias: --config-env separated"        $BLOCKED 'git --config-env alias.p=EV p --force origin main'
+run_case "alias: --config-env quoted"           $BLOCKED "git --config-env='alias.p=EV' p -f origin main"
+# git config section names are case-insensitive: git 2.50 resolves
+# `--config-env=Alias.s=EV`, `ALIAS.S=EV` and `-c ALIAS.P=push` identically
+# to the lowercase spellings (probed 2026-08-30), so the guards must match
+# the section name case-insensitively too. The -c spelling was already
+# handled by the normalizer's IGNORECASE and is pinned here; the two
+# --config-env spellings were exit 0 until rule 4 matched case-insensitively.
+run_case "alias: --config-env=Alias. cased"     $BLOCKED 'git --config-env=Alias.p=EV p --force origin main'
+run_case "alias: --config-env=ALIAS. cased"     $BLOCKED 'git --config-env=ALIAS.P=EV p -f origin main'
+run_case "alias: -c ALIAS.P=push cased"         $BLOCKED 'git -c ALIAS.P=push p --force origin main'
+
+echo ""
+echo "--- alias resolution must not over-match or launder --------------"
+# git IGNORES an alias that shadows a builtin: `git -c alias.push=status
+# push --force origin main` runs the REAL push. Resolution must therefore
+# never substitute away the verbs the rules anchor on. Both were blocked
+# before the alias fix and must stay blocked after it -- they are what stops
+# the resolver from becoming a laundering primitive.
+run_case "shadowed push stays blocked"      $BLOCKED 'git -c alias.push=status push --force origin main'
+run_case "shadowed commit stays blocked"    $BLOCKED 'git -c alias.commit=status commit --no-verify -m x'
+# Benign aliases and benign expansions stay allowed.
+run_case "alias to a benign subcommand"     $ALLOWED 'git -c alias.s=status s'
+run_case "alias to pull, naming main"       $ALLOWED 'git -c alias.p=pull p origin main'
+run_case "alias defined but not invoked"    $ALLOWED 'git -c alias.p=push status'
+run_case "alias defined, other subcommand"  $ALLOWED 'git -c alias.p=push fetch origin main'
+run_case "alias push to a feature branch"   $ALLOWED 'git -c alias.p=push p origin feature-branch'
+run_case "alias named force, benign use"    $ALLOWED 'git -c alias.force=push force origin feature-branch'
+run_case "prose defining an alias"          $ALLOWED 'git commit -m "docs: git -c alias.p=push explains the bypass"'
+run_case "config-env that is not an alias"  $ALLOWED 'git --config-env=user.name=EV commit -m x'
+# Quoting the FULL bypass in prose now trips the guard against it -- the same
+# accepted over-block class as quoting `git push --force origin main`
+# directly (see scripts/agent/agents.md, 2026-08-23); recorded here so the
+# class cannot flip silently in either direction.
+run_case "prose quoting the full bypass"    $BLOCKED 'echo "git -c alias.p=push p --force origin main"'
+# An alias cycle cannot run anything (git refuses alias loops); resolution
+# must terminate and leave the name in place rather than hang or guess.
+run_case_bounded "alias cycle stays bounded"    $ALLOWED \
+  'git -c alias.a=b -c alias.b=a a --force origin main' 10
+big_aliases=""
+for _ in $(seq 1 200); do big_aliases+="-c alias.p=push "; done
+run_case_bounded "200 alias defs then invocation"   $BLOCKED \
+  "git ${big_aliases}p --force origin main" 10
+run_case_bounded "200 alias defs then benign work"  $ALLOWED \
+  "git ${big_aliases}status --porcelain" 10
+
+echo ""
+echo "--- sibling hook: staging-evidence gh calls are time-bounded ----"
+# SCRUM-3656. check-staging-evidence-pre-merge.sh makes a network call
+# (`gh pr view`) from inside a PreToolUse hook. Un-timeouted, a hung call
+# wedges the session's Bash tool at the exact moment the agent runs a
+# `gh pr ready`. Static half: the calls must go through the bounded runner.
+STAGING_HOOK="${REPO_ROOT}/.claude/hooks/check-staging-evidence-pre-merge.sh"
+if /usr/bin/grep -q 'bounded_gh pr view' "$STAGING_HOOK"; then
+  echo "  PASS  staging hook routes pr view through bounded_gh"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL  staging hook does not route pr view through a bounded runner"
+  FAIL=$((FAIL + 1))
+fi
+if /usr/bin/grep -qE '\$\(gh pr view' "$STAGING_HOOK"; then
+  echo "  FAIL  staging hook still calls gh pr view unbounded"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS  no unbounded gh pr view call remains"
+  PASS=$((PASS + 1))
+fi
+# Functional half: with gh shimmed to hang for 60s and a 1s budget, the hook
+# must come back quickly AND fail closed (deny). Clocked like
+# run_case_bounded, because an unbounded hook presents as a hang, not as a
+# failed assert.
+shim_dir=$(mktemp -d)
+printf '#!/bin/bash\nexec sleep 60\n' >"${shim_dir}/gh"
+chmod +x "${shim_dir}/gh"
+out_f=$(mktemp)
+{ payload 'gh pr ready 123' \
+    | ARKOVA_HOOK_GH_TIMEOUT=1 PATH="${shim_dir}:${PATH}" bash "$STAGING_HOOK" \
+        >"$out_f" 2>/dev/null
+  echo $? >"${out_f}.rc"; } &
+pid=$!
+waited=0
+hung=false
+while kill -0 "$pid" 2>/dev/null; do
+  if (( waited >= 150 )); then   # 15s ceiling; the bounded path takes ~1-2s
+    kill -9 "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    hung=true
+    break
+  fi
+  sleep 0.1
+  waited=$((waited + 1))
+done
+if [[ "$hung" == "true" ]]; then
+  echo "  FAIL  staging hook hung >15s on a stalled gh (no effective timeout)"
+  FAIL=$((FAIL + 1))
+else
+  wait "$pid" 2>/dev/null
+  staging_rc=$(cat "${out_f}.rc" 2>/dev/null || echo 99)
+  if [[ "$staging_rc" == "0" ]] \
+     && /usr/bin/grep -q '"permissionDecision": "deny"' "$out_f"; then
+    echo "  PASS  stalled gh: hook returned within budget and failed closed"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL  stalled gh: expected exit 0 + deny JSON, got rc=${staging_rc}"
+    sed 's/^/        /' "$out_f"
+    FAIL=$((FAIL + 1))
+  fi
+fi
+rm -rf "$shim_dir" "$out_f" "${out_f}.rc"
 
 echo ""
 echo "--- summary ----------------------------------------------------"

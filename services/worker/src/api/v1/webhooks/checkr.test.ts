@@ -222,3 +222,166 @@ describe('POST /webhooks/checkr (SCRUM-1030 / 1151)', () => {
     expect(dlq.insert).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * SCRUM-3479 / AUDIT-0424-10 — the replay nonce must be released before any
+ * post-nonce 5xx.
+ *
+ * `checkr_webhook_nonces` is written BEFORE `enqueue_rule_event` runs, so an
+ * un-compensated enqueue failure is unrecoverable rather than retryable:
+ * Checkr re-presents the same delivery, the insert hits the
+ * `(report_id, payload_hash)` UNIQUE violation, and the handler answers
+ * `200 {duplicate:true}` — the `report.completed` event is dropped AND the
+ * vendor is told it succeeded. `webhook_dlq` does not save it: nothing under
+ * `services/worker/src/jobs/` reads that table, so a DLQ row records the loss,
+ * it is not a recovery path.
+ *
+ * Same compensating-delete shape as `middesk.ts::releaseNonce` and the
+ * `webhook_event_claims` release in `stripe/handlers.ts`.
+ */
+describe('SCRUM-3479: releases the replay nonce on post-nonce failure', () => {
+  const PAYLOAD_HASH = crypto.createHash('sha256').update(validBody()).digest('hex');
+
+  /**
+   * `checkr_webhook_nonces` is deduped on the composite UNIQUE key
+   * `(report_id, payload_hash)`, so the release must filter on BOTH columns.
+   * Deleting by `report_id` alone would drop the nonce for a DIFFERENT payload
+   * revision of the same report — silently disarming replay protection for a
+   * delivery this request never touched. This helper records the ordered filter
+   * chain so the tests can assert both.
+   */
+  function nonceTableMock(insertError: { code: string; message?: string } | null = null) {
+    const filters: Array<[string, unknown]> = [];
+    // Chainable eq: records each filter and is itself awaitable, so the same
+    // mock serves a one-eq or two-eq chain.
+    const makeEq = (): ((col: string, val: unknown) => unknown) =>
+      vi.fn((col: string, val: unknown) => {
+        filters.push([col, val]);
+        const thenable = Promise.resolve({ error: null }) as Promise<{ error: unknown }> & {
+          eq: unknown;
+        };
+        thenable.eq = makeEq();
+        return thenable;
+      });
+    const deleteFn = vi.fn(() => ({ eq: makeEq() }));
+    return {
+      filters,
+      deleteFn,
+      table: {
+        insert: vi.fn().mockResolvedValue({ data: null, error: insertError }),
+        delete: deleteFn,
+      },
+    };
+  }
+
+  function post(body: string) {
+    return request(createApp())
+      .post('/webhooks/checkr')
+      .set('Content-Type', 'application/json')
+      .set('X-Checkr-Signature', sign(body))
+      .set('X-Checkr-Account-Id', 'acct-acme')
+      .send(body);
+  }
+
+  it('releases the nonce when enqueue_rule_event returns an error', async () => {
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, account_id: 'acct-acme' });
+      }
+      if (table === 'checkr_webhook_nonces') return nonce.table;
+      if (table === 'webhook_dlq') return dlqInsertMock();
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: 'rpc boom' } });
+
+    const res = await post(validBody());
+
+    expect(res.status).toBe(500);
+    // Without this the Checkr retry short-circuits as a duplicate and the
+    // completed background check is lost permanently.
+    expect(nonce.filters).toEqual([
+      ['report_id', REPORT_ID],
+      ['payload_hash', PAYLOAD_HASH],
+    ]);
+  });
+
+  it('releases the nonce when post-nonce processing throws', async () => {
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, account_id: 'acct-acme' });
+      }
+      if (table === 'checkr_webhook_nonces') return nonce.table;
+      if (table === 'webhook_dlq') return dlqInsertMock();
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockImplementationOnce(() => {
+      throw new Error('connection terminated unexpectedly');
+    });
+
+    const res = await post(validBody());
+
+    expect(res.status).toBe(500);
+    expect(nonce.filters).toEqual([
+      ['report_id', REPORT_ID],
+      ['payload_hash', PAYLOAD_HASH],
+    ]);
+  });
+
+  it('does NOT release the nonce on success (replay protection intact)', async () => {
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, account_id: 'acct-acme' });
+      }
+      if (table === 'checkr_webhook_nonces') return nonce.table;
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockResolvedValueOnce({ data: 'rule-event-uuid', error: null });
+
+    const res = await post(validBody());
+
+    expect(res.status).toBe(202);
+    expect(nonce.deleteFn).not.toHaveBeenCalled();
+  });
+
+  it('does NOT delete a nonce this delivery never committed (pre-nonce failure)', async () => {
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockImplementation((table: string) => {
+      // The integration lookup fails BEFORE the nonce insert, so any row
+      // matching (report_id, payload_hash) could only be an EARLIER delivery's.
+      // Deleting it here would re-open that delivery to replay.
+      if (table === 'org_integrations') return integrationLookup(null, { message: 'lookup boom' });
+      if (table === 'checkr_webhook_nonces') return nonce.table;
+      if (table === 'webhook_dlq') return dlqInsertMock();
+      throw new Error(`unexpected: ${table}`);
+    });
+
+    const res = await post(validBody());
+
+    expect(res.status).toBe(500);
+    expect(nonce.deleteFn).not.toHaveBeenCalled();
+  });
+
+  it('does NOT delete when the nonce insert failed open (non-23505)', async () => {
+    // The handler deliberately continues when the nonce write fails for a
+    // non-duplicate reason. No row was committed, so there is nothing to
+    // compensate — and any matching row belongs to an earlier delivery.
+    const nonce = nonceTableMock({ code: '42501', message: 'permission denied' });
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') {
+        return integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID, account_id: 'acct-acme' });
+      }
+      if (table === 'checkr_webhook_nonces') return nonce.table;
+      if (table === 'webhook_dlq') return dlqInsertMock();
+      throw new Error(`unexpected: ${table}`);
+    });
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: 'rpc boom' } });
+
+    const res = await post(validBody());
+
+    expect(res.status).toBe(500);
+    expect(nonce.deleteFn).not.toHaveBeenCalled();
+  });
+});

@@ -10,6 +10,48 @@ The durable gate inventory, conventions, and open work live in
 ---
 
 ## Recent Changes
+- 2026-08-23 SCRUM-2897 / SCRUM-2965 / SCRUM-2977 — **both soak-integrity gates
+  activated FAIL-CLOSED.** `evidence-identity-report` → `evidence-identity` and
+  `anti-hollow-soak-report` → `anti-hollow-soak`. Supersedes the 2026-07-21
+  SCRUM-2897 entry below and the SCRUM-2977 wiring note, both of which record
+  the report-only state and its "deferred until ≥1 real green soak" rationale.
+  FOUR independent mechanisms had to go together, because removing fewer leaves
+  the gate decorative: (1) the CLI `--report-only` flag (makes `main()` always
+  exit 0), (2) `|| true` on the anti-hollow-soak invocation, (3)
+  `continue-on-error: true` on both steps, and (4) the checks' absence from
+  `.mergify.yml` `merge_conditions` — a check Mergify does not evaluate can be
+  red while Mergify merges anyway (same class as `Orphaned Export Lint`,
+  2026-08-17). Both check names were added to all three queue rules.
+  Two safety preconditions shipped with the flip: `evidence-identity` skips
+  Mergify's speculative `mergify/merge-queue/*` PRs (they carry Mergify's body,
+  not the original evidence block — without the skip every queued merge
+  deadlocks), and it resolves PR body/head/draft LIVE via `gh api` instead of
+  the frozen event payload, because ci.yml's `pull_request` trigger declares no
+  `types:` and so never fires on a body `edited` (SCRUM-3026 replay class) —
+  copied from `staging-evidence.yml`'s audited step, including its per-run
+  `openssl rand -hex 16` `$GITHUB_OUTPUT` heredoc delimiter, without which a PR
+  author could close the body value early and overwrite `head_sha`, forging the
+  very identity the gate exists to make unforgeable.
+  Also fixed a latent ordering bug that only bites once the gate is real:
+  `runEvidenceIdentity()` evaluated `hasEvidenceSection()` before the tier, and
+  that helper deliberately matches a bare `Tier: T0` line — so a T0 PR that
+  merely declared its tier fell through to `checkHeadShaIdentity` and failed on
+  the absent `PR head SHA:`. An explicit `tier === 'T0'` short-circuit now runs
+  first. Contract suite: `scripts/ci/soak-integrity-gates-failclosed.test.ts`
+  (16 tests) plus SCRUM-2965's red-first fail-closed CLI cases.
+  **Residual:** branch-protection required-check status is repo-admin state and
+  is NOT set by this repo's config — these gates block the Mergify path only
+  until that is confirmed separately.
+  Second review pass (same day) added: a scoping fix to `jobBlock()` in the
+  contract suite (it ran past the job's own steps into the NEXT job's header
+  comments, so the `--report-only` / `|| true` / `continue-on-error` negative
+  assertions were partly judging a neighbour's prose); check-B2's embedded-SHA
+  match narrowed to keyed-or-full-40-hex so a 7-digit row count or `ref=abc1234`
+  can no longer red a T2/T3 PR as "copied evidence"; and the `.mergify.yml`
+  comment corrected — it claimed the two checks "run unconditionally", but
+  ci.yml's `pull_request:` `paths-ignore` means a LICENSE/README/memory-only PR
+  posts neither check at all (pre-existing class, shared with `Orphaned Export
+  Lint`).
 - 2026-08-01 SonarCloud config reality-check: **`sonar-project.properties` was
   deleted — SonarCloud never read it.** The project runs **Automatic Analysis**
   (`sonar.autoscan.enabled = true`; CE tasks carry no `submitterLogin`; no

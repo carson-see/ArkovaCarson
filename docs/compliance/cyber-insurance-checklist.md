@@ -1,6 +1,6 @@
 # Cyber Liability Insurance Procurement Checklist (TRUST-02)
 
-> **Version:** 1.0 | **Date:** 2026-04-17 | **Classification:** CONFIDENTIAL
+> **Version:** 1.1 | **Date:** 2026-08-29 | **Classification:** CONFIDENTIAL
 > **Story:** TRUST-02 | **Owner:** Arkova Security Team
 > **Review Cadence:** Annually (at policy renewal)
 > **Cross-references:** `trust-framework-roadmap.md`, `vendor-register.md`, `incident-response-plan.md`
@@ -100,7 +100,7 @@ Procure cyber liability insurance with $2-5M aggregate coverage. This is a procu
 
 | Control | Status | Evidence |
 |---------|--------|----------|
-| Multi-factor authentication | ENABLED | Supabase Auth with MFA (HIPAA REG-05) |
+| Multi-factor authentication | AVAILABLE, OPT-IN — NOT ENFORCED | Supabase Auth TOTP, opt-in per account (`TwoFactorSetup` in Settings). Login enforcement (HIPAA REG-05, PR #1973) was reverted in commit `6d10032b4` after a lockout incident; no `aal2` step-up check exists (see `src/lib/complianceMapping.ts`). Do NOT represent MFA as enforced on a carrier application |
 | Endpoint encryption | ENABLED | FileVault on all dev machines (`endpoint-security.md`) |
 | Vulnerability scanning | ENABLED | npm audit (CI), TruffleHog, Gitleaks |
 | Incident response plan | DOCUMENTED | `incident-response-plan.md` |
@@ -174,4 +174,4 @@ These factors should result in favorable underwriting terms:
 
 ---
 
-_Document version: 1.0 | 2026-04-17 | TRUST-02_
+_Document version: 1.1 | 2026-08-29 | TRUST-02 — v1.1 corrects the MFA control row: previously asserted ENABLED/enforced; MFA login enforcement (PR #1973) was reverted in `6d10032b4` and MFA is opt-in only._

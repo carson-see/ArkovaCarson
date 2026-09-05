@@ -560,6 +560,11 @@ describe('WebhookSettings', () => {
         'anchor.secured',
         'anchor.revoked',
         'anchor.expired',
+        // DI-775 (SCRUM-3538): dispatched live from
+        // services/worker/src/api/anchor-lineage.ts (SCRUM-2937) and accepted
+        // by the CRUD allowlist, but it was missing from the UI picker, so no
+        // org could subscribe to an event it was already being sent.
+        'anchor.superseded',
         'anchor.batch_secured',
         'credential.issued',
         'credential.verified',

@@ -398,3 +398,53 @@ If you find yourself about to:
 * `Supabase MCP create_branch` against prod project_ref → STOP. The standing rig is a standalone project, not a preview branch.
 * Hardcode `vzwyaatejekddvltxyye` (prod) anywhere in `scripts/staging/*` → STOP. Staging is `fizyjojbebyalirtjjht`.
 * Apply a migration via Supabase MCP `apply_migration` to staging → only do this for files in `migration-drift.yml` `exempt_regex` (those that haven't yet been promoted to prod). All other migrations apply via `db push --linked`.
+
+---
+
+## Rig inventory — verified 2026-08-27T21:00Z (no soak is running; teardown is OWED)
+
+This doc's "Live state" header above is dated 2026-08-19 and describes the **standing** rig only. It
+is still accurate for that rig, but it is not the whole picture: seven *additional* isolated rigs
+were provisioned for the 2026-08 soak wave and every one of their windows has now closed. Read this
+section before provisioning anything new — you may not need a new rig at all.
+
+Read live this session from the Supabase MCP `list_projects` and
+`gcloud run services list --project arkova1 --region us-central1`:
+
+| Supabase project | ref | Status | Paired Cloud Run service | Latest ready revision | Disposition |
+|---|---|---|---|---|---|
+| `arkova-staging-2026-08` | `fizyjojbebyalirtjjht` | ACTIVE_HEALTHY | `arkova-worker-staging` | `arkova-worker-staging-00350-yoy` | **KEEP** — this is the standing rig this doc governs |
+| `arkova-fullsoak-2026-08` | `gnkuaywlpmsaezwvlvhk` | ACTIVE_HEALTHY | `arkova-worker-fullsoak-2026-08-staging` | `…-00024-kaj` | window closed — teardown candidate |
+| `arkova-wave2-2026-08` | `tkciooifwxwnkoizgalp` | ACTIVE_HEALTHY | `arkova-worker-wave2-2026-08-staging` | `…-00006-gik` | window closed 2026-08-23 — teardown candidate |
+| `arkova-wave3-2026-08` | `jiotjhqmedkajdsojsbn` | ACTIVE_HEALTHY | `arkova-worker-wave3-2026-08-staging` | `…-00005-rib` | window closed — teardown candidate |
+| `arkova-ferpa-2314-2026-08` | `wjuelohtpklodpjklvqy` | ACTIVE_HEALTHY | `arkova-worker-ferpa2314-staging` | `…-00001-cit` | window closed 2026-08-23 — **hold**, PR #2314 still open |
+| `arkova-node22-2026-08` | `yklabujmzhzbvnhovcjt` | ACTIVE_HEALTHY | `arkova-worker-node22-staging` | `…-00003-vey` | window closed — teardown candidate |
+| `arkova-soak-sec-2336` | `cdevaqafshzdxipjbech` | ACTIVE_HEALTHY | `arkova-worker-sec-2336-staging` | `…-00003-k5d` | soak SEALED (48 h) — **hold**, PR #2336 still open |
+| `arkova-soak-sec-2355` | `zehwymytxihxxbdirqzu` | ACTIVE_HEALTHY | `arkova-worker-sec-2355-staging` | `…-00002-tb2` | soak SEALED (48 h) — **hold**, PR #2355 still open |
+
+Also present and NOT a staging rig: `arkova-worker` (prod) and `chaindump-mcp`. Prod Supabase is
+`vzwyaatejekddvltxyye` — never target it from `scripts/staging/*`.
+
+**What is verified and what is not.** Verified: each project's existence, name, ref and
+`ACTIVE_HEALTHY` status; each Cloud Run service's existence and latest-ready revision name. **Not**
+verified this session: whether any load driver is still pointed at any of these, and the
+authenticated `/health` of any staging worker. **A standing service is not a running soak** — do not
+conclude either way from this table alone.
+
+### Teardown rules for this inventory
+
+* Mechanism is `scripts/staging/teardown-isolated-rig.sh`, per CLAUDE.md §1.11 / §7.
+* **Do NOT tear down a rig whose PR is still open** — `cdevaqafshzdxipjbech`, `zehwymytxihxxbdirqzu`
+  and `wjuelohtpklodpjklvqy` are named inside the evidence blocks of #2336, #2355 and #2314
+  respectively, and a reviewer may need to re-read the rig. Their soak evidence is exact-head-bound;
+  destroying the rig does not invalidate the recorded evidence, but it does destroy the ability to
+  re-verify it.
+* **A destructive rebuild requires explicit confirmation that names the project ref and lists the
+  active PRs/soaks/evidence it will invalidate** (§1.11A). That applies to every row above.
+* Per CLAUDE.md §7, a **paid** Supabase project cannot be paused via the MCP (`pause_project`
+  requires a free-tier downgrade first). The realistic choices are delete, or flag for Carson to
+  pause/downgrade from the dashboard. The "pause it via the Supabase dashboard" line in **Cost
+  discipline** above is therefore a Carson action, not an agent action.
+
+**Status: this sweep has NOT been executed.** It is recorded as owed. Five of the eight rows are
+teardown candidates today; three are held pending their PRs.

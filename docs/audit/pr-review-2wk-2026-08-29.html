@@ -1,0 +1,143 @@
+<title>Arkova Two-Week PR Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F6F8F9; --surface:#FFFFFF; --ink:#182530; --muted:#5A6B75; --line:#D9E2E7;
+  --accent:#0E7C94; --accent-ink:#0A5D70;
+  --crit:#B3261E; --warn:#996A00; --ok:#1A7F37;
+  --chip-crit:#FBEAE9; --chip-warn:#FBF3DC; --chip-ok:#E4F2E8; --chip-mut:#EAF0F3;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F171C; --surface:#161F26; --ink:#E4EDF2; --muted:#8FA1AB; --line:#26333C;
+    --accent:#3FB5CE; --accent-ink:#6FCBDE;
+    --crit:#F2837C; --warn:#E0B54E; --ok:#66C285;
+    --chip-crit:#3A1E1C; --chip-warn:#37301A; --chip-ok:#1B3123; --chip-mut:#222E36;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F171C; --surface:#161F26; --ink:#E4EDF2; --muted:#8FA1AB; --line:#26333C;
+  --accent:#3FB5CE; --accent-ink:#6FCBDE;
+  --crit:#F2837C; --warn:#E0B54E; --ok:#66C285;
+  --chip-crit:#3A1E1C; --chip-warn:#37301A; --chip-ok:#1B3123; --chip-mut:#222E36;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.6 "Source Sans 3",system-ui,sans-serif;margin:0;padding:0}
+.wrap{max-width:900px;margin:0 auto;padding:48px 24px 96px}
+h1,h2,h3{font-family:"Archivo",system-ui,sans-serif;text-wrap:balance;line-height:1.15}
+h1{font-size:34px;font-weight:700;margin:0 0 6px}
+h2{font-size:21px;font-weight:600;margin:44px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+h3{font-size:16.5px;font-weight:600;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 30px;max-width:64ch}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);margin:0 0 10px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:26px 0}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px}
+.stat b{display:block;font-family:"Archivo";font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+.stat span{font-size:13px;color:var(--muted)}
+.chip{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:11.5px;font-weight:500;padding:1px 8px;border-radius:99px;white-space:nowrap;vertical-align:1px}
+.c-crit{background:var(--chip-crit);color:var(--crit)}
+.c-warn{background:var(--chip-warn);color:var(--warn)}
+.c-ok{background:var(--chip-ok);color:var(--ok)}
+.c-mut{background:var(--chip-mut);color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+.tblwrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:6px;margin:14px 0}
+th{font-family:"Archivo";font-size:12px;letter-spacing:.05em;text-transform:uppercase;text-align:left;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--line)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+code,.mono{font-family:"IBM Plex Mono",monospace;font-size:.88em}
+a{color:var(--accent-ink);text-decoration:none}
+a:hover,a:focus-visible{text-decoration:underline}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+p{max-width:70ch}
+.find{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:6px;padding:14px 16px;margin:12px 0}
+.find.crit{border-left-color:var(--crit)}
+.find h3{margin:0 0 4px;font-size:15.5px}
+.find p{margin:6px 0 0;font-size:14.5px}
+.act{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:14px 16px;margin:12px 0}
+.act h3{margin:0 0 4px;font-size:15.5px}
+.act p{margin:6px 0 0;font-size:14.5px}
+ul{padding-left:22px;max-width:72ch}
+li{margin:5px 0}
+.foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+@media (prefers-reduced-motion:no-preference){ .stat{transition:border-color .15s} .stat:hover{border-color:var(--accent)} }
+</style>
+
+<div class="wrap">
+<p class="eyebrow">CTO review · 2026-08-15 → 2026-08-29 · carson-see/ArkovaCarson</p>
+<h1>Arkova Two-Week PR Review</h1>
+<p class="sub">Every pull request from the past two weeks, reviewed by the CTO agent team and verified against the code, CI logs, prod database, and GCP — not against PR bodies. Companion to the deferred-work audit (epic <a href="https://arkova.atlassian.net/browse/SCRUM-3373">SCRUM-3373</a>).</p>
+
+<div class="stats">
+  <div class="stat"><b>227</b><span>PRs in window</span></div>
+  <div class="stat"><b>20</b><span>open, reviewed</span></div>
+  <div class="stat"><b>83</b><span>merged, audited</span></div>
+  <div class="stat"><b>50</b><span>post-merge findings</span></div>
+  <div class="stat"><b>7</b><span>major · 0 critical</span></div>
+  <div class="stat"><b>40</b><span>merged PRs fully clean</span></div>
+</div>
+
+<h2>Open PRs — dispositions</h2>
+<p>Nineteen of twenty reviewed (the #2432 review is re-running after a spend-limit kill). Failing checks were individually diagnosed: nearly all are the Staging Soak Evidence Gate doing its job on drafts, not broken code. <span class="chip c-ok">soak</span>&nbsp;= sound, waiting only on tier evidence; <span class="chip c-warn">work</span>&nbsp;= verified defects queued; reviewers fixed blockers in place where the branch was ours.</p>
+<div class="tblwrap"><table>
+<tr><th>PR</th><th>Verdict</th><th>Tier</th><th>What matters</th></tr>
+<tr><td class="mono"><a href="https://github.com/carson-see/ArkovaCarson/pull/2249">#2249</a></td><td><span class="chip c-ok">soak</span></td><td>T3</td><td>48&nbsp;h window ran on the exact head but close-out artifacts were never produced; branch unmergeable (agents.md EOF union conflict — GitHub ignores the local union driver).</td></tr>
+<tr><td class="mono"><a href="https://github.com/carson-see/ArkovaCarson/pull/2274">#2274</a></td><td><span class="chip c-warn">work</span></td><td>T2</td><td>npm publication prep; 3 major items before publish.</td></tr>
+<tr><td class="mono"><a href="https://github.com/carson-see/ArkovaCarson/pull/2314">#2314</a></td><td><span class="chip c-warn">work</span></td><td>T3</td><td>FERPA §99.37 opt-out. <b>CTO ruling: lands before #2440</b> (both redefine <code>get_public_anchor</code>).</td></tr>
+<tr><td class="mono"><a href="https://github.com/carson-see/ArkovaCarson/pull/2335">#2335</a></td><td><span class="chip c-ok">soak</span></td><td>T3</td><td>cleanup_expired_data deadlock fix; isolated rig stood up today by a parallel session.</td></tr>
+<tr><td class="mono"><a href="https://github.com/carson-see/ArkovaCarson/pull/2336">#2336</a> / <a href="https://github.com/carson-see/ArkovaCarson/pull/2355">#2355</a></td><td><span class="chip c-warn">work</span></td><td>T3</td><td>Anon-revoke replays; sealed 48&nbsp;h soaks, but review found items to resolve before ready.</td></tr>
+<tr><td class="mono">#2426–#2442</td><td>mixed</td><td>T0–T3</td><td>The 13 audit-series PRs: 9 <span class="chip c-ok">soak</span>, 4 <span class="chip c-warn">work</span>. Reviewer self-fixes included #2438's tier under-declaration (T2→T3, <code>batch-anchor.ts</code> is a pinned T3 path) and #2440's <code>Object.hasOwn</code> frontend build break.</td></tr>
+<tr><td class="mono"><a href="https://github.com/carson-see/ArkovaCarson/pull/2457">#2457</a></td><td><span class="chip c-warn">work</span></td><td>T2</td><td>Extraction-failure reason copy; 4 major items.</td></tr>
+</table></div>
+
+<h2>Post-merge audit — the seven majors</h2>
+<p>All 83 merged PRs were audited against current <code>main</code> and, where relevant, live prod. No criticals; seven majors, each independently verified.</p>
+
+<div class="find crit"><h3>#2232 — SOC 2 MCP audit trail: merged six days ago, still not in prod</h3>
+<p>The fix lives in <code>services/edge</code> (Cloudflare Worker) and <b>no workflow deploys it</b> — zero wrangler references in CI. Prod <code>audit_events</code> has <b>0</b> <code>MCP_TOOL_CALL</code> rows while the MCP surface is served. The control gap the P0 was about persists; merge closed the code defect only.</p></div>
+
+<div class="find"><h3>#2276 — platform-health digest falsifies its own audit log</h3>
+<p><code>releaseDelivery</code> pre-records status <code>SENT</code> at reservation time; the failure path then can't work. Must be fixed before the Cloud Scheduler binding fires it in prod.</p></div>
+
+<div class="find"><h3>#2254 — monitor gates paging on a cache value that's never freshness-checked</h3>
+<p><code>pipelineThroughputMonitor</code> reads <code>cache_value</code> without checking <code>updated_at</code>; a stale cache silences the very incident class that motivated the monitor.</p></div>
+
+<div class="find"><h3>#2264 — merged with “Human approver: NONE” in its evidence block</h3>
+<p>The gate regex-tests that the <i>label</i> exists, not that the value is a person. A worker runtime-manifest change (KMS library major bump) merged with zero reviews. Fix in flight on #2432 (value-blind → filled-value validation); retro approval record requested below.</p></div>
+
+<div class="find"><h3>#2246 — admin-merged past a failing soak gate with no recorded disposition</h3>
+<p>Founder override is legitimate authority; the SOC 2 gap is that no residual-risk disposition was recorded anywhere. Needs a retroactive note.</p></div>
+
+<div class="find"><h3>#2266 — tier under-declaration: public-record anchoring feeder merged at T2</h3>
+<p>The path detector doesn't pin <code>publicRecordAnchor.ts</code> / quarantine as T3 anchor-lifecycle. Detector rule fix queued.</p></div>
+
+<div class="find"><h3>#2251 — merged on the deferred manifest; consolidated soak is now a cutover debt</h3>
+<p>Its behavior remains unexercised. Together with #2235's four unmet T3 items (both honestly recorded), the <b>consolidated soak of merged main is a hard blocker for lifting <code>DEPLOY_WORKER_PAUSED</code></b> — nothing mechanically forces it today.</p></div>
+
+<h2>Recurring governance patterns</h2>
+<ul>
+<li><b>Prose holds don't hold.</b> “Do not merge” in a body is inert (#2240 merged mid-freeze in 3&nbsp;h); only draft state or the <code>do-not-merge</code> label stops Mergify.</li>
+<li><b>Gates that check labels, not values.</b> Evidence fields pass on placeholder text (#2264); Policy Lints job isn't in any Mergify <code>merge_conditions</code>, so its override labels govern nothing.</li>
+<li><b>Constitution vs. enforcement drift.</b> §1.12 says T1 = 2&nbsp;h soak; the gate's <code>TIER_SPECS.T1.soakHours = 0</code> (#2241 merged honestly disclosing this).</li>
+<li><b>Merged ≠ deployed.</b> Cloud Run is pause-gated; the Cloudflare edge has no deploy pipeline at all (#2232).</li>
+</ul>
+
+<h2>Prod verifications closed this cycle</h2>
+<ul>
+<li><span class="chip c-ok">closed</span> <b>SCRUM-3185</b> — migration 0386 confirmed in the prod ledger <i>and</i> the live <code>get_public_anchor_by_fingerprint</code> body has the SECURED-only guard: the anon fingerprint existence oracle is closed.</li>
+<li><span class="chip c-ok">closed</span> <b>SCRUM-3192</b> — 61 Cloud Scheduler jobs live, including all previously-missing ones. SCRUM-3193 (execution 200s) deliberately left open.</li>
+<li><span class="chip c-warn">half-open</span> <b>IAM</b> — <code>arkova-cli</code> user-managed keys: zero (fixed). Compute SA still holds <code>roles/owner</code> + a never-expiring key from March — needs a planned dependency-mapped migration (SCRUM-3127), not a hot revoke.</li>
+</ul>
+
+<h2>Actions needing Carson</h2>
+<div class="act"><h3>1 · Rotate the GetBlock token (today)</h3>
+<p>The live prod worker writes the <code>bitcoin-rpc-url</code> token to Cloud Logging (latest 20:50Z today; 380+ hits/30&nbsp;d). PR #2436 stops future logging but the current token sits in log history. Rotation needs the GetBlock dashboard — founder access.</p></div>
+<div class="act"><h3>2 · Record two retro dispositions</h3>
+<p>#2264: a one-line approval comment naming yourself. #2246: the residual-risk disposition for the base-drift override. Both are SOC&nbsp;2 audit-trail hygiene, five minutes total.</p></div>
+<div class="act"><h3>3 · Treat the consolidated soak as the unpause gate</h3>
+<p>#2251 + #2235's deferred evidence means <code>DEPLOY_WORKER_PAUSED</code> should not lift until the consolidated soak of merged main fires Trigger A/B, observes a real flush, and rehearses rollback for 0411/0412.</p></div>
+
+<h2>Program status</h2>
+<p>The deferred-work program that produced the audit series: 839 evidence-grounded issues from all 2,365 historical PRs, each reconciled against Jira and <code>origin/main</code> with adversarial peer review; <b>376 tickets filed and priority-set</b> (2 Highest / 78 High / 192 Medium / 104 Low, JQL-verified) under SCRUM-3373; 17 implementation PRs produced, 4 merged and live on prod worker <code>0440ce7e5</code>. Board: <a href="https://arkova.atlassian.net/issues/?jql=project%20%3D%20SCRUM%20AND%20labels%20%3D%20%22pr-deferred-audit%22%20ORDER%20BY%20priority%20DESC">pr-deferred-audit by priority</a>.</p>
+
+<p class="foot">Compiled 2026-08-29 by the CTO agent team · every claim verified against origin/main <span class="mono">f576e2f64</span>, live CI logs, prod DB <span class="mono">vzwyaatejekddvltxyye</span>, and gcloud — not PR bodies · terminology note: technical terms in this internal document are per §1.3 exempt (not user-visible UI copy)</p>
+</div>
