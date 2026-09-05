@@ -5,6 +5,16 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
+// Resolve `psql` to a FIXED absolute path instead of letting the OS search
+// `$PATH` (Sonar typescript:S4036 — a writable/attacker-controlled PATH entry
+// could shadow the real binary and see the PG* credentials this probe passes
+// through the environment). `/usr/bin/psql` is where the Debian/Ubuntu
+// `postgresql-client` package installs it, which is what GitHub-hosted runners
+// get; `PSQL_BIN` overrides for local dev and self-hosted rigs (e.g.
+// Homebrew's `/opt/homebrew/opt/libpq/bin/psql`). Mirrors the GH_BIN / GIT_BIN
+// convention in scripts/ci/lib/ciContext.ts.
+const PSQL_BIN = process.env.PSQL_BIN ?? '/usr/bin/psql';
+
 const PROD_REF = 'vzwyaatejekddvltxyye';
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const BARRIER_MODES = new Set(['ShareLock', 'ShareRowExclusiveLock', 'ExclusiveLock', 'AccessExclusiveLock']);
@@ -35,7 +45,7 @@ class PsqlSession {
   private pending: { token: string; resolve: (lines: string[]) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> } | null = null;
   private stopped = false;
   constructor(env: ConnectionEnv, name: string) {
-    this.child = spawn('psql', ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=terse'], {
+    this.child = spawn(PSQL_BIN, ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=terse'], {
       env: { ...process.env, PGHOSTADDR: undefined, PGSERVICE: undefined, PGSERVICEFILE: undefined, PGDATABASE: 'postgres', ...env, PGAPPNAME: name, PGCONNECT_TIMEOUT: '10' }, stdio: 'pipe',
     });
     this.child.stdout.on('data', data => {
