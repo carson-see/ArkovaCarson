@@ -184,3 +184,8 @@ consumer's unit test. Denials are logged by the route via `logConnectDenial`, on
 ## 2026-08-15 Drive OAuth scope minimality (FULLSOAK finding)
 
 `buildGoogleDriveAuthorizationUrl` inherits its scope set + URL params from `oauth/drive.ts` `buildAuthorizationUrl`. That URL no longer sends `include_granted_scopes` (it let a connect inherit a 33-scope grant from the shared OAuth client) and the scope set is the exact three-scope allowlist in `DRIVE_DEFAULT_SCOPES`. Pinned in `googleDrive.test.ts`; do not loosen either assertion.
+
+
+## PR #2474 release review — 2026-09-05
+
+Signer status values are restricted to documented DocuSign recipient status codes; signed_at accepts only numeric ISO datetimes, including fractional seconds, offsets and timezone-less vendor values. This closes PII persistence through correctly named status/timestamp fields. Regression tests reject email/name text in both fields. Recipient status reference: https://developers.docusign.com/docs/esign-rest-api/esign101/concepts/recipients/status-codes/

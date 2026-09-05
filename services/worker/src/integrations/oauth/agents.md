@@ -30,3 +30,8 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 - **DO** use the optional `detail?: string` (3rd ctor arg) ONLY on the NON-document paths (token exchange/refresh, userinfo, DocuSign Connect list/mutation/parse/timeout; Drive token exchange/refresh, startPageToken, changes.watch, channels.stop, token revoke, files.get, changes.list) — whose error body is safe OAuth/API error JSON. Always build it with `boundedErrorDetail(json)` from `utils/byte-safety.ts` (bounded ~500 chars, byte-redacted, PII-scrubbed). Never pass a raw string/body directly.
 - **DO NOT** re-add `include_granted_scopes` to `buildAuthorizationUrl` (drive.ts). With the shared Google OAuth client it made one Drive connect inherit EVERY scope that client was ever granted by the account — a 33-scope grant (full `drive`, `gmail.modify`, `calendar`, `contacts`, `classroom.*`, `chat.*`) was observed during FULLSOAK 2026-08 (shared-resource register #9). Absent, Google defaults it to false. Pinned by tests in `drive.test.ts`, `googleDrive.test.ts`, and `drive-oauth.test.ts`.
 - **DO NOT** widen `DRIVE_DEFAULT_SCOPES` without a security review — it is the complete allowlist of what a leaked refresh token can reach. Current set: `drive.file` (all Drive API calls), `drive.activity.readonly` (declared Activity surface), `userinfo.email` (the callback's `oauth2/v3/userinfo` identity lookup; without it `account_id` degrades to a constant and collapses the `org_integrations` upsert key).
+
+
+## PR #2474 release review — 2026-09-05
+
+Environment classification parses the base URI hostname. A vendor string in a path, query, or attacker-controlled domain suffix cannot determine demo/prod. Invalid and non-vendor URIs retain the documented environment fallback.

@@ -341,6 +341,12 @@ describe('resolveDocusignEnvironment', () => {
     expect(resolveDocusignEnvironment('', { DOCUSIGN_DEMO: 'false' })).toBe('prod');
   });
 
+  it('uses only the parsed host when identifying the environment', () => {
+    expect(resolveDocusignEnvironment('https://demo.docusign.net.evil.invalid', { DOCUSIGN_DEMO: 'false' })).toBe('prod');
+    expect(resolveDocusignEnvironment('https://evil.invalid/docusign.net', { DOCUSIGN_DEMO: 'true' })).toBe('demo');
+    expect(resolveDocusignEnvironment('https://na1.docusign.net/?next=demo.docusign.net', { DOCUSIGN_DEMO: 'true' })).toBe('prod');
+  });
+
   it('prefers base_uri over DOCUSIGN_DEMO when both are present and disagree', () => {
     // A prod base_uri wins even if DOCUSIGN_DEMO is left at its demo-default —
     // the resolved connection is the authoritative signal, not the env var.
