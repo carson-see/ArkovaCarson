@@ -4,7 +4,8 @@ Story: [SCRUM-4035](https://arkova.atlassian.net/browse/SCRUM-4035).
 Specification/test plan/pre-mortem: [Confluence 137297921](https://arkova.atlassian.net/wiki/spaces/A/pages/137297921).
 Source: [founder UAT document](https://docs.google.com/document/d/1RTXrw_9eKR4JHkGGCqzA_EBO_ZUFTHUlwVf5VsnS7Sk/edit).
 
-Status: candidate implementation; activation and release evidence are outstanding. Google confirming
+Status: candidate implementation; isolated test-cohort activation and functional evidence exist,
+but production activation and release approval are outstanding. Google confirming
 its own email claim does not satisfy the separate Arkova confirmation required by this story.
 
 ## Behavior and authority
@@ -76,7 +77,8 @@ Local fixtures are not hosted Google consent, actual email receipt, or productio
 
 ## Deployment and rollback gates
 
-1. Reconcile PR #2589's ES256 edge implementation and PR #2637's MFA guard with this pending-role
+1. Qualify the narrow auth dependency from PR #2589 commit `69e24d83cfbc7a8a68f07c3c286cc870ea04de9e`
+   and reconcile PR #2637's MFA guard with this pending-role
    policy at the final merged commit. Regenerate public types from the committed full local ledger and
    pass CI. Reserve migration 0436 against main, open PRs, all worktrees and production ledger.
 2. On an owned isolated T3 environment, apply migration with `enabled_at = NULL`, deploy compatible
@@ -109,8 +111,23 @@ Seven cases run against the actual App/PublicOnly/AuthGuard/signup components wi
 
 `--execute --evidence-out evidence.json` runs actual GoTrue and worker requests with real mailbox receipt. Default `--mailbox-mode stdin` prints only the unique recipient, app origin and issue time, then accepts one JSON line (`recipient`, `appOrigin`, `receivedAtMs`, `messageId`, `token`) from the operator Gmail adapter. The adapter must retrieve that exact newly received test email and verify its link origin; the runner validates those metadata bindings and disables PTY echo before input. Optional `--mailbox-mode imap` reads the mailbox directly. Required environment: `STAGING_SUPABASE_SERVICE_ROLE_KEY`, `STAGING_SUPABASE_ANON_KEY`, `SUPABASE_ACCESS_TOKEN`, `UAT03_TEST_MAILBOX` (owned mailbox supporting plus aliases, currently Carson’s `carson@arkova.ai` via Gmail). Only IMAP mode additionally requires `UAT03_IMAP_HOST`, `UAT03_IMAP_USER`, `UAT03_IMAP_PASSWORD`. Cloud Run IAM comes from captured `gcloud auth print-identity-token`; optional `STAGING_GCP_IDENTITY` is limited to short runs. Credentials, mailbox links and provider response bodies are never written to evidence.
 
-The runner checks pending/ordinary Auth and Data API behavior, key-mint denial versus ordinary request validation, real resend timing, superseded proof, concurrent completion, replay, old pending-session denial and refreshed access, changed email, and actual 15-minute expiry. `--duration-minutes 2880` repeats pending/ordinary authorization controls after that sequence. Fixtures are OAuth-shaped admin-created test identities, so this is not a Google consent roundtrip. Cleanup deletes only the Auth IDs created in this run. Evidence always leaves `hostedReleaseComplete` false: hosted browser account switching, Storage/Realtime/MCP protocol controls, rollback, full CI and independent release approval remain explicit gates. The driver never provisions infrastructure, installs hooks or changes enrollment policy. It has not been executed against hosted services.
+The runner checks pending/ordinary Auth and Data API behavior, key-mint denial versus ordinary request validation, real resend timing, superseded proof, concurrent completion, replay, old pending-session denial and refreshed access, changed email, and actual 15-minute expiry. `--duration-minutes 2880` repeats pending/ordinary authorization controls after that sequence. Fixtures are OAuth-shaped admin-created test identities, so this is not a Google consent roundtrip. Cleanup deletes only the Auth IDs created in this run. Evidence always leaves `hostedReleaseComplete` false; independent surface, CI and release gates remain required. The driver never provisions infrastructure, installs hooks or changes enrollment policy.
+
+The owned hosted run completed all 46 non-cleanup assertions, including actual 15-minute expiry;
+the headless app run passed 20 functional checks. Both ran on `63e50e7`, whose worker/app/SQL
+content is identical to `bc128c4`. The immutable `bc128c4` worker then passed the separate real-mail
+rollback smoke. Existing SCRUM-4458 caused audited-account Auth deletion failures; root retained
+those failures and used a reviewed fixture-only cleanup preserving every audit row. Hosted surface
+run `4723` proved pending CDC row-value denial. Run `02c50` failed the ordinary CDC positive control
+before refresh; its owner is diagnosing it. These runs do not prove CDC recovery or admit a T3 clock.
+
+The edge candidate imports only PR #2589's reviewed verifier/cache and missing-secret auth hunk,
+composed with pending-role rejection after either HS256 or ES256 signature verification. The actual
+`validateBearer` tests prove pending tokens never reach getUser, ordinary ES256 needs no shared
+secret, and a returned-subject mismatch denies. The imported JWKS concurrency, failure cooldown,
+cache and timeout tests remain intact. Current tool/SDK names and unrelated PR #2589 files are not
+part of this import. Hosted deployment and protocol qualification of this edge change remain pending.
 
 ## Hosted role-creation compatibility
 
-Hosted PostgreSQL17 creates an administration-only membership for its non-superuser `postgres` migration principal: grantor `supabase_admin`, ADMIN true, SET false, INHERIT false. A rollback-only preview probe confirmed that difference from the native superuser fixture. The guard permits only that grant to the current CREATEROLE/BYPASSRLS migration principal from a superuser grantor; runtime members, parent roles and elevated pending-role attributes remain rejected. Missing membership-option columns on PostgreSQL15 do not satisfy the exception. Sixteen SQL cases now include superuser and hosted-style non-superuser creation plus authenticator/authenticated and parent-role rejection. See PostgreSQL's [role attribute documentation](https://www.postgresql.org/docs/17/role-attributes.html).
+Hosted PostgreSQL17 creates an administration-only membership for its non-superuser `postgres` migration principal: grantor `supabase_admin`, ADMIN true, SET false, INHERIT false. A rollback-only preview probe confirmed that difference from the native superuser fixture. The guard permits only that grant to the current CREATEROLE/BYPASSRLS migration principal from a superuser grantor; runtime members, parent roles and elevated pending-role attributes remain rejected. Missing membership-option columns on PostgreSQL15 do not satisfy the exception. Nineteen SQL cases include superuser and hosted-style non-superuser creation plus authenticator/authenticated and parent-role rejection. CI's psql result suppression is reproduced with `SHOW_ALL_RESULTS=off`; scripts now enter through stdin so every intermediate result remains visible. Negative assertions match only the primary ERROR message, excluding supplied SQL in command or LINE/CONTEXT excerpts. See PostgreSQL's [role attribute documentation](https://www.postgresql.org/docs/17/role-attributes.html).

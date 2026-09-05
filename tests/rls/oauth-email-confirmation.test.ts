@@ -18,7 +18,11 @@ if (!['postgres:', 'postgresql:'].includes(fixtureUrl.protocol)
 }
 function sql(body: string) {
   try {
-    return execFileSync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', `BEGIN; ${body}; ROLLBACK;`], { encoding: 'utf8', stdio: 'pipe' });
+    // Feed statements individually through stdin: a multi-command -c can
+    // suppress every intermediate result when SHOW_ALL_RESULTS is off in CI.
+    return execFileSync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-v', 'SHOW_ALL_RESULTS=off', '-At'], {
+      input: `BEGIN; ${body}; ROLLBACK;`, encoding: 'utf8', stdio: 'pipe',
+    });
   } catch (error) {
     // Neither Node's echoed command nor psql's LINE/CONTEXT excerpts prove a
     // server denial. Match only the primary ERROR diagnostic, exactly.
@@ -42,6 +46,9 @@ describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
     // A refused connection or ordinary migration principal must fail setup,
     // not accidentally satisfy a negative assertion about a permission error.
     expect(sql('SELECT rolsuper FROM pg_roles WHERE rolname=current_user')).toContain('\nt\n');
+  });
+  it('retains intermediate statement results with SHOW_ALL_RESULTS disabled', () => {
+    expect(sql("SELECT 'first_result'; SELECT 'second_result'")).toBe('BEGIN\nfirst_result\nsecond_result\nROLLBACK\n');
   });
   it('reports the server error without matching supplied SQL text', () => {
     let failure: unknown;

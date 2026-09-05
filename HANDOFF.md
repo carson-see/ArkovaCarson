@@ -16,15 +16,20 @@
 
 ### SCRUM-4035 / UAT-03 — OAuth mailbox confirmation candidate (2026-09-05)
 
-Implementation is on `cto/uat03-oauth-confirmation-20260905`; **not released or activated**.
+Implementation is on `cto/uat03-oauth-confirmation-20260905`; **not released in production**.
 See [the scope, evidence, and rollout gates](docs/uat03-email-confirmation.md).
 Migration 0436 was applied to the owned PR preview and keeps activation NULL; its automatic
 preview check passed. The driver’s path and exact released-rig binding guards pass locally.
-Full CI exposed stale documentation pins and a hardcoded SQL-fixture port; the correction
-keeps all prior document invariants, reads the actual local CI database URL, and fails
-setup before negative SQL assertions can pass on a broken connection. Final-head CI
-and release approval remain pending. Hosted functional UI checks passed on the earlier
-63e50 candidate; audited-account fixture cleanup exposed existing SCRUM-4458.
+CI at `bc128c4` passed root, worker, SDK and edge suites but failed the new RLS setup:
+multi-command `psql -c` hid intermediate results. Feeding scripts through stdin passes
+19 native SQL cases with `SHOW_ALL_RESULTS=off`, retaining exact primary-error assertions.
+The narrow ES256 verifier dependency from PR #2589 commit `69e24d83` is composed with the
+signed pending-role guard; unrelated tool/SDK names remain unchanged. Final-head CI and
+release approval remain pending. The isolated `bc128c4` worker passed real mailbox and
+rollback controls; earlier 63e50 UI and expiry evidence is linked by runtime-byte equality.
+Audited-account fixture cleanup exposed existing SCRUM-4458 and required bounded operator
+cleanup. Hosted CDC ordinary-user recovery is not proven; its owner is diagnosing the
+positive-control failure. No formal T3 clock has started.
 Root resolved the initial Auth-config403 and read both
 production/owned preview hooks disabled with URI NULL; recheck before installation. UAT-02 owns
 Google consent branding; UAT-04 owns

@@ -822,21 +822,20 @@ let supabaseJwtSecretWarned = false;
 function warnSupabaseJwtSecretMissingOnce(): void {
   if (supabaseJwtSecretWarned) return;
   supabaseJwtSecretWarned = true;
-  console.error('[mcp-server] SUPABASE_JWT_SECRET unset — bearer auth disabled (MCP-SEC-07). Provision via `wrangler secret put SUPABASE_JWT_SECRET --name arkova-edge`.');
+  console.warn('[mcp-server] SUPABASE_JWT_SECRET unset — HS256 (legacy-key) bearer tokens will be rejected; ES256 tokens verify via JWKS (MCP-SEC-07 / BUG-2026-09-02-002).');
 }
 
 export async function validateBearer(
   token: string,
   env: Env,
 ): Promise<AuthResult | null> {
-  // SCRUM-926 / MCP-SEC-07 — verify HS256 signature + exp/iat/aud/iss
-  // locally first. Fail-closed if SUPABASE_JWT_SECRET is unset; that
-  // forces operators to provision the secret rather than silently
-  // falling back to the round-trip-only model the ticket flagged.
-  if (!env.SUPABASE_JWT_SECRET) {
-    warnSupabaseJwtSecretMissingOnce();
-    return null;
-  }
+  // SCRUM-926 / MCP-SEC-07 — verify signature + exp/iat/aud/iss locally
+  // first. BUG-2026-09-02-002: Supabase signs current tokens with ES256, which
+  // verifies against the project JWKS and needs no shared secret, so an
+  // absent SUPABASE_JWT_SECRET no longer disables Bearer auth outright — it
+  // only disables the HS256 fallback (verifySupabaseJwt returns
+  // `missing_secret` for an HS256 token in that case, still fail-closed).
+  if (!env.SUPABASE_JWT_SECRET) warnSupabaseJwtSecretMissingOnce();
   const local = await verifySupabaseJwt(token, {
     secret: env.SUPABASE_JWT_SECRET,
     supabaseUrl: env.SUPABASE_URL,
