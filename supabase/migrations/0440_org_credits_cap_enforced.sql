@@ -1,5 +1,5 @@
--- 0433_org_credits_cap_enforced.sql
--- SCRUM-3882 — decouple "this org has a document cap" from "this org is a test org".
+-- 0440_org_credits_cap_enforced.sql
+-- SCRUM-4474 — decouple "this org has a document cap" from "this org is a test org".
 --
 -- WHY
 -- `org_credits.is_test` currently carries two unrelated meanings at once:
@@ -50,10 +50,10 @@ ALTER TABLE public.org_credits
   ADD COLUMN IF NOT EXISTS cap_enforced boolean NOT NULL DEFAULT false;
 
 COMMENT ON COLUMN public.org_credits.cap_enforced IS
-  'Does anchor_quota actually bite? Independent of is_test (which now means only: never bill through Stripe). Set by admin_set_org_cap. SCRUM-3882.';
+  'Does anchor_quota actually bite? Independent of is_test (which now means only: never bill through Stripe). Set by admin_set_org_cap. SCRUM-4474.';
 
 COMMENT ON COLUMN public.org_credits.is_test IS
-  'Billing exclusion ONLY: an org with is_test = true must never have a Stripe meter event fired against it (meteredBilling.ts). It no longer governs quota enforcement — see cap_enforced. SCRUM-3882.';
+  'Billing exclusion ONLY: an org with is_test = true must never have a Stripe meter event fired against it (meteredBilling.ts). It no longer governs quota enforcement — see cap_enforced. SCRUM-4474.';
 
 -- Preserve today's effective behaviour exactly.
 UPDATE public.org_credits
@@ -62,7 +62,7 @@ UPDATE public.org_credits
    AND anchor_quota IS NOT NULL;
 
 COMMENT ON FUNCTION public.admin_set_org_anchor_quota(uuid, integer, boolean, uuid) IS
-  'DEPRECATED (SCRUM-3882): welds the cap to is_test and cannot express a billable capped org. Kept working for the paused-deploy window; use admin_set_org_cap instead.';
+  'DEPRECATED (SCRUM-4474): welds the cap to is_test and cannot express a billable capped org. Kept working for the paused-deploy window; use admin_set_org_cap instead.';
 
 CREATE OR REPLACE FUNCTION public.admin_set_org_cap(
   p_org_id       uuid,

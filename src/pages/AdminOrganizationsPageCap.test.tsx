@@ -1,5 +1,5 @@
 /**
- * SCRUM-3882 — the document cap is independent of the billing flag.
+ * SCRUM-4474 — the document cap is independent of the billing flag.
  *
  * Before this, `org_credits.is_test` meant two unrelated things at once:
  * "never bill this org through Stripe" (meteredBilling.ts) and "enforce this
@@ -78,7 +78,7 @@ function renderWith(o: Record<string, unknown>) {
   );
 }
 
-describe('AdminOrganizationsPage — document cap vs billing flag (SCRUM-3882)', () => {
+describe('AdminOrganizationsPage — document cap vs billing flag (SCRUM-4474)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockProfile.is_platform_admin = true;

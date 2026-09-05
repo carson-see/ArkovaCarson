@@ -4,7 +4,7 @@
  * Pins the contract that:
  *   - prod orgs (anchor_quota = NULL) are never gated
  *   - cap_enforced = false is never gated, whatever is_test says
- *   - cap_enforced = true IS gated even when is_test = false (SCRUM-3882:
+ *   - cap_enforced = true IS gated even when is_test = false (SCRUM-4474:
  *     a billable customer may carry a contractual cap)
  *   - sandbox orgs are allowed under the cap
  *   - sandbox orgs get 402 problem+json with type "quota-exhausted" at the cap
@@ -104,7 +104,7 @@ describe('ensureAnchorQuotaAvailable', () => {
 
   it('allows an org whose cap is NOT enforced, even with a quota set and far over it', async () => {
     // The Login Defense shape: anchor_quota = 15 recorded, is_test = false, so
-    // the quota is inert. SCRUM-3882 preserved that exactly rather than letting
+    // the quota is inert. SCRUM-4474 preserved that exactly rather than letting
     // a stored number start biting on its own.
     const db = makeDb({ org: { is_test: false, anchor_quota: 10, cap_enforced: false }, count: 50 });
     const { res, status } = makeRes();
@@ -120,7 +120,7 @@ describe('ensureAnchorQuotaAvailable', () => {
   });
 
   it('GATES a billable org (is_test = false) when its cap is enforced', async () => {
-    // The reason SCRUM-3882 exists. HakiChain is invoiced, not a test org, and
+    // The reason SCRUM-4474 exists. HakiChain is invoiced, not a test org, and
     // is contractually capped at 2,000. Before this change the only way to get
     // the cap enforced was to flag them is_test = true, which also excluded
     // them from Stripe metered billing.

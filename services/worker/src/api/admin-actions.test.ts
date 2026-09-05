@@ -5,7 +5,7 @@
  * (org_credits.anchor_quota + cap_enforced). Tests cover the admin gate, input
  * validation, RPC dispatch shape, and error mapping.
  *
- * SCRUM-3882 decoupled the cap from `is_test`. Two contract changes are pinned
+ * SCRUM-4474 decoupled the cap from `is_test`. Two contract changes are pinned
  * below: the RPC is now admin_set_org_cap, and omitting `is_test` PRESERVES the
  * org's current billing flag instead of forcing it to true. The old default
  * silently converted any org you capped into a Stripe-excluded test org.
@@ -112,7 +112,7 @@ describe('handleSetOrgQuota (SCRUM-2225)', () => {
     expect((res.body as { success: boolean }).success).toBe(true);
   });
 
-  it('PRESERVES the current billing flag when is_test is omitted (SCRUM-3882)', async () => {
+  it('PRESERVES the current billing flag when is_test is omitted (SCRUM-4474)', async () => {
     // The bug this replaced: is_test defaulted to true, so capping a billable
     // customer silently excluded it from Stripe metered billing.
     setCurrentIsTest(false);

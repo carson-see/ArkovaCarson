@@ -169,7 +169,7 @@ export async function handleSetOrg(
  * POST /api/admin/organizations/:id/quota
  * Body: { anchor_quota: number | null, cap_enforced?: boolean, is_test?: boolean }
  *
- * SCRUM-2225, reworked by SCRUM-3882 — platform-admin sets an org's document
+ * SCRUM-2225, reworked by SCRUM-4474 — platform-admin sets an org's document
  * cap. Enforced on the anchor-submit hot path by ensureAnchorQuotaAvailable():
  * when cap_enforced=true AND anchor_quota IS NOT NULL, the org gets a 402
  * `quota_exhausted` once its non-deleted anchor count reaches the quota.
@@ -180,7 +180,7 @@ export async function handleSetOrg(
  *   is_test:      billing ONLY — true means never fire a Stripe meter event for
  *                 this org (meteredBilling.ts). It no longer affects the cap.
  *
- * The three are independent. Before SCRUM-3882 the cap was welded to is_test,
+ * The three are independent. Before SCRUM-4474 the cap was welded to is_test,
  * so capping a billable customer silently removed it from metered billing —
  * which is what happened to HakiChain on 2026-09-02.
  *

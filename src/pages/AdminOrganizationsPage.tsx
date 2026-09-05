@@ -73,7 +73,7 @@ const DEFAULT_FREE_QUOTA = 10;
 // in every inline handler was scored as part of one giant function.
 
 function renderOrgCapBadge(org: AdminOrganization) {
-  // SCRUM-3882: the cap is `cap_enforced`, not `is_test`. A billable customer
+  // SCRUM-4474: the cap is `cap_enforced`, not `is_test`. A billable customer
   // may be capped, so the word "free" is only correct for a non-billable org —
   // showing "4/2000 free" against an invoiced customer is simply wrong.
   if (org.cap_enforced && org.anchor_quota != null) {
@@ -92,7 +92,7 @@ function isValidQuotaInput(capEnabled: boolean, quotaNum: number): boolean {
 }
 
 /**
- * SCRUM-3882 — the cap and the billing flag are independent.
+ * SCRUM-4474 — the cap and the billing flag are independent.
  *
  * This previously returned `is_test: true` whenever the cap was on, so capping
  * any organization silently converted it into a Stripe-excluded test org, and
@@ -726,7 +726,7 @@ export function AdminOrganizationsPage() {
         </CardContent>
       </Card>
 
-      {/* SCRUM-2225 — cap editor; SCRUM-3882 decoupled the cap from the billing flag */}
+      {/* SCRUM-2225 — cap editor; SCRUM-4474 decoupled the cap from the billing flag */}
       <Dialog open={!!editingOrg} onOpenChange={(open) => { if (!open) setEditingOrg(null); }}>
         <DialogContent>
           <DialogHeader>
@@ -757,7 +757,7 @@ export function AdminOrganizationsPage() {
                 <p className="text-xs text-muted-foreground">New signups default to {DEFAULT_FREE_QUOTA}.</p>
               </div>
             )}
-            {/* SCRUM-3882 — billing is a SEPARATE switch. It used to be implied
+            {/* SCRUM-4474 — billing is a SEPARATE switch. It used to be implied
                 by the cap, so capping an invoiced customer silently stopped
                 them being billed. */}
             <div className="flex items-center justify-between gap-4 border-t pt-4">

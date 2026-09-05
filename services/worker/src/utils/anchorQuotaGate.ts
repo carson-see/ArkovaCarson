@@ -3,9 +3,9 @@
  *
  * An org with `org_credits.cap_enforced = true` AND `anchor_quota IS NOT NULL`
  * has a hard cap on the number of anchors it may submit. Migration 0297 added
- * the quota column; 0433 (SCRUM-3882) added `cap_enforced`.
+ * the quota column; 0440 (SCRUM-4474) added `cap_enforced`.
  *
- * `cap_enforced` — NOT `is_test` — is the switch. Before 0433 this gate keyed
+ * `cap_enforced` — NOT `is_test` — is the switch. Before 0440 this gate keyed
  * on `is_test`, which also means "never bill this org through Stripe"
  * (meteredBilling.ts). That made a billable customer with a contractual cap
  * unrepresentable: HakiChain, invoiced and capped at 2,000 documents, had to be
@@ -41,7 +41,7 @@ import { logger } from './logger.js';
 
 interface OrgQuotaRow {
   anchor_quota: number | null;
-  /** SCRUM-3882 — the sole switch for whether anchor_quota bites. */
+  /** SCRUM-4474 — the sole switch for whether anchor_quota bites. */
   cap_enforced: boolean | null;
 }
 
