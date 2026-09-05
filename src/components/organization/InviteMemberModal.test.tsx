@@ -8,16 +8,24 @@ import { TOAST } from '@/lib/copy';
 import { InviteMemberModal } from './InviteMemberModal';
 
 describe('InviteMemberModal', () => {
-  const defaultProps = {
+  // Rebuilt fresh in beforeEach (SCRUM-4028) rather than declared once at
+  // describe-scope: every test used to share the exact same onOpenChange /
+  // onInvite vi.fn() instances, so any stray async call that outlived its
+  // own test (e.g. a real setTimeout resolving late) could land on a LATER
+  // test's assertion against the same mock. Fresh mocks per test make that
+  // class of leak land on an orphaned function object instead.
+  const createDefaultProps = () => ({
     open: true,
-    onOpenChange: vi.fn(),
+    onOpenChange: vi.fn<(open: boolean) => void>(),
     // onInvite reports success/failure via its boolean result (SCRUM-3524);
     // useInviteMember never rethrows (SCRUM-1979 toast-safety contract).
-    onInvite: vi.fn().mockResolvedValue(true),
-  };
+    onInvite: vi.fn<(email: string, role: 'INDIVIDUAL' | 'ORG_ADMIN') => Promise<boolean>>().mockResolvedValue(true),
+  });
+
+  let defaultProps: ReturnType<typeof createDefaultProps>;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    defaultProps = createDefaultProps();
   });
 
   it('should render modal with form elements', () => {
@@ -106,6 +114,15 @@ describe('InviteMemberModal', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Sending...')).toBeInTheDocument();
+    });
+
+    // Let the slow invite's real setTimeout settle inside this test's own
+    // boundary (SCRUM-4028). Previously the test ended here while the
+    // 100ms timer was still pending; under full-suite CPU contention it
+    // could fire during a LATER test and call onOpenChange as a side
+    // effect, corrupting that test's "not.toHaveBeenCalled()" assertion.
+    await waitFor(() => {
+      expect(defaultProps.onOpenChange).toHaveBeenCalledWith(false);
     });
   });
 
