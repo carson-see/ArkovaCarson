@@ -21,6 +21,7 @@ Row Level Security integration tests. Verify RLS policies enforce tenant isolati
 - **`credential-source-providers.test.ts`** — SCRUM-1611: verifies migration 0329 widens `member_integrations.provider` for Credly/Accredible/Udemy while preserving DocuSign back-compat, RLS policies extend to the new providers, and unknown providers stay CHECK-rejected.
 - **`sanitize-metadata-helper-revoke.test.ts`** — SEC-RECON / migration 0388: proves `anon` and `authenticated` get SQLSTATE 42501 calling `public.sanitize_metadata_for_public(jsonb)` directly (it was an anon-callable oracle for the whole redaction denylist), that `service_role` keeps EXECUTE, and — the regression this must not cause — that `get_public_anchor` still projects end to end for `anon` against a REAL seeded anchor, because it reaches the helper as SECURITY DEFINER. Requires 0388 applied. The fixture is load-bearing: it throws on insert failure, since a missing anchor makes `get_public_anchor` return its "Record not found" stub and the end-to-end assertion pass vacuously (that exact bug was caught during authoring — `anchors.filename` is NOT NULL). Content-guard half runs in default CI at `src/tests/sec-0388-sanitize-metadata-helper-revoke.test.ts`.
 - **`public-anchor-pii-projection.test.ts`** — migration 0385. Live proof that the anon-GRANTed `get_public_anchor` / `get_public_anchor_by_fingerprint` projection no longer leaks learner PII: seeds learner names into `filename` / `metadata.title` / `metadata.description` and PII into `revocation_reason`, then reads back as a real ANON client and asserts on the SERIALIZED body (so a value cannot hide in an unnamed field). Vectors come from `scripts/ci/public-pii-projection-contract.json`, the shared contract that also binds `services/worker/src/ctdl/ctdl-pii-guard.ts`, so this suite and the CTDL suite cannot drift on what counts as PII. Carries PRECISION assertions too (real institution names, ordinary titles, numeric issuer URLs must still publish) — a gate that blanks legitimate credentials is a worse product than the leak it replaced. Seeds must set `revoked_at` alongside `revocation_reason` (`anchors_revocation_consistency`).
+- **`ferpa-directory-info-opt-out.test.ts`** — **FD-FERPA-1**, migration `0415`. Live proof that `anchors.directory_info_opt_out` actually suppresses directory information on all three anon-reachable SQL projections: seeds a SECURED anchor carrying an issuer name, a `cpe_metadata.field_of_study`, award/expiry dates and a name-shaped filename, then reads it back as a real ANON client and asserts on the SERIALIZED body, so a value cannot survive by moving to a key the test does not name. Every negative is paired with a POSITIVE CONTROL — the same fixture with the flag off must still publish, and the opted-out record must still VERIFY (`verified`, `fingerprint`, chain receipt, a non-empty `filename` and `issuer_name` display string). The `credential_type: null` case is not invented coverage: all three production anchors carrying the flag have a NULL type, so a suppression rule keyed on the education set alone suppresses nothing for any of them. The fingerprint path is asserted for INDISTINGUISHABILITY (`toEqual` against the public-id body) rather than merely "also suppresses", because `0415` deliberately does not redefine it and relies on its delegation to `get_public_anchor`. The search half asserts EXCLUSION FROM MATCHING, not a blanked title — a non-empty result set is itself the disclosure (0387's hit-count oracle) — and uses `CLE` so the assertion is not vacuous, since CLE is in the FERPA set but not the academic set 0387 already excludes. A `INSURANCE` case pins the recorded residual: a PRESENT non-education type still publishes, matching the REST path's own pinned boundary. Requires the local DB migrated to at least 0415.
 
 ## Conventions
 - Requires local Supabase running (`supabase start`) with seed data (`supabase db reset`).
@@ -84,6 +85,20 @@ way and was anon-callable in prod until revoked on 2026-08-11.
   EXECUTE the function is merely broken, and "anon cannot call it" would pass
   for the wrong reason.
 
+## Fixture ownership — every suite owns its org (FD-FERPA-1)
+
+An RLS suite must create its own organization, user and profile in `beforeAll` and
+delete them in `afterAll`. **Do not reuse another file's `ORG_ID`.**
+
+`ferpa-directory-info-opt-out.test.ts` originally pinned the same
+`f19e2400-…c001` as `fingerprint-lookup-secured-only.test.ts` and only *read* a
+profile for it. That sibling creates the org in `beforeAll` and **deletes it** in
+`afterAll`, so the FERPA suite threw `could not resolve a seed profile` whenever it
+ran outside the sibling's window — and no seed defines that org, on any branch.
+Worse, had it run inside that window, the sibling's
+`anchors.delete().eq('org_id', ORG_ID)` could remove the FERPA fixtures mid-run,
+making leak assertions pass **vacuously**. Shared ids couple suites through the
+database; unique ids per suite do not.
 ## Fixture rules for full-parallel runs (SCRUM-3618 / SCRUM-3577)
 
 Vitest runs every file in this directory in its own worker, concurrently,

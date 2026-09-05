@@ -13,7 +13,11 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
-import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
+import {
+  FERPA_EDUCATION_TYPES,
+  FERPA_REDISCLOSURE_NOTICE,
+  suppressesDirectoryInfo,
+} from '../../constants/ferpa.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
   controlsApplyForStatus,
@@ -400,10 +404,19 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   };
 
   // REG-02: When directory_info_opt_out is true for education types,
-  // suppress directory-level fields (name, degree type, dates) per FERPA Section 99.37
-  const isEducationType = anchor.credential_type &&
-    (FERPA_EDUCATION_TYPES as readonly string[]).includes(anchor.credential_type);
-  const suppressDirectory = anchor.directory_info_opt_out && isEducationType;
+  // suppress directory-level fields (name, degree type, dates) per FERPA Section 99.37.
+  //
+  // FD-FERPA-1: this was `anchor.credential_type && FERPA_EDUCATION_TYPES
+  // .includes(...)`, which is FALSY for a null type — and every anchor in
+  // production that carries the opt-out has a null type, so this block
+  // suppressed nothing for 100% of the records it exists to protect. The rule
+  // now lives in one named, fail-closed predicate shared with the SQL
+  // projection (migration 0415), so the two anonymous surfaces cannot answer
+  // differently for the same row.
+  const suppressDirectory = suppressesDirectoryInfo(
+    anchor.directory_info_opt_out,
+    anchor.credential_type,
+  );
 
   // Structural layer: an ACADEMIC RECORD (a record about an identified learner)
   // emits no issuer- or extraction-authored free text. Unconditional — see the
@@ -456,9 +469,19 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   // public projections suppress outright. It was not even covered by the
   // REG-02 opt-out above.
   //
-  // Academic record  -> omitted entirely (structural).
-  // Everything else  -> value-gated, same as the other two projections.
-  if (!isAcademicRecord) {
+  // Academic record                -> omitted entirely (structural).
+  // Directory-info-suppressed (REG-02, includes CLE) -> omitted entirely.
+  //   CLE is in the wider FERPA/opt-out set (`isAcademicRecord` is FALSE for
+  //   it — see the note above) but not the narrow academic-structural set, so
+  //   a bare `!isAcademicRecord` check let an opted-out CLE record's
+  //   `description` ship raw while migration 0415's SQL projection
+  //   (`get_public_anchor`'s `'description'` CASE) suppresses it via
+  //   `WHEN g.suppress_directory THEN NULL`. Matching that here keeps the two
+  //   anonymous surfaces answering alike for the same row (see the
+  //   `suppressDirectory` comment above) — pinned by
+  //   verify.test.ts "suppresses description for CLE type with opt-out".
+  // Everything else                 -> value-gated, same as the other two projections.
+  if (!isAcademicRecord && !suppressDirectory) {
     const description = publicFreeTextOrNull(anchor.description);
     if (description) {
       result.description = description;

@@ -681,8 +681,8 @@ describe('public projection PII gate — the verify API surface', () => {
       expect(
         src,
         `verify.ts must suppress '${field}' on an academic record — it is listed in ` +
-          'verify_academic_suppressed_fields.',
-      ).toMatch(new RegExp(String.raw`if\s*\(!isAcademicRecord\)[\s\S]{0,400}?\b${escaped}\b`));
+          'verify_academic_suppressed_fields; publishing must also require no directory opt-out.',
+      ).toMatch(new RegExp(String.raw`if\s*\(!isAcademicRecord\s*&&\s*!suppressDirectory\)[\s\S]{0,400}?\b${escaped}\b`));
     }
   });
 
