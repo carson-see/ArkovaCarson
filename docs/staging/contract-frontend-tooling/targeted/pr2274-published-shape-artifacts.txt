@@ -1,0 +1,73 @@
+### PR #2274 targeted check — published-shape arkova + arkova-mcp-server artifacts
+captured_at: 2026-08-30T22:11:52Z
+
+== 1. npm pack both packages (runs prepack -> real build, exactly as npm publish would) ==
+--- packages/sdk (name: arkova) ---
+npm notice integrity: sha512-5Dta3nvy9sxfX[...]1z9nkqPhKCNaw==
+npm notice total files: 8
+npm notice
+arkova-2.2.0.tgz
+--- sdks/mcp-server (name: arkova-mcp-server) ---
+npm notice integrity: sha512-OnjsSk2EAPl5U[...]GGSSOk1SxP0HA==
+npm notice total files: 7
+npm notice
+arkova-mcp-server-2.2.0.tgz
+
+== 2. tarball contents (published file set) ==
+--- /tmp/cft-consumer/arkova-2.2.0.tgz ---
+package/LICENSE
+package/dist/index.js
+package/package.json
+package/README.md
+package/dist/index.mjs
+package/dist/index.d.mts
+package/examples/anchor-document.ts
+package/dist/index.d.ts
+  (files: 8)
+--- /tmp/cft-consumer/arkova-mcp-server-2.2.0.tgz ---
+package/LICENSE
+package/dist/cli.js
+package/dist/index.js
+package/package.json
+package/README.md
+package/dist/cli.d.ts
+package/dist/index.d.ts
+  (files: 7)
+
+== 3. install BOTH tarballs into a throwaway consumer project (/tmp/cft-consumer) ==
+   npm install ./arkova-2.2.0.tgz ./arkova-mcp-server-2.2.0.tgz
+   installed: arkova
+   installed: arkova-mcp-server
+   bin: lrwxr-xr-x@ 1 carson  wheel  32 Aug 30 18:12 arkova-mcp-server -> ../arkova-mcp-server/dist/cli.js
+
+== 4. module-resolution round-trip from the INSTALLED artifact (not repo source) ==
+   CJS require OK, exports: Arkova,ArkovaError,BULK_ANCHOR_CREDENTIAL_TYPES,BULK_ANCHOR_MAX_ROWS,VERIFY_BATCH_SYNC_LIMIT
+   ESM import OK, exports: Arkova,ArkovaError,BULK_ANCHOR_CREDENTIAL_TYPES,BULK_ANCHOR_MAX_ROWS,VERIFY_BATCH_SYNC_LIMIT
+
+== 5. CLI round-trip: the installed arkova-mcp-server binary over a real stdio MCP session ==
+   arkova-mcp-server: ARKOVA_API_KEY is not set — authenticated tool calls will fail.
+   MCP handshake OK. server advertised tools: 10
+     - arkova_verify_credential
+     - arkova_credential_status
+     - arkova_search_credentials
+     - arkova_create_attestation
+     - arkova_batch_verify
+     - nessie_compliance_score
+     - nessie_gap_analysis
+     - nessie_ask
+     - nessie_cross_reference
+     - arkova_verify_signature
+
+   NOTE (pre-existing, not introduced by #2274): 4 of the 10 advertised tools are nessie_*
+   backed by endpoints that are OFF in prod by standing founder directive (2026-08-01).
+   The PR's own agents.md records this as follow-up; the 10-tool count is the corrected
+   shape #2274 fixed (main's index.test.ts was silently pinned at 6).
+
+== 6. UNSOAKABLE-SURFACE NOTE (CLAUDE.md §1.12, T2) ==
+   The npm PUBLICATION step itself cannot be soaked: publishing to the public npm registry is
+   irreversible, is founder-reserved (npm account ownership), and has no staging analogue —
+   there is no rig on which 'npm publish arkova@2.2.0' can be rehearsed and rolled back.
+   What IS soakable, and what is exercised above and continuously by the rig driver, is the
+   ARTIFACT the publish step would upload: the exact npm pack tarball, installed as a
+   consumer would install it, exercised against a live Arkova API. No worker artifact is
+   claimed for this PR — it deploys nothing to any running service.

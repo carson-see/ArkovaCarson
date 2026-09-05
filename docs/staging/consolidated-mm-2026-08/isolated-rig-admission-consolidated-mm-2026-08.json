@@ -1,0 +1,119 @@
+{
+  "schema_version": 2,
+  "kind": "isolated_rig_admission",
+  "generated_at": "2026-08-30T15:56:31Z",
+  "rig_name": "consolidated-mm-2026-08",
+  "rig_id": "RIG-CMM-1",
+  "profile": "chain",
+  "soak_id": "SOAK-CONSOLIDATED-MM-2026-08",
+  "lease_id": "LEASE-CMM-2026-08-30",
+  "gcp_project_id": "arkova1",
+  "supabase_org_id": "byhkazrpmivhcsuqjtva",
+  "region": "us-central1",
+  "cloud_run_service": "arkova-worker-consolidated-mm-2026-08-staging",
+  "tier": "T3",
+  "duration_min": 2880,
+  "required_uptime_min": 2880,
+  "required_wall_min": 2910,
+  "sha": "b2a65edddff9a3bfb0bb6ec35729bbdd7558a678",
+  "declared_source_head": "b2a65edddff9a3bfb0bb6ec35729bbdd7558a678",
+  "source_head_image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:b2a65edddff9a3bfb0bb6ec35729bbdd7558a678",
+  "source_head_image_digest": "sha256:12eddc1e080c9a4ac4a648b2889eda1b96ed14f16dc530754d3b31271218b65f",
+  "base_sha": "b2a65edddff9a3bfb0bb6ec35729bbdd7558a678",
+  "image": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:12eddc1e080c9a4ac4a648b2889eda1b96ed14f16dc530754d3b31271218b65f",
+  "image_digest": "sha256:12eddc1e080c9a4ac4a648b2889eda1b96ed14f16dc530754d3b31271218b65f",
+  "deployed_revision": "arkova-worker-consolidated-mm-2026-08-staging-00001-7n4",
+  "deployed_image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:305faf4e5fb828c7a9888c96ada3d4875951f215a31e6a87dee952934aabe96c",
+  "deployed_image_digest": "sha256:305faf4e5fb828c7a9888c96ada3d4875951f215a31e6a87dee952934aabe96c",
+  "deployed_image_digest_note": "pinned digest sha256:12eddc1e... is the OCI image INDEX the exact-head tag resolves to; Cloud Run records its single linux/amd64 child manifest sha256:305faf4e... (docker buildx imagetools inspect shows the parent->child relation; verified at deploy).",
+  "deployed_source_head": "b2a65edddff9a3bfb0bb6ec35729bbdd7558a678",
+  "tag_url": "https://arkova-worker-consolidated-mm-2026-08-staging-kvojbeutfa-uc.a.run.app",
+  "tag_url_note": "No Cloud Run traffic tag is possible: tag+service name are capped at 46 combined chars and the service name alone is 45. Isolation holds without it - the service is single-revision with traffic explicitly pinned 100% to the soaked revision, owned exclusively by this soak.",
+  "supabase_project_ref": "krhegsltjkazuomynbww",
+  "preflight_result": "environment_type=clean_mirror",
+  "clean_mirror_attestation_id": "sha256:6a62c4e17b9e3504e785503d06f621fb045d7696a51055ccbbfc135e5e4013ae",
+  "clean_mirror": {
+    "result": "environment_type=clean_mirror",
+    "artifact": "docs/staging/consolidated-mm-2026-08/clean-mirror-preflight-consolidated-mm-2026-08.json",
+    "verified_at": "2026-08-30T15:51:21.385Z",
+    "attestation_id": "sha256:6a62c4e17b9e3504e785503d06f621fb045d7696a51055ccbbfc135e5e4013ae"
+  },
+  "critical_config": {
+    "node_env": "production",
+    "enable_ai_fraud": "false",
+    "enable_ai_reports": "false",
+    "frontend_url": "https://app.arkova.ai",
+    "use_mocks": "false",
+    "enable_prod_network_anchoring": "true",
+    "bitcoin_network": "signet",
+    "bitcoin_utxo_provider": "getblock",
+    "kms_provider": "gcp",
+    "gemini_tuned_model": "",
+    "gemini_v6_prompt": "",
+    "gemini_tuned_response_schema": "<unset>",
+    "ip_hash_pepper_secret": "ip-hash-pepper-consolidated-mm-2026-08-staging",
+    "vpc_connector": "fullsoak-btc-rpc (egress private-ranges-only; reaches the private signet Bitcoin Core RPC only)"
+  },
+  "scheduler": {
+    "applicable": true,
+    "jobs": [
+      {
+        "name": "arkova-worker-consolidated-mm-2026-08-staging-batch-anchors",
+        "path": "/jobs/batch-anchors"
+      },
+      {
+        "name": "arkova-worker-consolidated-mm-2026-08-staging-check-confirmations",
+        "path": "/jobs/check-confirmations"
+      },
+      {
+        "name": "arkova-worker-consolidated-mm-2026-08-staging-populate-confirmation-proofs",
+        "path": "/jobs/populate-confirmation-proofs"
+      },
+      {
+        "name": "arkova-worker-consolidated-mm-2026-08-staging-org-queue-scheduler",
+        "path": "/jobs/org-queue-scheduler"
+      }
+    ],
+    "creation_guard": "created on non-firing hold schedule 0 0 29 2 * then immediately paused + PAUSED-verified; cadence */5 restored and resumed only after clean_mirror admission",
+    "paused_through_clean_mirror": true,
+    "state": "resumed_after_clean_mirror"
+  },
+  "driver_path": "docs/staging/consolidated-mm-2026-08/harness/supervisor-cmm.sh",
+  "driver_sha256": "a093c5468f7ec33fd80b09151ba6692b56cfb79d43436ba7707cca7abc6be98f",
+  "changed_behavior": "Consolidated soak of merged main at accumulated head b2a65eddd (rc-deferred-2026-08-22 pause_lift_obligation): integrated worker behavior of the 19 manifest-admitted PRs plus every merge past prod-divergence 0440ce7e5 - API surface, rate-limit cluster, API-key lifecycle, cron jobs, batch-anchor Trigger A/B + daily flush, per-org isolation, Node 22 runtime, signet chain path",
+  "harness_version": "docs/staging/consolidated-mm-2026-08/harness/supervisor-cmm.sh@b2a65edddff9",
+  "tool_version": "scripts/staging/provision-isolated-rig.sh@b2a65edddff9 (Step 1 + fail-closed guards) + operator completion per its printed plan",
+  "owner": "carson@Arkovas-Mac-mini",
+  "soak_clock": {
+    "basis": "FD-CLOCK-1: serving revision creationTimestamp, not instance uptime",
+    "revision_created": "2026-08-30T15:46:33.844077Z",
+    "window_start": "2026-08-30T15:46:33Z",
+    "window_end": "2026-09-01T15:46:33Z",
+    "load_started": "2026-08-30T15:54:54Z",
+    "clock_matches_creation": true
+  },
+  "deviations": [
+    "Step 2 (db push) fail-closed inside the script twice: first LegacyDbConfigIpv6Error (link ran while project was COMING_UP and stored the IPv6 direct-db config), then a transient pooler tenant-not-found; recovered by re-linking after ACTIVE_HEALTHY and re-running db push --include-all --yes, which applied 117 migrations (baseline + 0290..0419).",
+    "0381_docusign_envelope_metadata_lookup_indexes.sql (3 executable CREATE INDEX CONCURRENTLY statements) was set aside during the push per STAGING_RIG.md gotcha 3, applied via session-pooler psql, its ledger row inserted (version 0381), and the file restored byte-identical; final numeric head 0419 matches prod.",
+    "Step 3 deploy adds IP_HASH_PEPPER=ip-hash-pepper-consolidated-mm-2026-08-staging:latest - config.ts requires IP_HASH_PEPPER in production and the provisioner never wires it (a worker deployed exactly per the script crash-loops at boot; every 2026-08 rig carries the same per-rig repair).",
+    "Step 3 deploy adds --vpc-connector=fullsoak-btc-rpc --vpc-egress=private-ranges-only: the only live signet RPC secrets (arkova-s33-rig-b1-*) point at a private 10.33.10.10 Bitcoin Core node, unreachable without the connector (same parity pattern the fullsoak rig used, its manifest section 9.4). The scripted bitcoin-*-staging secret names do not exist in Secret Manager.",
+    "Scheduler hold schedule 0 0 31 2 * from the script is rejected by Cloud Scheduler (INVALID_ARGUMENT - it calendar-validates day-of-month); 0 0 29 2 * (leap-day, next occurrence 2028) used instead, with the same create->pause->verify-PAUSED guard.",
+    "No traffic tag (46-char combined cap, see tag_url_note); scripts/staging/load-harness.ts therefore cannot target this rig (it requires a tag-routed host), so the ambient lane is docs/staging/consolidated-mm-2026-08/harness/ambient-load.sh - paced anon + API-key lanes under their rate tiers.",
+    "Data-only rig seeds beyond the baseline fixture (never ledger writes): fixture org org_credits set to balance=25000/monthly_allocation=25000/anchor_quota=NULL/is_test=false and the soak API key rate_limit_tier=paid, so 13k+ volume-injection through the real POST /api/v1/anchor path is not rejected by the sandbox quota row the seed creates (anchor_quota=10). ENABLE_VERIFICATION_API=true was already seeded by the baseline fixture itself (FD-GATE-1 fix present at this head).",
+    "Post-window-open data-only seed: organizations.tier for the fixture org set FREE->ENTERPRISE at ~16:07Z after the B-volume lane hit the per-org daily plan quota (perOrgRateLimit TIER_QUOTAS: FREE caps anchors_created at 100/day; the planned 13,200/day volume models a partner-scale org, which is exactly the ENTERPRISE row). The ~100-accept/~60-deny FREE-quota interval is honest in-window evidence of the #2251 denial path: 429 ORG_QUOTA_EXCEEDED with truthful quota headers, no quota consumed by denials."
+  ],
+  "stop_conditions": [
+    "SHA mismatch between admission JSON and PR head",
+    "rig_id or lease_id mismatch against the declared run",
+    "base SHA drift with runtime/schema/staging/deploy impact",
+    "image digest mismatch against deployed Cloud Run revision",
+    "source image repository differs from the approved Arkova worker repository",
+    "dirty preflight (environment_type != clean_mirror)",
+    "clean_mirror attestation hash mismatch against sanitized artifact bytes",
+    "required worker uptime or wall-clock floor not met",
+    "Supabase project ref resolves to prod or shared staging",
+    "Cloud Run service/tag URL points at shared/main staging",
+    "driver_path or driver_sha256 mismatch",
+    "soak harness exits non-zero or fails required duration"
+  ]
+}
