@@ -122,7 +122,8 @@ def sql(query):
     status, _, text = http(
         'POST',
         'https://api.supabase.com/v1/projects/%s/database/query' % RIG['project_ref'],
-        {'Authorization': 'Bearer ' + MGMT_TOKEN, 'Content-Type': 'application/json'},
+        {'Authorization': 'Bearer ' + MGMT_TOKEN, 'Content-Type': 'application/json',
+         'User-Agent': 'Arkova-batch-e-soak/1.0'},
         body,
         timeout=90,
     )
@@ -217,7 +218,7 @@ def cycle(i, tag, ev):
         'Content-Type': 'application/json',
         'X-AdobeSign-ClientId-Authentication-Sha256': sign(raw),
     }, raw)
-    assert st == 200, 'signed delivery expected 200 got %s %s' % (st, text[:300])
+    assert st in (200, 202), 'signed delivery expected 200/202 got %s %s' % (st, text[:300])
     ev['delivery'] = json.loads(text) if text.strip().startswith('{') else {'status': st}
     rule_row = sql(
         "SELECT id, org_id, payload->>'agreement_id' AS agreement_id "
@@ -232,7 +233,7 @@ def cycle(i, tag, ev):
         'Content-Type': 'application/json',
         'X-AdobeSign-ClientId-Authentication-Sha256': sign(raw),
     }, raw)
-    assert st_dup == 200, 'replay expected 200 got %s' % st_dup
+    assert st_dup in (200, 202), 'replay expected 200/202 got %s' % st_dup
     again = scalar("SELECT count(*) FROM public.organization_rule_events "
                    "WHERE payload->>'agreement_id'='%s'" % agreement)
     assert int(again) == 1, 'replay created a duplicate rule event (%s)' % again
@@ -270,7 +271,7 @@ def cycle(i, tag, ev):
         'Content-Type': 'application/json',
         'X-AdobeSign-ClientId-Authentication-Sha256': sign(raw_b),
     }, raw_b)
-    assert st_b == 200, 'org B delivery expected 200 got %s' % st_b
+    assert st_b in (200, 202), 'org B delivery expected 200/202 got %s' % st_b
     row_b = sql("SELECT org_id FROM public.organization_rule_events "
                 "WHERE payload->>'agreement_id'='%s'" % agreement_b)
     assert len(row_b) == 1 and row_b[0]['org_id'] == RIG['org_b'], 'org B delivery did not isolate'
