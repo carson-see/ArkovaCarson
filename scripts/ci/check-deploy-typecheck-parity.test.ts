@@ -40,8 +40,14 @@ interface CiOpts {
   run?: string | null;
   /** Which ci.yml job hosts the step. */
   job?: string;
-  /** An `if:` guard on the step, if any. */
+  /** An `if:` guard between the name and the run, if any. */
   guard?: string | null;
+  /** An `if:` guard AFTER the `run:` line — step keys are an unordered YAML mapping. */
+  guardAfterRun?: string | null;
+  /** An `if:` guard OPENING the step item (`- if:`), ahead of the `name:` key. */
+  guardFirst?: string | null;
+  /** An `if:` guard on the FOLLOWING (lint) step — must never be attributed to ours. */
+  nextStepGuard?: string | null;
   /** The step's `name:`. Must keep the `typecheck` marker to be found at all. */
   name?: string;
 }
@@ -51,14 +57,20 @@ function ciWorkflow({
   run = EXPECTED_TYPECHECK_RUN,
   job = REQUIRED_CI_JOB,
   guard = null,
+  guardAfterRun = null,
+  guardFirst = null,
+  nextStepGuard = null,
   name = 'Typecheck worker (deploy-gate parity)',
 }: CiOpts = {}): string {
   const step = run
     ? [
-        `      - name: ${name}`,
+        ...(guardFirst
+          ? [`      - if: ${guardFirst}`, `        name: ${name}`]
+          : [`      - name: ${name}`]),
         ...(guard ? [`        if: ${guard}`] : []),
         '        working-directory: services/worker',
         `        run: ${run}`,
+        ...(guardAfterRun ? [`        if: ${guardAfterRun}`] : []),
       ]
     : [];
   return [
@@ -79,6 +91,7 @@ function ciWorkflow({
     '        run: npm ci --ignore-scripts',
     ...step,
     '      - name: Lint worker (deploy-gate parity)',
+    ...(nextStepGuard ? [`        if: ${nextStepGuard}`] : []),
     '        working-directory: services/worker',
     '        run: npm run lint',
     '',
@@ -130,6 +143,51 @@ describe('check-deploy-typecheck-parity — worker compile gate ≡ deploy gate'
     );
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => e.includes('unconditionally'))).toBe(true);
+  });
+
+  // Step keys are an UNORDERED YAML mapping: `if:` placed after `run:` (or
+  // opening the item as `- if:`, ahead of the `name:`) guards the step exactly
+  // as well as one between the name and the run. The original scan stopped at
+  // the `run:` line and missed both orderings — a path-filter guard could ride
+  // back in by key order alone (post-merge audit finding on PR #2427).
+  it('fails when the `if:` guard sits AFTER the `run:` line (key order must not matter)', () => {
+    const r = auditDeployTypecheckParity(
+      sources({ ciWorkflow: ciWorkflow({ guardAfterRun: "steps.changed.outputs.worker == 'true'" }) }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('unconditionally'))).toBe(true);
+  });
+
+  it('fails when the step OPENS with `- if:` ahead of the `name:` key', () => {
+    const r = auditDeployTypecheckParity(
+      sources({ ciWorkflow: ciWorkflow({ guardFirst: "github.event_name == 'pull_request'" }) }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('unconditionally'))).toBe(true);
+  });
+
+  it('fails when a DEDENTED comment sits between the `run:` line and the `if:` guard', () => {
+    // YAML ignores comments at ANY indentation, so a comment at the list
+    // indent between step keys does not end the step — the `if:` after it
+    // still guards the step. The scan must skip comment lines rather than
+    // treat one as the dedent that terminates the key block.
+    const ci = ciWorkflow({ guardAfterRun: "steps.changed.outputs.worker == 'true'" }).replace(
+      '        if: steps.changed',
+      '      # dedented comment — YAML-ignored, must not stop the scan\n        if: steps.changed',
+    );
+    const r = auditDeployTypecheckParity(sources({ ciWorkflow: ci }));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('unconditionally'))).toBe(true);
+  });
+
+  it("does not attribute a NEIGHBOURING step's `if:` to the typecheck step", () => {
+    // The whole-step scan must stop at the next step's `- ` line — a guard on
+    // the following lint step is that step's business, not a parity failure.
+    const r = auditDeployTypecheckParity(
+      sources({ ciWorkflow: ciWorkflow({ nextStepGuard: "github.event_name == 'pull_request'" }) }),
+    );
+    expect(r.ok).toBe(true);
+    expect(r.errors).toEqual([]);
   });
 
   it('fails when deploy-worker.yml loses its worker typecheck step', () => {

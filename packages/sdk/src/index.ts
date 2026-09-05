@@ -1,11 +1,11 @@
 /**
- * @carsonarkova/sdk — Arkova Verification SDK (PH1-SDK-01 + INT-01)
+ * arkova — Arkova Verification SDK (PH1-SDK-01 + INT-01)
  *
  * SDK for anchoring, verifying, and managing webhook endpoints via the
  * Arkova API. Supports both API key auth and x402 micropayments.
  *
  * @example
- *   import { Arkova } from '@carsonarkova/sdk';
+ *   import { Arkova } from 'arkova';
  *
  *   const arkova = new Arkova({ apiKey: 'ak_live_...' });
  *
