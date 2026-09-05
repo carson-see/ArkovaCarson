@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TOOL_DEFINITIONS, handleToolCall } from './index.js';
+import { TOOL_DEFINITIONS, handleToolCall, VERIFY_BATCH_SYNC_LIMIT, DISABLED_CAPABILITY_PHRASE } from './index.js';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -122,11 +122,146 @@ describe('Tool Definitions', () => {
 
   // D6/F7 — SYNC_THRESHOLD=20 server-side; above that the worker returns
   // 202 + job_id with no results and this tool cannot fetch them.
-  it('should cap arkova_batch_verify at 20 public IDs', () => {
+  it('should cap arkova_batch_verify at VERIFY_BATCH_SYNC_LIMIT public IDs', () => {
     const batchTool = TOOL_DEFINITIONS.find(t => t.name === 'arkova_batch_verify')!;
-    expect(batchTool.inputSchema.properties.public_ids.maxItems).toBe(20);
-    expect(batchTool.description).toContain('up to 20 public IDs');
+    expect(batchTool.description).toContain(`up to ${VERIFY_BATCH_SYNC_LIMIT} public IDs`);
     expect(batchTool.description).toContain('results returned inline');
+  });
+
+  // The wire encoding for public_ids is a JSON *string* (the args shape is
+  // Record<string, string>), so JSON Schema's array-only `maxItems` keyword
+  // never applied and no MCP client could enforce it. The runtime cap in
+  // handleBatchVerify is the only real one.
+  it('does not put an inert array keyword on the string-typed public_ids', () => {
+    const batchTool = TOOL_DEFINITIONS.find(t => t.name === 'arkova_batch_verify')!;
+    expect(batchTool.inputSchema.properties.public_ids.type).toBe('string');
+    expect(batchTool.inputSchema.properties.public_ids).not.toHaveProperty('maxItems');
+  });
+
+  // Pinned constant, not a literal. Sources: the SDK's
+  // packages/sdk/src/client.ts VERIFY_BATCH_SYNC_LIMIT and the worker's
+  // services/worker/src/api/v1/batch.ts SYNC_THRESHOLD.
+  it('pins the synchronous batch limit at 20', () => {
+    expect(VERIFY_BATCH_SYNC_LIMIT).toBe(20);
+  });
+});
+
+// Every handler's non-OK path must disclose a 503 as "capability off, nothing
+// ran" rather than collapsing it into a bare status number an agent reads as
+// an empty/negative result. One helper, one phrase, all six handlers.
+describe('503 disabled-capability disclosure (all 6 handlers)', () => {
+  const cases: Array<{ tool: string; args: Record<string, string>; detail: string; body: unknown }> = [
+    {
+      tool: 'arkova_verify_anchor',
+      args: { public_id: 'ARK-DOC-1' },
+      detail: 'Verification is not currently enabled',
+      body: { error: 'service_unavailable', message: 'Verification is not currently enabled' },
+    },
+    {
+      tool: 'arkova_anchor_status',
+      args: { public_id: 'ARK-DOC-1' },
+      detail: 'Anchor status is not currently enabled',
+      body: { message: 'Anchor status is not currently enabled' },
+    },
+    {
+      tool: 'arkova_search_anchors',
+      args: { query: 'test' },
+      detail: 'Semantic search is not currently enabled',
+      body: { error: 'service_unavailable', message: 'Semantic search is not currently enabled' },
+    },
+    {
+      tool: 'arkova_create_attestation',
+      args: {
+        attestation_type: 'VERIFICATION',
+        subject_identifier: 'ARK-DOC-1',
+        attester_name: 'Attester',
+        claims: '[{"claim":"x"}]',
+        summary: 'summary',
+      },
+      // `error` only — exercises the message ?? error ?? code fallback chain.
+      detail: 'Attestations are not currently enabled',
+      body: { error: 'Attestations are not currently enabled' },
+    },
+    {
+      tool: 'arkova_batch_verify',
+      args: { public_ids: '["ARK-DOC-1"]' },
+      // `code` only — exercises the last link of the fallback chain.
+      detail: 'BATCH_VERIFY_DISABLED',
+      body: { code: 'BATCH_VERIFY_DISABLED' },
+    },
+    {
+      tool: 'arkova_verify_signature',
+      args: { signature_id: 'ARK-SIG-1' },
+      // `error` + `code`: the unified chain (message ?? error ?? code) picks
+      // `error`, where this handler's old private fallback (message ?? code)
+      // picked the code. That divergence is the thing being removed.
+      detail: 'AdES signature service is not currently enabled',
+      body: { error: 'AdES signature service is not currently enabled', code: 'ADES_SIGNATURES_DISABLED' },
+    },
+  ];
+
+  for (const c of cases) {
+    it(`${c.tool} discloses a 503 with the canonical phrase and the server detail`, async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: () => Promise.resolve(c.body),
+      });
+
+      const result = await handleToolCall(c.tool, c.args);
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(DISABLED_CAPABILITY_PHRASE);
+      expect(result.content[0].text).toContain(c.detail);
+    });
+  }
+
+  it('falls back to service_unavailable when the 503 body is unparseable', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: () => Promise.reject(new Error('not json')),
+    });
+
+    const result = await handleToolCall('arkova_search_anchors', { query: 'test' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain(DISABLED_CAPABILITY_PHRASE);
+    expect(result.content[0].text).toContain('service_unavailable');
+  });
+
+  it('leaves a 404 unchanged — not found is a real answer, not a disabled capability', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404, json: () => Promise.resolve({}) });
+
+    const result = await handleToolCall('arkova_verify_anchor', { public_id: 'ARK-NOPE' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('Record not found');
+    expect(result.content[0].text).not.toContain(DISABLED_CAPABILITY_PHRASE);
+  });
+
+  it('leaves a 400 validation failure unchanged, details array included', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({
+        error: 'validation_error',
+        details: [{ field: 'attester_name', message: 'Required' }],
+      }),
+    });
+
+    const result = await handleToolCall('arkova_create_attestation', {
+      attestation_type: 'VERIFICATION',
+      subject_identifier: 'ARK-DOC-1',
+      attester_name: '',
+      claims: '[{"claim":"x"}]',
+      summary: 'summary',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation_error');
+    expect(result.content[0].text).toContain('attester_name: Required');
+    expect(result.content[0].text).not.toContain(DISABLED_CAPABILITY_PHRASE);
   });
 });
 
@@ -243,7 +378,8 @@ describe('handleToolCall', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('disabled');
     expect(result.content[0].text).toContain('NOT a "not found" or negative verification result');
-    expect(result.content[0].text).toContain('ADES_SIGNATURES_DISABLED');
+    // message ?? error ?? code — this body has no `message`, so `error` wins.
+    expect(result.content[0].text).toContain('AdES signature service is not currently enabled');
   });
 
   it('still reports an ordinary signature-verification failure distinctly from "disabled"', async () => {

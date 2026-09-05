@@ -13,6 +13,8 @@ import {
   ArkovaBatchVerifyTool,
   ArkovaVerifySignatureTool,
   getArkovaTools,
+  VERIFY_BATCH_SYNC_LIMIT,
+  DISABLED_CAPABILITY_PHRASE,
   type ArkovaToolConfig,
 } from './index.js';
 
@@ -245,7 +247,10 @@ describe('ArkovaVerifySignatureTool', () => {
     expect(result.valid).toBe(false);
     expect(result.error).toContain('disabled');
     expect(result.error).toContain('NOT a "not found" or negative verification result');
-    expect(result.error).toContain('ADES_SIGNATURES_DISABLED');
+    // Unified chain is message ?? error ?? code; this body has no `message`,
+    // so `error` wins where the old private fallback (message ?? code) picked
+    // the code. Removing that divergence is the point of the shared helper.
+    expect(result.error).toContain('AdES signature service is not currently enabled');
   });
 });
 
@@ -299,5 +304,118 @@ describe('Tool terminology guard (CLAUDE.md §1.3 + F8 credential scrub)', () =>
   it('should not claim public_id can be a document fingerprint', () => {
     const verifyTool = tools.find(t => t.name === 'arkova_verify_anchor')!;
     expect(verifyTool.description.toLowerCase()).not.toContain('fingerprint');
+  });
+});
+
+
+// Parity with sdks/mcp-server: the disclosure must exist on every handler's
+// non-OK path, from one helper and one phrase — not on 2 of 6 with divergent
+// body-field fallbacks.
+describe('503 disabled-capability disclosure (all 6 tools)', () => {
+  const cases: Array<{ label: string; run: () => Promise<string>; detail: string; body: unknown }> = [
+    {
+      label: 'ArkovaVerifyTool',
+      run: () => new ArkovaVerifyTool(mockConfig).call('ARK-DOC-1'),
+      detail: 'Verification is not currently enabled',
+      body: { error: 'service_unavailable', message: 'Verification is not currently enabled' },
+    },
+    {
+      label: 'ArkovaAnchorStatusTool',
+      run: () => new ArkovaAnchorStatusTool(mockConfig).call('ARK-DOC-1'),
+      detail: 'Anchor status is not currently enabled',
+      body: { message: 'Anchor status is not currently enabled' },
+    },
+    {
+      label: 'ArkovaSearchTool',
+      run: () => new ArkovaSearchTool(mockConfig).call('test'),
+      detail: 'Semantic search is not currently enabled',
+      body: { error: 'service_unavailable', message: 'Semantic search is not currently enabled' },
+    },
+    {
+      label: 'ArkovaAttestTool',
+      run: () => new ArkovaAttestTool(mockConfig).call('{"attestation_type":"VERIFICATION"}'),
+      // `error` only — exercises the middle link of message ?? error ?? code.
+      detail: 'Attestations are not currently enabled',
+      body: { error: 'Attestations are not currently enabled' },
+    },
+    {
+      label: 'ArkovaBatchVerifyTool',
+      run: () => new ArkovaBatchVerifyTool(mockConfig).call('["ARK-DOC-1"]'),
+      // `code` only — exercises the last link.
+      detail: 'BATCH_VERIFY_DISABLED',
+      body: { code: 'BATCH_VERIFY_DISABLED' },
+    },
+    {
+      label: 'ArkovaVerifySignatureTool',
+      run: () => new ArkovaVerifySignatureTool(mockConfig).call('ARK-SIG-1'),
+      detail: 'AdES signature service is not currently enabled',
+      body: { error: 'AdES signature service is not currently enabled', code: 'ADES_SIGNATURES_DISABLED' },
+    },
+  ];
+
+  for (const c of cases) {
+    it(`${c.label} discloses a 503 with the canonical phrase and the server detail`, async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: () => Promise.resolve(c.body),
+      });
+
+      const result = JSON.parse(await c.run());
+
+      expect(result.error).toContain(DISABLED_CAPABILITY_PHRASE);
+      expect(result.error).toContain(c.detail);
+    });
+  }
+
+  it('falls back to service_unavailable when the 503 body is unreadable', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const result = JSON.parse(await new ArkovaSearchTool(mockConfig).call('test'));
+
+    expect(result.error).toContain(DISABLED_CAPABILITY_PHRASE);
+    expect(result.error).toContain('service_unavailable');
+  });
+
+  it('leaves a 404 unchanged — not found is a real answer, not a disabled capability', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404, json: () => Promise.resolve({}) });
+
+    const result = JSON.parse(await new ArkovaVerifyTool(mockConfig).call('ARK-NOPE'));
+
+    expect(result.error).toBe('Record not found');
+    expect(JSON.stringify(result)).not.toContain(DISABLED_CAPABILITY_PHRASE);
+  });
+
+  it('leaves a 400 unchanged, surfacing the server error field', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ error: 'validation_error' }),
+    });
+
+    const result = JSON.parse(await new ArkovaAttestTool(mockConfig).call('{"attestation_type":"X"}'));
+
+    expect(result.error).toBe('validation_error');
+    expect(result.error).not.toContain(DISABLED_CAPABILITY_PHRASE);
+  });
+});
+
+// Pinned constant, not a literal. Sources: packages/sdk/src/client.ts
+// VERIFY_BATCH_SYNC_LIMIT and services/worker/src/api/v1/batch.ts
+// SYNC_THRESHOLD — neither importable from this standalone package.
+describe('VERIFY_BATCH_SYNC_LIMIT', () => {
+  it('pins the synchronous batch limit at 20', () => {
+    expect(VERIFY_BATCH_SYNC_LIMIT).toBe(20);
+  });
+
+  it('is the value the batch tool description and over-cap message quote', async () => {
+    const tool = new ArkovaBatchVerifyTool(mockConfig);
+    expect(tool.description).toContain(`up to ${VERIFY_BATCH_SYNC_LIMIT} public IDs`);
+
+    const tooMany = Array.from({ length: VERIFY_BATCH_SYNC_LIMIT + 1 }, (_, i) => `ARK-${i}`);
+    const result = JSON.parse(await tool.call(JSON.stringify(tooMany)));
+
+    expect(result.error).toContain(`Maximum ${VERIFY_BATCH_SYNC_LIMIT} public IDs`);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

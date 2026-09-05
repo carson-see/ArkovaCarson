@@ -129,3 +129,55 @@ timestamp" (§1.3 violation); fixed to "network anchor timestamp".
 **Version:** `package.json` and `SERVER_VERSION` (`cli.ts`) bumped to `3.0.0` — breaking change
 (tool removal + rename). `sdks/langchain-ts/package.json` bumped to `3.0.0` in the same pass for
 tool-set parity.
+
+## 2026-09-05 — 503 disclosure unified; inert `maxItems` removed; batch cap named (PR #2589 review)
+
+**One 503 disclosure, on all 6 handlers.** The "capability is off, nothing ran" disclosure existed
+on exactly 2 of 6 handlers (`arkova_search_anchors`, `arkova_verify_signature`) and the two spelled
+their server-detail fallback differently — one read `body?.message ?? body?.error`, the other
+`body?.message ?? body?.code`. The other four collapsed a live 503 into a bare
+`"… API returned 503"`, which is the exact failure mode BUG-008/027 was raised about: an agent reads
+a bare status as a completed request that found nothing.
+
+Now one helper, `disabledCapabilityMessage(status, body, subject)`, applied on **every** handler's
+non-OK path. It returns `null` when the status is not 503 so the caller falls through to its
+ordinary error text, and resolves the server detail as `message ?? error ?? code` (falling back to
+`service_unavailable`). The canonical sentence is the exported `DISABLED_CAPABILITY_PHRASE`:
+
+> `<subject> is disabled in this environment and no request ran. This is NOT an empty result, NOT a
+> "not found" or negative verification result, and does not mean no matching records exist.`
+
+Subjects: `Record verification`, `Anchor status lookup`, `Search`, `Attestation creation`,
+`Batch verification`, `Signature verification`.
+
+**One behaviour change to be aware of:** `arkova_verify_signature`'s old private fallback was
+`message ?? code`, so for the worker's `{error, code}` AdES body it surfaced
+`ADES_SIGNATURES_DISABLED`. The unified chain puts `error` ahead of `code`, so it now surfaces the
+human-readable `AdES signature service is not currently enabled`. That is the divergence being
+removed, not a regression; the test assertion was updated to match. 404 and 400 paths are untouched
+— `handleCreateAttestation` still surfaces the worker's `details[]` array on a 400.
+
+Body reads go through `readErrorBody()`, which uses `try`/`catch` rather than `res.json().catch()`:
+a `json()` that throws synchronously (or a response object without one, as several tests mock) must
+not escape as a tool crash.
+
+**`maxItems: 20` removed from `public_ids` (it was inert).** `arkova_batch_verify`'s wire encoding
+is a JSON *string* — the args shape is `Record<string, string>`, same pattern as `claims` — so JSON
+Schema's array-only `maxItems` keyword never applied and no MCP client could have enforced it. It
+read as a live guard while doing nothing. The `maxItems?: number` slot on `McpToolDefinition` went
+with it (no other property used it). The runtime cap in `handleBatchVerify` is unchanged and is the
+only real one.
+
+**`VERIFY_BATCH_SYNC_LIMIT = 20`** is now an exported constant instead of a literal repeated across
+the tool description, the runtime guard, and the over-cap error text. Its doc comment names the two
+upstream sources it mirrors — `packages/sdk/src/client.ts` `VERIFY_BATCH_SYNC_LIMIT` and
+`services/worker/src/api/v1/batch.ts` `SYNC_THRESHOLD` — because this package can import neither
+(no workspace link to the rest of the repo). `index.test.ts` pins the value at 20, so a change to
+the worker's threshold that is not mirrored here fails a test rather than silently sending batches
+the worker answers with a `202` this server cannot follow up on. `sdks/langchain-ts` carries the
+identical constant for the same reason.
+
+Tests: `describe('503 disabled-capability disclosure (all 6 handlers)')` — a case per handler
+asserting the canonical phrase plus that handler's server detail, with the fallback chain exercised
+end to end (`message` only, `error` only, `code` only, unparseable body), plus 404- and
+400-unchanged cases. Suite is 49 tests.

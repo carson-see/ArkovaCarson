@@ -31,7 +31,7 @@ interface McpToolDefinition {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, { type: string; description: string; enum?: string[]; maxItems?: number }>;
+    properties: Record<string, { type: string; description: string; enum?: string[] }>;
     required: string[];
   };
 }
@@ -70,6 +70,69 @@ async function arkovaFetch(path: string, options: RequestInit = {}): Promise<Res
  */
 const API_ONLY_NOTE =
   'Queries the Arkova verification API over HTTPS; it does NOT read local files, environment variables, or stored secrets.';
+
+/**
+ * Maximum public IDs the verification API answers **synchronously**.
+ *
+ * Mirrors two upstream sources, neither of which this package can import
+ * (it has no dependency on the repo's other packages):
+ *   - `packages/sdk/src/client.ts` `VERIFY_BATCH_SYNC_LIMIT`
+ *   - `services/worker/src/api/v1/batch.ts` `SYNC_THRESHOLD`
+ * Above this the worker answers `202 {job_id,…}` with no results and this
+ * server has no way to fetch them later, so the tool refuses the call.
+ * Keep the three in step; `index.test.ts` pins the value.
+ */
+export const VERIFY_BATCH_SYNC_LIMIT = 20;
+
+/**
+ * The one sentence every handler uses to disclose a 503.
+ *
+ * A disabled capability answered with a bare status number reads to an agent
+ * as a completed request that found nothing — "no matching records",
+ * "not verified", "not found". It is none of those: nothing ran. Say so in
+ * the surface the model reads, identically on every tool, so the disclosure
+ * cannot drift handler-to-handler (it previously existed on only 2 of 6,
+ * with two different body-field fallbacks).
+ */
+export const DISABLED_CAPABILITY_PHRASE =
+  'is disabled in this environment and no request ran. This is NOT an empty result, ' +
+  'NOT a "not found" or negative verification result, and does not mean no matching records exist.';
+
+/** Shape of the error bodies the worker returns; fields are all optional. */
+interface ErrorBody {
+  message?: string;
+  error?: string;
+  code?: string;
+  details?: Array<{ field: string; message: string }>;
+}
+
+/**
+ * Parse an error response body once; null when there is no readable JSON.
+ * `try`, not `.catch()`: a `json()` that throws synchronously (or is absent
+ * entirely) must not escape as a tool crash.
+ */
+async function readErrorBody(res: Response): Promise<ErrorBody | null> {
+  try {
+    return (await res.json()) as ErrorBody | null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the 503 disclosure for `subject`, or null when the status is not a
+ * 503 (so a caller can fall through to its ordinary error text).
+ * Server detail resolves `message ?? error ?? code`.
+ */
+function disabledCapabilityMessage(
+  status: number,
+  body: ErrorBody | null,
+  subject: string,
+): string | null {
+  if (status !== 503) return null;
+  const detail = body?.message ?? body?.error ?? body?.code ?? 'service_unavailable';
+  return `${subject} ${DISABLED_CAPABILITY_PHRASE} Server detail: ${detail}`;
+}
 
 // ─── Tool Definitions ──────────────────────────────────────────────────
 
@@ -153,14 +216,17 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'arkova_batch_verify',
-    description: 'Verify up to 20 public IDs at once; results returned inline in a single response.',
+    description: `Verify up to ${VERIFY_BATCH_SYNC_LIMIT} public IDs at once; results returned inline in a single response.`,
     inputSchema: {
       type: 'object',
       properties: {
         public_ids: {
           type: 'string',
-          description: 'JSON array of up to 20 public IDs to verify',
-          maxItems: 20,
+          // No `maxItems` here: the wire encoding is a JSON *string* (the
+          // args shape is Record<string, string>), so the array-only JSON
+          // Schema keyword never applied and no client could enforce it.
+          // handleBatchVerify's runtime cap is the real one.
+          description: `JSON array of up to ${VERIFY_BATCH_SYNC_LIMIT} public IDs to verify`,
         },
       },
       required: ['public_ids'],
@@ -225,6 +291,8 @@ async function handleVerifyCredential(publicId: string): Promise<McpToolResult> 
   const res = await arkovaFetch(`/api/v1/verify/${encodeURIComponent(publicId)}`);
   if (!res.ok) {
     if (res.status === 404) return textResult('Record not found. The public ID may be incorrect.');
+    const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Record verification');
+    if (disabled) return errorResult(disabled);
     return errorResult(`Verification API returned ${res.status}`);
   }
   const data = await res.json();
@@ -233,7 +301,11 @@ async function handleVerifyCredential(publicId: string): Promise<McpToolResult> 
 
 async function handleGetCredentialStatus(publicId: string): Promise<McpToolResult> {
   const res = await arkovaFetch(`/api/v1/verify/${encodeURIComponent(publicId)}`);
-  if (!res.ok) return errorResult(`API returned ${res.status}`);
+  if (!res.ok) {
+    const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Anchor status lookup');
+    if (disabled) return errorResult(disabled);
+    return errorResult(`API returned ${res.status}`);
+  }
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
 }
@@ -252,14 +324,8 @@ async function handleSearchCredentials(query: string, limit: number): Promise<Mc
   const safeLimit = Math.min(Math.max(limit, 1), 20);
   const res = await arkovaFetch(`/api/v1/verify/search?q=${encodeURIComponent(query)}&limit=${safeLimit}`);
   if (!res.ok) {
-    if (res.status === 503) {
-      const body = await res.json().catch(() => null) as { message?: string; error?: string } | null;
-      return errorResult(
-        'Search is disabled in this environment and no search ran. This is NOT an empty result — ' +
-        'it does not mean "no matching records exist". ' +
-        `Server detail: ${body?.message ?? body?.error ?? 'service_unavailable'}`,
-      );
-    }
+    const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Search');
+    if (disabled) return errorResult(disabled);
     return errorResult(`Search API returned ${res.status}`);
   }
   const data = await res.json();
@@ -297,11 +363,13 @@ async function handleCreateAttestation(args: Record<string, string>): Promise<Mc
     }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: string; details?: Array<{ field: string; message: string }> };
-    const detailText = Array.isArray(err.details) && err.details.length > 0
+    const err = await readErrorBody(res);
+    const disabled = disabledCapabilityMessage(res.status, err, 'Attestation creation');
+    if (disabled) return errorResult(disabled);
+    const detailText = Array.isArray(err?.details) && err.details.length > 0
       ? ` Details: ${err.details.map((d) => `${d.field}: ${d.message}`).join('; ')}`
       : '';
-    return errorResult((err.error || `API returned ${res.status}`) + detailText);
+    return errorResult((err?.error || `API returned ${res.status}`) + detailText);
   }
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
@@ -314,14 +382,8 @@ async function handleVerifySignature(signatureId: string): Promise<McpToolResult
   });
   if (!res.ok) {
     if (res.status === 404) return textResult('Signature not found.');
-    if (res.status === 503) {
-      const body = await res.json().catch(() => null) as { message?: string; code?: string } | null;
-      return errorResult(
-        'Signature verification is disabled in this environment and no check ran. This is NOT a ' +
-        '"not found" or negative verification result. ' +
-        `Server detail: ${body?.message ?? body?.code ?? 'service_unavailable'}`,
-      );
-    }
+    const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Signature verification');
+    if (disabled) return errorResult(disabled);
     return errorResult(`Signature verification API returned ${res.status}`);
   }
   const data = await res.json();
@@ -329,7 +391,7 @@ async function handleVerifySignature(signatureId: string): Promise<McpToolResult
 }
 
 /**
- * D6/F7 — the worker's SYNC_THRESHOLD is 20; a batch above that returns
+ * D6/F7 — the worker's SYNC_THRESHOLD is VERIFY_BATCH_SYNC_LIMIT; a batch above that returns
  * `202 {job_id,…}` with no results and this tool has no way to fetch them
  * later. Cap the tool's own limit at 20 so every call this tool accepts
  * returns results inline.
@@ -344,10 +406,11 @@ async function handleBatchVerify(publicIdsJson: string): Promise<McpToolResult> 
   if (!Array.isArray(publicIds) || publicIds.length === 0) {
     return errorResult('Input must be a non-empty JSON array of public IDs.');
   }
-  if (publicIds.length > 20) {
+  if (publicIds.length > VERIFY_BATCH_SYNC_LIMIT) {
     return errorResult(
-      'Maximum 20 public IDs per batch. The Arkova API processes larger batches asynchronously ' +
-      '(202 + job_id) and this tool has no way to fetch results from that job — split into batches of 20 or fewer.',
+      `Maximum ${VERIFY_BATCH_SYNC_LIMIT} public IDs per batch. The Arkova API processes larger batches ` +
+      'asynchronously (202 + job_id) and this tool has no way to fetch results from that job — split into ' +
+      `batches of ${VERIFY_BATCH_SYNC_LIMIT} or fewer.`,
     );
   }
 
@@ -355,7 +418,11 @@ async function handleBatchVerify(publicIdsJson: string): Promise<McpToolResult> 
     method: 'POST',
     body: JSON.stringify({ public_ids: publicIds }),
   });
-  if (!res.ok) return errorResult(`Batch verify API returned ${res.status}`);
+  if (!res.ok) {
+    const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Batch verification');
+    if (disabled) return errorResult(disabled);
+    return errorResult(`Batch verify API returned ${res.status}`);
+  }
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
 }

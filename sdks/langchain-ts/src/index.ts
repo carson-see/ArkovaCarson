@@ -61,6 +61,65 @@ const DEFAULT_BASE_URL = 'https://api.arkova.ai';
 const API_ONLY_NOTE =
   'Queries the Arkova verification API over HTTPS; it does NOT read local files, environment variables, or stored secrets.';
 
+/**
+ * Maximum public IDs the verification API answers **synchronously**.
+ *
+ * Mirrors two upstream sources, neither importable from this standalone
+ * package: `packages/sdk/src/client.ts` `VERIFY_BATCH_SYNC_LIMIT` and
+ * `services/worker/src/api/v1/batch.ts` `SYNC_THRESHOLD`. Above this the
+ * worker answers `202 {job_id,…}` with no results and this package has no
+ * way to fetch them later. Keep the three in step; `index.test.ts` pins it.
+ */
+export const VERIFY_BATCH_SYNC_LIMIT = 20;
+
+/**
+ * The one sentence every tool uses to disclose a 503 — parity with
+ * `sdks/mcp-server/src/index.ts`.
+ *
+ * A disabled capability answered with a bare status number reads to an agent
+ * as a completed request that found nothing. It is not: nothing ran. Stated
+ * identically on every tool so the disclosure cannot drift tool-to-tool (it
+ * previously existed on 2 of 6, with two different body-field fallbacks).
+ */
+export const DISABLED_CAPABILITY_PHRASE =
+  'is disabled in this environment and no request ran. This is NOT an empty result, ' +
+  'NOT a "not found" or negative verification result, and does not mean no matching records exist.';
+
+/** Shape of the error bodies the worker returns; fields are all optional. */
+interface ErrorBody {
+  message?: string;
+  error?: string;
+  code?: string;
+}
+
+/**
+ * Parse an error response body once; null when there is no readable JSON.
+ * `try`, not `.catch()`: a `json()` that throws synchronously (or is absent)
+ * must not escape as a tool crash.
+ */
+async function readErrorBody(res: Response): Promise<ErrorBody | null> {
+  try {
+    return (await res.json()) as ErrorBody | null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the 503 disclosure for `subject`, or null when the status is not a
+ * 503 (so a caller falls through to its ordinary error text).
+ * Server detail resolves `message ?? error ?? code`.
+ */
+function disabledCapabilityMessage(
+  status: number,
+  body: ErrorBody | null,
+  subject: string,
+): string | null {
+  if (status !== 503) return null;
+  const detail = body?.message ?? body?.error ?? body?.code ?? 'service_unavailable';
+  return `${subject} ${DISABLED_CAPABILITY_PHRASE} Server detail: ${detail}`;
+}
+
 // ─── HTTP Client ───────────────────────────────────────────────────────
 
 async function arkovaFetch(
@@ -100,6 +159,8 @@ export class ArkovaVerifyTool {
 
       if (!res.ok) {
         if (res.status === 404) return JSON.stringify({ valid: false, error: 'Record not found' });
+        const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Record verification');
+        if (disabled) return JSON.stringify({ valid: false, error: disabled });
         return JSON.stringify({ valid: false, error: `API returned ${res.status}` });
       }
 
@@ -133,6 +194,8 @@ export class ArkovaAnchorStatusTool {
       const res = await arkovaFetch(this.config, `/api/v1/verify/${encodeURIComponent(publicId)}`);
 
       if (!res.ok) {
+        const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Anchor status lookup');
+        if (disabled) return JSON.stringify({ error: disabled });
         return JSON.stringify({ error: `API returned ${res.status}` });
       }
 
@@ -168,16 +231,8 @@ export class ArkovaSearchTool {
       );
 
       if (!res.ok) {
-        if (res.status === 503) {
-          const body = await res.json().catch(() => null) as { message?: string; error?: string } | null;
-          return JSON.stringify({
-            results: [],
-            error:
-              'Search is disabled in this environment and no search ran. This is NOT an empty result — ' +
-              'it does not mean "no matching records exist". ' +
-              `Server detail: ${body?.message ?? body?.error ?? 'service_unavailable'}`,
-          });
-        }
+        const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Search');
+        if (disabled) return JSON.stringify({ results: [], error: disabled });
         return JSON.stringify({ results: [], error: `API returned ${res.status}` });
       }
 
@@ -207,8 +262,10 @@ export class ArkovaAttestTool {
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        return JSON.stringify({ error: (err as any).error || `API returned ${res.status}` });
+        const err = await readErrorBody(res);
+        const disabled = disabledCapabilityMessage(res.status, err, 'Attestation creation');
+        if (disabled) return JSON.stringify({ error: disabled });
+        return JSON.stringify({ error: err?.error || `API returned ${res.status}` });
       }
 
       const data = await res.json() as AttestationResult;
@@ -225,7 +282,7 @@ export class ArkovaAttestTool {
 
 export class ArkovaBatchVerifyTool {
   name = 'arkova_batch_verify';
-  description = `Verify up to 20 public IDs at once; results returned inline. Input should be a JSON array of public IDs (e.g., ["ARK-X-DOC-1", "ARK-Y-DOC-2"]). ${API_ONLY_NOTE}`;
+  description = `Verify up to ${VERIFY_BATCH_SYNC_LIMIT} public IDs at once; results returned inline. Input should be a JSON array of public IDs (e.g., ["ARK-X-DOC-1", "ARK-Y-DOC-2"]). ${API_ONLY_NOTE}`;
   private config: ArkovaToolConfig;
 
   constructor(config: ArkovaToolConfig) {
@@ -238,11 +295,12 @@ export class ArkovaBatchVerifyTool {
       if (!Array.isArray(publicIds) || publicIds.length === 0) {
         return JSON.stringify({ error: 'Input must be a JSON array of public IDs' });
       }
-      if (publicIds.length > 20) {
+      if (publicIds.length > VERIFY_BATCH_SYNC_LIMIT) {
         return JSON.stringify({
           error:
-            'Maximum 20 public IDs per batch. The Arkova API processes larger batches asynchronously ' +
-            '(202 + job_id) and this tool has no way to fetch results from that job — split into batches of 20 or fewer.',
+            `Maximum ${VERIFY_BATCH_SYNC_LIMIT} public IDs per batch. The Arkova API processes larger batches ` +
+            'asynchronously (202 + job_id) and this tool has no way to fetch results from that job — split into ' +
+            `batches of ${VERIFY_BATCH_SYNC_LIMIT} or fewer.`,
         });
       }
 
@@ -252,6 +310,8 @@ export class ArkovaBatchVerifyTool {
       });
 
       if (!res.ok) {
+        const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Batch verification');
+        if (disabled) return JSON.stringify({ error: disabled });
         return JSON.stringify({ error: `API returned ${res.status}` });
       }
 
@@ -282,16 +342,8 @@ export class ArkovaVerifySignatureTool {
 
       if (!res.ok) {
         if (res.status === 404) return JSON.stringify({ valid: false, error: 'Signature not found' });
-        if (res.status === 503) {
-          const body = await res.json().catch(() => null) as { message?: string; code?: string } | null;
-          return JSON.stringify({
-            valid: false,
-            error:
-              'Signature verification is disabled in this environment and no check ran. This is NOT a ' +
-              '"not found" or negative verification result. ' +
-              `Server detail: ${body?.message ?? body?.code ?? 'service_unavailable'}`,
-          });
-        }
+        const disabled = disabledCapabilityMessage(res.status, await readErrorBody(res), 'Signature verification');
+        if (disabled) return JSON.stringify({ valid: false, error: disabled });
         return JSON.stringify({ valid: false, error: `API returned ${res.status}` });
       }
 
