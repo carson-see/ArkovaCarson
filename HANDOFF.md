@@ -14,6 +14,16 @@
 
 ## Now
 
+### SCRUM-4035 / UAT-03 — OAuth mailbox confirmation candidate (2026-09-05)
+
+Implementation is on `cto/uat03-oauth-confirmation-20260905`; **not released or activated**.
+See [the scope, evidence, and rollout gates](docs/uat03-email-confirmation.md).
+Migration 0436 keeps activation NULL; existing production Auth hook configuration is unknown
+(read returned 403), so never overwrite it. UAT-02 owns Google consent branding; UAT-04 owns
+MFA; UAT-17 owns verified-domain policy. The retired beta env sample cleanup belongs to
+SCRUM-4031/PR #2653 and is carried with this auth configuration change by CTO assignment.
+
+
 ### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
 
 **711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
@@ -2187,3 +2197,5 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against the Supabase Management API project list/config, `scripts/ci/staging-honesty-preflight.ts` artifacts, psql ledger queries, and the harness logs under `~/arkova-soak/mfa-3167/`._
+
+_Last refreshed: 2026-09-05 by Codex CTO UAT-03 — claims verified against gcloud/MCP/CI output (candidate local checks and read-only production ledger/ACL; full PR CI and hosted release remain pending)._

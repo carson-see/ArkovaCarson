@@ -125,3 +125,7 @@ _Restored 2026-07-28 — same union-merge-driver incident as the Recent Changes 
 - `@/lib/supabase` — the typed Supabase client
 - `@/types/database.types` — auto-generated from `supabase gen types`
 - `useAuth` — most hooks depend on the authenticated user
+
+## 2026-09-05 — SCRUM-4035 pending OAuth profile access
+
+`useProfile` suppresses product-data queries while the session carries `arkova_email_pending`, including its loading indicator, so confirmation remains reachable. A confirmed token re-enables the existing profile query and onboarding destination calculation; covered by hook and real-app browser positive controls.

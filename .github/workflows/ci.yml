@@ -1599,6 +1599,20 @@ jobs:
         if: steps.e2e-changed.outputs.changed == 'true'
         run: node_modules/.bin/playwright install --with-deps chromium
 
+      - name: Verify OAuth email confirmation UI
+        if: steps.e2e-changed.outputs.changed == 'true'
+        # Real app routes/components; owned mocked Auth/worker boundaries, no seed setup.
+        run: node_modules/.bin/playwright test --config playwright.uat03.config.ts
+        timeout-minutes: 3
+
+      - name: Upload OAuth confirmation UI evidence
+        if: always() && steps.e2e-changed.outputs.changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oauth-email-confirmation-ui
+          path: output/playwright/uat03*
+          retention-days: 14
+
       - name: Setup Supabase CLI
         if: steps.e2e-changed.outputs.changed == 'true'
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0

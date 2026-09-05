@@ -308,3 +308,7 @@ E2E job is low-risk.
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
+
+## 2026-09-05 — SCRUM-4035 OAuth confirmation routing
+
+`oauth-email-confirmation.spec.ts` runs via `playwright.uat03.config.ts` in CI before hosted-stack setup. Its seven real-app browser cases mock only external Auth/worker boundaries and verify pending routing without profile reads, delivery/retry, explicit proof confirmation, account switching/recovery, normal authenticated routing, and profile loading after confirmation. The default config excludes this separately executed fixture; no tests are conditionally skipped. Screenshots at 1280/375 are uploaded. This does not prove hosted Google consent or real mailbox receipt.

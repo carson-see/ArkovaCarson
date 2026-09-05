@@ -200,3 +200,11 @@ Body params are all validated positive-int / string-array or dropped — an out-
 - **`POST /smoke-test` anchor-count check now distinguishes "unknown" from "zero"** (BUG-009). `get_anchor_status_counts_fast().total` can be `-1`, the established sentinel for "no trustworthy count". Both still fail the check, but only one means the database is empty, and the detail string says which. The root cause is migration `0412`: an un-analysed `anchors` table published `{"total":0,"SECURED":0}` as measured, which this check read as "no anchors exist".
 - **`POST /calibration-refit` 500'd with `PGRST205`** because `public.calibration_features` does not exist — including in prod. Recreated by migration `0413`; no route change. The job itself was never broken.
 - Test note: `cron.test.ts` now mocks `../middleware/flagRegistry.js` and adds `dispatchWebhookEvent` to the `../webhooks/delivery.js` mock. `flagRegistry` is reached from exactly one cron route, so the module-level mock cannot perturb any other route.
+
+## SCRUM-4035 — pending OAuth identity
+
+`email-confirmation.ts` provides status/send/complete; `email-confirmation-runtime.ts` wires
+Supabase and audited delivery. Only this router imports `verifyEmailConfirmationToken`.
+Product routes retain `verifyAuthToken`, whose pending-role denial is terminal. Never use
+`getDb().auth.verifyOtp` or `refreshSession`: even with persistence disabled, these replace the
+shared client's Authorization with a user token. Proof clients must be fresh per operation.
