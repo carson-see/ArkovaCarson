@@ -70,7 +70,7 @@ Since the US does not have POPIA adequacy, Arkova must execute binding SCCs with
    - RLS on every Supabase table
    - Zero Trust ingress (Cloudflare Tunnel)
    - GCP KMS for key management
-   - MFA on admin access
+   - MFA available (opt-in) — administrator enforcement in progress (SCRUM-3167), NOT yet enforced
    - Annual penetration testing
 5. **Sub-processing** — no sub-processing without prior authorization; sub-processors bound by equivalent obligations
 6. **Data subject rights** — assist the responsible party in responding to access, correction, and deletion requests
@@ -149,4 +149,4 @@ This annex supplements the base SCC template at `../scc/base-template.md` with P
 
 ---
 
-_Last updated: 2026-04-14 | Status: NOT STARTED — SCCs drafted, formal assessment pending legal review_
+_Last updated: 2026-09-03 | Status: NOT STARTED — SCCs drafted, formal assessment pending legal review | MFA wording corrected to reflect production state (R-7 claims gate)_

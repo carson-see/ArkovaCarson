@@ -6,7 +6,7 @@
 
 Arkova currently has:
 - SOC 2 evidence collection in progress (`docs/compliance/soc2-evidence.md`)
-- FERPA + HIPAA compliance controls (disclosure log, MFA, audit, session timeout)
+- FERPA + HIPAA compliance controls (disclosure log, MFA [opt-in only as of 2026-09; administrator enforcement in progress under SCRUM-3167, not yet in effect — see `cyber-insurance-checklist.md`], audit, session timeout)
 - GDPR, eIDAS, Kenya DPA, Australia APP, POPIA, NDPA compliance
 - RLS on all database tables, client-side document processing
 - 24/24 audit findings + 9 pentest findings resolved
