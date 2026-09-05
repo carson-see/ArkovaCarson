@@ -125,7 +125,9 @@ test.describe('MFA enrollment and login challenge', () => {
 
       // Sign out (disposable user — safe to end its own session) and sign
       // back in: the fresh aal1 session must now be challenged.
-      await page.getByRole('button', { name: new RegExp(fullName, 'i') }).click();
+      // The compact header shows initials at mobile widths; target the actual
+      // user-menu trigger, whose full display name is visually hidden there.
+      await page.getByRole('banner').locator('button[aria-haspopup="menu"]').click();
       await page
         .getByRole('menuitem', { name: 'Sign out' })
         .or(page.getByRole('button', { name: 'Sign out' }))

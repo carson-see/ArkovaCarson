@@ -419,3 +419,7 @@ BroadcastChannel while the backup QR is visible, asserts the same QR/secret
 survive, and requires the AAL downgrade challenge after factor removal. It covers
 platform-admin enrollment plus ordinary-user and org-admin platform-route and
 foreign-private-profile denials. Enrollment screenshots mask QR and secret data.
+
+At375px the header account button is named by initials, because the full name
+is hidden. MFA sign-out probes use the banner's menu trigger across widths;
+they still click the real Sign out action and require a new-login challenge.
