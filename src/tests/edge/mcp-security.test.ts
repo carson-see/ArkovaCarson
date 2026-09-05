@@ -45,7 +45,8 @@ beforeAll(() => {
   }
 });
 import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-prompt-safety';
-import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
+import { enforceRateLimit, TOOL_LIMITS_RPM, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
+import { TOOL_DEFINITIONS } from '../../../services/edge/src/mcp-tools';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
 import { signEnvelope, verifyEnvelope } from '../../../services/edge/src/mcp-hmac';
 import {
@@ -229,6 +230,26 @@ describe('mcp-rate-limit — enforceRateLimit (SCRUM-919)', () => {
       expect(r.retryAfterSeconds).toBeGreaterThanOrEqual(1);
       expect(r.retryAfterSeconds).toBeLessThanOrEqual(60);
     }
+  });
+
+  // A key that is not a real tool name silently falls through to
+  // `default: 1000` — the per-tool limit is then never applied and nothing
+  // fails. The 2026-09-02 tool rename (`oracle_batch_verify` →
+  // `arkova_oracle_batch_verify`) is exactly the edit that can do this.
+  it('every TOOL_LIMITS_RPM key other than "default" is a real tool name', () => {
+    const toolNames = new Set(TOOL_DEFINITIONS.map((t) => t.name));
+    const unknown = Object.keys(TOOL_LIMITS_RPM)
+      .filter((key) => key !== 'default')
+      .filter((key) => !toolNames.has(key));
+    expect(unknown).toEqual([]);
+  });
+
+  it('resolves a tool-specific limit for every non-default key, and 1000 otherwise', () => {
+    for (const [key, limit] of Object.entries(TOOL_LIMITS_RPM)) {
+      expect(limit).toBeGreaterThan(0);
+      if (key !== 'default') expect(limit).not.toBe(TOOL_LIMITS_RPM.default);
+    }
+    expect(TOOL_LIMITS_RPM.default).toBe(1000);
   });
 
   it('allows traffic when KV read throws', async () => {
