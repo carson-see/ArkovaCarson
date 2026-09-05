@@ -66,6 +66,8 @@ EV = HOME / "evidence"
 EV.mkdir(parents=True, exist_ok=True)
 
 CYCLE_SECONDS = int(os.environ.get("BATCH_F_CYCLE_SECONDS", "900"))
+# Smoke-test escape hatch: run N cycles and exit. Unset in the real window.
+MAX_CYCLES = int(os.environ.get("BATCH_F_MAX_CYCLES", "0"))
 WINDOW_HOURS = 48
 TEST_DOMAIN = "arkova-batch-f.test"
 
@@ -116,6 +118,17 @@ def expect(cond: bool, msg: str) -> None:
 # --------------------------------------------------------------------------
 # transports
 # --------------------------------------------------------------------------
+class CIHeaders(dict):
+    """HTTP/2 lowercases header names; look them up case-insensitively."""
+
+    def get(self, key, default=None):  # type: ignore[override]
+        lk = key.lower()
+        for k, v in self.items():
+            if k.lower() == lk:
+                return v
+        return default
+
+
 def http(method, url, *, headers=None, body=None, timeout=45):
     data = None
     hdrs = dict(headers or {})
@@ -126,11 +139,11 @@ def http(method, url, *, headers=None, body=None, timeout=45):
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
-            return r.status, dict(r.headers), raw
+            return r.status, CIHeaders(r.headers), raw
     except urllib.error.HTTPError as e:
-        return e.code, dict(e.headers), e.read()
+        return e.code, CIHeaders(e.headers), e.read()
     except Exception as e:  # transport-level: recorded, never silently dropped
-        return 0, {"x-transport-error": type(e).__name__ + ": " + str(e)[:200]}, b""
+        return 0, CIHeaders({"x-transport-error": type(e).__name__ + ": " + str(e)[:200]}), b""
 
 
 def jbody(raw):
@@ -266,17 +279,23 @@ def probe_2655(rig: Rig, base: str, supa_url: str, service_key: str, tag: str, o
     email = f"bf-oauth-{tag}-{rand(6)}@{TEST_DOMAIN}"
     pw = "Batch-F-" + rand(16) + "!"
 
-    # 1. Real GoTrue signup (admin create -> the on_auth_user_created +
-    #    enrollment triggers fire on auth.users, not a hand-written INSERT).
+    # 1. Real GoTrue signup. email_confirm=False: this identity has NOT proved
+    #    its mailbox, which is the cohort 0436 exists to gate. (A signup that
+    #    ALREADY held mailbox proof is asserted separately at step 6 — the
+    #    migration deliberately carries that proof forward instead of
+    #    re-challenging, and conflating the two hides the real gate.)
     st, _h, raw = http(
         "POST", f"{supa_url}/auth/v1/admin/users",
         headers={"apikey": service_key, "Authorization": "Bearer " + service_key},
-        body={"email": email, "password": pw, "email_confirm": True},
+        body={"email": email, "password": pw, "email_confirm": False,
+              "app_metadata": {"provider": "google", "providers": ["google"]}},
     )
     expect(st in (200, 201), f"#2655 GoTrue admin signup failed {st}: {raw[:200]}")
     uid = jbody(raw)["id"]
 
-    # 2. Convert to an OAuth identity — the trigger's UPDATE OF raw_app_meta_data arm.
+    # 2. Ensure the identity presents as an OAuth provider. GoTrue stamps
+    #    provider=email for an admin-created user, so this is the trigger's
+    #    `UPDATE OF raw_app_meta_data` arm — the real Google-conversion path.
     rig.sql(
         "UPDATE auth.users SET raw_app_meta_data = "
         "jsonb_build_object('provider','google','providers',jsonb_build_array('google')) "
@@ -302,19 +321,31 @@ def probe_2655(rig: Rig, base: str, supa_url: str, service_key: str, tag: str, o
     pre = rig.one(f"SELECT count(*)::int AS n FROM org_members WHERE user_id = {q(uid)}::uuid")
     expect(pre["n"] == 0, f"#2655 REGRESSION: {pre['n']} org_members rows before confirmation")
 
-    # 3b. Worker HTTP surface for the pending identity (pending role JWT).
+    # 3b. Worker HTTP surface for the pending identity. GoTrue refuses a
+    #     password grant to an unconfirmed address, so email_confirmed_at is
+    #     stamped directly — this touches neither raw_app_meta_data (so the
+    #     enrollment trigger does not re-fire) nor the confirmation row, which
+    #     stays pending. That is the point: a GoTrue-confirmed session must
+    #     STILL be told mailbox proof is required by Arkova's own gate.
+    rig.sql(f"UPDATE auth.users SET email_confirmed_at = now() WHERE id = {q(uid)}::uuid "
+            "AND email_confirmed_at IS NULL;")
+    still_pending = rig.one(
+        f"SELECT (confirmed_at IS NULL) AS pending FROM private.oauth_email_confirmations "
+        f"WHERE user_id = {q(uid)}::uuid")
+    expect(still_pending["pending"] is True, "#2655 confirmation row resolved itself without proof")
     tokst, _th, tokraw = http(
         "POST", f"{supa_url}/auth/v1/token?grant_type=password",
         headers={"apikey": service_key}, body={"email": email, "password": pw},
     )
-    http_status = None
-    if tokst == 200:
-        jwt = jbody(tokraw).get("access_token")
-        s, _h2, r2 = http("GET", f"{base}/api/auth/email-confirmation",
-                          headers={"Authorization": "Bearer " + jwt,
-                                   "X-Serverless-Authorization": "Bearer " + identity_token()})
-        http_status = {"status": s, "body": jbody(r2)}
-    out["pr2655_http_status_endpoint"] = {"password_grant": tokst, "result": http_status}
+    expect(tokst == 200, f"#2655 password grant for the pending identity failed {tokst}: {tokraw[:200]}")
+    jwt = jbody(tokraw).get("access_token")
+    hs2, _h2, r2 = http("GET", f"{base}/api/auth/email-confirmation",
+                        headers={"Authorization": "Bearer " + jwt,
+                                 "X-Serverless-Authorization": "Bearer " + identity_token()})
+    body2 = jbody(r2)
+    out["pr2655_http_status_endpoint"] = {"status": hs2, "body": body2}
+    expect(hs2 == 200 and body2.get("required") is True,
+           f"#2655 worker status endpoint did not report confirmation required: {hs2} {body2}")
 
     junk = "z" * 64
     js, _jh, jr = http("POST", f"{base}/api/auth/email-confirmation/complete",
@@ -363,6 +394,32 @@ def probe_2655(rig: Rig, base: str, supa_url: str, service_key: str, tag: str, o
     expect(replay.get("error") == "invalid_link", f"#2655 replayed complete was accepted: {replay}")
     again = rig.one(f"SELECT count(*)::int AS n FROM org_members WHERE user_id = {q(uid)}::uuid")
     expect(again["n"] == 1, f"#2655 replay produced {again['n']} memberships — association is not exactly-once")
+
+    # 6. Discriminator: an account that ALREADY proved its mailbox as an email
+    #    identity must NOT be re-challenged when it links Google. Without this
+    #    the "pending" result above is indistinguishable from a trigger that
+    #    enrolls everyone.
+    linked_email = f"bf-linked-{tag}-{rand(6)}@{TEST_DOMAIN}"
+    lst, _lh, lraw = http(
+        "POST", f"{supa_url}/auth/v1/admin/users",
+        headers={"apikey": service_key, "Authorization": "Bearer " + service_key},
+        body={"email": linked_email, "password": "Batch-F-" + rand(16) + "!", "email_confirm": True},
+    )
+    expect(lst in (200, 201), f"#2655 linked-account signup failed {lst}: {lraw[:200]}")
+    luid = jbody(lraw)["id"]
+    rig.sql(
+        "UPDATE auth.users SET raw_app_meta_data = "
+        "jsonb_build_object('provider','google','providers',jsonb_build_array('google')) "
+        f"WHERE id = {q(luid)}::uuid;"
+    )
+    linked = rig.one(
+        f"SELECT (confirmed_at IS NOT NULL) AS carried, "
+        f"private.requires_oauth_email_confirmation({q(luid)}::uuid) AS gated "
+        f"FROM private.oauth_email_confirmations WHERE user_id = {q(luid)}::uuid"
+    )
+    expect(linked is not None and linked["carried"] is True and linked["gated"] is False,
+           f"#2655 a mailbox-proved email account was re-challenged on linking Google: {linked}")
+    out["pr2655_linked_account"] = {"user_id": luid, "state": linked}
 
     out["pr2655"] = {
         "user_id": uid, "email": email,
@@ -440,7 +497,7 @@ def probe_2658(rig: Rig, base: str, tag: str, hmac_secret: str, out: dict) -> No
         f"{q(capped['id'])}::uuid, {q(cap_uid)}::uuid, 'batch-f-cap-fill', 'OTHER' "
         "FROM generate_series(1, 10) g;"
     )
-    raw_key = "ark_bf_" + rand(40)
+    raw_key = "ak_bf" + rand(40)  # apiKeyAuth only extracts keys prefixed ak_
     key_hash = hmac.new(hmac_secret.encode(), raw_key.encode(), hashlib.sha256).hexdigest()
     rig.sql(
         "INSERT INTO api_keys (org_id, created_by, name, key_hash, key_prefix, scopes) VALUES ("
@@ -466,7 +523,7 @@ def probe_2658(rig: Rig, base: str, tag: str, hmac_secret: str, out: dict) -> No
     # 5. Login Defense shape: a RECORDED but INERT quota must stay inert and untouched.
     ld = rig.one(
         f"SELECT org_id, anchor_quota, is_test, cap_enforced FROM org_credits "
-        f"WHERE org_id = (SELECT id FROM organizations WHERE display_name = 'BatchF Preserved Quota')"
+        f"WHERE org_id = (SELECT id FROM organizations WHERE display_name = 'BatchF Preserved Quota' LIMIT 1)"
     )
     expect(ld is not None, "#2658 preserved-quota fixture org is missing from the rig")
     expect(ld["anchor_quota"] == 15 and ld["is_test"] is False and ld["cap_enforced"] is False,
@@ -550,7 +607,7 @@ def anti_hollow(rig: Rig, tag: str, out: dict) -> int:
     rig.sql(
         "INSERT INTO organizations (legal_name, display_name, domain) VALUES "
         f"({q('BatchF Cycle ' + tag + ' LLC')}, {q('BatchF Cycle ' + tag)}, "
-        f"{q('bf-cycle-' + tag + '.test')})"
+        f"{q('bf-cycle-' + tag.lower() + '.test')})"
     )
     n = rig.one(f"SELECT count(*)::int AS n FROM organizations WHERE display_name = {q('BatchF Cycle ' + tag)}")
     expect(n["n"] == 1, f"anti-hollow: cycle tag {tag} counted {n['n']} rows, expected 1")
@@ -618,6 +675,8 @@ def main() -> int:
               f"cycles={status.get('cycles', 0)} failures={status.get('failures', 0)}",
               flush=True)
 
+        if MAX_CYCLES and status.get("cycles", 0) + status.get("failures", 0) >= MAX_CYCLES:
+            break
         sleep = CYCLE_SECONDS - (time.time() - started)
         if sleep > 0:
             time.sleep(sleep)
