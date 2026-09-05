@@ -35,9 +35,20 @@
  * orphan branch. See `api/v1/webhooks/agents.md`, 2026-08-30.
  */
 
-import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { readOrgOAuthRequest, readOAuthCallback } from './oauth-request.js';
+import { requireOAuthOrgAdmin, requireOAuthVerifiedOrg, recordOAuthIntegrationEvent, type OAuthIntegrationEvent } from './oauth-org.js';
+import type { DbQueryResult, DbFilterQuery } from './oauth-db.js';
+import { randomUUID } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import {
+  appendOAuthResult as appendResult,
+  readSignedOAuthState,
+  requestOrigin as getRequestBaseUrl,
+  sameOriginReturnTo,
+  signOAuthState as signState,
+  toPostgresBytea,
+} from './oauth-primitives.js';
 import { config } from '../../../config.js';
 import { logger } from '../../../utils/logger.js';
 import { db as defaultDb } from '../../../utils/db.js';
@@ -98,19 +109,6 @@ type AdobeIntegrationUpsert = Pick<
   | 'updated_at'
 >;
 
-interface DbQueryResult<T> {
-  data: T | null;
-  error: unknown;
-}
-
-interface DbFilterQuery<T> extends PromiseLike<DbQueryResult<T>> {
-  select(columns?: string): DbFilterQuery<T>;
-  eq(field: string, value: unknown): DbFilterQuery<T>;
-  is(field: string, value: unknown): DbFilterQuery<T>;
-  single(): Promise<DbQueryResult<T extends Array<infer Row> ? Row : T>>;
-  maybeSingle(): Promise<DbQueryResult<T extends Array<infer Row> ? Row : T>>;
-}
-
 interface DbTableQuery<T> {
   select(columns?: string): DbFilterQuery<T>;
   update(value: OrgIntegrationUpdate): DbFilterQuery<AdobeIntegrationIdRow[]>;
@@ -159,50 +157,12 @@ const StartSchema = z.object({
 /** Postgres unique-violation. Here it means migration 0426's partial index fired. */
 const PG_UNIQUE_VIOLATION = '23505';
 
-function getUserId(req: Request): string | undefined {
-  return (req as unknown as { userId?: string }).userId;
-}
-
-function base64Url(input: string): string {
-  return Buffer.from(input, 'utf8').toString('base64url');
-}
-
-function hmac(input: string, secret: string): string {
-  return createHmac('sha256', secret).update(input).digest('base64url');
-}
-
-function signState(payload: StatePayload, secret: string): string {
-  const encoded = base64Url(JSON.stringify(payload));
-  return `${encoded}.${hmac(encoded, secret)}`;
-}
-
 function verifyState(state: string, secret: string, deps: AdobeSignOAuthDeps): StatePayload | null {
-  const [encoded, signature] = state.split('.');
-  if (!encoded || !signature) return null;
-
-  const expected = hmac(encoded, secret);
-  const sigBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (sigBuffer.length !== expectedBuffer.length || !timingSafeEqual(sigBuffer, expectedBuffer)) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as StatePayload;
+  const parsed = readSignedOAuthState<StatePayload>(state, secret, (parsed) => {
     const nowMs = (deps.now?.() ?? new Date()).getTime();
-    if (!parsed.orgId || !parsed.userId || !parsed.iat || nowMs - parsed.iat > StateTtlMs) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function getRequestBaseUrl(req: Request): string {
-  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0] ?? req.protocol;
-  const host = req.headers['x-forwarded-host'] ?? req.headers.host;
-  return `${proto}://${host}`;
+    return !(!parsed.orgId || !parsed.userId || !parsed.iat || nowMs - parsed.iat > StateTtlMs);
+  });
+  return parsed;
 }
 
 /**
@@ -218,42 +178,11 @@ function buildRedirectUri(req: Request): string {
 
 function sanitizeReturnTo(returnTo: string | undefined, orgId: string, deps: AdobeSignOAuthDeps): string {
   const fallback = `${deps.frontendUrl ?? config.frontendUrl}/organizations/${orgId}?tab=settings`;
-  if (!returnTo) return fallback;
-  try {
-    const parsed = new URL(returnTo);
-    const frontendOrigin = new URL(deps.frontendUrl ?? config.frontendUrl).origin;
-    if (parsed.origin !== frontendOrigin) return fallback;
-    return parsed.toString();
-  } catch {
-    return fallback;
-  }
+  return sameOriginReturnTo(returnTo, deps.frontendUrl ?? config.frontendUrl, fallback);
 }
 
-function appendResult(url: string, key: 'adobe_sign' | 'adobe_sign_error', value: string): string {
-  const parsed = new URL(url);
-  parsed.searchParams.set('tab', 'settings');
-  parsed.searchParams.set(key, value);
-  return parsed.toString();
-}
-
-function toPostgresBytea(buffer: Buffer): string {
-  return `\\x${buffer.toString('hex')}`;
-}
-
-async function requireOrgAdmin(db: DbClient, userId: string, orgId: string): Promise<boolean> {
-  const { data, error } = await db
-    .from('org_members')
-    .select('role')
-    .eq('user_id', userId)
-    .eq('org_id', orgId)
-    .maybeSingle();
-
-  if (error) {
-    logger.error({ error, orgId }, 'Adobe Sign OAuth admin lookup failed');
-    return false;
-  }
-  return data?.role === 'admin' || data?.role === 'owner';
-}
+const requireOrgAdmin = (db: DbClient, userId: string, orgId: string) =>
+  requireOAuthOrgAdmin(db, userId, orgId, 'Adobe Sign');
 
 /**
  * Verified-organization entitlement gate — parity with DocuSign's DS-01
@@ -262,46 +191,11 @@ async function requireOrgAdmin(db: DbClient, userId: string, orgId: string): Pro
  * replayable inside its TTL and verification can be revoked in between.
  * Disconnect is never gated.
  */
-type VerifiedOrgGate =
-  | { allowed: true }
-  | { allowed: false; reason: 'org_unverified' | 'org_suspended' | 'org_not_found' | 'lookup_failed' };
+const requireVerifiedOrg = (db: DbClient, orgId: string) =>
+  requireOAuthVerifiedOrg(db, orgId, 'Adobe Sign');
 
-async function requireVerifiedOrg(db: DbClient, orgId: string): Promise<VerifiedOrgGate> {
-  const { data, error } = await db
-    .from('organizations')
-    .select('id, verification_status, suspended')
-    .eq('id', orgId)
-    .maybeSingle();
-
-  if (error) {
-    logger.error({ error, orgId }, 'Adobe Sign OAuth org-verification lookup failed');
-    return { allowed: false, reason: 'lookup_failed' };
-  }
-  if (!data) return { allowed: false, reason: 'org_not_found' };
-  if (data.verification_status !== 'VERIFIED') return { allowed: false, reason: 'org_unverified' };
-  if (data.suspended === true) return { allowed: false, reason: 'org_suspended' };
-  return { allowed: true };
-}
-
-async function recordIntegrationEvent(db: DbClient, args: {
-  orgId: string;
-  integrationId?: string | null;
-  eventType: string;
-  status: 'success' | 'warning' | 'error';
-  details?: IntegrationEventInsert['details'];
-}): Promise<void> {
-  const { error } = await db.from('integration_events').insert({
-    org_id: args.orgId,
-    integration_id: args.integrationId ?? null,
-    provider: Provider,
-    event_type: args.eventType,
-    status: args.status,
-    details: args.details ?? {},
-  });
-  if (error) {
-    logger.warn({ error, orgId: args.orgId, eventType: args.eventType }, 'Adobe Sign integration event insert failed');
-  }
-}
+const recordIntegrationEvent = (db: DbClient, args: OAuthIntegrationEvent) =>
+  recordOAuthIntegrationEvent(db, Provider, 'Adobe Sign', args);
 
 /**
  * Best-effort Adobe-side webhook teardown.
@@ -353,23 +247,12 @@ export function createAdobeSignOAuthRouter(deps: AdobeSignOAuthDeps = {}): Route
     deps.refreshTokenStore ?? createAdobeSignRefreshTokenStore({ env: deps.env, fetchImpl: deps.fetchImpl });
 
   router.post('/adobe-sign/oauth/start', async (req: Request, res: Response) => {
-    const userId = getUserId(req);
-    if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
-    const parsed = StartSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
-      return;
-    }
-
-    const orgId = parsed.data.org_id;
-    if (!(await requireOrgAdmin(db, userId, orgId))) {
-      res.status(403).json({ error: 'Must be org admin to connect Adobe Sign' });
-      return;
-    }
+    const request = await readOrgOAuthRequest(req, res, StartSchema,
+      (userId, orgId) => requireOrgAdmin(db, userId, orgId),
+      'Must be org admin to connect Adobe Sign');
+    if (!request) return;
+    const { userId, data: requestData } = request;
+    const orgId = requestData.org_id;
 
     const orgGate = await requireVerifiedOrg(db, orgId);
     if (!orgGate.allowed) {
@@ -385,7 +268,7 @@ export function createAdobeSignOAuthRouter(deps: AdobeSignOAuthDeps = {}): Route
     }
 
     try {
-      const returnTo = sanitizeReturnTo(parsed.data.return_to, orgId, deps);
+      const returnTo = sanitizeReturnTo(requestData.return_to, orgId, deps);
       const state = signState({
         orgId,
         userId,
@@ -419,24 +302,13 @@ export function createAdobeSignOAuthRouter(deps: AdobeSignOAuthDeps = {}): Route
   });
 
   router.get('/adobe-sign/oauth/callback', async (req: Request, res: Response) => {
-    const state = typeof req.query.state === 'string' ? req.query.state : '';
-    const code = typeof req.query.code === 'string' ? req.query.code : '';
-    const errorParam = typeof req.query.error === 'string' ? req.query.error : '';
-    const payload = verifyState(state, stateSecret, deps);
-    const returnTo = payload?.returnTo ?? `${deps.frontendUrl ?? config.frontendUrl}/organizations`;
-
-    if (!payload) {
-      res.redirect(302, appendResult(returnTo, 'adobe_sign_error', 'invalid_state'));
-      return;
-    }
-    if (errorParam) {
-      res.redirect(302, appendResult(returnTo, 'adobe_sign_error', errorParam));
-      return;
-    }
-    if (!code) {
-      res.redirect(302, appendResult(returnTo, 'adobe_sign_error', 'missing_code'));
-      return;
-    }
+    const callback = readOAuthCallback(req, res, {
+      verify: (state) => verifyState(state, stateSecret, deps),
+      fallback: `${deps.frontendUrl ?? config.frontendUrl}/organizations`,
+      errorKey: 'adobe_sign_error',
+    });
+    if (!callback) return;
+    const { payload, code, returnTo } = callback;
     if (!(await requireOrgAdmin(db, payload.userId, payload.orgId))) {
       res.redirect(302, appendResult(returnTo, 'adobe_sign_error', 'not_authorized'));
       return;
@@ -660,25 +532,12 @@ export function createAdobeSignOAuthRouter(deps: AdobeSignOAuthDeps = {}): Route
   });
 
   router.post('/adobe-sign/disconnect', async (req: Request, res: Response) => {
-    const userId = getUserId(req);
-    if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
-    const parsed = StartSchema.pick({ org_id: true }).safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
-      return;
-    }
-
-    const orgId = parsed.data.org_id;
-    // Deliberately NOT gated on requireVerifiedOrg: a lapsed or suspended org
-    // must always be able to remove its connection.
-    if (!(await requireOrgAdmin(db, userId, orgId))) {
-      res.status(403).json({ error: 'Must be org admin to disconnect Adobe Sign' });
-      return;
-    }
+    const request = await readOrgOAuthRequest(req, res, StartSchema.pick({ org_id: true }),
+      (userId, orgId) => requireOrgAdmin(db, userId, orgId),
+      'Must be org admin to disconnect Adobe Sign');
+    if (!request) return;
+    const { userId, data: requestData } = request;
+    const orgId = requestData.org_id;
 
     const now = (deps.now?.() ?? new Date()).toISOString();
     const { data: existing, error: existingError } = await db

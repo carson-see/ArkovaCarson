@@ -32,27 +32,20 @@
  * code -> copy mapping lives in exactly one place.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { CheckCircle, FileSignature, Loader2, PlugZap, ShieldAlert, Unplug } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS } from '@/lib/copy';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
+import { useSignatureConnection } from './useSignatureConnection';
+import { followSignatureOAuthStart } from './signatureOAuthResponse';
 
 interface AdobeSignConnectorCardProps {
   orgId: string;
-}
-
-interface AdobeSignConnection {
-  id: string;
-  account_label: string | null;
-  account_id: string | null;
-  connected_at: string | null;
-  scope: string | null;
 }
 
 /**
@@ -81,11 +74,10 @@ export function adobeSignErrorCopy(code: string | undefined): string {
   }
 }
 
-export function AdobeSignConnectorCard({ orgId }: AdobeSignConnectorCardProps) {
-  const [connection, setConnection] = useState<AdobeSignConnection | null>(null);
-  const [statusLoading, setStatusLoading] = useState(true);
+export function AdobeSignConnectorCard({ orgId }: Readonly<AdobeSignConnectorCardProps>) {
+  const { connection, setConnection, statusLoading, error, setError } =
+    useSignatureConnection(orgId, 'adobe_sign', 'Unable to load Adobe Sign connection status.');
   const [actionLoading, setActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Verified-org entitlement, same signal as the DocuSign card (SCRUM-1755).
   // UX defense-in-depth only — the worker `/oauth/start` endpoint is the
@@ -93,46 +85,6 @@ export function AdobeSignConnectorCard({ orgId }: AdobeSignConnectorCardProps) {
   const issueGate = useCanIssueCredential({ orgId });
   const gateLoading = issueGate.loading;
   const gateBlocked = !issueGate.loading && !issueGate.allowed;
-
-  const refreshConnection = useCallback(async () => {
-    setStatusLoading(true);
-    setError(null);
-    try {
-      // org_integrations is newer than the generated frontend DB types.
-      // Deliberately does NOT select webhook_id / encrypted_tokens /
-      // token_secret_name: the card needs none of them, and a browser-side
-      // select is exactly how DriveConnectorCard leaked `account_label`
-      // secrets past the worker's own redaction (GH #1836, round 3).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: queryError } = await (supabase as any)
-        .from('org_integrations')
-        .select('id, account_label, account_id, connected_at, scope')
-        .eq('org_id', orgId)
-        .eq('provider', 'adobe_sign')
-        .is('revoked_at', null)
-        .order('connected_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (queryError) {
-        setError('Unable to load Adobe Sign connection status.');
-        setConnection(null);
-        return;
-      }
-
-      setConnection(data ?? null);
-    } catch {
-      setError('Unable to load Adobe Sign connection status.');
-      setConnection(null);
-    } finally {
-      setStatusLoading(false);
-    }
-  }, [orgId]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async Supabase refresh settles after the effect returns
-    void refreshConnection();
-  }, [refreshConnection]);
 
   const handleConnect = useCallback(async () => {
     // Defense in depth: never call the worker when the gate denies. The button
@@ -146,37 +98,15 @@ export function AdobeSignConnectorCard({ orgId }: AdobeSignConnectorCardProps) {
         method: 'POST',
         body: JSON.stringify({ org_id: orgId, return_to: window.location.href }),
       });
-      const body = await response.json().catch(() => ({})) as {
-        authorizationUrl?: string;
-        url?: string;
-        error?: string;
-        code?: string;
-      };
-
-      if (!response.ok) {
-        // A 503 here is the kill switch: the connector is not enabled on this
-        // deployment, which reads the same to the admin as "not configured".
-        setError(
-          response.status === 503
-            ? CONNECTIONS_LABELS.ADOBE_SIGN_UNCONFIGURED
-            : adobeSignErrorCopy(body.code),
-        );
-        return;
-      }
-
-      const nextUrl = body.authorizationUrl ?? body.url;
-      if (!nextUrl) {
-        setError(CONNECTIONS_LABELS.CONNECT_FAILED);
-        return;
-      }
-
-      window.location.assign(nextUrl);
+      setError(await followSignatureOAuthStart(response, (body, status) =>
+        status === 503 ? CONNECTIONS_LABELS.ADOBE_SIGN_UNCONFIGURED : adobeSignErrorCopy(body.code),
+      ));
     } catch (err) {
       setError(err instanceof Error ? err.message : CONNECTIONS_LABELS.CONNECT_FAILED);
     } finally {
       setActionLoading(false);
     }
-  }, [orgId, gateBlocked, gateLoading]);
+  }, [orgId, gateBlocked, gateLoading, setError]);
 
   const handleDisconnect = useCallback(async () => {
     setActionLoading(true);
@@ -209,10 +139,22 @@ export function AdobeSignConnectorCard({ orgId }: AdobeSignConnectorCardProps) {
     } finally {
       setActionLoading(false);
     }
-  }, [orgId]);
+  }, [orgId, setConnection, setError]);
 
   const connected = !!connection;
   const accountLabel = connection?.account_label || connection?.account_id;
+  let StatusIcon = PlugZap;
+  let statusIconClass = 'h-5 w-5 text-muted-foreground';
+  let statusLabel: string = CONNECTIONS_LABELS.STATUS_NOT_CONNECTED;
+  if (statusLoading) {
+    StatusIcon = Loader2;
+    statusIconClass = 'h-5 w-5 animate-spin text-muted-foreground';
+    statusLabel = CONNECTIONS_LABELS.STATUS_CHECKING;
+  } else if (connected) {
+    StatusIcon = CheckCircle;
+    statusIconClass = 'h-5 w-5 text-emerald-500';
+    statusLabel = CONNECTIONS_LABELS.STATUS_CONNECTED;
+  }
 
   return (
     <Card data-testid="adobe-sign-card">
@@ -227,22 +169,12 @@ export function AdobeSignConnectorCard({ orgId }: AdobeSignConnectorCardProps) {
       <CardContent className="space-y-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            {statusLoading ? (
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            ) : connected ? (
-              <CheckCircle className="h-5 w-5 text-emerald-500" />
-            ) : (
-              <PlugZap className="h-5 w-5 text-muted-foreground" />
-            )}
+            <StatusIcon className={statusIconClass} />
             <div>
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium">Status</p>
                 <Badge variant={connected ? 'default' : 'secondary'}>
-                  {statusLoading
-                    ? CONNECTIONS_LABELS.STATUS_CHECKING
-                    : connected
-                      ? CONNECTIONS_LABELS.STATUS_CONNECTED
-                      : CONNECTIONS_LABELS.STATUS_NOT_CONNECTED}
+                  {statusLabel}
                 </Badge>
               </div>
               {connected && accountLabel && (
