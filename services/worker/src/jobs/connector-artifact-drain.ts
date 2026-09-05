@@ -1338,8 +1338,10 @@ export async function defaultListDrainableOrgIds(
 /**
  * Cron entrypoint (QUEUE-06). Cloud Scheduler → `POST /jobs/drain-connector-artifacts`.
  *
- * In-process node-cron is dormant under Cloud Run CPU throttling (proven by the
- * PROOF-03 soak), so prod drives this via HTTP. No-ops (`skipped:true`) when the
+ * Prod drives this via HTTP because Cloud Scheduler is the trigger with retries
+ * and an attempt deadline; the in-process registration in routes/scheduled.ts is
+ * a backup that also fires on every warm prod instance (SCRUM-3384), which the
+ * per-row compare-and-set claim makes safe. No-ops (`skipped:true`) when the
  * flag is off. Per-org drains are isolated: one org throwing alerts (scope=cycle)
  * and the remaining orgs still drain — no silent drop.
  */

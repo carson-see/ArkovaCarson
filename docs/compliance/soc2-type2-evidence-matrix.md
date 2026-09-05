@@ -70,7 +70,7 @@ Arkova's client-side processing boundary materially reduces audit scope: no PII 
 | # | Criterion | Control | Evidence Location | Responsible | Frequency |
 |---|-----------|---------|-------------------|-------------|-----------|
 | CC6.1 | Logical access controls | Supabase Auth + RLS on all tables | RLS test suite (42 tests) | Engineering | Per migration |
-| CC6.2 | Prior to access, identity verified | Email verification, MFA (HIPAA) | Supabase Auth config | Engineering | Continuous |
+| CC6.2 | Prior to access, identity verified | Email verification; MFA available (opt-in) — administrator enforcement in progress (SCRUM-3167), NOT yet enforced | Supabase Auth config | Engineering | Continuous |
 | CC6.3 | Access provisioned/modified | Role-based access (user/admin/platform_admin) | `auth.ts`, RLS policies | Engineering | Per change |
 | CC6.4 | Physical access restricted | N/A (cloud-hosted, no on-premise) | Supabase/GCP/Vercel SOC 2 reports | Engineering | Inherited |
 | CC6.5 | Access is removed when no longer needed | Account deletion, session expiry | `data-retention-policy.md` | Engineering | Per request |
