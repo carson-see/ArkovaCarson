@@ -173,6 +173,28 @@ describe('canonical agent workflow documentation', () => {
     expect(workflowDoc).toContain('raw document content');
   });
 
+  it('makes every executable MCP call in the workflow doc use the REGISTERED tool name', () => {
+    // The surface-matrix test above proves the prefixed names APPEAR in the
+    // document. It cannot see the ```text blocks under each "MCP:" heading,
+    // which are the only lines an agent actually copies — those carried the
+    // pre-rename bare names (`search({...})`, `get_anchor({...})`) while the
+    // matrix two screens up listed `arkova_search`. A reader who follows the
+    // worked example gets a tool-not-found; a reader who reads the table does
+    // not. This pins the executable half.
+    //
+    // REST and SDK blocks are deliberately out of scope: `GET /api/v2/search`
+    // and `arkova.getAnchor()` are correct as written and must stay bare.
+    const mcpBlocks = [...workflowDoc.matchAll(/^MCP:\n+```text\n([\s\S]*?)^```/gm)].map((m) => m[1]);
+    expect(mcpBlocks.length).toBeGreaterThan(0);
+
+    const registered = new Set(canonicalSurface.map(([, , , mcpTool]) => mcpTool));
+    const calls = mcpBlocks.flatMap((block) =>
+      [...block.matchAll(/^([A-Za-z0-9_]+)\(/gm)].map((m) => m[1]),
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter((name) => !registered.has(name))).toEqual([]);
+  });
+
   it('keeps the MCP tool reference aligned with the runtime tool registry', () => {
     // `services/edge/server.json` is the official MCP Registry publish
     // manifest — it no longer carries a `tools`/`prompts` field (the

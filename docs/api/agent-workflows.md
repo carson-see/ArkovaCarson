@@ -45,10 +45,10 @@ GET /api/v2/anchors/{public_id}
 MCP:
 
 ```text
-search({ "q": "Acme compliance certificate", "type": "document", "max_results": 5 })
-get_document({ "public_id": "<result.public_id>" })
-verify({ "fingerprint": "<detail.fingerprint>" })
-get_anchor({ "public_id": "<detail.public_id>" })
+arkova_search({ "q": "Acme compliance certificate", "type": "document", "max_results": 5 })
+arkova_get_document({ "public_id": "<result.public_id>" })
+arkova_verify({ "fingerprint": "<detail.fingerprint>" })
+arkova_get_anchor({ "public_id": "<detail.public_id>" })
 ```
 
 TypeScript:
@@ -107,8 +107,8 @@ GET /api/v2/fingerprints/{fingerprint}
 MCP:
 
 ```text
-verify({ "fingerprint": "<64-character-sha256>" })
-get_fingerprint({ "fingerprint": "<64-character-sha256>" })
+arkova_verify({ "fingerprint": "<64-character-sha256>" })
+arkova_get_fingerprint({ "fingerprint": "<64-character-sha256>" })
 ```
 
 TypeScript:
@@ -144,11 +144,11 @@ GET /api/v2/anchors/{public_id}
 MCP:
 
 ```text
-list_orgs({})
-get_organization({ "public_id": "<organization.public_id>" })
-search({ "q": "licensed nurse", "type": "record", "max_results": 10 })
-get_record({ "public_id": "<result.public_id>" })
-get_anchor({ "public_id": "<detail.public_id>" })
+arkova_list_orgs({})
+arkova_get_organization({ "public_id": "<organization.public_id>" })
+arkova_search({ "q": "licensed nurse", "type": "record", "max_results": 10 })
+arkova_get_record({ "public_id": "<result.public_id>" })
+arkova_get_anchor({ "public_id": "<detail.public_id>" })
 ```
 
 TypeScript:
