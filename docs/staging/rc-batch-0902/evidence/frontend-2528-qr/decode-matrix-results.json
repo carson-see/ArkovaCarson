@@ -1,0 +1,105 @@
+{
+  "decoder": "jsqr 1.4.0",
+  "quietModules": 4,
+  "ids": {
+    "ARK-DOC-9G5HQZ": {
+      "expected": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+      "matrixUrlField": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+      "matrixUrlFieldEqualsExpected": true,
+      "moduleCount": 33,
+      "matrixSha256": "f2f5328eb164a9b255264fac39da86f8518fce36038561691406d29edc793335",
+      "perScale": [
+        {
+          "scale": 3,
+          "imagePx": 123,
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "decodedLength": 43,
+          "expectedLength": 43,
+          "qrVersion": 4,
+          "chunkTypes": [
+            "byte"
+          ]
+        },
+        {
+          "scale": 8,
+          "imagePx": 328,
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "decodedLength": 43,
+          "expectedLength": 43,
+          "qrVersion": 4,
+          "chunkTypes": [
+            "byte"
+          ]
+        },
+        {
+          "scale": 12,
+          "imagePx": 492,
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-9G5HQZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "decodedLength": 43,
+          "expectedLength": 43,
+          "qrVersion": 4,
+          "chunkTypes": [
+            "byte"
+          ]
+        }
+      ],
+      "allScalesEqual": true
+    },
+    "ARK-DOC-ZZZZZZ": {
+      "expected": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+      "matrixUrlField": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+      "matrixUrlFieldEqualsExpected": true,
+      "moduleCount": 33,
+      "matrixSha256": "ac8f1c53614d5549c52a780b90e66ed823fa5732422882ba642e205f5806cddb",
+      "perScale": [
+        {
+          "scale": 3,
+          "imagePx": 123,
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "decodedLength": 43,
+          "expectedLength": 43,
+          "qrVersion": 4,
+          "chunkTypes": [
+            "byte"
+          ]
+        },
+        {
+          "scale": 8,
+          "imagePx": 328,
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "decodedLength": 43,
+          "expectedLength": 43,
+          "qrVersion": 4,
+          "chunkTypes": [
+            "byte"
+          ]
+        },
+        {
+          "scale": 12,
+          "imagePx": 492,
+          "decoded": "https://app.arkova.ai/verify/ARK-DOC-ZZZZZZ",
+          "textEqual": true,
+          "bytesEqual": true,
+          "decodedLength": 43,
+          "expectedLength": 43,
+          "qrVersion": 4,
+          "chunkTypes": [
+            "byte"
+          ]
+        }
+      ],
+      "allScalesEqual": true
+    }
+  },
+  "failures": 0
+}

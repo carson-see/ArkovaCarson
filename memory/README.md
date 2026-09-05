@@ -72,6 +72,7 @@ you cite `memory/x.md`, the file has to be in this directory.
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
 | `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
 | `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |
+| `feedback_no_prs_for_t0.md` | Documentation only (tier is computed by `requiredTierFor()`; no detector can tell a T0 that *should* have skipped the PR from one that legitimately opened it) | 📖 docs only |
 
 ## Failure-class notes
 

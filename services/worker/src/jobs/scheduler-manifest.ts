@@ -1,10 +1,11 @@
 /**
  * Config-as-code scheduler manifest (SCRUM-2900).
  *
- * The prod scheduler binding lives in Cloud Scheduler (node-cron is dormant
- * under Cloud Run CPU throttling — see routes/scheduled.ts), so the ONLY
- * durable record of "which jobs should be running, on what cadence, and which
- * are deliberately paused" was, until now, out-of-repo console state. The
+ * The prod scheduler binding lives in Cloud Scheduler (the in-process schedule
+ * in routes/scheduled.ts is a backup with no retry, no attempt deadline and no
+ * run history — and, per SCRUM-3384, it also fires on every warm instance), so
+ * the ONLY durable record of "which jobs should be running, on what cadence,
+ * and which are deliberately paused" was, until now, out-of-repo console state. The
  * 2026-06-01 daily-flush 401 blackout drained nothing for ~6 weeks with no
  * alert precisely because a pause was untracked.
  *

@@ -2934,6 +2934,18 @@ const STAGING_TOOLING_ALLOW = [
   // read by scripts/*.test.ts only (never imported, typechecked, or bundled).
   /^scripts\/check-copy-terms(\.test)?\.ts$/,
   /^scripts\/fixtures\//,
+  // SCRUM-3618: the RLS test-helper subtree — the exact path CLAUDE.md §1.7
+  // names for `withUser()` / `withAuth()` (plus `cleanupClient()` and the
+  // pinned DEMO_CREDENTIALS/ORG_IDS seed constants). It is imported ONLY by
+  // `*.test.ts` files (verified: no src/ runtime importer), so like the
+  // CODEOWNERS / gitleaks entries above there is no surface a soak could
+  // exercise. It bit the same way: the tests-only SCRUM-3618 parallel-safety
+  // fix (tests/rls/** sweep + the shared sign-out helper) classified T1 via
+  // the frontend default and would have demanded a 2 h soak of a file prod
+  // never reads. Sibling `*.test.ts`/`agents.md` files under src/tests/ are
+  // already T0 via the early TEST_FILE_RE / agents.md return; this entry
+  // covers only the non-test helper modules in the RLS subtree.
+  /^src\/tests\/rls\//,
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,
