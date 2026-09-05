@@ -124,7 +124,7 @@ describe('Anchor Document Action', () => {
   });
 });
 
-describe('Verify Credential Action', () => {
+describe('Verify Anchor Action', () => {
   const action = App.creates.verify_anchor;
 
   it('requires public_id input', () => {
