@@ -13,7 +13,7 @@ import {
   assertRequiredToolsPresent,
   assertApiOnlyNotePresent,
   assertToolsList,
-  assertOauthAdvertisement,
+  assertOauthNotAdvertised,
   assertUnknownToolRejected,
   assertReadToolOutcome,
   planHostedReadToolCalls,
@@ -225,27 +225,23 @@ describe('mcp-sdk-surface-driver: SCRUM-2589 tool-naming assertions', () => {
   });
 });
 
-describe('mcp-sdk-surface-driver: D3 OAuth discovery assertion', () => {
-  it('post-fix (default expectation): passes when authorization_servers is ABSENT', () => {
-    expect(assertOauthAdvertisement({ resource: 'https://x' }, false)).toBeNull();
+describe('mcp-sdk-surface-driver: D3 OAuth discovery assertion (unconditional)', () => {
+  it('a default run PASSES on a discovery body without authorization_servers (the post-D3 state)', () => {
+    expect(assertOauthNotAdvertised({ resource: 'https://x/mcp', scopes_supported: [] })).toBeNull();
   });
 
-  it('post-fix: fails when authorization_servers is still PRESENT', () => {
-    const err = assertOauthAdvertisement({ resource: 'https://x', authorization_servers: ['https://x/auth'] }, false);
+  it('a default run FAILS when authorization_servers is still present', () => {
+    const err = assertOauthNotAdvertised({ resource: 'https://x/mcp', authorization_servers: ['https://x/auth'] });
     expect(err).toMatch(/PRESENT/);
   });
 
-  it('pre-fix mode (--expect-oauth-advertised): passes when PRESENT', () => {
-    expect(assertOauthAdvertisement({ authorization_servers: ['https://x/auth'] }, true)).toBeNull();
-  });
-
-  it('pre-fix mode: fails when ABSENT', () => {
-    const err = assertOauthAdvertisement({}, true);
-    expect(err).toMatch(/ABSENT/);
+  it('an empty authorization_servers array is still an advertisement (key presence is the test)', () => {
+    expect(assertOauthNotAdvertised({ resource: 'https://x/mcp', authorization_servers: [] })).toMatch(/PRESENT/);
   });
 
   it('fails on a non-object body', () => {
-    expect(assertOauthAdvertisement(null, false)).toMatch(/not an object/);
+    expect(assertOauthNotAdvertised(null)).toMatch(/not an object/);
+    expect(assertOauthNotAdvertised(['a'])).toMatch(/not an object/);
   });
 });
 
@@ -464,13 +460,9 @@ describe('mcp-sdk-surface-driver: parseMcpSdkDriverArgs', () => {
     expect(() => parseMcpSdkDriverArgs(['--duration=-1'])).toThrow(/positive integer/);
   });
 
-  it('--expect-oauth-advertised defaults to true (post-D3-fix: NOT advertised is the pass case)', () => {
-    expect(parseMcpSdkDriverArgs([]).expectOauthAdvertised).toBe(true);
-  });
-
-  it('--expect-oauth-advertised=false switches to the pre-fix expectation', () => {
-    expect(parseMcpSdkDriverArgs(['--expect-oauth-advertised', 'false']).expectOauthAdvertised).toBe(false);
-    expect(parseMcpSdkDriverArgs(['--expect-oauth-advertised', '0']).expectOauthAdvertised).toBe(false);
+  it('rejects the removed --expect-oauth-advertised flag outright (the D3 assertion is unconditional)', () => {
+    expect(() => parseMcpSdkDriverArgs(['--expect-oauth-advertised', 'true'])).toThrow();
+    expect(() => parseMcpSdkDriverArgs(['--expect-oauth-advertised=false'])).toThrow();
   });
 
   it('--with-sdks and --dry-run parse as booleans, default false', () => {

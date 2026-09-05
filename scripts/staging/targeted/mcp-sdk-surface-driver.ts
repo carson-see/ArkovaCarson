@@ -19,9 +19,9 @@
  *      the deliberately-disabled `nessie_query`, FIVE negatives (no auth,
  *      bogus key, unknown tool, the REMOVED `search_credentials` name, and
  *      the REMOVED pre-D4 unprefixed `search_anchors` name), the
- *      `.well-known/oauth-protected-resource` discovery document (D3: no
- *      longer advertises `authorization_servers` — `--expect-oauth-advertised`
- *      flips the assertion for a pre-fix run), and an `audit_events`
+ *      `.well-known/oauth-protected-resource` discovery document (D3: it
+ *      must NOT advertise `authorization_servers` — asserted unconditionally,
+ *      since that is the only shape this PR ships), and an `audit_events`
  *      `MCP_TOOL_CALL` row-count control (before/after the tools/call batch).
  *
  *   B) LOCAL stdio MCP package (`sdks/mcp-server`, unscoped npm name
@@ -372,17 +372,15 @@ export const STDIO_EXPECTED_TOOL_COUNT = STDIO_EXPECTED_TOOL_NAMES.length;
 
 /**
  * D3: the hosted MCP `.well-known/oauth-protected-resource` document must NOT
- * advertise `authorization_servers` post-fix. `--expect-oauth-advertised`
- * flips this to the pre-fix expectation so the driver can run against either
- * head without becoming a false failure.
+ * advertise `authorization_servers`. Asserted UNCONDITIONALLY — the absent-key
+ * shape is the only one this PR ships, so a switch to "expect it present"
+ * could only ever make a CORRECT build fail. Key PRESENCE is the test: an
+ * empty `authorization_servers: []` still advertises an authorization-server
+ * list to a discovering client.
  */
-export function assertOauthAdvertisement(body: JsonBody, expectAdvertised: boolean): string | null {
+export function assertOauthNotAdvertised(body: JsonBody): string | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'discovery body is not an object';
-  const has = 'authorization_servers' in (body as Record<string, unknown>);
-  if (expectAdvertised && !has) {
-    return 'authorization_servers key ABSENT (expected present under --expect-oauth-advertised)';
-  }
-  if (!expectAdvertised && has) {
+  if ('authorization_servers' in (body as Record<string, unknown>)) {
     return 'authorization_servers key PRESENT (D3: OAuth must no longer be advertised post-fix)';
   }
   return null;
@@ -670,7 +668,6 @@ export interface McpSdkDriverArgs {
   evidenceOut?: string;
   dryRun: boolean;
   withSdks: boolean;
-  expectOauthAdvertised: boolean;
 }
 
 /**
@@ -678,8 +675,7 @@ export interface McpSdkDriverArgs {
  * default) OR `--cycles <n>` as an alternative fixed-count mode — mutually
  * exclusive in intent, but `--cycles` simply takes priority when both are
  * given, and duration is left undefined so the runtime loop knows which mode
- * governs. `--expect-oauth-advertised` defaults true (post-D3-fix: NOT
- * advertised — see assertOauthAdvertisement's doc comment for the naming).
+ * governs.
  */
 export function parseMcpSdkDriverArgs(argv: string[]): McpSdkDriverArgs {
   const { values } = parseArgs({
@@ -690,7 +686,6 @@ export function parseMcpSdkDriverArgs(argv: string[]): McpSdkDriverArgs {
       'evidence-out': { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       'with-sdks': { type: 'boolean', default: false },
-      'expect-oauth-advertised': { type: 'string' },
     },
     allowPositionals: true,
   });
@@ -712,10 +707,9 @@ export function parseMcpSdkDriverArgs(argv: string[]): McpSdkDriverArgs {
     }
     durationMin = n;
   }
+  // Same 15-minute floor as driver-core's own (private) DEFAULT_DURATION_MIN.
+  // This driver parses its own args only because of --cycles, not to differ here.
   if (cycles === undefined && durationMin === undefined) durationMin = 15;
-
-  const oauthRaw = values['expect-oauth-advertised'];
-  const expectOauthAdvertised = oauthRaw === undefined ? true : oauthRaw !== 'false' && oauthRaw !== '0';
 
   return {
     durationMin: cycles === undefined ? durationMin : undefined,
@@ -723,7 +717,6 @@ export function parseMcpSdkDriverArgs(argv: string[]): McpSdkDriverArgs {
     evidenceOut: values['evidence-out'],
     dryRun: Boolean(values['dry-run']),
     withSdks: Boolean(values['with-sdks']),
-    expectOauthAdvertised,
   };
 }
 
@@ -965,7 +958,6 @@ async function runHostedCycle(ctx: {
   edgeBase: string;
   apiKey: string;
   fx: HostedFixtures;
-  expectOauthAdvertised: boolean;
   supabaseUrl: string;
   supabaseKey: string;
   evidence: McpEvidenceExtension;
@@ -1095,14 +1087,14 @@ async function runHostedCycle(ctx: {
     method: 'GET',
     headers: { Accept: 'application/json' },
     okStatuses: [200],
-    assert: (b) => assertOauthAdvertisement(b, ctx.expectOauthAdvertised),
+    assert: assertOauthNotAdvertised,
   });
   ctx.evidence.oauthAdvertised =
     !!discoResult.body &&
     typeof discoResult.body === 'object' &&
     !Array.isArray(discoResult.body) &&
     'authorization_servers' in (discoResult.body as Record<string, unknown>);
-  ctx.log(`discovery: oauthAdvertised=${ctx.evidence.oauthAdvertised} (expected=${ctx.expectOauthAdvertised})`);
+  ctx.log(`discovery: oauthAdvertised=${ctx.evidence.oauthAdvertised} (expected=false)`);
 
   // Bearer-JWT section (coordinator follow-up) — skips cleanly if its env is absent.
   await runHostedBearerSection({ stats: ctx.stats, edgeBase: ctx.edgeBase, evidence: ctx.evidence, log: ctx.log });
@@ -1491,8 +1483,7 @@ async function main(): Promise<void> {
   const log = (m: string) => console.log(`[mcp-sdk-surface] ${new Date().toISOString()} ${m}`);
 
   log(
-    `api_base=${apiBase} edge_mcp_base=${edgeBase} with_sdks=${args.withSdks} ` +
-      `expect_oauth_advertised=${args.expectOauthAdvertised} dry_run=${args.dryRun}`,
+    `api_base=${apiBase} edge_mcp_base=${edgeBase} with_sdks=${args.withSdks} dry_run=${args.dryRun}`,
   );
 
   if (args.dryRun) {
@@ -1549,7 +1540,6 @@ async function main(): Promise<void> {
         edgeBase,
         apiKey,
         fx,
-        expectOauthAdvertised: args.expectOauthAdvertised,
         supabaseUrl,
         supabaseKey,
         evidence,
