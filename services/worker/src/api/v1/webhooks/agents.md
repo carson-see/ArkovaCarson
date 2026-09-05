@@ -207,3 +207,7 @@ webhook_id introduced by its 0426 migration, matching the dependent OAuth writer
 in PR 2529; PR 2496's earlier subscription_id repair is interim. Production was
 queried read-only: subscription_id exists, webhook_id and migration 0426 do not.
 Schema application and isolated verification remain required before deployment.
+
+## 2026-09-05 — Adobe registration challenge reads validated configuration
+
+The GET challenge uses config.adobeSignClientId, populated by the existing Zod configuration loader. Request-time process.env reads can diverge from the validated startup configuration. Regressions prove the configured ID remains authoritative after raw environment mutation and an absent configured ID still returns 503 without echo. Constant-time comparison and notification HMAC behavior are unchanged.
