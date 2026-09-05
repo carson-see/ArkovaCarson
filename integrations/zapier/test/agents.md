@@ -23,3 +23,16 @@ caveats worth knowing before citing it as a guard:
 The PR-time gate for the same class is `scripts/ci/check-webhook-event-registration-drift.ts`, which
 parses `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` and compares this package's constant against it from inside
 the required root `Tests` job. Keep both — the pin gives a local edit a readable failure.
+
+## 2026-09-05 — describe label corrected (PR #2589 review)
+
+`describe('Verify Credential Action')` → `describe('Verify Anchor Action')`. The action itself was
+renamed to `verify_anchor` on 2026-09-02 (see `../src/agents.md`, P10); the test's own label was
+missed, so the suite still printed "Credential" on every run. No behaviour change — 24 tests, same
+before and after.
+
+The §1.3 guard immediately below it (`action display copy has no "credential" wording`) inspects
+`key` / `display.label` / `display.description` on the app's actions; it does not and cannot see a
+test file's own `describe` strings, which is why this one survived. The remaining `credential_type`
+strings in `src/` are the frozen API field name, deliberately kept — see the P10 note in
+`../src/agents.md`.

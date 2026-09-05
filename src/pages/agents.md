@@ -54,6 +54,18 @@ come back quietly. `src/lib/publishedVerificationPointers.test.ts` holds the
 copy-level half of the same guard.
 _Last updated: 2026-08-30_
 
+## 2026-09-05 — `DevelopersPage.tsx` advertised two unregistered MCP tools
+
+The MCP section's two example cards read `verify_credential` and `search_credentials`.
+Those names were removed in v3.0 with NO aliases, deliberately — they are the names that
+caused an agent to sweep local secrets (BUG-2026-09-02-001). A developer copying either
+card got a tool-not-found. Now `arkova_verify_anchor` and `arkova_search_anchors`.
+
+Nothing gates tool names on this page: `scripts/ci/check-mcp-claim-parity.ts` reads
+`public/`, `docs/api/mcp-tools.md` and the edge registry, not `src/pages/`. Treat any tool
+name rendered in a page as unchecked copy and grep `services/edge/src/mcp-tools.ts` before
+shipping it.
+
 ## 2026-08-30 SCRUM-3559 — `ThirdPartyNoticesPage.tsx` includes copyright lines + verbatim license text
 
 The page listed dependency names + SPDX identifiers only; strict MIT attribution

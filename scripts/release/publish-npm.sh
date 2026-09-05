@@ -32,6 +32,23 @@
 #      path, .github/workflows/publish-sdk.yml, which covers packages/sdk
 #      only and is tag-triggered).
 #
+# OPERATOR NOTE 1 — NPM_TOKEN's scope is not the package's scope.
+#   The CI path (.github/workflows/publish-sdk.yml, triggered by an `sdk-v*`
+#   tag) publishes packages/sdk using `secrets.NPM_TOKEN`. That token was
+#   provisioned while the package was `@carsonarkova/sdk`, so it was scoped to
+#   the `carsonarkova` org. The package is now the UNSCOPED name `arkova`,
+#   which is a different ownership record entirely — an org-scoped token has no
+#   rights on it. CONFIRM the token can publish `arkova` BEFORE pushing an
+#   `sdk-v3.0.0` tag: a tag push that fails on E403 has already burned the tag,
+#   and re-tagging the same version is the messiest possible recovery.
+#
+# OPERATOR NOTE 2 — sdks/mcp-server has NO CI publish workflow.
+#   `.github/workflows/` contains publish-sdk.yml (packages/sdk) and
+#   publish-python-sdk.yml (packages/arkova-py) and nothing else. Tagging does
+#   not publish `arkova-mcp-server`; running THIS script with
+#   `--only=mcp-server`, by hand, on an authenticated machine, is the only way
+#   that package reaches the registry. Do not assume a release tag covered it.
+#
 # What this script deliberately does NOT do:
 #   - Never runs `npm login` itself, interactively or otherwise — this
 #     script only ever checks whether a login already exists.

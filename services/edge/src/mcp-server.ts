@@ -22,7 +22,9 @@ interface ExecutionContext {
  * Connector-ready: resources, prompts, tool annotations, and
  * OAuth Protected Resource Metadata for MCP registry listing.
  *
- * Authentication: OAuth 2.0 Bearer or API key via X-API-Key header.
+ * Authentication: API key via X-API-Key header, or a Supabase session JWT
+ * via Authorization: Bearer. OAuth authorization-code flow is not
+ * supported.
  * Constitution 1.4: No raw PII in tool responses.
  */
 
@@ -62,6 +64,7 @@ import { isMcpEnabled, mcpDisabledResponse } from './mcp-kill-switch';
 import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
 import { signEnvelope } from './mcp-hmac';
 import { verifySupabaseJwt } from './mcp-jwt-verify';
+import { safeErrorText } from './mcp-error-utils';
 
 // Module-scope detector so heuristics span requests inside one CF
 // isolate. Request-scoped detectors could not observe cross-session
@@ -69,7 +72,7 @@ import { verifySupabaseJwt } from './mcp-jwt-verify';
 const anomalyDetector: AnomalyDetector = createAnomalyDetector();
 
 // F-4 (edge bug-bounty 2026-04-26): one-shot warning per isolate when
-// MCP_SIGNING_KEY is unset. Without the key, oracle_batch_verify cannot
+// MCP_SIGNING_KEY is unset. Without the key, arkova_oracle_batch_verify cannot
 // produce tamper-evident envelopes — paired with the `signed:false`
 // marker emitted in the response body so downstream callers can fail
 // closed.
@@ -77,7 +80,7 @@ let mcpSigningKeyWarned = false;
 function warnSigningKeyMissingOnce(): void {
   if (mcpSigningKeyWarned) return;
   mcpSigningKeyWarned = true;
-  console.warn('[mcp-server] MCP_SIGNING_KEY missing — oracle_batch_verify envelopes will be returned UNSIGNED with signed:false. Provision via `wrangler secret put MCP_SIGNING_KEY --name arkova-edge`.');
+  console.warn('[mcp-server] MCP_SIGNING_KEY missing — arkova_oracle_batch_verify envelopes will be returned UNSIGNED with signed:false. Provision via `wrangler secret put MCP_SIGNING_KEY --name arkova-edge`.');
 }
 import {
   MCP_TOOL_SCHEMAS,
@@ -97,23 +100,74 @@ const SERVER_VERSION = '1.0.0';
 /** Map tool name → description from the single source of truth */
 const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
 
+/**
+ * First sentence of a tool description, for the one-line api-overview listing.
+ *
+ * A very short lead sentence carries its follow-on so the line still says
+ * something — `nessie_query` leads with "DISABLED." and the disabled contract
+ * is the part an agent has to read.
+ */
+function firstSentence(description: string): string {
+  const sentences = description.match(/[^.!?]+[.!?]+/g);
+  if (!sentences || sentences.length === 0) return description.trim();
+  let out = sentences[0].trim();
+  for (let i = 1; i < sentences.length && out.length < 40; i++) {
+    out = `${out} ${sentences[i].trim()}`;
+  }
+  return out;
+}
+
+/**
+ * Render the `arkova://api/overview` resource text.
+ *
+ * DERIVED from `TOOL_DEFINITIONS` — do not hand-type the listing. It used to
+ * be a literal block, which drifted: `arkova_verify_batch` was registered as a
+ * tool but absent from the overview, so an agent reading the resource never
+ * learned it existed, and the name column was padded inconsistently. Deriving
+ * it also means the BUG-026 class (a published claim disagreeing with the
+ * canonical description) cannot reappear on this surface.
+ */
+export function buildApiOverviewText(anchorDocumentEnabled: boolean): string {
+  const width = Math.max(...TOOL_DEFINITIONS.map((t) => t.name.length));
+  const toolLines = TOOL_DEFINITIONS.map((t) => {
+    const summary = t.name === 'arkova_anchor_document' && !anchorDocumentEnabled
+      ? 'Disabled for read-only launch unless MCP_ENABLE_ANCHOR_DOCUMENT=true and caller has write:anchors or anchor:write'
+      : firstSentence(t.description);
+    return `  ${t.name.padEnd(width)} — ${summary}`;
+  });
+
+  return [
+    'Arkova Verification API — Overview',
+    '',
+    'Arkova anchors document fingerprints (SHA-256 hashes) to the public ledger',
+    'for tamper-proof verification. Documents never leave the user\'s device —',
+    'only their cryptographic fingerprints are submitted.',
+    '',
+    'Available tools:',
+    ...toolLines,
+    '',
+    'Authentication: API key via X-API-Key header, or a Supabase session JWT via',
+    'Authorization: Bearer. OAuth authorization-code flow is not supported.',
+    'Get your API key at https://app.arkova.ai/settings/api-keys',
+    '',
+    'Rate limits: 1,000 req/min per API key. Batch: 10 req/min.',
+  ].join('\n');
+}
+
 // Leaf validators live in mcp-tool-schemas.ts; the registry is the
 // canonical per-tool boundary validator. `withTelemetry` runs the
 // registry's strict validator before any handler fires.
 
-/** Scrub tool handler errors before they reach the MCP client — raw
- *  `String(error)` was leaking stack traces + internal URLs. */
-function safeErrorText(err: unknown, context: string): string {
-  console.error(`[mcp-server] ${context}:`, err);
-  return JSON.stringify({ error: `${context} failed`, code: 'TOOL_ERROR' });
-}
+// `safeErrorText` moved to mcp-error-utils.ts (F4) so mcp-tools.ts can use
+// it too without an import cycle (mcp-server.ts already imports
+// TOOL_DEFINITIONS from mcp-tools.ts).
 
 /** Alias for tool config — userId now lives on SupabaseConfig (MCP-SEC-03). */
 type ScopedConfig = SupabaseConfig;
 
 /** Per-request telemetry context — threaded into every tool invocation so
  *  SEC-01 rate limiting + SEC-06 audit logging can scope to the caller. */
-interface RequestTelemetryContext {
+export interface RequestTelemetryContext {
   env: Env;
   execCtx: ExecutionContext;
   apiKeyId: string | null;
@@ -136,7 +190,7 @@ interface RequestTelemetryContext {
  *  this wrapper runs. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyArgs = Record<string, any>;
-function withTelemetry(
+export function withTelemetry(
   toolName: string,
   handler: (args: AnyArgs) => Promise<ToolResult>,
   telemetry: RequestTelemetryContext,
@@ -225,8 +279,17 @@ function withTelemetry(
       if (result.isError) outcome = 'tool_error';
       return result;
     } catch (err) {
+      // Do NOT re-throw. The MCP SDK's `createToolError`
+      // (@modelcontextprotocol/sdk/server/mcp.js) puts `err.message` on the
+      // wire verbatim, so a thrown `Error` carrying an internal PostgREST URL,
+      // a query string, or a host name would be handed straight to the client.
+      // Full detail goes to Logpush via `safeErrorText`; the caller gets the
+      // same scrubbed envelope every other tool-error path returns.
       outcome = 'tool_error';
-      throw err;
+      return {
+        content: [{ type: 'text' as const, text: safeErrorText(err, toolName) }],
+        isError: true,
+      };
     } finally {
       logOnce();
     }
@@ -264,33 +327,33 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
   // ── Tools ─────────────────────────────────────────────────────────────
 
   tool(
-    'verify_credential',
-    TOOL_DESC['verify_credential'],
+    'arkova_verify_anchor',
+    TOOL_DESC['arkova_verify_anchor'],
     { public_id: publicIdSchema.describe('The credential\'s public identifier (e.g., ARK-2026-001)') },
     withTelemetry(
-      'verify_credential',
+      'arkova_verify_anchor',
       async ({ public_id }) => handleVerifyCredential({ public_id }, config),
       telemetry,
     ),
   );
 
   tool(
-    'search_credentials',
-    TOOL_DESC['search_credentials'],
+    'arkova_search_anchors',
+    TOOL_DESC['arkova_search_anchors'],
     {
       query: freeTextQuerySchema.describe('Natural language search query'),
       max_results: z.number().int().min(1).max(50).optional().describe('Maximum results to return (default: 10, max: 50)'),
     },
     withTelemetry(
-      'search_credentials',
+      'arkova_search_anchors',
       async ({ query, max_results }) => handleSearchCredentials({ query, max_results }, config),
       telemetry,
     ),
   );
 
   tool(
-    'search',
-    TOOL_DESC.search,
+    'arkova_search',
+    TOOL_DESC.arkova_search,
     {
       q: freeTextQuerySchema.describe('Natural language query or exact SHA-256 fingerprint'),
       type: z.enum(['all', 'org', 'record', 'fingerprint', 'document']).optional().describe('Optional result filter (default: all)'),
@@ -298,84 +361,84 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
       max_results: z.number().int().min(1).max(50).optional().describe('Deprecated alias for limit (default: 50, max: 50)'),
     },
     withTelemetry(
-      'search',
+      'arkova_search',
       async ({ q, type, limit, max_results }) => handleAgentSearch({ q, type, limit, max_results }, config),
       telemetry,
     ),
   );
 
   tool(
-    'verify',
-    TOOL_DESC.verify,
+    'arkova_verify',
+    TOOL_DESC.arkova_verify,
     { fingerprint: contentHashSchema.describe('SHA-256 fingerprint of the document to verify') },
     withTelemetry(
-      'verify',
+      'arkova_verify',
       async ({ fingerprint }) => handleAgentVerify({ fingerprint }, config),
       telemetry,
     ),
   );
 
   tool(
-    'list_orgs',
-    TOOL_DESC.list_orgs,
+    'arkova_list_orgs',
+    TOOL_DESC.arkova_list_orgs,
     {},
     withTelemetry(
-      'list_orgs',
+      'arkova_list_orgs',
       async () => handleAgentListOrgs(config),
       telemetry,
     ),
   );
 
   tool(
-    'get_anchor',
-    TOOL_DESC.get_anchor,
+    'arkova_get_anchor',
+    TOOL_DESC.arkova_get_anchor,
     { public_id: publicIdSchema.describe('Arkova public identifier (e.g., ARK-DOC-ABCDEF)') },
     withTelemetry(
-      'get_anchor',
+      'arkova_get_anchor',
       async ({ public_id }) => handleAgentGetAnchor({ public_id }, config),
       telemetry,
     ),
   );
 
   tool(
-    'get_organization',
-    TOOL_DESC.get_organization,
+    'arkova_get_organization',
+    TOOL_DESC.arkova_get_organization,
     { public_id: orgPublicIdSchema.describe('Organization public identifier returned by search') },
     withTelemetry(
-      'get_organization',
+      'arkova_get_organization',
       async ({ public_id }) => handleAgentGetOrganization({ public_id }, config),
       telemetry,
     ),
   );
 
   tool(
-    'get_record',
-    TOOL_DESC.get_record,
+    'arkova_get_record',
+    TOOL_DESC.arkova_get_record,
     { public_id: publicIdSchema.describe('Arkova public identifier returned by search') },
     withTelemetry(
-      'get_record',
+      'arkova_get_record',
       async ({ public_id }) => handleAgentGetAnchor({ public_id }, config),
       telemetry,
     ),
   );
 
   tool(
-    'get_fingerprint',
-    TOOL_DESC.get_fingerprint,
+    'arkova_get_fingerprint',
+    TOOL_DESC.arkova_get_fingerprint,
     { fingerprint: contentHashSchema.describe('SHA-256 fingerprint returned by search') },
     withTelemetry(
-      'get_fingerprint',
+      'arkova_get_fingerprint',
       async ({ fingerprint }) => handleAgentVerify({ fingerprint }, config),
       telemetry,
     ),
   );
 
   tool(
-    'get_document',
-    TOOL_DESC.get_document,
+    'arkova_get_document',
+    TOOL_DESC.arkova_get_document,
     { public_id: publicIdSchema.describe('Arkova public identifier returned by search') },
     withTelemetry(
-      'get_document',
+      'arkova_get_document',
       async ({ public_id }) => handleAgentGetAnchor({ public_id }, config),
       telemetry,
     ),
@@ -398,8 +461,8 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
 
   if (telemetry.anchorDocumentEnabled) {
     tool(
-      'anchor_document',
-      TOOL_DESC['anchor_document'],
+      'arkova_anchor_document',
+      TOOL_DESC['arkova_anchor_document'],
       {
         content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document'),
         record_type: z.string().max(50).optional().describe('Record type (e.g., patent_grant, 10-K)'),
@@ -409,7 +472,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
         idempotency_key: z.string().uuid().optional().describe('Client-supplied UUID for retry deduplication'),
       },
       withTelemetry(
-        'anchor_document',
+        'arkova_anchor_document',
         async ({ content_hash, record_type, source, title, source_url, idempotency_key }) => {
           return handleAnchorDocument(
             { content_hash, record_type, source, title, source_url, idempotency_key },
@@ -422,11 +485,11 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
   }
 
   tool(
-    'verify_document',
-    TOOL_DESC['verify_document'],
+    'arkova_verify_document',
+    TOOL_DESC['arkova_verify_document'],
     { content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document to verify') },
     withTelemetry(
-      'verify_document',
+      'arkova_verify_document',
       async ({ content_hash }) => handleVerifyDocument({ content_hash }, config),
       telemetry,
     ),
@@ -435,8 +498,8 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
   // ── INT-02: Batch verification ────────────────────────────────────────
 
   tool(
-    'verify_batch',
-    TOOL_DESC['verify_batch'],
+    'arkova_verify_batch',
+    TOOL_DESC['arkova_verify_batch'],
     {
       public_ids: z
         .array(publicIdSchema)
@@ -445,7 +508,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
         .describe('Array of credential public IDs (max 100). Results returned in input order.'),
     },
     withTelemetry(
-      'verify_batch',
+      'arkova_verify_batch',
       async ({ public_ids }) => handleVerifyBatch({ public_ids }, config),
       telemetry,
     ),
@@ -454,16 +517,18 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
   // ── Phase II Agentic Tools (PH2-AGENT-06) ─────────────────────────────
 
   tool(
-    'oracle_batch_verify',
+    'arkova_oracle_batch_verify',
     // NOTE 2026-04-20 MCP security audit: description previously claimed
     // "HMAC-signed results for tamper detection" — implementation did no
     // such signing. Claim removed; real HMAC signing tracked as MCP-SEC-02.
-    'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
+    // The text lives in TOOL_DEFINITIONS (mcp-tools.ts), the CI-guarded
+    // source of truth; an inline literal here is an unguarded sixth copy.
+    TOOL_DESC['arkova_oracle_batch_verify'],
     {
       public_ids: z.array(publicIdSchema).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),
     },
     withTelemetry(
-      'oracle_batch_verify',
+      'arkova_oracle_batch_verify',
       async ({ public_ids }) => {
         try {
           const results = await Promise.all(
@@ -487,7 +552,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
                 type: 'text' as const,
                 text: JSON.stringify({
                   error: 'signing_key_missing',
-                  message: 'oracle_batch_verify is fail-closed in this environment because MCP_SIGNING_KEY is not provisioned. Provision via `wrangler secret put MCP_SIGNING_KEY --name arkova-edge` and retry.',
+                  message: 'arkova_oracle_batch_verify is fail-closed in this environment because MCP_SIGNING_KEY is not provisioned. Provision via `wrangler secret put MCP_SIGNING_KEY --name arkova-edge` and retry.',
                 }),
               }],
               isError: true,
@@ -505,7 +570,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           }
           return { content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }] };
         } catch (error) {
-          return { content: [{ type: 'text' as const, text: safeErrorText(error, 'oracle_batch_verify') }], isError: true };
+          return { content: [{ type: 'text' as const, text: safeErrorText(error, 'arkova_oracle_batch_verify') }], isError: true };
         }
       },
       telemetry,
@@ -513,11 +578,11 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
   );
 
   tool(
-    'list_agents',
-    'List AI agents registered to the authenticated caller\'s organization. Returns agent names, types, scopes, and status.',
+    'arkova_list_agents',
+    TOOL_DESC['arkova_list_agents'],
     {},
     withTelemetry(
-      'list_agents',
+      'arkova_list_agents',
       async () => {
         // MCP security fix 2026-04-20: prior implementation queried
         // /rest/v1/agents?status=eq.active with the service-role key and no
@@ -538,12 +603,12 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
             },
           );
           if (!resp.ok) {
-            return { content: [{ type: 'text' as const, text: safeErrorText(new Error(`HTTP ${resp.status}`), 'list_agents') }], isError: true };
+            return { content: [{ type: 'text' as const, text: safeErrorText(new Error(`HTTP ${resp.status}`), 'arkova_list_agents') }], isError: true };
           }
           const agents = await resp.json();
           return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: Array.isArray(agents) ? agents : [] }, null, 2) }] };
         } catch (error) {
-          return { content: [{ type: 'text' as const, text: safeErrorText(error, 'list_agents') }], isError: true };
+          return { content: [{ type: 'text' as const, text: safeErrorText(error, 'arkova_list_agents') }], isError: true };
         }
       },
       telemetry,
@@ -560,40 +625,10 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
       contents: [{
         uri: 'arkova://api/overview',
         mimeType: 'text/plain',
-        text: [
-          'Arkova Verification API — Overview',
-          '',
-          'Arkova anchors document fingerprints (SHA-256 hashes) to the public ledger',
-          'for tamper-proof verification. Documents never leave the user\'s device —',
-          'only their cryptographic fingerprints are submitted.',
-          '',
-          'Available tools:',
-          '  search               — Agent-friendly v2 search across orgs, records, fingerprints, and documents',
-          '  verify               — Verify a document fingerprint by SHA-256 hash',
-          '  list_orgs            — List organizations available to the authenticated caller',
-          '  get_anchor           — Fetch redacted public anchor metadata by Arkova public ID',
-          '  get_organization     — Fetch organization details by public ID',
-          '  get_record           — Fetch record details by Arkova public ID',
-          '  get_fingerprint      — Fetch record details by SHA-256 fingerprint',
-          '  get_document         — Fetch document details by Arkova public ID',
-          '  verify_credential    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
-          // BUG-026 / BUG-008 / R-1: this listing is a published claim. Keep it
-          // matched to what the tools actually do — search_credentials is served
-          // lexically, and nessie_query is disabled.
-          '  search_credentials   — Keyword (substring) search across the anchored records corpus',
-          '  oracle_batch_verify  — Batch-verify up to 25 credentials with query-envelope metadata',
-          '  nessie_query         — DISABLED: returns an explicit nessie_disabled error, never results',
-          ...(telemetry.anchorDocumentEnabled
-            ? ['  anchor_document      — Submit a SHA-256 fingerprint for batch anchoring']
-            : ['  anchor_document      — Disabled for read-only launch unless MCP_ENABLE_ANCHOR_DOCUMENT=true and caller has write:anchors or anchor:write']),
-          '  verify_document      — Check if a document fingerprint has been anchored',
-          '  list_agents          — List registered AI agents for the organization',
-          '',
-          'Authentication: API key (X-API-Key header) or OAuth Bearer token.',
-          'Get your API key at https://app.arkova.ai/settings/api-keys',
-          '',
-          'Rate limits: 1,000 req/min per API key. Batch: 10 req/min.',
-        ].join('\n'),
+        // DERIVED from TOOL_DEFINITIONS — see buildApiOverviewText. Do not
+        // re-inline the tool listing here: the literal version drifted from
+        // the registered tool set (arkova_verify_batch was missing entirely).
+        text: buildApiOverviewText(telemetry.anchorDocumentEnabled),
       }],
     }),
   );
@@ -641,7 +676,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           type: 'text' as const,
           text:
             `${SAFETY_PREFIX}\n\n` +
-            `Please verify the credential whose public ID is provided below using the verify_credential tool. ` +
+            `Please verify the credential whose public ID is provided below using the arkova_verify_anchor tool. ` +
             'Report the verification status, issuer, credential type, dates, and anchoring proof.\n\n' +
             fenceUserInput(public_id, 'public_id'),
         },
@@ -660,12 +695,12 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           type: 'text' as const,
           text:
             `${SAFETY_PREFIX}\n\n` +
-            'Run search with the query provided below. From the top result, ' +
+            'Run arkova_search with the query provided below. From the top result, ' +
             'inspect the appropriate v2 detail surface based on the result type: ' +
-            'get_organization for orgs, get_record for records, get_fingerprint for ' +
-            'fingerprints, get_document for documents. Then call verify with the ' +
+            'arkova_get_organization for orgs, arkova_get_record for records, arkova_get_fingerprint for ' +
+            'fingerprints, arkova_get_document for documents. Then call arkova_verify with the ' +
             'fingerprint (the SHA-256 hash returned in the detail response) to ' +
-            'confirm cryptographic integrity, or call get_anchor with the public_id ' +
+            'confirm cryptographic integrity, or call arkova_get_anchor with the public_id ' +
             'for the lifecycle history. Summarize your findings.\n\n' +
             fenceUserInput(query, 'query'),
         },
@@ -688,7 +723,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
             type: 'text' as const,
             text:
               `${SAFETY_PREFIX}\n\n` +
-              `Anchor the document described below using anchor_document, then verify it was submitted using verify_document.\n\n` +
+              `Anchor the document described below using arkova_anchor_document, then verify it was submitted using arkova_verify_document.\n\n` +
               fenceUserInput(title ?? 'Untitled', 'title') + '\n' +
               fenceUserInput(content_hash, 'content_hash'),
           },
@@ -822,21 +857,20 @@ let supabaseJwtSecretWarned = false;
 function warnSupabaseJwtSecretMissingOnce(): void {
   if (supabaseJwtSecretWarned) return;
   supabaseJwtSecretWarned = true;
-  console.error('[mcp-server] SUPABASE_JWT_SECRET unset — bearer auth disabled (MCP-SEC-07). Provision via `wrangler secret put SUPABASE_JWT_SECRET --name arkova-edge`.');
+  console.warn('[mcp-server] SUPABASE_JWT_SECRET unset — HS256 (legacy-key) bearer tokens will be rejected; ES256 tokens verify via JWKS (MCP-SEC-07 / BUG-2026-09-02-002).');
 }
 
 export async function validateBearer(
   token: string,
   env: Env,
 ): Promise<AuthResult | null> {
-  // SCRUM-926 / MCP-SEC-07 — verify HS256 signature + exp/iat/aud/iss
-  // locally first. Fail-closed if SUPABASE_JWT_SECRET is unset; that
-  // forces operators to provision the secret rather than silently
-  // falling back to the round-trip-only model the ticket flagged.
-  if (!env.SUPABASE_JWT_SECRET) {
-    warnSupabaseJwtSecretMissingOnce();
-    return null;
-  }
+  // SCRUM-926 / MCP-SEC-07 — verify signature + exp/iat/aud/iss locally
+  // first. BUG-2026-09-02-002: Supabase signs current tokens with ES256, which
+  // verifies against the project JWKS and needs no shared secret, so an
+  // absent SUPABASE_JWT_SECRET no longer disables Bearer auth outright — it
+  // only disables the HS256 fallback (verifySupabaseJwt returns
+  // `missing_secret` for an HS256 token in that case, still fail-closed).
+  if (!env.SUPABASE_JWT_SECRET) warnSupabaseJwtSecretMissingOnce();
   const local = await verifySupabaseJwt(token, {
     secret: env.SUPABASE_JWT_SECRET,
     supabaseUrl: env.SUPABASE_URL,
@@ -874,7 +908,17 @@ export async function validateBearer(
 
 /**
  * OAuth Protected Resource Metadata (RFC 9728).
- * Required for MCP connector discovery.
+ *
+ * D3: deliberately carries NO `authorization_servers` — Arkova does not run
+ * an OAuth authorization-code flow and never has. The field previously
+ * pointed at `${baseUrl}/auth`, a route that does not exist (see also the
+ * STATIC copy at `public/.well-known/oauth-protected-resource`, which named
+ * a real-but-unreachable-for-this-flow Supabase auth issuer). Kept alive:
+ * `resource` / `scopes_supported` / `bearer_methods_supported` /
+ * `resource_documentation`, so a client can still discover what scopes and
+ * bearer method this resource expects — the 401 `WWW-Authenticate` header
+ * still points here for exactly that. Actual auth is API key or a Supabase
+ * session JWT presented directly as a Bearer token; see the 401 body below.
  */
 function handleProtectedResourceMetadata(baseUrl: string, env: Env): Response {
   const scopesSupported = env.MCP_ENABLE_ANCHOR_DOCUMENT === 'true'
@@ -882,7 +926,6 @@ function handleProtectedResourceMetadata(baseUrl: string, env: Env): Response {
     : ['mcp:verify', 'mcp:search'];
   return new Response(JSON.stringify({
     resource: `${baseUrl}/mcp`,
-    authorization_servers: [`${baseUrl}/auth`],
     scopes_supported: scopesSupported,
     bearer_methods_supported: ['header'],
     resource_documentation: 'https://app.arkova.ai/docs/mcp',
@@ -985,7 +1028,7 @@ export async function handleMcpRequest(
     return new Response(
       JSON.stringify({
         error: 'Unauthorized',
-        message: 'Valid API key (X-API-Key header) or OAuth Bearer token required.',
+        message: 'API key via X-API-Key header, or a Supabase session JWT via Authorization: Bearer. OAuth authorization-code flow is not supported.',
         docs: 'https://app.arkova.ai/settings/api-keys',
       }),
       {
@@ -1001,7 +1044,7 @@ export async function handleMcpRequest(
   }
 
   // Create MCP server and transport. userId threaded through so tools can
-  // org-scope their queries (see `list_agents` + get_agents_for_user RPC).
+  // org-scope their queries (see `arkova_list_agents` + get_agents_for_user RPC).
   const config: ScopedConfig = {
     supabaseUrl: env.SUPABASE_URL,
     supabaseKey: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -1090,7 +1133,7 @@ export async function handleMcpRequest(
 }
 
 /**
- * SCRUM-1283 (R3-10) adjacent: should oracle_batch_verify fail-closed when
+ * SCRUM-1283 (R3-10) adjacent: should arkova_oracle_batch_verify fail-closed when
  * `MCP_SIGNING_KEY` is missing in this environment? Production wrangler.toml
  * sets `EDGE_REQUIRE_MCP_SIGNING = "true"`; dev/preview leaves it unset and
  * the soft-fail path (`signed: false` marker) continues to work.

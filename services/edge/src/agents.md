@@ -98,16 +98,16 @@ Three rules came out of it. Do not relax any of them:
 
 ## `TOOL_DEFINITIONS` descriptions are CI-guarded (BUG-026, 2026-08-15)
 
-`TOOL_DEFINITIONS` in `mcp-tools.ts` is the canonical text for five published surfaces: this file, `public/.well-known/mcp/server-card.json`, `public/AGENTS.md`, `public/llms.txt` + `public/llms-full.txt`, and `docs/api/mcp-tools.md`. Nothing compared the description TEXT between them, which is how BUG-026 — `search_credentials` advertising semantic/vector matching over an ILIKE substring scan — survived on six surfaces at once.
+`TOOL_DEFINITIONS` in `mcp-tools.ts` is the canonical text for five published surfaces: this file, `public/.well-known/mcp/server-card.json`, `public/AGENTS.md`, `public/llms.txt` + `public/llms-full.txt`, and `docs/api/mcp-tools.md`. Nothing compared the description TEXT between them, which is how BUG-026 — `search_anchors` advertising semantic/vector matching over an ILIKE substring scan — survived on six surfaces at once.
 
 `scripts/ci/check-mcp-claim-parity.ts` now enforces it (ci.yml `policy-lints`). What this means when you edit a description here:
 
 - The manifest description must still START WITH your new canonical text. Editing one side alone fails the build. The manifest may APPEND discovery-only guidance (8 of the 16 tools do); it may not restate the mechanism.
 - A new tool must be documented in `docs/api/mcp-tools.md` in the same PR (`reference-coverage`, strict, no baseline).
-- `CLAIM_RULES` in the gate declares assertions a description may not make about a given tool, with a qualifier that makes the claim honest — `search_credentials` may not claim semantic/vector retrieval unless the same text also discloses `search_mode` or the lexical/substring fallback, and `nessie_query` may not be described in the present tense without a DISABLED marker. Adding a rule is the intended way to close the next instance; deleting one asserts the behaviour changed, and needs the code that changed it.
+- `CLAIM_RULES` in the gate declares assertions a description may not make about a given tool, with a qualifier that makes the claim honest — `search_anchors` may not claim semantic/vector retrieval unless the same text also discloses `search_mode` or the lexical/substring fallback, and `nessie_query` may not be described in the present tense without a DISABLED marker. Adding a rule is the intended way to close the next instance; deleting one asserts the behaviour changed, and needs the code that changed it.
 - Known outstanding, in `scripts/ci/mcp-claim-parity-baseline.json`: this file's `nessie_query` description still makes a present-tense capability claim (owned by PR #2236), and `oracle_batch_verify` / `list_agents` carry one-word hand-copy drift against the manifest that is UNOWNED. The gate could not fix them — every published surface is above T0.
 - The gate scopes text by tool NAME. A module-header comment that names no tool is out of scope; `mcp-tools.ts`'s own header was one of BUG-026's six surfaces and would not be caught.
-## 2026-08-15 BUG-008/027 — `nessie_query` fails CLOSED; BUG-026 — `search_credentials` describes itself honestly
+## 2026-08-15 BUG-008/027 — `nessie_query` fails CLOSED; BUG-026 — `search_anchors` describes itself honestly
 
 **`nessie_query`.** Gated on `SupabaseConfig.nessieEnabled`, sourced from the `ENABLE_NESSIE_QUERY`
 edge var (`env.ENABLE_NESSIE_QUERY === 'true'`). **Absent means disabled** — Nessie is permanently
@@ -126,7 +126,7 @@ The disabled result carries `isError: true`, `enabled: false`, `code: 'nessie_di
 of `total`/`results`/`answer`/`confidence`/`citations`. The absence is the contract: an agent reading
 only `total` would otherwise conclude "0 results".
 
-**`search_credentials` (BUG-026).** The description used to LEAD with "Uses semantic (vector)
+**`search_anchors` (BUG-026).** The description used to LEAD with "Uses semantic (vector)
 similarity matching". In practice the vector path needs a configured worker AND an open
 `ENABLE_SEMANTIC_SEARCH` gate; with the gate closed the worker answers 503 and every call is served
 lexically. Reproduced on the rig: the non-word fragment `aten` matched
@@ -148,3 +148,98 @@ names/schemas only. Update both by hand, together.
 - No CI check enforces text parity across the five published MCP claim surfaces (`mcp-tools.ts`,
   `server-card.json`, `public/AGENTS.md`, `public/llms*.txt`, `docs/api/mcp-tools.md`). They can drift
   freely today; a parity script is the durable fix for the BUG-026 class.
+
+## 2026-09-02 — tool rename, D3, ES256 Bearer, safeErrorText (SCRUM-3894)
+
+See `services/edge/agents.md` (same date) for the full entry. File-level notes:
+- **`mcp-tools.ts`** — all `TOOL_DEFINITIONS` names `arkova_`-prefixed except `nessie_query`; `API_ONLY_NOTE` appended to `arkova_verify_anchor` / `arkova_search_anchors` (do not drop it); every catch block returns `safeErrorText(...)`.
+- **`mcp-tool-schemas.ts`** — registry keys follow the new names.
+- **`mcp-server.ts`** — `TOOL_DESC` keys renamed; `handleProtectedResourceMetadata` has no `authorization_servers` (D3); `validateBearer` tolerates a missing `SUPABASE_JWT_SECRET` (ES256 path needs none).
+- **`mcp-jwt-verify.ts`** — ES256 via JWKS + HS256 fallback; exports `jwksUrlFor`, `resetJwksCacheForTests`, `JwksFetcher`. (`supabase-jwt.ts`, the HS256-only duplicate this line flagged for removal, was deleted 2026-09-05 — see below.)
+- **`mcp-error-utils.ts`** — `safeErrorText` home (was in `mcp-server.ts`; moved to avoid an import cycle).
+
+## 2026-09-05 — unauthenticated JWKS refreshes must be bounded (PR #2589)
+
+An unknown `kid` is attacker-controlled and reaches local JWT verification before
+authenticated tool rate limiting. Never force a network request for each unknown
+key. Share in-flight JWKS refreshes and retain both successful and failed attempts
+for a 30-second cooldown. The successful-key cache remains valid for 10 minutes;
+known cached keys continue working during an unknown-key refresh outage. A newly
+rotated key can be fetched after the short cooldown, and unknown keys always fail
+closed. The default fetch and response-body read are bounded by a five-second
+abort timer. `resetJwksCacheForTests` clears both cache and refresh-attempt state.
+
+Regression tests reproduce request amplification, concurrent cold fetches, and
+outage retries, and verify the timeout, legitimate rotation, and outage recovery.
+The current review and release record is Confluence page `137101729`; the same
+finding is recorded in master bug tracker `88768514`. Auth changes require T3
+qualification on the final frozen source; older T2 wording is superseded.
+
+## 2026-09-05 — review fixes on PR #2589 (edge MCP surface)
+
+Six findings from the code review of `5bd5f754b`. All are in this directory
+plus `src/tests/edge/` and `tests/infra/edge-wrangler-vars-parity.test.ts`.
+
+**A malformed bearer token must not reach the runtime as a thrown exception.**
+`base64UrlDecode` in `mcp-jwt-verify.ts` called `atob` unguarded. Every byte of
+a bearer token is attacker-controlled and `atob` raises a DOMException on a
+non-base64url segment; the HS256 branch had no try/catch, and neither
+`validateBearer`, `handleMcpRequest`, nor `index.ts` catches above it, so
+`<HS256 header>.<payload>.$$$$` produced a generic Workers error instead of the
+401 the auth contract promises. The decoder now returns `null` and both
+signature branches read that as `bad_signature`. The ES256 path decodes
+**before** any JWKS work, so an undecodable signature also cannot buy an
+unauthenticated caller a request to the authentication service.
+
+**The ES256-only pin is deliberate and asymmetric with the worker.**
+`services/worker/src/auth.ts` accepts `ASYMMETRIC_ALGS = ['ES256', 'RS256']` on
+its JWKS path. This module accepts ES256 (JWKS) and legacy HS256 (secret) only:
+RS256 is rejected as `wrong_alg` before any JWKS fetch. That is not drift to
+"fix" by widening — Supabase signs with ES256, RS256 buys the edge nothing, and
+the narrower set means one fewer alg an attacker can steer an unauthenticated
+request into. A test pins it.
+
+**A thrown tool error was published verbatim.** `withTelemetry` re-threw the
+handler's error, and the MCP SDK's `createToolError`
+(`@modelcontextprotocol/sdk` `server/mcp.js`) copies `err.message` onto the
+wire. It now returns the `safeErrorText` envelope, the same one every other
+tool-error path uses. Four raw upstream bodies in `mcp-tools.ts` went the same
+way — the two search fallbacks and both anchor-submission paths interpolated
+the PostgREST response body, which names columns and can echo row content. The
+body goes to Logpush; the client gets `{error, code:'TOOL_ERROR'}`. **Never
+interpolate a response body, an `Error.message`, or `String(err)` into
+`content[0].text`.**
+
+**`TOOL_LIMITS_RPM` is exported so a test can pin it.** A key that is not a real
+tool name falls through to `default: 1000` in silence — the per-tool cap simply
+never applies. The 2026-09-02 `arkova_` rename is exactly the edit that strands
+one. A test asserts every key but `default` is a `TOOL_DEFINITIONS` name.
+
+**The `api-overview` resource is derived, not typed.** It listed tools as hand-
+written literals and had already drifted: `arkova_verify_batch` was registered
+but absent, so an agent reading the resource never learned it existed.
+`buildApiOverviewText` renders padded name + first sentence of the canonical
+description (a very short lead sentence carries its follow-on, so `nessie_query`
+still reads "DISABLED. …"), keeping the `anchor_document` enabled/disabled
+conditional. `arkova_oracle_batch_verify` and `arkova_list_agents` also stopped
+passing inline description literals and now read `TOOL_DESC[...]` like the other
+13. **Do not re-inline either one** — an inline literal is a sixth, unguarded
+copy of text `check-mcp-claim-parity.ts` pins across five published surfaces,
+and it is the shape the baselined BUG-026 one-word drift took. Canonical
+descriptions in `mcp-tools.ts` were not touched, and the gate still exits 0 with
+the same 3 baselined violations.
+
+**`supabase-jwt.ts` is gone.** It was a second Supabase JWT verifier, HS256-only,
+whose sole importer was `src/tests/edge/mcp-security.test.ts`. It would have
+rejected every current Supabase token (BUG-2026-09-02-002) — and because it was
+what the tests exercised, they could stay green while the shipped verifier
+broke. Those tests now run against `mcp-jwt-verify.ts` with the specific
+failure reason asserted, not just "returns null".
+
+**`wrangler.soak.toml` `[vars]` keys are pinned to `wrangler.toml`'s**
+(`tests/infra/edge-wrangler-vars-parity.test.ts`, keys only — values differ per
+environment). Nothing compared them. A var present only in prod makes the rig
+take the other branch of a gate read as `env.X === 'true'`, since an absent var
+is `undefined`; `EDGE_REQUIRE_MCP_SIGNING` is the worked example, where the rig
+would emit unsigned oracle envelopes while prod fails closed and the soak still
+reports green (§1.11A: a hollow soak).
