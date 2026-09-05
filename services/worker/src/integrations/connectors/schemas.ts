@@ -27,6 +27,15 @@ import { z } from 'zod';
 const NonEmptyString = z.string().trim().min(1).max(500);
 const MaybeEmail = z.string().trim().toLowerCase().email().optional();
 
+// Standard 8-4-4-4-12 hex GUID shape — deliberately NOT Zod's built-in
+// `.uuid()`, which additionally enforces the RFC 4122 variant nibble
+// (8/9/a/b) that a vendor-issued GUID is not guaranteed to satisfy. Used to
+// structurally pin PII-adjacent identifier fields (see `DocusignCapturedSigner`
+// below) so a value cannot pass validation merely by having the right KEY
+// NAME while holding an email/name in the wrong shape.
+const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const GuidString = NonEmptyString.regex(GUID_PATTERN, 'must be a GUID');
+
 // =============================================================================
 // INT-12 — E-Sign (SCRUM-1016)
 // =============================================================================
@@ -36,6 +45,10 @@ export const DocusignEnvelopeCompleted = z.object({
   event: z.literal('envelope-completed'),
   eventId: NonEmptyString.optional(),
   envelopeId: NonEmptyString,
+  // The account whose Connect configuration produced THIS delivery (used to
+  // resolve the org_integrations/member_integrations row + its HMAC key —
+  // unchanged by docusign-bilateral-2026-08). NOT necessarily the envelope's
+  // owning/sending account — see `senderAccountId` below.
   accountId: NonEmptyString,
   status: z.literal('completed'),
   generatedDateTime: z.string().datetime().optional(),
@@ -43,6 +56,19 @@ export const DocusignEnvelopeCompleted = z.object({
     .object({ email: MaybeEmail })
     .partial()
     .optional(),
+  // docusign-bilateral-2026-08 (feasibility spike, SCRUM-3817/SCRUM-3818):
+  // the envelope's declared owning/sending DocuSign account, when DocuSign's
+  // notification states one distinct from `accountId` — carries the payload's
+  // `sender.accountId`. Optional and ABSENT on every payload shape that
+  // predates this field (including 100% of traffic today): the webhook
+  // classifier (services/worker/src/api/v1/webhooks/docusign.ts) treats a
+  // missing `senderAccountId` as "same as accountId" (falls back to it),
+  // which reproduces the pre-existing outbound-only classification exactly.
+  // Never trust this field alone for a trust decision — the classifier
+  // additionally cross-checks it against the resolving org's own
+  // SERVER-STORED connected-account set before ever calling an envelope
+  // "outbound" (see that file's `classifyDirection`).
+  senderAccountId: NonEmptyString.optional(),
   envelopeDocuments: z
     .array(
       z.object({
@@ -56,6 +82,48 @@ export const DocusignEnvelopeCompleted = z.object({
     .max(100)
     .default([]),
 });
+
+/**
+ * CTO Decision Record (docs/staging/docusign-bilateral-2026-08,
+ * ruling R6) — a captured DocuSign signer identifier. PSEUDONYMOUS ONLY:
+ * `recipient_id_guid` (DocuSign's envelope-scoped GUID) and `user_id`
+ * (DocuSign's platform user id, absent for pure email-link signers) — never
+ * a name or email.
+ *
+ * Zod's default "strip unknown keys" object mode is load-bearing here: the
+ * raw DocuSign recipient object also carries `name` / `email` / `phoneAuthentication`
+ * / etc. Because this schema does not list them, they are stripped BY
+ * CONSTRUCTION on `.parse()` — not merely "not read" by whatever code
+ * happens to touch the object afterward. No caller may widen this schema
+ * with `.passthrough()`; doing so would defeat the guarantee.
+ *
+ * HIGH finding (PR #2474 review): stripping-by-key-name alone is not enough —
+ * if a future/buggy DocuSign payload ever mis-slots a value so that
+ * `recipientIdGuid` (or `userId`) HOLDS an email/name string, every gate that
+ * only checks the key name would wave it through and persist PII under a
+ * GUID-shaped field name. `GuidString` pins the VALUE shape, not just the
+ * key: a non-GUID `recipient_id_guid`/`user_id` fails `.safeParse()`, so
+ * `extractSigners` (webhooks/docusign.ts) silently skips that entry — same
+ * fail-soft posture as a missing required field, never a thrown error.
+ */
+export const DocusignCapturedSigner = z.object({
+  recipient_id_guid: GuidString,
+  // Absent for pure email-link (non-platform) signers — DocuSign only
+  // assigns userId to a recipient with a DocuSign platform account.
+  user_id: GuidString.optional(),
+  status: NonEmptyString.refine((value) => new Set([
+    'created', 'sent', 'delivered', 'signed', 'declined', 'completed',
+    'faxpending', 'autoresponded',
+  ]).has(value.toLowerCase()), 'must be a recipient status code'),
+  // Validate values as well as keys: free text here can persist a name/email.
+  // Preserve vendor fractional seconds, offsets and timezone-less timestamps.
+  signed_at: z.string().trim().max(100).datetime({ offset: true, local: true }).optional(),
+});
+
+export type DocusignCapturedSignerT = z.infer<typeof DocusignCapturedSigner>;
+
+/** R6: display cap + persistence cap for captured signers (metadata-size safety). */
+export const MAX_CAPTURED_DOCUSIGN_SIGNERS = 20;
 
 /** Adobe Sign agreement-signed payload — simplified shape. */
 export const AdobeAgreementSigned = z.object({

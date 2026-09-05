@@ -20,8 +20,11 @@
 
 import { AlertTriangle } from 'lucide-react';
 import { DOES_NOT_ASSERT_LABELS } from '@/lib/copy';
+import { getFingerprintSourceTriad, isRecordDerived } from '@/lib/fingerprintSource';
 
-export function DoesNotAssertDisclaimer() {
+export function DoesNotAssertDisclaimer({ fingerprintSource }: Readonly<{ fingerprintSource?: string | null }>) {
+  // A generic document claim must not contradict the record's declared source.
+  const declared = isRecordDerived(fingerprintSource) ? getFingerprintSourceTriad(fingerprintSource) : null;
   return (
     <div
       data-testid="does-not-assert-disclaimer"
@@ -39,7 +42,7 @@ export function DoesNotAssertDisclaimer() {
             {DOES_NOT_ASSERT_LABELS.MEASURED_LABEL}
           </dt>
           <dd className="text-xs text-muted-foreground leading-relaxed">
-            {DOES_NOT_ASSERT_LABELS.MEASURED_BODY}
+            {declared?.measured ?? DOES_NOT_ASSERT_LABELS.MEASURED_BODY}
           </dd>
         </div>
         <div>
@@ -47,7 +50,7 @@ export function DoesNotAssertDisclaimer() {
             {DOES_NOT_ASSERT_LABELS.ASSERTED_LABEL}
           </dt>
           <dd className="text-xs text-muted-foreground leading-relaxed">
-            {DOES_NOT_ASSERT_LABELS.ASSERTED_BODY}
+            {declared?.asserted ?? DOES_NOT_ASSERT_LABELS.ASSERTED_BODY}
           </dd>
         </div>
         <div>
@@ -55,7 +58,7 @@ export function DoesNotAssertDisclaimer() {
             {DOES_NOT_ASSERT_LABELS.NOT_ASSERTED_LABEL}
           </dt>
           <dd className="text-xs text-muted-foreground leading-relaxed">
-            {DOES_NOT_ASSERT_LABELS.NOT_ASSERTED_BODY}
+            {declared?.notAsserted ?? DOES_NOT_ASSERT_LABELS.NOT_ASSERTED_BODY}
           </dd>
         </div>
       </dl>

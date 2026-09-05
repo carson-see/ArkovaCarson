@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
+import { config } from '../../../config.js';
 import { submitJob } from '../../../utils/jobQueue.js';
 import { DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE } from '../../../jobs/docusign-envelope-completed.js';
 import { DOCUSIGN_NOTARIZATION_COMPLETED_JOB_TYPE } from '../../../jobs/docusign-notarization-completed.js';
@@ -26,6 +27,11 @@ import {
   extractDocusignSignatures,
 } from '../../../integrations/oauth/docusign-hmac.js';
 import { resolveHmacKeys, type HmacKeyEntry } from './docusign-hmac-helpers.js';
+import {
+  DocusignCapturedSigner,
+  MAX_CAPTURED_DOCUSIGN_SIGNERS,
+  type DocusignCapturedSignerT,
+} from '../../../integrations/connectors/schemas.js';
 
 export const docusignWebhookRouter = Router();
 
@@ -37,6 +43,10 @@ interface DocusignIntegrationRow {
 }
 
 interface DocusignNonceKey {
+  // docusign-bilateral-2026-08 / migration 0424: tenant-scopes the replay-
+  // protection key. Always resolved BEFORE the nonce write, for both the
+  // outbound and inbound branches — see nonceKeyForEvent below.
+  account_id: string;
   envelope_id: string;
   event_id: string;
   generated_at: string;
@@ -180,13 +190,52 @@ function documentHashes(event: DocusignCompletedEnvelope): string[] {
   )];
 }
 
+/**
+ * Build the sanitized rule-event payload for the `enqueue_rule_event` RPC.
+ *
+ * `organization_rule_events.payload` carries a hard DB CHECK
+ * (`organization_rule_events_payload_size`): `pg_column_size(payload) <= 16384`.
+ * The payload is derived from EVERY envelope document, so it must stay bounded
+ * regardless of envelope cardinality or documentId length.
+ *
+ * We record `document_count` — a fixed-size integer — rather than the full
+ * `document_ids` array. At the schema-permitted maximum (envelopeDocuments
+ * `.max(100)`) with long documentId values, that array alone overflowed the
+ * 16KB budget; the RPC would then throw a check_violation, the handler would
+ * roll the nonce back and 500, and DocuSign would retry the identical failing
+ * payload forever — trapping the envelope's ESIGN_COMPLETED event and every
+ * downstream step (document fetch, notarization, anchor). Nothing reads
+ * `document_ids` back off THIS payload: the rules engine's
+ * `sanitizeExecutionProviderPayload` allowlist and the action dispatcher consume
+ * only `document_hashes` / `document_sha256`, and the per-document ids the fetch
+ * job needs ride the UNCAPPED `job_queue` payload instead (see `enqueueFetchJob`).
+ * `document_hashes` stays: <=100 unique 64-char digests keep it well under budget.
+ */
+export function buildDocusignRuleEventPayload(args: {
+  integrationId: string;
+  event: DocusignCompletedEnvelope;
+  payloadHash: string;
+}): Record<string, unknown> {
+  const hashes = documentHashes(args.event);
+  return {
+    source: 'docusign_connect',
+    integration_id: args.integrationId,
+    account_id: args.event.accountId,
+    envelope_id: args.event.envelopeId,
+    document_count: args.event.envelopeDocuments.length,
+    ...(hashes.length > 0 ? { document_hashes: hashes } : {}),
+    ...(hashes.length === 1 ? { document_sha256: hashes[0] } : {}),
+    generated_at: args.event.generatedDateTime ?? null,
+    payload_hash: args.payloadHash,
+  };
+}
+
 async function enqueueRuleEvent(args: {
   integration: DocusignIntegrationRow;
   event: DocusignCompletedEnvelope;
   payloadHash: string;
 }): Promise<string> {
   const canonical = adaptDocusign(args.event, { org_id: args.integration.org_id });
-  const hashes = documentHashes(args.event);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db.rpc as any)('enqueue_rule_event', {
     p_org_id: canonical.org_id,
@@ -197,17 +246,11 @@ async function enqueueRuleEvent(args: {
     p_folder_path: canonical.folder_path ?? null,
     p_sender_email: canonical.sender_email ?? null,
     p_subject: canonical.subject ?? null,
-    p_payload: {
-      source: 'docusign_connect',
-      integration_id: args.integration.id,
-      account_id: args.event.accountId,
-      envelope_id: args.event.envelopeId,
-      document_ids: args.event.envelopeDocuments.map((doc) => doc.documentId),
-      ...(hashes.length > 0 ? { document_hashes: hashes } : {}),
-      ...(hashes.length === 1 ? { document_sha256: hashes[0] } : {}),
-      generated_at: args.event.generatedDateTime ?? null,
-      payload_hash: args.payloadHash,
-    },
+    p_payload: buildDocusignRuleEventPayload({
+      integrationId: args.integration.id,
+      event: args.event,
+      payloadHash: args.payloadHash,
+    }),
   });
 
   if (error || !data) {
@@ -222,6 +265,7 @@ async function enqueueFetchJob(args: {
   integration: DocusignIntegrationRow;
   event: DocusignCompletedEnvelope;
   ruleEventId: string;
+  signers: DocusignCapturedSignerT[];
 }): Promise<string> {
   const jobId = await submitJob({
     type: DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE,
@@ -238,6 +282,12 @@ async function enqueueFetchJob(args: {
       // connector_artifact.source_timestamp. Optional — undefined when DocuSign
       // omits it; the job payload schema and the RPC both accept null.
       envelope_completed_at: args.event.generatedDateTime,
+      // CTO Decision Record R6: pseudonymous signer GUIDs only (never name/
+      // email — see extractSigners). Omitted entirely when empty, matching
+      // the document_hashes/document_sha256 spread convention below in
+      // enqueueRuleEvent — never persist an empty array where "absent" reads
+      // more honestly (CLAUDE.md §6: omit rather than null/empty).
+      ...(args.signers.length > 0 ? { _signers: args.signers } : {}),
     },
   });
   if (!jobId) {
@@ -247,8 +297,13 @@ async function enqueueFetchJob(args: {
   return jobId;
 }
 
-function nonceKeyForEvent(event: DocusignCompletedEnvelope, payloadHash: string): DocusignNonceKey {
+function nonceKeyForEvent(
+  event: DocusignCompletedEnvelope,
+  payloadHash: string,
+  accountId: string,
+): DocusignNonceKey {
   return {
+    account_id: accountId,
     envelope_id: event.envelopeId,
     event_id: event.eventId ?? event.event,
     generated_at: event.generatedDateTime ?? payloadHash,
@@ -347,6 +402,96 @@ function findNotaryRecipient(recipients: RecipientGroups): Record<string, unknow
   }
 
   return signers.find(isNotaryRecipient) ?? null;
+}
+
+// ── CTO Decision Record (docusign-bilateral-2026-08, ruling R6): signer capture ──
+
+/**
+ * Extract pseudonymous signer identifiers from a DocuSign Connect raw payload.
+ *
+ * Mirrors `extractNotaryData`'s raw-body access pattern: `recipients.signers[]`
+ * lives outside the strict `DocusignEnvelopeCompleted` schema (like the notary
+ * data, DocuSign's own recipient shape varies more than that schema validates),
+ * so this reads the same `envelopeSummary ?? data ?? root` recipients block
+ * directly rather than widening the typed schema. Deliberately does NOT read
+ * `recipients.carbonCopies[]` — `findNotaryRecipient` above only ever consults
+ * `notaries` and `signers`, and this mirrors that same access pattern.
+ *
+ * PII discipline (R6): only `recipient_id_guid` / `user_id` / `status` /
+ * `signed_at` are ever copied — each field is read individually via
+ * `trimmedString`/`firstString` into a fresh literal, never spread from the
+ * raw recipient object, so a DocuSign-supplied `name`/`email` can never reach
+ * the result even if a future DocuSign payload shape adds more fields.
+ * `DocusignCapturedSigner.safeParse` is a second, independent gate — its
+ * default (non-`.passthrough()`) object mode strips anything not explicitly
+ * listed, rejects entries missing a required `recipient_id_guid`/`status`,
+ * AND (PR #2474 review, HIGH) rejects `recipient_id_guid`/`user_id` values
+ * that are not GUID-shaped — key-name stripping alone cannot stop a
+ * mis-slotted email/name riding in under the right field name; the value
+ * shape is pinned too, so that failure mode fails closed (entry skipped),
+ * not open.
+ *
+ * Also dedupes by `recipient_id_guid` — a resend/bounce can list the same
+ * signer twice within one delivery, and a duplicate should not burn a second
+ * slot of the cap.
+ *
+ * Capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS` entries (metadata-size + display
+ * safety per R6) — truncates rather than rejecting the whole envelope, so an
+ * oversized recipient list never blocks the fetch/anchor pipeline for the
+ * signed document itself.
+ */
+export function extractSigners(rawBody: Buffer | string): DocusignCapturedSignerT[] {
+  try {
+    const text = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+    const json = JSON.parse(text) as Record<string, unknown>;
+
+    const summary = (json.envelopeSummary ?? json.data ?? json) as Record<string, unknown>;
+    const recipients = summary.recipients as RecipientGroups | undefined;
+    if (!recipients) return [];
+
+    const signers = recipients.signers;
+    if (!signers || signers.length === 0) return [];
+
+    const captured: DocusignCapturedSignerT[] = [];
+    // Dedupe by recipient_id_guid — a resend/bounce can produce two recipient
+    // entries for the same signer within one delivery; without this, a
+    // duplicate burns a second slot of the 20-entry cap for no new signer.
+    const seenGuids = new Set<string>();
+    for (const raw of signers) {
+      if (captured.length >= MAX_CAPTURED_DOCUSIGN_SIGNERS) break;
+
+      const recipientIdGuid = trimmedString(raw, 'recipientIdGuid');
+      const userId = trimmedString(raw, 'userId');
+      const status = trimmedString(raw, 'status');
+      const signedAt = firstString(raw, ['signedDateTime']);
+      // Optional fields are only spread in when present — an explicit `undefined`
+      // value would still leave the key on the object (Zod .optional() accepts
+      // that), which would defeat the "absent, not merely falsy" contract the
+      // pure-email-link-signer case (no userId) and unsigned-recipient case (no
+      // signed_at) both rely on.
+      const candidate = {
+        ...(recipientIdGuid ? { recipient_id_guid: recipientIdGuid } : {}),
+        ...(userId ? { user_id: userId } : {}),
+        ...(status ? { status } : {}),
+        ...(signedAt ? { signed_at: signedAt } : {}),
+      };
+      const parsed = DocusignCapturedSigner.safeParse(candidate);
+      if (parsed.success && !seenGuids.has(parsed.data.recipient_id_guid)) {
+        seenGuids.add(parsed.data.recipient_id_guid);
+        captured.push(parsed.data);
+      }
+      // Entries missing a required recipient_id_guid/status, or whose
+      // recipient_id_guid/user_id is not GUID-shaped (PR #2474 review, HIGH:
+      // stripping-by-key-name alone cannot stop a mis-slotted email/name from
+      // riding in under the right field name), are silently skipped — never
+      // persisted as a partial/identity-less/PII row — matches
+      // extractNotaryData's fail-soft posture (best-effort metadata, never
+      // blocks the standard eSign flow).
+    }
+    return captured;
+  } catch {
+    return [];
+  }
 }
 
 function isNotaryRecipient(recipient: Record<string, unknown>): boolean {
@@ -491,6 +636,224 @@ function verifyIntegrationSignature(
   return true;
 }
 
+// ── docusign-bilateral-2026-08: inbound (Recipient Connect) classification ──
+//
+// THREAT MODEL (CTO Decision Record, docusign-bilateral-2026-08): the
+// DocuSign Connect HMAC key is CUSTOMER-side console state — every connected
+// org holds a VALID signing key for deliveries to its own listener. A
+// declared-hash inbound path that skipped API re-verification would let any
+// connected org self-POST a self-signed "inbound" event claiming to be about
+// someone ELSE's envelope, and anchor a forged provenance record. The
+// mitigation is that `direction` is decided from SERVER-STORED state ONLY —
+// never from an attacker-authored body field, and never from the
+// `?customrecipient` query marker alone (a marker cannot upgrade an envelope
+// to a trust level the account comparison itself disproves).
+//
+// This whole feature ships behind ENABLE_DOCUSIGN_INBOUND (default false)
+// and is NOT going live this cycle (SCRUM-3817 feasibility spike).
+
+export type DocusignDirection = 'outbound' | 'inbound';
+
+export interface DocusignDirectionClassification {
+  direction: DocusignDirection;
+  /** event.senderAccountId ?? event.accountId — the envelope's declared owning/sending account. */
+  sendingAccountId: string;
+  /**
+   * Set only when direction resolved to 'inbound' via the fail-safe branch
+   * (the org's-own-account lookup itself errored) rather than a genuine
+   * foreign-account comparison. Never set for 'outbound'.
+   */
+  orphanReason?: 'own_account_lookup_failed';
+}
+
+/**
+ * All DocuSign account_ids this org has itself connected — org_integrations
+ * UNION member_integrations, both `provider = 'docusign'`, not revoked. This
+ * is the "resolving org's OWN connected account_id set" the classifier
+ * compares the envelope's declared owner against. SERVER-STORED state only;
+ * the request body never reaches this function.
+ */
+async function resolveOrgOwnAccountIds(orgId: string): Promise<Set<string>> {
+  const [orgRows, memberRows] = await Promise.all([
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- webhook ingress: same untyped-table pattern as findIntegration above
+    (db as any)
+      .from('org_integrations')
+      .select('account_id')
+      .eq('org_id', orgId)
+      .eq('provider', 'docusign')
+      .is('revoked_at', null),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (db as any)
+      .from('member_integrations')
+      .select('account_id')
+      .eq('org_id', orgId)
+      .eq('provider', 'docusign')
+      .is('revoked_at', null),
+  ]);
+
+  if (orgRows.error || memberRows.error) {
+    throw new Error('own_account_lookup_failed');
+  }
+
+  const ids = new Set<string>();
+  for (const row of [...(orgRows.data ?? []), ...(memberRows.data ?? [])] as Array<{ account_id: string | null }>) {
+    if (row.account_id) ids.add(row.account_id);
+  }
+  return ids;
+}
+
+/**
+ * R4: decide outbound vs inbound. Called AFTER HMAC + integration resolution
+ * — the `integration` row already proves the request is signed by a key this
+ * ORG registered. This function decides nothing about who is calling; it
+ * decides whose envelope this is:
+ *
+ * - `sendingAccountId` present in the org's own connected-account set ->
+ *   `outbound` (the existing, byte-for-byte unchanged path below).
+ * - present but NOT in that set -> `inbound` (a different account owns the
+ *   envelope).
+ * - the own-account lookup itself fails (DB error) -> fail SAFE to `inbound`
+ *   (never silently trust an unverifiable case as outbound) and record why,
+ *   so the caller emits the distinct orphan signal instead of crashing.
+ *
+ * FAST PATH, zero extra DB round-trips: `integration` was itself resolved
+ * (in `findIntegration` above) via an EXACT match on `account_id =
+ * event.accountId`. So whenever the envelope's declared sending account is
+ * `event.accountId` unchanged — every payload shape that predates
+ * `senderAccountId`, i.e. 100% of traffic before this PR and still the
+ * common case after it — membership in the org's own-account set is already
+ * proven BY CONSTRUCTION; re-querying would be redundant. This is also what
+ * keeps the existing outbound flow reaching the database exactly as many
+ * times as it did before this PR (backward-compat, tested explicitly). Only
+ * a genuinely distinct declared `senderAccountId` falls through to the real
+ * cross-check below.
+ */
+async function classifyDirection(
+  integration: DocusignIntegrationRow,
+  event: DocusignCompletedEnvelope,
+): Promise<DocusignDirectionClassification> {
+  const sendingAccountId = event.senderAccountId ?? event.accountId;
+
+  if (sendingAccountId === integration.account_id) {
+    return { direction: 'outbound', sendingAccountId };
+  }
+
+  let ownAccountIds: Set<string>;
+  try {
+    ownAccountIds = await resolveOrgOwnAccountIds(integration.org_id);
+  } catch (err) {
+    logger.error(
+      { error: err, orgId: integration.org_id, envelopeId: event.envelopeId },
+      'DocuSign webhook: own-account lookup failed — classifying inbound (fail-safe, never trust unverifiable as outbound)',
+    );
+    return { direction: 'inbound', sendingAccountId, orphanReason: 'own_account_lookup_failed' };
+  }
+
+  if (ownAccountIds.has(sendingAccountId)) {
+    return { direction: 'outbound', sendingAccountId };
+  }
+  return { direction: 'inbound', sendingAccountId };
+}
+
+/**
+ * R5: a DISTINCT inbound orphan-drop signal, separate from the existing
+ * (deliberately silent) unknown-integration orphan path in
+ * `acknowledgeUnknownIntegration` above. That path is silent BY DESIGN — an
+ * unrecognised account is routine, expected noise. This one is not: a
+ * nonzero inbound-orphan rate while ENABLE_DOCUSIGN_INBOUND is on means real
+ * inbound envelopes are arriving and NOT being anchored. Structured log field
+ * is the house pattern for this signal shape (see the UTXO RPC-fallback
+ * breadcrumb, `chain_rpc_fallback: true`, documented in
+ * services/worker/agents.md) — there is no dedicated metrics/counter client
+ * in this codebase to bind to instead.
+ */
+function recordInboundOrphanDrop(args: {
+  envelopeId: string;
+  accountId: string;
+  reason: 'own_account_lookup_failed' | 'no_usable_declared_hash';
+}): void {
+  logger.warn(
+    {
+      docusign_inbound_orphan_drop: true,
+      envelopeId: args.envelopeId,
+      accountId: args.accountId,
+      reason: args.reason,
+    },
+    'DocuSign webhook: inbound envelope dropped without anchoring (orphan)',
+  );
+}
+
+/**
+ * The single per-envelope declared SHA-256 an inbound (declared-hash)
+ * artifact can anchor. Reuses `documentHashes` (already de-dupes + validates
+ * sha256 shape) and requires EXACTLY one distinct value — a multi-document or
+ * zero-hash envelope has no single fingerprint this v1 path can commit to, so
+ * it orphan-drops rather than guessing which document (or a concatenation)
+ * the caller meant. (Scope note: multi-document inbound envelopes are an
+ * explicit v1 limitation — see the PR description — not a silent gap.)
+ */
+function extractSingleDeclaredHash(event: DocusignCompletedEnvelope): string | null {
+  const hashes = documentHashes(event);
+  return hashes.length === 1 ? hashes[0] : null;
+}
+
+/**
+ * R3: INBOUND + FLAG ON declared-hash anchor path. NEVER calls any
+ * `/envelopes/{id}/documents/*` DocuSign API — the fingerprint is the
+ * DocuSign-DECLARED per-document sha256 already present on the Connect
+ * payload, not anything Arkova fetched or measured (cross-account fetch is
+ * being locked down by DocuSign 26.3, 2026-09, and fetching a foreign
+ * account's document was never in scope for Arkova's OAuth grant regardless).
+ *
+ * Reuses the SAME `enqueue_connector_artifact` RPC (migration 0343) the
+ * outbound connector path uses (source='docusign'), with the `_direction` /
+ * `_sending_account_id` metadata markers this PR's classifier produces —
+ * both underscore-prefixed, in the write-authority guard's key family
+ * (PR #2472's metadata key write-authority trigger); this handler writes via
+ * the service_role client, which that guard allows.
+ *
+ * `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` is guaranteed true here BY
+ * CONSTRUCTION — config.ts's cross-field guard refuses to boot with
+ * ENABLE_DOCUSIGN_INBOUND=true and that flag off — so this never needs its
+ * own runtime flag check the way the outbound job's `enqueueSignedDocument`
+ * does.
+ */
+async function enqueueInboundDeclaredHashArtifact(args: {
+  integration: DocusignIntegrationRow;
+  event: DocusignCompletedEnvelope;
+  sendingAccountId: string;
+  declaredHash: string;
+}): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- enqueue_connector_artifact (mig 0343) not yet in generated types; same cast convention as the RPC calls above
+  const { data, error } = await (db.rpc as any)('enqueue_connector_artifact', {
+    p_org_id: args.integration.org_id,
+    p_source: 'docusign',
+    p_external_ref: args.event.envelopeId,
+    p_external_revision: null,
+    p_fingerprint_sha256: args.declaredHash,
+    p_byte_length: null,
+    p_source_timestamp: args.event.generatedDateTime ?? null,
+    p_metadata: {
+      account_id: args.event.accountId,
+      envelope_id: args.event.envelopeId,
+      integration_id: args.integration.id,
+      // R4: underscore-prefixed, write-authority-guard key family (PR #2472).
+      _direction: 'inbound',
+      _sending_account_id: args.sendingAccountId,
+    },
+  });
+
+  if (error || !data) {
+    logger.error(
+      { error, integrationId: args.integration.id, envelopeId: args.event.envelopeId },
+      'DocuSign inbound declared-hash connector-artifact enqueue failed',
+    );
+    throw new Error('inbound_connector_artifact_enqueue_failed');
+  }
+
+  return String(data);
+}
+
 docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
   const rawBody = getRawBody(req);
   if (!rawBody) {
@@ -529,11 +892,95 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Replay protection: dedupe on (envelope_id, event_id, generated_at).
-    // DocuSign retries on any non-2xx response, so a duplicate must return
-    // 200 to stop the retry loop. Migration 0256 creates the nonce table.
-    const nonceKey = nonceKeyForEvent(event, payloadHash);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker write has no tenant key; nonce tuple prevents duplicate provider delivery
+    // R4 (docusign-bilateral-2026-08): classify AFTER HMAC + integration
+    // resolution, from SERVER-STORED state only — see classifyDirection's
+    // doc comment above for the full threat-model rationale.
+    const classification = await classifyDirection(integration, event);
+    const markerClaimsInbound = typeof req.query.customrecipient !== 'undefined';
+    if (markerClaimsInbound && classification.direction === 'outbound') {
+      // The marker cannot upgrade trust — logged, never acted on.
+      logger.warn(
+        { envelopeId: event.envelopeId, accountId: event.accountId },
+        "DocuSign webhook: customrecipient marker claimed inbound but the envelope's owning account is this org's own connected account — classifying outbound",
+      );
+    }
+
+    if (classification.direction === 'inbound') {
+      if (!config.enableDocusignInbound) {
+        // R3 flag-OFF: acknowledge 200 with NO nonce consumed and NO durable
+        // write. Avoids DocuSign retry storms on a path this deploy cannot
+        // process yet, AND preserves recoverability — DocuSign resends on
+        // any non-401/-invalid-sig-shaped failure path is not what's
+        // happening here (this IS a 2xx ack), but critically consuming a
+        // nonce here would permanently discard an inbound envelope that
+        // happened to arrive before the flag was enabled, even after a
+        // later flip-on and resend.
+        logger.info(
+          { envelopeId: event.envelopeId, accountId: event.accountId },
+          'DocuSign webhook: inbound envelope acknowledged, ENABLE_DOCUSIGN_INBOUND is off — no nonce consumed, no durable write',
+        );
+        res.status(200).json({ ok: true, inbound: true, skipped: 'flag_disabled' });
+        return;
+      }
+
+      const declaredHash = extractSingleDeclaredHash(event);
+      if (!declaredHash) {
+        // Orphan-drop BEFORE any nonce write: nothing to reconcile on retry —
+        // a resend of the same unusable envelope orphan-drops again,
+        // harmlessly. Bounded 200, never a crash.
+        recordInboundOrphanDrop({
+          envelopeId: event.envelopeId,
+          accountId: event.accountId,
+          reason: classification.orphanReason ?? 'no_usable_declared_hash',
+        });
+        res.status(200).json({ ok: true, inbound: true, skipped: 'no_usable_declared_hash' });
+        return;
+      }
+
+      // Replay protection, tenant-scoped (migration 0424) by the resolving
+      // account_id — same shape as the outbound branch below.
+      const inboundNonceKey = nonceKeyForEvent(event, payloadHash, event.accountId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker write scoped by account_id (migration 0424); nonce tuple prevents duplicate provider delivery
+      const { error: inboundNonceErr } = await (db as any).from('docusign_webhook_nonces').insert(inboundNonceKey);
+      if (inboundNonceErr) {
+        if ((inboundNonceErr as { code?: string }).code === '23505') {
+          logger.info(
+            { envelopeId: event.envelopeId, eventId: event.eventId },
+            'DocuSign webhook: duplicate inbound delivery — returning 200',
+          );
+          res.status(200).json({ ok: true, duplicate: true, inbound: true });
+          return;
+        }
+        logger.error(
+          { error: inboundNonceErr, envelopeId: event.envelopeId },
+          'DocuSign webhook: inbound nonce insert failed',
+        );
+        res.status(500).json({ error: { code: 'nonce_insert_failed' } });
+        return;
+      }
+
+      try {
+        await enqueueInboundDeclaredHashArtifact({
+          integration,
+          event,
+          sendingAccountId: classification.sendingAccountId,
+          declaredHash,
+        });
+      } catch (enqueueErr) {
+        await rollbackNonceAfterEnqueueFailure(inboundNonceKey);
+        throw enqueueErr;
+      }
+      res.status(202).json({ ok: true, inbound: true });
+      return;
+    }
+
+    // ── OUTBOUND: existing path, unchanged ──────────────────────────────
+    // Replay protection: dedupe on (account_id, envelope_id, event_id,
+    // generated_at). DocuSign retries on any non-2xx response, so a
+    // duplicate must return 200 to stop the retry loop. Migration 0256
+    // creates the nonce table; migration 0424 tenant-scopes it by account_id.
+    const nonceKey = nonceKeyForEvent(event, payloadHash, event.accountId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker write scoped by account_id (migration 0424); nonce tuple prevents duplicate provider delivery
     const { error: nonceErr } = await (db as any).from('docusign_webhook_nonces').insert(nonceKey);
     if (nonceErr) {
       // Postgres unique_violation — duplicate delivery, ack so retries stop.
@@ -555,7 +1002,14 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
 
     try {
       const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
-      await enqueueFetchJob({ integration, event, ruleEventId });
+      // CTO Decision Record R6/Finding 7: signer GUIDs are deliberately kept OFF
+      // the rule-event payload (organization_rule_events.payload has a DB CHECK
+      // pg_column_size(payload) <= 16384; document_ids/document_hashes alone can
+      // approach that ceiling at the 100-envelopeDocuments cap) and carried only
+      // on the job → connector_artifact.metadata → anchors.metadata path, which
+      // is uncapped.
+      const signers = extractSigners(rawBody);
+      await enqueueFetchJob({ integration, event, ruleEventId, signers });
 
       // SCRUM-1872: Check for notary data and enqueue notarization job (non-fatal)
       const notaryData = extractNotaryData(rawBody);

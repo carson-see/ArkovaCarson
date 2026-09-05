@@ -22,7 +22,7 @@ import {
 } from '../../constants/proofAvailability.js';
 import {
   connectorFingerprintRederivabilityFields,
-  resolveConnectorFetchSource,
+  resolveFingerprintRederivabilityClass,
   type FingerprintRederivability,
 } from '../../constants/connectorFingerprint.js';
 import { fromByteaHex } from '../../utils/anchorProofs.js';
@@ -313,6 +313,17 @@ export interface ProofAnchorData {
   chain_block_height: number | null;
   chain_timestamp: string | null;
   metadata: Record<string, unknown> | null;
+  /**
+   * SCRUM-3818 (docusign-bilateral-2026-08): R19 fingerprint evidence class
+   * from `anchors.fingerprint_source` (migration 0376) — the SAME column
+   * `resolveFingerprintRederivabilityClass` keys off in verify.ts. Optional
+   * (not `| undefined` removed) so every pre-existing fixture/test double that
+   * predates this field keeps compiling AND keeps its prior behavior: an
+   * absent value is treated identically to `document_bytes` below (never
+   * downgrades to DECLARED_UNVERIFIED), which is the correct default for a
+   * lookup that hasn't measured this column at all.
+   */
+  fingerprint_source?: string | null;
 }
 
 export interface ProofRecordData {
@@ -595,6 +606,21 @@ export function buildProofResponse(
     inclusionOpts,
   );
 
+  // docusign-bilateral-2026-08 (SCRUM-3818 go-live blocker): PRIOR to this,
+  // `connectorFingerprintRederivabilityFields()` was called with NO argument,
+  // which always defaulted to the STRONGER FETCH_TIME_SNAPSHOT class — so an
+  // inbound declared-hash anchor (`fingerprint_source` =
+  // 'issuer_record_attestation', set only by the connector-artifact drain's
+  // inbound branch) rendered a false "Arkova computed its fingerprint from
+  // the document bytes" claim on /proof. Mirrors buildVerificationResult in
+  // verify.ts: `resolveFingerprintRederivabilityClass` re-validates the
+  // connector marker AND reads `fingerprint_source` to pick the class, and
+  // returns null (omit both fields) for anything not connector-sourced.
+  const rederivabilityClass = resolveFingerprintRederivabilityClass(
+    anchor.metadata?.connector_source,
+    anchor.fingerprint_source,
+  );
+
   return {
     public_id: anchor.public_id,
     fingerprint: anchor.fingerprint,
@@ -608,12 +634,11 @@ export function buildProofResponse(
     // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
     proof_bundle: buildProofBundle(anchor, proofSource, leafCount),
     // BUG-2026-08-13-010 (§1.5/§1.6A): connector-sourced fingerprints attest
-    // fetch-time bytes, not source re-derivability. Response-level only —
-    // never inside the (signable) proof_bundle. Spread emits the indivisible
-    // pair for a measured connector marker and NOTHING otherwise.
-    ...(resolveConnectorFetchSource(anchor.metadata)
-      ? connectorFingerprintRederivabilityFields()
-      : {}),
+    // fetch-time bytes (or, for the inbound declared-hash path, attest
+    // NOTHING Arkova measured) — never source re-derivability. Response-level
+    // only — never inside the (signable) proof_bundle. Spread emits the
+    // indivisible pair for a measured connector marker and NOTHING otherwise.
+    ...(rederivabilityClass ? connectorFingerprintRederivabilityFields(rederivabilityClass) : {}),
   };
 }
 
@@ -639,7 +664,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       const { db } = await import('../../utils/db.js');
       const { data, error } = await db
         .from('anchors')
-        .select('id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, metadata')
+        .select('id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, metadata, fingerprint_source')
         .eq('public_id', publicId)
         .is('deleted_at', null)
         .single();
@@ -666,6 +691,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
           metadata: typeof data.metadata === 'object' && data.metadata !== null
             ? data.metadata as Record<string, unknown>
             : null,
+          fingerprint_source: data.fingerprint_source ?? null,
         };
 
         // PROOF-05 (SCRUM-2338): the EXACT leaf_count for the tree this proof

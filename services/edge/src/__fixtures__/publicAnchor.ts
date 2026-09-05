@@ -24,6 +24,13 @@
  *   evidence_package_hash, source_payload_hash, fetched_at,
  *   recipient_identifier  (+ optional jurisdiction)
  *
+ * SCRUM-3818 (docusign-bilateral-2026-08): `fingerprint_source` was added by
+ * migration 0376 (R19) and is still emitted by the current function body
+ * (`supabase/migrations/0385_public_anchor_academic_record_pii_projection.sql`
+ * line ~605 — the latest of the migrations that redefine this RPC). Added
+ * here so MCP tests can exercise the real `document_bytes` /
+ * `issuer_record_attestation` / null contract instead of a hand-authored row.
+ *
  * The migration distinguishes the gated network-observed time
  * (`anchor_timestamp` / `secured_at` = `a.chain_timestamp`, only set when
  * status != PENDING) from the row-creation time (`created_at`). It also
@@ -64,6 +71,8 @@ export interface PublicAnchorRow {
   fetched_at: string | null;
   recipient_identifier: string;
   jurisdiction?: string;
+  /** R19 (migration 0376): 'document_bytes' | 'issuer_record_attestation' | null (unclassified). */
+  fingerprint_source: string | null;
   [key: string]: unknown;
 }
 
@@ -111,6 +120,10 @@ export function realPublicAnchorRow(
     source_payload_hash: null,
     fetched_at: null,
     recipient_identifier: 'b'.repeat(64),
+    // A "fully-anchored credential" default realistically had a source
+    // document (§1.6) — override to 'issuer_record_attestation' or null to
+    // model the other two R19 classes.
+    fingerprint_source: 'document_bytes',
     ...overrides,
   };
 }

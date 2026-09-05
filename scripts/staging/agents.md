@@ -328,6 +328,16 @@ run against a service whose soak has closed without disturbing the revision that
 soak was measured on. Deleting the revisions is a separate, irreversible step
 that buys no further operational benefit once the tag is gone.
 
+## `seed.ts` seeds `org_integrations.webhook_id` for adobe_sign rows (2026-08-30)
+
+Migration `0426` adds `org_integrations.webhook_id`, which the Adobe Sign webhook handler's
+`findIntegration()` has always queried but which never existed (found live during the
+`worker-webhook-runtime` T3 soak). Fixture rows seeded with `provider: 'adobe_sign'` previously
+left `webhook_id` unset, so no seeded environment could exercise the (now-fixed) lookup path.
+`seedOrgIntegrations()` now sets a `staging-adobe-webhook-<random-hex>` value for `adobe_sign`
+rows only (independent `randomBytes(8)`, matching every other synthetic-identifier field in this
+function rather than reusing the row's own `id`); every other provider still gets `null`,
+matching DocuSign's account_id-based resolution (`0306`).
 ## Provisioner repairs found by standing up a real rig (consolidated-mm-2026-08, 2026-08-30)
 
 Standing up the consolidated merged-main T3 rig with `provision-isolated-rig.sh`
@@ -379,3 +389,5 @@ script. Source: `docs/staging/consolidated-mm-2026-08/soak-start-2026-08-30T1546
   pooler tenant lagging just after the project comes up. Exhausting either budget
   **exits non-zero** — a rig that never linked must never reach a deploy, and the
   failure message says the project exists, is billable, and names teardown.
+
+2026-09-05, PR #2519: the two exact documentation snapshots now include the Adobe webhook seed section above. Preserve every prior section, its order, and the existing per-section byte pins when updating either snapshot.

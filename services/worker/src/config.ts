@@ -354,6 +354,19 @@ const ConfigSchema = z.object({
    * which is itself gated by enableConnectorArtifactEnqueue.
    */
   enableDocusignQueueReconciliation: boolFlag(false),
+  /**
+   * docusign-bilateral-2026-08 (feasibility spike, SCRUM-3817/SCRUM-3818):
+   * gates the INBOUND (Recipient Connect / received-envelope) webhook path in
+   * services/worker/src/api/v1/webhooks/docusign.ts. When false, an inbound
+   * classification acknowledges HTTP 200 with NO nonce consumed and NO
+   * durable write (see the handler for the fail-closed rationale) — the
+   * OUTBOUND (own-account envelope-completed) path is entirely unaffected by
+   * this flag either way. Default false: this is a NEW external trust
+   * boundary (any connected org's valid Connect HMAC key can self-POST a
+   * self-signed "inbound" event) and is NOT going live this cycle — see the
+   * cross-field guard below for the prerequisite flags it requires when on.
+   */
+  enableDocusignInbound: boolFlag(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
@@ -368,6 +381,14 @@ const ConfigSchema = z.object({
   enableAtsWebhook: boolFlag(false),
   /** Adobe Sign OAuth client secret. Routes 503 when unset. */
   adobeSignClientSecret: z.string().optional(),
+  /**
+   * Adobe Sign OAuth client id. Required to answer Adobe's webhook
+   * REGISTRATION challenge (GET /webhooks/adobe-sign must echo this value)
+   * — without it Adobe refuses to create the webhook at all, so no
+   * `org_integrations.webhook_id` can ever be minted. Challenge 503s when
+   * unset; it is never echoed blindly.
+   */
+  adobeSignClientId: z.string().optional(),
   /** Checkr Connect webhook HMAC. Routes 503 when unset. */
   checkrWebhookSecret: z.string().optional(),
   /** Veremark webhook HMAC. Required when ENABLE_VEREMARK_WEBHOOK=true. */
@@ -801,6 +822,43 @@ const ConfigSchema = z.object({
     });
   }
 
+  // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818): the inbound webhook
+  // path reuses the connector_artifact enqueue+drain pipeline (declared-hash
+  // anchoring, §1.6A adjacent) rather than the rules engine, and it needs
+  // BOTH the DocuSign webhook mount itself AND both connector_artifact stages
+  // live — without any one of the three, an inbound delivery would either
+  // never reach the classifier (webhook off) or enqueue a connector_artifact
+  // that nothing ever drains into an anchor (enqueue on, drain off), silently
+  // piling up `pending` rows. Mirrors the enableDocusignQueueReconciliation
+  // guard immediately above.
+  if (cfg.enableDocusignInbound && !cfg.enableDocusignWebhook) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_INBOUND=true requires ENABLE_DOCUSIGN_WEBHOOK=true — '
+        + 'the inbound classifier lives inside the /webhooks/docusign handler, which 503s without it.',
+      path: ['enableDocusignInbound'],
+    });
+  }
+  if (cfg.enableDocusignInbound && !cfg.enableConnectorArtifactEnqueue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_INBOUND=true requires ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true — '
+        + 'the declared-hash inbound path enqueues a connector_artifact directly; without this flag it has no producer to reuse.',
+      path: ['enableDocusignInbound'],
+    });
+  }
+  if (cfg.enableDocusignInbound && !cfg.enableConnectorArtifactDrain) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_INBOUND=true requires ENABLE_CONNECTOR_ARTIFACT_DRAIN=true — '
+        + 'without the drain consumer, inbound connector_artifact rows enqueue but never materialize into an anchor.',
+      path: ['enableDocusignInbound'],
+    });
+  }
+
   // SCRUM-1258 (R1-4) batch 2 cross-field rules.
 
   // Arize tracing requires creds when enabled.
@@ -934,11 +992,14 @@ function loadConfig(): Config {
     // Default OFF in prod — the reconciliation re-materializes via the DS-03
     // producer, which is itself gated by ENABLE_CONNECTOR_ARTIFACT_ENQUEUE.
     enableDocusignQueueReconciliation: process.env.ENABLE_DOCUSIGN_QUEUE_RECONCILIATION,
+    // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818): inbound webhook path.
+    enableDocusignInbound: process.env.ENABLE_DOCUSIGN_INBOUND,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
     docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
     enableAtsWebhook: process.env.ENABLE_ATS_WEBHOOK,
     adobeSignClientSecret: process.env.ADOBE_SIGN_CLIENT_SECRET,
+    adobeSignClientId: process.env.ADOBE_SIGN_CLIENT_ID,
     checkrWebhookSecret: process.env.CHECKR_WEBHOOK_SECRET,
     veremarkWebhookSecret: process.env.VEREMARK_WEBHOOK_SECRET,
     enableVeremarkWebhook: process.env.ENABLE_VEREMARK_WEBHOOK,
