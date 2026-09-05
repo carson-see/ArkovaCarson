@@ -35,6 +35,8 @@ ALTER TABLE public.admin_org_provisioning_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_org_provisioning_requests FORCE ROW LEVEL SECURITY;
 REVOKE ALL ON public.admin_org_provisioning_requests FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.admin_org_provisioning_requests TO service_role;
+COMMENT ON TABLE public.admin_org_provisioning_requests IS
+  'Deny-all by design (R3-2). See SCRUM-4455. Only the owner-executed atomic provisioning function writes receipts; service_role has read-only inspection access.';
 
 CREATE OR REPLACE FUNCTION public.admin_provision_organization(
   p_actor uuid,

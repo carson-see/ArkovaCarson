@@ -25,6 +25,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { workerFetch } from '@/lib/workerClient';
+import { InviteMemberSchema } from '@/lib/validators';
 import { ADMIN_PROVISION_USER_LABELS as L } from '@/lib/copy';
 
 type ProfileRole = 'INDIVIDUAL' | 'ORG_ADMIN' | 'ORG_MEMBER';
@@ -40,7 +41,8 @@ export interface CreateUserDialogProps {
   onCreated: () => void;
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAIL_LENGTH = 254;
+const emailSchema = InviteMemberSchema.shape.email;
 
 /** Maps a worker error code to its user-facing message. */
 function messageForCode(code: unknown, fallback: string): string {
@@ -73,7 +75,7 @@ export function CreateUserDialog({
   function handleClose() { reset(); onClose(); }
 
   async function submit() {
-    if (!EMAIL_RE.test(email.trim())) { setError(L.EMAIL_REQUIRED_ERROR); return; }
+    if (email.trim().length > MAX_EMAIL_LENGTH || !emailSchema.safeParse(email).success) { setError(L.EMAIL_REQUIRED_ERROR); return; }
     if (orgRequired && !orgId) { setError(L.ORG_REQUIRED_ERROR); return; }
 
     setSubmitting(true);

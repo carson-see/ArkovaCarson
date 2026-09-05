@@ -22,7 +22,7 @@
  *
  *    The service-written `app_metadata.admin_provisioned` marker makes the
  *    0439 domain helper preserve this explicit placement on confirmation too.
- *    That guard also preserves0436's pending OAuth mailbox restriction; a
+ *    That guard also preserves 0436's pending OAuth mailbox restriction; a
  *    client's user_metadata cannot set the protected marker.
  *
  * 2. **No DDL, ever.** The neighbouring `admin_change_user_role` /
@@ -236,13 +236,10 @@ export interface CreateUserAccountResult {
   activation_link: string | null;
 }
 
-export async function createUserAccount(
-  deps: AdminProvisioningDeps,
-  actorId: string,
-  input: CreateUserAccountInput,
-): Promise<CreateUserAccountResult> {
+async function createUnconfirmedAccount(
+  deps: AdminProvisioningDeps, input: CreateUserAccountInput,
+): Promise<string> {
   const { db, logger } = deps;
-
   const { data: existingProfile, error: existingError } = await db
     .from('profiles')
     .select('id')
@@ -284,97 +281,125 @@ export async function createUserAccount(
     logger.error({ error: sanitizeError(createError) }, 'Admin provisioning: auth user creation failed');
     throw new ProvisioningError('Failed to create the account.', 'internal_error');
   }
-  const userId = newUser.id;
+  return newUser.id;
 
+}
+
+async function writeAccountPlacement(
+  db: SupabaseClient, actorId: string, userId: string, input: CreateUserAccountInput,
+): Promise<void> {
+  // The `on_auth_user_created` trigger normally wins this race and has
+  // already inserted the row; 23505 is therefore success, not a conflict.
+  // Identity columns only. role / org_id / full_name are written by the
+  // single UPDATE below, so there is exactly ONE writer for them whether the
+  // row came from us or from `on_auth_user_created` — which in turn makes the
+  // role guard meaningful on both paths instead of only one.
+  const { error: profileInsertError } = await db.from('profiles').insert({
+    id: userId,
+    email: input.email,
+    subscription_tier: 'free',
+    status: 'ACTIVE',
+  });
+  if (profileInsertError && (profileInsertError as { code?: string }).code !== '23505') {
+    throw profileInsertError;
+  }
+
+  // Assertion, not a second existence check: nothing should have set a role
+  // by this point (the pre-check above already returned account_exists for a
+  // known address, and email_confirm:false keeps the auto-association writer
+  // dormant), so `currentRole` is expected to be null. If it is ever not,
+  // `enforce_role_immutability` has frozen the wrong role onto this account
+  // — fail loudly rather than ship a silently mis-roled admin. Do not delete
+  // the pre-check above on the assumption that this replaces it.
+  const { data: profileRow, error: readBackError } = await db
+    .from('profiles')
+    .select('id, role')
+    .eq('id', userId)
+    .maybeSingle();
+  if (readBackError) throw readBackError;
+
+  const currentRole = (profileRow as { role: ProfileRole | null } | null)?.role ?? null;
+  if (currentRole !== null && currentRole !== input.role) {
+    throw new ProvisioningError(
+      `This account was auto-assigned the role ${currentRole}, which cannot be changed. `
+        + 'Its email domain is claimed by an existing organization.',
+      'role_conflict',
+    );
+  }
+
+  // service_role bypasses protect_privileged_profile_fields; role is still
+  // NULL here so enforce_role_immutability permits NULL -> value. No DDL.
+  const { error: profileUpdateError } = await db
+    .from('profiles')
+    .update({ role: input.role, org_id: input.org_id, full_name: input.full_name })
+    .eq('id', userId);
+  if (profileUpdateError) throw profileUpdateError;
+
+  if (input.org_id) {
+    const { error: memberError } = await db.from('org_members').insert({
+      user_id: userId,
+      org_id: input.org_id,
+      role: input.org_role,
+      invited_by: actorId,
+    });
+    if (memberError) throw memberError;
+  }
+
+}
+
+async function activateAccount(
+  deps: AdminProvisioningDeps, userId: string, input: CreateUserAccountInput,
+): Promise<{ activationLink: string | null; inviteEmailSent: boolean }> {
+  const { db } = deps;
   let activationLink: string | null = null;
   let inviteEmailSent = false;
+  const link = await generateSetPasswordLink(deps, input.email);
+  if (!link) throw new ProvisioningError('Failed to create an activation link for the account.', 'internal_error');
+
+  if (input.send_invite_email) {
+    inviteEmailSent = await sendProvisioningEmail(deps, {
+      email: input.email,
+      orgId: input.org_id,
+      link,
+    });
+  }
+
+  // F6, both branches: if no email actually went out — because the admin
+  // opted out OR because the send failed — nobody has been told this account
+  // exists. Hand the link back for out-of-band delivery and make the account
+  // immediately usable. Reporting a send that did not happen is the silent
+  // failure this whole flow exists to avoid, so this is keyed on the ACTUAL
+  // send result, never on the caller's intent.
+  if (!inviteEmailSent) {
+    activationLink = link;
+    // Confirming AFTER role and org are written makes the auto-association
+    // profile update a no-op.
+    const { error: confirmError } = await db.auth.admin.updateUserById(userId, {
+      email_confirm: true,
+    });
+    if (confirmError) {
+      throw confirmError;
+    }
+  }
+  return { activationLink, inviteEmailSent };
+}
+
+export async function createUserAccount(
+  deps: AdminProvisioningDeps,
+  actorId: string,
+  input: CreateUserAccountInput,
+): Promise<CreateUserAccountResult> {
+  const { db, logger } = deps;
+
+  const userId = await createUnconfirmedAccount(deps, input);
+
+  let activationLink: string | null;
+  let inviteEmailSent: boolean;
 
   try {
-    // The `on_auth_user_created` trigger normally wins this race and has
-    // already inserted the row; 23505 is therefore success, not a conflict.
-    // Identity columns only. role / org_id / full_name are written by the
-    // single UPDATE below, so there is exactly ONE writer for them whether the
-    // row came from us or from `on_auth_user_created` — which in turn makes the
-    // role guard meaningful on both paths instead of only one.
-    const { error: profileInsertError } = await db.from('profiles').insert({
-      id: userId,
-      email: input.email,
-      subscription_tier: 'free',
-      status: 'ACTIVE',
-    });
-    if (profileInsertError && (profileInsertError as { code?: string }).code !== '23505') {
-      throw profileInsertError;
-    }
+    await writeAccountPlacement(db, actorId, userId, input);
 
-    // Assertion, not a second existence check: nothing should have set a role
-    // by this point (the pre-check above already returned account_exists for a
-    // known address, and email_confirm:false keeps the auto-association writer
-    // dormant), so `currentRole` is expected to be null. If it is ever not,
-    // `enforce_role_immutability` has frozen the wrong role onto this account
-    // — fail loudly rather than ship a silently mis-roled admin. Do not delete
-    // the pre-check above on the assumption that this replaces it.
-    const { data: profileRow, error: readBackError } = await db
-      .from('profiles')
-      .select('id, role')
-      .eq('id', userId)
-      .maybeSingle();
-    if (readBackError) throw readBackError;
-
-    const currentRole = (profileRow as { role: ProfileRole | null } | null)?.role ?? null;
-    if (currentRole !== null && currentRole !== input.role) {
-      throw new ProvisioningError(
-        `This account was auto-assigned the role ${currentRole}, which cannot be changed. `
-          + 'Its email domain is claimed by an existing organization.',
-        'role_conflict',
-      );
-    }
-
-    // service_role bypasses protect_privileged_profile_fields; role is still
-    // NULL here so enforce_role_immutability permits NULL -> value. No DDL.
-    const { error: profileUpdateError } = await db
-      .from('profiles')
-      .update({ role: input.role, org_id: input.org_id, full_name: input.full_name })
-      .eq('id', userId);
-    if (profileUpdateError) throw profileUpdateError;
-
-    if (input.org_id) {
-      const { error: memberError } = await db.from('org_members').insert({
-        user_id: userId,
-        org_id: input.org_id,
-        role: input.org_role,
-        invited_by: actorId,
-      });
-      if (memberError) throw memberError;
-    }
-
-    const link = await generateSetPasswordLink(deps, input.email);
-    if (!link) throw new ProvisioningError('Failed to create an activation link for the account.', 'internal_error');
-
-    if (input.send_invite_email) {
-      inviteEmailSent = await sendProvisioningEmail(deps, {
-        email: input.email,
-        orgId: input.org_id,
-        link,
-      });
-    }
-
-    // F6, both branches: if no email actually went out — because the admin
-    // opted out OR because the send failed — nobody has been told this account
-    // exists. Hand the link back for out-of-band delivery and make the account
-    // immediately usable. Reporting a send that did not happen is the silent
-    // failure this whole flow exists to avoid, so this is keyed on the ACTUAL
-    // send result, never on the caller's intent.
-    if (!inviteEmailSent) {
-      activationLink = link;
-      // Confirming AFTER role and org are written makes the auto-association
-      // profile update a no-op.
-      const { error: confirmError } = await db.auth.admin.updateUserById(userId, {
-        email_confirm: true,
-      });
-      if (confirmError) {
-        throw confirmError;
-      }
-    }
+    ({ activationLink, inviteEmailSent } = await activateAccount(deps, userId, input));
     const { error: auditError } = await db.from('audit_events').insert({
       event_type: 'ACCOUNT_PROVISIONED',
       event_category: 'PROFILE',

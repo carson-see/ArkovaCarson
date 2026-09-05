@@ -6,7 +6,7 @@
  * sign-in link on screen rather than closing over it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CreateUserDialog } from './CreateUserDialog';
 import { workerFetch } from '@/lib/workerClient';
@@ -73,6 +73,14 @@ describe('CreateUserDialog', () => {
     await userEvent.type(screen.getByLabelText(/email address/i), 'not-an-email');
     await userEvent.click(screen.getByRole('button', { name: /create account/i }));
 
+    expect(await screen.findByText(/valid email address/i)).toBeInTheDocument();
+    expect(workerFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized email input before submitting', async () => {
+    renderDialog();
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'a'.repeat(255) + '@example.com' } });
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }));
     expect(await screen.findByText(/valid email address/i)).toBeInTheDocument();
     expect(workerFetch).not.toHaveBeenCalled();
   });

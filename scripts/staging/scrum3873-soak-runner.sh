@@ -27,16 +27,30 @@ DURATION_MIN="${DURATION_MIN:-2880}"     # 48h
 INTERVAL_SEC="${INTERVAL_SEC:-180}"
 
 case "$TARGET_URL$RIG_SUPABASE_URL" in
-  *vzwyaatejekddvltxyye*|*app.arkova.ai*)
+  *vzwyaatejekddvltxyye*|*fizyjojbebyalirtjjht*|*app.arkova.ai*)
     echo "REFUSING: target resolves to production." >&2; exit 1 ;;
+  *) ;;
 esac
 
-mint() {  # $1=email $2=password — echoes an access_token or empty
-  curl -s --max-time 20 -X POST \
-    "$RIG_SUPABASE_URL/auth/v1/token?grant_type=password" \
-    -H "apikey: $RIG_ANON_KEY" -H 'Content-Type: application/json' \
-    -d "{\"email\":\"$1\",\"password\":\"$2\"}" \
-  | python3 -c 'import sys,json;print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null || echo ""
+# Keep bearer tokens and fixture passwords out of command-line arguments.
+export RIG_SUPABASE_URL RIG_ANON_KEY RIG_SERVICE_ROLE_KEY COLLISION_DOMAIN
+export SUPABASE_URL="$RIG_SUPABASE_URL"
+export SUPABASE_ANON_KEY="$RIG_ANON_KEY"
+export SUPABASE_SERVICE_ROLE_KEY="$RIG_SERVICE_ROLE_KEY"
+export EXPECTED_SOURCE_HEAD="${EXPECTED_SOURCE_HEAD:?EXPECTED_SOURCE_HEAD is required}"
+mint() {
+  local mint_email="$1" mint_password="$2"
+  MINT_EMAIL="$mint_email" MINT_PASSWORD="$mint_password" python3 - <<'PYTHON'
+import json, os, urllib.request
+try:
+    payload = json.dumps({"email": os.environ["MINT_EMAIL"], "password": os.environ["MINT_PASSWORD"]}).encode()
+    request = urllib.request.Request(os.environ["RIG_SUPABASE_URL"] + "/auth/v1/token?grant_type=password", data=payload,
+        headers={"apikey": os.environ["RIG_ANON_KEY"], "Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        print(json.load(response).get("access_token", ""))
+except Exception:
+    print("")
+PYTHON
 }
 
 # One-time: an org that CLAIMS the collision domain. Without this,
@@ -47,7 +61,7 @@ seed_collision_org() {
   existing=$(curl -s --max-time 20 \
     "$RIG_SUPABASE_URL/rest/v1/organizations?domain=eq.$COLLISION_DOMAIN&select=id&limit=1" \
     -H "apikey: $RIG_SERVICE_ROLE_KEY" -H "Authorization: Bearer $RIG_SERVICE_ROLE_KEY")
-  if [ "$existing" = "[]" ] || [ -z "$existing" ]; then
+  if [[ "$existing" == "[]" ]]; then
     curl -s --max-time 20 -X POST "$RIG_SUPABASE_URL/rest/v1/organizations" \
       -H "apikey: $RIG_SERVICE_ROLE_KEY" -H "Authorization: Bearer $RIG_SERVICE_ROLE_KEY" \
       -H 'Content-Type: application/json' -H 'Prefer: return=minimal' \
@@ -62,7 +76,7 @@ seed_collision_org
 # Durability: the evidence must never live only on this disk.
 push_evidence() {
   local snap=/tmp/soak-evidence-wt
-  [ -d "$snap" ] || return 0
+  [[ -d "$snap" ]] || return 0
   cp "$EVIDENCE" "$snap/docs/staging/provisioning-3873/" 2>/dev/null || return 0
   ( cd "$snap" && git add -A \
     && git -c user.name=carson -c user.email=carson@arkova.io \
@@ -76,12 +90,13 @@ CYCLE=0
 mkdir -p "$(dirname "$EVIDENCE")"
 echo "soak start $(date -u +%Y-%m-%dT%H:%M:%SZ) deadline=$(date -u -r "$DEADLINE" +%Y-%m-%dT%H:%M:%SZ)"
 
-while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+while [[ "$(date +%s)" -lt "$DEADLINE" ]]; do
   CYCLE=$((CYCLE + 1))
+  export ADMIN_TOKEN NONADMIN_TOKEN
   ADMIN_TOKEN=$(mint "$ADMIN_EMAIL" "$ADMIN_PASSWORD")
   NONADMIN_TOKEN=$(mint "$NONADMIN_EMAIL" "$NONADMIN_PASSWORD")
 
-  if [ -z "$ADMIN_TOKEN" ] || [ -z "$NONADMIN_TOKEN" ]; then
+  if [[ -z "$ADMIN_TOKEN" || -z "$NONADMIN_TOKEN" ]]; then
     # Record the gap rather than skipping quietly: a soak with unexplained
     # silent windows is not merge-grade.
     printf '{"utc":"%s","story":"SCRUM-3873","cycle":%d,"status":"fail","blockers":["token mint failed"]}\n' \
@@ -91,12 +106,11 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
 
   npx tsx services/worker/scripts/scrum3873-provisioning-driver.ts \
     --live --target-url "$TARGET_URL" \
-    --bearer-token "$ADMIN_TOKEN" --non-admin-token "$NONADMIN_TOKEN" \
     --collision-domain "$COLLISION_DOMAIN" \
     --evidence-jsonl "$EVIDENCE" >/dev/null 2>&1 \
     || echo "cycle $CYCLE reported a failure (recorded in $EVIDENCE)"
 
-  if [ $(( CYCLE % EVIDENCE_PUSH_EVERY )) -eq 0 ]; then push_evidence; fi
+  if [[ $(( CYCLE % EVIDENCE_PUSH_EVERY )) -eq 0 ]]; then push_evidence; fi
 
   sleep "$INTERVAL_SEC"
 done

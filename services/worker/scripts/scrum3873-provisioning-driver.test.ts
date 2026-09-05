@@ -32,7 +32,7 @@ describe('validateLiveArgs', () => {
 
   it('blocks a live run with no target or tokens', () => {
     const b = validateLiveArgs({ mode: 'live' });
-    expect(b.length).toBe(6);
+    expect(b).toHaveLength(6);
   });
 
   it('requires the non-admin token — the 403 assertion is the point of this driver', () => {
