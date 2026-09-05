@@ -129,3 +129,34 @@ The verify API description is emitted only when both `!isAcademicRecord` and `!s
 ## 2026-09-05 — PR #2440 subtype opt-out release review
 
 Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
+## 2026-08-23 — credit fail-closed content guard (SCRUM-2538 / SCRUM-3502)
+
+`scrum-2538-check-unified-credits-fail-closed.test.ts` guards migration `0420`,
+which flips `check_unified_credits` from fail-OPEN (a missing `unified_credits`
+row returned `50, 0, 50, true`) to fail-CLOSED.
+
+Two things it does that are worth copying:
+
+1. **It asserts the DEFECT against the baseline, not only the fix against the
+   migration.** If someone "fixes" the squashed baseline in place instead of
+   writing a compensating migration (§1.2 forbids that), the guard fails and
+   says so rather than silently passing because both halves now agree.
+
+2. **It runs the REAL `secdef-function-grants` linter over the new file**
+   (`findViolations`, with the production `DELIBERATELY_PUBLIC` /
+   `DELIBERATELY_AUTHENTICATED` sets) instead of regex-matching for a REVOKE.
+   `0420` does `CREATE OR REPLACE` on two SECURITY DEFINER billing RPCs, which
+   re-triggers `ALTER DEFAULT PRIVILEGES` and would re-open both to `anon` over
+   PostgREST; a presence-only check passes on a revoke written in the wrong
+   place, and the linter checks position.
+
+Same comment-stripping convention as the data-integrity cluster above — the
+`sqlOnly()` helper drops `--` lines before asserting, because the `-- ROLLBACK:`
+header quotes the old fail-open body verbatim and a naive substring match finds
+the defect inside its own rollback note.
+
+`routineBody()` anchors on `CREATE OR REPLACE FUNCTION`, not the bare function
+name: the name also appears in the REVOKE/GRANT statements that follow the
+definition, and `lastIndexOf` on the name lands on one of those, which has no
+`AS $$` body. That mistake fails loudly here; in a laxer helper it would slice
+the wrong text and assert nothing.
