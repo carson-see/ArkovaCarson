@@ -2,7 +2,7 @@
 
 ## SCRUM-4448 — securing layout boundary helpers
 
-`secure-dialog-layout.ts` supplies deterministic auth/data/extraction boundaries for the isolated real-component layout fixture and rejects non-loopback network requests. Geometry checks cover the viewport, horizontal overflow, real action hit targets and reachable fields; screenshots capture top and bottom of scrolling steps. This fixture uses synthetic IDs and captured in-memory requests, never seed credentials or service clients. Do not replace rendering components or add production test-only state to make these assertions pass.
+`secure-dialog-layout.ts` supplies deterministic auth/data/extraction boundaries for the isolated real-component layout fixture and rejects non-loopback network requests. Geometry checks cover the viewport, horizontal overflow, real action hit targets and reachable fields; screenshots capture top and bottom of scrolling steps after viewport/scroll anchoring settles. This fixture uses synthetic IDs and captured in-memory requests, never seed credentials or service clients. Do not replace rendering components or add production test-only state to make these assertions pass.
 
 Shared utility functions for E2E Playwright tests.
 

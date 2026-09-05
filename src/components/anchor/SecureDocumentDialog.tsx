@@ -650,26 +650,26 @@ export function SecureDocumentDialog({
                 </p>
               </div>
               <div className="rounded-lg border p-4 space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Type</span>
-                  <span className="font-medium">{attestationData.attestation_type.replace(/_/g, ' ')}</span>
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                  <span className="shrink-0 text-muted-foreground">Type</span>
+                  <span className="min-w-0 font-medium sm:text-right">{attestationData.attestation_type.replace(/_/g, ' ')}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Subject</span>
-                  <span className="font-medium truncate max-w-[250px]">{attestationData.subject_identifier}</span>
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                  <span className="shrink-0 text-muted-foreground">Subject</span>
+                  <span className="min-w-0 font-medium sm:max-w-[250px] sm:text-right">{attestationData.subject_identifier}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Attester</span>
-                  <span className="font-medium">{attestationData.attester_name}</span>
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                  <span className="shrink-0 text-muted-foreground">Attester</span>
+                  <span className="min-w-0 font-medium sm:text-right">{attestationData.attester_name}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Claims</span>
-                  <span className="font-medium">{attestationData.claims.length}</span>
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                  <span className="shrink-0 text-muted-foreground">Claims</span>
+                  <span className="min-w-0 font-medium sm:text-right">{attestationData.claims.length}</span>
                 </div>
                 {attestationData.jurisdiction && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Jurisdiction</span>
-                    <span className="font-medium">{attestationData.jurisdiction}</span>
+                  <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                    <span className="shrink-0 text-muted-foreground">Jurisdiction</span>
+                    <span className="min-w-0 font-medium sm:text-right">{attestationData.jurisdiction}</span>
                   </div>
                 )}
                 {attestationData.summary && (

@@ -21,6 +21,12 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await page.getByTestId('secure-document-continue').click();
       await expect(page.getByTestId('extraction-review-continue')).toBeVisible();
       await assertLayout(page, testInfo, 'extraction-review');
+      await page.getByTestId('review-edit-field0').click();
+      await expect(page.getByTestId('review-input-field0')).toBeFocused();
+      await assertLayout(page, testInfo, 'extraction-field-edit');
+      await page.getByTestId('review-input-field0').fill('Edited fixture value');
+      await page.getByTestId('review-save-field0').click();
+      await expect(page.getByTestId('review-field-field0')).toContainText('Edited fixture value');
       await page.getByTestId('extraction-review-continue').click();
       await expect(page.getByTestId('securing-path-queue')).toBeVisible();
       await assertLayout(page, testInfo, 'confirm');
@@ -127,6 +133,14 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await page.locator('input[type="file"]').setInputFiles({ name: 'attestation.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(attestation)) });
       await expect(page.getByText('Attestation detected', { exact: true })).toBeVisible();
       await assertLayout(page, testInfo, 'attestation-review');
+      for (const label of ['Type', 'Subject', 'Attester', 'Claims', 'Jurisdiction']) {
+        const lineCount = await page.getByText(label, { exact: true }).evaluate(element => {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return range.getClientRects().length;
+        });
+        expect(lineCount, `${label} must remain an intact label beside or above the long value`).toBe(1);
+      }
       await page.getByRole('button', { name: /Create Attestation/ }).click();
       await expect(page.getByText('Creating attestation and anchoring to network...', { exact: true })).toBeVisible();
       await assertLayout(page, testInfo, 'attestation-submitting');

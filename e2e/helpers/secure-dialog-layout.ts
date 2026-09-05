@@ -94,14 +94,21 @@ export async function assertLayout(page: Page, testInfo: TestInfo, state: string
   const geometry = await dialog.evaluate(el => {
     const r = el.getBoundingClientRect();
     return {
-left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: innerWidth, height: innerHeight,
-      scrollWidth: el.scrollWidth, clientWidth: el.clientWidth
-};
+      left: r.left, right: r.right, top: r.top, bottom: r.bottom,
+      width: innerWidth, height: innerHeight,
+      scrollWidth: el.scrollWidth, clientWidth: el.clientWidth,
+    };
   });
   const geometryPath = testInfo.outputPath(`${state}-geometry.json`);
   await writeFile(geometryPath, JSON.stringify(geometry, null, 2));
   await testInfo.attach(`${state}-geometry`, { path: geometryPath, contentType: 'application/json' });
-  await dialog.evaluate(el => { el.scrollTop = 0; });
+  await dialog.evaluate(el => new Promise<void>(resolve => {
+    el.scrollTo({ top: 0, behavior: 'instant' });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.scrollTo({ top: 0, behavior: 'instant' });
+      resolve();
+    }));
+  }));
   const screenshotPath = testInfo.outputPath(`${state}.png`);
   await page.screenshot({ path: screenshotPath });
   await testInfo.attach(`${state}-screenshot`, { path: screenshotPath, contentType: 'image/png' });
