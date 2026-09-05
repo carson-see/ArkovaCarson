@@ -773,3 +773,32 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+
+## Recent migrations (PR: SCRUM-4474 org cap decoupling)
+
+| Prefix | File | Story | Applied to prod | Notes |
+|---|---|---|---|---|
+| `0440` | `0440_org_credits_cap_enforced.sql` | SCRUM-4474 | no | **Decouples the document cap from `is_test`.** `org_credits.is_test` carried two unrelated meanings: "never fire a Stripe meter event" (`meteredBilling.ts`) and "enforce `anchor_quota`" (`anchorQuotaGate.ts`), so a billable customer with a contractual cap was unrepresentable. HakiChain — invoiced, capped at 2,000 — had to be flagged a TEST org on 2026-09-02 to get its cap enforced at all, silently excluding it from metered billing. Adds `cap_enforced boolean NOT NULL DEFAULT false` as the sole enforcement switch and leaves `is_test` meaning billing only. **Behaviour-preserving by construction:** the backfill sets `cap_enforced` to what the gate computes today (`is_test AND anchor_quota IS NOT NULL`), so no org changes state. This matters concretely — Login Defense (`caa14834-1252-42b4-b34b-025798b45185`) holds `anchor_quota = 15` with `is_test = false`, an INERT quota; making `anchor_quota` enforce on its own would have started capping a live partner nobody decided to cap. Adds `admin_set_org_cap(uuid, integer, boolean, boolean, uuid)` (service_role only, with inline REVOKE from PUBLIC/anon/authenticated). Deliberately does NOT drop or re-signature `admin_set_org_anchor_quota` — worker deploys are paused, so the running worker keeps calling the 4-arg form for an unbounded window; the old function stays working and is marked deprecated. Tier T3. Rollback in the file header. **Next author claims `0441` — re-derive, do not trust this line.** |
+
+Amended after the 2026-09-05 review of PR #2658 (findings F1/F2/F3/F5), still under prefix `0440`:
+
+* **The signup trigger had to be redefined too.** `seed_free_tier_org_credits()` (defined in `0327`, never
+  redefined since) inserts `(org_id, is_test, anchor_quota)` and does not name `cap_enforced`. Adding the
+  column without touching that function meant every org created *after* the migration took the column
+  DEFAULT `false` — `anchor_quota = 10` recorded and INERT, i.e. unlimited free anchoring for every new
+  signup, which is exactly what `0327` exists to prevent. The backfill only fixes rows that exist at
+  migration time. `0440` now `CREATE OR REPLACE`s it to seed `cap_enforced = true`.
+* **The kept 4-arg RPC had to be redefined too**, for the same reason: a `COMMENT` does not change a body.
+  `admin_set_org_anchor_quota` now writes `cap_enforced = (p_is_test IS TRUE AND p_anchor_quota IS NOT NULL)`
+  — the old gate's rule verbatim — with its **signature untouched**, so the running (deploy-paused) worker's
+  4-arg call keeps resolving and cannot record an inert cap mid-window.
+* **`NOTIFY pgrst, 'reload schema'`** now ends the transaction. The migration adds a column *and* a function;
+  without the reload, `admin_set_org_cap` is not callable over the Data API and `select(...cap_enforced...)`
+  fails `42703`.
+* **New CHECK `org_credits_cap_enforced_needs_quota`** (`NOT (cap_enforced AND anchor_quota IS NULL)`),
+  added `NOT VALID` then `VALIDATE`d so the scan does not run under `ACCESS EXCLUSIVE`. Makes the invariant
+  structural rather than enforced only inside one RPC.
+* **Rollback order now matters and the header says so.** Both redefined functions reference `cap_enforced`,
+  so their `0327` bodies must be restored *before* the column is dropped — otherwise every signup INSERT and
+  every 4-arg admin write fails on a missing column. Verified end-to-end on a disposable Postgres.
+
