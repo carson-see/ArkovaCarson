@@ -1,4 +1,9 @@
 # agents.md — components/auth
+
+## UAT-01 / SCRUM-4031 — open registration (2026-09-05)
+
+`SignUpForm` renders email/password and Google/LinkedIn choices immediately. The retired beta-code prerequisite and its local state are removed. Keep organization invitation authorization and the `useAuth` session/confirmation flow separate. Registration tests run with both an absent and a stale `VITE_BETA_INVITE_CODE`; a legacy deployment variable must never restore the beta screen.
+
 _Last updated: 2026-07-22_
 
 ## What This Folder Contains

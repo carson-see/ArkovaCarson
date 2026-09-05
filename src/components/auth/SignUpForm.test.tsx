@@ -1,13 +1,13 @@
 /**
- * SignUpForm Beta Gate Tests
+ * SignUpForm Registration Tests
  *
- * Verifies signup form behavior with and without the beta invite code gate.
- * The gate is controlled by VITE_BETA_INVITE_CODE env var.
+ * Registration stays open even when an old deployment still defines a beta code.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
+const authState = { loading: false, error: null as string | null };
 const mockSignUp = vi.fn();
 const mockSignInWithGoogle = vi.fn();
 const mockSignInWithLinkedIn = vi.fn();
@@ -17,8 +17,8 @@ vi.mock('@/hooks/useAuth', () => ({
     signUp: mockSignUp,
     signInWithGoogle: mockSignInWithGoogle,
     signInWithLinkedIn: mockSignInWithLinkedIn,
-    loading: false,
-    error: null,
+    loading: authState.loading,
+    error: authState.error,
     clearError: vi.fn(),
   }),
 }));
@@ -30,12 +30,21 @@ vi.mock('@/components/onboarding/EmailConfirmation', () => ({
 describe('SignUpForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.loading = false;
+    authState.error = null;
     mockSignUp.mockResolvedValue({ error: null });
   });
 
-  describe('without beta gate (no VITE_BETA_INVITE_CODE)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  describe.each([
+    ['no legacy beta code', ''],
+    ['a legacy beta code', 'RETIRED-BETA-CODE'],
+  ])('with %s', (_label, legacyCode) => {
     beforeEach(() => {
-      vi.stubEnv('VITE_BETA_INVITE_CODE', '');
+      vi.stubEnv('VITE_BETA_INVITE_CODE', legacyCode);
     });
 
     async function loadSignUpForm() {
@@ -47,6 +56,7 @@ describe('SignUpForm', () => {
     it('shows signup form directly', async () => {
       const SignUpForm = await loadSignUpForm();
       render(<SignUpForm />);
+      expect(screen.queryByLabelText(/invite code/i)).not.toBeInTheDocument();
       expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /google/i })).toBeInTheDocument();
@@ -92,6 +102,56 @@ describe('SignUpForm', () => {
       expect(mockSignUp).not.toHaveBeenCalled();
     });
 
+    it('rejects a short password before contacting auth', async () => {
+      const SignUpForm = await loadSignUpForm();
+      render(<SignUpForm />);
+      fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'test@example.com' } });
+      fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'short' } });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'short' } });
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent('Password must be at least 8 characters');
+      expect(mockSignUp).not.toHaveBeenCalled();
+    });
+
+    it('keeps a failed signup on the form without reporting success', async () => {
+      mockSignUp.mockResolvedValue({ error: new Error('Signup is temporarily unavailable'), session: null });
+      const SignUpForm = await loadSignUpForm();
+      const onSuccess = vi.fn();
+      const { rerender } = render(<SignUpForm onSuccess={onSuccess} />);
+      fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'test@example.com' } });
+      fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'password123' } });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'password123' } });
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => expect(mockSignUp).toHaveBeenCalledOnce());
+      // useAuth owns backend error state and publishes it to subscribers.
+      authState.error = 'Signup is temporarily unavailable';
+      rerender(<SignUpForm onSuccess={onSuccess} />);
+      expect(screen.getByRole('alert').textContent).toContain('Signup is temporarily unavailable');
+      expect(screen.queryByTestId('email-confirmation')).not.toBeInTheDocument();
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(/email address/i)).toHaveValue('test@example.com');
+    });
+
+    it('shows errors supplied by the OAuth provider', async () => {
+      authState.error = 'Unable to connect to the sign-in provider';
+      const SignUpForm = await loadSignUpForm();
+      render(<SignUpForm />);
+      expect(screen.getByRole('alert').textContent).toContain('Unable to connect to the sign-in provider');
+      expect(screen.queryByTestId('email-confirmation')).not.toBeInTheDocument();
+    });
+
+    it('prevents duplicate signup and provider submissions while auth is loading', async () => {
+      authState.loading = true;
+      const SignUpForm = await loadSignUpForm();
+      render(<SignUpForm />);
+      expect(screen.getByRole('button', { name: /creating account/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /google/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /linkedin/i })).toBeDisabled();
+      expect(screen.getByLabelText(/email address/i)).toBeDisabled();
+    });
+
     it('shows email confirmation after successful signup', async () => {
       const SignUpForm = await loadSignUpForm();
       render(<SignUpForm />);
@@ -124,8 +184,8 @@ describe('SignUpForm', () => {
       expect(onSuccess).not.toHaveBeenCalled();
     });
 
-    // SCRUM-2907: When signUp returns an ACTIVE session (auto-confirm on, as in
-    // prod today), the user is already logged in → skip the misleading
+    // SCRUM-2907: When signUp returns an ACTIVE session (confirmation disabled
+    // in a test environment), the user is already logged in → skip the misleading
     // "Check your email" screen and proceed into the app like a normal login.
     it('proceeds into the app without email confirmation when signUp returns an active session', async () => {
       mockSignUp.mockResolvedValue({ error: null, session: { user: { id: 'user-1' } } });
@@ -144,60 +204,6 @@ describe('SignUpForm', () => {
     });
 
     it('shows sign in link when onLoginClick provided', async () => {
-      const SignUpForm = await loadSignUpForm();
-      const onLoginClick = vi.fn();
-      render(<SignUpForm onLoginClick={onLoginClick} />);
-      const signInButton = screen.getByText(/sign in/i);
-      fireEvent.click(signInButton);
-      expect(onLoginClick).toHaveBeenCalled();
-    });
-  });
-
-  describe('with beta gate (VITE_BETA_INVITE_CODE set)', () => {
-    beforeEach(() => {
-      vi.stubEnv('VITE_BETA_INVITE_CODE', 'BETA-TEST-CODE');
-    });
-
-    async function loadSignUpForm() {
-      vi.resetModules();
-      const { SignUpForm } = await import('./SignUpForm');
-      return SignUpForm;
-    }
-
-    it('shows invite code form instead of signup form', async () => {
-      const SignUpForm = await loadSignUpForm();
-      render(<SignUpForm />);
-      expect(screen.getByLabelText(/invite code/i)).toBeInTheDocument();
-      expect(screen.queryByLabelText(/full name/i)).not.toBeInTheDocument();
-      expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
-    });
-
-    it('shows error for invalid invite code', async () => {
-      const SignUpForm = await loadSignUpForm();
-      render(<SignUpForm />);
-      fireEvent.change(screen.getByLabelText(/invite code/i), { target: { value: 'WRONG-CODE' } });
-      fireEvent.click(screen.getByRole('button', { name: /continue/i }));
-
-      await waitFor(() => {
-        expect(screen.getByText(/invalid invite code/i)).toBeInTheDocument();
-      });
-      expect(screen.queryByLabelText(/full name/i)).not.toBeInTheDocument();
-    });
-
-    it('shows signup form after valid invite code', async () => {
-      const SignUpForm = await loadSignUpForm();
-      render(<SignUpForm />);
-      fireEvent.change(screen.getByLabelText(/invite code/i), { target: { value: 'BETA-TEST-CODE' } });
-      fireEvent.click(screen.getByRole('button', { name: /continue/i }));
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
-      });
-      expect(screen.queryByLabelText(/invite code/i)).not.toBeInTheDocument();
-    });
-
-    it('shows sign in link on invite code form', async () => {
       const SignUpForm = await loadSignUpForm();
       const onLoginClick = vi.fn();
       render(<SignUpForm onLoginClick={onLoginClick} />);
