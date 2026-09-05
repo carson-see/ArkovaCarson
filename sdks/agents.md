@@ -5,7 +5,7 @@ Developer SDK packages for integrating with the Arkova Verification API. Each su
 ## Subdirectories
 - **`langchain/`** — **UNSHIPPED. Not a package; not built, tested, published, or imported by
   anything.** LangChain Python-style tool wrappers (verify, oracle, search) that exist only as
-  `src/index.ts` + `src/tools.ts` + `src/agents.md`. Verified 2026-09-05: no `package.json`, so no
+  `sdks/langchain/src/index.ts` + `sdks/langchain/src/tools.ts` + `src/agents.md`. Verified 2026-09-05: no `package.json`, so no
   name, version, dependency set, `build`/`test` script, or `files` list; no `*.test.ts`, so
   `vitest run --root sdks` discovers nothing here and CI covers none of it; no README and no
   LICENSE; no entry in `.github/workflows/publish-sdk.yml` or `scripts/publish-packages.sh`; and no
