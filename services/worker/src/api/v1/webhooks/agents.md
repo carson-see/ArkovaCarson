@@ -1,5 +1,9 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
+## 2026-09-05 — PR #2496: Adobe integration lookup matches the schema
+
+Adobe webhook registrations resolve through `org_integrations.subscription_id` with `provider = 'adobe_sign'` and `revoked_at IS NULL`. The previously queried `webhook_id` column never existed on this table; it belongs to the nonce/DLQ tables. The lookup now uses the generated database types rather than an `any` cast, selects only the identity fields it needs, and fails closed on ambiguous registrations. Register the vendor webhook ID in `subscription_id`; no schema migration is needed. The bounded payload and retry-compensation changes retain their targeted coverage.
+
 _Last updated: 2026-09-02 (Adobe Sign Finding 7: rule-event payload 16KB CHECK guard + input/constraint parity + AUDIT-0424-10 nonce release — parallel to DocuSign PR #2485)_
 
 ## 2026-08-30 — Adobe Sign bilateral 2026-08 (Finding 7): `adobe-sign.ts` rule-event payload now records `document_count`, not the unbounded `document_ids` array — FIXED

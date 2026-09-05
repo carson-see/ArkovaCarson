@@ -28,7 +28,6 @@ export const adobeSignWebhookRouter = Router();
 interface AdobeIntegrationRow {
   id: string;
   org_id: string;
-  webhook_id: string | null;
 }
 
 function getRawBody(req: Request): Buffer | null {
@@ -48,21 +47,21 @@ async function findIntegration(
   webhookId: string | null,
 ): Promise<AdobeIntegrationRow | null> {
   if (!webhookId) return null;
-  // Cast until database.types.ts is regenerated — provider='adobe_sign' rows
-  // mirror the existing 'docusign' shape (org_integrations table from 0251).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
-  const { data, error } = await (db as any)
+  // Provider webhook registrations use the shared subscription_id column.
+  // org_integrations has no webhook_id column; a typed query catches that drift.
+  // eslint-disable-next-line arkova/missing-org-filter -- resolve tenant from authenticated provider webhook ID
+  const { data, error } = await db
     .from('org_integrations')
-    .select('id, org_id, webhook_id')
+    .select('id, org_id')
     .eq('provider', 'adobe_sign')
-    .eq('webhook_id', webhookId)
+    .eq('subscription_id', webhookId)
     .is('revoked_at', null)
     .maybeSingle();
   if (error) {
     logger.error({ error, webhookId }, 'Adobe Sign webhook integration lookup failed');
     throw new Error('integration_lookup_failed');
   }
-  return (data as AdobeIntegrationRow | null) ?? null;
+  return data ?? null;
 }
 
 /**
@@ -233,8 +232,8 @@ adobeSignWebhookRouter.post('/', async (req: Request, res: Response) => {
    * alongside is a record of the loss, not a recovery path — nothing under
    * `jobs/` drains that table.
    *
-   * Deleting the nonce restores exactly-once-on-success: the row is the claim
-   * on in-flight work, released only when that work did not happen. The success
+   * Deleting the nonce permits retry after a reported failure. Commit outcome
+   * can be ambiguous, so this is at-least-once recovery. The success
    * path never calls this, so replay protection for genuinely duplicate
    * deliveries is unchanged. Mirrors `checkr.ts` / `middesk.ts::releaseNonce`.
    *

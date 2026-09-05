@@ -174,6 +174,18 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
   });
 
+  it('resolves the registered Adobe webhook through the actual subscription_id column', async () => {
+    const lookup = integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID });
+    dbFromMock.mockReturnValueOnce(lookup);
+    dbFromMock.mockReturnValueOnce(nonceInsertMock());
+    rpcMock.mockResolvedValueOnce({ data: '33333333-3333-4333-8333-333333333333', error: null });
+    expect((await postSignedBody(validBody())).status).toBe(202);
+    expect(lookup.select).toHaveBeenCalledWith('id, org_id');
+    expect(lookup.eq).toHaveBeenCalledWith('subscription_id', WEBHOOK_ID);
+    expect(lookup.eq).toHaveBeenCalledWith('provider', 'adobe_sign');
+    expect(lookup.is).toHaveBeenCalledWith('revoked_at', null);
+  });
+
   it('202 + rule_event_id when payload is valid, integration is connected, and enqueue succeeds', async () => {
     dbFromMock.mockImplementation((table: string) => {
       if (table === 'org_integrations') {
