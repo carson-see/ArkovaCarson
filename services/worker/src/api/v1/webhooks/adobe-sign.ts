@@ -28,7 +28,6 @@ export const adobeSignWebhookRouter = Router();
 interface AdobeIntegrationRow {
   id: string;
   org_id: string;
-  webhook_id: string | null;
 }
 
 function getRawBody(req: Request): Buffer | null {
@@ -48,21 +47,74 @@ async function findIntegration(
   webhookId: string | null,
 ): Promise<AdobeIntegrationRow | null> {
   if (!webhookId) return null;
-  // Cast until database.types.ts is regenerated — provider='adobe_sign' rows
-  // mirror the existing 'docusign' shape (org_integrations table from 0251).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
-  const { data, error } = await (db as any)
+  // Provider webhook registrations use the shared subscription_id column.
+  // org_integrations has no webhook_id column; a typed query catches that drift.
+  // eslint-disable-next-line arkova/missing-org-filter -- resolve tenant from authenticated provider webhook ID
+  const { data, error } = await db
     .from('org_integrations')
-    .select('id, org_id, webhook_id')
+    .select('id, org_id')
     .eq('provider', 'adobe_sign')
-    .eq('webhook_id', webhookId)
+    .eq('subscription_id', webhookId)
     .is('revoked_at', null)
     .maybeSingle();
   if (error) {
     logger.error({ error, webhookId }, 'Adobe Sign webhook integration lookup failed');
     throw new Error('integration_lookup_failed');
   }
-  return (data as AdobeIntegrationRow | null) ?? null;
+  return data ?? null;
+}
+
+/**
+ * Build the sanitized rule-event payload for the `enqueue_rule_event` RPC.
+ *
+ * `organization_rule_events.payload` carries a hard DB CHECK
+ * (`organization_rule_events_payload_size`): `pg_column_size(payload) <= 16384`.
+ * The payload is derived from EVERY agreement document, so it must stay bounded
+ * regardless of document cardinality or document-id length.
+ *
+ * We record `document_count` — a fixed-size integer — rather than the full
+ * `document_ids` array. Adobe's `documents` array is `.max(100)` and each
+ * document `id` is `z.string().trim().min(1)` with NO `.max()` length cap, so
+ * the former array was even less bounded than the DocuSign case (which had a
+ * 100-char documentId gate): at max cardinality with long ids it overflowed the
+ * 16KB budget (measured ~50KB at 100 × 500-char ids). The RPC would then raise a
+ * check_violation, `enqueueRuleEvent` would throw, and the handler would DLQ +
+ * 500 — after which the event is not retried forever, it is LOST: Adobe's retry
+ * carries the identical body, hits the nonce's `(agreement_id, payload_hash)`
+ * UNIQUE violation and is answered `200 {duplicate:true}`. See `releaseNonce`
+ * below, which compensates that; the agreement's ESIGN_COMPLETED event and
+ * every downstream step (anchoring) are otherwise dropped silently.
+ *
+ * The `documents` leg is only half of it. `agreement.id` also lands on this
+ * payload, and its only bound was a late `.max(500)` throw inside
+ * `adaptAdobeSign` — a bound by accident, taken AFTER the nonce is committed,
+ * so it produced a 500 and a silently-lost event rather than a rejection. And
+ * `senderInfo.email` (-> `sender_email`, CHECK <= 320) had no bound at all.
+ * Both are now bounded at the parse layer in `integrations/oauth/adobe-sign.ts`,
+ * which is what makes this payload's size an actual invariant instead of a
+ * consequence of where something happens to throw.
+ *
+ * Dropping `document_ids` here is safe because it is write-only on THIS payload:
+ * the rules engine's `sanitizeExecutionProviderPayload` allowlist
+ * (`jobs/rules-engine.ts`) and the action dispatcher (`jobs/rule-action-dispatcher.ts`)
+ * read only `document_hashes` / `document_sha256` (which this handler does not
+ * even set), and there is no Adobe fetch/materialization job that references it.
+ * Mirrors `buildDocusignRuleEventPayload` (DocuSign bilateral 2026-08, Finding 7;
+ * PR #2485). If a per-document-id consumer is ever added, carry the ids on the
+ * UNCAPPED `job_queue` payload of that job, never back onto this capped payload.
+ */
+export function buildAdobeSignRuleEventPayload(args: {
+  integrationId: string;
+  event: AdobeAgreementCompletedEvent;
+  payloadHash: string;
+}): Record<string, unknown> {
+  return {
+    source: 'adobe_sign_webhook',
+    integration_id: args.integrationId,
+    agreement_id: args.event.agreementId,
+    document_count: args.event.documents.length,
+    payload_hash: args.payloadHash,
+  };
 }
 
 async function enqueueRuleEvent(args: {
@@ -91,13 +143,11 @@ async function enqueueRuleEvent(args: {
     p_folder_path: canonical.folder_path ?? null,
     p_sender_email: canonical.sender_email ?? null,
     p_subject: canonical.subject ?? null,
-    p_payload: {
-      source: 'adobe_sign_webhook',
-      integration_id: args.integration.id,
-      agreement_id: args.event.agreementId,
-      document_ids: args.event.documents.map((d) => d.id),
-      payload_hash: args.payloadHash,
-    },
+    p_payload: buildAdobeSignRuleEventPayload({
+      integrationId: args.integration.id,
+      event: args.event,
+      payloadHash: args.payloadHash,
+    }),
   });
   if (error || !data) {
     logger.error({ error, integrationId: args.integration.id }, 'Adobe Sign rule-event enqueue failed');
@@ -168,6 +218,71 @@ adobeSignWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
+  /**
+   * AUDIT-0424-10 / SCRUM-3479 — release the replay nonce before returning any
+   * post-nonce 5xx.
+   *
+   * The nonce row is committed BEFORE `enqueue_rule_event` runs, so without
+   * this compensation a transient enqueue failure is unrecoverable rather than
+   * retryable — and the loss is faster than it looks. Adobe's retry carries the
+   * identical body, so it hashes to the identical `payload_hash`, hits the
+   * `(agreement_id, payload_hash)` UNIQUE violation, and is answered
+   * `200 {duplicate:true}`: the ESIGN_COMPLETED event is dropped after ONE
+   * retry AND the vendor is told it succeeded. The `webhook_dlq` row written
+   * alongside is a record of the loss, not a recovery path — nothing under
+   * `jobs/` drains that table.
+   *
+   * Deleting the nonce permits retry after a reported failure. Commit outcome
+   * can be ambiguous, so this is at-least-once recovery. The success
+   * path never calls this, so replay protection for genuinely duplicate
+   * deliveries is unchanged. Mirrors `checkr.ts` / `middesk.ts::releaseNonce`.
+   *
+   * RESIDUAL RISK — a deliberate at-least-once trade, identical to `checkr.ts`.
+   * If the RPC throws after Postgres already committed the insert (connection
+   * dropped while awaiting the response) we cannot tell "enqueued" from "not
+   * enqueued", and releasing lets the retry enqueue a SECOND
+   * `organization_rule_events` row: `enqueue_rule_event` is a bare INSERT with
+   * no `ON CONFLICT`, and the executions idempotency index is
+   * `UNIQUE(rule_id, trigger_event_id)` keyed on the per-enqueue rule-event id,
+   * so two enqueues are two distinct keys. A rare duplicate execution is
+   * recoverable; a guaranteed silent loss while the vendor is told `200` is not.
+   */
+  let nonceCommitted = false;
+  async function releaseNonce(reason: string): Promise<void> {
+    // Only compensate a nonce THIS delivery committed. The insert below fails
+    // open on non-23505 errors, and the enclosing try also covers work that
+    // runs before the insert — in both cases a row matching this key could only
+    // belong to an EARLIER delivery, and deleting it would re-open that
+    // delivery to replay.
+    if (!nonceCommitted) return;
+    try {
+      // Filter on BOTH columns of the UNIQUE key
+      // (`adobe_sign_webhook_nonces_agreement_id_payload_hash_key`). Deleting by
+      // `agreement_id` alone would drop the nonce for a different payload
+      // revision of the same agreement, disarming its replay protection.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- webhook replay marker rollback scoped by nonce unique key
+      const { error: releaseErr } = await (db as any)
+        .from('adobe_sign_webhook_nonces')
+        .delete()
+        .eq('agreement_id', event.agreementId)
+        .eq('payload_hash', payloadHash);
+      if (releaseErr) {
+        // Nothing further we can do — log loudly. The event is now stuck and
+        // needs a manual replay from the Adobe Sign console.
+        logger.error(
+          { error: releaseErr, reason },
+          'Failed to release Adobe Sign webhook nonce — event will not be reprocessed on retry',
+        );
+        return;
+      }
+      nonceCommitted = false;
+      logger.warn({ reason }, 'Released Adobe Sign webhook nonce so retry can reprocess');
+    } catch (releaseThrew) {
+      // Best-effort: never let the compensation mask the original failure.
+      logger.error({ error: releaseThrew, reason }, 'Adobe Sign nonce release threw');
+    }
+  }
+
   try {
     const integration = await findIntegration(event.webhookId);
     if (!integration) {
@@ -200,9 +315,18 @@ adobeSignWebhookRouter.post('/', async (req: Request, res: Response) => {
         { error: nonceErr, agreementId: event.agreementId },
         'Adobe Sign webhook: nonce insert failed',
       );
-      // Fail open: we still try to enqueue rather than reject — Adobe retry
-      // semantics will deliver the same event again later, but the rule
-      // executions table's idempotency key still de-dupes downstream.
+      // Fail open: we still try to enqueue rather than reject — losing the
+      // event is worse than double-processing it. No row was committed, so
+      // `releaseNonce` must stay disarmed for this delivery.
+      //
+      // NOTE: the older comment here claimed the executions idempotency key
+      // de-dupes a re-delivery. It does not on this path — the index is
+      // `UNIQUE(rule_id, trigger_event_id)` and `trigger_event_id` is the
+      // per-enqueue rule-event id, so a re-delivery that enqueues again
+      // produces a different key. Failing open can therefore double-process;
+      // that is an accepted trade, not a guarded no-op.
+    } else {
+      nonceCommitted = true;
     }
 
     const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
@@ -216,6 +340,7 @@ adobeSignWebhookRouter.post('/', async (req: Request, res: Response) => {
       reason: message,
       payloadHash,
     });
+    await releaseNonce(message);
     res.status(500).json({ error: { code: 'webhook_processing_failed' } });
   }
 });

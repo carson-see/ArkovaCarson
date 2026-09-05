@@ -226,6 +226,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0386` | `0386_fingerprint_lookup_secured_only.sql` | #1854 | no | Closes the fingerprint EXISTENCE ORACLE on the anon-GRANTed `get_public_anchor_by_fingerprint`. Prod had silently drifted from `0339` to `status IN ('SECURED','SUBMITTED','PENDING')` with **no source on main** — 3 PENDING + 48,149 SUBMITTED non-deleted anchors were confirmable by an anonymous caller. Restores `status = 'SECURED'` and 0339's `ORDER BY created_at DESC, a.id DESC` tiebreak. Based on the CURRENT PROD body via `pg_get_functiondef` (source md5 `1fd78aece7613fd191f7a053f2f66475`), not on the 0339 file. Tier T3. Rollback in the file header. See the PR block below. **Next author claims `0387`.** |
 | `0387` | `0387_public_search_learner_name_leak.sql` | (this PR) | **yes — applied out of band 2026-08-02, ahead of this PR** | **Confirmed LIVE leak, since fixed in prod.** `search_public_credentials` is anon-executable (`anon_execute=true`) and projected `'title', a.filename` RAW — the same learner-name PII 0385 removed from `get_public_anchor`, still exposed through the public search surface (search.arkova.ai). Verified in prod: `search_public_credentials('ava-williams',3)` returned `title = 'diploma-ava-williams.pdf'`, `credential_type = DEGREE`. Fixes BOTH sides: projection uses 0385's `private.*` label/cleaner, academic-record types are excluded from MATCHING (projection-only suppression would leave a hit-count oracle), non-academic rows match only on text the projection would print, and status narrows to `SECURED` (SUBMITTED was pre-publication filename disclosure). Based on the live prod body via `pg_get_functiondef` (md5 `411787e41120fda83c3aef4511b00da9` pre-fix). CTO applied this exact body directly on 2026-08-02 (pen-test window did not allow waiting for the normal PR/soak cycle); post-fix verification found zero academic hits on every learner-name probe, with legitimate ACRA/FINRA/USPTO public records still searchable. This PR's `0387_public_search_learner_name_leak.sql` was re-diffed against the live `pg_get_functiondef` output in-session (2026-08-02) and matches byte-for-byte — the repo file is the source of truth for what is running. It is a prod-orphan row, exempted in `scripts/ci/snapshots/ledger-numeric-exemptions.json` (`"0387"`) until this PR merges, at which point that exemption should be removed. Depends on 0385's helpers. Tier T3. Rollback in the file header. **Do NOT assume `0388`/`0389`/`0391` are free** — per `scripts/ci/snapshots/ledger-numeric-exemptions.json`'s own notes, `0388` is claimed/applied out of band (branch `claude/optimistic-perlman-9ff2fe`, PR #1863), `0389` is claimed file-only (branch `perf/anchors-ce-registry-ctid-index-0388`), and `0391` is claimed (PR #1871). `0390` is already merged to `main`. Next author: re-derive the true next-free prefix per the next-free rule at the top of this file (`max(main numeric head, this table, open-PR migrations) + 1`) rather than trusting any number asserted here. |
 | `0417` | `0417_cleanup_expired_data_singleton_advisory_lock.sql` | branch `claude/keen-haslett-8f4379` (this PR) | **no — file only, applied nowhere** | **BUG-2026-08-22-001 (P1) — `cleanup_expired_data()` deadlocks in PRODUCTION nightly.** `arkova-worker` runs `autoscaling.knative.dev/minScale = 2` (`gcloud run services describe`, 2026-08-22) and `routes/scheduled.ts` registers `cleanup-expired-data` on `0 2 * * *` in every instance, so two callers enter the `DROP TRIGGER` / `DELETE` / `CREATE TRIGGER` section on `audit_events` together and take the relation lock and the `pg_trigger` catalog-object lock (class 2620) in opposite orders. Cloud Logging shows SQLSTATE **40P01** on 2026-08-17/18/19/21 and duplicate `DATA_RETENTION_CLEANUP` audit rows on the nights both survived. Adds `pg_try_advisory_xact_lock(8675309, 2)` at the top of the body — the two-int Arkova namespace already used by `refresh_pipeline_dashboard_cache()` at `(8675309, 1)`; `2` is claimed here. **TRANSACTION-scoped is load-bearing**: `services/worker/src/jobs/run-lease.ts` rejected the SESSION-scoped `try_advisory_lock` RPC for singleton cron work because its release can land on a different PostgREST pool backend and no-op, wedging the lock — an xact lock has no release call to misroute. The guard lives in the FUNCTION, not the worker, so it also covers the Cloud Scheduler `POST /cron/cleanup-retention` path and operator smoke calls. Skip path writes **no** audit row and returns `skipped_concurrent_run: true` with `-1` not-measured sentinels (never `0`, which would falsely assert an empty purge); `success` stays `true` because a skip is the guard working. **STACKS ON `0411`** (PR #2235, `fix/data-integrity-soak-cluster`): everything below the guard is 0411's body verbatim, so this file yields the correct end state in either merge order, but it must NOT be applied BEFORE 0411 — that would silently fast-forward another PR's unlanded work. `0411` is necessary and NOT sufficient: it catches `lock_not_available` (55P03), and a deadlock raises 40P01, which that handler does not match. **Verified on real Postgres 15.18** in a throwaway container (private port, never the shared local stack), 6 concurrent callers x 5 rounds: 0411 alone = **24 deadlocks** and a round that wrote **2** cleanup rows; 0411+0417 = **0 deadlocks**, 25 skips, exactly **1** row per round. Re-runnable via `scripts/ops/repro-cleanup-expired-data-concurrency.sh`. Shape pinned in CI by `src/tests/0417-cleanup-expired-data-singleton.test.ts` (11 tests, asserted to FAIL against 0411 so it is a ratchet, not a tautology). No `database.types.ts` delta (signature unchanged; the return is `jsonb`). Tier T3. Rollback in the file header. **Prefix derivation:** `git log --all --diff-filter=A` on 2026-08-22 showed `0410`-`0414` claimed by the migration-T3 RC, `0415` claimed **TWICE** (`fix/false-secured-signet-anchors` and `fix/fd-ferpa-1-directory-opt-out-public-projections` — an unresolved live collision someone should resolve, same shape as the `0407` one noted above) and `0416` by `fix/secured-count-overstatement`. `0417` was the first free prefix. **Next author claims `0418` — re-derive, do not trust this line.** |
+| `0435` | `0435_docusign_nonce_legacy_rollout_guard.sql` | PR #2476 | Not applied to staging or production | Preserves replay protection across legacy NULL-account rows and tenant-scoped rows, including concurrent mixed-version writers. Keep this additive schema during worker rollback. Prefix re-derived from every open PR on 2026-09-05: maximum 0434. |
 
 ### Prefixes with no file and no reservation
 
@@ -800,3 +801,69 @@ asserting things that were not true:
   rules, and the header names both functions so the claim is checkable.
 
 Prefix unchanged. **Next author claims `0428` — re-derive, do not trust this line.**
+## Recent migrations (PR #PENDING-docusign-key-authority)
+
+**Branch `fix/docusign-metadata-key-write-authority`. PR not yet opened. CTO Decision Record
+ruling R1 (`docs/staging/docusign-bilateral-2026-08/CTO-DECISION-RECORD.md`), PR-1 of the
+DocuSign bilateral coverage sequence — a write-authority guard trigger on the DocuSign key
+family in `anchors.metadata`.**
+
+### `0422` was already claimed by the time this session re-derived — used `0423` instead
+
+The Decision Record (also dated 2026-08-29) names `0422` as "the next free prefix, currently".
+Re-deriving fresh per this file's next-free rule (`git log --all --diff-filter=A` over **every**
+ref, not just this file's own stale lines) found that prefix already taken:
+
+| Commit | Author date | File | Owner |
+|---|---|---|---|
+| `04e4b0fa05183a6f02102b206232dc1f614f0323` | 2026-08-29 10:13:01 -0400 | `0422_false_secured_offchain_anchor_quarantine.sql` | branch `fix/false-secured-signet-anchors` (checked out in another worktree, no open PR) |
+
+That commit is `fix/false-secured-signet-anchors`'s own renumber of its `0415` claim (see the
+"`0415` collision resolution 2026-08-29" block above) — it landed hours before this session
+started. First-claim-wins by commit time (same rule as the `0420`/`0415` resolutions above):
+`0422` stays with the false-SECURED quarantine fix. This migration claims **`0423`** —
+`0423_sec_docusign_metadata_key_write_authority.sql`.
+
+**Prefix derivation, this session:** `origin/main` migration-file head `0414`; prod ledger head
+`0419` (gap at `0415`-`0417`, legitimate per the blocks above); `0415` kept by #2314, the other
+`0415` claim now at `0422` (above); `0416` `fix/secured-count-overstatement`; `0417` #2335;
+`0418` #2336; `0419` #2355; `0420` #2442; `0421` #2440 (renumbered from `0420`); `0422`
+`fix/false-secured-signet-anchors` (above). `gh pr list --state open` (17 open PRs, checked this
+session) and `git log --all --diff-filter=A` show nothing claiming `0423` or `0424`. `0423` is
+the first free prefix. **Next author claims `0424` — re-derive, do not trust this line; several
+other worktrees are actively claiming numbers in this range the same day (rig table above).**
+
+### `0423` — RESERVED, file-only, NOT applied anywhere
+
+| Prefix | File | PR | Applied to prod/rig? | Note |
+|---|---|---|---|---|
+| `0423` | `0423_sec_docusign_metadata_key_write_authority.sql` | branch `fix/docusign-metadata-key-write-authority` (PR #2472, DRAFT) | **no — file only, pre-soak** | T3 (migration + security). `BEFORE INSERT OR UPDATE OF metadata` trigger `trg_strip_unattested_docusign_metadata_keys` + `SECURITY DEFINER` function `enforce_docusign_metadata_key_authority()`, copying 0384's/0394's exact strip/revert pattern and reusing 0394's identical `get_caller_role() = 'service_role'` predicate (no new detection method invented). Strips (INSERT) or reverts-to-OLD (UPDATE) the DocuSign provenance key family in `anchors.metadata` for any non-service_role writer — `connector_source`, `connector_artifact_id`, `_signers`, `_docusign_env`, `_direction`, `_sending_account_id` unconditionally; `account_id`/`envelope_id` ONLY when the row claims DocuSign provenance (`v_claims_docusign`, true when `connector_source` is present in the caller's payload or the row's existing OLD state) — those two are generic names that also occur legitimately in non-DocuSign metadata (`SecureDocumentDialog.tsx` spreads AI-extracted top-level fields; `IssueCredentialForm.tsx` persists arbitrary org-template field keys), so unconditional guarding would have silently stripped unrelated data with no error. Does not reopen the forgery: `AssetDetailView.tsx` (PR #2473) renders `account_id`/`envelope_id` as DocuSign links only when `connector_source === 'docusign'` exactly, and `connector_source` itself stays unconditionally guarded. Closes the `bulk_create_anchors` / direct-PostgREST forgery gap `services/worker/src/constants/connectorFingerprint.ts` documents in its own header. Confirmed by full-tree grep that the only writers of these 8 keys into `anchors.metadata` (`jobs/connector-artifact-drain.ts`, `jobs/rule-action-dispatcher.ts`, `jobs/docusign-envelope-completed.ts` via the `connector_artifact` staging row) all authenticate `service_role` through `services/worker/src/utils/db.ts`'s `config.supabaseServiceKey` client; no legitimate non-service_role writer of any of the 8 keys exists in the DocuSign context. `SET LOCAL lock_timeout = '5s'` precedes the `CREATE TRIGGER` (hot-table DDL, CLAUDE.md §1.2); `scripts/ci/check-hot-table-ddl-lock-timeout.ts` passes with 0 new violations. Soak: pending, orchestrated by the CTO session per the Decision Record's delivery sequence (PR-1 of 4). |
+## Recent migrations (branch feat/docusign-inbound-recipient-connect)
+
+Titled by branch, not PR number: written before this branch's PR existed. Unique
+per `scripts/ci/check-agents-md-migration-collision.ts` (no other block in this
+file uses this branch name).
+
+### `0424` claimed — `0424_docusign_webhook_nonces_tenant_scope.sql`
+
+Re-derived 2026-08-29 per the next-free rule: `git log --all --diff-filter=A -- 'supabase/migrations/0*.sql'`
+over every fetched ref tops out at `0423` (`fix/docusign-metadata-key-write-authority`,
+PR #2472 — the DocuSign metadata key write-authority guard trigger this same
+epic's PR-1 relies on). The `0421`/`0422` reservations two sections above and
+the `credits-2442` (`0420`) / `cleanup-2335` (`0417`) rig rows immediately
+above are all `<= 0423`, so none of them are the head. `0424` is therefore the
+next genuinely-free prefix as of this derivation — **next author, re-derive,
+do not trust this line**, per this file's own standing rule (same caveat every
+other reservation in this section carries).
+
+Adds `account_id` to `docusign_webhook_nonces`' uniqueness key (tenant-scopes
+DocuSign Connect webhook replay protection — see the file header for the full
+rationale). Additive nullable column, no backfill (§1.5), plain `ADD
+CONSTRAINT` (table is small, swept every 14 days — not a hot-table two-phase
+lock situation). Part of the docusign-bilateral-2026-08 feasibility spike
+(SCRUM-3817/SCRUM-3818): the whole feature ships behind `ENABLE_DOCUSIGN_INBOUND`
+(default false) and is NOT going live this cycle, but this migration itself is
+a real, always-applicable tenant-isolation hardening independent of the flag —
+it does not touch existing rows' behavior and is safe to soak/apply on its own
+schedule. Tier T3 (migration). **Next author claims `0425` — re-derive, do not
+trust this line.**

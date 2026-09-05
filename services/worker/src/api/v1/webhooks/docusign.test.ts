@@ -30,13 +30,34 @@ vi.mock('../../../utils/logger.js', () => ({
   },
 }));
 
-import { docusignWebhookRouter, extractNotaryData } from './docusign.js';
+// docusign-bilateral-2026-08: docusign.ts now reads config.enableDocusignInbound.
+// Mock directly (same pattern as drive.test.ts's mockConfig) so these tests
+// don't need real SUPABASE_URL/etc env vars, and so the inbound tests below
+// can flip the flag per-test.
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { enableDocusignInbound: false },
+}));
+vi.mock('../../../config.js', () => ({ config: mockConfig }));
+
+import { docusignWebhookRouter, extractNotaryData, extractSigners, buildDocusignRuleEventPayload } from './docusign.js';
+import type { DocusignCompletedEnvelope } from '../../../integrations/oauth/docusign.js';
 import { logger } from '../../../utils/logger.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
 const SUB_ORG_ID = '22222222-2222-4222-8222-222222222222';
 const VALID_DOC_SHA256 = 'b'.repeat(64);
+
+// R6 (PR #2474 review, HIGH): DocusignCapturedSigner now pins recipient_id_guid
+// / user_id to a GUID shape, not just the key name. Test fixtures for those two
+// fields must be real GUID-shaped strings. `n` MUST be an integer (never an
+// arbitrary word) — its decimal digits are also valid hex characters, so
+// distinct integers give distinct, deterministic, valid GUIDs; an arbitrary
+// string could contain non-hex letters and silently break the fixture.
+function testGuid(n: number): string {
+  const suffix = String(Math.trunc(n)).padStart(12, '0').slice(-12);
+  return `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`;
+}
 
 function createApp() {
   const app = express();
@@ -112,7 +133,32 @@ beforeEach(() => {
   rpcMock.mockReset();
   submitJobMock.mockReset();
   process.env.DOCUSIGN_CONNECT_HMAC_SECRET = TEST_HMAC_KEY;
+  mockConfig.enableDocusignInbound = false;
 });
+
+/** docusign-bilateral-2026-08: a valid body declaring a distinct owning/sending account. */
+function bodyWithSenderAccount(args: { senderAccountId?: string; envelopeId?: string; sha256s?: string[] }): string {
+  return JSON.stringify({
+    event: 'envelope-completed',
+    envelopeId: args.envelopeId ?? 'env-1',
+    accountId: 'acct-1',
+    status: 'completed',
+    sender: {
+      email: 'legal@example.com',
+      ...(args.senderAccountId ? { accountId: args.senderAccountId } : {}),
+    },
+    envelopeDocuments: (args.sha256s ?? [VALID_DOC_SHA256]).map((sha256, i) => ({
+      documentId: `doc-${i}`,
+      name: `doc-${i}.pdf`,
+      sha256,
+    })),
+  });
+}
+
+/** True when `mock` was ever called with `table` as its first argument. */
+function calledWithTable(mock: ReturnType<typeof vi.fn>, table: string): boolean {
+  return mock.mock.calls.some((call) => call[0] === table);
+}
 
 describe('POST /webhooks/docusign', () => {
   it('returns 503 when HMAC secret is not configured and integration has no keys', async () => {
@@ -248,7 +294,9 @@ describe('POST /webhooks/docusign', () => {
         source: 'docusign_connect',
         integration_id: 'int-1',
         envelope_id: 'env-1',
-        document_ids: ['combined'],
+        // document_count replaces the former unbounded document_ids array so the
+        // payload stays under the 16KB CHECK (see the size-guard describe block).
+        document_count: 1,
         document_hashes: [VALID_DOC_SHA256],
         document_sha256: VALID_DOC_SHA256,
         payload_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -264,6 +312,14 @@ describe('POST /webhooks/docusign', () => {
         rule_event_id: '22222222-2222-4222-8222-222222222222',
       }),
     }));
+    // Backward compat (R6): validBody() carries no `recipients` at all — the
+    // envelope must still process cleanly, and `_signers` must be omitted
+    // entirely (never an empty array) from both the rule-event payload and
+    // the job payload.
+    const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+    expect(jobPayload).not.toHaveProperty('_signers');
+    const ruleEventPayload = rpcMock.mock.calls[0][1].p_payload as Record<string, unknown>;
+    expect(ruleEventPayload).not.toHaveProperty('_signers');
   });
 
   it('attributes a parent-owned DocuSign account to the single inherited sub-org marker', async () => {
@@ -526,12 +582,17 @@ describe('POST /webhooks/docusign', () => {
 
     expect(first.status).toBe(202);
     expect(retry.status).toBe(200);
+    // docusign-bilateral-2026-08 / migration 0424: nonce writes are now
+    // tenant-scoped by account_id — see the dedicated "tenant-scopes the
+    // nonce write" test above for the focused assertion on that field alone.
     expect(firstNonce.insert).toHaveBeenCalledWith({
+      account_id: 'acct-1',
       envelope_id: 'env-1',
       event_id: 'envelope-completed',
       generated_at: expectedPayloadHash,
     });
     expect(secondNonce.insert).toHaveBeenCalledWith({
+      account_id: 'acct-1',
       envelope_id: 'env-1',
       event_id: 'envelope-completed',
       generated_at: expectedPayloadHash,
@@ -890,6 +951,265 @@ describe('POST /webhooks/docusign', () => {
     expect(res.status).toBe(202);
     expect(res.body.ok).toBe(true);
   });
+
+  // CTO Decision Record (docusign-bilateral-2026-08, ruling R6) — signer
+  // capture on the outbound (own-account) envelope-completed path.
+  describe('signer capture (R6)', () => {
+    function bodyWithSigners(signers: unknown[]): string {
+      return JSON.stringify({
+        event: 'envelope-completed',
+        envelopeId: 'env-signers-1',
+        accountId: 'acct-1',
+        status: 'completed',
+        sender: { email: 'legal@example.com' },
+        envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf' }],
+        envelopeSummary: {
+          recipients: { signers },
+        },
+      });
+    }
+
+    it('captures pseudonymous signer GUIDs into the job payload as _signers', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-signers-1', error: null });
+      submitJobMock.mockResolvedValueOnce('job-signers-1');
+
+      const body = bodyWithSigners([
+        {
+          recipientIdGuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          userId: testGuid(101),
+          status: 'completed',
+          signedDateTime: '2026-08-20T10:00:00Z',
+          name: 'Jane Doe',
+          email: 'jane@example.com',
+        },
+        {
+          // Pure email-link signer — no DocuSign platform userId.
+          recipientIdGuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          status: 'completed',
+          signedDateTime: '2026-08-20T10:05:00Z',
+          name: 'John Roe',
+          email: 'john@example.com',
+        },
+      ]);
+
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect(jobPayload._signers).toEqual([
+        {
+          recipient_id_guid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          user_id: testGuid(101),
+          status: 'completed',
+          signed_at: '2026-08-20T10:00:00Z',
+        },
+        {
+          recipient_id_guid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          status: 'completed',
+          signed_at: '2026-08-20T10:05:00Z',
+        },
+      ]);
+
+      // R6: assert absence explicitly — no name/email anywhere in the captured
+      // signers, and neither PII marker appears even serialized.
+      const serializedSigners = JSON.stringify(jobPayload._signers);
+      expect(serializedSigners).not.toContain('Jane Doe');
+      expect(serializedSigners).not.toContain('jane@example.com');
+      expect(serializedSigners).not.toContain('John Roe');
+      expect(serializedSigners).not.toContain('john@example.com');
+      for (const signer of jobPayload._signers as Record<string, unknown>[]) {
+        expect(Object.keys(signer).sort()).toEqual(
+          [...new Set(['recipient_id_guid', 'user_id', 'status', 'signed_at'])]
+            .filter((key) => key in signer)
+            .sort(),
+        );
+        expect(signer).not.toHaveProperty('name');
+        expect(signer).not.toHaveProperty('email');
+      }
+
+      // Finding 7 / R6: _signers must never ride on the size-capped rule-event
+      // payload — only on the job → connector_artifact.metadata path.
+      const ruleEventPayload = rpcMock.mock.calls[0][1].p_payload as Record<string, unknown>;
+      expect(ruleEventPayload).not.toHaveProperty('_signers');
+    });
+
+    it('caps captured signers at 20 entries (truncates rather than rejecting the envelope)', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-signers-cap', error: null });
+      submitJobMock.mockResolvedValueOnce('job-signers-cap');
+
+      const signers = Array.from({ length: 25 }, (_, i) => ({
+        recipientIdGuid: testGuid(i),
+        status: 'completed',
+      }));
+      const body = bodyWithSigners(signers);
+
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      const captured = jobPayload._signers as Record<string, unknown>[];
+      expect(captured).toHaveLength(20);
+      expect(captured[0]).toMatchObject({ recipient_id_guid: testGuid(0) });
+      expect(captured[19]).toMatchObject({ recipient_id_guid: testGuid(19) });
+    });
+
+    it('skips recipient entries missing the required recipientIdGuid or status', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-signers-partial', error: null });
+      submitJobMock.mockResolvedValueOnce('job-signers-partial');
+
+      const body = bodyWithSigners([
+        { recipientIdGuid: testGuid(201) },
+        { status: 'completed' }, // no recipientIdGuid
+        { recipientIdGuid: testGuid(202), status: 'completed' },
+      ]);
+
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect(jobPayload._signers).toEqual([
+        { recipient_id_guid: testGuid(202), status: 'completed' },
+      ]);
+    });
+
+    it('omits _signers entirely for an envelope with an empty signers array', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-signers-empty', error: null });
+      submitJobMock.mockResolvedValueOnce('job-signers-empty');
+
+      const body = bodyWithSigners([]);
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect(jobPayload).not.toHaveProperty('_signers');
+    });
+
+    it('processes cleanly (still 202) for an envelope with no recipients block at all', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-no-recipients', error: null });
+      submitJobMock.mockResolvedValueOnce('job-no-recipients');
+
+      const body = validBody(); // no envelopeSummary/recipients at all
+      const res = await postSignedBody(body);
+
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ ok: true });
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect(jobPayload).not.toHaveProperty('_signers');
+    });
+
+    // Finding 7 / R6: organization_rule_events.payload has a DB CHECK
+    // pg_column_size(payload) <= 16384. At the schema's max cardinality (100
+    // envelopeDocuments, the .max(100) cap in DocusignEnvelopeCompleted) the
+    // document_ids/document_hashes arrays alone approach that ceiling, so
+    // _signers (up to 20 entries) must never ride on this payload — only on
+    // the job -> connector_artifact.metadata path, which has no size cap.
+    it('MAX CARDINALITY (100 envelopeDocuments + 20 _signers): rule-event payload stays <= 16KB and never carries _signers', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-max-cardinality', error: null });
+      submitJobMock.mockResolvedValueOnce('job-max-cardinality');
+
+      // 100 documents at the envelopeDocuments schema cap, each with a unique
+      // valid vendor-supplied sha256 (worst case for document_hashes dedup —
+      // no collisions to shrink the array).
+      const envelopeDocuments = Array.from({ length: 100 }, (_, i) => ({
+        documentId: String(i + 1),
+        name: `Document ${i + 1}.pdf`,
+        sha256: crypto.createHash('sha256').update(`document-${i}`).digest('hex'),
+      }));
+      // 20 signers at the _signers cap.
+      const signers = Array.from({ length: 20 }, (_, i) => ({
+        recipientIdGuid: testGuid(i),
+        userId: testGuid(i + 500),
+        status: 'completed',
+        signedDateTime: '2026-08-20T10:00:00Z',
+      }));
+
+      const body = JSON.stringify({
+        event: 'envelope-completed',
+        envelopeId: 'env-max-cardinality',
+        accountId: 'acct-1',
+        status: 'completed',
+        generatedDateTime: '2026-08-20T10:00:00.000Z',
+        sender: { email: 'legal@example.com' },
+        envelopeDocuments,
+        envelopeSummary: {
+          recipients: { signers },
+        },
+      });
+
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+
+      // The rule-event payload (organization_rule_events.payload, DB CHECK
+      // pg_column_size <= 16384) must stay under that ceiling AND never carry
+      // _signers.
+      const ruleEventPayload = rpcMock.mock.calls[0][1].p_payload as Record<string, unknown>;
+      expect(ruleEventPayload).not.toHaveProperty('_signers');
+      const ruleEventBytes = Buffer.byteLength(JSON.stringify(ruleEventPayload), 'utf8');
+      expect(ruleEventBytes).toBeLessThanOrEqual(16384);
+      // The capped rule event retains all digests and the bounded count;
+      // per-document IDs remain only in the fetch job.
+      expect(ruleEventPayload.document_count).toBe(100);
+      expect(ruleEventPayload).not.toHaveProperty('document_ids');
+      expect((ruleEventPayload.document_hashes as unknown[]).length).toBe(100);
+
+      // _signers rides ONLY the job -> connector_artifact.metadata path (no
+      // size cap there), at full cardinality.
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect((jobPayload._signers as unknown[]).length).toBe(20);
+      expect((jobPayload.document_ids as unknown[]).length).toBe(100);
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -902,6 +1222,312 @@ describe('POST /webhooks/docusign', () => {
 // DO log (invalid signature, processing-failure DLQ, ambiguity) and assert the
 // PII markers never appear in any captured log argument or thrown error.
 // ─────────────────────────────────────────────────────────────────────
+// CTO Decision Record (docusign-bilateral-2026-08) — R4 classification, R3
+// flag-gated inbound declared-hash anchoring, R5 orphan observability, and
+// the migration-0424 nonce tenant-scoping. This whole feature ships behind
+// ENABLE_DOCUSIGN_INBOUND (default false, mockConfig reset to false in
+// beforeEach above) and is not going live this cycle.
+describe('POST /webhooks/docusign — inbound classification (docusign-bilateral-2026-08)', () => {
+  it('classifies an envelope owned by the org\'s own connected account as outbound, even when the customrecipient marker claims inbound — and reaches the DB exactly as many times as before this feature (backward-compat)', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-outbound-marker', error: null });
+    submitJobMock.mockResolvedValueOnce('job-outbound-marker');
+
+    // No senderAccountId declared — the common case, and also the fast path:
+    // sendingAccountId falls back to accountId, which IS this integration's
+    // own account by construction (findIntegration matched on it), so
+    // classification never queries org_integrations/member_integrations
+    // again. The `?customrecipient` marker is present but must NOT change
+    // the outcome (marker cannot upgrade trust).
+    const body = validBody();
+    const res = await request(createApp())
+      .post('/webhooks/docusign?customrecipient=1')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true }); // no `inbound` key — identical shape to the pre-existing outbound response
+    // Exactly the pre-existing outbound call count: integration lookup,
+    // inherited-marker lookup, nonce insert. Zero extra classification
+    // queries for the fast path.
+    expect(dbFromMock).toHaveBeenCalledTimes(3);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.anything());
+    expect(submitJobMock).toHaveBeenCalled();
+    // The marker/classification disagreement is logged, never acted on.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ envelopeId: 'env-1' }),
+      expect.stringContaining('classifying outbound'),
+    );
+  });
+
+  it('classifies an envelope owned by a DIFFERENT DocuSign account as inbound, and — flag OFF — acknowledges 200 with NO nonce consumed and NO durable write', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    // classifyDirection's own-account cross-check: neither table lists the
+    // foreign sending account among this org's connected accounts.
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }])); // org_integrations
+    dbFromMock.mockReturnValueOnce(integrationLookup(null)); // member_integrations
+
+    const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN' });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inbound: true, skipped: 'flag_disabled' });
+    // Exactly 4 DB calls — integration lookup, inherited-marker lookup, and
+    // the two own-account cross-check queries. Critically, NO 5th call: the
+    // nonce table is never touched.
+    expect(dbFromMock).toHaveBeenCalledTimes(4);
+    expect(calledWithTable(dbFromMock, 'docusign_webhook_nonces')).toBe(false);
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
+  it('anchors via the declared-hash path when flag is ON: sets fingerprint_source=issuer_record_attestation via _direction metadata, and never engages the document-fetch job pathway', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }])); // org_integrations (own)
+    dbFromMock.mockReturnValueOnce(integrationLookup(null)); // member_integrations (own)
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'artifact-inbound-1', error: null });
+
+    const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN', envelopeId: 'env-inbound-1' });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true, inbound: true });
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_connector_artifact', expect.objectContaining({
+      p_org_id: ORG_ID,
+      p_source: 'docusign',
+      p_external_ref: 'env-inbound-1',
+      p_external_revision: null,
+      p_fingerprint_sha256: VALID_DOC_SHA256, // the DECLARED hash — never a server-fetched one
+      p_metadata: expect.objectContaining({
+        _direction: 'inbound',
+        _sending_account_id: 'acct-FOREIGN',
+      }),
+    }));
+    // R3: the ONLY caller of the DocuSign document-fetch API is the
+    // `docusign.envelope_completed` job (docusign-envelope-completed.ts ->
+    // integrations/connectors/docusign.ts -> fetchDocusignCombinedDocument).
+    // This webhook module has no other path to that function, so proving the
+    // job was never submitted IS the proof the fetch API was never engaged.
+    expect(submitJobMock).not.toHaveBeenCalled();
+    // fingerprint_source is NOT set by this handler directly — it's set by
+    // connector-artifact-drain.ts's defaultMaterializeAnchor, keyed off the
+    // SAME `_direction: 'inbound'` marker asserted above (see that file's
+    // own dedicated test coverage for the anchor-insert assertion).
+  });
+
+  // F1-heal (SCRUM-3818 go-live gate): "outbound-then-inbound ordering ->
+  // inbound does not downgrade a verified row." The real outbound job
+  // (docusign-envelope-completed.ts) already won the `(org_id, source,
+  // external_ref, revision)` slot for this envelope with its real,
+  // server-measured fingerprint BEFORE this (forged or otherwise
+  // non-owning) inbound delivery arrives. `enqueue_connector_artifact`'s
+  // `ON CONFLICT DO NOTHING` means the RPC call below returns the EXISTING
+  // (real) row's id, unchanged — and this handler does nothing further with
+  // that id (see enqueueInboundDeclaredHashArtifact's call site: the
+  // returned value is awaited and discarded, never read back or written).
+  // This test pins that structurally, not just by inspection: the same
+  // `dbFromMock` call count as the "wins the race" test above (5 — no 6th
+  // call attempting to read back or update `connector_artifact`) proves this
+  // path CANNOT rewrite/downgrade whatever row already exists at that key.
+  it('outbound-then-inbound ordering: when enqueue_connector_artifact returns a PRE-EXISTING (real, outbound-owned) row id via ON CONFLICT DO NOTHING, this handler makes no further write and cannot downgrade it', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }])); // org_integrations (own)
+    dbFromMock.mockReturnValueOnce(integrationLookup(null)); // member_integrations (own)
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    // ON CONFLICT DO NOTHING: the RPC returns the id of the row that ACTUALLY
+    // won the INSERT — the real outbound job's prior write — not a new row
+    // for this (later, non-owning) inbound delivery.
+    rpcMock.mockResolvedValueOnce({ data: 'existing-outbound-artifact', error: null });
+
+    const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN', envelopeId: 'env-already-outbound-1' });
+    const res = await postSignedBody(body);
+
+    // Structurally unaware it lost the race — the handler's own success
+    // response is identical either way, which is exactly the point: it never
+    // branches on "did my write actually win," so it has no path to act on a
+    // returned id that isn't its own.
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true, inbound: true });
+    // Exactly the same 5 calls as the "wins the race" test above — no read-
+    // back, no update, no 6th connector_artifact call of any kind.
+    expect(dbFromMock).toHaveBeenCalledTimes(5);
+    expect(calledWithTable(dbFromMock, 'connector_artifact')).toBe(false);
+  });
+
+  it('ambiguous/unresolvable (own-account lookup DB error) classifies inbound (fail-safe) — and orphan-drops with a DISTINCT signal, not a crash, when it also cannot resolve a usable declared hash', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    // Own-account cross-check itself fails (DB error) — classification must
+    // fail SAFE to inbound rather than throw or silently trust outbound.
+    dbFromMock.mockReturnValueOnce(integrationLookup(null, { message: 'db unavailable' }));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+
+    // Two distinct declared hashes -> extractSingleDeclaredHash finds no
+    // SINGLE usable value -> compound-ambiguous case: orphan-drop, not a crash.
+    const body = bodyWithSenderAccount({
+      senderAccountId: 'acct-FOREIGN',
+      envelopeId: 'env-ambiguous-1',
+      sha256s: [VALID_DOC_SHA256, 'c'.repeat(64)],
+    });
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inbound: true, skipped: 'no_usable_declared_hash' });
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+    expect(calledWithTable(dbFromMock, 'docusign_webhook_nonces')).toBe(false);
+    // R5: the distinct inbound-orphan-drop signal fired, carrying the
+    // classification's own failure reason through — not the generic
+    // "no_usable_declared_hash" default, proving the ambiguous-lookup reason
+    // actually propagates.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        docusign_inbound_orphan_drop: true,
+        envelopeId: 'env-ambiguous-1',
+        reason: 'own_account_lookup_failed',
+      }),
+      expect.any(String),
+    );
+  });
+
+  it('orphan-drops a foreign-account envelope with zero declared hashes (flag ON) without consuming a nonce', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }]));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-no-hash',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'legal@example.com', accountId: 'acct-FOREIGN' },
+      envelopeDocuments: [{ documentId: 'doc-1', name: 'doc.pdf' }], // no sha256
+    });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inbound: true, skipped: 'no_usable_declared_hash' });
+    expect(calledWithTable(dbFromMock, 'docusign_webhook_nonces')).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ docusign_inbound_orphan_drop: true, reason: 'no_usable_declared_hash' }),
+      expect.any(String),
+    );
+  });
+
+  it('tenant-scopes the nonce write (migration 0424): the inserted row carries account_id alongside envelope_id/event_id/generated_at', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    const nonceInsertFn = vi.fn().mockResolvedValue({ data: null, error: null });
+    dbFromMock.mockReturnValueOnce({ insert: nonceInsertFn });
+    rpcMock.mockResolvedValueOnce({ data: 'evt-nonce-scope', error: null });
+    submitJobMock.mockResolvedValueOnce('job-nonce-scope');
+
+    const body = validBody();
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(202);
+    expect(nonceInsertFn).toHaveBeenCalledWith({
+      account_id: 'acct-1',
+      envelope_id: 'env-1',
+      event_id: 'envelope-completed',
+      generated_at: expect.stringMatching(/^[a-f0-9]{64}$/), // payloadHash fallback — no generatedDateTime in validBody()
+    });
+  });
+
+  it('duplicate inbound delivery (nonce 23505) returns 200 without re-anchoring', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }]));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(nonceInsert({ code: '23505' }));
+
+    const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN', envelopeId: 'env-dup-inbound' });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, duplicate: true, inbound: true });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  // F1 (security review, docusign-bilateral-2026-08) — cross-tenant regression
+  // pin. HMAC verification proves this request is signed by the CALLER's own
+  // org's key (here, ORG_ID's — resolved via findIntegration('acct-1')); it
+  // proves nothing about the payload's claimed `senderAccountId`, which is
+  // attacker-authored body content. An attacker at ORG_ID could set
+  // `senderAccountId` to SUB_ORG_ID's REAL connected account, impersonating
+  // that org as the envelope's owner. This must NEVER cause the enqueued
+  // artifact to land in SUB_ORG_ID's namespace — `p_org_id` is always
+  // `integration.org_id` (the HMAC-verified caller's own org), never anything
+  // derived from the spoofable `senderAccountId` value. True by construction
+  // (enqueueInboundDeclaredHashArtifact hardcodes `p_org_id: args.integration.org_id`
+  // and never threads `sendingAccountId` into that field) — pinned here so a
+  // future refactor that accidentally wires org_id from classification output
+  // fails this test immediately.
+  it('a senderAccountId spoofing another real org\'s connected account still lands the artifact in the CALLER\'s own org_id, never the impersonated org', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }]));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'artifact-cross-tenant-1', error: null });
+
+    // acct-SUB-ORG-REAL stands in for a real DocuSign account genuinely
+    // connected to SUB_ORG_ID — the attacker (posting as ORG_ID, HMAC-signed
+    // with ORG_ID's own key) claims IT as the envelope's sender.
+    const body = bodyWithSenderAccount({
+      senderAccountId: 'acct-SUB-ORG-REAL',
+      envelopeId: 'env-cross-tenant-spoof',
+    });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_connector_artifact', expect.objectContaining({
+      // The load-bearing assertion: org_id is the HMAC-verified caller's own
+      // org (ORG_ID), NEVER SUB_ORG_ID or the spoofed account's org.
+      p_org_id: ORG_ID,
+      p_metadata: expect.objectContaining({
+        _sending_account_id: 'acct-SUB-ORG-REAL', // the CLAIM is recorded...
+      }),
+    }));
+    // ...but never leaks into the write's tenant scope.
+    const call = rpcMock.mock.calls.find((c) => c[0] === 'enqueue_connector_artifact');
+    expect((call?.[1] as Record<string, unknown>)?.p_org_id).not.toBe(SUB_ORG_ID);
+  });
+});
+
 describe('POST /webhooks/docusign — no raw-payload PII leak (DS-02, §1.6A)', () => {
   // Distinctive markers planted in the payload. If any surfaces in a log line
   // or an Error, the redaction contract is broken.
@@ -1174,5 +1800,374 @@ describe('extractNotaryData', () => {
     expect(result!.notary_name).toBeNull();
     expect(result!.notary_commission_state).toBeNull();
     expect(result!.notary_commission_number).toBeNull();
+  });
+});
+
+// ── extractSigners unit tests (CTO Decision Record R6) ──────────────
+
+describe('extractSigners', () => {
+  it('extracts recipient_id_guid/user_id/status/signed_at from recipients.signers', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{
+            recipientIdGuid: testGuid(1),
+            userId: testGuid(101),
+            status: 'completed',
+            signedDateTime: '2026-05-27T10:00:00Z',
+            name: 'Should Not Appear',
+            email: 'should-not-appear@example.com',
+          }],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toEqual([{
+      recipient_id_guid: testGuid(1),
+      user_id: testGuid(101),
+      status: 'completed',
+      signed_at: '2026-05-27T10:00:00Z',
+    }]);
+  });
+
+  it('never includes name or email even when present on the raw recipient', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{
+            recipientIdGuid: testGuid(2),
+            status: 'completed',
+            name: 'PII Name Marker',
+            email: 'pii-marker@example.com',
+          }],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]).not.toHaveProperty('name');
+    expect(result[0]).not.toHaveProperty('email');
+    expect(JSON.stringify(result)).not.toContain('PII Name Marker');
+    expect(JSON.stringify(result)).not.toContain('pii-marker@example.com');
+  });
+
+  it('omits user_id for a pure email-link signer (no DocuSign platform account)', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{ recipientIdGuid: testGuid(3), status: 'sent' }],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toEqual([{ recipient_id_guid: testGuid(3), status: 'sent' }]);
+    expect(result[0]).not.toHaveProperty('user_id');
+    expect(result[0]).not.toHaveProperty('signed_at');
+  });
+
+  it('skips entries missing recipientIdGuid or status', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [
+            { status: 'completed' },
+            { recipientIdGuid: testGuid(4) },
+            { recipientIdGuid: testGuid(5), status: 'completed' },
+          ],
+        },
+      },
+    });
+    expect(extractSigners(body)).toEqual([{ recipient_id_guid: testGuid(5), status: 'completed' }]);
+  });
+
+  // PR #2474 review, HIGH: the entire "no name/email ever persisted" guarantee
+  // rests on recipient_id_guid/user_id being structurally GUID-shaped, not
+  // merely present under the right key. A mis-slotted email/name-shaped value
+  // must be SKIPPED (fail-soft — identical treatment to a missing required
+  // field), never persisted, at the actual DB-write boundary (_signers on the
+  // job payload — see the "signer capture (R6)" describe block above for the
+  // full webhook->job assertion). This unit test covers extractSigners itself.
+  it('skips an entry whose recipientIdGuid is email/name-shaped instead of a GUID', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [
+            { recipientIdGuid: 'jane.doe@example.com', status: 'completed' },
+            { recipientIdGuid: 'Jane Doe', status: 'completed' },
+            { recipientIdGuid: testGuid(6), status: 'completed' },
+          ],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toEqual([{ recipient_id_guid: testGuid(6), status: 'completed' }]);
+    expect(JSON.stringify(result)).not.toContain('jane.doe@example.com');
+    expect(JSON.stringify(result)).not.toContain('Jane Doe');
+  });
+
+  it('drops an entry whose user_id is email-shaped, even when recipientIdGuid is a valid GUID', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{
+            recipientIdGuid: testGuid(7),
+            userId: 'mistakenly-an-email@example.com',
+            status: 'completed',
+          }],
+        },
+      },
+    });
+    // user_id fails the GUID regex, so the whole candidate fails safeParse —
+    // the entry is skipped entirely (fail-soft), never persisted with a
+    // dropped-user_id partial row.
+    expect(extractSigners(body)).toEqual([]);
+  });
+
+  it('dedupes repeated recipientIdGuid values within one delivery (resend/bounce)', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [
+            { recipientIdGuid: testGuid(9), status: 'sent' },
+            { recipientIdGuid: testGuid(9), status: 'completed' },
+            { recipientIdGuid: testGuid(10), status: 'completed' },
+          ],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toHaveLength(2);
+    // First occurrence wins.
+    expect(result[0]).toEqual({ recipient_id_guid: testGuid(9), status: 'sent' });
+    expect(result[1]).toEqual({ recipient_id_guid: testGuid(10), status: 'completed' });
+  });
+
+  it('caps at 20 entries', () => {
+    const signers = Array.from({ length: 30 }, (_, i) => ({
+      recipientIdGuid: testGuid(i),
+      status: 'completed',
+    }));
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: { recipients: { signers } },
+    });
+    const result = extractSigners(body);
+    expect(result).toHaveLength(20);
+    expect(result.map((s) => s.recipient_id_guid)).toEqual(
+      Array.from({ length: 20 }, (_, i) => testGuid(i)),
+    );
+  });
+
+  it('returns [] for non-signed envelopes (no recipients block)', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      envelopeDocuments: [{ documentId: 'combined' }],
+    });
+    expect(extractSigners(body)).toEqual([]);
+  });
+
+  it('returns [] for an empty signers array', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: { recipients: { signers: [] } },
+    });
+    expect(extractSigners(body)).toEqual([]);
+  });
+
+  it('returns [] for empty recipients', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: { recipients: {} },
+    });
+    expect(extractSigners(body)).toEqual([]);
+  });
+
+  it('returns [] for invalid JSON', () => {
+    expect(extractSigners('not json')).toEqual([]);
+  });
+
+  it('handles Buffer input', () => {
+    const body = Buffer.from(JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{ recipientIdGuid: testGuid(8), status: 'completed' }],
+        },
+      },
+    }));
+    expect(extractSigners(body)).toEqual([{ recipient_id_guid: testGuid(8), status: 'completed' }]);
+  });
+
+  it('does not read recipients.carbonCopies (mirrors extractNotaryData, which does not either)', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          carbonCopies: [{ recipientIdGuid: 'guid-cc', status: 'sent' }],
+        },
+      },
+    });
+    expect(extractSigners(body)).toEqual([]);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Rule-event payload 16KB CHECK guard (DocuSign bilateral 2026-08, Finding 7)
+//
+// `organization_rule_events.payload` carries a DB CHECK from the baseline
+// migration (`organization_rule_events_payload_size`):
+//     pg_column_size(payload) <= 16384
+//
+// The DocuSign webhook builds that payload from EVERY envelope document. At the
+// schema-permitted maximum cardinality (envelopeDocuments `.max(100)`) with long
+// documentId values (`.max(100)` at the Connect raw-parse gate, `.max(500)` in
+// DocusignEnvelopeCompleted), the unbounded `document_ids` array overflowed the
+// 16KB budget. In production that would make `enqueue_rule_event` throw a
+// check_violation, the handler roll back the nonce and return 500, and DocuSign
+// retry forever — the envelope's ESIGN_COMPLETED event and everything downstream
+// (document fetch, notarization, anchor) would never succeed.
+//
+// These tests pin the built payload under budget at adversarial cardinality.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Conservative upper-bound model of Postgres `pg_column_size(value::jsonb)`
+ * (the uncompressed jsonb binary size the CHECK evaluates on insert). Every
+ * branch charges AT LEAST what Postgres charges, so
+ * `jsonbColumnSize(v) <= 16384` implies the real DB CHECK passes:
+ *   - every value carries a 4-byte JEntry
+ *   - every container (object/array) adds a 4-byte header
+ *   - object keys are stored as strings, each with its own 4-byte JEntry
+ *   - strings cost their exact UTF-8 byte length
+ *   - numbers are charged a generous flat 16 bytes (real jsonb numeric is smaller)
+ * plus the 4-byte top-level varlena header.
+ */
+function jsonbColumnSize(value: unknown): number {
+  const sizeOf = (v: unknown): number => {
+    if (v === null || v === undefined) return 4;
+    if (typeof v === 'boolean') return 4;
+    if (typeof v === 'number') return 4 + 16;
+    if (typeof v === 'string') return 4 + Buffer.byteLength(v, 'utf8');
+    if (Array.isArray(v)) {
+      return 4 + 4 + v.reduce((sum: number, el) => sum + sizeOf(el), 0);
+    }
+    return (
+      4 +
+      4 +
+      Object.entries(v as Record<string, unknown>).reduce(
+        (sum, [k, val]) => sum + 4 + Buffer.byteLength(k, 'utf8') + sizeOf(val),
+        0,
+      )
+    );
+  };
+  return 4 + sizeOf(value);
+}
+
+/** Distinct 64-char lowercase SHA-256 hex per document index. */
+function uniqueDocHash(index: number): string {
+  return crypto.createHash('sha256').update(`doc-${index}`).digest('hex');
+}
+
+/**
+ * A signed envelope-completed body carrying `count` documents, each with a
+ * documentId of exactly `idLength` chars and a unique SHA-256. `idLength` must
+ * be <= 100 to survive the Connect raw-parse gate (EnvelopeDocument.documentId).
+ */
+function bodyWithDocuments(count: number, idLength: number): string {
+  const envelopeDocuments = Array.from({ length: count }, (_, i) => ({
+    documentId: `${i}-`.padEnd(idLength, 'x').slice(0, idLength),
+    name: 'contract.pdf',
+    sha256: uniqueDocHash(i),
+  }));
+  return JSON.stringify({
+    event: 'envelope-completed',
+    envelopeId: 'env-maxcard',
+    accountId: 'acct-1',
+    status: 'completed',
+    sender: { email: 'legal@example.com' },
+    envelopeDocuments,
+  });
+}
+
+describe('rule-event payload 16KB guard (DocuSign Finding 7)', () => {
+  const PAYLOAD_SIZE_LIMIT = 16384;
+
+  function primeEnqueueMocks(): void {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
+    submitJobMock.mockResolvedValueOnce('job-maxcard');
+  }
+
+  function enqueuedRulePayload(): Record<string, unknown> {
+    const call = rpcMock.mock.calls.find((c) => c[0] === 'enqueue_rule_event');
+    if (!call) throw new Error('enqueue_rule_event was not called');
+    return (call[1] as { p_payload: Record<string, unknown> }).p_payload;
+  }
+
+  it('stays within the 16KB CHECK at 100 documents with max-length documentIds', async () => {
+    primeEnqueueMocks();
+
+    // 100 documents (the envelopeDocuments `.max(100)` cap), each with a 100-char
+    // documentId — the longest value the raw-parse gate accepts — and a unique
+    // SHA-256. This is the adversarial worst case reachable through ingress.
+    const res = await postSignedBody(bodyWithDocuments(100, 100));
+
+    expect(res.status).toBe(202);
+    expect(jsonbColumnSize(enqueuedRulePayload())).toBeLessThanOrEqual(PAYLOAD_SIZE_LIMIT);
+  });
+
+  it('replaces the unbounded document_ids array with a bounded document_count', async () => {
+    primeEnqueueMocks();
+
+    const res = await postSignedBody(bodyWithDocuments(3, 40));
+    const payload = enqueuedRulePayload();
+
+    expect(res.status).toBe(202);
+    expect(payload.document_count).toBe(3);
+    // The unbounded array must be gone from the size-capped payload entirely —
+    // documentId length can no longer push it toward the 16KB CHECK.
+    expect(payload).not.toHaveProperty('document_ids');
+  });
+
+  it('stays under budget even at the DocusignEnvelopeCompleted schema-max documentId length (500)', () => {
+    // The Connect raw-parse gate caps documentId at 100 chars, but the
+    // DocusignEnvelopeCompleted schema permits 500. Build the payload directly at
+    // that outer bound to prove documentId length is now irrelevant to the size —
+    // this is the adversarial case the webhook ingress cannot even reach today,
+    // and it must hold if that gate is ever relaxed.
+    const event = {
+      event: 'envelope-completed',
+      envelopeId: 'env-schema-max',
+      accountId: 'acct-1',
+      status: 'completed',
+      envelopeDocuments: Array.from({ length: 100 }, (_, i) => ({
+        documentId: `${i}-`.padEnd(500, 'x').slice(0, 500),
+        name: 'contract.pdf',
+        sha256: uniqueDocHash(i),
+      })),
+    } as DocusignCompletedEnvelope;
+
+    const payload = buildDocusignRuleEventPayload({
+      integrationId: 'int-1',
+      event,
+      payloadHash: 'a'.repeat(64),
+    });
+
+    expect(payload.document_count).toBe(100);
+    expect(jsonbColumnSize(payload)).toBeLessThanOrEqual(PAYLOAD_SIZE_LIMIT);
   });
 });

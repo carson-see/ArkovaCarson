@@ -46,6 +46,13 @@ Requests to `/` with `Accept: text/markdown` receive `/index.md`; browser reques
 continue to receive the React application. `vercel.json` owns the response Link
 headers, media types, conditional rewrite, caching, and CORS for these files.
 
+## Verification evidence classes
+
+Verification and lookup tools return `fingerprint_source`. A value of
+`issuer_record_attestation` does not establish that Arkova measured document
+bytes; consult `fingerprint_evidence_note` for the declared evidence scope.
+The server card carries the same evidence qualifications as the registered tools.
+
 ## Available Tools
 
 ### `verify_credential`
