@@ -43,9 +43,9 @@ describe('RLS: Credential Templates', () => {
   });
 
   afterAll(async () => {
-    await adminClient.auth.signOut();
-    await userClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
   });
 
   it('ORG_ADMIN can read templates for their org', async () => {
@@ -149,9 +149,9 @@ describe('RLS: Memberships', () => {
   });
 
   afterAll(async () => {
-    await adminClient.auth.signOut();
-    await userClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
   });
 
   it('ORG_ADMIN can see all memberships in their org', async () => {
@@ -220,9 +220,9 @@ describe('RLS: Invitations', () => {
   });
 
   afterAll(async () => {
-    await adminClient.auth.signOut();
-    await userClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
   });
 
   it('ORG_ADMIN can create invitations for their org', async () => {
@@ -315,9 +315,9 @@ describe('RLS: Webhook Endpoints', () => {
   });
 
   afterAll(async () => {
-    await adminClient.auth.signOut();
-    await userClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
   });
 
   it('ORG_ADMIN can insert webhook endpoints for their org', async () => {

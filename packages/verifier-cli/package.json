@@ -1,5 +1,5 @@
 {
-  "name": "@arkova/verifier-cli",
+  "name": "arkova-verifier-cli",
   "version": "0.1.0",
   "description": "Standalone reference verifier for Arkova proof packets \u2014 recomputes the on-chain Merkle root and confirms inclusion via an INDEPENDENT node, with zero Arkova network calls.",
   "type": "module",
@@ -10,7 +10,10 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "fixtures",
+    "!fixtures/author-adversarial.py",
+    "!fixtures/generate-fixtures.mjs",
     "README.md",
     "LICENSE"
   ],
@@ -21,7 +24,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src test scripts",
-    "parity": "npm run build && node scripts/parity-compare.mjs"
+    "parity": "npm run build && node scripts/parity-compare.mjs",
+    "prepack": "npm run build",
+    "prepublishOnly": "node scripts/check-publishable.mjs"
   },
   "keywords": [
     "arkova",
@@ -33,11 +38,16 @@
     "trustless"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/carson-see/ArkovaCarson",
+    "directory": "packages/verifier-cli"
+  },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@arkova/verifier": "file:../verifier"
+    "arkova-verifier": "file:../verifier"
   },
   "devDependencies": {
     "@eslint/js": "9.24.0",

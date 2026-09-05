@@ -12,7 +12,7 @@ The full machine-readable v1 API spec is served live at [`https://app.arkova.ai/
 
 | What you want to do | Read this |
 |---|---|
-| Anchor + verify credentials from TypeScript / JavaScript | [`@carsonarkova/sdk`](../../packages/sdk/README.md) |
+| Anchor + verify credentials from TypeScript / JavaScript | [`arkova`](../../packages/sdk/README.md) |
 | Search + verify from Python | [`arkova`](../../packages/arkova-py/README.md) |
 | Move from API v1 to v2 | [v1 to v2 migration guide](./v2-migration.md) |
 | Drop a verification badge on any third-party site | [`@arkova/embed`](../../packages/embed/README.md) |
@@ -71,12 +71,12 @@ Search endpoints return `public_id` values that can be passed directly to the ma
 
 `POST /api/v1/anchor` accepts either `anchor:write` or `write:anchors`. `GET /api/v1/usage` requires `usage:read`; read/search scopes do not include usage analytics.
 
-### 3. TypeScript SDK — `@carsonarkova/sdk`
+### 3. TypeScript SDK — `arkova`
 
 A thin wrapper around the REST API. Three lines of code to anchor and verify. Includes a programmable webhooks namespace, batch verify, error handling, and x402 micropayment support.
 
 ```typescript
-import { Arkova } from '@carsonarkova/sdk';
+import { Arkova } from 'arkova';
 const arkova = new Arkova({ apiKey: process.env.ARKOVA_API_KEY });
 const receipt = await arkova.anchor('document content');
 const result = await arkova.verify(receipt.publicId);
@@ -130,11 +130,14 @@ Model Context Protocol endpoint for AI agents. New integrations should prefer th
 
 ### 7. Webhooks (outbound) — your URL
 
-Arkova POSTs HMAC-SHA256-signed JSON to your endpoint when anchors transition state. Three event types:
+Arkova POSTs HMAC-SHA256-signed JSON to your endpoint when anchors transition state. A representative subset:
 
 - `anchor.secured` — network confirmation complete
 - `anchor.revoked` — Org admin revoked the credential
 - `anchor.expired` — `expires_at` passed
+- `anchor.superseded` — the record was replaced by a re-issued version
+
+That is not the full set — see the webhooks guide below for every subscribable event type and its payload fields.
 
 Register, list, update, and delete webhook endpoints **programmatically** via `POST/GET/PATCH/DELETE /api/v1/webhooks` — no UI needed.
 
@@ -225,7 +228,7 @@ v1 responses now include `Deprecation: Sun, 23 Apr 2027 00:00:00 GMT; link="<htt
 
 External:
 
-- [`packages/sdk/README.md`](../../packages/sdk/README.md) — `@carsonarkova/sdk` TypeScript SDK
+- [`packages/sdk/README.md`](../../packages/sdk/README.md) — `arkova` TypeScript SDK
 - [`packages/embed/README.md`](../../packages/embed/README.md) — `@arkova/embed` embeddable widget
 - [`packages/arkova-py/`](../../packages/arkova-py/) — Python SDK
 - [`https://app.arkova.ai/api/docs`](https://app.arkova.ai/api/docs) — Hosted Swagger UI

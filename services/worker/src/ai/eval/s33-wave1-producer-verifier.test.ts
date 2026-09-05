@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
@@ -25,9 +25,11 @@ import {
   verifyS33Wave1ProducerHead,
 } from './s33-wave1-producer-verifier.js';
 
+import { removeTempRoot } from './testing/remove-temp-root.js';
+
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  for (const root of roots.splice(0)) removeTempRoot(root);
 });
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');

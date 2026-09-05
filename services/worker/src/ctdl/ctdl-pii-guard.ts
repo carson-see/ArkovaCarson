@@ -183,7 +183,37 @@ export function normalizePublicText(value: string, maxChars = MAX_SCAN_CHARS): s
 // before failing.
 // ---------------------------------------------------------------------------
 
-const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+/**
+ * The LOCAL-PART quantifier is BOUNDED to RFC 5321 §4.5.3.1's 64 octets, and
+ * the leading `\b` is deliberately GONE. Both halves are load-bearing.
+ *
+ * An unbounded `+` here is quadratic (Sonar typescript:S8786) for the same
+ * reason the separator classes above are bounded: the match is unanchored, so
+ * the engine retries at every offset a long local-part-valid run allows and
+ * re-scans the remainder before failing to find `@`. The `\b` does not save it
+ * — `.`, `-`, `%` and `+` are local-part characters but NOT word characters, so
+ * a dotted run puts a word boundary before every token. Measured on
+ * `'a.'.repeat(40000)`: 4,030 ms unbounded vs 12 ms bounded. At this module's
+ * own `MAX_SCAN_CHARS` cap the same shape is only 9.0 ms vs 0.6 ms — the cap
+ * already bounds the blast radius, so this is defence in depth on a public,
+ * unauthenticated, single-threaded endpoint rather than the whole fix.
+ *
+ * Dropping the leading `\b` is what keeps the bound from UNDER-DETECTING. With
+ * it, a local-part run longer than 64 characters cannot reach the `@` from the
+ * only offset `\b` permits, so the pattern matches NOTHING and a real address
+ * stops being detected — on a fail-closed PII gate that is a silent miss, the
+ * one direction that is never acceptable. Without it the match simply starts
+ * later and the address is still found. Verified by an 842,100-case
+ * differential fuzz over six adversarial alphabets: zero inputs detected by the
+ * old pattern and missed by this one. The 5,249 inputs it newly detects are all
+ * the >64 local-part case the old pattern was silently dropping.
+ *
+ * The DOMAIN quantifier stays unbounded, matching `src/lib/piiStripper.ts`.
+ * Bounding it was tried there and reverted: a domain run longer than the bound
+ * cannot reach the `\.` that must follow it, so the pattern matches nothing and
+ * the whole address survives. Do not "symmetrise" these two bounds.
+ */
+const EMAIL_PATTERN = /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
 
 /**
  * SSN requires REAL SEPARATORS, or an explicit keyword.

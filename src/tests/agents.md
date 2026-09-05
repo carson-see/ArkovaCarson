@@ -106,7 +106,7 @@ is *still* flagged when a file-level `SET LOCAL lock_timeout` is prepended, whic
 is the precise false negative that let BUG-019 sit in the tree with a green lint.
 A test that only pinned the migration text would have let the next author
 reintroduce the class in a different function with nothing to catch it
-(`memory/feedback_lint_rule_beats_human_census.md`).
+(a detector finds the class sites a careful human census misses).
 
 Comment lines are stripped before asserting on SQL (`code()` helper) — every
 `-- ROLLBACK:` header quotes the old body, so a naive substring match on the raw

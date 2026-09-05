@@ -6,7 +6,9 @@ import {
   auditLocalFiles,
   auditStaleExemptions,
   parseLedgerPayload,
+  partitionOrphanViolations,
   type LedgerRow,
+  type Violation,
 } from './check-ledger-numeric-integrity.ts';
 
 // vitest runs from the repo root; reference the script by repo-relative path.
@@ -285,6 +287,47 @@ describe('parseLedgerPayload — fail-closed boundary (P1)', () => {
   });
 });
 
+describe('partitionOrphanViolations — orphan blast radius (2026-08-30, the 0425 board stall)', () => {
+  const orphan: Violation = {
+    code: 'ledger-orphan-prod-row',
+    message: 'prod ledger has version="0425" (name="0425_anchors_reorg_scan_index")',
+  };
+  const corrupt: Violation = {
+    code: 'ledger-nonnumeric-version',
+    message: 'timestamp version on a numeric-named migration',
+  };
+
+  it('BLOCKS an orphan on a PR that touches the migration surface — that PR can reconcile it', () => {
+    const { blocking, warnOnly } = partitionOrphanViolations([orphan], true);
+    expect(blocking).toEqual([orphan]);
+    expect(warnOnly).toEqual([]);
+  });
+
+  it('DOWNGRADES an orphan on a PR that touches no migration surface — that PR cannot reconcile it', () => {
+    const { blocking, warnOnly } = partitionOrphanViolations([orphan], false);
+    expect(blocking).toEqual([]);
+    expect(warnOnly).toEqual([orphan]);
+  });
+
+  it('NEVER downgrades ledger corruption — a bad version blocks every PR regardless of surface', () => {
+    const { blocking, warnOnly } = partitionOrphanViolations([corrupt], false);
+    expect(blocking).toEqual([corrupt]);
+    expect(warnOnly).toEqual([]);
+  });
+
+  it('splits a mixed set: corruption stays blocking, the orphan becomes advisory', () => {
+    const { blocking, warnOnly } = partitionOrphanViolations([orphan, corrupt], false);
+    expect(blocking).toEqual([corrupt]);
+    expect(warnOnly).toEqual([orphan]);
+  });
+
+  it('preserves order within each partition for a stable, diffable CI log', () => {
+    const second: Violation = { code: 'ledger-orphan-prod-row', message: 'prod ledger has version="0426"' };
+    const { warnOnly } = partitionOrphanViolations([orphan, second], false);
+    expect(warnOnly.map((v) => v.message)).toEqual([orphan.message, second.message]);
+  });
+});
+
 describe('CLI exit codes — BLOCK vs WARN vs fail-closed (S0-4.2 main())', () => {
   const dirty = JSON.stringify([{ version: '20260615120000', name: '0322_bump_cloud_logging' }]);
 
@@ -310,5 +353,35 @@ describe('CLI exit codes — BLOCK vs WARN vs fail-closed (S0-4.2 main())', () =
     const r = runCli({ LEDGER_JSON: '' });
     expect(r.status).toBe(0);
     expect(r.out).toContain('Ledger pass skipped');
+  });
+
+  // Orphan blast-radius scoping (2026-08-30). `9999_` is deliberately a prefix no
+  // repo file will ever carry, so the row is a guaranteed orphan without depending
+  // on the live exemptions snapshot.
+  const orphanLedger = JSON.stringify([{ version: '9999', name: '9999_never_landed_on_main' }]);
+
+  it('BLOCKS an orphan by default — an UNSET migration-surface flag fails closed', () => {
+    const r = runCli({ LEDGER_JSON: orphanLedger });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('ledger-orphan-prod-row');
+  });
+
+  it('BLOCKS an orphan when the PR touches the migration surface', () => {
+    const r = runCli({ LEDGER_JSON: orphanLedger, LEDGER_PR_MIGRATION_SURFACE: '1' });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('ledger-orphan-prod-row');
+  });
+
+  it('WARNS (exit 0) on an orphan when the PR touches NO migration surface', () => {
+    const r = runCli({ LEDGER_JSON: orphanLedger, LEDGER_PR_MIGRATION_SURFACE: '0' });
+    expect(r.status).toBe(0);
+    expect(r.out).toContain('ledger-orphan-prod-row');
+    expect(r.out).toContain('::warning::');
+  });
+
+  it('still BLOCKS ledger corruption on a PR with no migration surface', () => {
+    const r = runCli({ LEDGER_JSON: dirty, LEDGER_PR_MIGRATION_SURFACE: '0' });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('ledger-nonnumeric-version');
   });
 });
