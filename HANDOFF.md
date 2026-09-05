@@ -14,6 +14,10 @@
 
 ## Now
 
+### UAT-01 — public signup released (2026-09-05, SCRUM-4031)
+
+[PR #2653](https://github.com/carson-see/ArkovaCarson/pull/2653) merged via Mergify at 16:49:30 UTC (`3954ca54d5d44cc15902756af0a70b44df79c6be`). Vercel production deployment `dpl_7g6sgAjbDxiuWfog58gZTL8krFJu` was independently verified READY with `app.arkova.ai` on that merge at 16:52 UTC. Later main deployments retain the signup change. Logged-out signup passed actual headless Chrome checks at 1280/375: immediate registration controls, retired beta gate absent, keyboard/error/navigation behavior and no horizontal overflow. No account writes. [Production metadata, screenshots and independent CTO verification](https://arkova.atlassian.net/wiki/spaces/A/pages/137134081); [merge-candidate CI passed](https://github.com/carson-see/ArkovaCarson/actions/runs/33976208584) (18,992 tests and 349 E2E cases). API, worker, webhook, MCP and SDK authentication were unchanged by this frontend fix. OAuth branding/mailbox verification and MFA retain their separate UAT ownership. Final close-out is tracked in SCRUM-4031 after the required observation deadline of 17:19:30 UTC.
+
 ### SCRUM-4035 / UAT-03 — OAuth mailbox confirmation candidate (2026-09-05)
 
 Implementation is on `cto/uat03-oauth-confirmation-20260905`; **not released in production**.
@@ -35,7 +39,6 @@ production/owned preview hooks disabled with URI NULL; recheck before installati
 Google consent branding; UAT-04 owns
 MFA; UAT-17 owns verified-domain policy. The retired beta env sample cleanup belongs to
 SCRUM-4031/PR #2653 and is carried with this auth configuration change by CTO assignment.
-
 
 ### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
 
@@ -2209,6 +2212,6 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
-_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against the Supabase Management API project list/config, `scripts/ci/staging-honesty-preflight.ts` artifacts, psql ledger queries, and the harness logs under `~/arkova-soak/mfa-3167/`._
+_Last refreshed: 2026-09-05 by Codex CTO — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-05 by Codex CTO UAT-03 — claims verified against gcloud/MCP/CI output (candidate local checks and read-only production ledger/ACL; full PR CI and hosted release remain pending)._
