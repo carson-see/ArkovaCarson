@@ -63,7 +63,7 @@ import {
   buildSignedReportUrl,
   verifySignedReportUrl,
 } from '../../../services/edge/src/r2-signed-url';
-import { verifySupabaseJwt } from '../../../services/edge/src/supabase-jwt';
+import { verifySupabaseJwt } from '../../../services/edge/src/mcp-jwt-verify';
 import type { Env } from '../../../services/edge/src/env';
 
 function base64Url(value: string | Uint8Array): string {
@@ -722,6 +722,12 @@ describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
     SUPABASE_JWT_SECRET: 'local-test-secret',
   } as Env;
 
+  // These exercised `supabase-jwt.ts`, an HS256-only duplicate verifier that
+  // no non-test file imported. It was deleted; the tests now run against the
+  // live verifier `mcp-jwt-verify.ts` — the one `validateBearer` actually
+  // calls — so a regression in the shipped path can no longer pass here.
+  const hs256Options = { secret: env.SUPABASE_JWT_SECRET!, supabaseUrl: env.SUPABASE_URL };
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -729,10 +735,11 @@ describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
   it('accepts a locally valid Supabase user token', async () => {
     const token = await signSupabaseTestJwt(env);
 
-    await expect(verifySupabaseJwt(token, env)).resolves.toMatchObject({
-      sub: 'user-123',
-      aud: 'authenticated',
-      iss: 'https://example.supabase.co/auth/v1',
+    await expect(verifySupabaseJwt(token, hs256Options)).resolves.toEqual({
+      ok: true,
+      userId: 'user-123',
+      tier: 'authenticated',
+      scopes: [],
     });
   });
 
@@ -742,10 +749,24 @@ describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
     const wrongIssuer = await signSupabaseTestJwt(env, { iss: 'https://evil.example/auth/v1' });
     const badSignature = await signSupabaseTestJwt(env, {}, 'different-secret');
 
-    await expect(verifySupabaseJwt(expired, env)).resolves.toBeNull();
-    await expect(verifySupabaseJwt(wrongAudience, env)).resolves.toBeNull();
-    await expect(verifySupabaseJwt(wrongIssuer, env)).resolves.toBeNull();
-    await expect(verifySupabaseJwt(badSignature, env)).resolves.toBeNull();
+    await expect(verifySupabaseJwt(expired, hs256Options)).resolves.toEqual({ ok: false, reason: 'expired' });
+    await expect(verifySupabaseJwt(wrongAudience, hs256Options)).resolves.toEqual({ ok: false, reason: 'wrong_aud' });
+    await expect(verifySupabaseJwt(wrongIssuer, hs256Options)).resolves.toEqual({ ok: false, reason: 'wrong_iss' });
+    await expect(verifySupabaseJwt(badSignature, hs256Options)).resolves.toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  // The deleted duplicate pinned HS256 and would have rejected every current
+  // Supabase token (BUG-2026-09-02-002). The live verifier is ES256-first:
+  // RS256 fails closed on `wrong_alg` before any JWKS work.
+  it('fails closed on a non-ES256/HS256 alg without a network call', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const rs256 = (await signSupabaseTestJwt(env)).split('.');
+    const forgedHeader = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'k' }));
+
+    await expect(
+      verifySupabaseJwt(`${forgedHeader}.${rs256[1]}.${rs256[2]}`, hs256Options),
+    ).resolves.toEqual({ ok: false, reason: 'wrong_alg' });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('short-circuits forged JWTs before the Supabase auth round-trip', async () => {
