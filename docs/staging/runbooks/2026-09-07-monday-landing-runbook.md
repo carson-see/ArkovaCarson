@@ -1,4 +1,9 @@
 # MONDAY RUNBOOK — Merge Lane A
+
+> **Added 2026-09-06 after the #2434 and #2525 close-outs (read before touching any sealed PR).**
+> 1. Every PR that sealed is now `DIRTY`/behind main. A DIRTY PR gets **no** `pull_request` workflow runs (GitHub cannot build the merge ref), so body edits trigger nothing. Order per PR: **merge origin/main into the branch first** (expect HANDOFF.md/agents.md/copy.ts unions; verify the PR's own file diff is byte-identical before/after and add a doc-only residual note), then rewrite the evidence block with real artifact values (bare labels, `Evidence scope: merge-grade isolated staging`, `Image digest:` must contain a real `sha256:<64hex>`; for edge-only PRs use the frozen edge-source manifest digest and say so), then **`gh run rerun <latest ci.yml run> --failed`** because the Evidence-identity job lives in ci.yml and does not re-run on `edited`. Then remove `do-not-merge`; Mergify's `Queue CI-green PRs` rule embarks it within a minute; if not, comment `@Mergifyio requeue`.
+> 2. If the speculative merge fails in the E2E job's **Seed database** step, that is infra (it happened to #2525); requeue once before investigating.
+> 3. `~/arkova-soak/cto-closeouts/close2434.py` and `close2525.py` are templates for the close-out step (they seal `Soak end`, lift the label, refresh Mergify, re-run the evidence-identity job).
 Written 2026-09-05 by Merge Lane A (second pass). Commands, in order. RTE owns every prod apply.
 
 ```
