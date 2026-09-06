@@ -54,6 +54,33 @@ come back quietly. `src/lib/publishedVerificationPointers.test.ts` holds the
 copy-level half of the same guard.
 _Last updated: 2026-08-30_
 
+## 2026-08-31 — `AttestationsPage.tsx`: phantom notarization columns unwired, load errors no longer silent
+
+Two defects in one page, same root cause — the page reads `attestations` through
+`const dbAny = supabase as any` and casts the result to a hand-written interface, so the
+compiler cannot see a column that does not exist.
+
+1. **`<NotarizationBadge>` was fed four columns `attestations` does not have.** Three
+   (`notary_name`, `notary_commission_state`, `docusign_envelope_id`) live on
+   `legally_binding_attestations` (migration 0314); the fourth, `notarized_at`, exists on
+   **no table in this schema** — the real column there is `notarization_completed_at`.
+   Every prop arrived `undefined`, so the badge rendered nothing on every row since it
+   shipped. The render is removed and the component is parked.
+2. **`if (!error && data)` collapsed a failed load into the empty state.** A statement
+   timeout, an RLS denial or a schema-cache miss showed the user "No attestations yet"
+   with no console signal — the shape described in
+   `memory/project_hollow_200_statement_timeout_swallow.md`. The fetch now branches on
+   `error` first and renders a distinct, retryable error state.
+
+**The guard is now the compiler, not a test.** `interface Attestation` is asserted against
+`Database['public']['Tables']['attestations']['Row']`, so declaring a phantom column is a
+`typecheck` failure naming the column — the DI-398 ruling in
+`services/worker/src/api/v1/agents.md` applied to this page. An earlier draft used a
+regex test that scraped both source files; it was replaced because it parsed on exact
+indentation and passed vacuously when the parse missed. Residual, stated plainly: this
+pins the declared interface, not every read — a `(row as any).x` access still bypasses it,
+and ~30 other `src/` files use the same cast.
+
 ## 2026-08-30 SCRUM-3559 — `ThirdPartyNoticesPage.tsx` includes copyright lines + verbatim license text
 
 The page listed dependency names + SPDX identifiers only; strict MIT attribution
@@ -595,3 +622,7 @@ presence so this change cannot be misread as having quietly resolved R-2. Do not
 `scripts/ci/config-drift/flag-inventory.json` also still carries the two `ENABLE_SEMANTIC_SEARCH`
 `claimedBy` entries pointing at this file (lines 65 and 240); `flagInventory.test.ts` asserts that
 finding still fires, so deleting them turns that test red.
+
+## 2026-09-05 — PR #2525 attestation actions on narrow screens
+
+Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Attestation outside the viewport. Document scrollWidth did not detect it because the shell clips overflow. Stack the heading and action group below lg and allow the actions to wrap. The staging browser regression checks every action bounding box at 375px and 1280px; it failed before this fix. Preserve this geometry check alongside actual database loading/error/retry and tenant-isolation checks.
