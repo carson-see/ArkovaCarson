@@ -3,6 +3,7 @@
   "captured_at": "2026-09-07T13:39:49.234Z",
   "remote_ip": "132.243.242.215",
   "user_agent": "node-fetch/1.0 (+https://github.com/bitinn/node-fetch)",
+  "content_type": "application/json",
   "secret": "arkova-test-8a175cc183320e3f34a0696568abb72a",
   "header_name": "X-ComputeID-Signature",
   "header_value": "sha256=4b30d74af0e3ba1e7121c303c5d5c3fe59e92f9c7089d43e2830d472be1a1584",

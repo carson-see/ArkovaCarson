@@ -6,6 +6,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { loadPinnedCa, type PinnedCa } from './ca-cert.js';
 import { verifyComputeIdReceipt, type ComputeIdReceiptInput } from './receipt-verifier.js';
 
@@ -128,6 +131,38 @@ describe('verifyComputeIdReceipt', () => {
     expect(verifyComputeIdReceipt({ receipt: expired, ca, expectedPassportId: PASSPORT, now: new Date('2026-09-07T12:31:00Z') })).toEqual({ ok: false, reason: 'expired' });
     const future = receiptFor(privateKey, ca, { payloadOverride: { issued_at: '2026-09-07T12:10:00.000Z' } });
     expect(verifyComputeIdReceipt({ receipt: future, ca, expectedPassportId: PASSPORT, now: NOW, maxClockSkewSeconds: 60 })).toEqual({ ok: false, reason: 'not_yet_valid' });
+  });
+
+  it('rejects a receipt whose SIGNED payload says the passport signature failed, whatever status says', () => {
+    const r = receiptFor(privateKey, ca, { payloadOverride: { signature_valid: false }, outerOverride: { signature_valid: false } });
+    expect(verifyComputeIdReceipt({ receipt: r, ca, expectedPassportId: PASSPORT, now: NOW })).toEqual({ ok: false, reason: 'passport_signature_invalid' });
+    const pq = receiptFor(privateKey, ca, { payloadOverride: { pq_signature_valid: false } });
+    expect(verifyComputeIdReceipt({ receipt: pq, ca, expectedPassportId: PASSPORT, now: NOW })).toEqual({ ok: false, reason: 'passport_signature_invalid' });
+  });
+
+  it('rejects when outer signature_valid disagrees with the signed one', () => {
+    const r = receiptFor(privateKey, ca, { payloadOverride: { signature_valid: false }, outerOverride: { signature_valid: true } });
+    expect(verifyComputeIdReceipt({ receipt: r, ca, expectedPassportId: PASSPORT, now: NOW })).toEqual({ ok: false, reason: 'payload_field_mismatch' });
+  });
+
+  it('enforces the CA validity window per verification (real ComputeID CA, clock beyond notAfter) before touching the signature', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const realCa = loadPinnedCa(readFileSync(path.join(here, '__fixtures__', 'computeid-ca.pem'), 'utf8'), new Date('2026-09-07T00:00:00Z'));
+    const r = receiptFor(privateKey, realCa); // key_id will match the real CA; signature will not — the window check must come first
+    expect(verifyComputeIdReceipt({ receipt: r, ca: realCa, expectedPassportId: PASSPORT, now: new Date('2040-01-01T00:00:00Z') })).toEqual({ ok: false, reason: 'ca_not_valid' });
+    expect(verifyComputeIdReceipt({ receipt: r, ca: realCa, expectedPassportId: PASSPORT, now: new Date('2020-01-01T00:00:00Z') })).toEqual({ ok: false, reason: 'ca_not_valid' });
+  });
+
+  it('reports issuedAt as null (never the wall clock) when the signed payload carries no issued_at', () => {
+    const raw = JSON.stringify({ passport_id: PASSPORT, status: 'active', expires_at: '2026-09-07T12:30:00.000Z', key_id: ca.keyId });
+    const v = verifyComputeIdReceipt({ receipt: receiptFor(privateKey, ca, { rawPayload: raw }), ca, expectedPassportId: PASSPORT, now: NOW });
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.issuedAt).toBeNull();
+  });
+
+  it('compares passport ids case-insensitively (RFC-4122 text is case-insensitive)', () => {
+    const v = verifyComputeIdReceipt({ receipt: receiptFor(privateKey, ca), ca, expectedPassportId: PASSPORT.toUpperCase(), now: NOW });
+    expect(v.ok).toBe(true);
   });
 
   it('requires passport_id, status and expires_at INSIDE the signed payload', () => {

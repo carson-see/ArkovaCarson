@@ -26,7 +26,6 @@ export interface PinnedCa {
   /** 16 hex chars — matches ComputeID's `key_id`. */
   keyId: string;
   subject: string;
-  isCa: boolean;
   notBefore: Date | null;
   notAfter: Date | null;
 }
@@ -69,7 +68,6 @@ export function loadPinnedCa(pem: string, now: Date = new Date()): PinnedCa {
       publicKey,
       keyId: deriveKeyId(publicKey),
       subject: cert.subject.replace(/\n/g, ', '),
-      isCa: true,
       notBefore,
       notAfter,
     };
@@ -88,7 +86,6 @@ export function loadPinnedCa(pem: string, now: Date = new Date()): PinnedCa {
       publicKey,
       keyId: deriveKeyId(publicKey),
       subject: 'raw-public-key',
-      isCa: false,
       notBefore: null,
       notAfter: null,
     };

@@ -24,7 +24,6 @@ describe('loadPinnedCa (ComputeID CA pin)', () => {
     expect(ca.kind).toBe('certificate');
     expect(ca.keyId).toBe('ebb276c2f18ed34f');
     expect(ca.subject).toContain('CN=ComputeID-CA');
-    expect(ca.isCa).toBe(true);
     expect(ca.publicKey.asymmetricKeyType).toBe('rsa');
   });
 
@@ -38,7 +37,6 @@ describe('loadPinnedCa (ComputeID CA pin)', () => {
     const pem = publicKey.export({ type: 'spki', format: 'pem' }) as string;
     const ca = loadPinnedCa(pem);
     expect(ca.kind).toBe('public-key');
-    expect(ca.isCa).toBe(false);
     expect(ca.keyId).toBe(deriveKeyId(publicKey));
     expect(ca.keyId).toMatch(/^[0-9a-f]{16}$/);
   });

@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { loadPinnedCa } from './integrations/computeid/ca-cert.js';
+import { parseSecretList } from './integrations/computeid/secrets.js';
 
 const boolEnv = (v: unknown) => v === 'true' || v === true;
 const boolEnvInverse = (v: unknown) => v !== 'false';
@@ -788,7 +789,7 @@ const ConfigSchema = z.object({
   // secret or the CA pin is missing/unusable rather than accept unsigned or
   // unverifiable input.
   if (cfg.enableComputeidIntegration) {
-    if (!cfg.computeidWebhookSecret?.trim()) {
+    if (parseSecretList(cfg.computeidWebhookSecret).length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
@@ -807,7 +808,14 @@ const ConfigSchema = z.object({
       });
     } else {
       try {
-        loadPinnedCa(cfg.computeidCaCertPem);
+        const pinned = loadPinnedCa(cfg.computeidCaCertPem);
+        if (cfg.nodeEnv === 'production' && pinned.kind !== 'certificate') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'COMPUTEID_CA_CERT_PEM must be an X.509 CA certificate in production (bare public-key pins are for staging/tests only).',
+            path: ['computeidCaCertPem'],
+          });
+        }
       } catch (err) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

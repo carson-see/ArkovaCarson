@@ -2,6 +2,16 @@
 
 TLA+ PreCheck formal verification models for critical state machines.
 
+## 2026-09-07 — `agentPassport.machine.ts` (SCRUM-4493 / SCRUM-4494): ComputeID AgentPassport ↔ agent lifecycle
+
+New machine for the ComputeID partner integration (epic SCRUM-4492). Models the per-agent-row state driven by `api/v1/agents-computeid.ts` (admit), `api/v1/webhooks/computeid.ts` (`passport.suspended` / `reinstated` / `revoked`) and `api/v1/agents.ts` (mint key, admin revoke): `NONE → ACTIVE ⇄ SUSPENDED`, `ACTIVE|SUSPENDED → REVOKED` (terminal), plus a per-agent `keyActive` bool.
+
+**What modeling found before TLC ran:** `middleware/apiKeyAuth.ts` authenticates on the `api_keys` row alone (`is_active`, `revoked_at`, `expires_at`) and never joins `agents.status`, so an agent whose status is `suspended` but whose keys are live still authenticates — suspension would be decorative. The webhook handler therefore deactivates keys on `passport.suspended` (`revocation_reason = 'computeid:passport.suspended'`) and reinstates exactly those keys on `passport.reinstated`; `mintKey` is guarded on ACTIVE (matches `POST /agents/:agentId/key`'s 409). Invariant `keyImpliesActive` pins it. **The same gap exists in the pre-existing `PATCH /api/v1/agents/:agentId {status:'suspended'}` path** (sets `suspended_at` only, keys untouched) — reported on PR #2668, not widened into it.
+
+Deliberately not modeled: the signed-timestamp ordering guard in `integrations/computeid/binding.ts` (a per-delivery comparison with no cross-row state; the DSL has no arithmetic; `binding.test.ts` pins it).
+
+Certificate (tier `pr`): proofPassed true; invariants keyImpliesActive, revokedHasNoKey, suspendedHasNoKey, noKeyBeforeAdmission; graph equivalence true (16/16 states, 48/48 edges); TLC 49 generated / 16 distinct; deadlock check off (REVOKED terminal by design). Picked up automatically by `npm run verify:machines` / the `tla-verify` CI job (the script globs).
+
 ## 2026-08-01 — F-3 recovery for SUBMITTED+NULL-chain_tx_id (docs/staging/SOAK-FINDINGS-2026-08.md, migration 0379)
 
 `bitcoinAnchor.machine.ts` is documentation-only changed: a comment on `submittedRequiresChainTx` (INV-1b) records that a live anchor was observed SUBMITTED with a NULL `chain_tx_id` — a real violation of this invariant, caught during the 2026-08 launch-72h soak. Every current write site that sets `status='SUBMITTED'` (`workerBroadcast`, `journalAdopt`, `broadcastResumeFinalize`) was re-audited and each is a single-statement atomic UPDATE — no *modeled* transition can produce the violation, so **no variables, actions, or invariants changed**; this is a pure `git diff` comment-only edit. Migration 0379 (`supabase/migrations/0379_f3_recover_submitted_null_txid.sql`) extends `recover_stuck_broadcasts()` with a second branch alongside its existing BROADCASTING one, purely as a DB-level self-healing safety net for a state the design still correctly says must never happen — deliberately NOT modeled as a new action (that would require weakening INV-1b, legitimizing a state that shouldn't occur). Root-causing the actual producer is out of scope for this fix and tracked separately.

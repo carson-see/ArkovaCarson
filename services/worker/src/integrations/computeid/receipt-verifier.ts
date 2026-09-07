@@ -13,22 +13,13 @@
  */
 import { constants, verify as rsaVerify } from 'node:crypto';
 import type { PinnedCa } from './ca-cert.js';
+import { isRecord, type ComputeIdVerificationReceiptT } from './schemas.js';
 
 export const SUPPORTED_RECEIPT_ALGORITHM = 'RSA-SHA256';
 export const DEFAULT_MAX_CLOCK_SKEW_SECONDS = 300;
 
-export interface ComputeIdReceiptInput {
-  passport_id: string;
-  status: string;
-  issued_at: string;
-  expires_at: string;
-  key_id: string;
-  receipt_signature: string;
-  receipt_algorithm: string;
-  receipt_payload: string;
-  signature_valid?: boolean | null;
-  [extra: string]: unknown;
-}
+/** The Zod-parsed receipt (passthrough keeps unknown extras). One wire type, defined once in schemas.ts. */
+export type ComputeIdReceiptInput = ComputeIdVerificationReceiptT;
 
 export type ReceiptFailure =
   | 'unsupported_algorithm'
@@ -40,10 +31,12 @@ export type ReceiptFailure =
   | 'passport_id_mismatch'
   | 'status_not_active'
   | 'expired'
-  | 'not_yet_valid';
+  | 'not_yet_valid'
+  | 'ca_not_valid'
+  | 'passport_signature_invalid';
 
 export type ReceiptVerdict =
-  | { ok: true; passportId: string; issuedAt: Date; expiresAt: Date; signedPayload: Record<string, unknown> }
+  | { ok: true; passportId: string; issuedAt: Date | null; expiresAt: Date }
   | { ok: false; reason: ReceiptFailure };
 
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -52,10 +45,6 @@ function decodeBase64Strict(value: string): Buffer | null {
   if (!value || value.length % 4 !== 0 || !BASE64_RE.test(value)) return null;
   const buf = Buffer.from(value, 'base64');
   return buf.length > 0 ? buf : null;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 const fail = (reason: ReceiptFailure): ReceiptVerdict => ({ ok: false, reason });
@@ -73,6 +62,10 @@ export function verifyComputeIdReceipt(args: {
 
   if (receipt.receipt_algorithm !== SUPPORTED_RECEIPT_ALGORITHM) return fail('unsupported_algorithm');
   if (receipt.key_id !== ca.keyId) return fail('key_id_mismatch');
+  // The pin's validity window is a per-verification property, not a per-boot
+  // side effect: a long-lived instance must stop trusting an expired CA.
+  if (ca.notBefore && now.getTime() < ca.notBefore.getTime()) return fail('ca_not_valid');
+  if (ca.notAfter && now.getTime() > ca.notAfter.getTime()) return fail('ca_not_valid');
 
   const signature = decodeBase64Strict(receipt.receipt_signature);
   if (!signature) return fail('malformed_signature');
@@ -112,17 +105,31 @@ export function verifyComputeIdReceipt(args: {
   }
   if (typeof sIssued === 'string' && receipt.issued_at !== sIssued) return fail('payload_field_mismatch');
   if (typeof signed.key_id === 'string' && signed.key_id !== receipt.key_id) return fail('payload_field_mismatch');
+  if (
+    typeof signed.signature_valid === 'boolean'
+    && typeof receipt.signature_valid === 'boolean'
+    && signed.signature_valid !== receipt.signature_valid
+  ) {
+    return fail('payload_field_mismatch');
+  }
 
-  if (sPassport !== args.expectedPassportId) return fail('passport_id_mismatch');
+  if (sPassport.toLowerCase() !== args.expectedPassportId.toLowerCase()) return fail('passport_id_mismatch');
   if (sStatus !== 'active') return fail('status_not_active');
+  // The CA attests the passport's own signature checks inside the receipt. A
+  // receipt that says the passport failed verification is not proof of a valid
+  // passport, whatever `status` says. Absent flags are tolerated (not attested).
+  if (signed.signature_valid === false || signed.pq_signature_valid === false) return fail('passport_signature_invalid');
 
   const expiresAt = new Date(sExpires);
   if (Number.isNaN(expiresAt.getTime())) return fail('malformed_payload');
   if (now.getTime() >= expiresAt.getTime()) return fail('expired');
 
-  const issuedAt = typeof sIssued === 'string' ? new Date(sIssued) : now;
-  if (Number.isNaN(issuedAt.getTime())) return fail('malformed_payload');
-  if (issuedAt.getTime() > now.getTime() + skewMs) return fail('not_yet_valid');
+  let issuedAt: Date | null = null;
+  if (typeof sIssued === 'string') {
+    issuedAt = new Date(sIssued);
+    if (Number.isNaN(issuedAt.getTime())) return fail('malformed_payload');
+    if (issuedAt.getTime() > now.getTime() + skewMs) return fail('not_yet_valid');
+  }
 
-  return { ok: true, passportId: sPassport, issuedAt, expiresAt, signedPayload: signed };
+  return { ok: true, passportId: sPassport.toLowerCase(), issuedAt, expiresAt };
 }

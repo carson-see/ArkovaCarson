@@ -11,7 +11,8 @@ Partner integration with ComputeID (Praveen Gajjala, CEO; `https://api.aicompute
 | `schemas.ts` | Zod wire shapes: webhook envelope + `passport.*` events (lenient `.passthrough()`), `verification_receipt`, admission request |
 | `ca-cert.ts` | Pinned CA loader (X.509 cert PEM in prod, bare SPKI public-key PEM in tests/staging) + `key_id` derivation `sha256(SPKI PEM)[:16]` |
 | `receipt-verifier.ts` | Offline RSA-SHA256 verification of `verification_receipt` over the exact `receipt_payload` bytes; the signed payload is the only trusted source |
-| `binding.ts` | v1 binding in `agents.metadata.computeid`; forward-only transition decision with an ordering guard on the signed event timestamp |
+| `binding.ts` | v1 binding in `agents.metadata.computeid`; forward-only transitions, ordering **floor** (last applied event → admitting receipt's `issued_at` → `bound_at`), exact-replay detection, `suspended_by` ownership, and the key-enforcement output the handler applies |
+| `secrets.ts` | `parseSecretList` — the ONE parser for `COMPUTEID_WEBHOOK_SECRET`, shared by the boot check and the verifier |
 | `__fixtures__/computeid-ca.pem` | The REAL public CA served by `/v1/ca/cert` on 2026-09-07 (RSA-2048, CN=ComputeID-CA, C=CY, valid to 2036-08-13). Public material |
 | `__fixtures__/golden-test-delivery.json` | A REAL `POST /v1/webhooks/test` delivery captured 2026-09-07 (body, header, throwaway secret) — pins byte-compatibility with ComputeID's signer |
 
@@ -27,18 +28,23 @@ Partner integration with ComputeID (Praveen Gajjala, CEO; `https://api.aicompute
 
 ## Do / Don't Rules
 
-- **DO** verify the receipt signature over `Buffer.from(receipt_payload, 'utf8')` exactly as delivered. **DO NOT** parse-then-re-stringify; whitespace/key-order differences flip the signature silently.
-- **DO** read `passport_id` / `status` / `expires_at` from the parsed *signed* payload. The outer receipt fields are unsigned copies — `verifyComputeIdReceipt` rejects any disagreement (`payload_field_mismatch`) rather than picking one.
-- **DO NOT** fetch `/v1/ca/cert` at runtime. The pin comes from `COMPUTEID_CA_CERT_PEM`; rotation is the partner's promised 30-day notice → secret update → redeploy. Fetching would reintroduce the uptime dependency the offline path exists to remove.
-- **DO NOT** persist or log the partner's free-text `reason` (it may carry PII). Audit rows record only its length.
-- **DO NOT** add a nonce table here without a migration — that is PR-B (SCRUM-4497). Replay safety in v1 is the ordering guard on the signed timestamp (`decidePassportEvent`): an event at or before `last_event_at` is a no-op, `revoked` is terminal, `already_in_state` still advances the clock.
-- RSA padding is PKCS#1 v1.5 (Node's default for `crypto.sign('sha256', …)`). If the first REAL receipt fails with `invalid_signature`, suspect PSS and confirm with the partner — do not loosen the verifier to try both.
-- Both handlers read the flag, secret and CA pin through the typed `config` export — never `process.env` (SCRUM-1258 ratchet, enforced by `check-worker-env-adhoc`). Tests mock `config.js` with a hoisted mutable object.
-- Binding lookups use `.contains('metadata', { computeid: { passport_id } })` (jsonb `@>`). `agents` is not in the tenant-isolation lint list, but every write re-scopes by `org_id` anyway.
+- **DO** verify the receipt signature over `Buffer.from(receipt_payload, 'utf8')` exactly as delivered. **DO NOT** parse-then-re-stringify.
+- **DO** read `passport_id` / `status` / `expires_at` / `signature_valid` from the parsed *signed* payload. Outer copies must agree (`payload_field_mismatch`); a signed `signature_valid:false` or `pq_signature_valid:false` is `passport_signature_invalid` whatever `status` says.
+- **DO** check the pin's validity window per verification (`ca_not_valid`), not only at load — a long-lived instance must stop trusting an expired CA. Production refuses a bare SPKI pin at boot (`config.ts`).
+- **DO NOT** fetch `/v1/ca/cert` at runtime. Pin from `COMPUTEID_CA_CERT_PEM`; rotation = partner notice → secret update → redeploy.
+- **DO NOT** persist or log the partner's free-text `reason` (any shape is tolerated; only its length is recorded).
+- **Ordering (no nonce table until PR-B):** an event is stale if OLDER than the floor (`last_event_at`, else `receipt_issued_at`, else `bound_at`), or if it is an exact replay (same timestamp AND same event). A different event at the same timestamp is applied. `revoked` is terminal. Every non-stale event for a bound agent advances the clock (a metadata write even when status is unchanged) so a late replay can never slip in behind it.
+- **Ownership:** `passport.suspended` sets `suspended_by: 'computeid'`; `passport.reinstated` lifts a suspension ONLY when that marker is present — an org admin's own suspension (PATCH /agents/:id) is never undone by a partner event.
+- **Keys are the enforcement point** (`apiKeyAuth` reads only `api_keys.is_active`): the handler deactivates keys BEFORE flipping the row to revoked/suspended, reactivates them AFTER the row is active (only keys with `revocation_reason = 'computeid:passport.suspended'`), and re-asserts the target key state on repeat events so a partial failure heals on retry.
+- **Compare-and-set:** the `agents` update carries `.eq('status', <snapshot>)` and the snapshot's `last_event_at` (`is null` / `eq`), then `.select('id')`; zero rows → 409 `conflict_retry` + DLQ so the sender redelivers against fresh state.
+- Both handlers read the flag, secrets and CA pin through the typed `config` export — never `process.env` (SCRUM-1258 ratchet). `middleware/computeidGate.ts` answers 503 at BOTH mounts before any parsing/auth work; the handlers keep their own check as defense in depth.
+- Binding lookups use `.contains('metadata', { computeid: { passport_id } })` (jsonb `@>`); passport ids are lowercased at the Zod boundary so stored bindings and lookups always agree. `agents` is not in the tenant-isolation lint list, but every write re-scopes by `org_id`.
 
 ## Known gaps (tracked, not hidden)
 
 - **No real receipt has ever been verified.** Flag flip (SCRUM-4495) is gated on a golden test against a receipt from a passport ComputeID issued to us. Needs the partner API key (SCRUM-4498).
-- **Lost deliveries have no safety net** until the scheduled `/verify` re-check lands (SCRUM-4497). Until then a `webhook_dlq` row is a record of the loss, not a recovery.
-- **No uniqueness on the binding** — two concurrent admits of one passport into one org can both succeed. App-level check only; unique index is SCRUM-4497.
-- `anchors` carries no agent attribution, so "every record names the acting agent" is not yet true (SCRUM-4497).
+- **Lost deliveries have no safety net** until the scheduled `/verify` re-check lands (SCRUM-4497). A `webhook_dlq` row records the loss.
+- **The binding lives in org-admin-writable JSONB** (`agents.metadata`, RLS `agents_update_admin`, `CreateAgentSchema` passthrough): a tenant can strip, forge or future-date its OWN binding and dodge partner revocation of its own agents (self-harm, not cross-tenant). Durable fix = service-role-only binding columns + unique index + expression index for the `@>` lookup (SCRUM-4497).
+- **No uniqueness on the binding** — concurrent admits of one passport into one org can both succeed; unique index is SCRUM-4497.
+- `anchors` carries no agent attribution, so "every record names the acting agent" is not yet true (SCRUM-4497). The partner guide says so.
+- Pre-existing, reported not fixed here: `PATCH /api/v1/agents/:agentId {status:'suspended'}` records a suspension without deactivating keys (the same decorative-suspension class); the revoked-is-terminal guard on that route IS in this PR.

@@ -7,7 +7,7 @@ Shared constant definitions used across the worker. Single source of truth for e
 - **connectors.ts** — Vendor string constants for rule events (`GOOGLE_DRIVE_VENDOR`, `SHAREPOINT_VENDOR`, `DOCUSIGN_VENDOR`, etc.). Type-checked to prevent typo-class bugs.
 - **ferpa.ts** — FERPA compliance enums: party types, disclosure exception categories, institution types, education credential types. Used by keys, disclosures, and verify modules.
 - **hipaa.ts** — HIPAA compliance constants: healthcare credential types triggering HIPAA controls, emergency access max duration.
-- **webhook-paths.ts** — Single source of truth for public webhook paths. Both provider registration and worker mount derive from these constants to prevent silent 404 drift.
+- **webhook-paths.ts** — Single source of truth for public webhook paths. Both provider registration and worker mount derive from these constants to prevent silent 404 drift. `COMPUTEID` (2026-09-07, SCRUM-4493) is the ComputeID AgentPassport revocation receiver: `index.ts` mounts `WEBHOOK_PATHS.COMPUTEID` directly (root-level like checkr/middesk), and the partner registration in `docs/partners/computeid-integration-guide.md` quotes the same value.
 - **webhook-paths.test.ts** — Tests for webhook path constants and the `relativeTo()` helper.
 
 ## Rules

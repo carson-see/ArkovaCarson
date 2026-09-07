@@ -422,6 +422,16 @@ export const rateLimiters = {
     keyGenerator: () => 'stripe', // Global limit
   }),
 
+  // ComputeID revocation webhook: its own global bucket so a Stripe/Checkr
+  // burst can never 429 a passport.revoked (the sender's retry policy is
+  // undocumented; a limiter reject happens before any DLQ record).
+  computeidWebhook: rateLimit({
+    windowMs: 60000,
+    maxRequests: 100,
+    scope: 'computeid-webhook',
+    keyGenerator: () => 'computeid', // Global limit
+  }),
+
   // Checkout: 10 req/min per IP
   checkout: rateLimit({
     windowMs: 60000,

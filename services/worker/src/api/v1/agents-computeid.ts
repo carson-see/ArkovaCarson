@@ -18,7 +18,9 @@ import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { recordAuditEvent } from '../../utils/auditEvent.js';
-import { generateApiKey } from '../../middleware/apiKeyAuth.js';
+import { mintAgentKey } from './agent-keys.js';
+import { toPublicAgent } from './agents.js';
+import type { ApiKeyScope } from '../apiScopes.js';
 import { loadPinnedCa, type PinnedCa } from '../../integrations/computeid/ca-cert.js';
 import { verifyComputeIdReceipt } from '../../integrations/computeid/receipt-verifier.js';
 import { COMPUTEID_ISSUER, ComputeIdAdmissionRequest } from '../../integrations/computeid/schemas.js';
@@ -27,15 +29,16 @@ import { writeBinding, type ComputeIdBinding } from '../../integrations/computei
 export const agentsComputeIdRouter = Router();
 
 /** Scopes a passport-admitted agent may hold. Deliberately excludes every management scope. */
-export const PASSPORT_AGENT_SCOPE_ALLOWLIST = [
+export const PASSPORT_AGENT_SCOPE_ALLOWLIST: readonly ApiKeyScope[] = [
   'verify',
   'verify:batch',
   'anchor:write',
+  'write:anchors', // V2 spelling; scopeSatisfies() treats it as anchor:write
   'anchor:read',
   'read:records',
   'read:search',
-] as const;
-const DEFAULT_PASSPORT_AGENT_SCOPES = ['verify'];
+];
+const DEFAULT_PASSPORT_AGENT_SCOPES: ApiKeyScope[] = ['verify'];
 
 let cachedCa: { pem: string; ca: PinnedCa } | null = null;
 function getPinnedCa(): PinnedCa | null {
@@ -52,7 +55,7 @@ function getPinnedCa(): PinnedCa | null {
   }
 }
 
-function clampScopes(requested: string[] | undefined): string[] {
+function clampScopes(requested: readonly ApiKeyScope[] | undefined): ApiKeyScope[] {
   const allow = new Set<string>(PASSPORT_AGENT_SCOPE_ALLOWLIST);
   const wanted = requested && requested.length > 0 ? requested : DEFAULT_PASSPORT_AGENT_SCOPES;
   return [...new Set(wanted.filter((s) => allow.has(s)))];
@@ -71,7 +74,9 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
     res.status(401).json({ error: { code: 'api_key_required', message: 'Admission requires an organization API key.' } });
     return;
   }
-  const hmacSecret = req.hmacSecret;
+  // From typed config, NOT req.hmacSecret: that field is attached only by the
+  // JWT `requireAuth` middleware, which this API-key mount deliberately omits.
+  const hmacSecret = config.apiKeyHmacSecret;
   if (!hmacSecret) {
     res.status(500).json({ error: { code: 'hmac_unconfigured' } });
     return;
@@ -111,20 +116,39 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbAny = db as any;
 
+    // Every binding of this passport in this org, live or revoked. A live one
+    // is a duplicate. A REVOKED one blocks re-admission unless the receipt was
+    // provably issued after the revocation: a captured, still-unexpired receipt
+    // must not resurrect a passport ComputeID has already revoked.
     const { data: existing, error: dupErr } = await dbAny
       .from('agents')
-      .select('id')
+      .select('id, status, revoked_at')
       .eq('org_id', orgId)
-      .contains('metadata', { computeid: { passport_id: passportId } })
-      .neq('status', 'revoked')
-      .limit(1);
+      .contains('metadata', { computeid: { passport_id: passportId } });
     if (dupErr) {
       logger.error({ error: dupErr }, 'ComputeID admission: duplicate-binding lookup failed');
       res.status(500).json({ error: { code: 'admission_failed' } });
       return;
     }
-    if (Array.isArray(existing) && existing.length > 0) {
-      res.status(409).json({ error: { code: 'passport_already_bound', agent_id: existing[0].id } });
+    const rows = (Array.isArray(existing) ? existing : []) as Array<{ id: string; status: string; revoked_at: string | null }>;
+    const live = rows.find((r) => r.status !== 'revoked');
+    if (live) {
+      res.status(409).json({ error: { code: 'passport_already_bound', agent_id: live.id } });
+      return;
+    }
+    const blockingRevocation = rows.find((r) => {
+      if (r.status !== 'revoked') return false;
+      if (!verdict.issuedAt) return true; // receipt carries no issue time → cannot prove it post-dates the revocation
+      const revokedAt = r.revoked_at ? Date.parse(r.revoked_at) : Number.NaN;
+      return !Number.isFinite(revokedAt) || revokedAt >= verdict.issuedAt.getTime();
+    });
+    if (blockingRevocation) {
+      res.status(409).json({
+        error: {
+          code: 'passport_revoked',
+          message: 'This passport was revoked on Arkova after the presented receipt was issued; obtain a fresh receipt.',
+        },
+      });
       return;
     }
 
@@ -133,6 +157,7 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       passport_id: passportId,
       bound_at: now.toISOString(),
       receipt_expires_at: verdict.expiresAt.toISOString(),
+      ...(verdict.issuedAt ? { receipt_issued_at: verdict.issuedAt.toISOString() } : {}),
     };
 
     const { data: agent, error: agentErr } = await dbAny
@@ -146,7 +171,7 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
         allowed_scopes: scopes,
         metadata: writeBinding({}, binding),
       })
-      .select('id, name, status, agent_type, allowed_scopes, created_at, metadata')
+      .select('id, name, status, agent_type, allowed_scopes, created_at')
       .single();
     if (agentErr || !agent) {
       logger.error({ error: agentErr }, 'ComputeID admission: agent insert failed');
@@ -154,22 +179,18 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       return;
     }
 
-    const { raw, hash, prefix } = generateApiKey(hmacSecret);
-    const { data: key, error: keyErr } = await dbAny
-      .from('api_keys')
-      .insert({
-        org_id: orgId,
-        key_prefix: prefix,
-        key_hash: hash,
-        name: `${name} — ComputeID passport ${shortId}`,
-        scopes,
-        agent_id: agent.id,
-        created_by: principalUserId,
-      })
-      .select('id, key_prefix, scopes, created_at')
-      .single();
-    if (keyErr || !key) {
-      logger.error({ error: keyErr, agentId: agent.id }, 'ComputeID admission: key insert failed — rolling back agent');
+    const minted = await mintAgentKey({
+      hmacSecret,
+      orgId,
+      agentId: agent.id,
+      agentName: name,
+      scopes,
+      keyName: `${name} — ComputeID passport ${shortId}`,
+      createdBy: principalUserId,
+      auditContext: `Minted at ComputeID passport admission (passport ${passportId})`,
+    });
+    if ('error' in minted) {
+      logger.error({ error: minted.error, agentId: agent.id }, 'ComputeID admission: key insert failed — rolling back agent');
       const { error: rollbackErr } = await dbAny.from('agents').delete().eq('org_id', orgId).eq('id', agent.id);
       if (rollbackErr) logger.error({ error: rollbackErr, agentId: agent.id }, 'ComputeID admission: agent rollback failed');
       res.status(500).json({ error: { code: 'key_issue_failed' } });
@@ -188,17 +209,11 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
         `receipt key_id ${receipt.key_id}, receipt expires ${binding.receipt_expires_at}; authorized by API key ${apiKey.keyPrefix}.`,
     });
 
+    const { key } = minted;
     res.status(201).json({
-      agent: {
-        id: agent.id,
-        name: agent.name,
-        status: agent.status,
-        agent_type: agent.agent_type,
-        allowed_scopes: agent.allowed_scopes,
-        created_at: agent.created_at,
-      },
+      agent: toPublicAgent(agent),
       binding,
-      key: raw,
+      key: key.raw,
       key_id: key.id,
       key_prefix: key.key_prefix,
       scopes: key.scopes,

@@ -10,6 +10,11 @@
  * Differences from the Checkr template this is forked from:
  *   - One Arkova-global registration, not per-org: the org is resolved from
  *     the passport → agent binding, so there is no account-id header lookup.
+ *   - Keys are enforced BEFORE the row flips (deactivate) / AFTER (reactivate),
+ *     and re-asserted on repeat events, because the auth path checks only
+ *     api_keys.is_active, never agents.status.
+ *   - The agents write is a compare-and-set on (status, last_event_at); a lost
+ *     race answers 409 so the sender redelivers against fresh state.
  *   - No nonce table (would need a migration — PR-B). Replay safety is the
  *     ordering guard on the SIGNED timestamp (`integrations/computeid/binding.ts`).
  *   - Secrets may be a comma-separated list so rotation is register-new →
@@ -36,7 +41,8 @@ import {
   ComputeIdWebhookEnvelope,
   type ComputeIdPassportEvent,
 } from '../../../integrations/computeid/schemas.js';
-import { applyPassportEvent, type AgentStatus } from '../../../integrations/computeid/binding.js';
+import { applyPassportEvent, readBinding, type AgentStatus } from '../../../integrations/computeid/binding.js';
+import { parseSecretList } from '../../../integrations/computeid/secrets.js';
 
 export const computeidWebhookRouter = Router();
 
@@ -73,11 +79,8 @@ function signatureHex(req: Request): string | undefined {
   return trimmed.slice(SIGNATURE_PREFIX.length);
 }
 
-export function configuredSecrets(): string[] {
-  return (config.computeidWebhookSecret ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+function configuredSecrets(): string[] {
+  return parseSecretList(config.computeidWebhookSecret);
 }
 
 function isPassportEvent(event: string): event is ComputeIdPassportEvent {
@@ -193,7 +196,7 @@ computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
   const { passport_id: passportId, timestamp, reason } = passportEvent.data;
-  const withheldReasonChars = typeof reason === 'string' ? reason.length : 0;
+  const withheldReasonChars = typeof reason === 'string' ? reason.length : reason == null ? 0 : JSON.stringify(reason).length;
 
   let agents: BoundAgentRow[];
   try {
@@ -213,7 +216,7 @@ computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
   let applied = 0;
   let skipped = 0;
   for (const agent of agents) {
-    const { decision, update } = applyPassportEvent(
+    const { decision, update, keyEnforcement } = applyPassportEvent(
       { status: agent.status, metadata: agent.metadata },
       { event, timestamp },
     );
@@ -222,26 +225,63 @@ computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
       continue;
     }
 
+    // Keys FIRST for deactivation. The auth path reads only api_keys.is_active,
+    // so if the agent row were flipped first and this write failed, a retry
+    // would see the terminal status and never come back for the keys.
+    if (keyEnforcement === 'deactivate') {
+      const revocation_reason = `computeid:${event}`;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: keysErr } = await (db as any)
+        .from('api_keys')
+        .update({ is_active: false, revoked_at: timestamp, revocation_reason })
+        .eq('org_id', agent.org_id)
+        .eq('agent_id', agent.id)
+        .eq('is_active', true);
+      if (keysErr) {
+        logger.error({ error: keysErr, agentId: agent.id, event }, 'ComputeID webhook: agent key deactivation failed');
+        await dlqInsert({ reason: `agent_keys_deactivate_failed:${event}`, externalId: passportId, payloadHash });
+        res.status(500).json({ error: { code: 'webhook_processing_failed' } });
+        return;
+      }
+    }
+
+    // Compare-and-set on the row we decided from. Two concurrent deliveries
+    // both read the same snapshot; only the first write lands, the second sees
+    // zero rows and answers 409 so the sender re-delivers against fresh state.
+    const prevLastEventAt = readBinding(agent.metadata)?.last_event_at ?? null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: updateErr } = await (db as any).from('agents').update(update).eq('org_id', agent.org_id).eq('id', agent.id);
+    let cas = (db as any).from('agents').update(update).eq('org_id', agent.org_id).eq('id', agent.id).eq('status', agent.status);
+    cas = prevLastEventAt === null
+      ? cas.is('metadata->computeid->>last_event_at', null)
+      : cas.eq('metadata->computeid->>last_event_at', prevLastEventAt);
+    const { data: casRows, error: updateErr } = await cas.select('id');
     if (updateErr) {
       logger.error({ error: updateErr, agentId: agent.id, event }, 'ComputeID webhook: agent update failed');
       await dlqInsert({ reason: `agent_update_failed:${event}`, externalId: passportId, payloadHash });
       res.status(500).json({ error: { code: 'webhook_processing_failed' } });
       return;
     }
+    if (!Array.isArray(casRows) || casRows.length === 0) {
+      logger.warn({ agentId: agent.id, event }, 'ComputeID webhook: agent row changed underneath us — asking for redelivery');
+      await dlqInsert({ reason: `agent_update_conflict:${event}`, externalId: passportId, payloadHash });
+      res.status(409).json({ error: { code: 'conflict_retry', message: 'Agent state changed concurrently; redeliver.' } });
+      return;
+    }
 
-    if (decision.action === 'revoke') {
+    // Reactivation AFTER the row is active, restoring only the keys WE
+    // deactivated for a suspension — never keys revoked for any other reason.
+    if (keyEnforcement === 'reactivate') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error: keysErr } = await (db as any)
         .from('api_keys')
-        .update({ is_active: false, revoked_at: timestamp, revocation_reason: 'computeid:passport.revoked' })
+        .update({ is_active: true, revoked_at: null, revocation_reason: null })
         .eq('org_id', agent.org_id)
         .eq('agent_id', agent.id)
-        .eq('is_active', true);
+        .eq('is_active', false)
+        .eq('revocation_reason', 'computeid:passport.suspended');
       if (keysErr) {
-        logger.error({ error: keysErr, agentId: agent.id }, 'ComputeID webhook: agent key revocation failed');
-        await dlqInsert({ reason: 'agent_keys_revoke_failed', externalId: passportId, payloadHash });
+        logger.error({ error: keysErr, agentId: agent.id }, 'ComputeID webhook: agent key reinstatement failed');
+        await dlqInsert({ reason: 'agent_keys_reinstate_failed', externalId: passportId, payloadHash });
         res.status(500).json({ error: { code: 'webhook_processing_failed' } });
         return;
       }

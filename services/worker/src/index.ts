@@ -49,7 +49,9 @@ import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
 import { checkrWebhookRouter } from './api/v1/webhooks/checkr.js';
 import { veremarkWebhookRouter } from './api/v1/webhooks/veremark.js';
-import { computeidWebhookRouter } from './api/v1/webhooks/computeid.js';
+import { computeidWebhookRouter, COMPUTEID_WEBHOOK_MAX_BODY_BYTES } from './api/v1/webhooks/computeid.js';
+import { WEBHOOK_PATHS } from './constants/webhook-paths.js';
+import { computeidGate } from './middleware/computeidGate.js';
 import { microsoftGraphWebhookRouter } from './api/v1/webhooks/microsoft-graph.js';
 import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
 import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
@@ -354,11 +356,26 @@ app.use(
 
 // ─── ComputeID AgentPassport revocation webhook — raw body required for HMAC ───
 // Gated by ENABLE_COMPUTEID_INTEGRATION (default off → 503 vendor_gated).
-// Path must equal WEBHOOK_PATHS.COMPUTEID — it is what ComputeID has registered.
+// Mounted at WEBHOOK_PATHS.COMPUTEID so the registered URL and the mount cannot
+// drift. Raw parsing accepts ANY content type: the handler JSON.parses the
+// bytes itself and the HMAC is the authentication, so a partner default of
+// text/plain must not become a 500. Its own limiter bucket (not Stripe's).
+const computeidRawBody = express.raw({ type: () => true, limit: COMPUTEID_WEBHOOK_MAX_BODY_BYTES + 1024 });
 app.use(
-  '/webhooks/computeid',
-  rateLimiters.stripeWebhook,
-  express.raw({ type: 'application/json' }),
+  WEBHOOK_PATHS.COMPUTEID,
+  computeidGate,
+  rateLimiters.computeidWebhook,
+  // body-parser's PayloadTooLargeError is not an AppError, so without this
+  // mapping an oversize body would surface as 500 INTERNAL_ERROR from the
+  // global handler instead of the 413 the handler promises.
+  (req, res, next) =>
+    computeidRawBody(req, res, (err?: unknown) => {
+      if (err && typeof err === 'object' && (err as { type?: string }).type === 'entity.too.large') {
+        res.status(413).json({ error: { code: 'payload_too_large' } });
+        return;
+      }
+      next(err);
+    }),
   (req, _res, next) => {
     (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
     next();
