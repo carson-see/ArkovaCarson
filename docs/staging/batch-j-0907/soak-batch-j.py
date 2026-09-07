@@ -183,13 +183,27 @@ def q(v) -> str:
 # the harness: the PR's OWN store module, at the candidate SHA, real Secret Manager
 # --------------------------------------------------------------------------
 def harness(wt: str, *args: str) -> dict:
+    """Run one harness subcommand from the candidate checkout.
+
+    cwd is services/worker because that is where tsx and the worker's deps live;
+    the harness's own imports are file-relative, so the module under test is the
+    same file the rig image was built from. The SUPABASE_/STRIPE_ values are
+    rig-only placeholders: importing the store pulls in logger.js -> config.ts,
+    whose Zod boot check runs on import. The harness never calls Supabase or
+    Stripe -- it talks only to Secret Manager.
+    """
     env = dict(os.environ)
     env["GCP_ACCESS_TOKEN"] = access_token()
-    env["NODE_ENV"] = "development"   # config.ts Zod boot check is prod-only
+    env["NODE_ENV"] = "development"
     env["BATCH_J_PROJECT"] = "arkova1"
+    env.setdefault("SUPABASE_URL", "https://batchj-harness.invalid")
+    env.setdefault("SUPABASE_SERVICE_ROLE_KEY", "rig-only-not-a-real-key")
+    env.setdefault("STRIPE_SECRET_KEY", "sk_test_rigonly")
+    env.setdefault("STRIPE_WEBHOOK_SECRET", "whsec_rigonly")
     r = subprocess.run(
-        ["npx", "tsx", "docs/staging/batch-j-0907/secret-retention-harness.ts", *args],
-        cwd=wt, capture_output=True, text=True, timeout=420, env=env,
+        ["./node_modules/.bin/tsx", "../../docs/staging/batch-j-0907/secret-retention-harness.ts", *args],
+        cwd=os.path.join(wt, "services", "worker"),
+        capture_output=True, text=True, timeout=420, env=env,
     )
     line = [l for l in r.stdout.strip().splitlines() if l.startswith("{")]
     if not line:
@@ -297,11 +311,18 @@ def probe_2667(wt: str, sec_a: str, sec_b: str, tag: str, out: dict) -> None:
     newest_before = max(live_before["enabled"])
     kz = harness(wt, "put-keep-zero", sec_a, f"rig-keepzero-{tag}-{rand()}")
     after_kz = harness(wt, "inspect", sec_a)
-    expect(newest_before in after_kz["enabled"] or kz["latest_access_status"] == 200,
-           f"F: the newest version {newest_before} is gone after a keepVersions:0 put")
+    # The floor normalises keepVersions:0 to 1, so an older version MAY be pruned
+    # here -- that is fine. The invariant is that the live token survives: the
+    # value just written is still what versions/latest resolves to and it is
+    # readable. Pre-fix, this call destroyed the version it had just written.
     expect(kz["latest_access_status"] == 200,
            f"F: versions/latest:access broke after a keepVersions:0 put ({kz['latest_access_status']}) — "
            "the live refresh token was destroyed")
+    expect(kz["latest_matches_written_value"],
+           "F: after a keepVersions:0 put, versions/latest no longer resolves to the value just written — "
+           "the live refresh token was destroyed")
+    expect(len(after_kz["enabled"]) >= 1,
+           f"F: a keepVersions:0 put left no enabled version at all: {after_kz}")
     sel = harness(wt, "selector-unit", sec_a)
     for keep, res in sel["results"].items():
         expect(res["includes_newest"] is False,
