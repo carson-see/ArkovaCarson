@@ -54,6 +54,7 @@ const ENV_FLAG_GETTERS = {
   ENABLE_ATS_WEBHOOK: () => config.enableAtsWebhook,
   ENABLE_VEREMARK_WEBHOOK: () => config.enableVeremarkWebhook,
   ENABLE_MICROSOFT_GRAPH_WEBHOOK: () => config.enableMicrosoftGraphWebhook,
+  ENABLE_COMPUTEID_INTEGRATION: () => config.enableComputeidIntegration,
 } as const;
 
 type EnvFlagName = keyof typeof ENV_FLAG_GETTERS;

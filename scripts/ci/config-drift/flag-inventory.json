@@ -503,6 +503,19 @@
       "soak": "either",
       "why": "Veremark partner webhook, dark."
     },
+    "ENABLE_COMPUTEID_INTEGRATION": {
+      "sources": ["env"],
+      "resolvers": [
+        "config.ts enableComputeidIntegration",
+        "api/v1/webhooks/computeid.ts (raw process.env)",
+        "api/v1/agents-computeid.ts (raw process.env)"
+      ],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "ComputeID AgentPassport partner integration (revocation webhook + offline-receipt admission), dark until the 2026-09 T2 soak lands and Secret Manager holds COMPUTEID_WEBHOOK_SECRET + COMPUTEID_CA_CERT_PEM. Activation is a separate T1 deploy-worker.yml PR."
+    },
     "ENABLE_MICROSOFT_GRAPH_WEBHOOK": {
       "sources": ["env"],
       "resolvers": ["config.ts enableMicrosoftGraphWebhook", "integrationKillSwitch.ts (raw process.env)"],

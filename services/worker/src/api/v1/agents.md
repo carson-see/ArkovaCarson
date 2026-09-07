@@ -2,6 +2,12 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
+
+`router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.
+
+Scopes a passport-admitted agent may hold are clamped to `PASSPORT_AGENT_SCOPE_ALLOWLIST` (`verify`, `verify:batch`, `anchor:write`, `anchor:read`, `read:records`, `read:search`) — never a management scope. The raw key is returned once; if the key insert fails the freshly inserted agent row is deleted so no unkeyed binding is left behind.
+
 ## 2026-08-23 — every limiter in `router.ts` now names its bucket scope (SCRUM-3418)
 
 `rateLimit()` used to default `scope` to `''` and key the bucket on the bare keyGenerator output, so

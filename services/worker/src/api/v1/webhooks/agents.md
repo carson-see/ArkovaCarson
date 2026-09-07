@@ -1,6 +1,17 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-08-23 (SCRUM-3479: Checkr + ATS nonce release on post-nonce 5xx)_
+_Last updated: 2026-09-07 (SCRUM-4493: ComputeID AgentPassport revocation receiver)_
+
+## 2026-09-07 — SCRUM-4493: `computeid.ts` — ComputeID AgentPassport revocation receiver (flag-gated dark)
+
+Forked from `checkr.ts`. Three things are deliberately different and are the first places to look when this handler behaves unlike its siblings:
+
+1. **One Arkova-global registration, not per-org.** ComputeID signs every delivery with the single secret we handed them at `POST /v1/webhooks/register`; the org is resolved from the passport → agent binding (`agents.metadata.computeid.passport_id`, jsonb `@>` lookup), not from an account header. `COMPUTEID_WEBHOOK_SECRET` may be a comma-separated list (current,next) because ComputeID has **no deregister/rotate endpoint** (verified live 2026-09-07) — rotation is register-new → ask the partner to retire old.
+2. **No nonce table.** A per-provider nonce table needs a migration, which is PR-B (SCRUM-4497). Replay safety comes from the ordering guard on the SIGNED payload timestamp in `integrations/computeid/binding.ts`: an event at or before the last applied one is a no-op, a late `passport.reinstated` can never undo a later `passport.revoked`, and `revoked` is terminal. Do not "fix" a duplicate delivery by adding a nonce here.
+3. **Ack semantics.** `test` and unknown event names → `200 ignored`. Unbound passport → `200 orphaned` + `webhook_dlq` row (reason `unbound_passport`). A DB failure mid-apply → `500` + DLQ so the partner can retry — but their delivery is `node-fetch` fire-and-forget with undocumented retry, so treat every 5xx as a probable loss until SCRUM-4497's re-verify cron exists.
+
+Signature contract verified against a real delivery (`integrations/computeid/__fixtures__/golden-test-delivery.json`): `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>`, no timestamp header. The `sha256=` prefix is required; a bare hex digest is rejected. Body cap 64 KiB, checked before signature verification. The partner-supplied free-text `reason` is never logged, never written to `audit_events.details`, never written to the DLQ — `computeid.test.ts` pins that with a serialized-args assertion.
+
 
 ## 2026-08-23 — SCRUM-3479 (AUDIT-0424-10): `checkr.ts` and `ats.ts` now release the replay nonce on post-nonce 5xx
 
@@ -44,6 +55,7 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 | `docusign-hmac-rotation.test.ts` | Tests for multi-key HMAC verification flow and key resolution |
 | `drive.ts` | Google Drive push notification handler — headers-only signal, channel-token verification |
 | `ats.ts` | ATS webhook handler (Greenhouse, Lever) — HMAC verify, attestation verification response. SCRUM-3479: releases the nonce on the catch-all 5xx path |
+| `computeid.ts` | ComputeID AgentPassport `passport.revoked` / `.suspended` / `.reinstated` receiver — HMAC-SHA256 hex with `sha256=` prefix, comma-separated secrets for rotation, ordering guard instead of a nonce table (SCRUM-4493), revoke → agent + all agent keys deactivated, DLQ on orphan/failure. Gated by `ENABLE_COMPUTEID_INTEGRATION` |
 | `checkr.ts` | Checkr `report.completed` handler — HMAC-SHA256 hex, nonce replay protection, DLQ on failure. SCRUM-3479: releases the nonce on both post-nonce 5xx paths so a transient enqueue failure stays retryable |
 | `middesk.ts` | Middesk KYB handler — `business.updated/verified/rejected` events, org verification status transitions |
 | `microsoft-graph.ts` | Microsoft Graph change-notifications — `clientState` verification, validation handshake echo |

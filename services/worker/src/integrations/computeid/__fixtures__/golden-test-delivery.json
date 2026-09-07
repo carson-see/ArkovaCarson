@@ -1,0 +1,10 @@
+{
+  "_note": "REAL delivery captured 2026-09-07 from POST https://api.aicomputeid.com/v1/webhooks/test against an Arkova scratch receiver (Cloudflare quick tunnel, since torn down). The secret is a throwaway generated for that receiver and is not used anywhere else. This fixture pins byte-compatibility of our verifier with ComputeID's actual signer: HMAC-SHA256(secret, raw body), hex, `sha256=` prefix, header X-ComputeID-Signature.",
+  "captured_at": "2026-09-07T13:39:49.234Z",
+  "remote_ip": "132.243.242.215",
+  "user_agent": "node-fetch/1.0 (+https://github.com/bitinn/node-fetch)",
+  "secret": "arkova-test-8a175cc183320e3f34a0696568abb72a",
+  "header_name": "X-ComputeID-Signature",
+  "header_value": "sha256=4b30d74af0e3ba1e7121c303c5d5c3fe59e92f9c7089d43e2830d472be1a1584",
+  "body": "{\"event\":\"test\",\"timestamp\":\"2026-09-07T13:39:48.768Z\"}"
+}

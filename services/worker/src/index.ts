@@ -49,6 +49,7 @@ import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
 import { checkrWebhookRouter } from './api/v1/webhooks/checkr.js';
 import { veremarkWebhookRouter } from './api/v1/webhooks/veremark.js';
+import { computeidWebhookRouter } from './api/v1/webhooks/computeid.js';
 import { microsoftGraphWebhookRouter } from './api/v1/webhooks/microsoft-graph.js';
 import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
 import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
@@ -349,6 +350,20 @@ app.use(
     next();
   },
   checkrWebhookRouter,
+);
+
+// ─── ComputeID AgentPassport revocation webhook — raw body required for HMAC ───
+// Gated by ENABLE_COMPUTEID_INTEGRATION (default off → 503 vendor_gated).
+// Path must equal WEBHOOK_PATHS.COMPUTEID — it is what ComputeID has registered.
+app.use(
+  '/webhooks/computeid',
+  rateLimiters.stripeWebhook,
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => {
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    next();
+  },
+  computeidWebhookRouter,
 );
 
 // ─── Veremark webhook (SCRUM-1030 / 1151) — gated, defaults to 503 ───

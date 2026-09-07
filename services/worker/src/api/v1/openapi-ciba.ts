@@ -583,6 +583,19 @@ function webhookPaths(): Record<string, SpecPathItem> {
         },
       },
     },
+    '/webhooks/computeid': {
+      post: {
+        tags: ['Webhook', 'HMAC'],
+        security: [{ WebhookHmac: [] }],
+        summary:
+          'ComputeID AgentPassport revocation receiver — passport.revoked / passport.suspended / passport.reinstated (gated by ENABLE_COMPUTEID_INTEGRATION)',
+        responses: {
+          '200': { description: 'Acknowledged (applied / ignored / orphaned)' },
+          '401': { description: 'Invalid signature' },
+          '503': { description: 'Vendor gated (default)' },
+        },
+      },
+    },
   };
 }
 

@@ -93,6 +93,7 @@ import { grcRouter } from './grc.js';
 import { grcFeatureGate } from '../../middleware/grcFeatureGate.js';
 import { oracleRouter } from './oracle.js';
 import { agentsRouter } from './agents.js';
+import { agentsComputeIdRouter } from './agents-computeid.js';
 import { signaturesRouter } from './signatures.js';
 import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
 import { auditBatchVerifyRouter } from './auditBatchVerify.js';
@@ -499,6 +500,10 @@ router.use('/webhooks', batchRateLimiter, webhooksRouter);
 
 // ─── Agent Identity & Delegation — Phase II Agentic Layer (PH2-AGENT-05) ───
 // JWT auth required — agents are org-managed resources
+// ComputeID AgentPassport admission — API-key callers with agents:manage.
+// MUST precede the '/agents' mount: that one is JWT-only (requireAuth) and
+// would 401 an API-key caller before this route is ever reached.
+router.use('/agents/computeid', batchRateLimiter, requireScopeAnyAuth('agents:manage'), agentsComputeIdRouter);
 router.use('/agents', requireAuth, agentsRouter);
 
 // ─── Record Authenticity Oracle — Phase II Agentic Layer (PH2-AGENT-04) ───
