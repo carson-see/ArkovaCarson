@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
+import { readJsonBounded } from '../../utils/body-read-timeout.js';
 import { getGcpAccessToken } from '../../utils/gcp-auth.js';
 import { logger as defaultLogger } from '../../utils/logger.js';
 
@@ -236,7 +237,9 @@ export function createGcpSecretManagerRefreshTokenStore(
         headers: await headers(),
       });
       if (!res.ok) return false;
-      const body = (await res.json()) as { payload?: { data?: string } };
+      const body = (await readJsonBounded(res, `${name}/versions/latest:access`, SECRET_MANAGER_TIMEOUT_MS)) as {
+        payload?: { data?: string };
+      };
       const data = body.payload?.data;
       if (!data) return false;
       return sameSecretValue(Buffer.from(data, 'base64').toString('utf8'), value);
@@ -257,7 +260,10 @@ export function createGcpSecretManagerRefreshTokenStore(
       if (!res.ok) {
         throw new Error(`Secret Manager list versions failed for DocuSign refresh token: ${res.status}`);
       }
-      const body = (await res.json()) as { versions?: SecretVersionSummary[]; nextPageToken?: string };
+      const body = (await readJsonBounded(res, `${name}/versions`, SECRET_MANAGER_TIMEOUT_MS)) as {
+        versions?: SecretVersionSummary[];
+        nextPageToken?: string;
+      };
       collected.push(...(body.versions ?? []));
       pageToken = body.nextPageToken || undefined;
       if (!pageToken) break;
@@ -341,7 +347,9 @@ export function createGcpSecretManagerRefreshTokenStore(
       if (!res.ok) {
         throw new Error(`Secret Manager access failed for DocuSign refresh token: ${res.status}`);
       }
-      const body = (await res.json()) as { payload?: { data?: string } };
+      const body = (await readJsonBounded(res, `${name}/versions/latest:access`, SECRET_MANAGER_TIMEOUT_MS)) as {
+        payload?: { data?: string };
+      };
       const data = body.payload?.data;
       return data ? Buffer.from(data, 'base64').toString('utf8') : null;
     },
