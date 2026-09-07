@@ -25,6 +25,11 @@
       "doc": "services/worker/src/api/v1/agents.md",
       "path": "scripts/ci/check-verification-status-writers.ts",
       "reason": "Named planned work. The line itself says the census rule is prose-only until this lint exists; deleting the pointer would delete the TODO."
+    },
+    {
+      "doc": "src/pages/agents.md",
+      "path": "packages/verifier-cli/dist/cli.js",
+      "reason": "Generated build artifact. dist/ is gitignored (.gitignore:12); this path is the STEP_3_CMD the documented build produces, and the same paragraph exists to say a bare `arkova-verify` is not on PATH so `node packages/verifier-cli/dist/cli.js` must be used instead. A tracked file here would mean dist/ was committed."
     }
   ]
 }

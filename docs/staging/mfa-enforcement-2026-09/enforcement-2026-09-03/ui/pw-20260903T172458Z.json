@@ -1,0 +1,303 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node/25.6.1/bin/node",
+      "/Users/carson/arkova-soak/mfa-3167/checkouts/wt-pr-a/node_modules/.bin/playwright",
+      "test",
+      "--config",
+      "/Users/carson/arkova-soak/mfa-3167/playwright.soak.config.ts",
+      "e2e/mfa-enrollment-and-challenge.spec.ts",
+      "--reporter=json"
+    ],
+    "configFile": "/Users/carson/arkova-soak/mfa-3167/playwright.soak.config.ts",
+    "rootDir": "/Users/carson/arkova-soak/mfa-3167/checkouts/wt-pr-a/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": true,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Users/carson/arkova-soak/mfa-3167/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-soak",
+        "name": "chromium-soak",
+        "testDir": "/Users/carson/arkova-soak/mfa-3167/checkouts/wt-pr-a/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/mfa-enrollment-and-challenge\\.spec\\.ts/"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 5,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "mfa-enrollment-and-challenge.spec.ts",
+      "file": "mfa-enrollment-and-challenge.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "totp helper (RFC 6238 vectors)",
+          "file": "mfa-enrollment-and-challenge.spec.ts",
+          "line": 78,
+          "column": 6,
+          "specs": [
+            {
+              "title": "matches the RFC 6238 Appendix B SHA-1 test vectors",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-soak",
+                  "projectName": "chromium-soak",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-03T17:24:59.667Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f7977a5400012a9a90f1-a460e0b2e7c545215631",
+              "file": "mfa-enrollment-and-challenge.spec.ts",
+              "line": 86,
+              "column": 3
+            },
+            {
+              "title": "base32Decode round-trips the RFC secret to its ASCII bytes",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-soak",
+                  "projectName": "chromium-soak",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 0,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-03T17:24:59.685Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f7977a5400012a9a90f1-d1338d9c65879488e805",
+              "file": "mfa-enrollment-and-challenge.spec.ts",
+              "line": 92,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "MFA enrollment and login challenge",
+          "file": "mfa-enrollment-and-challenge.spec.ts",
+          "line": 97,
+          "column": 6,
+          "specs": [
+            {
+              "title": "individual enrolls TOTP in Settings, then completes it again at the next login",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-soak",
+                  "projectName": "chromium-soak",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 7915,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-03T17:24:59.692Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f7977a5400012a9a90f1-b845034dfcce696d9c67",
+              "file": "mfa-enrollment-and-challenge.spec.ts",
+              "line": 98,
+              "column": 3
+            },
+            {
+              "title": "a disposable ORG_ADMIN sees the dismissible grace nudge before the enforcement date and still reaches the app",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-soak",
+                  "projectName": "chromium-soak",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3576,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-03T17:25:07.854Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f7977a5400012a9a90f1-d5fb5938204d24667f3d",
+              "file": "mfa-enrollment-and-challenge.spec.ts",
+              "line": 161,
+              "column": 3
+            },
+            {
+              "title": "a disposable ORG_ADMIN past the enforcement date must enroll before entering, and can",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-soak",
+                  "projectName": "chromium-soak",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3308,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-03T17:25:11.437Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f7977a5400012a9a90f1-b70b7c4a0c058e74b681",
+              "file": "mfa-enrollment-and-challenge.spec.ts",
+              "line": 207,
+              "column": 3
+            },
+            {
+              "title": "a user with one verified factor can add and remove a backup authenticator",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium-soak",
+                  "projectName": "chromium-soak",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 7894,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-03T17:25:14.753Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "f7977a5400012a9a90f1-672a596843b0e35573a6",
+              "file": "mfa-enrollment-and-challenge.spec.ts",
+              "line": 242,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-09-03T17:24:59.163Z",
+    "duration": 23524.641,
+    "expected": 6,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

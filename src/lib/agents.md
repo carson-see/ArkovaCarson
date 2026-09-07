@@ -37,6 +37,156 @@ New module, the single source of truth `AuthGuard`/`useMfaEnrollmentRequirement`
 `safeStorage.ts` (new) — `readItem`/`writeItem`/`removeItem(storage, key)`, each a one-line try/catch around the native `Storage` method (R8, round 2: a tiny shared helper replacing three near-identical bespoke try/catches in `mfaPolicy.ts`'s `readDateOverride` and `mfaCapabilityCooldown.ts`'s read/write, one throw-safety test in `safeStorage.test.ts`).
 
 The old `randomSuffixHex()` helper module under `src/lib/` is **DELETED** (R9, round 2) — both call sites (`TwoFactorSetup.tsx`, `MfaEnrollmentRequired.tsx`) now use `crypto.randomUUID().slice(0, 8)` directly (equally CSPRNG-backed, no extra module to maintain; SonarCloud typescript:S2245 still holds).
+_Last updated: 2026-09-02_
+
+## 2026-09-02 — certificate field values overprinted their labels; `addField` now measures the face it paints
+
+Every audit certificate rendered "Document TypeDOCUMENT", "Record Position#3",
+"Network Observed TimeJun 2, 2026, 3:00 AM UTC" — the value started on top of
+the label for any label of roughly 13 characters or more, in every renderer
+(pdf.js 6.2.108, macOS QuickLook, poppler). Present since PR #761 (2026-05-11);
+nothing to do with the QR work in PR #2528.
+
+**Root cause.** jsPDF's `getTextWidth` measures with whichever font is CURRENT.
+`addField` painted the label in helvetica-bold, switched to helvetica-regular
+for the value, and only then measured `label + '  '` — regular metrics with
+kerning on, for a label painted in bold advance widths. jsPDF 4.2.1 carries a
+separate Helvetica-Bold table ('i' 280 vs 220, 'm' 890 vs 830, 't' 330 vs 280
+per mille), so the shortfall grew with label length: the two-space allowance
+covered it for "Filename" (+1.02 mm gap) and ran out at "Document Type"
+(−0.03 mm), "Verification Path" (−0.44), "Proof Schema Version" (−0.67),
+"Network Observed Time" (−0.38).
+
+**Rules this leaves behind:**
+
+- **Measure text in the face it is painted in, before you switch faces, with
+  `doKerning: false`.** A plain `Tj` string is painted with the font's advance
+  widths only — jsPDF's own `text()` measures exactly that way for alignment —
+  so a kerned `getTextWidth` under-reads even in the right face (0.32 mm on the
+  longest label). `addField` now measures the bold label with
+  `getStringUnitWidth(label, { doKerning: false })` and starts the value a fixed
+  `FIELD_LABEL_GAP_MM` (2 mm) past it; the right-hand inset stays
+  `FIELD_INSET_MM` (4 mm), mirroring the left.
+- **Test what is painted, not what the helper computed.** The
+  `generateAuditReport.test.ts` block "field label / value spacing as painted"
+  parses every `Td … Tj` run out of the content stream, pairs each `FIELD_*`
+  label with the run on the same baseline, and holds the gap to
+  `FIELD_LABEL_GAP_MM` for all of them — and, separately, holds the gap
+  *uniform* across labels, because gap drift with label length is the exact
+  signature of measuring in the wrong face. A pin test asserts jsPDF's
+  Helvetica-Bold table is wider than its Helvetica table for a real label, so a
+  jsPDF upgrade that collapsed the two would fail loudly instead of quietly
+  re-introducing the overprint.
+
+UAT rasters (QuickLook + poppler, before/after side by side) and the two PDFs:
+`docs/uat/2026-09-02-certificate-field-label-gap/`.
+
+## 2026-08-31 — every certificate pointed at a URL that does not work; `certificateQr.ts` is new
+
+`CERTIFICATE_COPY.OFFLINE_VERIFY_TOOL` read *"Reference verifier:
+https://arkova.ai/verify — paste the proof packet to run all checks in your
+browser."* Both halves were false. That host **302s to the marketing homepage**
+(control: `arkova.ai/nonsense-xyz` 404s, so the redirect is deliberate, not a
+fallthrough), and **no page in this app has ever accepted a pasted proof
+packet**. It printed onto every audit certificate ever generated, via
+`generateAuditReport.ts`. It now names `https://app.arkova.ai/verify/independent`
+— the page that actually exists — and promises only what that page does (§1.5).
+
+**Two rules when you touch a published verification pointer:**
+
+- **Execute it before you write it.** The dead URL survived because it read
+  plausibly. `src/lib/publishedVerificationPointers.test.ts` is the ratchet. It
+  walks **every export of `copy.ts`** — not a hand-listed pair of blocks, which
+  could never catch the next dead pointer in a constant nobody thought to add —
+  and fails on: any `arkova.ai/verify` host lacking the `app.` prefix; any
+  non-`app.` arkova origin inside a string that mentions verifying (the pathless
+  variant); the word "paste" in the tool line; any mention of `verify.sh`; and
+  any `npm install @arkova/…`, since neither verifier package is published (R-7).
+  Two guard-the-guard tests keep it honest — one asserts the walk actually
+  reaches the constants it claims to cover, the other that each regex still
+  matches the exact string that shipped.
+- **An archived artifact never carries a build-time host.** The certificate uses
+  `canonicalVerifyUrl(publicId)` (`routes.ts`), pinned to `app.arkova.ai`. The
+  on-screen QR uses `verifyUrl()`, which follows `VITE_APP_URL` — correct for a
+  share sheet, catastrophic in a PDF: `.env.example` ships
+  `VITE_APP_URL=http://localhost:5173`, so a dev or preview build would emit
+  certificates whose QR **and** printed link resolve to localhost forever, in a
+  document that cannot be reissued once an auditor has it. The two helpers agree
+  in production and diverge exactly where they should. `buildAuditReport` returns
+  `verificationUrl` and `qr` so a test can assert the drawn matrix IS the matrix
+  for that URL rather than trusting two call sites to agree, and a stubbed-env
+  test pins the divergence.
+
+`certificateQr.ts` (new) is the only importer of `qrcode-generator` (MIT, zero
+deps). It exists because **`qrcode.react` cannot be reached from jsPDF**: it
+exports React components only, its bundled encoder is not exported, and both
+components call hooks — so the only route to it is `react-dom/server`, and
+`vite.config.ts`'s `manualChunks` sends every `/react-dom/` module to the
+`vendor-react-dom` chunk that ships in the **initial** bundle. That trade
+(~500 KB of server renderer at first paint, or an edit to that deliberately
+commented chunking rule) is far worse than a 52 KB encoder in the already-lazy
+certificate chunk. Read `certificateQr.ts`'s header before proposing to remove
+the dependency.
+
+Two non-obvious properties of that module, both deliberate:
+
+- **It returns `null`, never throws.** Over-capacity payloads, empty values and
+  non-ASCII values all degrade to "no QR" and the certificate still renders the
+  URL as text. An unscannable certificate is cosmetic; one that fails to
+  generate is a broken feature.
+- **Non-ASCII is refused on purpose.** `qrcode-generator`'s default byte
+  conversion is Latin-1 (`stringToBytes('é') → [233]`, not UTF-8 `[195,169]`),
+  so a non-ASCII URL would encode to a *different* string than the one printed
+  beside it. A QR that resolves somewhere other than its printed link is worse
+  than no QR.
+
+The `certificateQr.test.ts` golden digest was verified **out of band** by
+rasterising the matrix and decoding it with jsQR 1.4.0, which read back exactly
+`https://app.arkova.ai/verify/ARK-2026-001` — payload, packing and orientation
+proven end to end. No decoder ships in this repo, so if you flip that digest you
+must re-run that decode; do not just paste a new hash.
+
+**The digest is not the orientation guard, though — a hash tells you nothing
+about what broke and invites re-pinning.** Every structural test in that file
+(finder patterns at the three corners) is symmetric under transposition, and so
+is the spec's permanently-dark module here: for this code both `(21,8)` and
+`(8,21)` are dark, because `(8,21)` lands in the second format-information
+strip. Measured, not assumed. The named test `is oriented row-major` asserts
+eight module coordinates sampled from the 138 (of 406) pairs where this matrix
+disagrees with its own transpose, so mirroring the encoder fails a readable
+assertion instead of only a hash.
+
+**Assert what is PAINTED, not what is returned.** `buildAuditReport`'s return
+value is convenient to test and proves nothing about the draw call. Three real
+breakages — transposing `doc.rect`, `QR_QUIET_MODULES = 0`, and `QR_SIDE_MM = 5`
+(0.17 mm modules, unscannable) — all left the suite green until
+`generateAuditReport.test.ts` grew a content-stream parser. It reads the `re`
+ops back out of `doc.output()`, converts points to mm (jsPDF's COMPAT mode
+negates the height and flips the origin), and checks the full geometry against
+the matrix. All four mutations, plus reverting to `verifyUrl()`, now fail it.
+
+Measured cost: the QR is ~230 filled rectangles. `buildAuditReport` now
+constructs jsPDF with `floatPrecision: 'smart'` (5 decimals at ≥1 instead of the
+16-decimal default — 3.5 nm on a point, so nothing renders differently), which
+takes the QR block from 19.4 KB to 9.4 KB. Reference SECURED certificate: 2
+pages before and after.
+_Last updated: 2026-08-30_
+
+## 2026-08-30 SCRUM-3559 — `THIRD_PARTY_NOTICES_LABELS` gains `LICENSE_TEXT_TOGGLE`
+
+`copy.ts` `THIRD_PARTY_NOTICES_LABELS` adds `LICENSE_TEXT_TOGGLE` ('View
+license text') for the collapsible verbatim-license-text blocks on
+`/legal/third-party-notices`, and the two section intros now say the page
+*includes* (not just links) license text + copyright notices — keeping the
+copy honest about what the page actually renders (R-7 direction: the old
+`PAGE_DESCRIPTION` already promised "license text" the page did not carry
+inline). §1.3 clean.
+## UAT-01 / SCRUM-4031 — retired signup configuration (2026-09-05)
+
+The signup copy now describes securing and verifying records. `BETA_GATE_LABELS` and the unused `ENV.BETA_INVITE_CODE` projection are retired; account registration does not consume a beta code. This does not change organization invitation tokens or any API authentication contract.
+
+
+_Last updated: 2026-08-29_
 
 ## 2026-08-29 — `docusignLinks.ts` (DocuSign record deep links, bilateral rollout, frontend-targeted T2)
 
@@ -421,3 +571,11 @@ Keep the entries in the worker's declaration order and keep the copy §1.3-clean
 Hash / Blockchain — "replaced by a newer version", not "superseded transaction").
 `scripts/ci/check-webhook-event-registration-drift.ts` compares this map's key list against the
 worker map on every PR, in the required root `Tests` job.
+
+## 2026-09-05 — Certificate wrapped field spacing
+
+`generateAuditReport.addField` reserves the height of every wrapped value line. A long filename previously overlapped the next field because the helper always advanced 5 mm. The regression test reads the PDF text operators and checks the next baseline against the last painted filename line. Keep horizontal label spacing and vertical wrapping covered together.
+
+## 2026-09-05 — Certificate pagination at supported input limits
+
+Field, section and proof-line helpers reserve page space before painting. Wrapped values that exceed one printable page continue on subsequent pages with their label repeated; no value or proof step is truncated. Keep the maximum-length filename plus a full batch proof covered together, and exercise a multiline reason long enough to cross pages. The tests read actual PDF text operators and assert both printable bounds and complete text preservation. Certificate QR callers supply the canonical production URL; pointer regression tests reject alternate Arkova domains even when their host begins with `app.`.

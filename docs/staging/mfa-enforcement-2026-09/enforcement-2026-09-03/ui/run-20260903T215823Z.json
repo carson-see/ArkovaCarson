@@ -1,0 +1,47 @@
+{
+ "driver": "mfa-3167-ui",
+ "batch": "security/mfa-enforcement-3167",
+ "window_id": "20260903T125113Z",
+ "pr_head": "1a24af93e6c132597005796861ffc2657d14f33f",
+ "supabase_ref": "nesuwjlscilzzbhpvbkt",
+ "preview_started_at": "2026-09-03T12:51:14Z",
+ "run_started_at": "2026-09-03T21:58:23Z",
+ "run_finished_at": "2026-09-03T21:58:42Z",
+ "exit_code": 0,
+ "expected": 6,
+ "unexpected": 0,
+ "flaky": 0,
+ "skipped": 0,
+ "tests": [
+  {
+   "title": "matches the RFC 6238 Appendix B SHA-1 test vectors",
+   "status": "passed",
+   "ms": 3
+  },
+  {
+   "title": "base32Decode round-trips the RFC secret to its ASCII bytes",
+   "status": "passed",
+   "ms": 0
+  },
+  {
+   "title": "individual enrolls TOTP in Settings, then completes it again at the next login",
+   "status": "passed",
+   "ms": 5690
+  },
+  {
+   "title": "a disposable ORG_ADMIN sees the dismissible grace nudge before the enforcement date and still reaches the app",
+   "status": "passed",
+   "ms": 2924
+  },
+  {
+   "title": "a disposable ORG_ADMIN past the enforcement date must enroll before entering, and can",
+   "status": "passed",
+   "ms": 3125
+  },
+  {
+   "title": "a user with one verified factor can add and remove a backup authenticator",
+   "status": "passed",
+   "ms": 6216
+  }
+ ]
+}
