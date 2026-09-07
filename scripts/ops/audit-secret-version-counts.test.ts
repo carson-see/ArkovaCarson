@@ -114,7 +114,7 @@ describe('runAudit', () => {
     const fake = makeFake(secrets, { pageSize: 5 });
     const c = capture();
     const result = await runAudit({ project: 'arkova1', threshold: 20, json: false }, { fetchImpl: fake.fetchImpl, ...c.deps });
-    expect(result.counts.length).toBe(13);
+    expect(result.counts).toHaveLength(13);
     expect(result.counts.find((x) => x.secretId === 'big')?.enabledVersions).toBe(25);
     expect(result.flagged.map((f) => f.secretId)).toEqual(['big']);
   });

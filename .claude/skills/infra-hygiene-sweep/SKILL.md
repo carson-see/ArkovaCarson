@@ -51,7 +51,7 @@ Skip any worktree modified in the last couple of days: another session may be li
 Secret Manager bills every ENABLED or DISABLED version per month, and a writer that appends a version on every run is invisible to `/health` and to Cloud Run. Found 2026-09-05: one DocuSign refresh-token secret at **1,645 enabled versions** (~$99/month, growing ~$6/month per day) because two hourly jobs each rotated the token and nothing destroyed the old versions.
 
 ```bash
-npx tsx scripts/ops/audit-secret-version-counts.ts --project arkova1
+GCP_ACCESS_TOKEN=$(gcloud auth print-access-token) npx tsx scripts/ops/audit-secret-version-counts.ts --project arkova1
 ```
 
 Exit `1` means at least one secret has more than 20 enabled versions (a rotated secret here keeps 1–2). For a flagged secret:

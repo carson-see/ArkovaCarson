@@ -15,14 +15,15 @@
  *
  * Read-only: only list endpoints are called. Never fetches a payload.
  *
- * Usage:
- *   npx tsx scripts/ops/audit-secret-version-counts.ts --project arkova1
- *   npx tsx scripts/ops/audit-secret-version-counts.ts --project arkova1 --threshold 20 --json
+ * Usage (GCP_ACCESS_TOKEN is the caller's identity; the script never shells out):
+ *   GCP_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+ *     npx tsx scripts/ops/audit-secret-version-counts.ts --project arkova1
+ *   GCP_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+ *     npx tsx scripts/ops/audit-secret-version-counts.ts --project arkova1 --threshold 20 --json
  *
  * Exit codes: 0 nothing flagged; 1 at least one secret over threshold (so the
  * sweep fails loudly); 2 an API call failed.
  */
-import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -97,8 +98,11 @@ export interface AuditRunResult {
 
 function defaultGetAccessToken(env: NodeJS.ProcessEnv): () => Promise<string> {
   return async () => {
-    if (env.GCP_ACCESS_TOKEN) return env.GCP_ACCESS_TOKEN;
-    return execFileSync('gcloud', ['auth', 'print-access-token'], { encoding: 'utf8' }).trim();
+    const token = env.GCP_ACCESS_TOKEN?.trim();
+    if (!token) {
+      throw new Error('GCP_ACCESS_TOKEN is required (e.g. GCP_ACCESS_TOKEN=$(gcloud auth print-access-token))');
+    }
+    return token;
   };
 }
 

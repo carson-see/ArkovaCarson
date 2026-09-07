@@ -251,9 +251,9 @@ describe('runPrune', () => {
     expect(result.exitCode).toBe(EXIT_SUCCESS);
     expect(result.secrets[0]).toMatchObject({ applied: true, destroyed: 118, failed: 0, kept: [120, 119] });
     expect(fake.enabled(ORG_SECRET)).toEqual([119, 120]);
-    expect(fake.destroyCalls().length).toBe(118);
+    expect(fake.destroyCalls()).toHaveLength(118);
     expect(fake.calls.some((l) => l.includes(':access'))).toBe(false);
-    expect(c.out.filter((l) => l.includes('batch ')).length).toBe(3); // 50 + 50 + 18
+    expect(c.out.filter((l) => l.includes('batch '))).toHaveLength(3); // 50 + 50 + 18
     const summary = JSON.parse(c.out[c.out.length - 1]) as { mode: string; secrets: Array<{ destroyed: number; kept: number[] }> };
     expect(summary.mode).toBe('apply');
     expect(summary.secrets[0]).toMatchObject({ destroyed: 118, kept: [120, 119] });

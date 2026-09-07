@@ -29,21 +29,23 @@
  *   - Destroying a version is IRREVERSIBLE. Get explicit approval first.
  *
  * Usage (dry run — always first):
- *   npx tsx scripts/ops/prune-docusign-refresh-token-versions.ts --project arkova1 --all
- *   npx tsx scripts/ops/prune-docusign-refresh-token-versions.ts --project arkova1 --secret <id>
+ *   GCP_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+ *     npx tsx scripts/ops/prune-docusign-refresh-token-versions.ts --project arkova1 --all
+ *   GCP_ACCESS_TOKEN=$(gcloud auth print-access-token) \
+ *     npx tsx scripts/ops/prune-docusign-refresh-token-versions.ts --project arkova1 --secret <id>
  *
  * Usage (apply — destroys versions):
- *   CONFIRM_DESTROY_SECRET_VERSIONS=<id> \
+ *   GCP_ACCESS_TOKEN=$(gcloud auth print-access-token) CONFIRM_DESTROY_SECRET_VERSIONS=<id> \
  *     npx tsx scripts/ops/prune-docusign-refresh-token-versions.ts --project arkova1 --secret <id> --apply
  *
- * Auth: `gcloud auth print-access-token` (the caller's identity), or
- * GCP_ACCESS_TOKEN in env.
+ * Auth: GCP_ACCESS_TOKEN in env (the caller's identity, e.g.
+ * `GCP_ACCESS_TOKEN=$(gcloud auth print-access-token)`). The script never
+ * shells out.
  *
  * Exit codes: 0 done; 1 validation/refusal (nothing destroyed); 2 an API call
  * failed (dry run: nothing destroyed; apply: see the printed summary for what
  * was destroyed before the failure).
  */
-import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -106,16 +108,16 @@ export function parseCliArgs(argv: string[]): PruneCliArgs {
       throw new Error(`--${flag} was given more than once`);
     }
   }
-  const one = <T>(v: T[] | undefined): T | undefined => (v && v.length ? v[0] : undefined);
+  const one = <T>(v: T[] | undefined): T | undefined => (v?.length ? v[0] : undefined);
   const int = (flag: string, raw: string | undefined, fallback: number | undefined): number | undefined => {
     if (raw === undefined) return fallback;
     if (!/^\d+$/.test(raw)) throw new Error(`--${flag} must be a non-negative integer`);
     return Number(raw);
   };
 
-  const project = one(values.project) ?? 'arkova1';
+  const project: string = one<string>(values.project) ?? 'arkova1';
   if (!PROJECT_ID_RE.test(project)) throw new Error(`--project "${project}" is not a valid GCP project id`);
-  const secret = one(values.secret);
+  const secret: string | undefined = one<string>(values.secret);
   const all = Boolean(one(values.all));
   if (!secret && !all) throw new Error('pass --secret <id> or --all');
   if (secret && all) throw new Error('--secret and --all are mutually exclusive');
@@ -211,8 +213,11 @@ export interface PruneRunResult {
 
 function defaultGetAccessToken(env: NodeJS.ProcessEnv): () => Promise<string> {
   return async () => {
-    if (env.GCP_ACCESS_TOKEN) return env.GCP_ACCESS_TOKEN;
-    return execFileSync('gcloud', ['auth', 'print-access-token'], { encoding: 'utf8' }).trim();
+    const token = env.GCP_ACCESS_TOKEN?.trim();
+    if (!token) {
+      throw new Error('GCP_ACCESS_TOKEN is required (e.g. GCP_ACCESS_TOKEN=$(gcloud auth print-access-token))');
+    }
+    return token;
   };
 }
 
@@ -244,7 +249,7 @@ async function listMatchingSecrets(fetchImpl: typeof fetch, token: string, proje
     pageToken = body.nextPageToken || undefined;
     if (!pageToken) break;
   }
-  return ids.sort();
+  return ids.sort((a, b) => a.localeCompare(b));
 }
 
 async function listEnabledVersions(
@@ -297,67 +302,40 @@ async function destroyVersions(
   return { destroyed, failed };
 }
 
-export async function runPrune(args: PruneCliArgs, deps: PruneDeps = {}): Promise<PruneRunResult> {
-  const env = deps.env ?? process.env;
-  const out = deps.out ?? ((l) => console.log(l));
-  const err = deps.err ?? ((l) => console.error(l));
-  const fetchImpl = deps.fetchImpl ?? fetch;
-  const getAccessToken = deps.getAccessToken ?? defaultGetAccessToken(env);
+function refusal(err: (line: string) => void, message: string, apply: boolean): PruneRunResult {
+  err(message);
+  return { exitCode: EXIT_VALIDATION, apply, secrets: [] };
+}
 
+/** Every reason to stop before touching the API, or null when clear to proceed. */
+export function preflightRefusal(args: PruneCliArgs, env: NodeJS.ProcessEnv): string | null {
   if (args.secret && !isDocusignRefreshTokenSecretId(args.secret)) {
-    err(`refusing: "${args.secret}" does not match the DocuSign refresh-token secret pattern`);
-    return { exitCode: EXIT_VALIDATION, apply: args.apply, secrets: [] };
+    return `refusing: "${args.secret}" does not match the DocuSign refresh-token secret pattern`;
   }
-  if (args.apply) {
-    if (args.all) {
-      err('refusing: --all --apply is not allowed');
-      return { exitCode: EXIT_VALIDATION, apply: true, secrets: [] };
-    }
-    const confirm = env.CONFIRM_DESTROY_SECRET_VERSIONS;
-    if (!confirm || confirm !== args.secret) {
-      err('refusing: --apply requires CONFIRM_DESTROY_SECRET_VERSIONS to equal the exact --secret id');
-      return { exitCode: EXIT_VALIDATION, apply: true, secrets: [] };
-    }
+  if (!args.apply) return null;
+  if (args.all) return 'refusing: --all --apply is not allowed';
+  const confirm = env.CONFIRM_DESTROY_SECRET_VERSIONS;
+  if (!confirm || confirm !== args.secret) {
+    return 'refusing: --apply requires CONFIRM_DESTROY_SECRET_VERSIONS to equal the exact --secret id';
   }
+  return null;
+}
 
-  const token = await getAccessToken();
-  let secretIds: string[];
-  try {
-    secretIds = args.secret ? [args.secret] : await listMatchingSecrets(fetchImpl, token, args.project);
-  } catch (e) {
-    err(`error: ${e instanceof Error ? e.message : String(e)}`);
-    return { exitCode: EXIT_API_FAILURE, apply: args.apply, secrets: [] };
-  }
-  // Defence in depth: nothing that fails the pattern reaches a destroy call,
-  // whichever path produced the id.
-  secretIds = secretIds.filter((id) => isDocusignRefreshTokenSecretId(id));
+function describeVersion(label: string, v: { version: number; createTime?: string } | undefined): string {
+  if (!v) return '';
+  const when = v.createTime ?? '?';
+  return ` ${label}=v${v.version}@${when}`;
+}
 
-  out(`${args.apply ? 'APPLY' : 'DRY RUN'} — project=${args.project} keep=${args.keep} batchSize=${args.batchSize}${args.maxDestroy !== undefined ? ` maxDestroy=${args.maxDestroy}` : ''} secrets=${secretIds.length}`);
-  const results: SecretPruneResult[] = [];
-  let exitCode = EXIT_SUCCESS;
-  for (const secretId of secretIds) {
-    let plan: PrunePlan;
-    try {
-      const versions = await listEnabledVersions(fetchImpl, token, args.project, secretId);
-      plan = planPrune(secretId, versions, { keep: args.keep, maxDestroy: args.maxDestroy });
-    } catch (e) {
-      err(`error: ${e instanceof Error ? e.message : String(e)}`);
-      exitCode = EXIT_API_FAILURE;
-      break;
-    }
-    out(`- ${secretId}`);
-    out(`    enabled=${plan.enabledCount} keep=${plan.kept.join(',') || '-'} would_destroy=${plan.destroy.length}` +
-      (plan.oldestEnabled ? ` oldest=v${plan.oldestEnabled.version}@${plan.oldestEnabled.createTime ?? '?'}` : '') +
-      (plan.newestEnabled ? ` newest=v${plan.newestEnabled.version}@${plan.newestEnabled.createTime ?? '?'}` : ''));
-    if (!args.apply || plan.destroy.length === 0) {
-      results.push({ ...plan, applied: false, destroyed: 0, failed: 0 });
-      continue;
-    }
-    const { destroyed, failed } = await destroyVersions(fetchImpl, token, args.project, secretId, plan.destroy, args.batchSize, out);
-    results.push({ ...plan, applied: true, destroyed, failed });
-    if (failed > 0) exitCode = EXIT_API_FAILURE;
-  }
-  out(JSON.stringify({
+function describePlan(plan: PrunePlan): string {
+  const kept = plan.kept.join(',') || '-';
+  return `    enabled=${plan.enabledCount} keep=${kept} would_destroy=${plan.destroy.length}`
+    + describeVersion('oldest', plan.oldestEnabled)
+    + describeVersion('newest', plan.newestEnabled);
+}
+
+function summaryJson(args: PruneCliArgs, results: SecretPruneResult[]): string {
+  return JSON.stringify({
     mode: args.apply ? 'apply' : 'dry-run',
     project: args.project,
     keep: args.keep,
@@ -371,7 +349,62 @@ export async function runPrune(args: PruneCliArgs, deps: PruneDeps = {}): Promis
       oldestEnabled: r.oldestEnabled,
       newestEnabled: r.newestEnabled,
     })),
-  }, null, 2));
+  }, null, 2);
+}
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+export async function runPrune(args: PruneCliArgs, deps: PruneDeps = {}): Promise<PruneRunResult> {
+  const env = deps.env ?? process.env;
+  const out = deps.out ?? ((l) => console.log(l));
+  const err = deps.err ?? ((l) => console.error(l));
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const getAccessToken = deps.getAccessToken ?? defaultGetAccessToken(env);
+
+  const refused = preflightRefusal(args, env);
+  if (refused) return refusal(err, refused, args.apply);
+
+  let token: string;
+  let secretIds: string[];
+  try {
+    token = await getAccessToken();
+    secretIds = args.secret ? [args.secret] : await listMatchingSecrets(fetchImpl, token, args.project);
+  } catch (e) {
+    err(`error: ${errorMessage(e)}`);
+    return { exitCode: EXIT_API_FAILURE, apply: args.apply, secrets: [] };
+  }
+  // Defence in depth: nothing that fails the pattern reaches a destroy call,
+  // whichever path produced the id.
+  secretIds = secretIds.filter((id) => isDocusignRefreshTokenSecretId(id));
+
+  const maxDestroy = args.maxDestroy === undefined ? '' : ` maxDestroy=${args.maxDestroy}`;
+  out(`${args.apply ? 'APPLY' : 'DRY RUN'} — project=${args.project} keep=${args.keep} batchSize=${args.batchSize}${maxDestroy} secrets=${secretIds.length}`);
+
+  const results: SecretPruneResult[] = [];
+  let exitCode = EXIT_SUCCESS;
+  for (const secretId of secretIds) {
+    let plan: PrunePlan;
+    try {
+      const versions = await listEnabledVersions(fetchImpl, token, args.project, secretId);
+      plan = planPrune(secretId, versions, { keep: args.keep, maxDestroy: args.maxDestroy });
+    } catch (e) {
+      err(`error: ${errorMessage(e)}`);
+      exitCode = EXIT_API_FAILURE;
+      break;
+    }
+    out(`- ${secretId}`);
+    out(describePlan(plan));
+    if (!args.apply || plan.destroy.length === 0) {
+      results.push({ ...plan, applied: false, destroyed: 0, failed: 0 });
+      continue;
+    }
+    const { destroyed, failed } = await destroyVersions(fetchImpl, token, args.project, secretId, plan.destroy, args.batchSize, out);
+    results.push({ ...plan, applied: true, destroyed, failed });
+    if (failed > 0) exitCode = EXIT_API_FAILURE;
+  }
+  out(summaryJson(args, results));
   return { exitCode, apply: args.apply, secrets: results };
 }
 
