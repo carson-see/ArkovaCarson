@@ -24,6 +24,13 @@ import {
   connectorFingerprintRederivabilityFieldsFor,
   type FingerprintRederivability,
 } from '../../constants/connectorFingerprint.js';
+import {
+  PROOF_VERDICT,
+  classifyInclusionVerdict,
+  isStructuralGuardEffective,
+  proofVerdictFields,
+  type ProofVerdict,
+} from '../../constants/proofVerdict.js';
 import { fromByteaHex } from '../../utils/anchorProofs.js';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
 import { buildBoundProofPayload } from '../../proof/did-binding.js';
@@ -260,6 +267,28 @@ export interface MerkleProofResponse {
    */
   verified: boolean;
   /**
+   * R3: the SAME computation as `verified`, reported as three states instead of
+   * two. Additive per §1.8 — `verified` is unchanged and is NOT deprecated.
+   *
+   *   valid        — every check this endpoint claims to run, ran and passed.
+   *   invalid      — a check RAN and FAILED. An alarm. `verified` is false.
+   *   unverifiable — a check could not be completed (e.g. this record carries no
+   *                  `merkle_index`/`leaf_count`, so the CVE-2012-2459
+   *                  duplicate-node guard could not be armed). NOT an alarm.
+   *
+   * `valid` and `unverifiable` partition the old `verified: true` bucket;
+   * `invalid` is exactly `verified: false`. The two can therefore never
+   * contradict — see `constants/proofVerdict.ts` for the mapping and the
+   * reasoning behind the unarmed-guard case.
+   *
+   * Scoped to the layer-1 app-tree inclusion check ONLY, exactly like
+   * `verified`. Whether the committed root appears in a confirmed receipt is
+   * reported by `proof_bundle`, not here.
+   */
+  verdict: ProofVerdict;
+  /** The §1.5 measured / asserted / NOT-asserted statement for `verdict`. */
+  verdict_note: string;
+  /**
    * PROOF-05 (SCRUM-2338): additive nullable self-contained proof bundle.
    * `null` when the two-layer proof is incomplete (Constitution §1.8 / §1.5).
    */
@@ -332,6 +361,24 @@ export interface ProofErrorResponse {
    * instead of leaving it to be inferred from a 404.
    */
   proof_availability_note?: string;
+  /**
+   * R3: additive (§1.8) tri-state verdict, present on an error body ONLY where
+   * that body reports the outcome of an ATTEMPTED verification — today the
+   * single `leafCountIndeterminate` fail-closed 500, where it is always
+   * `unverifiable`.
+   *
+   * Deliberately ABSENT everywhere else, following the `proof_error_code`
+   * precedent above (400 / 503 / both 404s omit it, and consumers MUST fall
+   * back to the `error` string / HTTP status). In particular the "Merkle proof
+   * data is malformed" 500 gets NO verdict: that failure happens during
+   * EXTRACTION, before any verification is attempted, so there is no verdict to
+   * report. Emitting `invalid` from a parse failure would raise a cryptographic
+   * alarm about a document out of what is really a corrupt-row / server fault —
+   * exactly the cry-wolf reading this field exists to prevent.
+   */
+  verdict?: ProofVerdict;
+  /** The §1.5 statement for `verdict`. Present exactly when it is. */
+  verdict_note?: string;
 }
 
 /**
@@ -731,7 +778,15 @@ export function buildProofResponse(
   // silent null. Surface it as indeterminate; the route maps this to a 500 so a
   // transient DB fault never downgrades the cryptographic guarantee.
   if (leafCountIndeterminate) {
-    return { error: 'Proof leaf count could not be determined; verification is indeterminate.' };
+    return {
+      error: 'Proof leaf count could not be determined; verification is indeterminate.',
+      // R3: this is the one error body that reports a VERIFICATION outcome
+      // rather than a parse/lookup failure — the check was attempted and could
+      // not be completed. `unverifiable` is the machine-readable form of the
+      // prose already here; `invalid` would be wrong (nothing failed, evidence
+      // was missing) and is what the tri-state exists to stop.
+      ...proofVerdictFields(PROOF_VERDICT.UNVERIFIABLE),
+    };
   }
 
   // SCRUM-2490 (PROOF-VERIFY) — the pre-mortem K1 kill-shot was that
@@ -763,6 +818,29 @@ export function buildProofResponse(
     inclusionOpts,
   );
 
+  // R3 — was the CVE-2012-2459 structural guard actually EXERCISED for that
+  // call? Read off the SAME `inclusionOpts` object and the SAME branch that
+  // were just handed to the verifier, so the flag cannot describe a different
+  // call than the one `verified` came from.
+  //
+  // The predicate lives in `constants/proofVerdict.ts` — see its docblock for
+  // why the verifier's own arming condition is necessary but not sufficient
+  // (an empty branch, or a branch longer than the claimed tree, leaves the
+  // guard nominally on and inspecting nothing). The duplication of the arming
+  // condition is deliberate and unavoidable: `merkle-verify.ts` is pinned
+  // byte-for-byte against `packages/verifier-cli/src/vendor/merkle-verify.ts`
+  // (`test/sync-recompute.test.ts`), so it cannot grow a "guard exercised" flag
+  // on its result without editing the vendored verifier's trusted computing
+  // base. `verify-proof.verdict.test.ts` pins the two in agreement
+  // BEHAVIOURALLY — the forged self-pair fixture must be rejected exactly when
+  // this flag is true — so drift fails a test rather than silently upgrading a
+  // verdict.
+  const guardExercised = isStructuralGuardEffective(
+    inclusionOpts.leafIndex,
+    inclusionOpts.leafCount,
+    proofSource.merkleProof.length,
+  );
+
   return {
     public_id: anchor.public_id,
     fingerprint: anchor.fingerprint,
@@ -773,6 +851,10 @@ export function buildProofResponse(
     block_timestamp: anchor.chain_timestamp,
     batch_id: proofSource.batchId,
     verified: inclusion.valid,
+    // R3: the SAME `inclusion` object the boolean above is read from — one
+    // computation, two encodings, so K1 (they must never contradict) holds by
+    // construction rather than by review. `invalid` <=> `verified === false`.
+    ...proofVerdictFields(classifyInclusionVerdict(inclusion, guardExercised)),
     // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
     proof_bundle: buildProofBundle(anchor, proofSource, leafCount),
     // Evidence-gated class/note pair, response-level only. Explicit issuer
@@ -780,6 +862,31 @@ export function buildProofResponse(
     // Never add these fields inside the signable proof_bundle.
     ...connectorFingerprintRederivabilityFieldsFor(anchor.metadata, anchor.fingerprint_source),
   };
+}
+
+/**
+ * R3 — the signed envelope carries EVIDENCE ONLY.
+ *
+ * `?format=signed` spreads the whole response into the DID-bound payload before
+ * signing it, so anything left in here becomes a cryptographically attested,
+ * issuer-bound claim. `verdict` / `verdict_note` must not be: they are
+ * API-layer INTERPRETATION derived at READ time from the row's CURRENT
+ * completeness, not stored evidence. Signing them would
+ *
+ *   (a) attest a claim outside `PROOF_ASSERTIONS` — the bundle's own §1.5 / R-7
+ *       declaration of exactly what a bound bundle does and does not assert,
+ *       which enumerates the anchoring facts and says nothing about a verdict;
+ *   (b) let ONE record produce two validly-signed, correctly-bound bundles that
+ *       disagree — `unverifiable` before a `merkle_index`/`leaf_count` backfill
+ *       and `valid` after — with no way for a holder of both to tell which is
+ *       current.
+ *
+ * Same rule that keeps the pair out of `proof_bundle`, applied to the outer
+ * payload. The unsigned 200 body is unaffected and still carries both.
+ */
+function proofEvidenceForSigning(response: MerkleProofResponse): Record<string, unknown> {
+  const { verdict: _verdict, verdict_note: _verdictNote, ...evidence } = response;
+  return { ...evidence };
 }
 
 /**
@@ -932,10 +1039,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
           // signing, so a verifier follows one chain — issuer DID →
           // assertionMethod key (signer.keyId) → anchored proof.
           const bundle = await createSignedBundle({
-            payload: buildBoundProofPayload(
-              result as unknown as Record<string, unknown>,
-              signer.keyId,
-            ),
+            payload: buildBoundProofPayload(proofEvidenceForSigning(result), signer.keyId),
             sign: signer.sign,
           });
           res.json(bundle);
@@ -983,10 +1087,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       // signing, so a verifier follows one chain — issuer DID →
       // assertionMethod key (signer.keyId) → anchored proof.
       const bundle = await createSignedBundle({
-        payload: buildBoundProofPayload(
-          result as unknown as Record<string, unknown>,
-          signer.keyId,
-        ),
+        payload: buildBoundProofPayload(proofEvidenceForSigning(result), signer.keyId),
         sign: signer.sign,
       });
       res.json(bundle);
