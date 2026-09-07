@@ -568,6 +568,31 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
         expect(mod.config.enableDocusignWebhook).toBe(true);
         expect(mod.config.enableConnectorArtifactEnqueue).toBe(true);
         expect(mod.config.enableConnectorArtifactDrain).toBe(true);
+  // Signer backfill (record-detail signer rows, follow-on to
+  // signer capture / PR #2474): authenticates via the same
+  // refreshable DocuSign OAuth connection ENABLE_DOCUSIGN_OAUTH gates.
+  it('defaults ENABLE_DOCUSIGN_SIGNER_BACKFILL to false', async () => {
+    await withConfig({}, (mod) => {
+      expect(mod.config.enableDocusignSignerBackfill).toBe(false);
+    });
+  });
+
+  it('rejects when ENABLE_DOCUSIGN_SIGNER_BACKFILL=true but ENABLE_DOCUSIGN_OAUTH is off', async () => {
+    await expectConfigToReject({
+      ENABLE_DOCUSIGN_SIGNER_BACKFILL: 'true',
+      ENABLE_DOCUSIGN_OAUTH: undefined,
+    });
+  });
+
+  it('accepts ENABLE_DOCUSIGN_SIGNER_BACKFILL=true when ENABLE_DOCUSIGN_OAUTH=true', async () => {
+    await withConfig(
+      {
+        ENABLE_DOCUSIGN_SIGNER_BACKFILL: 'true',
+        ENABLE_DOCUSIGN_OAUTH: 'true',
+      },
+      (mod) => {
+        expect(mod.config.enableDocusignSignerBackfill).toBe(true);
+        expect(mod.config.enableDocusignOauth).toBe(true);
       },
     );
   });

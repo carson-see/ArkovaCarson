@@ -46,3 +46,7 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 ## PR #2476 rollout replay regression
 
 `check-docusign-nonce-rollout.py` uses a disposable network-isolated PostgreSQL container. It verifies legacy-row replay denial, both orders of concurrent old/new writers across different session timezones, same-account deduplication, and acceptance for distinct known accounts. `--baseline` reproduces the replay gap in 0424 alone. No application database is touched.
+
+## 2026-09-05 — PR #2565 owned PostgreSQL regression harness
+
+`test-docusign-backfill-attempts.py --pg-bin PATH --output NEW_DIRECTORY` creates a private PostgreSQL cluster via `lib/local_postgres.py`, uses a private Unix socket, loads the actual0438 SQL and tests role authority plus real concurrent attempt claims. It refuses an existing output directory and always stops its owned cluster. It does not use a running database or spend provider budget. The small fixture schema is explicit focused evidence; it is not a full-schema replay, generated-types proof or staging soak.

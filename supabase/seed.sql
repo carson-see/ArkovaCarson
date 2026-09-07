@@ -40,6 +40,8 @@
 
 TRUNCATE TABLE audit_events    RESTART IDENTITY CASCADE;
 TRUNCATE TABLE anchor_proofs   RESTART IDENTITY CASCADE;
+-- Migration0438's service-owned attempt table is emptied by this anchor FK
+-- cascade. Leave it empty: local reset must not invent provider-poll history.
 TRUNCATE TABLE anchors         RESTART IDENTITY CASCADE;
 TRUNCATE TABLE memberships     RESTART IDENTITY CASCADE;
 TRUNCATE TABLE profiles        RESTART IDENTITY CASCADE;
