@@ -473,6 +473,48 @@ describe('rateLimit', () => {
     });
   });
 
+  describe('distributed failed-request refunds', () => {
+    it('refunds a failed response in the shared counter and still charges successful responses', async () => {
+      const entries = new Map<string, { count: number; resetAt: number }>();
+      const decrement = vi.fn((key: string) => { entries.get(key)!.count--; });
+      const store = Object.assign(entries, {
+        increment: vi.fn(async (key: string, windowMs: number, now: number) => {
+          const current = entries.get(key) ?? { count: 0, resetAt: now + windowMs };
+          current.count++;
+          entries.set(key, current);
+          return { ...current };
+        }),
+        decrement,
+      });
+      setRateLimitStore(store);
+      try {
+        const limiter = rateLimit({ windowMs: 60000, maxRequests: 1, skipFailedRequests: true, scope: 'shared-refund' });
+        const first = createMockReqResWithKey('192.0.2.44', '/oauth/start');
+        limiter(first.req, first.res, first.next);
+        await vi.waitFor(() => expect(first.next).toHaveBeenCalledOnce());
+        first.res.statusCode = 500;
+        first.res.send('failed');
+        expect(decrement).toHaveBeenCalledExactlyOnceWith('shared-refund:192.0.2.44');
+        expect(entries.get('shared-refund:192.0.2.44')?.count).toBe(0);
+
+        const retry = createMockReqResWithKey('192.0.2.44', '/oauth/start');
+        limiter(retry.req, retry.res, retry.next);
+        await vi.waitFor(() => expect(retry.next).toHaveBeenCalledOnce());
+        retry.res.send('success');
+        expect(decrement).toHaveBeenCalledOnce();
+        expect(entries.get('shared-refund:192.0.2.44')?.count).toBe(1);
+
+        const excess = createMockReqResWithKey('192.0.2.44', '/oauth/start');
+        limiter(excess.req, excess.res, excess.next);
+        await vi.waitFor(() => expect(excess.res.status).toHaveBeenCalledWith(429));
+        expect(excess.next).not.toHaveBeenCalled();
+        expect(excess.res.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
+      } finally {
+        setRateLimitStore(new Map());
+      }
+    });
+  });
+
   describe('cleanupExpiredEntries', () => {
     it('removes expired entries from the store', () => {
       vi.useFakeTimers({ now: 100000 });
