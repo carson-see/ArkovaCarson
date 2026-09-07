@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
+import { config } from '../../../config.js';
 import { submitJob } from '../../../utils/jobQueue.js';
 import { DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE } from '../../../jobs/docusign-envelope-completed.js';
 import { DOCUSIGN_NOTARIZATION_COMPLETED_JOB_TYPE } from '../../../jobs/docusign-notarization-completed.js';
@@ -42,6 +43,10 @@ interface DocusignIntegrationRow {
 }
 
 interface DocusignNonceKey {
+  // docusign-bilateral-2026-08 / migration 0424: tenant-scopes the replay-
+  // protection key. Always resolved BEFORE the nonce write, for both the
+  // outbound and inbound branches — see nonceKeyForEvent below.
+  account_id: string;
   envelope_id: string;
   event_id: string;
   generated_at: string;
@@ -259,8 +264,13 @@ async function enqueueFetchJob(args: {
   return jobId;
 }
 
-function nonceKeyForEvent(event: DocusignCompletedEnvelope, payloadHash: string): DocusignNonceKey {
+function nonceKeyForEvent(
+  event: DocusignCompletedEnvelope,
+  payloadHash: string,
+  accountId: string,
+): DocusignNonceKey {
   return {
+    account_id: accountId,
     envelope_id: event.envelopeId,
     event_id: event.eventId ?? event.event,
     generated_at: event.generatedDateTime ?? payloadHash,
@@ -593,6 +603,224 @@ function verifyIntegrationSignature(
   return true;
 }
 
+// ── docusign-bilateral-2026-08: inbound (Recipient Connect) classification ──
+//
+// THREAT MODEL (CTO Decision Record, docusign-bilateral-2026-08): the
+// DocuSign Connect HMAC key is CUSTOMER-side console state — every connected
+// org holds a VALID signing key for deliveries to its own listener. A
+// declared-hash inbound path that skipped API re-verification would let any
+// connected org self-POST a self-signed "inbound" event claiming to be about
+// someone ELSE's envelope, and anchor a forged provenance record. The
+// mitigation is that `direction` is decided from SERVER-STORED state ONLY —
+// never from an attacker-authored body field, and never from the
+// `?customrecipient` query marker alone (a marker cannot upgrade an envelope
+// to a trust level the account comparison itself disproves).
+//
+// This whole feature ships behind ENABLE_DOCUSIGN_INBOUND (default false)
+// and is NOT going live this cycle (SCRUM-3817 feasibility spike).
+
+export type DocusignDirection = 'outbound' | 'inbound';
+
+export interface DocusignDirectionClassification {
+  direction: DocusignDirection;
+  /** event.senderAccountId ?? event.accountId — the envelope's declared owning/sending account. */
+  sendingAccountId: string;
+  /**
+   * Set only when direction resolved to 'inbound' via the fail-safe branch
+   * (the org's-own-account lookup itself errored) rather than a genuine
+   * foreign-account comparison. Never set for 'outbound'.
+   */
+  orphanReason?: 'own_account_lookup_failed';
+}
+
+/**
+ * All DocuSign account_ids this org has itself connected — org_integrations
+ * UNION member_integrations, both `provider = 'docusign'`, not revoked. This
+ * is the "resolving org's OWN connected account_id set" the classifier
+ * compares the envelope's declared owner against. SERVER-STORED state only;
+ * the request body never reaches this function.
+ */
+async function resolveOrgOwnAccountIds(orgId: string): Promise<Set<string>> {
+  const [orgRows, memberRows] = await Promise.all([
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- webhook ingress: same untyped-table pattern as findIntegration above
+    (db as any)
+      .from('org_integrations')
+      .select('account_id')
+      .eq('org_id', orgId)
+      .eq('provider', 'docusign')
+      .is('revoked_at', null),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (db as any)
+      .from('member_integrations')
+      .select('account_id')
+      .eq('org_id', orgId)
+      .eq('provider', 'docusign')
+      .is('revoked_at', null),
+  ]);
+
+  if (orgRows.error || memberRows.error) {
+    throw new Error('own_account_lookup_failed');
+  }
+
+  const ids = new Set<string>();
+  for (const row of [...(orgRows.data ?? []), ...(memberRows.data ?? [])] as Array<{ account_id: string | null }>) {
+    if (row.account_id) ids.add(row.account_id);
+  }
+  return ids;
+}
+
+/**
+ * R4: decide outbound vs inbound. Called AFTER HMAC + integration resolution
+ * — the `integration` row already proves the request is signed by a key this
+ * ORG registered. This function decides nothing about who is calling; it
+ * decides whose envelope this is:
+ *
+ * - `sendingAccountId` present in the org's own connected-account set ->
+ *   `outbound` (the existing, byte-for-byte unchanged path below).
+ * - present but NOT in that set -> `inbound` (a different account owns the
+ *   envelope).
+ * - the own-account lookup itself fails (DB error) -> fail SAFE to `inbound`
+ *   (never silently trust an unverifiable case as outbound) and record why,
+ *   so the caller emits the distinct orphan signal instead of crashing.
+ *
+ * FAST PATH, zero extra DB round-trips: `integration` was itself resolved
+ * (in `findIntegration` above) via an EXACT match on `account_id =
+ * event.accountId`. So whenever the envelope's declared sending account is
+ * `event.accountId` unchanged — every payload shape that predates
+ * `senderAccountId`, i.e. 100% of traffic before this PR and still the
+ * common case after it — membership in the org's own-account set is already
+ * proven BY CONSTRUCTION; re-querying would be redundant. This is also what
+ * keeps the existing outbound flow reaching the database exactly as many
+ * times as it did before this PR (backward-compat, tested explicitly). Only
+ * a genuinely distinct declared `senderAccountId` falls through to the real
+ * cross-check below.
+ */
+async function classifyDirection(
+  integration: DocusignIntegrationRow,
+  event: DocusignCompletedEnvelope,
+): Promise<DocusignDirectionClassification> {
+  const sendingAccountId = event.senderAccountId ?? event.accountId;
+
+  if (sendingAccountId === integration.account_id) {
+    return { direction: 'outbound', sendingAccountId };
+  }
+
+  let ownAccountIds: Set<string>;
+  try {
+    ownAccountIds = await resolveOrgOwnAccountIds(integration.org_id);
+  } catch (err) {
+    logger.error(
+      { error: err, orgId: integration.org_id, envelopeId: event.envelopeId },
+      'DocuSign webhook: own-account lookup failed — classifying inbound (fail-safe, never trust unverifiable as outbound)',
+    );
+    return { direction: 'inbound', sendingAccountId, orphanReason: 'own_account_lookup_failed' };
+  }
+
+  if (ownAccountIds.has(sendingAccountId)) {
+    return { direction: 'outbound', sendingAccountId };
+  }
+  return { direction: 'inbound', sendingAccountId };
+}
+
+/**
+ * R5: a DISTINCT inbound orphan-drop signal, separate from the existing
+ * (deliberately silent) unknown-integration orphan path in
+ * `acknowledgeUnknownIntegration` above. That path is silent BY DESIGN — an
+ * unrecognised account is routine, expected noise. This one is not: a
+ * nonzero inbound-orphan rate while ENABLE_DOCUSIGN_INBOUND is on means real
+ * inbound envelopes are arriving and NOT being anchored. Structured log field
+ * is the house pattern for this signal shape (see the UTXO RPC-fallback
+ * breadcrumb, `chain_rpc_fallback: true`, documented in
+ * services/worker/agents.md) — there is no dedicated metrics/counter client
+ * in this codebase to bind to instead.
+ */
+function recordInboundOrphanDrop(args: {
+  envelopeId: string;
+  accountId: string;
+  reason: 'own_account_lookup_failed' | 'no_usable_declared_hash';
+}): void {
+  logger.warn(
+    {
+      docusign_inbound_orphan_drop: true,
+      envelopeId: args.envelopeId,
+      accountId: args.accountId,
+      reason: args.reason,
+    },
+    'DocuSign webhook: inbound envelope dropped without anchoring (orphan)',
+  );
+}
+
+/**
+ * The single per-envelope declared SHA-256 an inbound (declared-hash)
+ * artifact can anchor. Reuses `documentHashes` (already de-dupes + validates
+ * sha256 shape) and requires EXACTLY one distinct value — a multi-document or
+ * zero-hash envelope has no single fingerprint this v1 path can commit to, so
+ * it orphan-drops rather than guessing which document (or a concatenation)
+ * the caller meant. (Scope note: multi-document inbound envelopes are an
+ * explicit v1 limitation — see the PR description — not a silent gap.)
+ */
+function extractSingleDeclaredHash(event: DocusignCompletedEnvelope): string | null {
+  const hashes = documentHashes(event);
+  return hashes.length === 1 ? hashes[0] : null;
+}
+
+/**
+ * R3: INBOUND + FLAG ON declared-hash anchor path. NEVER calls any
+ * `/envelopes/{id}/documents/*` DocuSign API — the fingerprint is the
+ * DocuSign-DECLARED per-document sha256 already present on the Connect
+ * payload, not anything Arkova fetched or measured (cross-account fetch is
+ * being locked down by DocuSign 26.3, 2026-09, and fetching a foreign
+ * account's document was never in scope for Arkova's OAuth grant regardless).
+ *
+ * Reuses the SAME `enqueue_connector_artifact` RPC (migration 0343) the
+ * outbound connector path uses (source='docusign'), with the `_direction` /
+ * `_sending_account_id` metadata markers this PR's classifier produces —
+ * both underscore-prefixed, in the write-authority guard's key family
+ * (PR #2472's metadata key write-authority trigger); this handler writes via
+ * the service_role client, which that guard allows.
+ *
+ * `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` is guaranteed true here BY
+ * CONSTRUCTION — config.ts's cross-field guard refuses to boot with
+ * ENABLE_DOCUSIGN_INBOUND=true and that flag off — so this never needs its
+ * own runtime flag check the way the outbound job's `enqueueSignedDocument`
+ * does.
+ */
+async function enqueueInboundDeclaredHashArtifact(args: {
+  integration: DocusignIntegrationRow;
+  event: DocusignCompletedEnvelope;
+  sendingAccountId: string;
+  declaredHash: string;
+}): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- enqueue_connector_artifact (mig 0343) not yet in generated types; same cast convention as the RPC calls above
+  const { data, error } = await (db.rpc as any)('enqueue_connector_artifact', {
+    p_org_id: args.integration.org_id,
+    p_source: 'docusign',
+    p_external_ref: args.event.envelopeId,
+    p_external_revision: null,
+    p_fingerprint_sha256: args.declaredHash,
+    p_byte_length: null,
+    p_source_timestamp: args.event.generatedDateTime ?? null,
+    p_metadata: {
+      account_id: args.event.accountId,
+      envelope_id: args.event.envelopeId,
+      integration_id: args.integration.id,
+      // R4: underscore-prefixed, write-authority-guard key family (PR #2472).
+      _direction: 'inbound',
+      _sending_account_id: args.sendingAccountId,
+    },
+  });
+
+  if (error || !data) {
+    logger.error(
+      { error, integrationId: args.integration.id, envelopeId: args.event.envelopeId },
+      'DocuSign inbound declared-hash connector-artifact enqueue failed',
+    );
+    throw new Error('inbound_connector_artifact_enqueue_failed');
+  }
+
+  return String(data);
+}
+
 docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
   const rawBody = getRawBody(req);
   if (!rawBody) {
@@ -631,11 +859,95 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Replay protection: dedupe on (envelope_id, event_id, generated_at).
-    // DocuSign retries on any non-2xx response, so a duplicate must return
-    // 200 to stop the retry loop. Migration 0256 creates the nonce table.
-    const nonceKey = nonceKeyForEvent(event, payloadHash);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker write has no tenant key; nonce tuple prevents duplicate provider delivery
+    // R4 (docusign-bilateral-2026-08): classify AFTER HMAC + integration
+    // resolution, from SERVER-STORED state only — see classifyDirection's
+    // doc comment above for the full threat-model rationale.
+    const classification = await classifyDirection(integration, event);
+    const markerClaimsInbound = typeof req.query.customrecipient !== 'undefined';
+    if (markerClaimsInbound && classification.direction === 'outbound') {
+      // The marker cannot upgrade trust — logged, never acted on.
+      logger.warn(
+        { envelopeId: event.envelopeId, accountId: event.accountId },
+        "DocuSign webhook: customrecipient marker claimed inbound but the envelope's owning account is this org's own connected account — classifying outbound",
+      );
+    }
+
+    if (classification.direction === 'inbound') {
+      if (!config.enableDocusignInbound) {
+        // R3 flag-OFF: acknowledge 200 with NO nonce consumed and NO durable
+        // write. Avoids DocuSign retry storms on a path this deploy cannot
+        // process yet, AND preserves recoverability — DocuSign resends on
+        // any non-401/-invalid-sig-shaped failure path is not what's
+        // happening here (this IS a 2xx ack), but critically consuming a
+        // nonce here would permanently discard an inbound envelope that
+        // happened to arrive before the flag was enabled, even after a
+        // later flip-on and resend.
+        logger.info(
+          { envelopeId: event.envelopeId, accountId: event.accountId },
+          'DocuSign webhook: inbound envelope acknowledged, ENABLE_DOCUSIGN_INBOUND is off — no nonce consumed, no durable write',
+        );
+        res.status(200).json({ ok: true, inbound: true, skipped: 'flag_disabled' });
+        return;
+      }
+
+      const declaredHash = extractSingleDeclaredHash(event);
+      if (!declaredHash) {
+        // Orphan-drop BEFORE any nonce write: nothing to reconcile on retry —
+        // a resend of the same unusable envelope orphan-drops again,
+        // harmlessly. Bounded 200, never a crash.
+        recordInboundOrphanDrop({
+          envelopeId: event.envelopeId,
+          accountId: event.accountId,
+          reason: classification.orphanReason ?? 'no_usable_declared_hash',
+        });
+        res.status(200).json({ ok: true, inbound: true, skipped: 'no_usable_declared_hash' });
+        return;
+      }
+
+      // Replay protection, tenant-scoped (migration 0424) by the resolving
+      // account_id — same shape as the outbound branch below.
+      const inboundNonceKey = nonceKeyForEvent(event, payloadHash, event.accountId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker write scoped by account_id (migration 0424); nonce tuple prevents duplicate provider delivery
+      const { error: inboundNonceErr } = await (db as any).from('docusign_webhook_nonces').insert(inboundNonceKey);
+      if (inboundNonceErr) {
+        if ((inboundNonceErr as { code?: string }).code === '23505') {
+          logger.info(
+            { envelopeId: event.envelopeId, eventId: event.eventId },
+            'DocuSign webhook: duplicate inbound delivery — returning 200',
+          );
+          res.status(200).json({ ok: true, duplicate: true, inbound: true });
+          return;
+        }
+        logger.error(
+          { error: inboundNonceErr, envelopeId: event.envelopeId },
+          'DocuSign webhook: inbound nonce insert failed',
+        );
+        res.status(500).json({ error: { code: 'nonce_insert_failed' } });
+        return;
+      }
+
+      try {
+        await enqueueInboundDeclaredHashArtifact({
+          integration,
+          event,
+          sendingAccountId: classification.sendingAccountId,
+          declaredHash,
+        });
+      } catch (enqueueErr) {
+        await rollbackNonceAfterEnqueueFailure(inboundNonceKey);
+        throw enqueueErr;
+      }
+      res.status(202).json({ ok: true, inbound: true });
+      return;
+    }
+
+    // ── OUTBOUND: existing path, unchanged ──────────────────────────────
+    // Replay protection: dedupe on (account_id, envelope_id, event_id,
+    // generated_at). DocuSign retries on any non-2xx response, so a
+    // duplicate must return 200 to stop the retry loop. Migration 0256
+    // creates the nonce table; migration 0424 tenant-scopes it by account_id.
+    const nonceKey = nonceKeyForEvent(event, payloadHash, event.accountId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker write scoped by account_id (migration 0424); nonce tuple prevents duplicate provider delivery
     const { error: nonceErr } = await (db as any).from('docusign_webhook_nonces').insert(nonceKey);
     if (nonceErr) {
       // Postgres unique_violation — duplicate delivery, ack so retries stop.

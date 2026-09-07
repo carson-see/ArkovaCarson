@@ -2276,6 +2276,10 @@ _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-on
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
 
+## PR #2476 release review — 2026-09-05
+
+Held for current-base T3 verification. 0424 alone permits a recent legacy nonce to be replayed with a non-NULL account id. 0435 serializes the vendor tuple and preserves legacy/global collision behavior across mixed old/new workers while keeping distinct known accounts independent. Seven real PostgreSQL checks cover replay, both concurrent writer orders across session timezones, tenant separation, same-account duplicates and non-destructive rollback/reapply. Keep both additive migrations during worker rollback; exact old-schema rollback refuses nonempty nonce tables. No production change or inbound enablement has occurred.
+
 _Last refreshed: 2026-09-05 by CTO session (Claude) — claims verified against `gh pr view` (#2635 merged, #2637 head/body), the harness evidence under `~/arkova-soak/mfa-3167/`, and the Supabase Management API project list._
 
 _Last refreshed: 2026-09-05 by Claude-Fable-5.1-CTO-session — claims verified against gcloud/MCP/CI output._
