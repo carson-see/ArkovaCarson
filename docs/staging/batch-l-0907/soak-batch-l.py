@@ -87,6 +87,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -119,6 +120,11 @@ def expect(cond: bool, msg: str) -> None:
 
 def rand(n=8) -> str:
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=n))
+
+
+def hex64() -> str:
+    """A fresh 64-char lowercase-hex fingerprint (anchors_fingerprint_format CHECK)."""
+    return "".join(random.choices("0123456789abcdef", k=64))
 
 
 class CIHeaders(dict):
@@ -263,9 +269,13 @@ def probe_deps(rig: "Rig", base: str, tag: str, out: dict) -> None:
     expect(seeded is not None, "P1: seed org did not land")
 
     pub = f"bl{tag.lower()}{rand(6)}"
+    # anchors requires user_id + fingerprint(char 64) + filename; the fixture user
+    # from standup owns the row. `fingerprint` is char(64), not `document_fingerprint`.
+    owner = read("isolation-a-user-id.txt")
     rig.sql(
-        "INSERT INTO anchors (org_id, public_id, document_fingerprint, status) VALUES "
-        f"({q(seeded['id'])}, {q(pub)}, {q('bl' + rand(60))}, 'PENDING')"
+        "INSERT INTO anchors (user_id, org_id, fingerprint, filename, public_id, status) VALUES "
+        f"({q(owner)}, {q(seeded['id'])}, {q(hex64())}, "
+        f"{q('batchl-' + tag + '.pdf')}, {q(pub)}, 'PENDING')"
     )
 
     st, _h, raw = http("GET", f"{base}/api/v1/verify/{pub}", headers=hdrs, timeout=60)
@@ -273,10 +283,21 @@ def probe_deps(rig: "Rig", base: str, tag: str, out: dict) -> None:
     expect(st == 200,
            f"P1/P3: the worker could not read back a seeded anchor through supabase-js/undici: "
            f"GET /api/v1/verify/{pub} -> {st} {str(body)[:240]}")
-    expect(str(body.get("public_id", body.get("publicId", ""))) == pub,
-           f"P1: /verify returned a different record than the one seeded: {str(body)[:240]}")
+    # The frozen v1 contract deliberately does NOT return public_id/org_id/anchors.id
+    # (CLAUDE.md §6); the public identifier surfaces only through the derived
+    # `record_uri`. Asserting on that is the correct read-back check AND proves the
+    # derived field was built from the row just seeded.
+    expect(str(body.get("record_uri", "")).endswith("/" + pub),
+           f"P1: /verify record_uri does not resolve to the seeded public_id {pub}: {str(body)[:240]}")
+    expect(body.get("status") == "PENDING",
+           f"P1: /verify returned status {body.get('status')!r} for a freshly seeded PENDING anchor")
+    expect(body.get("issuer_name") == org,
+           f"P1: /verify issuer_name {body.get('issuer_name')!r} != the seeded org {org!r} — "
+           "the anchors->organizations join did not resolve through supabase-js")
     out["P1_db_client_readback"] = {"public_id": pub, "status": st,
-                                    "returned_public_id": body.get("public_id", body.get("publicId"))}
+                                    "record_uri": body.get("record_uri"),
+                                    "anchor_status": body.get("status"),
+                                    "issuer_name": body.get("issuer_name")}
 
     # --- P3. express router: a 404 control on an unknown id ------------------
     # A 200 alone does not prove routing; the negative case must still be a clean
@@ -297,13 +318,21 @@ def probe_deps(rig: "Rig", base: str, tag: str, out: dict) -> None:
     # write path (§1.1). A validation layer that silently started ACCEPTING junk
     # would look identical to a healthy worker on the happy path above.
     bad_cases = []
-    for bad in ("", "%00", "a" * 512, "../../etc/passwd", "'; SELECT 1--"):
-        bs, _bh, braw = http("GET", f"{base}/api/v1/verify/{bad}", headers=hdrs, timeout=45)
-        bad_cases.append({"input": bad[:40], "status": bs, "bytes": len(braw)})
+    for bad in ("", "%00", "a" * 512, "../../etc/passwd", "'; SELECT 1--", "<script>alert(1)</script>"):
+        # Percent-encode so the request actually LEAVES the client. An unencoded
+        # quote/space makes urllib raise, which surfaces as status 0 -- and a status
+        # 0 would satisfy "not 200, under 500" without the worker ever being asked.
+        # That is a hollow assertion, so a transport failure is now an explicit FAIL.
+        bs, _bh, braw = http("GET", f"{base}/api/v1/verify/{urllib.parse.quote(bad, safe='')}",
+                             headers=hdrs, timeout=45)
+        bad_cases.append({"input": bad[:48], "status": bs, "bytes": len(braw)})
+        expect(bs != 0,
+               f"P4: malformed public_id {bad[:48]!r} never reached the worker "
+               f"(transport error) — this assertion would otherwise pass vacuously")
         expect(bs < 500,
-               f"P4: malformed public_id {bad[:40]!r} produced {bs} — validation did not refuse it cleanly")
+               f"P4: malformed public_id {bad[:48]!r} produced {bs} — validation did not refuse it cleanly")
         expect(bs != 200,
-               f"P4: malformed public_id {bad[:40]!r} was ACCEPTED with 200 — zod validation regressed")
+               f"P4: malformed public_id {bad[:48]!r} was ACCEPTED with 200 — zod validation regressed")
     out["P4_zod_validation_refusals"] = bad_cases
 
     # --- P2. jose: the JWT verifier must still REJECT a bad token ------------
