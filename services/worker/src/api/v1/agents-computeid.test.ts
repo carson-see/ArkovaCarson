@@ -15,6 +15,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbFromMock = vi.fn();
 const auditMock = vi.fn();
+const mockConfig = vi.hoisted(() => ({
+  enableComputeidIntegration: true,
+  computeidCaCertPem: '' as string | undefined,
+}));
+vi.mock('../../config.js', () => ({ config: mockConfig }));
 vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args) } }));
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({
@@ -118,13 +123,13 @@ const validBody = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   dbFromMock.mockReset();
-  process.env.ENABLE_COMPUTEID_INTEGRATION = 'true';
-  process.env.COMPUTEID_CA_CERT_PEM = CA_PEM;
+  mockConfig.enableComputeidIntegration = true;
+  mockConfig.computeidCaCertPem = CA_PEM;
 });
 
 describe('POST /api/v1/agents/computeid/admit — gating + auth', () => {
   it('503 vendor_gated when the integration flag is off', async () => {
-    delete process.env.ENABLE_COMPUTEID_INTEGRATION;
+    mockConfig.enableComputeidIntegration = false;
     const res = await admit(validBody());
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe('vendor_gated');
@@ -139,9 +144,9 @@ describe('POST /api/v1/agents/computeid/admit — gating + auth', () => {
     expect(res.body.error.code).toBe('api_key_required');
   });
   it('500 ca_unconfigured when the CA pin is missing or unparseable', async () => {
-    delete process.env.COMPUTEID_CA_CERT_PEM;
+    mockConfig.computeidCaCertPem = undefined;
     expect((await admit(validBody())).body.error.code).toBe('ca_unconfigured');
-    process.env.COMPUTEID_CA_CERT_PEM = 'garbage';
+    mockConfig.computeidCaCertPem = 'garbage';
     expect((await admit(validBody())).body.error.code).toBe('ca_unconfigured');
   });
   it('500 when the API-key HMAC secret is not attached to the request', async () => {

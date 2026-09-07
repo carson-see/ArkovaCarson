@@ -10,9 +10,11 @@
  * this path), binds the passport to a new `agents` row, and mints an
  * agent-scoped key. The raw key is returned once (Constitution 1.4).
  *
- * Gate: `ENABLE_COMPUTEID_INTEGRATION=true` + `COMPUTEID_CA_CERT_PEM`.
+ * Gate: `ENABLE_COMPUTEID_INTEGRATION=true` + `COMPUTEID_CA_CERT_PEM`, both read
+ * through the typed `config` export (SCRUM-1258 — no ad-hoc `process.env`).
  */
 import { Router, type Request, type Response } from 'express';
+import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { recordAuditEvent } from '../../utils/auditEvent.js';
@@ -37,7 +39,7 @@ const DEFAULT_PASSPORT_AGENT_SCOPES = ['verify'];
 
 let cachedCa: { pem: string; ca: PinnedCa } | null = null;
 function getPinnedCa(): PinnedCa | null {
-  const pem = process.env.COMPUTEID_CA_CERT_PEM ?? '';
+  const pem = config.computeidCaCertPem ?? '';
   if (!pem.trim()) return null;
   if (cachedCa && cachedCa.pem === pem) return cachedCa.ca;
   try {
@@ -57,7 +59,7 @@ function clampScopes(requested: string[] | undefined): string[] {
 }
 
 agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
-  if (process.env.ENABLE_COMPUTEID_INTEGRATION !== 'true') {
+  if (!config.enableComputeidIntegration) {
     res.status(503).json({
       error: { code: 'vendor_gated', message: 'ComputeID integration is not enabled in this environment.' },
     });

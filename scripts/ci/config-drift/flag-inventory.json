@@ -507,8 +507,9 @@
       "sources": ["env"],
       "resolvers": [
         "config.ts enableComputeidIntegration",
-        "api/v1/webhooks/computeid.ts (raw process.env)",
-        "api/v1/agents-computeid.ts (raw process.env)"
+        "flagRegistry.ts ENV_FLAG_GETTERS",
+        "api/v1/webhooks/computeid.ts (via config)",
+        "api/v1/agents-computeid.ts (via config)"
       ],
       "prodDbRow": "absent",
       "prodResolved": false,

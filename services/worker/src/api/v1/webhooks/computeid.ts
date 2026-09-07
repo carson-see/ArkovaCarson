@@ -18,10 +18,14 @@
  * Privacy: the partner-supplied free-text `reason` and the raw body never
  * reach the logger, Sentry, `audit_events.details`, or `webhook_dlq`.
  * Gate: `ENABLE_COMPUTEID_INTEGRATION=true` (default off → 503 vendor_gated).
+ * Flag and secret are read through the typed `config` export, never
+ * `process.env` (SCRUM-1258 ratchet: a Cloud Run typo must fail loudly at boot).
  */
 import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
+import { config } from '../../../config.js';
 import { db } from '../../../utils/db.js';
+import { truncateUtf16Safe } from '../../../utils/utf16-truncate.js';
 import { logger } from '../../../utils/logger.js';
 import { recordAuditEvent } from '../../../utils/auditEvent.js';
 import { verifyHmacSha256Hex } from '../../../integrations/oauth/hmac.js';
@@ -70,7 +74,7 @@ function signatureHex(req: Request): string | undefined {
 }
 
 export function configuredSecrets(): string[] {
-  return (process.env.COMPUTEID_WEBHOOK_SECRET ?? '')
+  return (config.computeidWebhookSecret ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
@@ -85,7 +89,7 @@ async function dlqInsert(args: { reason: string; externalId: string | null; payl
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any).from('webhook_dlq').insert({
       provider: PROVIDER,
-      reason: args.reason.slice(0, 500),
+      reason: truncateUtf16Safe(args.reason, 500),
       external_id: args.externalId,
       payload_hash: args.payloadHash,
     });
@@ -112,7 +116,7 @@ async function findBoundAgents(passportId: string): Promise<BoundAgentRow[]> {
 }
 
 computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
-  if (process.env.ENABLE_COMPUTEID_INTEGRATION !== 'true') {
+  if (!config.enableComputeidIntegration) {
     res.status(503).json({
       error: {
         code: 'vendor_gated',
@@ -182,7 +186,7 @@ computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
     const maybeId = (parsedJson as { passport_id?: unknown }).passport_id;
     await dlqInsert({
       reason: `passport_event_shape_invalid:${event}`,
-      externalId: typeof maybeId === 'string' ? maybeId.slice(0, 64) : null,
+      externalId: typeof maybeId === 'string' ? truncateUtf16Safe(maybeId, 64) : null,
       payloadHash,
     });
     res.status(400).json({ error: { code: 'invalid_body' } });

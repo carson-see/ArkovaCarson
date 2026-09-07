@@ -16,6 +16,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const dbFromMock = vi.fn();
 const logCalls = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 const auditMock = vi.fn();
+const mockConfig = vi.hoisted(() => ({
+  enableComputeidIntegration: true,
+  computeidWebhookSecret: 'computeid-fixture-secret-aaaa' as string | undefined,
+}));
+vi.mock('../../../config.js', () => ({ config: mockConfig }));
 
 vi.mock('../../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args) } }));
 vi.mock('../../../utils/logger.js', () => ({ logger: logCalls }));
@@ -100,13 +105,13 @@ const agentRow = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   dbFromMock.mockReset();
-  process.env.ENABLE_COMPUTEID_INTEGRATION = 'true';
-  process.env.COMPUTEID_WEBHOOK_SECRET = TEST_SECRET;
+  mockConfig.enableComputeidIntegration = true;
+  mockConfig.computeidWebhookSecret = TEST_SECRET;
 });
 
 describe('POST /webhooks/computeid — gating + signature', () => {
-  it('503 vendor_gated when ENABLE_COMPUTEID_INTEGRATION is not "true" (no DB, no signature check)', async () => {
-    delete process.env.ENABLE_COMPUTEID_INTEGRATION;
+  it('503 vendor_gated when config.enableComputeidIntegration is false (no DB, no signature check)', async () => {
+    mockConfig.enableComputeidIntegration = false;
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe('vendor_gated');
@@ -114,7 +119,7 @@ describe('POST /webhooks/computeid — gating + signature', () => {
   });
 
   it('503 webhook_unconfigured when the secret is missing', async () => {
-    delete process.env.COMPUTEID_WEBHOOK_SECRET;
+    mockConfig.computeidWebhookSecret = undefined;
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe('webhook_unconfigured');
@@ -134,7 +139,7 @@ describe('POST /webhooks/computeid — gating + signature', () => {
     const fx = JSON.parse(
       readFileSync(new URL('../../../integrations/computeid/__fixtures__/golden-test-delivery.json', import.meta.url), 'utf8'),
     ) as { secret: string; header_value: string; body: string };
-    process.env.COMPUTEID_WEBHOOK_SECRET = fx.secret;
+    mockConfig.computeidWebhookSecret = fx.secret;
     const res = await post(fx.body, fx.header_value);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, ignored: true, event: 'test' });
@@ -144,7 +149,7 @@ describe('POST /webhooks/computeid — gating + signature', () => {
   });
 
   it('supports secret rotation: a comma-separated list accepts any listed secret, rejects others', async () => {
-    process.env.COMPUTEID_WEBHOOK_SECRET = 'old-secret, new-secret';
+    mockConfig.computeidWebhookSecret = 'old-secret, new-secret';
     const body = JSON.stringify({ event: 'test', timestamp: T2 });
     expect((await post(body, sign(body, 'old-secret'))).status).toBe(200);
     expect((await post(body, sign(body, 'new-secret'))).status).toBe(200);

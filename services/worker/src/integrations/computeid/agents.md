@@ -33,6 +33,7 @@ Partner integration with ComputeID (Praveen Gajjala, CEO; `https://api.aicompute
 - **DO NOT** persist or log the partner's free-text `reason` (it may carry PII). Audit rows record only its length.
 - **DO NOT** add a nonce table here without a migration — that is PR-B (SCRUM-4497). Replay safety in v1 is the ordering guard on the signed timestamp (`decidePassportEvent`): an event at or before `last_event_at` is a no-op, `revoked` is terminal, `already_in_state` still advances the clock.
 - RSA padding is PKCS#1 v1.5 (Node's default for `crypto.sign('sha256', …)`). If the first REAL receipt fails with `invalid_signature`, suspect PSS and confirm with the partner — do not loosen the verifier to try both.
+- Both handlers read the flag, secret and CA pin through the typed `config` export — never `process.env` (SCRUM-1258 ratchet, enforced by `check-worker-env-adhoc`). Tests mock `config.js` with a hoisted mutable object.
 - Binding lookups use `.contains('metadata', { computeid: { passport_id } })` (jsonb `@>`). `agents` is not in the tenant-isolation lint list, but every write re-scopes by `org_id` anyway.
 
 ## Known gaps (tracked, not hidden)
