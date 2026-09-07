@@ -4,6 +4,11 @@
     {
       "date": "2026-09-07",
       "author": "CTO session \u2014 RTE prod-apply",
+      "note": "REMOVED 0440: PR #2658 merged 2026-09-07T22:23:49Z, so 0440_org_credits_cap_enforced.sql is on main and the prefix is present in both places (stale exemption per the INVARIANT)."
+    },
+    {
+      "date": "2026-09-07",
+      "author": "CTO session \u2014 RTE prod-apply",
       "note": "REMOVED 0428: PR #2564 merged 2026-09-07T20:54:10Z, so 0428_admin_profile_rpcs_remove_hot_table_trigger_ddl.sql is on main and the prefix is present in both places (stale exemption per the INVARIANT)."
     },
     {
@@ -154,7 +159,6 @@
   ],
   "exemptPrefixes": [
     "0415",
-    "0425",
-    "0440"
+    "0425"
   ]
 }
