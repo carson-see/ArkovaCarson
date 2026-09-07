@@ -3,7 +3,6 @@ import {
   enumType,
   boolType,
   eq,
-  and,
   or,
   not,
   lit,

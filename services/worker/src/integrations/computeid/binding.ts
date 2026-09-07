@@ -103,16 +103,20 @@ export function orderingFloor(binding: ComputeIdBinding): number | undefined {
 
 const noop = (reason: PassportDecisionReason): PassportEventDecision => ({ action: 'noop', reason });
 
+/** Older than the floor, or the exact (timestamp, event) pair already applied. */
+function isStaleEvent(binding: ComputeIdBinding, event: PassportEventInput, ts: number): boolean {
+  const floor = orderingFloor(binding);
+  if (floor === undefined) return false;
+  return ts < floor || (ts === floor && binding.last_event === event.event);
+}
+
+
 export function decidePassportEvent(agent: AgentState, event: PassportEventInput): PassportEventDecision {
   const binding = readBinding(agent.metadata);
   if (!binding) return noop('unbound');
   const ts = Date.parse(event.timestamp);
   if (!Number.isFinite(ts)) return noop('stale_event');
-  const floor = orderingFloor(binding);
-  if (floor !== undefined) {
-    if (ts < floor) return noop('stale_event');
-    if (ts === floor && binding.last_event === event.event) return noop('stale_event');
-  }
+  if (isStaleEvent(binding, event, ts)) return noop('stale_event');
   if (agent.status === 'revoked') return noop('already_revoked');
   switch (event.event) {
     case 'passport.revoked':

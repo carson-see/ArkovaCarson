@@ -33,8 +33,8 @@ export function createChainableBuilder(
   b.delete = vi.fn(() => (opts.deleteResult ? createChainableBuilder(opts.deleteResult) : b));
   // typescript:S7739 — "Do not add `then` to an object". Suppressed on purpose:
   // supabase-js builders ARE lazy thenables, and the stub must be awaitable at
-  // any point in the chain to mirror them. // NOSONAR
-  b.then = (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) => {
+  // any point in the chain to mirror them.
+  b.then = (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) => { // NOSONAR S7739 — thenable by design
     const r = queue.length > 1 ? (queue.shift() as DbResult) : queue[0];
     return Promise.resolve({ data: r?.data ?? null, error: r?.error ?? null }).then(onF, onR);
   };

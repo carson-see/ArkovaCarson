@@ -118,72 +118,90 @@ async function findBoundAgents(passportId: string): Promise<BoundAgentRow[]> {
   return (data as BoundAgentRow[] | null) ?? [];
 }
 
-computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
-  if (!config.enableComputeidIntegration) {
-    res.status(503).json({
-      error: {
-        code: 'vendor_gated',
-        message: 'ComputeID integration is not enabled in this environment (ENABLE_COMPUTEID_INTEGRATION).',
-      },
-    });
-    return;
-  }
+interface Reply {
+  status: number;
+  body: Record<string, unknown>;
+}
 
+const reply = (status: number, body: Record<string, unknown>): Reply => ({ status, body });
+const INVALID_BODY = { error: { code: 'invalid_body' } };
+const PROCESSING_FAILED = { error: { code: 'webhook_processing_failed' } };
+
+function send(res: Response, r: Reply): void {
+  res.status(r.status).json(r.body);
+}
+
+/** Flag gate, secret presence, raw-body presence, size cap, HMAC — in that order. */
+function authenticateDelivery(req: Request): { ok: true; rawBody: Buffer } | { ok: false; reply: Reply } {
+  if (!config.enableComputeidIntegration) {
+    return {
+      ok: false,
+      reply: reply(503, {
+        error: {
+          code: 'vendor_gated',
+          message: 'ComputeID integration is not enabled in this environment (ENABLE_COMPUTEID_INTEGRATION).',
+        },
+      }),
+    };
+  }
   const secrets = configuredSecrets();
   if (secrets.length === 0) {
     logger.error('COMPUTEID_WEBHOOK_SECRET not set — webhook rejected');
-    res.status(503).json({ error: { code: 'webhook_unconfigured' } });
-    return;
+    return { ok: false, reply: reply(503, { error: { code: 'webhook_unconfigured' } }) };
   }
-
   const rawBody = getRawBody(req);
   if (!rawBody) {
     logger.error({ path: req.path }, 'ComputeID webhook: rawBody missing — raw parser must be mounted');
-    res.status(500).json({ error: { code: 'misconfigured_raw_body' } });
-    return;
+    return { ok: false, reply: reply(500, { error: { code: 'misconfigured_raw_body' } }) };
   }
   if (rawBody.length > COMPUTEID_WEBHOOK_MAX_BODY_BYTES) {
-    res.status(413).json({ error: { code: 'payload_too_large' } });
-    return;
+    return { ok: false, reply: reply(413, { error: { code: 'payload_too_large' } }) };
   }
-
   const signature = signatureHex(req);
-  const signed = secrets.some((secret) => verifyHmacSha256Hex({ rawBody, signature, secret }));
-  if (!signed) {
-    res.status(401).json({ error: { code: 'invalid_signature' } });
-    return;
+  if (!secrets.some((secret) => verifyHmacSha256Hex({ rawBody, signature, secret }))) {
+    return { ok: false, reply: reply(401, { error: { code: 'invalid_signature' } }) };
   }
+  return { ok: true, rawBody };
+}
 
-  const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
+/** Partner free text is never persisted or logged; only its size is recorded. */
+function withheldChars(reason: unknown): number {
+  if (typeof reason === 'string') return reason.length;
+  if (reason == null) return 0;
+  return JSON.stringify(reason).length;
+}
 
+interface PassportDelivery {
+  event: ComputeIdPassportEvent;
+  passportId: string;
+  timestamp: string;
+  payloadHash: string;
+  withheldReasonChars: number;
+}
+
+type ParsedDelivery = { kind: 'reply'; reply: Reply } | { kind: 'passport'; delivery: PassportDelivery };
+
+/** JSON → envelope → (test / unknown event acknowledged) → passport.* payload. */
+async function parseDelivery(rawBody: Buffer, payloadHash: string): Promise<ParsedDelivery> {
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(rawBody.toString('utf8'));
   } catch {
     // Fixed reason strings only: a JSON parse error message echoes body bytes.
     await dlqInsert({ reason: 'invalid_body:json_parse', externalId: null, payloadHash });
-    res.status(400).json({ error: { code: 'invalid_body' } });
-    return;
+    return { kind: 'reply', reply: reply(400, INVALID_BODY) };
   }
   const envelope = ComputeIdWebhookEnvelope.safeParse(parsedJson);
   if (!envelope.success) {
     await dlqInsert({ reason: 'invalid_body:envelope', externalId: null, payloadHash });
-    res.status(400).json({ error: { code: 'invalid_body' } });
-    return;
+    return { kind: 'reply', reply: reply(400, INVALID_BODY) };
   }
-
   const { event } = envelope.data;
-  if (event === COMPUTEID_TEST_EVENT) {
-    logger.info({ provider: PROVIDER, event }, 'ComputeID webhook: test delivery acknowledged');
-    res.status(200).json({ ok: true, ignored: true, event });
-    return;
-  }
   if (!isPassportEvent(event)) {
-    logger.info({ provider: PROVIDER, event }, 'ComputeID webhook: unrecognized event acknowledged');
-    res.status(200).json({ ok: true, ignored: true, event });
-    return;
+    const what = event === COMPUTEID_TEST_EVENT ? 'test delivery' : 'unrecognized event';
+    logger.info({ provider: PROVIDER, event }, `ComputeID webhook: ${what} acknowledged`);
+    return { kind: 'reply', reply: reply(200, { ok: true, ignored: true, event }) };
   }
-
   const passportEvent = ComputeIdPassportEventPayload.safeParse(parsedJson);
   if (!passportEvent.success) {
     const maybeId = (parsedJson as { passport_id?: unknown }).passport_id;
@@ -192,121 +210,162 @@ computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
       externalId: typeof maybeId === 'string' ? truncateUtf16Safe(maybeId, 64) : null,
       payloadHash,
     });
-    res.status(400).json({ error: { code: 'invalid_body' } });
-    return;
+    return { kind: 'reply', reply: reply(400, INVALID_BODY) };
   }
   const { passport_id: passportId, timestamp, reason } = passportEvent.data;
-  const withheldReasonChars = typeof reason === 'string' ? reason.length : reason == null ? 0 : JSON.stringify(reason).length;
+  return {
+    kind: 'passport',
+    delivery: { event, passportId, timestamp, payloadHash, withheldReasonChars: withheldChars(reason) },
+  };
+}
+
+/**
+ * Keys FIRST for deactivation. The auth path reads only api_keys.is_active, so
+ * if the agent row were flipped first and this write failed, a retry would see
+ * the terminal status and never come back for the keys.
+ */
+async function deactivateAgentKeys(agent: BoundAgentRow, d: PassportDelivery): Promise<Reply | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (db as any)
+    .from('api_keys')
+    .update({ is_active: false, revoked_at: d.timestamp, revocation_reason: `computeid:${d.event}` })
+    .eq('org_id', agent.org_id)
+    .eq('agent_id', agent.id)
+    .eq('is_active', true);
+  if (!error) return null;
+  logger.error({ error, agentId: agent.id, event: d.event }, 'ComputeID webhook: agent key deactivation failed');
+  await dlqInsert({ reason: `agent_keys_deactivate_failed:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
+  return reply(500, PROCESSING_FAILED);
+}
+
+/**
+ * Reactivation AFTER the row is active, restoring only the keys WE deactivated
+ * for a suspension — never keys revoked for any other reason.
+ */
+async function reactivateAgentKeys(agent: BoundAgentRow, d: PassportDelivery): Promise<Reply | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (db as any)
+    .from('api_keys')
+    .update({ is_active: true, revoked_at: null, revocation_reason: null })
+    .eq('org_id', agent.org_id)
+    .eq('agent_id', agent.id)
+    .eq('is_active', false)
+    .eq('revocation_reason', 'computeid:passport.suspended');
+  if (!error) return null;
+  logger.error({ error, agentId: agent.id }, 'ComputeID webhook: agent key reinstatement failed');
+  await dlqInsert({ reason: 'agent_keys_reinstate_failed', externalId: d.passportId, payloadHash: d.payloadHash });
+  return reply(500, PROCESSING_FAILED);
+}
+
+/**
+ * Compare-and-set on the row we decided from. Two concurrent deliveries both
+ * read the same snapshot; only the first write lands, the second sees zero rows
+ * and answers 409 so the sender re-delivers against fresh state.
+ */
+async function compareAndSetAgent(
+  agent: BoundAgentRow,
+  update: Record<string, unknown>,
+  d: PassportDelivery,
+): Promise<Reply | null> {
+  const prevLastEventAt = readBinding(agent.metadata)?.last_event_at ?? null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cas = (db as any).from('agents').update(update).eq('org_id', agent.org_id).eq('id', agent.id).eq('status', agent.status);
+  cas = prevLastEventAt === null
+    ? cas.is('metadata->computeid->>last_event_at', null)
+    : cas.eq('metadata->computeid->>last_event_at', prevLastEventAt);
+  const { data: casRows, error } = await cas.select('id');
+  if (error) {
+    logger.error({ error, agentId: agent.id, event: d.event }, 'ComputeID webhook: agent update failed');
+    await dlqInsert({ reason: `agent_update_failed:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
+    return reply(500, PROCESSING_FAILED);
+  }
+  if (!Array.isArray(casRows) || casRows.length === 0) {
+    logger.warn({ agentId: agent.id, event: d.event }, 'ComputeID webhook: agent row changed underneath us — asking for redelivery');
+    await dlqInsert({ reason: `agent_update_conflict:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
+    return reply(409, { error: { code: 'conflict_retry', message: 'Agent state changed concurrently; redeliver.' } });
+  }
+  return null;
+}
+
+type AgentOutcome = { outcome: 'applied' | 'skipped' } | { outcome: 'failed'; reply: Reply };
+
+/** One bound agent: decide → keys (deactivate) → compare-and-set row → keys (reactivate) → audit. */
+async function processBoundAgent(agent: BoundAgentRow, d: PassportDelivery): Promise<AgentOutcome> {
+  const { decision, update, keyEnforcement } = applyPassportEvent(
+    { status: agent.status, metadata: agent.metadata },
+    { event: d.event, timestamp: d.timestamp },
+  );
+  if (!update) return { outcome: 'skipped' };
+
+  if (keyEnforcement === 'deactivate') {
+    const failed = await deactivateAgentKeys(agent, d);
+    if (failed) return { outcome: 'failed', reply: failed };
+  }
+  const casFailed = await compareAndSetAgent(agent, update, d);
+  if (casFailed) return { outcome: 'failed', reply: casFailed };
+  if (keyEnforcement === 'reactivate') {
+    const failed = await reactivateAgentKeys(agent, d);
+    if (failed) return { outcome: 'failed', reply: failed };
+  }
+  if (decision.action === 'noop') return { outcome: 'skipped' };
+
+  const nextStatus = typeof update.status === 'string' ? update.status : agent.status;
+  void recordAuditEvent({
+    actor_id: null,
+    event_type: AUDIT_EVENT_BY_ACTION[decision.action],
+    event_category: 'SECURITY',
+    target_type: 'agent',
+    target_id: agent.id,
+    org_id: agent.org_id,
+    details:
+      `ComputeID passport ${d.passportId} ${d.event.replace('passport.', '')} at ${d.timestamp}; ` +
+      `agent "${agent.name}" → ${nextStatus}. ` +
+      `Partner-supplied reason withheld (${d.withheldReasonChars} chars).`,
+  });
+  return { outcome: 'applied' };
+}
+
+computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
+  const auth = authenticateDelivery(req);
+  if (!auth.ok) {
+    send(res, auth.reply);
+    return;
+  }
+  const payloadHash = crypto.createHash('sha256').update(auth.rawBody).digest('hex');
+  const parsed = await parseDelivery(auth.rawBody, payloadHash);
+  if (parsed.kind === 'reply') {
+    send(res, parsed.reply);
+    return;
+  }
+  const d = parsed.delivery;
 
   let agents: BoundAgentRow[];
   try {
-    agents = await findBoundAgents(passportId);
+    agents = await findBoundAgents(d.passportId);
   } catch {
-    await dlqInsert({ reason: 'agent_lookup_failed', externalId: passportId, payloadHash });
-    res.status(500).json({ error: { code: 'webhook_processing_failed' } });
+    await dlqInsert({ reason: 'agent_lookup_failed', externalId: d.passportId, payloadHash });
+    send(res, reply(500, PROCESSING_FAILED));
     return;
   }
   if (agents.length === 0) {
-    logger.warn({ provider: PROVIDER, event, passportId }, 'ComputeID webhook: passport not bound to any agent');
-    await dlqInsert({ reason: 'unbound_passport', externalId: passportId, payloadHash });
-    res.status(200).json({ ok: true, orphaned: true, event });
+    logger.warn({ provider: PROVIDER, event: d.event, passportId: d.passportId }, 'ComputeID webhook: passport not bound to any agent');
+    await dlqInsert({ reason: 'unbound_passport', externalId: d.passportId, payloadHash });
+    send(res, reply(200, { ok: true, orphaned: true, event: d.event }));
     return;
   }
 
   let applied = 0;
   let skipped = 0;
   for (const agent of agents) {
-    const { decision, update, keyEnforcement } = applyPassportEvent(
-      { status: agent.status, metadata: agent.metadata },
-      { event, timestamp },
-    );
-    if (!update) {
-      skipped += 1;
-      continue;
-    }
-
-    // Keys FIRST for deactivation. The auth path reads only api_keys.is_active,
-    // so if the agent row were flipped first and this write failed, a retry
-    // would see the terminal status and never come back for the keys.
-    if (keyEnforcement === 'deactivate') {
-      const revocation_reason = `computeid:${event}`;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: keysErr } = await (db as any)
-        .from('api_keys')
-        .update({ is_active: false, revoked_at: timestamp, revocation_reason })
-        .eq('org_id', agent.org_id)
-        .eq('agent_id', agent.id)
-        .eq('is_active', true);
-      if (keysErr) {
-        logger.error({ error: keysErr, agentId: agent.id, event }, 'ComputeID webhook: agent key deactivation failed');
-        await dlqInsert({ reason: `agent_keys_deactivate_failed:${event}`, externalId: passportId, payloadHash });
-        res.status(500).json({ error: { code: 'webhook_processing_failed' } });
-        return;
-      }
-    }
-
-    // Compare-and-set on the row we decided from. Two concurrent deliveries
-    // both read the same snapshot; only the first write lands, the second sees
-    // zero rows and answers 409 so the sender re-delivers against fresh state.
-    const prevLastEventAt = readBinding(agent.metadata)?.last_event_at ?? null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let cas = (db as any).from('agents').update(update).eq('org_id', agent.org_id).eq('id', agent.id).eq('status', agent.status);
-    cas = prevLastEventAt === null
-      ? cas.is('metadata->computeid->>last_event_at', null)
-      : cas.eq('metadata->computeid->>last_event_at', prevLastEventAt);
-    const { data: casRows, error: updateErr } = await cas.select('id');
-    if (updateErr) {
-      logger.error({ error: updateErr, agentId: agent.id, event }, 'ComputeID webhook: agent update failed');
-      await dlqInsert({ reason: `agent_update_failed:${event}`, externalId: passportId, payloadHash });
-      res.status(500).json({ error: { code: 'webhook_processing_failed' } });
+    const result = await processBoundAgent(agent, d);
+    if (result.outcome === 'failed') {
+      send(res, result.reply);
       return;
     }
-    if (!Array.isArray(casRows) || casRows.length === 0) {
-      logger.warn({ agentId: agent.id, event }, 'ComputeID webhook: agent row changed underneath us — asking for redelivery');
-      await dlqInsert({ reason: `agent_update_conflict:${event}`, externalId: passportId, payloadHash });
-      res.status(409).json({ error: { code: 'conflict_retry', message: 'Agent state changed concurrently; redeliver.' } });
-      return;
-    }
-
-    // Reactivation AFTER the row is active, restoring only the keys WE
-    // deactivated for a suspension — never keys revoked for any other reason.
-    if (keyEnforcement === 'reactivate') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: keysErr } = await (db as any)
-        .from('api_keys')
-        .update({ is_active: true, revoked_at: null, revocation_reason: null })
-        .eq('org_id', agent.org_id)
-        .eq('agent_id', agent.id)
-        .eq('is_active', false)
-        .eq('revocation_reason', 'computeid:passport.suspended');
-      if (keysErr) {
-        logger.error({ error: keysErr, agentId: agent.id }, 'ComputeID webhook: agent key reinstatement failed');
-        await dlqInsert({ reason: 'agent_keys_reinstate_failed', externalId: passportId, payloadHash });
-        res.status(500).json({ error: { code: 'webhook_processing_failed' } });
-        return;
-      }
-    }
-
-    if (decision.action === 'noop') {
-      skipped += 1;
-      continue;
-    }
-    applied += 1;
-
-    void recordAuditEvent({
-      actor_id: null,
-      event_type: AUDIT_EVENT_BY_ACTION[decision.action],
-      event_category: 'SECURITY',
-      target_type: 'agent',
-      target_id: agent.id,
-      org_id: agent.org_id,
-      details:
-        `ComputeID passport ${passportId} ${event.replace('passport.', '')} at ${timestamp}; ` +
-        `agent "${agent.name}" → ${String(update.status ?? agent.status)}. ` +
-        `Partner-supplied reason withheld (${withheldReasonChars} chars).`,
-    });
+    if (result.outcome === 'applied') applied += 1;
+    else skipped += 1;
   }
 
-  logger.info({ provider: PROVIDER, event, passportId, applied, skipped }, 'ComputeID webhook: passport event processed');
-  res.status(200).json({ ok: true, event, applied, skipped });
+  logger.info({ provider: PROVIDER, event: d.event, passportId: d.passportId, applied, skipped }, 'ComputeID webhook: passport event processed');
+  res.status(200).json({ ok: true, event: d.event, applied, skipped });
 });

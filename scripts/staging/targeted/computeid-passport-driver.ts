@@ -511,7 +511,8 @@ async function runCycle(ctx: DriverContext, rig: RigContext, stats: DriverStats,
   });
   const mine = stats.outcomes.slice(before);
   const fails = mine.filter((o) => !o.expected).map((o) => `${o.label}:${o.status}`);
-  ctx.log(`cycle ${cycle} requests=${mine.length} ok=${fails.length === 0}${fails.length ? ` fails=${fails.join(',')}` : ''}`);
+  const failNote = fails.length > 0 ? ` fails=${fails.join(',')}` : '';
+  ctx.log(`cycle ${cycle} requests=${mine.length} ok=${fails.length === 0}${failNote}`);
 }
 
 async function main(): Promise<void> {

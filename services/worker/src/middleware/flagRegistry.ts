@@ -87,7 +87,7 @@ const DB_FLAGS = [
 type FlagName = typeof ENV_FLAGS[number] | typeof DB_FLAGS[number];
 
 class FeatureFlagRegistry {
-  private flags = new Map<string, FlagState>();
+  private readonly flags = new Map<string, FlagState>();
 
   /**
    * Initialize the registry — reads all env and DB flags, logs them.

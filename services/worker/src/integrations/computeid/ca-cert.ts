@@ -67,7 +67,7 @@ export function loadPinnedCa(pem: string, now: Date = new Date()): PinnedCa {
       kind: 'certificate',
       publicKey,
       keyId: deriveKeyId(publicKey),
-      subject: cert.subject.replace(/\n/g, ', '),
+      subject: cert.subject.replaceAll('\n', ', '),
       notBefore,
       notAfter,
     };

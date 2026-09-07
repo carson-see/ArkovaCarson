@@ -61,6 +61,34 @@ function clampScopes(requested: readonly ApiKeyScope[] | undefined): ApiKeyScope
   return [...new Set(wanted.filter((s) => allow.has(s)))];
 }
 
+interface BindingRow {
+  id: string;
+  status: string;
+  revoked_at: string | null;
+}
+
+/**
+ * The 409 body when this org already binds the passport, else null. A live
+ * binding is a duplicate. A REVOKED one blocks re-admission unless the receipt
+ * was provably issued after the revocation: a captured, still-unexpired receipt
+ * must not resurrect a passport ComputeID has already revoked.
+ */
+function bindingConflict(rows: readonly BindingRow[], receiptIssuedAt: Date | null): Record<string, unknown> | null {
+  const live = rows.find((r) => r.status !== 'revoked');
+  if (live) return { code: 'passport_already_bound', agent_id: live.id };
+  const revokedAfterReceipt = rows.some((r) => {
+    if (r.status !== 'revoked') return false;
+    if (!receiptIssuedAt) return true; // no issue time → cannot prove it post-dates the revocation
+    const revokedAt = r.revoked_at ? Date.parse(r.revoked_at) : Number.NaN;
+    return !Number.isFinite(revokedAt) || revokedAt >= receiptIssuedAt.getTime();
+  });
+  if (!revokedAfterReceipt) return null;
+  return {
+    code: 'passport_revoked',
+    message: 'This passport was revoked on Arkova after the presented receipt was issued; obtain a fresh receipt.',
+  };
+}
+
 agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
   if (!config.enableComputeidIntegration) {
     res.status(503).json({
@@ -116,10 +144,7 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbAny = db as any;
 
-    // Every binding of this passport in this org, live or revoked. A live one
-    // is a duplicate. A REVOKED one blocks re-admission unless the receipt was
-    // provably issued after the revocation: a captured, still-unexpired receipt
-    // must not resurrect a passport ComputeID has already revoked.
+    // Every binding of this passport in this org, live or revoked (see bindingConflict).
     const { data: existing, error: dupErr } = await dbAny
       .from('agents')
       .select('id, status, revoked_at')
@@ -130,25 +155,10 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       res.status(500).json({ error: { code: 'admission_failed' } });
       return;
     }
-    const rows = (Array.isArray(existing) ? existing : []) as Array<{ id: string; status: string; revoked_at: string | null }>;
-    const live = rows.find((r) => r.status !== 'revoked');
-    if (live) {
-      res.status(409).json({ error: { code: 'passport_already_bound', agent_id: live.id } });
-      return;
-    }
-    const blockingRevocation = rows.find((r) => {
-      if (r.status !== 'revoked') return false;
-      if (!verdict.issuedAt) return true; // receipt carries no issue time → cannot prove it post-dates the revocation
-      const revokedAt = r.revoked_at ? Date.parse(r.revoked_at) : Number.NaN;
-      return !Number.isFinite(revokedAt) || revokedAt >= verdict.issuedAt.getTime();
-    });
-    if (blockingRevocation) {
-      res.status(409).json({
-        error: {
-          code: 'passport_revoked',
-          message: 'This passport was revoked on Arkova after the presented receipt was issued; obtain a fresh receipt.',
-        },
-      });
+    const rows = (Array.isArray(existing) ? existing : []) as BindingRow[];
+    const conflict = bindingConflict(rows, verdict.issuedAt);
+    if (conflict) {
+      res.status(409).json({ error: conflict });
       return;
     }
 
