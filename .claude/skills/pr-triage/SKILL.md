@@ -33,7 +33,7 @@ The recurring one is **`Check supabase/migrations vs prod`**: prod has a ledger 
 
 ## Staging Soak Evidence Gate failures
 
-Most are **body format**, not missing soak work. Load the `soak-evidence` skill. Quick checks: an exact `## Staging Soak Evidence` H2, and a parseable `Tier: T[0-3]` line.
+Most are **body format**, not missing soak work. Load the `soak-evidence` skill. First check the tier the detector computes: a PR that is genuinely T0 should not exist as a PR at all (CLAUDE.md §0 rule 8) — close it and commit the change directly to `main`. Quick checks: an exact `## Staging Soak Evidence` H2, and a parseable `Tier: T[0-3]` line.
 
 If it says *"Declared tier T0 is below required tier T1"*, the path detector found a file it does not classify as docs/tests/CI/tooling. Find which:
 
