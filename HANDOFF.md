@@ -14,6 +14,21 @@
 
 ## Now
 
+### ComputeID AgentPassport integration — PR-A open as DRAFT, nothing in prod (2026-09-07, epic SCRUM-4492, CTO session)
+
+**What exists now:** [PR #2668](https://github.com/carson-see/ArkovaCarson/pull/2668) (draft, T2, head `c3b00d31c…` + this HANDOFF commit) on `feat/computeid-revocation-webhook` — `integrations/computeid/` (pinned-CA loader, offline RSA receipt verifier, JSONB binding + ordering guard), `POST /webhooks/computeid`, `POST /api/v1/agents/computeid/admit`, all dark behind `ENABLE_COMPUTEID_INTEGRATION=false`. No migration. `deploy-worker.yml` untouched on purpose (activation = SCRUM-4495). Jira: stories SCRUM-4493/4494 In Progress, 4495–4498 To Do, subtasks 4499–4502. Confluence: [epic AUDIT 138543105](https://arkova.atlassian.net/wiki/spaces/A/pages/138543105) + one page per story.
+
+**Prod state (read-only, verified 2026-09-07 via Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye`):** no ComputeID/Cortex org (`to_jsonb(o)::text ILIKE '%compute%'` → 0 rows); `agents` exists with **0 rows**; `api_keys.agent_id IS NOT NULL` → **0**; `audit_events.event_type` is free text (≤100), `event_category` CHECK includes `SECURITY`. Nothing from this branch is deployed anywhere.
+
+**Partner facts verified live 2026-09-07 against `https://api.aicomputeid.com` (curl):** webhook signature `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>` — end-to-end delivery captured and committed as a golden fixture; `POST /v1/webhooks/register` **unauthenticated, no URL validation, no DELETE**; `POST /v1/agents/register` **requires X-API-Key** (spec says public) — Arkova holds no key, so **no real receipt has been verified yet**; CA is RSA-2048 only (`pq: null`), `key_id ebb276c2f18ed34f = sha256(SPKI PEM)[:16]`. Full table: SCRUM-4498.
+
+**Local gates on `c3b00d31c`:** 75 new/updated tests green; worker `tsc` + `eslint --max-warnings 0` clean; root `lint:copy`, `check-doc-pointers` (1,466 refs), `config-drift` 62/62 green. Full worker suite 11,276 pass / 34 fail — the 32 in `s33-batch-acceptance` + `zk-proof` fail identically on untouched `origin/main` `1a9581ae2` (baseline worktree, `npm ci`, same files); `s33-wave1-dual-dag` + `ctdl-importer.perf` pass in isolation (parallel-run artifacts).
+
+**Next (owner):** ① Praveen reply — **drafted, not sent**, in thread "Revocation webhooks is live!" (Gmail draft `r-8434177638965826908`): asks for our API key, one real `/verify` JSON, retry policy, auth+DELETE on register, a real revocation during our soak (Carson to send). ② T2 12 h soak (SCRUM-4499): clean rig via preflight `--prod-project-ref`, register the staging URL at ComputeID, signed synthetic `passport.*` driver + admission against a staging SPKI pin, rollback rehearsal, evidence block → `gh pr ready` (RTE/CTO). ③ SCRUM-4495 activation only after a golden test on a **real** receipt (SCRUM-4501). ④ SCRUM-4496 org provisioning + guide before **2026-10-01** (operator-approved prod writes). ⑤ PR-B SCRUM-4497 (T3 migration). **Do not flip the flag, register a prod URL, or provision the org from this branch's claims — each needs its own artifact.**
+
+**Incidental, not fixed here:** `docs/partners/hakichain-integration-guide.md` still names the SDK `@carsonarkova/sdk`; the published packages are unscoped `arkova` / `arkova-mcp-server` (memory `project_arkova_public_package_names`, verified 09-05). Bug Tracker row owed at SCRUM-4500 close-out.
+
+
 ### State as of 2026-09-05T21:40Z (CTO session, Claude) — read this block first; everything below it in `## Now` is dated and superseded where it disagrees
 
 **Verified live this session:** `curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health`, `gcloud run services describe arkova-worker --project arkova1 --region us-central1`, `gh variable list`, Supabase MCP `list_projects` / `list_migrations` / `execute_sql` on `vzwyaatejekddvltxyye`, `gcloud scheduler jobs list --location us-central1`, `gcloud logging read`, Sentry `search_issues`, `gh pr view` on every open PR, and the driver `status.json` files of the running soaks.
@@ -2274,4 +2289,4 @@ _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI 
 
 _Last refreshed: 2026-09-05 by CTO session (Claude) — claims verified against `gh pr view` (#2635 merged, #2637 head/body), the harness evidence under `~/arkova-soak/mfa-3167/`, and the Supabase Management API project list._
 
-_Last refreshed: 2026-09-05 by Claude-Fable-5.1-CTO-session — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-07 by Claude Fable 5.1 (CTO session) — claims verified against gcloud/MCP/CI output._
