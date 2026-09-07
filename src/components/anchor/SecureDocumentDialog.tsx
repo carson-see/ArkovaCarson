@@ -613,8 +613,8 @@ export function SecureDocumentDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className={step === 'bulk' || step === 'mixed-batch' ? 'max-w-3xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg max-h-[90vh] overflow-y-auto'}>
-        <DialogHeader>
+      <DialogContent className={`w-[calc(100%_-_2rem)] max-h-[calc(100dvh_-_2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto overscroll-contain [overflow-wrap:anywhere] p-4 sm:p-6 ${step === 'bulk' || step === 'mixed-batch' ? 'max-w-3xl' : 'max-w-lg'}`}>
+        <DialogHeader className="min-w-0 pr-6">
           {/* SCRUM-1755 — title is stable across single + bulk paths. The user
               clicked "Secure Document" and is securing one or many; the system
               detects the shape, no separate "Bulk Upload" affordance. */}
@@ -627,7 +627,7 @@ export function SecureDocumentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="py-4">
+        <div className="min-w-0 py-4">
           {step === 'upload' && (
             <FileUpload
               onFileSelect={handleFileSelect}
@@ -650,26 +650,26 @@ export function SecureDocumentDialog({
                 </p>
               </div>
               <div className="rounded-lg border p-4 space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Type</span>
-                  <span className="font-medium">{attestationData.attestation_type.replace(/_/g, ' ')}</span>
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                  <span className="shrink-0 text-muted-foreground">Type</span>
+                  <span className="min-w-0 font-medium sm:text-right">{attestationData.attestation_type.replace(/_/g, ' ')}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Subject</span>
-                  <span className="font-medium truncate max-w-[250px]">{attestationData.subject_identifier}</span>
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                  <span className="shrink-0 text-muted-foreground">Subject</span>
+                  <span className="min-w-0 font-medium sm:max-w-[250px] sm:text-right">{attestationData.subject_identifier}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Attester</span>
-                  <span className="font-medium">{attestationData.attester_name}</span>
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                  <span className="shrink-0 text-muted-foreground">Attester</span>
+                  <span className="min-w-0 font-medium sm:text-right">{attestationData.attester_name}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Claims</span>
-                  <span className="font-medium">{attestationData.claims.length}</span>
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                  <span className="shrink-0 text-muted-foreground">Claims</span>
+                  <span className="min-w-0 font-medium sm:text-right">{attestationData.claims.length}</span>
                 </div>
                 {attestationData.jurisdiction && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Jurisdiction</span>
-                    <span className="font-medium">{attestationData.jurisdiction}</span>
+                  <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-4">
+                    <span className="shrink-0 text-muted-foreground">Jurisdiction</span>
+                    <span className="min-w-0 font-medium sm:text-right">{attestationData.jurisdiction}</span>
                   </div>
                 )}
                 {attestationData.summary && (
@@ -1087,7 +1087,7 @@ export function SecureDocumentDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="min-w-0 gap-2">
           {step === 'upload' && (
             <>
               <Button variant="outline" onClick={handleClose}>
@@ -1195,7 +1195,7 @@ export function SecureDocumentDialog({
           )}
 
           {step === 'success' && (
-            <div className="flex w-full gap-2">
+            <div className="flex w-full flex-col gap-2 sm:flex-row">
               <Button
                 variant="outline"
                 onClick={handleCopyLink}
