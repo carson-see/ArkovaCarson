@@ -363,6 +363,78 @@ describe('DocuSign refresh token version retention', () => {
     expect(log.serialized()).not.toContain('secret-refresh-token');
   });
 
+  // BATCH-J F1 (store level): a misconfigured retention must not be able to
+  // destroy the version `versions/latest` resolves to -- i.e. the token every
+  // reader uses.
+  it('never destroys the version just written, even when configured to keep zero', async () => {
+    const fake = makeFakeSecretManager({
+      versions: { 1: { state: 'ENABLED', value: 'v1' }, 2: { state: 'ENABLED', value: 'v2' } },
+    });
+    const store = makeStore(fake, { retention: { keepVersions: 0 } });
+
+    await store.put({ name: SECRET, value: 'v3' });
+
+    expect(fake.stateOf(3)).toBe('ENABLED');
+    expect(fake.destroyedIds()).not.toContain(3);
+    expect(fake.enabledIds()).toContain(3);
+  });
+
+  // BATCH-J F2. When the LIST call fails the store still holds the token, so the
+  // write must not fail -- but the warn line reported `remainingSuperseded: 0`,
+  // which reads as "backlog drained" to anyone auditing the logs. It is unknown,
+  // not zero: the real secret had 1,729 superseded versions at the time.
+  it('does not report a drained backlog when the version list failed', async () => {
+    const fake = makeFakeSecretManager({
+      versions: { 1: { state: 'ENABLED', value: 'v1' }, 2: { state: 'ENABLED', value: 'v2' } },
+      listStatus: 503,
+    });
+    const log = makeLogger();
+    const store = makeStore(fake, { logger: log.logger });
+
+    await store.put({ name: SECRET, value: 'v3' });
+
+    const warn = log.entries.find((e) => e.level === 'warn');
+    expect(warn).toBeDefined();
+    expect((warn?.args[0] as Record<string, unknown>).remainingSuperseded).not.toBe(0);
+    expect((warn?.args[0] as Record<string, unknown>).remainingSuperseded).toBe('unknown');
+  });
+
+  // BATCH-J F3. The prune only ran after a successful `:addVersion`, so a backlog
+  // left by crashed runs could only drain on a rotation that produced a NEW value.
+  // If DocuSign ever returned the same refresh token twice, the compare-before-write
+  // skip meant the backlog was never touched again. The prune is the self-healing
+  // mechanism; it must run on the skip path too.
+  it('prunes the backlog even when the compare-before-write skips the new version', async () => {
+    const fake = makeFakeSecretManager({
+      versions: {
+        1: { state: 'ENABLED', value: 'v1' },
+        2: { state: 'ENABLED', value: 'v2' },
+        3: { state: 'ENABLED', value: 'same' },
+      },
+    });
+    const store = makeStore(fake, {});
+
+    await store.put({ name: SECRET, value: 'same' });
+
+    expect(fake.addVersionCalls()).toBe(0);
+    expect(fake.destroyedIds()).toEqual([1]);
+    expect(fake.enabledIds()).toEqual([2, 3]);
+  });
+
+  // BATCH-J F4. `put`/`get`/`delete` take a caller-supplied resource name and
+  // interpolate it straight into the Secret Manager URL. `parseSecretName` allowed
+  // any non-slash project segment, so `..` traversed the API path. Every built name
+  // is already safe; this closes the interface itself.
+  it('refuses a secret name whose project segment is not a safe resource segment', async () => {
+    const fake = makeFakeSecretManager({});
+    const store = makeStore(fake, {});
+
+    await expect(store.get({ name: 'projects/../secrets/evil' })).rejects.toThrow(/safe/i);
+    await expect(store.put({ name: 'projects/../secrets/evil', value: 'x' })).rejects.toThrow(/safe/i);
+    await expect(store.delete({ name: 'projects/../secrets/evil' })).rejects.toThrow(/safe/i);
+    expect(fake.fetchImpl).not.toHaveBeenCalled();
+  });
+
   describe('selectSupersededVersions', () => {
     it('sorts numerically (not lexically), keeps the newest N, and returns the rest oldest-first', () => {
       const names = [9, 10, 2, 11, 1].map((n) => ({ name: `projects/123/secrets/s/versions/${n}`, state: 'ENABLED' as const }));
@@ -395,6 +467,28 @@ describe('DocuSign refresh token version retention', () => {
     it('destroys nothing when at or below the keep count', () => {
       const names = [1, 2].map((n) => ({ name: `projects/123/secrets/s/versions/${n}`, state: 'ENABLED' as const }));
       expect(selectSupersededVersions(names, { keepVersions: 2, maxDestroyPerPut: 10 })).toEqual({ destroy: [], remaining: 0 });
+    });
+
+    // BATCH-J F1. The whole point of this change is that the LIVE refresh token is
+    // never destroyed. `keepVersions` comes from a caller-supplied `deps.retention`,
+    // and nothing clamped it: `0` (or a non-finite value, which `slice` coerces to 0)
+    // put the newest version -- the live token -- in the destroy list, severing the
+    // DocuSign grant with no recovery path. The ops script already refuses
+    // `--keep < 1` and re-asserts the guard before destroying; the code that runs
+    // twice an hour in production had neither.
+    it('never returns the newest enabled version even when the caller asks to keep zero', () => {
+      const names = [1, 2, 3].map((n) => ({ name: `projects/123/secrets/s/versions/${n}`, state: 'ENABLED' as const }));
+      const selection = selectSupersededVersions(names, { keepVersions: 0, maxDestroyPerPut: 10 });
+      expect(selection.destroy).not.toContain(3);
+      expect(selection.destroy).toEqual([1, 2]);
+    });
+
+    it('never returns the newest enabled version for a negative or non-finite keep count', () => {
+      const names = [1, 2, 3].map((n) => ({ name: `projects/123/secrets/s/versions/${n}`, state: 'ENABLED' as const }));
+      for (const keepVersions of [-5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const selection = selectSupersededVersions(names, { keepVersions, maxDestroyPerPut: 10 });
+        expect(selection.destroy).not.toContain(3);
+      }
     });
   });
 });

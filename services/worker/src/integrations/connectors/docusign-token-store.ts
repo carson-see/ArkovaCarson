@@ -73,6 +73,18 @@ function versionNumber(name: string): number | null {
 }
 
 /**
+ * `keepVersions` reaches the selector from a caller-supplied `deps.retention`.
+ * A value below 1 (or a non-finite one, which `Array.prototype.slice` coerces to
+ * 0) would put the newest version -- the live refresh token -- in the destroy
+ * list and sever the DocuSign grant with no recovery path. The floor is 1; a
+ * value that is not a usable number falls back to the documented default.
+ */
+export function normalizeKeepVersions(keepVersions: number): number {
+  if (!Number.isFinite(keepVersions)) return DEFAULT_DOCUSIGN_REFRESH_TOKEN_RETENTION.keepVersions;
+  return Math.max(1, Math.floor(keepVersions));
+}
+
+/**
  * Pure selection of superseded versions. Sorts NUMERICALLY by version id
  * (the API returns names, and `10` sorts before `9` lexically), keeps the
  * newest `keepVersions` ENABLED entries, and returns the rest oldest-first,
@@ -88,11 +100,20 @@ export function selectSupersededVersions(
     .map((v) => versionNumber(v.name))
     .filter((n): n is number => n !== null)
     .sort((a, b) => b - a);
-  const superseded = enabled.slice(Math.max(0, retention.keepVersions)).sort((a, b) => a - b);
-  const cap = Math.max(0, retention.maxDestroyPerPut);
+  const keep = normalizeKeepVersions(retention.keepVersions);
+  const superseded = enabled.slice(keep).sort((a, b) => a - b);
+  const cap = Number.isFinite(retention.maxDestroyPerPut) ? Math.max(0, Math.floor(retention.maxDestroyPerPut)) : 0;
+  const destroy = superseded.slice(0, cap);
+  // Defense in depth, mirroring the ops script's guard: whatever the caller asked
+  // for, the newest ENABLED version is the one `versions/latest` resolves to and
+  // the only one any reader ever uses. It is never destroyable.
+  const newest = enabled[0];
+  if (newest !== undefined && destroy.includes(newest)) {
+    throw new Error('refusing to destroy the newest enabled secret version (the live refresh token)');
+  }
   return {
-    destroy: superseded.slice(0, cap),
-    remaining: Math.max(0, superseded.length - cap),
+    destroy,
+    remaining: Math.max(0, superseded.length - destroy.length),
   };
 }
 
@@ -160,7 +181,11 @@ function parseSecretName(name: string): { projectId: string; secretId: string } 
   if (!match) {
     throw new Error('DocuSign refresh token secret name must be projects/{project}/secrets/{secret}');
   }
-  return { projectId: match[1], secretId: match[2] };
+  // `name` is interpolated straight into the Secret Manager URL path by every
+  // request below. SECRET_NAME_RE's project segment is `[^/]+`, which admits
+  // `..` and would traverse the API path. Every name this module BUILDS is
+  // already checked; this checks the ones it is HANDED.
+  return { projectId: assertSafeSegment(match[1], 'projectId', SAFE_PROJECT_RE), secretId: match[2] };
 }
 
 function secretManagerUrl(path: string): string {
@@ -282,10 +307,12 @@ export function createGcpSecretManagerRefreshTokenStore(
     let destroyed = 0;
     let failed = 0;
     let remaining = 0;
+    let backlogKnown = false;
     try {
       const versions = await listEnabledVersions(name);
       const selection = selectSupersededVersions(versions, retention);
       remaining = selection.remaining;
+      backlogKnown = true;
       for (const version of selection.destroy) {
         const res = await fetchSecretManager(`${name}/versions/${version}:destroy`, {
           method: 'POST',
@@ -301,7 +328,9 @@ export function createGcpSecretManagerRefreshTokenStore(
           secretId,
           destroyed,
           failed,
-          remainingSuperseded: remaining + failed,
+          // The backlog is UNKNOWN, not zero, when the list never came back --
+          // reporting 0 here reads as "drained" to anyone auditing these lines.
+          remainingSuperseded: backlogKnown ? remaining + failed : 'unknown',
           reason: error instanceof Error ? error.message : 'unknown',
         },
         'DocuSign refresh-token secret: version prune failed; superseded versions remain enabled',
@@ -323,6 +352,11 @@ export function createGcpSecretManagerRefreshTokenStore(
       await ensureSecretExists(name);
       if (await latestVersionEquals(name, value)) {
         log.debug({ secretId }, 'DocuSign refresh-token secret: value unchanged; skipping new version');
+        // The prune is the self-healing mechanism for a backlog left by crashed
+        // runs, so it must not be reachable only through a value CHANGE: if the
+        // provider ever returns the same refresh token twice the skip path would
+        // otherwise leave the backlog enabled (and billed) forever.
+        await pruneSupersededVersions(name);
         return;
       }
       const res = await fetchSecretManager(`${name}:addVersion`, {

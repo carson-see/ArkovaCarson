@@ -205,3 +205,27 @@ consumer's unit test. Denials are logged by the route via `logConnectDenial`, on
 ## 2026-08-15 Drive OAuth scope minimality (FULLSOAK finding)
 
 `buildGoogleDriveAuthorizationUrl` inherits its scope set + URL params from `oauth/drive.ts` `buildAuthorizationUrl`. That URL no longer sends `include_granted_scopes` (it let a connect inherit a 33-scope grant from the shared OAuth client) and the scope set is the exact three-scope allowlist in `DRIVE_DEFAULT_SCOPES`. Pinned in `googleDrive.test.ts`; do not loosen either assertion.
+
+## 2026-09-07 Refresh-token version retention — the newest version is never destroyable (Batch-J review)
+
+`docusign-token-store.ts` prunes superseded Secret Manager versions after every `put`. Two rules are
+load-bearing and both are pinned by tests; do not relax either:
+
+1. **`selectSupersededVersions` floors `keepVersions` at 1 and re-asserts before returning.**
+   `keepVersions` arrives from a caller-supplied `deps.retention`. `0` — or any non-finite value,
+   which `Array.prototype.slice` coerces to `0` — used to put the newest ENABLED version in the
+   destroy list. That version is the one `versions/latest` resolves to and the only one any reader
+   ever uses, so destroying it severs the DocuSign grant with no recovery path. `normalizeKeepVersions`
+   is the floor; the `throw` on `destroy.includes(newest)` is the defense in depth, mirroring the
+   guard the ops script (`scripts/ops/prune-docusign-refresh-token-versions.ts`) already had.
+2. **The prune runs on the compare-before-write SKIP path too**, not only after a successful
+   `:addVersion`. It is the self-healing mechanism for a backlog left by crashed runs; reachable only
+   through a value *change*, it would never drain if the provider ever returned the same token twice.
+
+Nothing in the worker ever reads a pinned secret version — every read is `versions/latest:access`,
+and `connector_integrations.token_secret_name` names the SECRET, not a version. That is why no
+integration row can reference a version the prune destroys.
+
+A prune failure is a `warn`, never a throw: the token is already stored by then. When the LIST call
+is what failed, the log reports `remainingSuperseded: 'unknown'` — reporting `0` there read as
+"backlog drained" while the real secret still held 1,729 superseded versions.
