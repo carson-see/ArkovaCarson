@@ -158,7 +158,10 @@ describe('SCRUM-2486 AC-4: importer materializes PENDING only, never SECURED', (
 
     const result = await defaultMaterializeAnchor(artifactRow(), { db });
 
-    expect(result).toEqual({ anchorId: 'anchor-1', anchorPublicId: 'anc_pub1' });
+    // `created: true` — this call INSERTED the anchor (as opposed to reusing a
+    // pre-existing one), which is what licenses the claim-to-mint freshness
+    // gate to neutralize it as an orphan if the link is later rejected.
+    expect(result).toEqual({ anchorId: 'anchor-1', anchorPublicId: 'anc_pub1', created: true });
     expect(inserts).toHaveLength(1);
     expect(inserts[0].table).toBe('anchors');
     expect(inserts[0].values.status).toBe('PENDING');
