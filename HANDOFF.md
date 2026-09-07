@@ -184,6 +184,76 @@ the 711k-row backfill is a T3 migration needing operator approval and its own so
 this session and the `Atlassian` Secret Manager token returns 401. Paste-ready entry is in the
 session report; whoever has Atlassian auth should file it as BUG-2026-09-02-001.
 
+### DB — three admin RPCs ran unguarded DDL on the hot `profiles` table (fixed, pre-soak, 2026-09-01)
+
+`admin_change_user_role`, `admin_set_platform_admin` and `admin_set_user_org` each wrapped their
+`UPDATE` in `ALTER TABLE profiles DISABLE/ENABLE TRIGGER` with no bounded `lock_timeout`. All three
+are reachable from the admin console (`services/worker/src/api/admin-actions.ts` →
+`POST /api/admin/users/:id/{change-role,promote-admin,set-org}`), so every platform-admin role
+change ran DDL against a table on the auth hot path.
+
+**Severity is narrower than the §1.2 P0 shape, and the difference is load-bearing.** Measured from
+`pg_locks` on PostgreSQL 17: `ALTER TABLE ... DISABLE/ENABLE TRIGGER` takes **ShareRowExclusiveLock**,
+not AccessExclusiveLock. Readers are never blocked, so `/api/v1/verify` and PostgREST schema-cache
+introspection were never exposed by this — it is **not** the 2026-08-11 mechanism. Writes are
+blocked, and the FIFO barrier is real on that axis: with one slow in-flight write held on `profiles`,
+an innocent write **to an unrelated row** waited **4.95 s** before the fix and **0.04 s** after.
+Unbounded, since there is no `lock_timeout`.
+
+**Two of the three trigger-disables were never load-bearing.** Measured with the triggers left
+enabled, invoked exactly as PostgREST invokes them (`SET LOCAL ROLE service_role` + service_role JWT
+claims): `protect_privileged_fields` already bypasses (`get_caller_role() = 'service_role'` early
+return) so the `org_id` write succeeded; `trg_protect_platform_admin` already permits (it gates on
+`current_setting('role')`) so the `is_platform_admin` write stuck; only `enforce_role_immutability`
+genuinely blocked, because `check_role_immutability()` had no bypass at all. Re-measured rather than
+inherited from 0395: inside a SECURITY DEFINER function owned by `postgres`, `current_user` becomes
+`postgres` but **both** `current_setting('role')` and `get_caller_role()` still report the caller's
+role.
+
+Fix: migration `0428_admin_profile_rpcs_remove_hot_table_trigger_ddl.sql`. All three RPCs lose their
+DDL entirely. `check_role_immutability()` gains an exemption scoped to the RAISE only (so `role_set_at`
+stamping still applies to every caller), keyed on a **transaction-local flag** `arkova.allow_role_change`
+that `admin_change_user_role` sets around its own UPDATE **and** a service_role caller — both must hold,
+unset reads NULL and fails closed. `protect_platform_admin_flag()` also accepts `get_caller_role()`;
+`admin_set_platform_admin` captures the stored value via `UPDATE ... RETURNING` and raises if the flag
+did not take, because that trigger reverts *silently* and would otherwise return a false success.
+
+**A review pass this session caught that the first cut of the exemption was too broad and would have
+silently mutated real user data.** Keying it on `get_caller_role() = 'service_role'` alone also unblocks
+the worker's DIRECT service_role writes to `profiles.role` in `services/worker/src/api/invitations.ts`
+and `admin-org-members.ts`, which backfill `{ org_id, role }` guarded only by `.is('org_id', null)`.
+`org_id IS NULL` does not imply `role IS NULL` — **prod `vzwyaatejekddvltxyye` currently holds 16
+profiles with `org_id IS NULL AND role IS NOT NULL`** (verified this session via Supabase MCP
+`execute_sql`). Those writes raise today and their callers log a non-fatal warning; the broad exemption
+would have started silently rewriting those users' roles on invite acceptance, with no audit row.
+`current_user = 'postgres'` is no narrower — `auto_associate_profile_to_org_by_email_domain`,
+`join_org_by_domain`, `set_onboarding_plan` and `update_profile_onboarding` are all postgres-owned
+SECDEF functions that update `profiles` (same query). The flag is the narrowest correct signal, and the
+regression guard is pinned in the test file and measured on the rig rehearsal.
+
+**Verified against prod `vzwyaatejekddvltxyye` 2026-09-01 (Supabase Management API,
+`POST /v1/projects/{ref}/database/query`, read-only):** `pg_get_functiondef` for all five routines
+returned bodies byte-identical to the committed baseline, so the fix was designed against live prod
+rather than a stale file; all three profiles triggers read `tgenabled = 'O'` (none left disabled by a
+past crash); `user_role` has exactly three enum values, so the exemption widens nothing; and
+`has_function_privilege` shows the three admin RPCs already locked down (anon=f, authenticated=f,
+service_role=t) while `protect_platform_admin_flag` is still anon/authenticated-granted — which 0428
+revokes, burning one `secdef-grants-baseline.json` entry (109 → 108).
+
+**Migration is file-only — NOT applied to prod or any rig, NOT soaked.** Rehearsed 2026-09-01 on an
+isolated throwaway Postgres 17 cluster (never prod, never a rig, never the shared local stack):
+forward → rollback → forward, 14-case behavioural matrix green, plus an explicit regression guard that
+the worker-shaped direct backfill of an INDIVIDUAL is still blocked exactly as today. TLA PreCheck
+re-run on all four machines — all green; none model `profiles`/`role`, so it is N/A to this change. Migrations are always T3
+(CLAUDE.md §1.12), so this needs its own 48 h isolated-rig soak before it can go Ready. Opened as a
+**draft** PR.
+
+**Jira story, Confluence page and Bug Tracker row are NOT filed** (CLAUDE.md §3 gates 2/3/4) — the
+Atlassian connector is unauthenticated and the session was non-interactive, so it could not run the
+OAuth flow. The full page content is staged at
+[docs/confluence/19_admin_profile_rpc_hot_table_ddl_removal.md](docs/confluence/19_admin_profile_rpc_hot_table_ddl_removal.md)
+for whoever authenticates next.
+
 
 ### CI — dead `memory/` pointers were invisible to the gate built to catch them (2026-08-31)
 
@@ -2294,6 +2364,7 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
+_Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye`, `getblockheader` over the worker's GetBlock RPC, and (for the 0428 entry) Supabase MCP `execute_sql` plus `pg_locks` measurement on isolated rig `vofhfzyosxlneupohsem`._
 _Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye` and `getblockheader` over the worker's GetBlock RPC._
 
 _Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
