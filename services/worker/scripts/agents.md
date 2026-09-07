@@ -2,6 +2,20 @@
 
 Offline tooling for Nessie model training, evaluation, dataset building, benchmarks, operational helpers, and CI scripts. These scripts run outside the worker runtime — they are never imported by `services/worker/src/`.
 
+## Soak drivers
+
+- `pr2525-attestation-park-driver.ts` (+ `.test.ts`) — admission driver for the PR #2525 attestation
+  park. Probes `GET /api/v1/verify/attestation/:id` and asserts the one behavior that PR changes:
+  404 well-formed / 400 malformed with the `ARK-ATT` routing hint, never an APPLICATION 5xx, and
+  `X-RateLimit-*` still present (the header is how the soak observes the middleware POSITION — a park
+  mounted above the rate limiters answers correctly while silently off its §1.10 budget). `--live`
+  needs `--target-url`; default `--dry-run`-equivalent is `self-test`, whose rows are
+  `evidenceForSoak: false` and must never be cited as soak evidence.
+  - **Capacity is not behavior.** Cloud Run refuses requests on a scaled-to-zero rig with a 500 and
+    "no available instance"; a transport failure yields status 0. `isObserved()` excludes both, so
+    neither is scored as an application regression — and a cycle where nothing was observed fails
+    loudly rather than recording a hollow pass. That conflation invalidated the first soak window.
+
 ## Key subdirectories
 
 - `bench/` — Regional latency benchmarks (Kenya, etc.).
