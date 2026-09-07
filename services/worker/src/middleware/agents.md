@@ -2,6 +2,31 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-09-02 — `parkedAttestationVerify.ts`: the parked attestation-verification route
+
+Answers `GET /api/v1/verify/attestation/:attestationId` upstream of the real handler, which cannot
+succeed: `legally_binding_attestations` has no INSERT path anywhere in the tree (0 prod rows,
+verified 2026-08-31). Status contract is unchanged — 400 malformed / 404 well-formed; only the 404's
+`error` string changed, to stop asserting a corpus was searched. Deliberately **not** a 501: the
+enabled CRITICAL policy `PAGE — arkova-worker 5xx burst` fires on any 5xx at >5/300s with no path
+dimension to exclude on.
+
+**Its mount position in `router.ts` is load-bearing in both directions**, and `src/tests/api-e2e.test.ts`
+pins both halves:
+
+- **BELOW `apiKeyAuth` + the rate limiters.** This is a PUBLIC endpoint and §1.10 ("headers on every
+  response") applies. Mounted above them the route loses its budget entirely — `publicVerifyAnonLimiter`
+  (`apiIpShadowGuard.ts`) skips on `hasApiKeyCredential`, a SYNTAX-only header check, and
+  `apiIpShadowGuard` skips the whole `/api/v1/verify` prefix, so any caller sending a made-up
+  `X-API-Key: ak_…` is unthrottled and gets no `X-RateLimit-*`. It also turns the 401 a bad key had
+  always received into a 404.
+- **ABOVE `idempotency` + `usageTracking`.** The feature has no writer, so charging a caller's monthly
+  quota for a response that can never succeed is waste, and `usageTracking` has no refund path.
+
+It imports `ATTESTATION_ID_PATTERN` and `INVALID_ATTESTATION_ID_ERROR` from
+`api/v1/verify/attestation.ts` rather than copying them, so the park's 400 cannot drift from the
+handler's when the unpark path widens either. The unpark checklist lives in the module header.
+
 ## 2026-08-23 — `apiIpShadowGuard.ts`: the broad `/api` IP guard and its two §1.10 carve-outs
 
 New module. `index.ts` used to build this limiter inline, which made its skip predicate impossible to

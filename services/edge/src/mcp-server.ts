@@ -33,6 +33,7 @@ import {
   TOOL_DEFINITIONS,
   SHA256_HEX_RE,
   handleVerifyCredential,
+  verifyCredentialRecord,
   handleSearchCredentials,
   handleNessieQuery,
   handleAnchorDocument,
@@ -231,6 +232,71 @@ function withTelemetry(
       logOnce();
     }
   };
+}
+
+/**
+ * Build the `oracle_batch_verify` response envelope.
+ *
+ * Extracted from the inline tool callback so the batch semantics are
+ * reachable from unit tests — the registration below is a one-line
+ * delegation. Same export-for-test rationale as
+ * `shouldFailClosedWhenSigningKeyMissing` / `applyMcpSecurityHeaders`.
+ */
+export async function buildOracleBatchEnvelope(
+  public_ids: string[],
+  config: ScopedConfig,
+  env: Env,
+): Promise<ToolResult> {
+  try {
+    // DI-038 (SCRUM-3398): each member goes through the STRUCTURED
+    // `verifyCredentialRecord` seam. The previous implementation called
+    // `handleVerifyCredential` and then `JSON.parse(result.content[0].text)` —
+    // but that handler's catch branches return bare prose, not JSON
+    // (`'Verification lookup timed out'`), so `JSON.parse` threw a SyntaxError,
+    // rejected this `Promise.all`, and the catch below discarded EVERY
+    // successfully-verified credential in the batch. One transient timeout
+    // failed a whole 25-credential bulk call. Failures now degrade per member
+    // to `{ public_id, verified: false, error }` — the same shape
+    // `handleVerifyBatch` emits — and the rest of the batch survives.
+    // Removing the round-trip also drops a needless stringify→parse hop.
+    const results = await Promise.all(
+      public_ids.map((pid: string) => verifyCredentialRecord(pid, config)),
+    );
+    const envelope = { query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() };
+    const signingKey = env.MCP_SIGNING_KEY;
+    // SCRUM-1283 (R3-10) adjacent: when EDGE_REQUIRE_MCP_SIGNING is
+    // "true" (production wrangler.toml), refuse to emit unsigned
+    // envelopes if MCP_SIGNING_KEY is missing. Operators get an
+    // explicit failure instead of silently shipping `signed: false`
+    // payloads. Dev/preview without the secret continues to work
+    // because the var defaults to unset (soft-fail path retained).
+    if (!signingKey && shouldFailClosedWhenSigningKeyMissing(env)) {
+      warnSigningKeyMissingOnce();
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            error: 'signing_key_missing',
+            message: 'oracle_batch_verify is fail-closed in this environment because MCP_SIGNING_KEY is not provisioned. Provision via `wrangler secret put MCP_SIGNING_KEY --name arkova-edge` and retry.',
+          }),
+        }],
+        isError: true,
+      };
+    }
+    // F-4 (edge bug-bounty 2026-04-26): when signing key missing in
+    // dev/preview (EDGE_REQUIRE_MCP_SIGNING unset/false), return an
+    // explicit `signed: false` marker so downstream callers fail
+    // closed instead of silently accepting unsigned envelopes.
+    const body = signingKey
+      ? await signEnvelope(envelope, signingKey)
+      : { payload: envelope, signature: null, alg: null, key_id: null, signed: false };
+    if (!signingKey) {
+      warnSigningKeyMissingOnce();
+    }
+    return { content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }] };
+  } catch (error) {
+    return { content: [{ type: 'text' as const, text: safeErrorText(error, 'oracle_batch_verify') }], isError: true };
+  }
 }
 
 /**
@@ -464,50 +530,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     },
     withTelemetry(
       'oracle_batch_verify',
-      async ({ public_ids }) => {
-        try {
-          const results = await Promise.all(
-            public_ids.map(async (pid: string) => {
-              const result = await handleVerifyCredential({ public_id: pid }, config);
-              return { public_id: pid, ...JSON.parse(result.content[0].text) };
-            }),
-          );
-          const envelope = { query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() };
-          const signingKey = telemetry.env.MCP_SIGNING_KEY;
-          // SCRUM-1283 (R3-10) adjacent: when EDGE_REQUIRE_MCP_SIGNING is
-          // "true" (production wrangler.toml), refuse to emit unsigned
-          // envelopes if MCP_SIGNING_KEY is missing. Operators get an
-          // explicit failure instead of silently shipping `signed: false`
-          // payloads. Dev/preview without the secret continues to work
-          // because the var defaults to unset (soft-fail path retained).
-          if (!signingKey && shouldFailClosedWhenSigningKeyMissing(telemetry.env)) {
-            warnSigningKeyMissingOnce();
-            return {
-              content: [{
-                type: 'text' as const,
-                text: JSON.stringify({
-                  error: 'signing_key_missing',
-                  message: 'oracle_batch_verify is fail-closed in this environment because MCP_SIGNING_KEY is not provisioned. Provision via `wrangler secret put MCP_SIGNING_KEY --name arkova-edge` and retry.',
-                }),
-              }],
-              isError: true,
-            };
-          }
-          // F-4 (edge bug-bounty 2026-04-26): when signing key missing in
-          // dev/preview (EDGE_REQUIRE_MCP_SIGNING unset/false), return an
-          // explicit `signed: false` marker so downstream callers fail
-          // closed instead of silently accepting unsigned envelopes.
-          const body = signingKey
-            ? await signEnvelope(envelope, signingKey)
-            : { payload: envelope, signature: null, alg: null, key_id: null, signed: false };
-          if (!signingKey) {
-            warnSigningKeyMissingOnce();
-          }
-          return { content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }] };
-        } catch (error) {
-          return { content: [{ type: 'text' as const, text: safeErrorText(error, 'oracle_batch_verify') }], isError: true };
-        }
-      },
+      async ({ public_ids }) => buildOracleBatchEnvelope(public_ids, config, telemetry.env),
       telemetry,
     ),
   );
