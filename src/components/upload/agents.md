@@ -1,4 +1,9 @@
 # agents.md — components/upload
+
+## SCRUM-4448 — nested securing wizard layout
+
+`BulkUploadWizard` shrinks within its parent, uses compact mobile progress markers, and stacks column mapping controls and review actions below the small breakpoint. `AIExtractionStep` stacks its action groups on mobile. Browser coverage in `e2e/secure-dialog-layout.spec.ts` includes upload, mapping, extraction idle/in-flight/recovery and processing; successful bulk completion closes the parent dialog immediately by existing design. Record parsing, attestation, extraction and worker payloads are unchanged.
+
 _Last updated: 2026-07-28_
 
 ## 2026-07-28 R19 — issuer-attestation acknowledgement (advances SCRUM-2481)

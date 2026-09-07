@@ -1,0 +1,21 @@
+{
+ "closed_at": "2026-09-05T18:54:57Z",
+ "pr": 2635,
+ "declared_head": "bccc24a09f274484f0079afac0ab7f30905d7233",
+ "rig": "nesuwjlscilzzbhpvbkt",
+ "soak_start": "2026-09-03T07:05:25Z",
+ "planned_end": "2026-09-03T19:05:25Z",
+ "cycles": 71,
+ "failing_cycles": 0,
+ "failing_files": [],
+ "heads_seen": [
+  "bccc24a09f274484f0079afac0ab7f30905d7233"
+ ],
+ "rigs_seen": [
+  "nesuwjlscilzzbhpvbkt"
+ ],
+ "first_capture": "2026-09-03T07:05:31.225Z",
+ "last_capture": "2026-09-03T18:57:33.821Z",
+ "head_bound_ok": true,
+ "rig_bound_ok": true
+}
