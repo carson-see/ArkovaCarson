@@ -1,6 +1,7 @@
 # agents.md — services/worker/src/integrations/oauth/
 
-_Last updated: 2026-06-16 (SCRUM-2492 byte-safe error types + bounded `detail` on non-document paths)._
+_Last updated: 2026-08-29 (docusign-bilateral PR-2: `resolveDocusignEnvironment` env-tag resolver)._
+_Last updated: 2026-09-02 (Adobe Sign parse-layer bounds in code/constraint parity with `organization_rule_events`)._
 
 ## What This Folder Contains
 
@@ -11,9 +12,9 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 | `crypto.ts` | GCP KMS-based OAuth token encryption/decryption — cleartext never lands in Postgres |
 | `hmac.ts` | Shared HMAC-SHA256 webhook verifier (timing-safe, supports base64 and hex encoding) |
 | `drive.ts` | Google Drive OAuth client — token exchange, refresh, changes.watch, files.get, channels.stop. **DRIVE-02 (S2)**: `createChangesWatch` now returns the `startPageToken` (additive) and accepts an optional `driveId` to scope startPageToken + changes.watch to a shared-drive corpus. |
-| `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC |
+| `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC. **2026-08-29 (R7):** `resolveDocusignEnvironment(baseUri, env?)` — `'prod'\|'demo'` from the connection's `base_uri` (`demo.docusign.net` vs any other `*.docusign.net`), falling back to the existing `DOCUSIGN_DEMO` convention only when `base_uri` doesn't identify an environment |
 | `docusign-rate-limit.ts` | DocuSign outbound API guard — per-account 3,000/hour local slot budget plus Retry-After-aware 429 retry wrapper |
-| `adobe-sign.ts` | Adobe Sign webhook HMAC verification helpers |
+| `adobe-sign.ts` | Adobe Sign webhook HMAC verification + `RawAdobeWebhookPayload` parse. `agreement.id` / `agreement.name` / `senderInfo.email` are `.max()`-bounded to the `organization_rule_events` column CHECKs (500 / 500 / 320) the webhook handler writes them into |
 | `docusign-hmac.ts` | SCRUM-2043: multi-key HMAC verifier + signature header extractor for dual-key rotation |
 | `docusign-hmac.test.ts` | Tests for multi-key HMAC verification |
 
@@ -22,6 +23,8 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 - **DO** use `crypto.ts` for all token storage — dedicated symmetric KMS key, not the Bitcoin signing key
 - **DO** use `hmac.ts` centralized verifier for all webhook signatures (prevents drift on timing-safe path)
 - **DO** route DocuSign cron/job API fetches through `docusign-rate-limit.ts` so refresh/document calls share one per-account budget
+- **DO** bound every vendor string a parser admits to what the column it lands in can store, AT THE PARSE LAYER — not wherever a downstream throw happens to land. `RawAdobeWebhookPayload` capped neither `agreement.id` (→ `organization_rule_events.external_file_id`, `char_length <= 500`) nor `senderInfo.email` (→ `sender_email`, `<= 320`). The id was caught late by `NonEmptyString.max(500)` inside `adaptAdobeSign` — but that throw fires AFTER the replay nonce is committed, so it produced a 500 whose retry is answered `200 {duplicate:true}`: the event is lost and the vendor is told it succeeded. The email was not caught at all (`MaybeEmail` has no length cap) and raised SQLSTATE 23514 in Postgres for the same result. A `.max()` on the ingress schema moves both into the handler's bounded 400 + DLQ branch, before any nonce exists. The webhook test reads those bounds out of `supabase/migrations/` so the two cannot drift.
+- **KNOWN GAP:** `MaybeEmail` in `connectors/schemas.ts` is length-unbounded and is shared by the DocuSign (`sender.email`) and Checkr (`candidate.email`) adapters, which write the same 320-char `sender_email` column. Capping `MaybeEmail` is one line but changes three handlers' ingress at once — own ticket, own soak covering all three.
 - **DO NOT** log response bodies from OAuth token exchanges (contain cleartext tokens)
 - **DO NOT** reuse the Bitcoin asymmetric signing key for OAuth token encryption
 - **DO NOT** add a `body`/raw-response field to `DocusignApiError` / `DriveApiError` (§1.6A / SCRUM-2492). They carry NO raw response body — a document-bearing response must never ride an error into a logger/Sentry/`last_error`. On `fetchDocusignCombinedDocument`'s non-2xx path (the only document-fetch path), do NOT read the response body and do NOT pass a `detail`; throw status + message only.
@@ -30,3 +33,8 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 - **DO** use the optional `detail?: string` (3rd ctor arg) ONLY on the NON-document paths (token exchange/refresh, userinfo, DocuSign Connect list/mutation/parse/timeout; Drive token exchange/refresh, startPageToken, changes.watch, channels.stop, token revoke, files.get, changes.list) — whose error body is safe OAuth/API error JSON. Always build it with `boundedErrorDetail(json)` from `utils/byte-safety.ts` (bounded ~500 chars, byte-redacted, PII-scrubbed). Never pass a raw string/body directly.
 - **DO NOT** re-add `include_granted_scopes` to `buildAuthorizationUrl` (drive.ts). With the shared Google OAuth client it made one Drive connect inherit EVERY scope that client was ever granted by the account — a 33-scope grant (full `drive`, `gmail.modify`, `calendar`, `contacts`, `classroom.*`, `chat.*`) was observed during FULLSOAK 2026-08 (shared-resource register #9). Absent, Google defaults it to false. Pinned by tests in `drive.test.ts`, `googleDrive.test.ts`, and `drive-oauth.test.ts`.
 - **DO NOT** widen `DRIVE_DEFAULT_SCOPES` without a security review — it is the complete allowlist of what a leaked refresh token can reach. Current set: `drive.file` (all Drive API calls), `drive.activity.readonly` (declared Activity surface), `userinfo.email` (the callback's `oauth2/v3/userinfo` identity lookup; without it `account_id` degrades to a constant and collapses the `org_integrations` upsert key).
+
+
+## PR #2474 release review — 2026-09-05
+
+Environment classification parses the base URI hostname. A vendor string in a path, query, or attacker-controlled domain suffix cannot determine demo/prod. Invalid and non-vendor URIs retain the documented environment fallback.
