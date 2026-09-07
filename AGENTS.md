@@ -70,3 +70,7 @@ files on consecutive runs when something else (a dev server, another agent's
 suite) is competing for workers. A failure set that changes between runs is
 contention, not a regression. Re-run with `--maxWorkers=2` before believing it,
 and stop any background dev server first.
+
+## PR #2619 dependency verification (2026-09-05)
+
+The xmldom 0.8.15 lockfile update is verified through mammoth's real DOCX text extraction, including malformed end-tag rejection, namespace-heavy input, Unicode, long end-tag whitespace and external-entity rejection. The generated notices page is regenerated from the installed tree. This branch incorporates PR #2493's final notices implementation as an explicit merge dependency. Timed browser evidence and its exact source/build identifiers are recorded in the PR body; preparation is not soak completion.

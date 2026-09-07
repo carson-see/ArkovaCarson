@@ -4,6 +4,30 @@ Lane 1 (Trust & Chain) internal engineering notes and cross-lane contracts.
 Per CLAUDE.md §0.4 these markdown files are internal engineering records, NOT
 product documentation — the canonical specs live on Confluence.
 
+## 2026-08-31 — `fe-proof-gate-contract-s2.md` asserted a reference verifier that did not exist
+
+Three places in that contract named `https://arkova.ai/verify` as the offline
+reference verifier: the `verifier.reference_url` field in the response example,
+the frozen-surface table, and the open-items section. That host **302s to the
+marketing homepage**, and no page in this app has ever accepted a pasted proof
+packet. The contract was written against the plan; the plan never shipped.
+
+`reference_url` was never implemented on any endpoint (`grep -rn reference_url
+src/ services/worker/src/ packages/` returns nothing), so the damage was
+contained to the document — but `CERTIFICATE_COPY.OFFLINE_VERIFY_TOOL` printed
+the same dead pointer onto **every certificate ever generated**, which is how a
+doc-only inaccuracy became a user-facing defect.
+
+Corrected to `https://app.arkova.ai/verify/independent` (the page that exists)
+plus a row for the certificate QR payload. The open-items entry now states
+plainly that a paste-a-packet browser tool is **unbuilt**, and that what exists
+is the instruction page plus the in-repo CLI at `packages/verifier-cli` — which
+is **not published to any package registry**.
+
+The rule this lane keeps: **a URL in a contract document is a claim (§1.5 / R-7).
+Execute it before you write it down**, and when you change one here, grep for the
+copy constant that mirrors it — that is where it reaches users.
+
 ## Files
 
 - **`fe-proof-gate-contract-s2.md`** — FROZEN PI-0 Sprint 2 contract between
