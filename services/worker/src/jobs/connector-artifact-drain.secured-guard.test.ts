@@ -167,8 +167,10 @@ describe('SCRUM-2486 AC-4: importer materializes PENDING only, never SECURED', (
     expect(inserts[0].values.status).toBe('PENDING');
     expect(inserts[0].values.status).not.toBe('SECURED');
     expect(inserts[0].values.fingerprint).toBe(FP);
-    // R2: every row here was fetched + hashed server-side (§1.6A) — 'document_bytes'.
-    expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
+    // CANDIDATE-RESOLVED (see the R2 block below): the drain does NOT classify
+    // a connector-fetched anchor. #2474 asserted 'document_bytes' here; #2476
+    // (which #2566/#2570 build on) omits the column entirely for this path.
+    expect(inserts[0].values.fingerprint_source).toBeUndefined();
     // The importer never writes chain data — that's the worker's job post-broadcast.
     expect(inserts[0].values.chain_tx_id).toBeUndefined();
     expect(inserts[0].values.chain_block_height).toBeUndefined();
@@ -270,29 +272,54 @@ describe('SCRUM-2486 AC-4: importer materializes PENDING only, never SECURED', (
   });
 });
 
-// R2 (CTO Decision Record, docusign-bilateral-2026-08): the outbound fetched-
-// document path (this drain) always fingerprints real bytes it fetched
-// server-side — never a declared/asserted hash — so it must always classify
-// as anchors.fingerprint_source='document_bytes' (migration 0376/0384).
-describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', () => {
-  it('defaultMaterializeAnchor stamps fingerprint_source=document_bytes on the real insert', async () => {
+// ────────────────────────────────────────────────────────────────────────────
+// UNRESOLVED CROSS-PR CONFLICT — needs a CTO ruling before #2474 and #2476 can
+// BOTH reach main. They make DIRECTLY CONTRADICTORY claims about
+// `anchors.fingerprint_source` for a connector-drained anchor, on the same
+// lines of the same file:
+//
+//   #2474 (R2 CTO Decision Record): this drain always fetched + hashed real
+//         bytes server-side, so it must ALWAYS stamp 'document_bytes'
+//         (required z.literal), and the Zod payload must REJECT both
+//         'issuer_record_attestation' and an absent value.
+//   #2476 (R19, migration 0376) + #2566 + #2570: this FILE never fetches bytes
+//         (the §1.6A fetch happens upstream in docusign-envelope-completed.ts,
+//         which this materializer has no visibility into), so it must NOT
+//         assert a class it did not measure — the column is OMITTED (NULL,
+//         "unclassified") for every connector-fetch row, and set only to
+//         'issuer_record_attestation' on the NEW inbound declared-hash branch.
+//         #2486's own title states the same principle ("fingerprint_source =
+//         NULL, not a false evidence class").
+//
+// The rc/batch-g-2026-09-07 candidate resolves to #2476's contract, because
+// that is the production behaviour #2566 and #2570 are built on and the
+// behaviour this T3 window actually soaks — #2570's superseded-mint gate reads
+// `_direction` out of the CAPTURED metadata specifically to avoid stamping a
+// declared class onto a re-measured fingerprint. This block therefore pins the
+// RESOLVED contract, not #2474's. It is a deliberate, disclosed divergence from
+// #2474's frozen head, recorded in each Batch-G PR body and in
+// ~/arkova-soak/batch-g-0907/README.txt. Whoever merges second must adopt the
+// ruling rather than re-resolving silently.
+// ────────────────────────────────────────────────────────────────────────────
+describe('candidate-resolved: connector-drain omits fingerprint_source (#2476 contract)', () => {
+  it('defaultMaterializeAnchor does NOT classify a connector-fetched anchor', async () => {
     const { db, inserts } = makeCapturingClient();
 
     await defaultMaterializeAnchor(artifactRow(), { db });
 
     expect(inserts).toHaveLength(1);
-    expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
+    expect(inserts[0].values.fingerprint_source).toBeUndefined();
   });
 
-  it('is unconditional across connector sources — google_drive rows get the same class', async () => {
+  it('is unconditional across connector sources — google_drive rows are equally unclassified', async () => {
     const { db, inserts } = makeCapturingClient();
 
     await defaultMaterializeAnchor(artifactRow({ source: 'google_drive', external_ref: 'file-1' }), { db });
 
-    expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
+    expect(inserts[0].values.fingerprint_source).toBeUndefined();
   });
 
-  it('attacker-influenced metadata cannot override fingerprint_source (top-level field, not spread from metadata)', async () => {
+  it('attacker-influenced metadata cannot smuggle fingerprint_source into the insert', async () => {
     const { db, inserts } = makeCapturingClient();
 
     await defaultMaterializeAnchor(
@@ -305,13 +332,14 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
       { db },
     );
 
-    // The metadata sub-key is a distinct, unrelated JSONB field (free text,
-    // no CHECK constraint) — it never reaches the top-level typed column,
-    // which is always set by this path, never derived from metadata.
-    expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
+    // The metadata sub-key is a distinct, unrelated JSONB field (free text, no
+    // CHECK constraint). It never reaches the top-level typed column — which on
+    // this path is only ever set by the inbound declared-hash branch, and this
+    // row is not one (`_direction` is absent).
+    expect(inserts[0].values.fingerprint_source).toBeUndefined();
   });
 
-  it('AnchorInsertPayload Zod schema REJECTS issuer_record_attestation (that class is inbound-only, not this path)', () => {
+  it('AnchorInsertPayload ACCEPTS an absent fingerprint_source (unclassified is the correct answer here)', () => {
     const parsed = AnchorInsertPayload.safeParse({
       fingerprint: FP,
       status: 'PENDING',
@@ -320,12 +348,11 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
       filename: 'contract.pdf',
       credential_type: 'CONTRACT_POSTSIGNING',
       metadata: {},
-      fingerprint_source: 'issuer_record_attestation',
     });
-    expect(parsed.success).toBe(false);
+    expect(parsed.success).toBe(true);
   });
 
-  it('AnchorInsertPayload Zod schema REJECTS a missing fingerprint_source', () => {
+  it('AnchorInsertPayload still REJECTS a value outside the 0376 CHECK enum', () => {
     const parsed = AnchorInsertPayload.safeParse({
       fingerprint: FP,
       status: 'PENDING',
@@ -334,6 +361,7 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
       filename: 'contract.pdf',
       credential_type: 'CONTRACT_POSTSIGNING',
       metadata: {},
+      fingerprint_source: 'declared_unverified_but_not_in_the_enum',
     });
     expect(parsed.success).toBe(false);
   });

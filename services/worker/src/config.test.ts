@@ -568,6 +568,10 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
         expect(mod.config.enableDocusignWebhook).toBe(true);
         expect(mod.config.enableConnectorArtifactEnqueue).toBe(true);
         expect(mod.config.enableConnectorArtifactDrain).toBe(true);
+      },
+    );
+  });
+
   // Signer backfill (record-detail signer rows, follow-on to
   // signer capture / PR #2474): authenticates via the same
   // refreshable DocuSign OAuth connection ENABLE_DOCUSIGN_OAUTH gates.

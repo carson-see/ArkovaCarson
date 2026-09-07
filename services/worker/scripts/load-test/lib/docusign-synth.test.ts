@@ -31,6 +31,15 @@ vi.mock('../../../src/utils/jobQueue.js', () => ({
 vi.mock('../../../src/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+// CANDIDATE-RESOLVED (#2476 interaction): webhooks/docusign.ts now imports
+// `config` DIRECTLY (it reads config.enableDocusignInbound), not only
+// transitively via utils/db.ts — so stubbing db/jobQueue/logger is no longer
+// enough to keep this pure-parse suite out of env validation. Mock config the
+// same way #2476 does in the receiver's own suite. This file exercises only the
+// parse/verify/notary surface; the flag value is irrelevant to it.
+vi.mock('../../../src/config.js', () => ({
+  config: { enableDocusignInbound: false },
+}));
 
 import {
   DEFAULT_MIX,

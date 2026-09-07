@@ -1197,10 +1197,15 @@ describe('POST /webhooks/docusign', () => {
       expect(ruleEventPayload).not.toHaveProperty('_signers');
       const ruleEventBytes = Buffer.byteLength(JSON.stringify(ruleEventPayload), 'utf8');
       expect(ruleEventBytes).toBeLessThanOrEqual(16384);
-      // document_ids/document_hashes are the size-dominant fields at this
-      // cardinality — confirm they're actually present at full cardinality
-      // (proves this is a real max-cardinality measurement, not a vacuous one).
-      expect((ruleEventPayload.document_ids as unknown[]).length).toBe(100);
+      // CANDIDATE-RESOLVED (#2474 x #2485): #2474 asserted `document_ids` here,
+      // but #2485 deliberately took that array OFF this payload and replaced it
+      // with the fixed-size `document_count` — that is the whole point of
+      // #2485 (keep it under the 16 KB CHECK at max cardinality; the ids ride
+      // the uncapped job payload instead). #2485's contract wins; the
+      // max-cardinality measurement is preserved via document_hashes, which is
+      // now the size-dominant field.
+      expect(ruleEventPayload).not.toHaveProperty('document_ids');
+      expect(ruleEventPayload.document_count).toBe(100);
       expect((ruleEventPayload.document_hashes as unknown[]).length).toBe(100);
 
       // _signers rides ONLY the job -> connector_artifact.metadata path (no
@@ -2017,6 +2022,9 @@ describe('extractSigners', () => {
       },
     });
     expect(extractSigners(body)).toEqual([]);
+  });
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // Rule-event payload 16KB CHECK guard (DocuSign bilateral 2026-08, Finding 7)
 //
