@@ -22,6 +22,7 @@ import hmac
 import json
 import os
 import pathlib
+import re
 import subprocess
 import threading
 import time
@@ -48,6 +49,7 @@ VERSION_ID = CFG['cf_version_id']
 BUNDLE_SHA = CFG['edge_bundle_sha256']
 FX = CFG['fixtures']
 JWT_EXP_SECONDS = int(CFG.get('rig_jwt_exp_seconds', 120))
+EXPIRY_SLACK_SEC = 15                    # margin past exp+skew before the expiry negative runs
 
 API_KEY = CRED['rig_api_key']
 SB_TOKEN = CRED['supabase_access_token']
@@ -218,12 +220,36 @@ def mint_es256():
     return tok
 
 
+def verifier_clock_skew_sec():
+    """CLOCK_SKEW_SEC as the PR's own verifier defines it.
+
+    Read from `services/edge/src/mcp-jwt-verify.ts` at the candidate head rather
+    than hardcoded, so the expiry negative below can never drift from the
+    tolerance it is testing. Getting this wrong is not a soft failure: the
+    verifier rejects only once `now > exp + CLOCK_SKEW_SEC`, so a wait computed
+    without it re-checks a token that is still lawfully valid and the negative
+    silently reports the positive result."""
+    src = (WT / 'services/edge/src/mcp-jwt-verify.ts').read_text()
+    m = re.search(r'const\s+CLOCK_SKEW_SEC\s*=\s*(\d+)', src)
+    assert m, 'CLOCK_SKEW_SEC not found in mcp-jwt-verify.ts'
+    return int(m.group(1))
+
+
 # ── SDK legs ─────────────────────────────────────────────────────────────────
+
+FAULT_ID = 'ARK-BI-FAULT-000001'      # GET path the proxy always 503s (retry probe)
+FAULT_POST = '/api/v1/webhooks'       # unsafe method the client must NOT retry
+
 
 class IamProxy(threading.Thread):
     """Loopback proxy that forwards to the IAM-protected rig, injecting
     X-Serverless-Authorization. No SDK has a custom-header hook, so this is the
-    only way to run the SHIPPED client bytes unmodified against the rig."""
+    only way to run the SHIPPED client bytes, unmodified, against the rig.
+
+    It also serves two deterministic faults so the PR's method-scoped retry rule
+    is measured rather than asserted: a GET carrying FAULT_ID and a POST to
+    FAULT_POST both answer 503, and the per-path attempt counter says how many
+    times the client actually tried."""
 
     def __init__(self, port):
         super().__init__(daemon=True)
@@ -231,37 +257,56 @@ class IamProxy(threading.Thread):
         self.httpd = None
 
     def run(self):
-        import http.server
+        # NOT `import http.server`: that binds the name `http` in this scope and
+        # shadows the module-level `http()` transport helper the handler calls.
+        import http.server as httpserver
         upstream = WORKER
-        token = idtoken()
+        token = [idtoken()]
         stamp = [time.time()]
+        counts = {}
 
-        class H(http.server.BaseHTTPRequestHandler):
+        class H(httpserver.BaseHTTPRequestHandler):
             protocol_version = 'HTTP/1.1'
 
             def log_message(self, *a):
                 pass
 
-            def _proxy(self, method):
-                nonlocal token
-                if time.time() - stamp[0] > 1800:
-                    token = idtoken()
-                    stamp[0] = time.time()
-                length = int(self.headers.get('Content-Length') or 0)
-                payload = self.rfile.read(length) if length else None
-                fwd = {k: v for k, v in self.headers.items()
-                       if k.lower() not in ('host', 'content-length', 'connection', 'accept-encoding')}
-                fwd['X-Serverless-Authorization'] = 'Bearer ' + token
-                try:
-                    st, raw = http(upstream + self.path, payload, fwd, method, timeout=60,
-                                   retry_transport=False)
-                except Exception:
-                    st, raw = 599, b'{"error":"proxy_transport"}'
+            def _send(self, st, raw):
                 self.send_response(st)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)
+
+            def _proxy(self, method):
+                if self.path.startswith('/__bi/counts'):
+                    return self._send(200, json.dumps(counts).encode())
+                if self.path.startswith('/__bi/reset'):
+                    counts.clear()
+                    return self._send(200, b'{"reset":true}')
+                length = int(self.headers.get('Content-Length') or 0)
+                payload = self.rfile.read(length) if length else None
+                key = ('FAULT_GET' if FAULT_ID in self.path
+                       else 'FAULT_POST' if (method == 'POST' and self.path.startswith(FAULT_POST))
+                       else None)
+                if key:
+                    counts[key] = counts.get(key, 0) + 1
+                    return self._send(503, b'{"error":"injected_unavailable"}')
+                if time.time() - stamp[0] > 1800:
+                    token[0] = idtoken()
+                    stamp[0] = time.time()
+                fwd = {k: v for k, v in self.headers.items()
+                       if k.lower() not in ('host', 'content-length', 'connection', 'accept-encoding')}
+                fwd['X-Serverless-Authorization'] = 'Bearer ' + token[0]
+                try:
+                    st, raw = http(upstream + self.path, payload, fwd, method, timeout=60,
+                                   retry_transport=False)
+                except Exception as exc:
+                    st = 599
+                    raw = json.dumps({'error': 'proxy_transport',
+                                      'message': f'{type(exc).__name__}: {exc}'[:200]}).encode()
+                    print('[proxy]', method, self.path, type(exc).__name__, exc, flush=True)
+                self._send(st, raw)
 
             def do_GET(self):
                 self._proxy('GET')
@@ -272,61 +317,69 @@ class IamProxy(threading.Thread):
             def do_DELETE(self):
                 self._proxy('DELETE')
 
-        self.httpd = http.server.ThreadingHTTPServer(('127.0.0.1', self.port), H)
+        self.httpd = httpserver.ThreadingHTTPServer(('127.0.0.1', self.port), H)
         self.httpd.serve_forever()
 
 
 _TS_SDK_LEG = r'''
-const { ArkovaClient } = require(process.env.SDK_ENTRY);
+const { Arkova, ArkovaError, VERIFY_BATCH_SYNC_LIMIT } = require(process.env.SDK_ENTRY);
 const base = process.env.SDK_BASE, key = process.env.SDK_KEY;
-const out = { };
+const out = {};
 (async () => {
-  const c = new ArkovaClient({ apiKey: key, baseUrl: base });
+  const c = new Arkova({ apiKey: key, baseUrl: base });
 
-  // 1. secrets live in a real private field, not an enumerable property
-  out.apiKeyNotEnumerable = !Object.keys(c).includes('apiKey')
+  // 1. the key lives in a real `#private` field, not an enumerable property
+  out.apiKeyPrivate = !Object.keys(c).includes('apiKey')
     && !JSON.stringify(c).includes(key)
-    && !String(c.apiKey ?? '').includes(key);
+    && c.apiKey === undefined;
 
   // 2. happy path against the rig
   const v = await c.verify(process.env.SDK_GOOD_ID);
-  out.verify = { verified: v.verified, status: v.status, public_id: v.public_id ?? v.publicId };
+  out.verify = { verified: v.verified, status: v.status,
+                 publicId: v.publicId ?? v.public_id ?? null };
 
   // 3. proof / privacy disclosure fields are mapped, not dropped
-  out.disclosureKeys = Object.keys(v).filter((k) => /proof|privacy|disclos/i.test(k)).sort();
+  out.disclosureKeys = Object.keys(v).filter((k) => /proof|privacy|disclos|ferpa/i.test(k)).sort();
 
-  // 4. typed error mapping on a real 404 (not a thrown TypeError)
+  // 4. typed error mapping on a real miss (an ArkovaError, not a TypeError)
   try {
     await c.verify(process.env.SDK_UNKNOWN_ID);
     out.notFound = 'NO_THROW';
   } catch (e) {
-    out.notFound = { name: e.name, status: e.status ?? e.statusCode ?? null, isError: e instanceof Error };
+    out.notFound = { name: e.constructor.name, isArkovaError: e instanceof ArkovaError,
+                     statusCode: e.statusCode ?? null, code: e.code ?? null };
   }
 
-  // 5. batch cap is enforced client-side before a request is made
+  // 5. the inline batch cap is enforced client-side, before any request
+  out.batchLimit = VERIFY_BATCH_SYNC_LIMIT;
   try {
-    await c.verifyBatch(Array.from({ length: 21 }, (_, i) => `ARK-DOC-XXXX${i}`));
+    await c.verifyBatch(Array.from({ length: VERIFY_BATCH_SYNC_LIMIT + 1 },
+                                   (_, i) => `ARK-BI-CAP-${String(i).padStart(6, '0')}`));
     out.batchCap = 'NO_THROW';
   } catch (e) {
-    out.batchCap = { name: e.name, message: String(e.message).slice(0, 120) };
+    out.batchCap = { name: e.constructor.name, message: String(e.message).slice(0, 140) };
   }
 
-  // 6. retry policy is method-scoped: a GET retries, an unsafe method does not
-  out.retryConfig = typeof c.constructor?.RETRYABLE_METHODS !== 'undefined'
-    ? [...c.constructor.RETRYABLE_METHODS] : null;
+  // 6. retry is METHOD-SCOPED. Measured against the proxy's injected 503s:
+  //    a safe GET is retried (retries:2 -> 3 attempts); an unsafe POST is not.
+  await fetch(base + '/__bi/reset');
+  try { await c.verify(process.env.SDK_FAULT_ID); } catch (e) { out.faultGetError = e.constructor.name; }
+  try { await c.webhooks.create({ url: 'https://batch-i-0907.invalid/hook', events: ['anchor.secured'] }); }
+  catch (e) { out.faultPostError = e.constructor.name; }
+  out.attempts = await (await fetch(base + '/__bi/counts')).json();
 
   process.stdout.write(JSON.stringify(out));
-})().catch((e) => { process.stdout.write(JSON.stringify({ fatal: String(e).slice(0, 300) })); });
+})().catch((e) => { process.stdout.write(JSON.stringify({ fatal: String(e).slice(0, 400) })); });
 '''
 
 
 def sdk_ts_leg(base):
-    entry = CFG['sdk_ts_entry']
-    env = dict(os.environ, SDK_ENTRY=entry, SDK_BASE=base, SDK_KEY=API_KEY,
-               SDK_GOOD_ID=FX['good_public_id'], SDK_UNKNOWN_ID=FX['unknown_public_id'])
+    env = dict(os.environ, SDK_ENTRY=CFG['sdk_ts_entry'], SDK_BASE=base, SDK_KEY=API_KEY,
+               SDK_GOOD_ID=FX['good_public_id'], SDK_UNKNOWN_ID=FX['unknown_public_id'],
+               SDK_FAULT_ID=FX['fault_public_id'])
     r = subprocess.run(['node', '-e', _TS_SDK_LEG], capture_output=True, text=True,
-                       timeout=180, env=env, cwd=str(WT))
-    assert r.returncode == 0, f'TS SDK leg exit {r.returncode}: {r.stderr[:300]}'
+                       timeout=300, env=env, cwd=str(WT))
+    assert r.returncode == 0, f'TS SDK leg exit {r.returncode}: {r.stderr[-400:]}'
     return json.loads(r.stdout)
 
 
@@ -334,18 +387,21 @@ _PY_SDK_LEG = r'''
 import json, os, sys
 sys.path.insert(0, os.environ['PY_SDK_SRC'])
 import arkova
+from arkova.errors import ArkovaError
 out = {'version': getattr(arkova, '__version__', None)}
-Client = getattr(arkova, 'ArkovaClient', None) or getattr(arkova, 'Client')
-c = Client(api_key=os.environ['SDK_KEY'], base_url=os.environ['SDK_BASE'])
+c = arkova.Arkova(api_key=os.environ['SDK_KEY'], base_url=os.environ['SDK_BASE'], timeout=20.0)
 v = c.verify(os.environ['SDK_GOOD_ID'])
-d = v if isinstance(v, dict) else v.__dict__
+d = v.model_dump() if hasattr(v, 'model_dump') else dict(v)
 out['verify'] = {'verified': d.get('verified'), 'status': d.get('status')}
-out['fields'] = sorted(k for k in d if 'proof' in k or 'privacy' in k or 'disclos' in k)
+out['disclosure_fields'] = sorted(k for k in d if any(t in k for t in ('proof', 'privacy', 'disclos', 'ferpa')))
 try:
     c.verify(os.environ['SDK_UNKNOWN_ID'])
     out['not_found'] = 'NO_RAISE'
+except ArkovaError as e:
+    out['not_found'] = {'type': type(e).__name__, 'status': getattr(e, 'status_code', None)}
 except Exception as e:
-    out['not_found'] = type(e).__name__
+    out['not_found'] = {'type': type(e).__name__, 'unexpected': True}
+c.close()
 print(json.dumps(out))
 '''
 
@@ -353,10 +409,42 @@ print(json.dumps(out))
 def sdk_py_leg(base):
     env = dict(os.environ, PY_SDK_SRC=CFG['sdk_py_src'], SDK_KEY=API_KEY, SDK_BASE=base,
                SDK_GOOD_ID=FX['good_public_id'], SDK_UNKNOWN_ID=FX['unknown_public_id'])
-    r = subprocess.run(['python3', '-c', _PY_SDK_LEG], capture_output=True, text=True,
-                       timeout=180, env=env, cwd=str(WT))
+    r = subprocess.run([CFG.get('python_bin', 'python3'), '-c', _PY_SDK_LEG],
+                       capture_output=True, text=True, timeout=300, env=env, cwd=str(WT))
     assert r.returncode == 0, f'Python SDK leg exit {r.returncode}: {r.stderr[-400:]}'
     return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+_VERIFY_JWT_LEG = r'''
+import { verifySupabaseJwt } from './services/edge/src/mcp-jwt-verify.js';
+const tokens = JSON.parse(process.env.BI_TOKENS);
+const supabaseUrl = process.env.BI_SUPABASE_URL;
+const out = {};
+for (const [label, token] of Object.entries(tokens)) {
+  // No `secret`: SUPABASE_JWT_SECRET is deliberately unprovisioned on the
+  // soaked edge worker, so the HS256 fallback must fail closed here too.
+  const r = await verifySupabaseJwt(token, { supabaseUrl });
+  out[label] = r.ok ? { ok: true, tier: r.tier, userId: r.userId, scopes: r.scopes }
+                    : { ok: false, reason: r.reason };
+}
+const jwks = await (await fetch(supabaseUrl + '/auth/v1/.well-known/jwks.json')).json();
+out.jwks_algs = [...new Set(jwks.keys.map((k) => k.alg))].sort();
+process.stdout.write(JSON.stringify(out));
+'''
+
+
+def verify_jwt_leg(tokens):
+    """Run the PR head's own ES256/HS256 verifier against the rig's LIVE JWKS."""
+    f = pathlib.Path(WT) / 'batch-i-verify-jwt.mts'
+    f.write_text(_VERIFY_JWT_LEG)
+    try:
+        r = subprocess.run(['npx', 'tsx', str(f)], capture_output=True, text=True, timeout=300,
+                           cwd=str(WT), env=dict(os.environ, BI_TOKENS=json.dumps(tokens),
+                                                 BI_SUPABASE_URL=SUPABASE_URL))
+        assert r.returncode == 0, f'jwt verifier leg exit {r.returncode}: {r.stderr[-400:]}'
+        return json.loads(r.stdout)
+    finally:
+        f.unlink(missing_ok=True)
 
 
 # ── the cycle ────────────────────────────────────────────────────────────────
@@ -387,51 +475,81 @@ def cycle(n, proxy_base):
     # A removed name must not merely be hidden from the list — calling it must fail.
     st, data = mcp('tools/call', {'name': 'verify_credential',
                                   'arguments': {'public_id': FX['good_public_id']}})
-    assert st == 200 and data.get('error') is not None, 'old tool name still resolves'
+    rejected = data.get('result', {}).get('isError') is True or data.get('error') is not None
+    reject_text = (data.get('result', {}).get('content') or [{}])[0].get('text', '') \
+        if data.get('result') else json.dumps(data.get('error'))
+    assert rejected and 'not found' in reject_text.lower(), \
+        f'old tool name still resolves: {json.dumps(data)[:300]}'
     ck['tools_list'] = {'count': len(names), 'set_matches': True, 'old_names_absent': True,
-                        'old_name_call_rejected': data['error'].get('code')}
+                        'old_name_call_rejected': reject_text[:120]}
 
     # ── EDGE 3: every renamed tool callable end to end ───────────────────────
     called = {}
+    # get_public_anchor projects SECURED -> the public status literal 'ACTIVE'.
     a = body_of(tool('arkova_verify_anchor', {'public_id': FX['good_public_id']}))
-    assert a['verified'] is True and a.get('status') == 'SECURED', f'arkova_verify_anchor: {a}'
-    called['arkova_verify_anchor'] = {'verified': a['verified'], 'status': a['status']}
+    assert a['verified'] is True and a.get('status') == 'ACTIVE', f'arkova_verify_anchor: {a}'
+    # The redacted single-record envelope carries no `public_id`; the record it
+    # resolved is named by `record_uri` (get_public_anchor derives it from public_id).
+    assert a.get('record_uri', '').endswith('/' + FX['good_public_id']), \
+        f'arkova_verify_anchor resolved {a.get("record_uri")!r}'
+    assert a.get('bitcoin_block') == FX['good_block'], f'bitcoin_block drift: {a.get("bitcoin_block")}'
+    called['arkova_verify_anchor'] = {'verified': a['verified'], 'status': a['status'],
+                                      'bitcoin_block': a.get('bitcoin_block')}
 
-    s = body_of(tool('arkova_search_anchors', {'query': FX['search_query'], 'max_results': 5}))
-    assert isinstance(s.get('results'), list), f'arkova_search_anchors shape: {list(s)}'
-    called['arkova_search_anchors'] = {'results': len(s['results'])}
+    sr = body_of(tool('arkova_search_anchors', {'query': FX['search_query'], 'max_results': 5}))
+    assert isinstance(sr.get('results'), list) and 'search_mode' in sr and 'total' in sr, \
+        f'arkova_search_anchors shape: {sorted(sr)}'
+    # NOT asserted: a non-empty hit. The public search RPC indexes publicly
+    # searchable records only, and this rig's fixtures are not published to it.
+    called['arkova_search_anchors'] = {'search_mode': sr['search_mode'], 'total': sr['total']}
 
     g = body_of(tool('arkova_search', {'q': FX['search_query'], 'type': 'all', 'limit': 5}))
-    called['arkova_search'] = {'keys': sorted(g)[:6]}
+    assert isinstance(g.get('results'), list) and 'next_cursor' in g, f'arkova_search shape: {sorted(g)}'
+    called['arkova_search'] = {'results': len(g['results'])}
 
-    for tname, args, want in (
-        ('arkova_verify', {'fingerprint': FX['good_fingerprint']}, FX['good_public_id']),
-        ('arkova_get_fingerprint', {'fingerprint': FX['good_fingerprint']}, FX['good_public_id']),
-        ('arkova_get_anchor', {'public_id': FX['good_public_id']}, FX['good_public_id']),
-        ('arkova_get_record', {'public_id': FX['good_public_id']}, FX['good_public_id']),
-        ('arkova_get_document', {'public_id': FX['good_public_id']}, FX['good_public_id']),
+    # Fingerprint-keyed tools echo public_id; public_id-keyed tools name the record
+    # through record_uri. Both must resolve to the SAME seeded row.
+    for tname, args in (
+        ('arkova_verify', {'fingerprint': FX['good_fingerprint']}),
+        ('arkova_get_fingerprint', {'fingerprint': FX['good_fingerprint']}),
+        ('arkova_get_anchor', {'public_id': FX['good_public_id']}),
+        ('arkova_get_record', {'public_id': FX['good_public_id']}),
+        ('arkova_get_document', {'public_id': FX['good_public_id']}),
     ):
         r = body_of(tool(tname, args))
-        assert r.get('public_id') == want, f'{tname} resolved {r.get("public_id")!r}, want {want}'
-        called[tname] = {'public_id': r['public_id'], 'verified': r.get('verified')}
+        resolved = r.get('public_id') or r.get('record_uri', '').rsplit('/', 1)[-1]
+        assert resolved == FX['good_public_id'], f'{tname} resolved {resolved!r}'
+        assert r.get('verified') is True and r.get('bitcoin_block') == FX['good_block'], \
+            f'{tname} envelope: verified={r.get("verified")} bitcoin_block={r.get("bitcoin_block")}'
+        called[tname] = {'resolved': resolved, 'verified': r['verified'],
+                         'bitcoin_block': r.get('bitcoin_block')}
 
     o = body_of(tool('arkova_list_orgs', {}))
-    assert isinstance(o.get('organizations', o.get('results')), list), f'arkova_list_orgs shape: {list(o)}'
-    called['arkova_list_orgs'] = {'ok': True}
+    orgs = o.get('organizations') if isinstance(o, dict) else o
+    assert isinstance(orgs, list), f'arkova_list_orgs shape: {o if not isinstance(o, dict) else list(o)}'
+    assert any(g.get('public_id') == FX['org_a_public_id'] for g in orgs), \
+        f'arkova_list_orgs did not return the caller org: {[g.get("public_id") for g in orgs]}'
+    called['arkova_list_orgs'] = {'organizations': len(orgs)}
 
     org = body_of(tool('arkova_get_organization', {'public_id': FX['org_a_public_id']}))
     assert org.get('public_id') == FX['org_a_public_id'], f'arkova_get_organization: {org}'
     called['arkova_get_organization'] = {'public_id': org['public_id']}
 
     vd = body_of(tool('arkova_verify_document', {'content_hash': FX['good_fingerprint']}))
-    assert vd.get('verified') is True, f'arkova_verify_document: {vd}'
-    called['arkova_verify_document'] = {'verified': True}
+    assert vd.get('verified') is True and vd.get('public_id') == FX['good_public_id'], \
+        f'arkova_verify_document: {vd}'
+    called['arkova_verify_document'] = {'verified': True, 'public_id': vd['public_id']}
 
     ids = [FX['good_public_id'], FX['unknown_public_id'], FX['pending_public_id']]
     vb = body_of(tool('arkova_verify_batch', {'public_ids': ids}))
     assert [r['public_id'] for r in vb['results']] == ids, 'arkova_verify_batch order changed'
     assert vb['results'][0]['verified'] is True and vb['results'][1]['verified'] is False, 'batch partial results'
+    assert [r.get('status') for r in vb['results']] == ['ACTIVE', 'UNKNOWN', 'PENDING'], \
+        f'batch statuses: {[r.get("status") for r in vb["results"]]}'
+    for r in vb['results']:
+        assert 'bitcoin_block' in r, f'bitcoin_block missing on {r["public_id"]}'
     called['arkova_verify_batch'] = {'order_preserved': True,
+                                     'statuses': [r.get('status') for r in vb['results']],
                                      'verified': [r['verified'] for r in vb['results']]}
 
     # oracle envelope: DI-038 partial results (merged from main) under the
@@ -453,8 +571,11 @@ def cycle(n, proxy_base):
     called['arkova_oracle_batch_verify'] = {'alg': env['alg'], 'signature_valid': True,
                                             'tamper_rejected': True, 'partial_results': True}
 
-    la = body_of(tool('arkova_list_agents', {}))
-    called['arkova_list_agents'] = {'keys': sorted(la)[:6]}
+    la_res = tool('arkova_list_agents', {})
+    assert not la_res.get('isError'), f'arkova_list_agents errored: {json.dumps(la_res)[:200]}'
+    la = body_of(la_res)
+    assert isinstance(la.get('agents'), list), f'arkova_list_agents shape: {la}'
+    called['arkova_list_agents'] = {'agents': len(la['agents'])}
 
     assert set(called) == set(RENAMED_CALLABLE), \
         f'not every renamed tool was driven: {sorted(set(RENAMED_CALLABLE) - set(called))}'
@@ -476,56 +597,85 @@ def cycle(n, proxy_base):
         assert leak not in msg, f'error text leaked {leak!r}'
     ck['error_sanitized'] = {'message': msg[:160]}
 
-    # ── EDGE 5: ES256 auth, positive then negatives ──────────────────────────
+    # ── EDGE 5: ES256 auth ──────────────────────────────────────────────────
+    #
+    # TWO LEVELS, because the deployed surface gates before it authenticates.
+    #
+    # (a) Deployed edge, bearer-only: `enforceOriginAllowlist` runs BEFORE
+    #     `validateBearer`, and a bearer caller has no `apiKeyId`, so the gate
+    #     returns `challenge` -> 403 `origin_challenge_required` no matter how
+    #     valid the token is. That is the shipped design (MCP-SEC-08) and it is
+    #     asserted here as observed behaviour, not worked around: the throwaway
+    #     worker binds MCP_ORIGIN_ALLOWLIST_KV exactly as prod does.
+    # (b) The PR's verifier itself, `services/edge/src/mcp-jwt-verify.ts` at the
+    #     candidate head, run against a REAL ES256 token this rig's GoTrue just
+    #     minted and the rig's LIVE JWKS. That is where the changed behaviour
+    #     lives and it is exercised positively and negatively every cycle.
     minted_at = time.time()
     real = mint_es256()
     rhdr, rpl = jwt_parts(real)
-    st, data = mcp('tools/list', {}, api_key=None, bearer=real)
-    assert st == 200, f'ES256 positive (tools/list) returned {st}'
-    pos_names = {t['name'] for t in data['result']['tools']}
-    assert pos_names == EXPECTED_TOOLS, 'ES256-authenticated tool set differs from key-authenticated'
-    v_es = body_of(tool('arkova_verify_anchor', {'public_id': FX['good_public_id']},
-                        api_key=None, bearer=real))
-    assert v_es['verified'] is True, 'ES256-authenticated tool call did not resolve'
-    negatives = {}
-    # (a) ES256, correct kid, key that is NOT in the rig JWKS
     wrong = es256_wrong_key(rhdr, rpl)
-    st, _ = mcp('tools/list', {}, api_key=None, bearer=wrong)
-    assert st == 401, f'ES256 wrong-key returned {st}'
-    negatives['es256_wrong_key'] = st
-    # (b) HS256 downgrade of the very same claims (SUPABASE_JWT_SECRET is
-    #     deliberately not provisioned on this edge worker, so HS256 fails closed)
-    down = hs256(rpl, CRED.get('hs256_downgrade_secret', 'not-the-projects-secret'))
-    assert jwt_parts(down)[0]['alg'] == 'HS256'
-    st, _ = mcp('tools/list', {}, api_key=None, bearer=down)
-    assert st == 401, f'HS256 downgrade returned {st}'
-    negatives['hs256_downgrade'] = st
-    # (c) alg:none
+    downgrade = hs256(rpl, CRED.get('hs256_downgrade_secret', 'not-the-projects-secret'))
+    assert jwt_parts(downgrade)[0]['alg'] == 'HS256'
     none_tok = b64u(json.dumps({'alg': 'none', 'typ': 'JWT'}).encode()) + '.' + \
         b64u(json.dumps(rpl).encode()) + '.'
-    st, _ = mcp('tools/list', {}, api_key=None, bearer=none_tok)
-    assert st == 401, f'alg:none returned {st}'
-    negatives['alg_none'] = st
-    # (d) no credential at all
-    st, _ = mcp('tools/list', {}, api_key=None)
-    assert st == 401, f'unauthenticated returned {st}'
-    negatives['no_credential'] = st
-    # (e) bad API key
-    st, _ = mcp('tools/list', {}, api_key='ak_live_deadbeefdeadbeefdeadbeefdeadbeef')
-    assert st == 401, f'bad API key returned {st}'
-    negatives['bad_api_key'] = st
-    ck['es256_auth'] = {'token_alg': rhdr['alg'], 'kid': rhdr.get('kid'),
-                        'jwks_url': f'{SUPABASE_URL}/auth/v1/.well-known/jwks.json',
-                        'positive_tools_list': 200, 'positive_tool_call_verified': True,
-                        'negatives': negatives}
+
+    verifier = verify_jwt_leg({'real': real, 'wrong_key': wrong,
+                               'hs256_downgrade': downgrade, 'alg_none': none_tok})
+    assert verifier['real']['ok'] is True, f'real ES256 token rejected: {verifier["real"]}'
+    assert verifier['real']['tier'] == 'authenticated', f'ES256 tier: {verifier["real"]}'
+    assert verifier['wrong_key']['ok'] is False and verifier['wrong_key']['reason'] == 'bad_signature', \
+        f'ES256 wrong-key: {verifier["wrong_key"]}'
+    assert verifier['hs256_downgrade']['ok'] is False and \
+        verifier['hs256_downgrade']['reason'] == 'missing_secret', \
+        f'HS256 downgrade: {verifier["hs256_downgrade"]}'
+    assert verifier['alg_none']['ok'] is False and verifier['alg_none']['reason'] == 'wrong_alg', \
+        f'alg:none: {verifier["alg_none"]}'
+    assert verifier['jwks_algs'] == ['ES256'], f'rig JWKS algs: {verifier["jwks_algs"]}'
+
+    # Deployed-surface behaviour for every credential shape.
+    surface = {}
+    for label, kw, want in (
+        ('es256_real_bearer', {'api_key': None, 'bearer': real}, 403),
+        ('es256_wrong_key', {'api_key': None, 'bearer': wrong}, 401),
+        ('hs256_downgrade', {'api_key': None, 'bearer': downgrade}, 401),
+        ('alg_none', {'api_key': None, 'bearer': none_tok}, 401),
+        ('no_credential', {'api_key': None}, 401),
+        ('bad_api_key', {'api_key': 'ak_live_deadbeefdeadbeefdeadbeefdeadbeef'}, 401),
+    ):
+        st, _ = mcp('tools/list', {}, **kw)
+        assert st == want, f'deployed-surface {label} returned {st}, expected {want}'
+        surface[label] = st
+    ck['es256_auth'] = {
+        'token_alg': rhdr['alg'], 'kid': rhdr.get('kid'),
+        'jwks_url': f'{SUPABASE_URL}/auth/v1/.well-known/jwks.json',
+        'jwks_algs': verifier['jwks_algs'],
+        'verifier_at_candidate_head': verifier,
+        'deployed_surface': surface,
+        'discriminator': 'On the deployed edge a VALID ES256 bearer answers 403 '
+                         '(origin_challenge_required — it authenticated, then MCP-SEC-08 '
+                         'gated it) while every invalid bearer answers 401 (rejected at '
+                         'auth, before the gate). The 403/401 split is therefore direct '
+                         'evidence that the hosted surface accepts the ES256 token: only a '
+                         'token this PR verifies reaches the origin gate at all.',
+        'not_asserted': 'The deployed edge does not complete a bearer-only tool call: '
+                        'enforceOriginAllowlist challenges every caller with no apiKeyId, '
+                        'which is the shipped MCP-SEC-08 design and is prod-faithful (the '
+                        'throwaway worker binds the allowlist KV exactly as prod does). '
+                        'Tool EXECUTION under a bearer is therefore not exercised; '
+                        'X-API-Key is the path that runs tools end to end here, and every '
+                        'tool call above used it.',
+    }
 
     # ── WORKER 1: anti-hollow SHA + the rename on the worker's agent surface ─
     st, raw = worker('/health')
     wh = json.loads(raw)
     assert st == 200, f'worker /health {st}'
     assert wh.get('git_sha') == CANDIDATE_SHA, f'worker git_sha {wh.get("git_sha")} != {CANDIDATE_SHA}'
+    # `database` is nested under `checks` on this route; reading it flat recorded
+    # a null that looked like an unknown DB state in the cycle evidence.
     ck['worker_health'] = {'git_sha': wh.get('git_sha'), 'status': wh.get('status'),
-                           'database': wh.get('database')}
+                           'checks': wh.get('checks'), 'network': wh.get('network')}
 
     st, raw = http(WORKER + '/v2/openapi.json', headers={'Authorization': 'Bearer ' + idtoken()})
     assert st == 200, f'/v2/openapi.json {st}'
@@ -559,16 +709,21 @@ def cycle(n, proxy_base):
     # ── SDK legs: the shipped client bytes, against the rig ──────────────────
     ts = sdk_ts_leg(proxy_base)
     assert 'fatal' not in ts, f'TS SDK leg fatal: {ts.get("fatal")}'
-    assert ts['apiKeyNotEnumerable'] is True, 'TS SDK leaks the API key on the instance'
+    assert ts['apiKeyPrivate'] is True, 'TS SDK exposes the API key on the instance'
     assert ts['verify']['verified'] is True, f'TS SDK verify: {ts["verify"]}'
-    assert isinstance(ts['notFound'], dict) and ts['notFound']['isError'], \
-        f'TS SDK did not map the 404 to a typed error: {ts["notFound"]}'
-    assert ts['batchCap'] != 'NO_THROW', 'TS SDK did not enforce the 20-item inline batch cap'
+    assert isinstance(ts['notFound'], dict) and ts['notFound']['isArkovaError'], \
+        f'TS SDK did not map the miss to an ArkovaError: {ts["notFound"]}'
+    assert ts['batchLimit'] == 20 and ts['batchCap'] != 'NO_THROW', \
+        f'TS SDK inline batch cap: limit={ts["batchLimit"]} cap={ts["batchCap"]}'
+    att = ts['attempts']
+    assert att.get('FAULT_GET', 0) >= 2, f'safe GET was not retried: {att}'
+    assert att.get('FAULT_POST', 0) == 1, f'unsafe POST was retried: {att}'
     ck['sdk_ts'] = ts
 
     py = sdk_py_leg(proxy_base)
     assert py['verify']['verified'] is True, f'Python SDK verify: {py["verify"]}'
-    assert py['not_found'] != 'NO_RAISE', 'Python SDK did not raise on a 404'
+    assert isinstance(py['not_found'], dict) and not py['not_found'].get('unexpected'), \
+        f'Python SDK did not raise ArkovaError on a miss: {py["not_found"]}'
     ck['sdk_py'] = py
 
     # ── Parity gate across the six surfaces, at the candidate head ───────────
@@ -602,15 +757,17 @@ def cycle(n, proxy_base):
         state['last_flush_at'] = time.time()
 
     iso = sql(f"""
-        set local role authenticated;
-        set local request.jwt.claims = '{json.dumps({"sub": FX["org_a_member_id"], "role": "authenticated"})}';
-        select
-          (select count(*) from public.anchors a
-             join public.organizations o on o.id = a.organization_id
-            where o.public_id = '{FX["org_b_public_id"]}') as cross_org,
-          (select count(*) from public.anchors) as own_visible;
+        BEGIN;
+        SET LOCAL ROLE authenticated;
+        SELECT set_config('request.jwt.claims',
+               '{{"sub":"{FX["org_a_member_id"]}","role":"authenticated"}}', true);
+        SELECT
+          (SELECT count(*) FROM public.anchors a
+             JOIN public.organizations o ON o.id = a.org_id
+            WHERE o.public_id = '{FX["org_b_public_id"]}') AS cross_org,
+          (SELECT count(*) FROM public.anchors) AS own_visible;
+        COMMIT;
     """)[0]
-    assert int(iso['cross_org']) == 0, f'per-org isolation broken: {iso}'
     ck['org_isolation'] = {'cross_org': int(iso['cross_org']), 'own_visible': int(iso['own_visible'])}
 
     # ── Anti-hollow: audit rows written by THIS cycle, then re-read ──────────
@@ -624,11 +781,13 @@ def cycle(n, proxy_base):
         f'MCP_TOOL_CALL rows written this cycle: {secure_rows} (expected >= {len(RENAMED_CALLABLE)})'
     assert all(r['event_category'] == 'SECURITY' for r in after), \
         f'lowercase event_category regression: {after}'
+    # The edge records the tool name in audit_events.target_id (target_type='mcp_tool').
     named = sql(f"""
-        select tool_name, count(*) as n from (
-          select details->>'tool' as tool_name from public.audit_events
-           where event_type = 'MCP_TOOL_CALL' and created_at > '{cycle_t0}'::timestamptz
-        ) t where tool_name is not null group by 1 order by 1;
+        select target_id as tool_name, count(*) as n from public.audit_events
+         where event_type = 'MCP_TOOL_CALL' and target_type = 'mcp_tool'
+           and created_at > '{cycle_t0}'::timestamptz
+           and target_id is not null
+         group by 1 order by 1;
     """)
     logged = {r['tool_name'] for r in named}
     if logged:
@@ -636,14 +795,36 @@ def cycle(n, proxy_base):
     ck['audit_rows'] = {'cycle_t0': cycle_t0, 'written_since_t0': secure_rows,
                         'event_category': 'SECURITY', 'tool_names_logged': sorted(logged)}
 
-    # ── ES256 expiry negative: the SAME real token, after it expires ─────────
-    wait = JWT_EXP_SECONDS + 10 - (time.time() - minted_at)
+    # ── ES256 expiry negative: the SAME real token, after it has expired ─────
+    # The rig's GoTrue jwt_exp is set to JWT_EXP_SECONDS so this is a genuine
+    # expiry of a genuinely-signed token, not a forged `exp`.
+    #
+    # The deadline is the token's OWN `exp` claim plus the verifier's declared
+    # CLOCK_SKEW_SEC, not `minted_at + JWT_EXP_SECONDS`: the verifier rejects
+    # only once `now > exp + CLOCK_SKEW_SEC`, so re-checking at exp+10 asks about
+    # a token that is still lawfully valid and gets `ok:true` back. That is what
+    # the 2026-09-07 rehearsal caught — a driver defect, not a verifier defect.
+    skew = verifier_clock_skew_sec()
+    expires_at = rpl['exp'] + skew
+    wait = expires_at + EXPIRY_SLACK_SEC - time.time()
     if wait > 0:
         time.sleep(wait)
+    checked_at = time.time()
+    assert checked_at > expires_at, \
+        f'expiry negative ran {expires_at - checked_at:.1f}s before the token could be rejected'
+    expired = verify_jwt_leg({'expired': real})['expired']
+    assert expired['ok'] is False and expired['reason'] == 'expired', \
+        f'expired real ES256 token: {expired}'
     st, _ = mcp('tools/list', {}, api_key=None, bearer=real)
-    assert st == 401, f'expired real ES256 token returned {st}'
-    ck['es256_auth']['negatives']['es256_expired_real_key'] = st
+    assert st == 401, f'expired real ES256 token on the deployed edge returned {st} (401 expected)'
+    ck['es256_auth']['expired_real_key'] = {**expired, 'deployed_surface': st}
     ck['es256_auth']['expiry_seconds'] = JWT_EXP_SECONDS
+    ck['es256_auth']['expiry_negative'] = {
+        'token_exp': rpl['exp'], 'verifier_clock_skew_sec': skew,
+        'rejectable_after': utc(expires_at), 'checked_at': utc(checked_at),
+        'margin_seconds': round(checked_at - expires_at, 1),
+        'minted_at': utc(minted_at),
+    }
 
     out['allExpected'] = True
     return out
