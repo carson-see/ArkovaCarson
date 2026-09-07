@@ -859,6 +859,9 @@ const ConfigSchema = z.object({
         'ENABLE_DOCUSIGN_INBOUND=true requires ENABLE_CONNECTOR_ARTIFACT_DRAIN=true — '
         + 'without the drain consumer, inbound connector_artifact rows enqueue but never materialize into an anchor.',
       path: ['enableDocusignInbound'],
+    });
+  }
+
   // Signer backfill calls the DocuSign eSignature REST API using a refreshed
   // access token resolved via the same OAuth connection flow ENABLE_DOCUSIGN_OAUTH
   // gates — without it there is no live/refreshable connection to authenticate
