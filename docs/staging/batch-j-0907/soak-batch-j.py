@@ -259,6 +259,9 @@ def probe_2667(wt: str, sec_a: str, sec_b: str, tag: str, out: dict) -> None:
     # pinned VERSION (every read is versions/latest:access, and
     # connector_integrations.token_secret_name names the SECRET), so this is the
     # boundary that matters for "a version another integration row references".
+    # `seed` is create-if-missing, so the first cycle of a fresh rig creates
+    # secret B here rather than 404ing on inspect.
+    harness(wt, "seed", sec_b, "1", f"b{tag}")
     b_before = harness(wt, "inspect", sec_b)
     b_value = f"rig-b-{tag}-{rand()}"
     b_put = harness(wt, "put", sec_b, b_value)
