@@ -4,6 +4,15 @@ import { createHash } from 'node:crypto';
 vi.mock('../../utils/gcp-auth.js', () => ({
   getGcpAccessToken: vi.fn(async () => 'mock-token'),
 }));
+// This file imports docusign-token-store.js (for the cross-provider collision
+// assertion below), which imports utils/logger.js -> config.js, and config.ts
+// validates env at module load — so without these two stubs the suite failed
+// to collect with 'Invalid worker configuration'. Same mock pair the DocuSign
+// sibling suite (docusign-token-store.test.ts) already carries.
+vi.mock('../../config.js', () => ({ config: {} }));
+vi.mock('../../utils/logger.js', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 import {
   buildAdobeSignRefreshTokenSecretName,
