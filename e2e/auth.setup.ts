@@ -18,24 +18,39 @@
  *     out at 30s and burning CI minutes.
  *   - Verify the storageState file was actually written and contains
  *     a Supabase session — catches silent state-save failures.
+ *   - SCRUM-3167 / SCRUM-3584: inject a far-future MFA enforcement-date
+ *     override into every saved storageState so the ~100 existing specs
+ *     that reuse these files keep passing in the grace state once the
+ *     2026-09-21 default enforcement date (`src/lib/mfaPolicy.ts`, sibling
+ *     branch security/mfa-enforcement-3167) passes. A plain UI login never
+ *     writes this key itself, so it is patched into the file after
+ *     Playwright saves it — not read back from the live page.
  *
  * @created 2026-04-26
  * @updated 2026-04-28 — SCRUM-1302 follow-up hardening
+ * @updated 2026-09-03 — SCRUM-3167/3584 MFA enforcement-date override injection
  */
 
 import { test as setup, expect, errors as playwrightErrors } from '@playwright/test';
 import fs from 'fs';
 import { getServiceClient, SEED_USERS } from './fixtures/supabase';
 import { acceptDisclaimerIfVisible } from './helpers/dashboard';
+import { MFA_ENFORCE_DATE_OVERRIDE_KEY } from './helpers/mfa';
+import { resolveE2EFrontendOrigin } from './helpers/supabase-storage-key';
 
 const STORAGE_DIR = '.auth';
 const POST_LOGIN_URL_PATTERN =
   /\/(vault|dashboard|onboarding|organization|records|settings|review-pending)/;
 const LOGIN_FAILURE_TIMEOUT_MS = 15_000;
+// Far enough past the 2026-09-21 default that every pre-existing spec stays
+// in the grace state (nudge, not a block) for the foreseeable life of the
+// suite, regardless of the real wall-clock date a run happens on.
+const MFA_ENFORCE_OVERRIDE_ISO = '2099-01-01T00:00:00Z';
 const serviceClient = getServiceClient();
 
 interface StorageStateFile {
   origins?: Array<{
+    origin?: string;
     localStorage?: Array<{
       name?: string;
       value?: string;
@@ -66,6 +81,53 @@ function storageStateHasSupabaseSession(storagePath: string): boolean {
       entry.name.includes('auth-token') &&
       typeof entry.value === 'string' &&
       entry.value.includes('access_token'),
+    ),
+  );
+}
+
+/**
+ * Patch the MFA enforcement-date override into a saved storageState file,
+ * under the origin the browser actually visits (`resolveE2EFrontendOrigin`
+ * — the dev server locally, `E2E_BASE_URL` on a rig; matters because
+ * Playwright matches storageState origins by ORIGIN, same reasoning as
+ * `createProfileSession` in `helpers/profile-session.ts`). Creates the
+ * origin entry if the saved state had none for it (an empty-localStorage
+ * login could, in principle, produce zero origins).
+ */
+function injectMfaEnforcementOverride(storagePath: string): void {
+  const parsed = JSON.parse(fs.readFileSync(storagePath, 'utf8')) as StorageStateFile;
+  const targetOrigin = resolveE2EFrontendOrigin();
+  const origins = parsed.origins ?? [];
+
+  let originEntry = origins.find((entry) => entry.origin === targetOrigin);
+  if (!originEntry) {
+    originEntry = { origin: targetOrigin, localStorage: [] };
+    origins.push(originEntry);
+  }
+  originEntry.localStorage = originEntry.localStorage ?? [];
+
+  const existingEntry = originEntry.localStorage.find(
+    (entry) => entry.name === MFA_ENFORCE_DATE_OVERRIDE_KEY,
+  );
+  if (existingEntry) {
+    existingEntry.value = MFA_ENFORCE_OVERRIDE_ISO;
+  } else {
+    originEntry.localStorage.push({
+      name: MFA_ENFORCE_DATE_OVERRIDE_KEY,
+      value: MFA_ENFORCE_OVERRIDE_ISO,
+    });
+  }
+
+  parsed.origins = origins;
+  fs.writeFileSync(storagePath, JSON.stringify(parsed));
+}
+
+function storageStateHasMfaOverride(storagePath: string): boolean {
+  const parsed = JSON.parse(fs.readFileSync(storagePath, 'utf8')) as StorageStateFile;
+  return (parsed.origins ?? []).some((origin) =>
+    (origin.localStorage ?? []).some(
+      (entry) =>
+        entry.name === MFA_ENFORCE_DATE_OVERRIDE_KEY && entry.value === MFA_ENFORCE_OVERRIDE_ISO,
     ),
   );
 }
@@ -176,6 +238,17 @@ async function loginAndSave(
       `storageState file ${storagePath} does not contain a Supabase auth token. ` +
       'Browser context lost the auth state before save. Check supabase-js token ' +
       'persistence and the post-submit redirect race.',
+    );
+  }
+
+  // SCRUM-3167 / SCRUM-3584: keep every existing spec in the MFA grace
+  // state past the 2026-09-21 default enforcement date.
+  injectMfaEnforcementOverride(storagePath);
+  if (!storageStateHasMfaOverride(storagePath)) {
+    throw new Error(
+      `storageState file ${storagePath} is missing the MFA enforcement-date override ` +
+      `(${MFA_ENFORCE_DATE_OVERRIDE_KEY}) after injection. Check injectMfaEnforcementOverride() ` +
+      'and resolveE2EFrontendOrigin().',
     );
   }
 }
