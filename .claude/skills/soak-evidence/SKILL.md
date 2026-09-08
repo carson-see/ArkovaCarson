@@ -42,7 +42,7 @@ T0 is **computed from changed files, not asserted**. A PR that declares T0 but t
 
 ## Required fields
 
-**T0** — no evidence block required; CI must be green.
+**T0** — **not a PR** (CLAUDE.md §0 rule 8, founder directive 2026-09-05): a change the detector classifies T0 commits directly to `main` after local `typecheck`/`lint`/`test`/`lint:copy`. If you are looking at an agent-opened T0 PR, close it and land the change direct. Bot-opened T0 PRs (Dependabot) need no evidence block; CI must be green.
 
 **T1** (2 h soak): tier, exact PR head SHA, staging tag URL (or an explicit N/A explanation), health/smoke result, soak start + end, CI/E2E green, rollback plan, risk rationale, human approver.
 

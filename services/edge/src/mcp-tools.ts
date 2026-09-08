@@ -645,6 +645,30 @@ export function shapeAnchorRow(
 }
 
 /**
+ * Shared RPC mechanics for `get_public_anchor`, used by both
+ * `handleVerifyCredential` and `verifyCredentialRecord` (simplify pass,
+ * DI-038 follow-up). Only the fetch/ok-check/json-parse is shared here —
+ * each caller keeps its OWN error shaping deliberately: `handleVerifyCredential`
+ * still surfaces `error.message` (see the note on `verifyCredentialRecord`
+ * below for why the batch seam does not), so this helper throws the raw
+ * error rather than swallowing it.
+ */
+async function fetchAnchorRow(
+  id: string,
+  config: SupabaseConfig,
+): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false }> {
+  const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
+    method: 'POST',
+    body: JSON.stringify({ p_public_id: id }),
+  });
+  if (!response.ok) {
+    return { ok: false };
+  }
+  const data = (await response.json()) as Record<string, unknown>;
+  return { ok: true, data };
+}
+
+/**
  * Verify a credential by its public ID. Catastrophic failures (abort,
  * network) return an MCP error result; a 404 returns a normal textResult
  * with `verified: false` — matching the pre-INT-02 contract.
@@ -658,22 +682,60 @@ export async function handleVerifyCredential(
   }
 
   try {
-    const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
-      method: 'POST',
-      body: JSON.stringify({ p_public_id: input.public_id }),
-    });
+    const result = await fetchAnchorRow(input.public_id, config);
 
-    if (!response.ok) {
+    if (!result.ok) {
       return textResult({ verified: false, error: `Credential "${input.public_id}" not found.` });
     }
 
-    const data = (await response.json()) as Record<string, unknown>;
-    return textResult(shapeAnchorRow(data));
+    return textResult(shapeAnchorRow(result.data));
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Verification lookup timed out'
       : `Verification lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
+  }
+}
+
+/**
+ * Verify one credential and return the STRUCTURED row — never a `ToolResult`,
+ * never a throw. This is the seam every BATCH path consumes.
+ *
+ * DI-038 (SCRUM-3398): `oracle_batch_verify` used to fan out through
+ * `handleVerifyCredential` and then `JSON.parse(result.content[0].text)`.
+ * That handler's catch branches return BARE PROSE via `errorResult`
+ * (`'Verification lookup timed out'`), not JSON, so `JSON.parse` threw a
+ * SyntaxError, rejected the caller's `Promise.all`, and discarded every
+ * credential in the batch that HAD verified — a single transient timeout
+ * failed a 25-credential bulk call outright. Going through a structured
+ * result instead of a text round-trip removes both the whole-batch discard
+ * and the pointless stringify→parse hop.
+ *
+ * Failure degrades per-credential to `{ public_id, verified: false, error }`.
+ * The `error` strings are deliberately FIXED prose: the underlying
+ * `error.message` can carry transport internals (resolved host, port,
+ * TLS detail) and this envelope is public, agent-facing output.
+ */
+export async function verifyCredentialRecord(
+  publicId: string,
+  config: SupabaseConfig,
+): Promise<Record<string, unknown>> {
+  const id = typeof publicId === 'string' ? publicId.trim() : '';
+  if (id.length === 0) {
+    return { public_id: id, verified: false, error: 'Error: public_id is required' };
+  }
+
+  try {
+    const result = await fetchAnchorRow(id, config);
+    if (!result.ok) {
+      return { public_id: id, verified: false, error: `Credential "${id}" not found.` };
+    }
+    return shapeAnchorRow(result.data, id);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      return { public_id: id, verified: false, error: 'Verification lookup timed out' };
+    }
+    return { public_id: id, verified: false, error: 'Verification lookup failed' };
   }
 }
 
@@ -1827,26 +1889,12 @@ export async function handleVerifyBatch(
     return errorResult('Error: every public_id must be a non-empty string');
   }
 
-  const lookups = sanitized.map(async (publicId) => {
-    try {
-      const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
-        method: 'POST',
-        body: JSON.stringify({ p_public_id: publicId }),
-      });
-      if (!response.ok) {
-        return { public_id: publicId, verified: false, error: `Credential "${publicId}" not found.` };
-      }
-      const data = (await response.json()) as Record<string, unknown>;
-      return shapeAnchorRow(data, publicId);
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        return { public_id: publicId, verified: false, error: 'Verification lookup timed out' };
-      }
-      return { public_id: publicId, verified: false, error: 'Verification lookup failed' };
-    }
-  });
-
-  const results = await Promise.all(lookups);
+  // DI-038: the per-ID lookup lives in `verifyCredentialRecord` so this path
+  // and `oracle_batch_verify` cannot drift apart in either the success shape
+  // or the per-member failure shape.
+  const results = await Promise.all(
+    sanitized.map((publicId) => verifyCredentialRecord(publicId, config)),
+  );
   return textResult({ total: results.length, results });
 }
 

@@ -2,6 +2,31 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-23 — every limiter in `router.ts` now names its bucket scope (SCRUM-3418)
+
+`rateLimit()` used to default `scope` to `''` and key the bucket on the bare keyGenerator output, so
+every limiter that kept the default `req.ip` keyGenerator shared ONE Map entry per IP with every
+other unscoped limiter in the worker — including `index.ts`'s 60/min `apiIpShadowGuard` and the
+10/min `checkout`. `anonRateLimiter` could therefore never enforce its own §1.10 100/min contract.
+See `utils/agents.md` for the mechanism and `docs/staging/429-limiter-map-s33.md` §2a for what it
+does to log attribution.
+
+Two things to keep true in this file:
+
+- **Every limiter declared here passes an explicit `scope`.** The default is now a private
+  per-instance id (`rl-<n>`) rather than the shared bucket, so omitting it is no longer a
+  correctness bug — but the auto-id is derived from module construction order, which makes it a
+  useless (and unstable) thing to see in a `Rate limit exceeded` log line. The scope IS the
+  attribution.
+- **Where a limiter's keyGenerator used to carry its own string prefix** (`credits:`, `ai:`,
+  `ctdl-import:`, …), that prefix moved into `scope` and the keyGenerator now returns the bare
+  caller identifier. Doing both would produce `ai:ai:<user>` — `cpe-log-export.ts` has carried a
+  comment warning about exactly that since it was written.
+
+`batch` is the one scope deliberately shared by two limiter instances: `batchRateLimiter` here and
+`attestationBatchRateLimiter` in `attestations.ts`, so the §1.10 batch tier is one 10/min budget
+across both surfaces. Post-SCRUM-3418 a shared explicit scope is the ONLY way two limiters can share
+a bucket — which is what makes that sharing reviewable instead of accidental. Don't "tidy" it apart.
 ## 2026-08-23 — DI-398: `GET /anchor/:publicId/evidence` 404'd for EVERY anchor (three phantom columns)
 
 `anchor-evidence.ts`'s `defaultLookup.byPublicId` selected `jurisdiction, merkle_root,
@@ -688,10 +713,14 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 
 ## 2026-05-27 Attestation Verification Endpoint (SCRUM-1873)
 
+- **PARKED 2026-08-31.** `legally_binding_attestations` has no INSERT path anywhere in the tree, so this endpoint can never return a verified attestation. Verified read-only against prod `vzwyaatejekddvltxyye` on 2026-08-31: **0 table rows**, and **0 `docusign.notarization_completed` jobs ever enqueued** against 21 completed + 4 dead `docusign.envelope_completed` jobs. `GET /verify/attestation/:attestationId` is answered upstream by `services/worker/src/middleware/parkedAttestationVerify.ts`, mounted in `router.ts` **below** `apiKeyAuth` and the rate limiters (so the route keeps its §1.10 budget and `X-RateLimit-*` headers, and a bad key still 401s as it did before the park) but **above** `idempotency`/`usageTracking` (so it never charges a caller's monthly quota for a response that cannot succeed). Both halves of that position are pinned by `src/tests/api-e2e.test.ts`. The status-code contract is unchanged (400 malformed / 404 well-formed); only the 404's `error` string changed, to stop implying a corpus was searched. It is deliberately **not** a 501: the enabled CRITICAL policy `PAGE — arkova-worker 5xx burst` fires on any 5xx at >5/300s with no path dimension to exclude on, so a 501 here would page the on-call for an endpoint that cannot succeed. Unpark checklist is in `parkedAttestationVerify.ts`.
 - `GET /api/v1/verify/attestation/:attestationId` verifies legally binding attestations from `legally_binding_attestations` table (SCRUM-1871/1872/1873 chain).
 - Public, anonymous-allowed. Uses `ARK-ATT-*` public IDs only. Separate from `GET /api/v1/attestations/:publicId` which handles general `attestations` table.
 - Mounted BEFORE the generic `/verify` catch-all in router.ts to avoid route shadowing.
 - Response never includes `attestation_statement` (private per migration 0314 COMMENT).
+- **Status disclosure gate (2026-08-30):** only `notarized` and `anchored` rows are disclosed. `draft` / `pending_notarization` / `requires_review` carry `subject_name` and notary commission details for unpublished work and return the same 404 body as a missing row. Filtered in SQL by `defaultLookup` and re-checked in the route via `isPubliclyDisclosable()`. Migration 0314 grants no anon `SELECT` and its COMMENT requires public verification to be "API-mediated and **redacted**" — this gate is the redaction half.
+- **Do not repoint at `attestations`.** The table is a real but incomplete feature: 0 prod rows, an UPDATE-only writer in `jobs/docusign-notarization-completed.ts`, and no INSERT path anywhere. `ARK-ARK-VER-*` ids belong to `attestations`; a 400 that names the `ARK-ATT-` prefix is correct behaviour, not a bug.
+- A failed lookup 500s (never 404s) — `defaultLookup` throws on query error. No audit row is written on 400/404.
 
 ## 2026-05-31 CPE compliance-log export (SCRUM-1848 / SCRUM-1859 + SCRUM-1860)
 

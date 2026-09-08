@@ -79,6 +79,22 @@ describe('parseDocusignEnvelopeCompletedJobPayload', () => {
   // rejected by the schema (whole-array .parse() throws — this is the
   // job-payload re-validation gate, stricter than extractSigners' per-entry
   // safeParse skip, since this schema validates the FULL array at once).
+  it.each([
+    { status: 'person@example.invalid' },
+    { signed_at: 'Person Name person@example.invalid' },
+  ])('rejects PII in signer status/timestamp fields: %j', (fields) => {
+    expect(() => parseDocusignEnvelopeCompletedJobPayload({
+      ...PAYLOAD,
+      _signers: [{ recipient_id_guid: testGuid(4), status: 'completed', ...fields }],
+    })).toThrow();
+  });
+
+  it.each(['2026-08-20T10:00:00Z', '2026-08-20T10:00:00.1234567Z', '2026-08-20T10:00:00+02:00', '2026-08-20T10:00:00'])('preserves numeric vendor timestamp %s', (signed_at) => {
+    expect(parseDocusignEnvelopeCompletedJobPayload({
+      ...PAYLOAD, _signers: [{ recipient_id_guid: testGuid(4), status: 'completed', signed_at }],
+    })._signers?.[0].signed_at).toBe(signed_at);
+  });
+
   it('rejects a _signers entry whose recipient_id_guid is email-shaped', () => {
     expect(() =>
       parseDocusignEnvelopeCompletedJobPayload({

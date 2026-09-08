@@ -157,9 +157,13 @@ export function resolveDocusignEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): DocusignEnvironmentTag {
   if (baseUri) {
-    const lower = baseUri.toLowerCase();
-    if (lower.includes('demo.docusign.net')) return 'demo';
-    if (lower.includes('docusign.net')) return 'prod';
+    try {
+      const host = new URL(baseUri).hostname.toLowerCase();
+      if (host === 'demo.docusign.net') return 'demo';
+      if (host.endsWith('.docusign.net')) return 'prod';
+    } catch {
+      // An invalid/non-vendor URI uses the explicit environment fallback.
+    }
   }
   const demo = (env.DOCUSIGN_DEMO ?? 'true').toLowerCase() !== 'false';
   return demo ? 'demo' : 'prod';

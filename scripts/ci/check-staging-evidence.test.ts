@@ -7,6 +7,7 @@ import {
   baseDriftImpactErrors,
   formatBaseDriftDiagnostics,
   check,
+  hasBaseDriftResidualRiskNote,
   extractDeclaredTier,
   findS33RuntimeImporters,
   findS33Lane1RuntimeImporters,
@@ -182,6 +183,27 @@ describe('check-staging-evidence', () => {
 
     it('returns T1 for plain frontend file', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
+    });
+
+    it('returns T0 for the src/tests/rls/ test-helper subtree (SCRUM-3618)', () => {
+      // src/tests/rls/ is the canonical RLS test-helper module tree CLAUDE.md
+      // §1.7 itself names (`withUser()` / `withAuth()` / `cleanupClient()`).
+      // It is imported ONLY by *.test.ts files — verified no src/ runtime
+      // importer — so a change to it has no surface a soak could exercise.
+      // Without this, the tests-only SCRUM-3618 parallel-safety fix
+      // (tests/rls/** sweep + the shared sign-out helper) classified T1 via
+      // the frontend default: a 2 h soak of a file prod never reads.
+      expect(requiredTierFor(['src/tests/rls/helpers.ts']).tier).toBe('T0');
+      // The full SCRUM-3618 change-set shape stays T0 with the helper included.
+      expect(
+        requiredTierFor([
+          'src/tests/rls/agents.md',
+          'src/tests/rls/helpers.ts',
+          'tests/infra/rls-suite-parallel-safety.test.ts',
+          'tests/rls/docusign-integrations.test.ts',
+          'tests/rls/credential-source-providers.test.ts',
+        ]).tier,
+      ).toBe('T0');
     });
 
     it('returns T0 for the S0-E4 release-pipeline CI tooling scripts', () => {
@@ -3646,6 +3668,132 @@ describe('check-staging-evidence', () => {
 - Approved by: carson@arkova.io
 `;
       expect(hasResidualRiskException(body)).toEqual({ valid: true, missing: [] });
+    });
+
+    // Ninth closure (Batch-I stand-up for PR #2589, 2026-09-07): the seventh
+    // closure gave `none` / `n/a` a LEADING-token guard but left the
+    // incomplete-placeholder vocabulary whole-value anchored, so
+    // `Approved by: PENDING — Carson must decide.` and
+    // `Approved by: NOT YET APPROVED — requires Carson.` both GRANTED the
+    // exception while plainly stating no one had approved it. The same
+    // leading-token treatment now covers pending/tbd/tba/todo/wip/planned/
+    // placeholder/to-be-* and the `not yet <anything>` shape.
+    const INCOMPLETE_LEADING_APPROVERS = [
+      'PENDING — Carson must decide.',
+      'pending: Carson',
+      'NOT YET APPROVED — requires Carson.',
+      'Not yet — waiting on the CTO',
+      'not-yet-approved (Carson)',
+      'TBD (awaiting CTO)',
+      'tba: Carson',
+      'TODO — ask Carson',
+      'To-do: get Carson to sign',
+      'To be determined by the CTO',
+      'to be announced — CTO to confirm',
+      'To be filled in before merge',
+      'WIP — Carson to confirm',
+      'Work in progress; Carson reviewing',
+      'Planned: Carson',
+      'Placeholder — replace before merge',
+      'No one — not granted.',
+    ];
+    const REAL_APPROVERS = [
+      'Jean-Luc Picard',
+      'Carson See — approved 2026-09-07',
+      'Todorov, Georgi (CTO) — approved',
+      'Pendleton Ward, 2026-09-07',
+      'carson@arkova.io',
+    ];
+
+    it.each(INCOMPLETE_LEADING_APPROVERS)(
+      'returns invalid when Approved by leads with an incomplete marker: %s',
+      (approver) => {
+        const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 ledger rows
+- Impact on this PR: none
+- Reason not cleaned: other PRs hold active staging leases
+- Approved by: ${approver}
+`;
+        const result = hasResidualRiskException(body);
+        expect(result.valid).toBe(false);
+        expect(result.missing.join(' ')).toMatch(/Approved by/i);
+      },
+    );
+
+    it.each(REAL_APPROVERS)(
+      'still returns valid for a real approver whose name is not a leading marker: %s',
+      (approver) => {
+        const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 ledger rows
+- Impact on this PR: none
+- Reason not cleaned: other PRs hold active staging leases
+- Approved by: ${approver}
+`;
+        expect(hasResidualRiskException(body)).toEqual({ valid: true, missing: [] });
+      },
+    );
+
+    describe('hasBaseDriftResidualRiskNote shares the approver guard', () => {
+      const driftFile = 'services/worker/src/chain/client.ts';
+      const note = (approver: string) => `### Base-drift residual-risk note
+- Drift files: ${driftFile}
+- Risk assessment: the drifted surface shares no code path with the changed behavior this soak exercised.
+- Evidence still valid because: the soaked behavior does not invoke the drifted surface.
+- Approved by: ${approver}
+`;
+
+      it.each(INCOMPLETE_LEADING_APPROVERS)(
+        'returns invalid when Approved by leads with an incomplete marker: %s',
+        (approver) => {
+          const result = hasBaseDriftResidualRiskNote(note(approver), [driftFile]);
+          expect(result.valid).toBe(false);
+          expect(result.missing.join(' ')).toMatch(/Approved by/i);
+        },
+      );
+
+      it.each(REAL_APPROVERS)('still returns valid for a real approver: %s', (approver) => {
+        expect(hasBaseDriftResidualRiskNote(note(approver), [driftFile])).toEqual({
+          valid: true,
+          missing: [],
+        });
+      });
+    });
+
+    describe('validateHumanApproverField (via check, T1) shares the approver guard', () => {
+      const t1Body = (approver: string) => `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
+- Health/smoke result: current-head smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
+- CI/E2E green: green
+- Rollback plan: revert PR
+- Risk rationale: frontend copy-only change, no restricted surfaces
+- Human approver: ${approver}
+`;
+      const run = (approver: string) => check({
+        body: t1Body(approver),
+        files: ['src/components/Foo.tsx'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+      });
+
+      it.each(INCOMPLETE_LEADING_APPROVERS)(
+        'rejects a Human approver that leads with an incomplete marker: %s',
+        (approver) => {
+          const r = run(approver);
+          expect(r.ok).toBe(false);
+          expect(r.errors.join(' ')).toMatch(/Human approver:.*names no one/);
+        },
+      );
+
+      it.each(REAL_APPROVERS)('accepts a real Human approver: %s', (approver) => {
+        const r = run(approver);
+        expect(r.errors.filter((e) => /Human approver/.test(e))).toEqual([]);
+        expect(r.ok).toBe(true);
+      });
     });
   });
 

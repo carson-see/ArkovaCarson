@@ -1978,11 +1978,15 @@ function validateResidualRiskNote(
     // `Approved by: N/A — …` grant the exception once any prose trailed the
     // marker — the same leading-token shape the 2026-08-29 addendum closed for
     // self-references.
+    // INCOMPLETE_APPROVER_PREFIX_RE (ninth closure): the seventh never
+    // reached the pending/tbd vocabulary, so `Approved by: PENDING — Carson
+    // must decide.` still granted the exception on 2026-09-07.
     if (
       trimmed.length === 0
       || isIncompletePlaceholder(trimmed)
       || isNotApplicablePlaceholder(trimmed)
       || NOT_A_PERSON_PREFIX_RE.test(trimmed)
+      || INCOMPLETE_APPROVER_PREFIX_RE.test(trimmed)
     ) {
       missing.push('Approved by: (must name a real approver, not a blank or placeholder)');
     }
@@ -2047,6 +2051,31 @@ const SELF_REFERENCE_PREFIX_RE =
  */
 const NOT_A_PERSON_PREFIX_RE =
   /^(?:none|n\/a|not[\s-]?applicable|null|nobody|no[\s-]one)(?:$|[\s,;:.()!?—–])/i;
+
+/**
+ * LEADING "not filled in yet" tokens for an approver-class field (ninth
+ * closure, Batch-I stand-up for PR #2589, 2026-09-07). The seventh closure
+ * gave `none` / `n/a` the leading-token treatment above but left
+ * {@link INCOMPLETE_VALUE_PATTERNS} whole-value anchored, so
+ * `Approved by: PENDING — Carson must decide.` and
+ * `Approved by: NOT YET APPROVED — requires Carson.` both GRANTED a
+ * residual-risk / base-drift exception while plainly saying no one had
+ * approved it — the same prose-after-the-marker shape, one vocabulary over.
+ * A value that BEGINS with one of these tokens names no one regardless of
+ * what follows. Scoped to approver-class fields only: `isIncompletePlaceholder`
+ * stays whole-value because other fields legitimately carry prose after a
+ * marker (`Migration applied: pending 0441 — see rollback note`). `not yet` is
+ * open-ended on purpose (`not yet approved`, `not yet decided`, `not yet —`):
+ * whatever follows, a value that opens "not yet" is describing an absence.
+ * Same firing boundary as {@link SELF_REFERENCE_PREFIX_RE}: `-` is not a
+ * boundary, so a hyphenated name cannot false-positive, and a real surname
+ * that merely STARTS with a token (`Todorov`, `Pendleton`) needs the boundary
+ * it never gets. The one exception is `not yet`, which ALSO accepts `-` as
+ * its boundary: `not-yet-approved (Carson)` is a real spelling of the hole
+ * and no human name opens with "Not-yet-".
+ */
+const INCOMPLETE_APPROVER_PREFIX_RE =
+  /^(?:(?:pending|tbd|tba|todo|to[\s-]?do|to[\s-]?be[\s-]?(?:determined|announced|filled(?:[\s-]?in)?)|wip|work[\s-]?in[\s-]?progress|planned|placeholder)(?:$|[\s,;:.()!?—–])|not[\s-]?yet(?:$|[\s,;:.()!?—–-]))/i;
 
 /**
  * The agent naming itself as the approver. CLAUDE.md §1.12 and the T1 tier
@@ -2161,10 +2190,13 @@ function validateHumanApproverField(body: string): string | null {
   if (value === null) return null; // label absent → missingFields() owns it
   const trimmed = value.trim();
   if (trimmed.length === 0) return null; // empty → validateNonEmptyEvidenceField owns it
+  // Ninth closure: `Human approver: PENDING — Carson must decide.` is the
+  // T1 spelling of the residual-risk hole; both fields share the guard.
   if (
     isIncompletePlaceholder(trimmed)
     || isNotApplicablePlaceholder(trimmed)
     || NOT_A_PERSON_PREFIX_RE.test(trimmed)
+    || INCOMPLETE_APPROVER_PREFIX_RE.test(trimmed)
   ) {
     return `${field} must name the human who approved this PR — \`${trimmed}\` names no one. `
       + 'NONE/N/A/TBD/pending do not satisfy the T1 human-approval requirement; if no human '
@@ -2934,6 +2966,18 @@ const STAGING_TOOLING_ALLOW = [
   // read by scripts/*.test.ts only (never imported, typechecked, or bundled).
   /^scripts\/check-copy-terms(\.test)?\.ts$/,
   /^scripts\/fixtures\//,
+  // SCRUM-3618: the RLS test-helper subtree — the exact path CLAUDE.md §1.7
+  // names for `withUser()` / `withAuth()` (plus `cleanupClient()` and the
+  // pinned DEMO_CREDENTIALS/ORG_IDS seed constants). It is imported ONLY by
+  // `*.test.ts` files (verified: no src/ runtime importer), so like the
+  // CODEOWNERS / gitleaks entries above there is no surface a soak could
+  // exercise. It bit the same way: the tests-only SCRUM-3618 parallel-safety
+  // fix (tests/rls/** sweep + the shared sign-out helper) classified T1 via
+  // the frontend default and would have demanded a 2 h soak of a file prod
+  // never reads. Sibling `*.test.ts`/`agents.md` files under src/tests/ are
+  // already T0 via the early TEST_FILE_RE / agents.md return; this entry
+  // covers only the non-test helper modules in the RLS subtree.
+  /^src\/tests\/rls\//,
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,
@@ -2946,6 +2990,14 @@ const STAGING_TOOLING_ALLOW = [
   // over src/), runs only in CI; never ships to prod runtime → T0 tooling,
   // same class as the other scripts/ci/check-*.ts gates above.
   /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
+  // Governance doc-pointer resolution gate. Reads markdown + workflow YAML and
+  // asserts every cited repo path exists; nothing under src/ or
+  // services/worker/src/ imports it (verified by grep across src/, services/,
+  // packages/, integrations/, e2e/), and it runs only in the ci.yml
+  // `doc-pointers` job → no prod runtime to soak, same class as the other
+  // scripts/ci/check-*.ts gates above. Its exemptions file already rides the
+  // scripts/ci/snapshots/ entry.
+  /^scripts\/ci\/check-doc-pointers(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   // SCRUM-1253 (R0-7): memory feedback-rules CI gates. Per-rule scripts under
   // scripts/ci/feedback-rules/ + the check-feedback-rules.ts orchestrator run
@@ -3028,7 +3080,7 @@ const STAGING_TOOLING_ALLOW = [
   // PI-0 S2 (SCRUM-2341 / verifier track): @arkova/verifier + @arkova/verifier-cli
   // are new MIT-licensed STANDALONE library/CLI packages. They are NOT imported by
   // the deployed Cloud Run worker (services/worker) or the frontend (src/) — verified
-  // no `@arkova/verifier` import exists under services/** or src/**. No migration, no
+  // no `arkova-verifier` import exists under services/** or src/**. No migration, no
   // API/contract surface, no prod runtime: they run only in their own clean-room CI
   // job and as a developer/auditor CLI. Zero prod-runtime impact → T0 tooling. (The
   // packages/*/package.json + package-lock.json + eslint.config.js + agents.md within

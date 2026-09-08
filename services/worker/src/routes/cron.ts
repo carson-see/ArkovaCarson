@@ -146,14 +146,118 @@ const DocusignSignerBackfillRunLimitSchema = z.coerce.number().int().min(1).max(
 
 cronRouter.use(corsMiddleware);
 
-// Dedicated rate limiter for cron endpoints
-const cronJobsLimiter = rateLimit({
+/**
+ * SCRUM-4475 — cron rate limiting is TWO limiters, not one global bucket.
+ *
+ * HISTORY. This was a single `rateLimit({ maxRequests: 30, keyGenerator: () =>
+ * 'global' })` mounted on every `/jobs/*` route: ONE 30/min bucket shared by
+ * all 111 routes on this router. Prod runs 66 Cloud Scheduler jobs and the
+ * two-, five-, ten-, fifteen- and thirty-minute cadences all coincide with the
+ * hourly ones at :00, so the 31st job of that burst onwards was refused with
+ * 429. Cloud Scheduler records a 429 as status 8 RESOURCE_EXHAUSTED and does
+ * NOT retry inside the window, so those runs were skipped outright, silently.
+ * Cloud Logging for 2026-09-03T18Z..09-05T18Z shows 46 refusals of
+ * org-queue-scheduler, 43 of lock-wait, 43 of embed-public-records and so on
+ * down; the nightly `daily-anchor-flush` (`POST /jobs/batch-anchors?force=true`)
+ * was refused at 2026-09-04T07:00:51Z and 2026-09-05T07:00:41Z.
+ *
+ * The two limiters below have different jobs and must not be collapsed back
+ * into one:
+ *
+ *   `cronBurstGuard` runs BEFORE `cronAuth`. It is the flood guard that still
+ *   applies to an unauthenticated caller, and it is what bounds how often
+ *   anyone can drive the JWKS fetch / JWT verification inside `verifyCronAuth`.
+ *   It is keyed per source IP (`trust proxy` is set in index.ts, so that is the
+ *   real client), NOT globally: a global bucket is the very shape that caused
+ *   this outage, and per-IP means an abusive caller exhausts its own budget
+ *   instead of starving Cloud Scheduler.
+ *
+ *   `cronJobsLimiter` runs AFTER `cronAuth`, one bucket per registered job
+ *   path. It catches a runaway trigger on ONE job without taking the other 65
+ *   down with it. Sitting behind auth is deliberate and is what makes the
+ *   per-path key safe: an unauthenticated caller is refused at auth and can
+ *   never mint a bucket per route by enumerating URLs.
+ */
+
+/**
+ * 120/min per source IP. The worst case this has to admit is every one of the
+ * 66 Cloud Scheduler jobs landing in the same minute at :00, so 120 is ~1.8x
+ * the whole fleet; the in-process `scheduled.ts` backups and admin-console
+ * triggers fit inside that headroom. Raise it if the job count grows past ~80.
+ */
+export const CRON_BURST_GUARD_MAX_REQUESTS = 120;
+
+const cronBurstGuard = rateLimit({
   windowMs: 60000,
-  maxRequests: 30,
-  keyGenerator: () => 'cron-jobs',
+  maxRequests: CRON_BURST_GUARD_MAX_REQUESTS,
+  scope: 'cron-burst',
+  // Default keyGenerator is req.ip; named explicitly because the whole point of
+  // this limiter is that it is NOT the old constant-key global bucket.
+  keyGenerator: (req) => req.ip || 'unknown',
 });
 
-cronRouter.use(cronJobsLimiter);
+cronRouter.use(cronBurstGuard);
+
+/**
+ * 10/min per job. No cron job on this router legitimately fires more than once
+ * a minute — `lock-wait` at every-minute is the fastest — so this is ~10x
+ * headroom over the real cadence while still bounding a single misconfigured
+ * trigger.
+ */
+export const CRON_JOB_MAX_REQUESTS_PER_MINUTE = 10;
+
+/** Shared bucket for any path this router does not actually serve. */
+const UNROUTED_JOB_BUCKET = '__unrouted__';
+
+/**
+ * Registered route paths, read once off the router's own stack. Computed lazily
+ * because the routes below are registered after this module-level statement
+ * runs; by the time a request arrives the module body has finished, so the set
+ * is complete. Nothing else needs to be kept in sync with the route list.
+ */
+let registeredJobPaths: Set<string> | null = null;
+
+function getRegisteredJobPaths(): Set<string> {
+  if (!registeredJobPaths) {
+    const stack = (cronRouter as unknown as { stack: Array<{ route?: { path?: unknown } }> }).stack;
+    registeredJobPaths = new Set<string>();
+    for (const layer of stack) {
+      const routePath = layer.route?.path;
+      if (typeof routePath === 'string') {
+        registeredJobPaths.add(normalizeJobPath(routePath));
+      }
+    }
+  }
+  return registeredJobPaths;
+}
+
+/**
+ * Express default routing is case-insensitive and non-strict, so `/Lock-Wait/`
+ * and `/lock-wait` reach the same handler and must therefore share one bucket.
+ */
+function normalizeJobPath(path: string): string {
+  const trimmed = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  return trimmed.toLowerCase();
+}
+
+/**
+ * Bucket key for the per-job limiter: the job path when it is a route this
+ * router serves, otherwise one shared bucket. The allowlist is what keeps
+ * bucket cardinality bounded by the route table (111 + 1) instead of by
+ * whatever an authenticated caller puts in the URL — the store is a process-wide
+ * Map with a 50k cap, and unbounded keys would be a memory-pressure lever.
+ */
+function cronJobBucketKey(req: Request): string {
+  const path = normalizeJobPath(req.path || '/');
+  return getRegisteredJobPaths().has(path) ? path : UNROUTED_JOB_BUCKET;
+}
+
+const cronJobsLimiter = rateLimit({
+  windowMs: 60000,
+  maxRequests: CRON_JOB_MAX_REQUESTS_PER_MINUTE,
+  scope: 'cron-jobs',
+  keyGenerator: cronJobBucketKey,
+});
 
 // Log heap status after every cron job completes (response finish event)
 cronRouter.use((_req, res, next) => {
@@ -269,6 +373,11 @@ async function cronAuth(req: Request, res: any, next: any): Promise<void> {
 // Apply cron auth to all routes in this router
 cronRouter.use(cronAuth);
 
+// SCRUM-4475: per-job limiter sits BEHIND auth — see the block at the top of
+// this file. Unauthenticated callers are bounded by `cronBurstGuard` instead and
+// never reach a per-path bucket.
+cronRouter.use(cronJobsLimiter);
+
 // ─── Core Anchoring Jobs ───
 
 cronRouter.post('/process-anchors', async (_req, res) => {
@@ -342,11 +451,12 @@ cronRouter.post('/check-confirmations', async (_req, res) => {
 
 // PROOF-03 (SCRUM-2336): confirmation-proof backfill.
 //
-// PRODUCTION TRIGGER. The real-network soak proved the in-process node-cron
-// schedule (routes/scheduled.ts) NEVER fires on Cloud Run — node-cron is
-// dormant while CPU is throttled between requests. Prod drives cron via Cloud
-// Scheduler → HTTP, so the backfill needs this endpoint to run at all. The
-// in-process schedule stays as the dev/test backup. `runConfirmationProofBackfill`
+// PRODUCTION TRIGGER. The real-network soak found the in-process node-cron
+// schedule (routes/scheduled.ts) never fired on that rig — which is what a
+// revision scaled to zero does, NOT a property of Cloud Run in general
+// (SCRUM-3384). Prod drives cron via Cloud Scheduler → HTTP because that is the
+// trigger with retries, an attempt deadline and observability; the in-process
+// schedule is the dev/test backup and also fires on every warm prod instance. `runConfirmationProofBackfill`
 // already no-ops (skipped:true) in mock mode / when prod anchoring is off, and
 // needs no mutex (idempotent — the populated block_header is the watermark and
 // the last writer writes identical bytes). Same cronAuth + JSON-result /
@@ -366,8 +476,8 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
 // MANUAL TRIGGER ONLY — deliberately NOT scheduled (no Cloud Scheduler
 // binding, no in-process backup): the census is an operator-driven run, and
 // any future write mode is Carson-gated. Follows the Cloud Scheduler → HTTP
-// pattern anyway (node-cron is dormant under Cloud Run CPU throttling, so an
-// authenticated POST is the only trigger that actually fires in prod).
+// pattern anyway: an authenticated POST is the only trigger this route has, so
+// it runs when and only when an operator asks for it.
 //
 // DRY-RUN BY DEFAULT: emits the per-class plan {direct_anchored,
 // batch_provable, already_complete, ambiguous} with zero writes to the proof
@@ -648,8 +758,8 @@ cronRouter.post('/proof-coverage-monitor', async (req, res) => {
 
 // QUEUE-07 (SCRUM-2353): daily review digest to org admins.
 //
-// PRODUCTION TRIGGER (Cloud Scheduler → HTTP; node-cron is dormant under Cloud
-// Run CPU throttling). One row per org admin, scoped to the admin's org + owned
+// PRODUCTION TRIGGER (Cloud Scheduler → HTTP; this digest has no in-process
+// registration at all). One row per org admin, scoped to the admin's org + owned
 // sub-orgs. Counts-only — never document content (§1.6). Idempotent per
 // (admin, org, UTC date) via the audit-events-backed delivery log, so a daily
 // re-trigger or Scheduler retry does not double-send. Gated by
@@ -878,9 +988,11 @@ cronRouter.post('/org-queue-scheduler', async (req, res) => {
 
 // ─── QUEUE-06 (SCRUM-2352): connector_artifact drain consumer ───
 //
-// PRODUCTION TRIGGER. Cloud Scheduler hits this HTTP endpoint because in-process
-// node-cron is dormant under Cloud Run CPU throttling (the PROOF-03 soak proved
-// the dev/test backup never fires in prod). `runConnectorArtifactDrain` no-ops
+// PRODUCTION TRIGGER. Cloud Scheduler hits this HTTP endpoint because it is the
+// trigger with retries and an attempt deadline; the in-process registration in
+// routes/scheduled.ts is a backup that ALSO fires on every warm prod instance
+// (SCRUM-3384), which the compare-and-set claim below makes safe either way.
+// `runConnectorArtifactDrain` no-ops
 // (`skipped:true`) when ENABLE_CONNECTOR_ARTIFACT_DRAIN is false, drains each org
 // with at least one pending|queued row, and charges credits ONLY at SECURING via
 // debit_and_enqueue_anchor. Idempotent (compare-and-set claim) → no mutex needed.
@@ -956,9 +1068,9 @@ cronRouter.post('/docusign-envelope-completed', async (req, res) => {
 // ─── SCRUM-2903 (GD-PROD): Google Drive file-changed job queue ───
 //
 // Drive twin of /docusign-envelope-completed above. PRODUCTION TRIGGER —
-// Cloud Scheduler hits this HTTP endpoint (in-process node-cron is the
-// dev/test backup in routes/scheduled.ts; it's dormant under Cloud Run CPU
-// throttling per the PROOF-03 finding). Drains the `google_drive.file_changed`
+// Cloud Scheduler hits this HTTP endpoint (in-process node-cron in
+// routes/scheduled.ts is the backup, and it fires on every warm prod instance
+// too — SCRUM-3384). Drains the `google_drive.file_changed`
 // job_queue type that drive-changes-runner.ts writes on a matched change:
 // fetch bytes -> SHA-256 in memory -> discard -> enqueue_connector_artifact
 // (§1.6A). `runDriveFileChangedJobs` no-ops the hash/enqueue step (returns
@@ -1015,9 +1127,11 @@ cronRouter.post('/docusign-notarization-completed', async (req, res) => {
 // dead-letters with a Sentry event on the final attempt.
 //
 // PRODUCTION TRIGGER: Cloud Scheduler (`ai-credit-reconcile`, every 15 min —
-// see scripts/gcp-setup/cloud-scheduler.sh). In-process node-cron is NOT used:
-// it is dormant under Cloud Run CPU throttling (PROOF-03 finding), which is
-// precisely how a "wired" drain can silently never run.
+// see scripts/gcp-setup/cloud-scheduler.sh). There is deliberately NO
+// in-process registration for this drain: a process-local timer has no retry,
+// no attempt deadline and no run history, which is precisely how a "wired"
+// drain can silently never run — and on a revision that scales to zero it does
+// not fire at all.
 cronRouter.post('/ai-credit-reconcile', async (req, res) => {
   try {
     const rawLimit = req.query.limit ?? req.body?.limit;

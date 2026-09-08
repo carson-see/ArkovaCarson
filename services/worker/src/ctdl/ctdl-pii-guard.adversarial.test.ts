@@ -27,7 +27,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { buildCtdlJsonLd, type CtdlAnchor } from './ctdl-serializer.js';
-import { CtdlPiiSafetyError } from './ctdl-pii-guard.js';
+import { CtdlPiiSafetyError, containsHighConfidencePii, normalizePublicText } from './ctdl-pii-guard.js';
 
 const VERIFY = { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-PII-001' };
 
@@ -216,5 +216,110 @@ describe('SCRUM-2300 — adversarial transcript fixtures never leak learner PII'
     const started = performance.now();
     buildCtdlJsonLd(anchor, VERIFY);
     expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+/**
+ * EMAIL_PATTERN linearity and detection parity.
+ *
+ * The detector is a boolean `.test()`, so the `/g` desynchronisation that forced
+ * `compliance/professional-education.ts` onto an @-anchored scan cannot occur
+ * here — a single bounded pattern is sufficient. What DOES matter is that the
+ * bound never causes a MISSED detection: this is a fail-closed gate, so a miss
+ * publishes PII rather than 404ing a credential.
+ */
+describe('EMAIL_PATTERN — linearity and detection parity', () => {
+  const LEGACY_EMAIL_PATTERN = () => /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+
+  // This ratchet measures SCALING, not wall-clock, and that is deliberate.
+  //
+  // `containsHighConfidencePii` normalises through `normalizePublicText` first,
+  // so no caller can hand the pattern more than MAX_SCAN_CHARS. That cap
+  // already bounded the live exposure: the quadratic pattern costs ~9 ms at the
+  // cap, not the ~4,000 ms it costs on an uncapped 40k input. An absolute
+  // ceiling here would therefore be GREEN on the unbounded pattern — a ratchet
+  // that passes on the bug. (Verified: a 2 s ceiling did exactly that.)
+  //
+  // The ratio is the honest discriminator and is load-independent, since a
+  // uniformly slower machine scales both measurements. Quadratic cost grows
+  // ~16x for a 4x input; linear cost grows ~4x. Measured 14.2x unbounded vs
+  // 3.9x bounded, so a ceiling of 8 sits squarely between them.
+  //
+  // A DOTTED run is the adversarial shape, not the plain run PR #2346 used:
+  // '.' and '-' are local-part characters but NOT word characters, so the old
+  // pattern's leading `\b` held before every token. A plain alphanumeric run
+  // collapses to a single start offset and is fast even unbounded, so #2346's
+  // input reused unchanged would have proved nothing here.
+  it('scans a dotted local-part run in linear, not quadratic, time', () => {
+    const dotted = (chars: number) => 'a.'.repeat(chars / 2).slice(0, chars);
+    const best = (input: string) => {
+      let fastest = Infinity;
+      for (let run = 0; run < 7; run += 1) {
+        const started = performance.now();
+        containsHighConfidencePii(input);
+        fastest = Math.min(fastest, performance.now() - started);
+      }
+      return fastest;
+    };
+    const small = best(dotted(1000));
+    const large = best(dotted(4000));
+    expect(large / Math.max(small, 0.001)).toBeLessThan(8);
+  });
+
+  // The bound must degrade by making the match START LATER, never by failing to
+  // match. Keeping the old leading `\b` breaks exactly this: a run longer than
+  // 64 characters cannot reach the '@' from the only offset `\b` permits, so a
+  // real address stops being detected.
+  //
+  // Lengths stay inside MAX_SCAN_CHARS on purpose. Past that cap
+  // `normalizePublicText` truncates the input before the '@' is ever reached,
+  // so nothing is detected — that is the cap's behaviour, not the pattern's,
+  // it predates this change (the old pattern misses the same input), and it is
+  // the documented trade for bounding work on a public unauthenticated route.
+  it.each([64, 65, 80, 300, 3000])(
+    'still detects an address whose local-part run is %i characters',
+    (length) => {
+      expect(containsHighConfidencePii(`${'x'.repeat(length)}@mail.example.com`)).toBe(true);
+    },
+  );
+
+  // The DOMAIN quantifier stays unbounded; bounding it was tried in
+  // src/lib/piiStripper.ts and reverted for this reason.
+  it.each([200, 300, 400, 2000])('still detects an address with a %i-character domain', (length) => {
+    expect(containsHighConfidencePii(`mail user@${'a'.repeat(length)}.example.com end`)).toBe(true);
+  });
+
+  // Differential parity: anything the old pattern detected must still be
+  // detected. Over-detection is safe here only in the sense that it is the
+  // non-leaking direction; the precision blocks elsewhere in this file pin that
+  // ordinary credential copy still publishes.
+  it('never misses an address the previous pattern detected', () => {
+    const alphabets: string[][] = [
+      '@aZ09._%+-'.split(''),
+      'aaaAAA000zZ9@.'.split(''),
+      '..--@aA0_%+'.split(''),
+      ['user', 'jane.doe', 'bob', '@', 'example', '.com', '.edu', '.', ' ', '-', '_', 'x', 'ALLCAPS', '123'],
+      ['x'.repeat(70), 'y'.repeat(30), '@', '.com', '.', '-', '_', ' ', 'a'],
+    ];
+    let seed = 0x51de;
+    const rng = () => {
+      seed ^= seed << 13; seed >>>= 0;
+      seed ^= seed >> 17;
+      seed ^= seed << 5; seed >>>= 0;
+      return seed / 0x100000000;
+    };
+    const misses: string[] = [];
+    for (const alphabet of alphabets) {
+      for (let n = 0; n < 20_000; n += 1) {
+        const length = 1 + Math.floor(rng() * 60);
+        let input = '';
+        for (let i = 0; i < length; i += 1) input += alphabet[Math.floor(rng() * alphabet.length)];
+        const normalized = normalizePublicText(input);
+        if (LEGACY_EMAIL_PATTERN().test(normalized) && !containsHighConfidencePii(input)) {
+          misses.push(input);
+        }
+      }
+    }
+    expect(misses).toEqual([]);
   });
 });

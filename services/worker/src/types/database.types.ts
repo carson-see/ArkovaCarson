@@ -7155,6 +7155,20 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      insert_supplementary_proofs: {
+        Args: { p_rows: Json }
+        Returns: number
+      }
+      manage_oauth_email_confirmation: {
+        Args: {
+          p_action: string
+          p_attempt_id?: string
+          p_challenge_digest?: string
+          p_email?: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
       claim_pending_anchors: {
         Args: {
           p_exclude_pipeline?: boolean

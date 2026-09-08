@@ -58,6 +58,7 @@ interface AdminOrganization {
   anchor_count: number;
   is_test: boolean;
   anchor_quota: number | null;
+  cap_enforced: boolean;
   credit_balance: number | null;
   created_at: string;
 }
@@ -72,11 +73,14 @@ const DEFAULT_FREE_QUOTA = 10;
 // in every inline handler was scored as part of one giant function.
 
 function renderOrgCapBadge(org: AdminOrganization) {
-  if (org.is_test && org.anchor_quota != null) {
+  // SCRUM-4474: the cap is `cap_enforced`, not `is_test`. A billable customer
+  // may be capped, so the word "free" is only correct for a non-billable org —
+  // showing "4/2000 free" against an invoiced customer is simply wrong.
+  if (org.cap_enforced && org.anchor_quota != null) {
     const over = org.anchor_count >= org.anchor_quota;
     return (
       <Badge variant={over ? 'destructive' : 'secondary'} className="text-[10px]">
-        {org.anchor_count}/{org.anchor_quota} free
+        {org.anchor_count}/{org.anchor_quota}{org.is_test ? ' free' : ''}
       </Badge>
     );
   }
@@ -87,16 +91,43 @@ function isValidQuotaInput(capEnabled: boolean, quotaNum: number): boolean {
   return !capEnabled || (Number.isInteger(quotaNum) && quotaNum >= 0);
 }
 
-function buildQuotaPayload(capEnabled: boolean, quotaNum: number): { anchor_quota: number | null; is_test: boolean } {
-  return capEnabled
-    ? { anchor_quota: quotaNum, is_test: true }
-    : { anchor_quota: null, is_test: false };
+/**
+ * SCRUM-4474 — the cap and the billing flag are independent.
+ *
+ * This previously returned `is_test: true` whenever the cap was on, so capping
+ * any organization silently converted it into a Stripe-excluded test org, and
+ * uncapping one silently converted it back. HakiChain — invoiced, and
+ * contractually capped at 2,000 — could not be expressed at all.
+ */
+function buildQuotaPayload(
+  capEnabled: boolean,
+  quotaNum: number,
+  isTest: boolean,
+  recordedQuota: number | null,
+): { anchor_quota: number | null; cap_enforced: boolean; is_test: boolean } {
+  return {
+    // Turning the cap OFF must not DISCARD the number. This previously sent
+    // `null`, so an admin who opened this modal on an org holding a
+    // recorded-but-inert quota (Login Defense: anchor_quota = 15, cap off) and
+    // saved anything at all wiped the 15 — the exact value 0440's backfill goes
+    // out of its way to preserve rather than guess at. `cap_enforced` is the
+    // switch; `anchor_quota` is the number, and the two are independent.
+    anchor_quota: capEnabled ? quotaNum : recordedQuota,
+    cap_enforced: capEnabled,
+    is_test: isTest,
+  };
 }
 
-function buildQuotaSuccessMessage(displayName: string, capEnabled: boolean, quotaNum: number): string {
-  if (!capEnabled) return `${displayName}: uncapped (billable).`;
-  const unit = quotaNum === 1 ? 'action' : 'actions';
-  return `${displayName}: capped at ${quotaNum} free testing ${unit}.`;
+function buildQuotaSuccessMessage(
+  displayName: string,
+  capEnabled: boolean,
+  quotaNum: number,
+  isTest: boolean,
+): string {
+  const billing = isTest ? 'not billable' : 'billable';
+  if (!capEnabled) return `${displayName}: uncapped (${billing}).`;
+  const unit = quotaNum === 1 ? 'document' : 'documents';
+  return `${displayName}: capped at ${quotaNum} ${unit} (${billing}).`;
 }
 
 /** Maps an adjust-credits API error code to a user-facing toast message. */
@@ -463,6 +494,7 @@ export function AdminOrganizationsPage() {
   // SCRUM-2225 — free-tier cap editor state.
   const [editingOrg, setEditingOrg] = useState<AdminOrganization | null>(null);
   const [capEnabled, setCapEnabled] = useState(true);
+  const [capIsTest, setCapIsTest] = useState(false);
   const [quotaInput, setQuotaInput] = useState(String(DEFAULT_FREE_QUOTA));
   const [saving, setSaving] = useState(false);
 
@@ -508,7 +540,8 @@ export function AdminOrganizationsPage() {
 
   const openCap = (org: AdminOrganization) => {
     setEditingOrg(org);
-    setCapEnabled(org.is_test && org.anchor_quota != null);
+    setCapEnabled(org.cap_enforced && org.anchor_quota != null);
+    setCapIsTest(org.is_test);
     setQuotaInput(String(org.anchor_quota ?? DEFAULT_FREE_QUOTA));
   };
 
@@ -524,14 +557,14 @@ export function AdminOrganizationsPage() {
       const res = await workerFetch(`/api/admin/organizations/${encodeURIComponent(editingOrg.id)}/quota`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildQuotaPayload(capEnabled, quotaNum)),
+        body: JSON.stringify(buildQuotaPayload(capEnabled, quotaNum, capIsTest, editingOrg.anchor_quota)),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data.error ?? 'Failed to update cap');
         return;
       }
-      toast.success(buildQuotaSuccessMessage(editingOrg.display_name, capEnabled, quotaNum));
+      toast.success(buildQuotaSuccessMessage(editingOrg.display_name, capEnabled, quotaNum, capIsTest));
       setEditingOrg(null);
       doFetch(page);
     } catch {
@@ -700,20 +733,20 @@ export function AdminOrganizationsPage() {
         </CardContent>
       </Card>
 
-      {/* SCRUM-2225 — free-tier cap editor */}
+      {/* SCRUM-2225 — cap editor; SCRUM-4474 decoupled the cap from the billing flag */}
       <Dialog open={!!editingOrg} onOpenChange={(open) => { if (!open) setEditingOrg(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Free testing cap</DialogTitle>
+            <DialogTitle>Document cap &amp; billing</DialogTitle>
             <DialogDescription>
-              {editingOrg?.display_name} — how many documents this organization can secure for free before it must upgrade.
+              {editingOrg?.display_name} — how many documents this organization may secure, and whether it is billed.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <Label htmlFor="cap-toggle">Capped free tier</Label>
-                <p className="text-xs text-muted-foreground">Off = uncapped, billable account.</p>
+                <Label htmlFor="cap-toggle">Enforce a document cap</Label>
+                <p className="text-xs text-muted-foreground">Off = unlimited documents.</p>
               </div>
               <Switch id="cap-toggle" checked={capEnabled} onCheckedChange={setCapEnabled} />
             </div>
@@ -731,6 +764,19 @@ export function AdminOrganizationsPage() {
                 <p className="text-xs text-muted-foreground">New signups default to {DEFAULT_FREE_QUOTA}.</p>
               </div>
             )}
+            {/* SCRUM-4474 — billing is a SEPARATE switch. It used to be implied
+                by the cap, so capping an invoiced customer silently stopped
+                them being billed. */}
+            <div className="flex items-center justify-between gap-4 border-t pt-4">
+              <div>
+                <Label htmlFor="cap-istest">Test organization</Label>
+                <p className="text-xs text-muted-foreground">
+                  On = never billed through Stripe. Leave off for real customers, including
+                  invoiced ones.
+                </p>
+              </div>
+              <Switch id="cap-istest" checked={capIsTest} onCheckedChange={setCapIsTest} />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingOrg(null)} disabled={saving}>Cancel</Button>

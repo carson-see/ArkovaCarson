@@ -2,11 +2,85 @@
 
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
+## 2026-09-02 — a /health mock that omits `getAnchoringRpcStatus` is now a live cold-cache test
+
+`buildHealthResponse` falls back to the module-local `UNPROBED` constant
+(`state: 'unknown'`, `checkedAtMs: null`) whenever `deps.getAnchoringRpcStatus`
+is absent. Since 8a3629e64 (PR #2573, merged 2026-09-02 13:17Z) that snapshot is no longer inert: when
+`config.enableProdNetworkAnchoring === true`, `evaluateAnchoringRpcHealth`
+fails closed and reports `anchoring: 'warning'` — an unmeasured credential is
+the absence of a measurement, not a measured `ok` (§1.5).
+
+So **the pair `enableProdNetworkAnchoring: true` + no `getAnchoringRpcStatus`
+is a meaningful assertion now, not a default.** `health-detail-auth.test.ts`
+had exactly that pair for SCRUM-2653 reasons that had nothing to do with the
+RPC probe, and when the carve-out landed its compact-liveness assertion
+(`anchoring: 'ok'`) went red on `main` — reddening the required `Tests` check
+on every open PR whose merge ref included main.
+
+When you write or copy a `HealthCheckDeps` mock:
+
+- If the test is about something OTHER than RPC cold-start, wire a
+  genuinely-probed snapshot (`state: 'ok'`, non-null `checkedAtMs`), or leave
+  `enableProdNetworkAnchoring: false`. Don't leave the pair by accident.
+- `health.test.ts`'s `createMockDeps` defaults the flag to `false`, which is
+  why that suite never saw the break. Its
+  `cold cache (never probed) reaches the verdict through the response` block
+  now pins the wiring end-to-end (`deps.config` -> `prodAnchoringEnabled` ->
+  `UNPROBED`), which is the coverage that was missing: the carve-out was
+  unit-tested in `anchoring-rpc-probe.test.ts` but never exercised through
+  `buildHealthResponse`.
+- A transient `unknown` that FOLLOWS a real probe keeps `checkedAtMs` and must
+  stay non-degrading — `verify-worker-runtime.yml` and `deploy-staging.yml`
+  assert `anchoring == "ok"`, so degrading on a blip would flap the gates.
+
+**Addendum, later on 2026-09-02 — the fix for that red was merged twice, and the
+two fixes contradict.** PR #2584 (`d4dc3cfdb`, 17:39:23Z) flipped the assertion
+to `anchoring: 'warning'` on the reasoning "the mock wires no probe"; PR #2587
+(`498608193`, 17:39:32Z) wired the probed-`ok` snapshot described above on the
+reasoning "the assertion stays `'ok'`". Each was green on the `main` it was
+written against, the hunks do not overlap so git merged them without a
+conflict, and the combination — a probed-`ok` fixture asserting `'warning'` —
+was first executed on `main` (run 33662564027: `expected 'warning', received
+'ok'`). The resolution keeps #2587's design and restores the `'ok'` assertion,
+which is what the bullets above prescribe. Two corrections to carry forward:
+(1) the carve-out reached `main` via PR #2573 (`45bb0e002`, 13:17Z), not
+PR #2335 as both fix PRs stated — attribute a break with
+`gh api repos/{owner}/{repo}/commits/<sha>/pulls`, not from `git log`
+adjacency; (2) before opening a fix for a red `main`, check
+`gh pr list --state open --search "<failing test file>"` — if a fix is already
+up, review that one instead of racing it, because nothing in the merge path
+runs two green fixes together before both are on `main`.
+
+## 2026-08-23 — the "unscoped limiters share one IP bucket" mechanism is GONE (SCRUM-3418)
+
+Two long notes in this file — the 2026-08-10 `anchor.ts` activation entry and the SCRUM-3012
+invitation entry — explain that `rateLimit()` keys unscoped buckets on the client IP alone, so a
+route's own limiter shared a counter with `index.ts`'s `apiIpShadowGuard` and each request burned
+two of the cap. **That mechanism no longer exists.** Buckets are now always keyed
+`${bucketScope}:${key}`, and a limiter that passes no `scope` gets a private per-instance namespace
+instead of the shared bare-IP entry (`utils/agents.md` has the full writeup).
+
+What that changes for this folder:
+
+- `scope: 'invitations'` (30/min) and `scope: 'activation'` (10/min) in `anchor.ts` are still
+  correct and should stay — but the reason is now "a named bucket is a readable, stable log key",
+  not "otherwise it collides with the shadow guard".
+- The standing advice is unchanged in practice: **give any new unauthenticated burst-prone route an
+  explicit `scope`.** It is just no longer load-bearing for correctness.
+- `cron.ts`'s `cronJobsLimiter` gained `scope: 'cron-jobs'` with `keyGenerator: () => 'global'`. It
+  was never at risk (its keyGenerator returned a constant string, not an IP), so this is naming
+  only; the single global 30/min bucket is unchanged.
+- `anchor-invitation-ratelimit.test.ts` still runs the REAL limiters behind a stand-in shadow guard
+  and still earns its keep — it pins the budget an invitee actually gets, independent of the keying
+  rule underneath. Its header now records the old mechanism as history rather than as current fact.
+
 ## Files
 - `cron.ts` — HTTP-triggered cron endpoints. Cloud Scheduler hits these. Includes `POST /jobs/anchor-expiry-sweep` (SCRUM-1736), `POST /jobs/check-stuck-anchors` (SCRUM-2234), and `POST /jobs/populate-confirmation-proofs` (PROOF-03 / SCRUM-2336 — see below).
 - **GH #1835 (2026-08-03):** `POST /jobs/drive-subscription-renewal` — renews Google Drive `changes.watch` push channels before their ~7-day expiry (nothing did this before; every Drive connection went silent within a week). Calls `runDriveSubscriptionRenewal()` (`jobs/drive-subscription-renewal-deps.ts`) with no args — that function wires the pure `renewDriveSubscriptions()` orchestrator (`integrations/connectors/drive-subscription-renewal.ts`) to real deps AND wraps the whole call in the cross-instance `withRunLease` primitive. **`scheduled.ts` also has an hourly in-process backup calling the SAME `runDriveSubscriptionRenewal()`** (see below) — an earlier round of PR #1944's review had this route be Cloud-Scheduler-only and explicitly removed the backup to avoid a double-fire race; that was reversed once it became clear Cloud Scheduler is not yet applied to prod (`scripts/gcp-setup/cloud-scheduler.sh` — review PR #1944 for current status), which would have made the job never run automatically at all. The lease (`DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`, `jobs/run-lease.ts`) is what makes running both safe: whichever trigger fires first wins the lease and runs the body, the other observes the lease held and no-ops (`{skipped: true}`) rather than racing a second sweep against the same due connections. See `services/worker/src/jobs/agents.md`'s GH #1835 entry for the full lease + restoration writeup.
 - `cron.ts` — PR #841 containment: `POST /jobs/professional-education-extraction` returns 503 while `ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY=false` so prod cannot query missing CPE/CLE schema objects.
-- **`scheduled.ts`** — in-process backup `cron.schedule()` calls. Includes the `ANCHOR_TABLE_IN_PROCESS_JOBS` allowlist that gates which jobs are skipped in production when `DISABLE_IN_PROCESS_ANCHOR_CRON=true`. **SCRUM-1736 added `anchor-expiry-sweep` (daily `0 3 * * *`)** to both the schedule and the allowlist; without the allowlist entry the in-process job would still fire even with the maintenance flag on, defeating the point. **SCRUM-2234 added `check-stuck-anchors` (hourly `0 * * * *`)** to both the schedule and the allowlist (it reads the `anchors` table, so it's skipped under the maintenance flag alongside the other anchor-table jobs — a paused pipeline during a migration must not trip a spurious stall page). **PROOF-03 (SCRUM-2336) added `populate-confirmation-proofs` (every `*/15 * * * *`)** to both the schedule and the allowlist, conditional on `config.enableConfirmationProofBackfill`. NOTE: in-process node-cron is the **dev/test backup ONLY** — the real-network soak proved it never fires on Cloud Run (dormant under CPU throttling), so prod runs the backfill via the Cloud Scheduler → `POST /jobs/populate-confirmation-proofs` HTTP endpoint (PR #1320). LOW-2: the backfill catch logs `errMsg(error)` (string), not the raw object.
+- **`in-process-cron-audit.ts`** (SCRUM-3384) — the per-job answer to "what stops the second concurrent copy?" for every job `scheduled.ts` registers, plus a pure `validateInProcessCronAudit()`. It exists because the repo-wide claim that in-process node-cron is inert on Cloud Run is **false** and was load-bearing: a node-cron timer only stops firing once its revision has scaled to ZERO, and prod `arkova-worker` deploys `--min-instances 2 --max-instances 10` with `DISABLE_IN_PROCESS_ANCHOR_CRON` unset, so all 19 registrations run on 2-10 warm instances at once. `in-process-cron-audit.test.ts` ratchets three things: every `scheduleInProcess(...)` name is classified (the job list is parsed from `scheduled.ts` SOURCE, because four registrations sit behind flags a runtime spy would miss), a `guard: 'run-lease'` claim is checked against the module that supposedly makes it, and the retracted dormancy sentence cannot reappear anywhere under `services/worker/src`. Seven jobs are recorded `unguarded` — `process-revoked-anchors` (concurrent treasury spends), `process-monthly-credits` (duplicate credit-ledger rows), `cleanup-expired-data` (trigger-DDL deadlock; PR #2335 fixes it), `rebroadcast-dropped-transactions` (lost attempt-counter increments), `process-webhook-retries` (duplicate outbound POST — the idempotency lookup deliberately lets a `retrying` row re-fire), `monitor-fee-rates` (sample-table inflation shrinks its own 24h averaging window) and `consolidate-utxos` (duplicate audit row only — the sweep is unimplemented). Each names its follow-up; the audit deliberately does NOT wrap them in leases, because a `RunLeaseSpec` is only correct with cadences read off live Cloud Scheduler.
+- **`scheduled.ts`** — in-process backup `cron.schedule()` calls. Includes the `ANCHOR_TABLE_IN_PROCESS_JOBS` allowlist that gates which jobs are skipped in production when `DISABLE_IN_PROCESS_ANCHOR_CRON=true`. **SCRUM-1736 added `anchor-expiry-sweep` (daily `0 3 * * *`)** to both the schedule and the allowlist; without the allowlist entry the in-process job would still fire even with the maintenance flag on, defeating the point. **SCRUM-2234 added `check-stuck-anchors` (hourly `0 * * * *`)** to both the schedule and the allowlist (it reads the `anchors` table, so it's skipped under the maintenance flag alongside the other anchor-table jobs — a paused pipeline during a migration must not trip a spurious stall page). **PROOF-03 (SCRUM-2336) added `populate-confirmation-proofs` (every `*/15 * * * *`)** to both the schedule and the allowlist, conditional on `config.enableConfirmationProofBackfill`. NOTE: prod runs the backfill via the Cloud Scheduler → `POST /jobs/populate-confirmation-proofs` HTTP endpoint (PR #1320) — that is the trigger with retries and an attempt deadline. The in-process registration is a **backup, not a no-op**: SCRUM-3384 retracted the claim that it never fires on Cloud Run (it is inert only on a revision scaled to zero, and prod runs `--min-instances 2`), so it fires here too. See `in-process-cron-audit.ts`. LOW-2: the backfill catch logs `errMsg(error)` (string), not the raw object.
 - `lifecycle.ts` — graceful-shutdown tracking via `trackOperation()`.
 - `agents.ts`, `webhooks.ts`, `attestations.ts`, etc. — domain routers.
 
@@ -61,6 +135,25 @@ Pinned by `routes/ingestionResponse.test.ts` (the contract) and the `ingestion r
 `cron.test.ts` (the three named routes end to end, plus all four flag states). Note `cron.test.ts`'s `db`
 double now answers a `switchboard_flags` read — every other table still returns `undefined` as before.
 
+## 2026-08-30 SCRUM-3374 — `/health` reported `anchoring: "ok"` while the RPC credential was REVOKED
+
+**Verified production defect, not a theoretical one.** On 2026-08-30 the stored `bitcoin-rpc-url` GetBlock access token was revoked and returned `HTTP 401 "Unknown token"`, while prod `/health` kept serving `{"status":"healthy","checks":{"anchoring":"ok"}}` (reproduced live at 2026-08-30T16:22:51Z on `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`). A dead anchoring credential was invisible to every monitor, alert and soak that trusts `/health` — and because soak evidence across this repo cites `/health` as proof of anchoring liveness, the blast radius included **evidence integrity**, not just paging.
+
+**Root cause — it was a literal, not a weak check.** `buildHealthResponse` computed `status: drainVerdict?.status ?? 'ok'`. `drainVerdict` is only computed `if (detailed)`, so on every **compact** request (plain `/health` — what monitors, uptime checks and deploy gates actually read) it was `null` and the status fell through to the hardcoded `'ok'`. Nothing in the worker had ever contacted the RPC provider. `batch-drain-deadman.ts`'s own header already named this: *"/health hardcodes anchoring.status='ok'"* — it closed the backlog-aging half; this closes the credential half.
+
+**The fix** — new `anchoring-rpc-probe.ts`, wired through an optional `getAnchoringRpcStatus` dep on `HealthCheckDeps` and a monitor singleton in `index.ts`:
+- Live authenticated `getblockcount` against the configured `BITCOIN_RPC_URL` — the cheapest call that still exercises **authentication**, which is the thing that broke.
+- **State taxonomy** (`ok` / `unauthenticated` / `unreachable` / `unknown` / `not_configured`). `ok` now means *verified*; `unknown` is reported as unknown rather than laundered into `ok`.
+- **Only `unauthenticated` (401/403) degrades** `anchoring.status` to `warning`. `verify-worker-runtime.yml` (lines 73 and 106) and `deploy-staging.yml` (line 200) hard-assert `anchoring == "ok"`, so degrading on a transient `unreachable`/`unknown` would let a brief GetBlock blip block deploys and flap the gates. A 401 is definitive, non-transient and actionable.
+- **Status stays inside the existing `'ok' | 'warning'` union.** `scripts/staging/targeted/health-batch-drain-deadman.ts` hard-rejects any other value of `checks.anchoring.status`; the new detail therefore lives in an **additive** `checks.anchoring.rpc` sub-object (no consumer in the repo rejects unknown keys — verified across workflows, `scripts/`, `infra/` and the soak harnesses).
+- **Top-level `status` is deliberately unchanged** — still driven by the DB alone. The GCP uptime check and the Cloudflare LB monitor page on `status`/body `healthy`, and `deploy-worker.yml`'s canary gate asserts `.status == "healthy"`. A dead anchoring credential is an **integrity** failure, not an **availability** failure: it must fail the deploy-verification gates that exist to catch it, and must not wake anyone at 3am or mark the origin down.
+
+**Why it is safe on a public, high-frequency endpoint.** `/health` is polled by the Cloudflare LB monitor (30s), the GCP uptime check (60s), deploy verification and the soak harnesses. `getAnchoringRpcStatus` is a **synchronous, TTL-cached snapshot read** — `createAnchoringRpcMonitor` refreshes in the background, so `/health` never awaits GetBlock and a wedged provider adds **0ms** of health latency (no probe-timeout or restart-loop risk). 60s TTL at `--min-instances 2` is ~2 provider calls/minute. The probe has a hard 2.5s request timeout **plus** a separate bounded body read (an `AbortSignal` does not cover a provider that sends headers then stalls — the F-D0-5 lesson from `chain/utxo-provider.ts`). Failure is always a state, never an exception.
+
+**§1.4 — the URL is itself a secret.** Prod `BITCOIN_RPC_URL` carries the token in the URL **path** (`https://go.getblock.io/<ACCESS_TOKEN>`) and `/health` is public. Only the sanitized **origin** ever leaves the probe module, caught errors never propagate their (URL-bearing) messages, and the `rpc` sub-object — including `endpoint` — is confined to `?detailed=true`, consistent with SCRUM-2653. Tests assert the token never appears in any serialized output.
+
+No `chain/` file was modified — the probe deliberately has no runtime import of the chain graph, so `/health` does not pull config/bitcoinjs-lib/signing providers onto the health path.
+
 ## Recent changes
 
 - **2026-08-18 (`cron.ts`, `feat/platform-admin-daily-health-digest`, draft, T2) — new `POST /jobs/platform-health-digest` route.** Delegates to `runPlatformHealthDigest()` (`../jobs/platform-health-digest-cron.js`) — a daily summary email (anchors by status, job_queue depth, last night's batch flush, connector health rollup, quota anomalies) to every `profiles.is_platform_admin=true` recipient, sourced by DB flag, never hardcoded. Same shape as the `/queue-digest` route right above it: `withCronMonitoring`, same `'0 13 * * *'` schedule string (informational only — the actual Scheduler binding is a separate, not-yet-performed step, see `scripts/gcp-setup/agents.md`), JSON-result / 500-on-error. Gated by `ENABLE_PLATFORM_HEALTH_DIGEST` (default true — an internal ops digest, not a customer-facing send). Distinct from and additive to the existing hardcoded-recipient stuck-anchor ALERT in `../jobs/pipeline-health.ts`, which is unchanged.
@@ -73,10 +166,10 @@ double now answers a `switchboard_flags` read — every other table still return
 - SCRUM-2917 / PI-0.5 (Lane 1, `cron.ts`, PR #TBD lane1/scrum-2917): added `POST /jobs/materialize-proof-backcatalog` → `runProofMaterializer()` (`../jobs/proof-materializer.js`). **MANUAL TRIGGER ONLY** — no Cloud Scheduler binding, no `scheduled.ts` backup: populating the ~2.96M direct-anchor back catalogue is an operator-driven, Carson-gated T3 run. Mirrors `/jobs/classify-proof-backcatalog` exactly: router-wide `cronAuth`, zod boundary (`org_id` uuid; `execute`/`restart` boolean-ish; `batch_size` 50–2000; `max_batches` 1–200) → 400 on malformed, JSON-result / 500-on-error. Dry-run plan by default (zero anchor_proofs writes); write mode is dual-guarded (`execute=true` + `PROOF_MATERIALIZER_CONFIRM=EXECUTE` via typed config), GUC-off-confirmed, halt-on-ambiguous, and idempotent via `ON CONFLICT (anchor_id) DO NOTHING`. Inserts ONLY the 4-column honest skeleton (anchor_id, receipt_id := chain_tx_id, proof_completeness_class='direct_anchored', materialize_run_id) — never merkle/branch/op_return data (CTO ruling, Confluence 110198785; 0360 predicate keeps a bare label non-load-bearing). Advisory-locker wired from the materializer module's re-exports so route tests pin the wiring.
 - 2026-07-28 (L2-A5, `admin.ts`): added `POST /admin/organizations/:id/credits/adjust` → `handleAdjustOrgCredit` (`../api/admin-actions.js`), same 401/gate pattern as the other admin POST routes in this file. See `services/worker/src/api/agents.md` for the handler + RPC writeup.
 - SCRUM-3012 (`anchor.ts`): fixed the org-invite flow end to end. `/send-invitation-email` now REQUIRES `invitationId` in the body, looks up `invitations.token` (+ verifies `org_id`/`email` match, defense in depth beyond the `isCallerOrgAdmin` gate), and embeds the real token via `buildInviteAcceptUrl()` — the link was previously `/login?invite=true&org=...`, dropping the token entirely so nothing could ever accept it. Added `GET /invitations/:token` (public preview) and `POST /invitations/accept` (auth OPTIONAL — an authenticated caller joins directly, an unauthenticated one with a password provisions a brand-new account; see `api/invitations.ts`), both mounted here (NOT under `/api/v1` — that surface is the frozen, API-key-scoped public contract; this is a browser-session-or-token-proves-identity internal flow, matching where `/send-invitation-email` already lived). `InvitationError.code` → HTTP status via the local `INVITATION_ERROR_STATUS` map. **Both invitation routes use a `scope: 'invitations'` limiter, NOT `rateLimiters.auth`** — `rateLimit()` keys unscoped buckets on the client IP alone, so the unscoped 5/min `auth` limiter shared one counter with `index.ts`'s `apiIpShadowGuard` (mounted at `app.use('/api', apiIpShadowGuard, badgeRouter)`, so it runs for EVERY `/api/*` request before this router matches). Each invitation request burned two of the five, leaving an IP two per minute: one page reload before submit, or a second colleague behind the same office NAT, and the accept 429'd. Same bug class as the `/api/v1/identity` note at index.ts:360. If you add a route here that an unauthenticated browser hits in a burst, give it a `scope` — and cover it in `anchor-invitation-ratelimit.test.ts`, which runs the REAL limiters behind a stand-in shadow guard (the other route tests mock them to pass-throughs, which is exactly why this was invisible).
-- SCRUM-2901 / PI-0.5 (Lane 3, `cron.ts`): added `POST /jobs/pipeline-throughput-monitor` → `runPipelineThroughputMonitor(db, { windowHours, linkerStallThresholdHours })` (`../jobs/pipelineThroughputMonitor.js`). Dead-man on pipeline CONVERSION with TWO fire conditions (one stable Sentry fingerprint via `capturePipelineThroughputAlert`): **A** total securing death (new unlinked records in-window + ZERO anchors secured network-wide, `chain_timestamp` on the 0310 partial index) and **B** linker stall (oldest unlinked record older than the threshold — the exact 2026-07 incident where other paths keep securing so A alone is silent). Read-only LIMIT-1 timestamp probes + `pipeline_dashboard_cache` context — no snapshot table, no migration, and no count queries (R0-8/SCRUM-1254 exact-count baseline stays flat). Params (query or body, zod, → 400 out-of-range): `window_hours` int 1–72 default 24 (≥24h so the nightly 3am batch flush lands inside every healthy window), `linker_stall_threshold_hours` int 1–168 default 48. Feeder death (Scheduler drift) is SCRUM-2900's surface, not this route's. Same router-wide `cronAuth`; HTTP semantics mirror `/jobs/check-stuck-anchors`: DETECTED stall → **200** `healthy:false` (Scheduler must not retry a correct finding), broken probe → **500** (Scheduler retries). **NOT yet scheduled** — the Cloud Scheduler binding is a separate, gated ops step (RTE-owned); no `scheduled.ts` in-process backup on purpose (node-cron is dormant on Cloud Run and the monitor is meaningless without a reliable cadence).
+- SCRUM-2901 / PI-0.5 (Lane 3, `cron.ts`): added `POST /jobs/pipeline-throughput-monitor` → `runPipelineThroughputMonitor(db, { windowHours, linkerStallThresholdHours })` (`../jobs/pipelineThroughputMonitor.js`). Dead-man on pipeline CONVERSION with TWO fire conditions (one stable Sentry fingerprint via `capturePipelineThroughputAlert`): **A** total securing death (new unlinked records in-window + ZERO anchors secured network-wide, `chain_timestamp` on the 0310 partial index) and **B** linker stall (oldest unlinked record older than the threshold — the exact 2026-07 incident where other paths keep securing so A alone is silent). Read-only LIMIT-1 timestamp probes + `pipeline_dashboard_cache` context — no snapshot table, no migration, and no count queries (R0-8/SCRUM-1254 exact-count baseline stays flat). Params (query or body, zod, → 400 out-of-range): `window_hours` int 1–72 default 24 (≥24h so the nightly 3am batch flush lands inside every healthy window), `linker_stall_threshold_hours` int 1–168 default 48. Feeder death (Scheduler drift) is SCRUM-2900's surface, not this route's. Same router-wide `cronAuth`; HTTP semantics mirror `/jobs/check-stuck-anchors`: DETECTED stall → **200** `healthy:false` (Scheduler must not retry a correct finding), broken probe → **500** (Scheduler retries). **NOT yet scheduled** — the Cloud Scheduler binding is a separate, gated ops step (RTE-owned); no `scheduled.ts` in-process backup on purpose (a process-local timer has no retry, no attempt deadline and no run history, and the monitor is meaningless without a reliable cadence).
 - S3-A / PROOF-BACKCATALOG (Lane 1 S3, `cron.ts`): added `POST /jobs/classify-proof-backcatalog` → `runBackCatalogClassifier()` (`../jobs/proof-backcatalog-classifier.js`). **MANUAL TRIGGER ONLY** — deliberately no Cloud Scheduler binding and no `scheduled.ts` in-process backup: the back-catalogue census is operator-driven and any future write mode is Carson-gated. Same router-wide `cronAuth` + JSON-result / 500-on-error shape as the other proof jobs. Params (query or body, ALL zod-validated at the boundary → 400 on malformed/out-of-range): `org_id` (uuid), `execute`/`restart` (boolean or 'true'/'false'/'1'/'0'), `batch_size` (int 50–2000), `max_batches` (int 1–200 — bounded so one POST cannot request an unbounded synchronous run). Dry-run census by default (zero writes); write mode is quadruple-gated (execute flag + `PROOF_CLASSIFIER_CONFIRM` env token + GUC-off confirmation + zero-ambiguity plan) and currently stops on the honest 0354 schema gap. Resumable — re-POST continues from the durable `job_queue` checkpoint.
-- QUEUE-06 / SCRUM-2352 (Lane 2 s2, `cron.ts` + `scheduled.ts`): added `POST /jobs/drain-connector-artifacts` → `runConnectorArtifactDrain()` (`../jobs/connector-artifact-drain.js`). Same router-wide `cronAuth` + JSON-result / 500-on-error shape as `/jobs/check-confirmations`. **Production trigger** — Cloud Scheduler hits this HTTP endpoint because in-process node-cron is dormant under Cloud Run CPU throttling. `scheduled.ts` adds the `*/5` in-process **backup** gated on `config.enableConnectorArtifactDrain` (default false), with `drain-connector-artifacts` joined to the `ANCHOR_TABLE_IN_PROCESS_JOBS` allowlist so a paused pipeline (`DISABLE_IN_PROCESS_ANCHOR_CRON=true`) can't materialize/charge/anchor rows during a migration window. Idempotent (compare-and-set claim) → no mutex; a non-200 (cycle select failure) is retry-eligible. Cloud Scheduler binding lives in `scripts/gcp-setup/cloud-scheduler.sh`.
-- PROOF-03 / SCRUM-2336 (PR #1320, `cron.ts`): added `POST /jobs/populate-confirmation-proofs` → `runConfirmationProofBackfill()` (`../jobs/confirmation-proof-backfill.js`). Same router-wide `cronAuth` + JSON-result / 500-on-error shape as `/jobs/check-confirmations`. **This is the production trigger** — the real-network soak proved the in-process `populate-confirmation-proofs` node-cron in `scheduled.ts` never fires on Cloud Run (CPU throttling leaves node-cron dormant), so Cloud Scheduler must hit this HTTP endpoint. The in-process schedule stays as the dev/test backup. The handler needs no mutex (the backfill is idempotent — populated `block_header` is the watermark).
+- QUEUE-06 / SCRUM-2352 (Lane 2 s2, `cron.ts` + `scheduled.ts`): added `POST /jobs/drain-connector-artifacts` → `runConnectorArtifactDrain()` (`../jobs/connector-artifact-drain.js`). Same router-wide `cronAuth` + JSON-result / 500-on-error shape as `/jobs/check-confirmations`. **Production trigger** — Cloud Scheduler hits this HTTP endpoint because it is the trigger with retries and an attempt deadline; the in-process registration is a backup that also fires on every warm prod instance (SCRUM-3384). `scheduled.ts` adds the `*/5` in-process **backup** gated on `config.enableConnectorArtifactDrain` (default false), with `drain-connector-artifacts` joined to the `ANCHOR_TABLE_IN_PROCESS_JOBS` allowlist so a paused pipeline (`DISABLE_IN_PROCESS_ANCHOR_CRON=true`) can't materialize/charge/anchor rows during a migration window. Idempotent (compare-and-set claim) → no mutex; a non-200 (cycle select failure) is retry-eligible. Cloud Scheduler binding lives in `scripts/gcp-setup/cloud-scheduler.sh`.
+- PROOF-03 / SCRUM-2336 (PR #1320, `cron.ts`): added `POST /jobs/populate-confirmation-proofs` → `runConfirmationProofBackfill()` (`../jobs/confirmation-proof-backfill.js`). Same router-wide `cronAuth` + JSON-result / 500-on-error shape as `/jobs/check-confirmations`. **This is the production trigger** — Cloud Scheduler must hit this HTTP endpoint, because a process-local timer has no retry, no attempt deadline and no run history, and does not fire at all on a revision scaled to zero (which is what the real-network soak observed). The in-process schedule stays as a backup and, per SCRUM-3384, does fire in prod as well. The handler needs no mutex (the backfill is idempotent — populated `block_header` is the watermark).
 - SCRUM-2210 (`billing.ts`): added `GET /api/billing/status` → `handleBillingStatus`. This is the `BillingInfo` endpoint the frontend `BillingPage` has always fetched but that was never implemented (`billingRouter` only had `/checkout/session` + `/billing/portal`) → 404 → billing page bricked. **Returns 200 on every normal path** with a usable `BillingInfo` — a free-tier default when the caller has no subscription, and a best-effort usage count (scoped by `org_id`, or by `user_id` for individual/non-org plans; `recordsUsed` falls back to 0 if the `anchors` count errors/times out) so a downstream failure can't brick billing (the SCRUM-1983 / SCRUM-2213 lesson). **The only 500 is a hard failure of the primary subscription lookup itself.** Read-only; uses `rateLimiters.api` (60/min).
 - PR #924 (SCRUM-2040/2041): added `/nonce-sweep` and `/connector-health-check` cron routes. Connector health route now checks `result.ok` and returns 500 on persist failure (fail-close, matching docusign-reconciliation pattern).
 - 2026-06-01 (`admin.ts`): mounted the platform-admin org roster/search/add routes (handlers in `api/admin-org-members.ts`): `GET /admin/users/search` (registered **before** `/admin/users/:id` so "search" isn't captured as an `:id` param), `GET /admin/organizations/:id/members`, `POST /admin/organizations/:id/members`. Same `extractAuthUserId` → 401 / `isPlatformAdmin` → 403 envelope as the other admin routes.
@@ -88,7 +181,7 @@ double now answers a `switchboard_flags` read — every other table still return
 
 ## Open work
 - SCRUM-1736 (PR #734) — `scheduled.ts` test counts updated for the new entry (3/3 tests pass after counter bump from 13/8/5 to 14/9/5).
-- Billing integrity (2026-08-10): added `POST /jobs/ai-credit-reconcile` → `runAiCreditReconcileJobs({ limit })` (`../jobs/ai-credit-reconcile.js`), same limit-schema validation / JSON-result / 500-on-error shape as `/docusign-envelope-completed` and `/drive-file-changed` beside it. It drains `ai_credits.reconcile_refund`, the queue `api/v1/ai-extract-batch.ts` writes when an AI-credit refund fails AFTER a successful debit — a producer that shipped with **no consumer at all**, so every "surfaced" overcharge sat `pending` forever. **Production trigger is Cloud Scheduler** (`ai-credit-reconcile`, `*/15 * * * *`, retry `30s,120s,2`, added to `scripts/gcp-setup/cloud-scheduler.sh`); no in-process `scheduled.ts` entry, deliberately — in-process node-cron is dormant under Cloud Run CPU throttling (PROOF-03), and a route whose only "trigger" is dormant cron reproduces the exact defect being fixed. Note for anyone auditing this folder: `/professional-education-extraction` and `/docusign-notarization-completed` are cron routes with **no** scheduler binding, i.e. having a route is not the same as being drained in prod.
+- Billing integrity (2026-08-10): added `POST /jobs/ai-credit-reconcile` → `runAiCreditReconcileJobs({ limit })` (`../jobs/ai-credit-reconcile.js`), same limit-schema validation / JSON-result / 500-on-error shape as `/docusign-envelope-completed` and `/drive-file-changed` beside it. It drains `ai_credits.reconcile_refund`, the queue `api/v1/ai-extract-batch.ts` writes when an AI-credit refund fails AFTER a successful debit — a producer that shipped with **no consumer at all**, so every "surfaced" overcharge sat `pending` forever. **Production trigger is Cloud Scheduler** (`ai-credit-reconcile`, `*/15 * * * *`, retry `30s,120s,2`, added to `scripts/gcp-setup/cloud-scheduler.sh`); no in-process `scheduled.ts` entry, deliberately — a process-local timer is not a durable trigger (no retry, no attempt deadline, no run history, and nothing at all once a revision scales to zero), and a route whose only "trigger" is in-process cron reproduces the exact defect being fixed. Note for anyone auditing this folder: `/professional-education-extraction` and `/docusign-notarization-completed` are cron routes with **no** scheduler binding, i.e. having a route is not the same as being drained in prod.
 
 ## 2026-08-11 — SCRUM-3188 `POST /jobs/supplementary-proof-anchor`
 
@@ -108,3 +201,61 @@ Body params are all validated positive-int / string-array or dropped — an out-
 - **`POST /smoke-test` anchor-count check now distinguishes "unknown" from "zero"** (BUG-009). `get_anchor_status_counts_fast().total` can be `-1`, the established sentinel for "no trustworthy count". Both still fail the check, but only one means the database is empty, and the detail string says which. The root cause is migration `0412`: an un-analysed `anchors` table published `{"total":0,"SECURED":0}` as measured, which this check read as "no anchors exist".
 - **`POST /calibration-refit` 500'd with `PGRST205`** because `public.calibration_features` does not exist — including in prod. Recreated by migration `0413`; no route change. The job itself was never broken.
 - Test note: `cron.test.ts` now mocks `../middleware/flagRegistry.js` and adds `dispatchWebhookEvent` to the `../webhooks/delivery.js` mock. `flagRegistry` is reached from exactly one cron route, so the module-level mock cannot perturb any other route.
+
+## SCRUM-4035 — pending OAuth identity
+
+`email-confirmation.ts` provides status/send/complete; `email-confirmation-runtime.ts` wires
+Supabase and audited delivery. Only this router imports `verifyEmailConfirmationToken`.
+Product routes retain `verifyAuthToken`, whose pending-role denial is terminal. Never use
+`getDb().auth.verifyOtp` or `refreshSession`: even with persistence disabled, these replace the
+shared client's Authorization with a user token. Proof clients must be fresh per operation.
+## 2026-09-05 — SCRUM-4475: the `/jobs/*` limiter was ONE global 30/min bucket
+
+The 2026-08-23 entry above records `cronJobsLimiter` as `scope: 'cron-jobs'` with
+`keyGenerator: () => 'global'` and calls the single global 30/min bucket "unchanged" and "never at
+risk". That was true about the SCRUM-3418 collision mechanism and **wrong about the budget**. One
+30/min bucket served all 111 routes on this router. Prod runs 66 Cloud Scheduler jobs whose two-,
+five-, ten-, fifteen- and thirty-minute cadences all coincide with the hourly ones at :00, so from
+the 31st job of that burst onwards Cloud Scheduler got a 429 — recorded as status 8
+RESOURCE_EXHAUSTED, **not retried inside the window**, so the run was skipped outright rather than
+delayed. Cloud Logging 2026-09-03T18Z..09-05T18Z: 46 refusals of `org-queue-scheduler`, 43 of
+`lock-wait`, 43 of `embed-public-records`, 28 of `fetch-dapip`, 27 of `refresh-treasury-cache`, and
+the nightly `daily-anchor-flush` (`POST /jobs/batch-anchors?force=true`) refused at
+2026-09-04T07:00:51Z and 2026-09-05T07:00:41Z after last succeeding 2026-09-03T07:00:49Z.
+
+There are now TWO limiters on this router and they must not be collapsed back into one:
+
+- **`cronBurstGuard`** — mounted BEFORE `cronAuth`, 120/min keyed on `req.ip`. This is the limiter
+  that still applies to an **unauthenticated** caller, and it is what bounds how often anyone can
+  drive the JWKS fetch / JWT verification inside `verifyCronAuth`. It is per-IP rather than global
+  on purpose: a global bucket is the exact shape that caused this outage, and per-IP means an
+  abusive caller exhausts its own budget instead of starving Cloud Scheduler. 120 is ~1.8x the
+  whole 66-job fleet landing in one minute — **raise it if the scheduler job count grows past ~80.**
+- **`cronJobsLimiter`** — mounted AFTER `cronAuth`, 10/min keyed on the job path. No job on this
+  router legitimately fires faster than once a minute (`lock-wait` at every-minute is the fastest),
+  so this is ~10x headroom while still bounding one runaway trigger without taking the other 65
+  jobs down with it.
+
+**Why the per-job limiter sits behind auth.** A per-path key in front of auth would let an
+anonymous caller multiply its budget by enumerating URLs, and would let it grow the process-wide
+bucket Map one entry per URL it invents. Behind auth it cannot mint a bucket at all — it is refused
+401 having been counted only against its own IP's burst bucket. Belt and braces: the key is
+normalised (lowercased, trailing slash stripped — Express routing here is case-insensitive and
+non-strict, so `/Lock-Wait/` and `/lock-wait` must share a bucket) and looked up against the
+router's own registered route table, read lazily off `cronRouter.stack`. Anything unrouted collapses
+into one shared `__unrouted__` bucket, so cardinality is bounded by the route table (111 + 1), not
+by the URL.
+
+Tests: **`cron-jobs-ratelimit.test.ts`** (new, beside `cron.test.ts`). It deliberately does NOT mock
+`../utils/rateLimit.js` — `cron.test.ts` replaces the limiter with a pass-through, which is exactly
+why this was invisible for the life of the router — so the REAL limiters run behind the REAL
+`cronAuth` on the REAL `cronRouter`. It replays a 40-distinct-job :00 burst and asserts zero 429s,
+pins the 11th-hit-on-one-path 429 + `Retry-After`, asserts one runaway job does not refuse another,
+asserts an unauthenticated caller gets 401 without minting a per-path bucket, asserts the
+unauthenticated flood is still refused, and asserts bucket cardinality is bounded against
+attacker-chosen paths. Adding a route needs no change here; the allowlist is read off the router.
+
+Note `scripts/staging/fullsoak-cron-exerciser.sh` documented the old 30/min global bucket in its
+RATE LIMIT header; that comment is corrected in the same change. Its 6 s pacing across distinct job
+paths is still safe under both new limiters, but `--only <one-path>` at that interval would now
+exhaust that single job's 10/min bucket.

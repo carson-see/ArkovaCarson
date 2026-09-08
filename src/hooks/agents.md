@@ -1,5 +1,51 @@
 # agents.md — hooks
-_Last updated: 2026-08-12_
+_Last updated: 2026-09-03_
+
+## PR #2637 refresh without remounting MFA setup (2026-09-05)
+
+`useMfaAssurance` accepts a separate refresh trigger from its stable session/AAL
+cache identity. Token rotation runs an immediate background recheck, retaining
+the last known state while it resolves; it does not unmount an in-progress QR.
+New sign-in and AAL-change identities still report loading until checked. Existing
+known-factor fail-closed behavior and 60s/visibility polling remain active.
+
+## 2026-09-04 — release review: preserve an established MFA challenge on failed rechecks
+
+`useMfaAssurance` now preserves the current session's known-factor state when a
+background assurance lookup errors, rejects, or times out. Previously these paths
+replaced `challenge_required` with `satisfied` and cleared `hasVerifiedFactor`,
+allowing AuthGuard to render protected content without verification. Three
+red-first regressions cover the failures and the next route's cache read.
+This supersedes the unconditional recheck fail-open statement below: initial
+unknown-factor availability behavior remains, but a known factor is never erased
+by an unavailable lookup. Successful rechecks can still detect factor removal.
+Runtime change: the previous PR #2637 soak does not cover this correction.
+
+## 2026-09-03 SCRUM-3167 — `useMfaAssurance.ts` restored + live re-evaluation; `useMfaEnrollmentRequirement.ts` rewritten role+date; useHipaaMfaGate (deleted) deleted
+
+Three hooks, one enforcement gate consumed by `AuthGuard.tsx` (see `src/components/auth/agents.md`'s dated entry for the full decision table and fail-open contract — this entry covers only the hook layer).
+
+- **`useMfaAssurance(userId, sessionKey?)` — restored verbatim from PR #1973 (`3572fcd6e`, reverted `6d10032b4`)**, then extended with a LIVE RE-EVALUATION trigger (CTO ruling A4-11): the same fail-open `getAuthenticatorAssuranceLevel()` check now also re-runs on `visibilitychange` (tab returns to foreground) and every 60s while mounted, via a shared `check()` callback and a `userIdRef`-based stale-response guard, now shared through `useVisibilityPolling` (R7, PR #2637 review round 2 — this used to be a bespoke `useForegroundInterval` hook, deleted). Fail-open contract for `getAuthenticatorAssuranceLevel()` itself is UNCHANGED: every ambiguous/error/timeout outcome resolves to `'satisfied'`, never `'challenge_required'` — this hook can only ever ADD friction for an already-enrolled user. **R17-R21 (round 2) re-scopes `markBypassed()` to the ENROLLMENT path only** — `MfaChallenge` no longer calls it at all (it fails CLOSED on every error now, see `src/components/auth/agents.md`); the sole remaining caller is `AuthGuard`'s enrollment-branch `handleCapabilityUnavailable`. **R11 (round 2, efficiency, not security) adds an optional second `sessionKey` argument** (the caller's session `access_token`/`expires_at`) and a module-scope cache keyed by `(userId, sessionKey)`, so a route change that remounts `AuthGuard` renders synchronously from the last known result instead of re-awaiting the check. Caching is INERT whenever `sessionKey` is omitted/null — every pre-existing call site (all of `useMfaAssurance.test.ts`) keeps its exact prior behavior, in particular the EVERY-LOGIN ENFORCEMENT guarantee that two independent logins by the same user never share a cache entry. `markVerified`/`markBypassed` write through to the cache; `clearMfaAssuranceCache()` is called by `useAuth.ts`'s `signOut()`.
+- **`useMfaEnrollmentRequirement()` — REWRITTEN, no longer takes a `userId` argument.** CTO ruling A4-3 drops org-level enforcement (`organizations.hipaa_mfa_required`) from phase 1 entirely — that column is writable by any org owner/admin via PostgREST with zero audit trail, so this hook issues **NO** `organizations` query at all now. Role comes from `useProfile()` (React Query, 60s staleTime) instead of a standalone Supabase query, so cached navigation never flashes a spinner (A4-6) — **this hook MUST be called from inside `<ProfileProvider>`**; every `AuthGuard` render already is (`App.tsx`: `QueryClientProvider` > `BrowserRouter` > `ProfileProvider` wraps every route). Returns `{ loading, mfaRequired, mfaGraceActive, enforceFromIso }`, derived from `src/lib/mfaPolicy.ts`'s `isMfaRequiredRole` × `isMfaEnforcementActive()`. Fails open to both-false on a profile query error or a null profile/role. Also carries the A4-11 live re-evaluation trigger via the shared `useVisibilityPolling` (R7, round 2 — same consolidation as `useMfaAssurance` above), gated `enabled: Boolean(profile)` (R12, matching its sibling's `Boolean(userId)` — it used to poll even before the profile had loaded). **R13 (round 2):** `onboardingIncomplete` is read directly from `useProfile().destination === '/onboarding/org'` (plus the `!is_platform_admin` carve-out) instead of re-deriving role/org_id inline.
+- **useHipaaMfaGate (deleted) DELETED** (zero non-test importers, confirmed by repo-wide grep before deletion). Superseded by `useMfaEnrollmentRequirement.ts` above.
+
+**Phase-2 items, tracked not built here:**
+- Org-level enforcement needs an audited service-role RPC + a `REVOKE`-the-column migration (T3) before `organizations.hipaa_mfa_required` can safely gate anything again — this is what eventually delivers the still-open SCRUM-564 HIPAA REG-05 story. Do not read that column from either hook until that lands.
+- **SCRUM-3593** (aal2-aware RLS on platform-admin surfaces) is the phase-2 control that closes the accepted A4-7 fail-open bypass (see `src/components/auth/agents.md`) server-side — planned only after this gate has soaked in prod past the 2026-09-21 enforcement date.
+
+## 2026-08-30 — `useComplianceScore.ts` `useJurisdictionRules` error surfacing (SCRUM-3670)
+
+`useJurisdictionRules()` swallowed fetch failures (bare `catch {}`, no else on `!res.ok`),
+so an HTTP 500 from the public `/api/v1/compliance/rules` endpoint was indistinguishable
+from an empty rule set — the compliance-score pickers rendered silently empty. Now mirrors
+the sibling `useComplianceScore()` shape: `useCallback` fetch that sets `error` on non-ok
+(`Failed to fetch compliance rules (HTTP <status>)`) and on throw (`err.message` /
+`'Network error'`), returned as `{ rules, jurisdictions, industries, loading, error, refetch }`.
+The effect uses the sibling's `async function run()` wrapper (avoids
+`react-hooks/set-state-in-effect`). Consumers render generic copy, never the raw `error`
+string. Sole consumer: `ComplianceDashboardPage` (see `src/pages/agents.md`). Tests:
+`useComplianceScore.test.tsx` (4 cases, red-first — pins the HTTP-status message, the
+network-failure message, and `refetch()` recovery).
 
 ## 2026-08-12 — `useApiKeys.ts`: revoke/delete actually reachable now (FD-P7)
 
@@ -77,7 +123,7 @@ _The following three entries were lost off `main` by the 2026-07-28 union-merge-
 - 2026-05-30 SCRUM-1979: `useInviteMember.ts` — the outer `inviteMember` wrapper had a bare `catch {}` (no binding) that discarded the specific actionable message and always toasted the generic `TOAST.MEMBER_INVITE_FAILED`. Fix: curated messages (the 4 RPC-branch strings, the email-send-failed string, and Zod validation messages) are now thrown as a typed `ActionableInviteError` and surfaced verbatim via toast; anything else (incl. raw `rpcError.message`) maps to the generic fallback. The unknown RPC branch no longer rethrows raw DB text (§1.4 — no DB internals / constraint names / PG DETAIL / org-or-user identifiers to the UI). Pattern note: prefer a typed user-safe-error marker over surfacing arbitrary thrown `.message` to the UI.
 - 2026-05-29 SCRUM-1958 (subtask-4): `useSemanticSearch.ts` now routes all user-visible error copy through `SEMANTIC_SEARCH_LABELS` (copy.ts) — auth, 402 (out of credits), 503 (service unavailable / AI down), generic, and network. Raw worker error bodies are no longer surfaced to users (was a §1.3 leak risk); any non-OK status that isn't 402/503 maps to friendly generic copy. Calls `GET /api/v1/ai/search` on the worker with the Supabase session token (unchanged contract).
 - 2026-05-15 SCRUM-1651 ORG-HIER-01 verification: Expanded `useActiveOrg.test.ts` from 10 to 56 tests with full cross-tenant negative test matrix (SCRUM-1651 ORG-12). Matrix covers URL-based attacks, session-poisoning attacks, profile-drift attacks, combined attacks, parent/sub-org isolation for dual-membership users, and the operation-scoped invariant proving resolved orgId is always in membershipOrgIds or null. All 56 tests green.
-- 2026-05-26 SCRUM-2013: `useHipaaMfaGate.ts` removed phantom credential types MEDICAL_LICENSE and IMMUNIZATION that never existed in the canonical enum. Tests updated.
+- 2026-05-26 SCRUM-2013: useHipaaMfaGate (deleted) removed phantom credential types MEDICAL_LICENSE and IMMUNIZATION that never existed in the canonical enum. Tests updated.
 - 2026-05-15 Tech-debt (CodeRabbit #689): `useActiveOrg.ts` — extracted `membershipOrgIds` into a value-stable `useMemo` keyed on sorted org ID string. Prevents unnecessary `resolveActiveOrg` recalculation on background React Query refetches when org IDs haven't changed.
 - 2026-05-05 SCRUM-1755: Created `useCanIssueCredential.ts` (+ 15 resolver tests) — gate hook for the Issue Credential UI surface. Pure `resolveIssueGate()` carries the logic; React wrapper pulls `organizations.verification_status` / `suspended` / `parent_org_id` / `parent_approval_status` and the parent-org row when present. Returns a discriminated `IssueGate` so UI surfaces can render the right gate-blocked banner copy. Replaces the prior implicit "ORG_ADMIN ⇒ may issue" assumption.
 - 2026-04-26 SCRUM-1260 R1-6 /simplify carry-over: Extracted `useVisibilityPolling.ts` — page-visibility-aware polling with `(cb, intervalMs)` contract. Replaces three near-identical inline copies in `AnchorQueuePage`, `useTreasuryBalance`, `PipelineAdminPage`. `useTreasuryBalance.ts` also gained `Promise.all` parallelization for the worker + mempool legs (16s → ~8s worst case) plus equality guards on `setBalance` / `setFeeRates` / `setReceipts` so identical poll payloads don't churn the consumer tree.
@@ -111,3 +157,7 @@ _Restored 2026-07-28 — same union-merge-driver incident as the Recent Changes 
 - `@/lib/supabase` — the typed Supabase client
 - `@/types/database.types` — auto-generated from `supabase gen types`
 - `useAuth` — most hooks depend on the authenticated user
+
+## 2026-09-05 — SCRUM-4035 pending OAuth profile access
+
+`useProfile` suppresses product-data queries while the session carries `arkova_email_pending`, including its loading indicator, so confirmation remains reachable. A confirmed token re-enables the existing profile query and onboarding destination calculation; covered by hook and real-app browser positive controls.

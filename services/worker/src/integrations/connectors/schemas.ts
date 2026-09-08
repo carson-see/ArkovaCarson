@@ -94,11 +94,13 @@ export const DocusignCapturedSigner = z.object({
   // Absent for pure email-link (non-platform) signers — DocuSign only
   // assigns userId to a recipient with a DocuSign platform account.
   user_id: GuidString.optional(),
-  status: NonEmptyString,
-  // Deliberately NOT `.datetime()` — mirrors the existing notary extraction
-  // (`extractNotaryData`/`completedDateTime`), which accepts DocuSign's raw
-  // timestamp string as-is rather than enforcing strict RFC3339.
-  signed_at: z.string().trim().min(1).max(100).optional(),
+  status: NonEmptyString.refine((value) => new Set([
+    'created', 'sent', 'delivered', 'signed', 'declined', 'completed',
+    'faxpending', 'autoresponded',
+  ]).has(value.toLowerCase()), 'must be a recipient status code'),
+  // Validate values as well as keys: free text here can persist a name/email.
+  // Preserve vendor fractional seconds, offsets and timezone-less timestamps.
+  signed_at: z.string().trim().max(100).datetime({ offset: true, local: true }).optional(),
 });
 
 export type DocusignCapturedSignerT = z.infer<typeof DocusignCapturedSigner>;

@@ -2,6 +2,70 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-09-02 — `parkedAttestationVerify.ts`: the parked attestation-verification route
+
+Answers `GET /api/v1/verify/attestation/:attestationId` upstream of the real handler, which cannot
+succeed: `legally_binding_attestations` has no INSERT path anywhere in the tree (0 prod rows,
+verified 2026-08-31). Status contract is unchanged — 400 malformed / 404 well-formed; only the 404's
+`error` string changed, to stop asserting a corpus was searched. Deliberately **not** a 501: the
+enabled CRITICAL policy `PAGE — arkova-worker 5xx burst` fires on any 5xx at >5/300s with no path
+dimension to exclude on.
+
+**Its mount position in `router.ts` is load-bearing in both directions**, and `src/tests/api-e2e.test.ts`
+pins both halves:
+
+- **BELOW `apiKeyAuth` + the rate limiters.** This is a PUBLIC endpoint and §1.10 ("headers on every
+  response") applies. Mounted above them the route loses its budget entirely — `publicVerifyAnonLimiter`
+  (`apiIpShadowGuard.ts`) skips on `hasApiKeyCredential`, a SYNTAX-only header check, and
+  `apiIpShadowGuard` skips the whole `/api/v1/verify` prefix, so any caller sending a made-up
+  `X-API-Key: ak_…` is unthrottled and gets no `X-RateLimit-*`. It also turns the 401 a bad key had
+  always received into a 404.
+- **ABOVE `idempotency` + `usageTracking`.** The feature has no writer, so charging a caller's monthly
+  quota for a response that can never succeed is waste, and `usageTracking` has no refund path.
+
+It imports `ATTESTATION_ID_PATTERN` and `INVALID_ATTESTATION_ID_ERROR` from
+`api/v1/verify/attestation.ts` rather than copying them, so the park's 400 cannot drift from the
+handler's when the unpark path widens either. The unpark checklist lives in the module header.
+
+## 2026-08-23 — `apiIpShadowGuard.ts`: the broad `/api` IP guard and its two §1.10 carve-outs
+
+New module. `index.ts` used to build this limiter inline, which made its skip predicate impossible to
+test without booting the server; it now lives here with the predicate split out, the same shape
+`routes/admin-paths.ts` uses to split `isAdminRouterPath` out of `adminRouter`.
+
+**What it is.** A blunt 60/min-per-IP backstop for anonymous `/api/*` traffic. It is NOT the limiter
+that implements any Constitution §1.10 tier — every tier has its own correctly-keyed limiter further
+down the chain. Treat it as defense-in-depth, and when it starts binding a documented tier, that is
+the bug.
+
+**It is MOUNTED twice, and charged once.** `index.ts` mounts the same instance at `/api` (ahead of
+badgeRouter) and prefix-less (ahead of didWebRouter + proofKeysRouter, which serve `/.well-known/*`
+and `/orgs/*`). Both mounts are load-bearing; `rateLimit()` charges a request at most once per
+limiter INSTANCE (`utils/rateLimit.ts`, COUNTED_LIMITERS, RC #2269), which is what makes that safe.
+Do not delete a mount, and do not add a third.
+
+**Carve-out 1 — keyed `/api/v1/*` (F-2).** Requests presenting `Bearer ak_…` / `X-API-Key: ak_…` skip
+it; `apiV1Router`'s keyedRateLimiter (1,000/min/key) owns them.
+
+**Carve-out 2 — anonymous public verification (SCRUM-2603).** §1.10 gives anonymous callers 100
+req/min/IP on the public verification API. They were getting ~30: this guard bound first, and before
+SCRUM-3418 it wrote the same bare-per-IP bucket as `apiV1Router`'s 100/min `anonRateLimiter`, so one
+verify request charged that entry twice and the 60-cap guard refused at request #31.
+`/api/v1/verify` now skips it and is capped by `publicVerifyAnonLimiter` (`v1-verify-anon`, 100/min,
+keyed callers skipped) instead. Measured on the real limiter in `apiIpShadowGuard.test.ts`.
+
+**Why `publicVerifyAnonLimiter` is mounted in `index.ts` and not left to `apiV1Router`'s
+`anonRateLimiter`** — which enforces the same 100/min: the v1 router runs `verificationApiGate()`
+BEFORE its rate limiting, so with `ENABLE_VERIFICATION_API` off a verify request 503s without ever
+reaching that limiter. Skipping the IP guard while relying on it would leave the dark-API path
+uncapped. The two limiters cost one count each against separate buckets and share a cap, so anonymous
+verify binds at 100/min whether the surface is lit or dark. A test pins the dark shape.
+
+**If you widen `isPublicVerifyPath`, re-read that paragraph first.** The carve-out's safety rests on
+the skipped path having its own limiter above the feature gate. It matches on the path with the query
+string stripped and requires `/` or end-of-path after the prefix, so `/api/v1/verify-anchor` does not
+inherit it.
+
 ## 2026-08-12 — `apiKeyAuth` refuses `revoked_at`-stamped keys (FD-P7 companion)
 
 The middleware now selects `revoked_at` and returns 401 `api_key_revoked` when it is non-null even
