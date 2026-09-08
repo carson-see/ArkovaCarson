@@ -14,7 +14,7 @@
 
 ## Now
 
-### 2026-09-08 — verify-by-fingerprint is TIMING OUT in prod; migration 0441 written, pre-soak
+### 2026-09-08 — verify-by-fingerprint is TIMING OUT in prod; migration 0442 written, pre-soak
 
 - **The defect.** `anchors.fingerprint` is `character(64)`; `get_public_anchor_by_fingerprint`'s parameter is
   `text`. Migration `0386` (the body live in prod) compares them bare, and with no `bpchar = text` operator
@@ -27,7 +27,7 @@
   up as finding 1 of `docs/staging/edge-retro-2026-09-07/DEPLOY.md` (HANDOFF entry `bd72f65ff`).
 - **Not a regression.** `get_public_anchor_by_fingerprint` has 0 grep hits in the June edge bundle. The catch-up
   added the path; the path is slow. The fix is forward, not a rollback.
-- **`0441_fingerprint_lookup_bpchar_cast.sql` — file only, NOT applied to prod, NOT applied to any rig.** One
+- **`0442_fingerprint_lookup_bpchar_cast.sql` — file only, NOT applied to prod, NOT applied to any rig.** One
   clause: cast the PARAMETER, `lower(p_fingerprint)::bpchar`. Same mechanism and same remedy as `0370`
   (SCRUM-3031) on this same column — cast only the non-indexed side. 0386's SECURED-only invariant, the
   `created_at DESC, id DESC` tiebreak, the `{"error":"Record not found"}` envelope for both the not-found and
@@ -35,17 +35,17 @@
 - **Evidence is local, and labelled as such.** Local Postgres 17.9 repro at 300,020 rows rebuilt to prod's index
   shapes: before = `Filter: ((fingerprint)::text = …)`, Rows Removed by Filter **300,019**, **65.788 ms**; after =
   `Index Cond`, **0.058 ms**. Prod's own `EXPLAIN (ANALYZE)` with the cast is **3.020 ms**. Transcripts and the
-  full write-up: `docs/staging/fingerprint-timeout-0441/`.
+  full write-up: `docs/staging/fingerprint-timeout-0442/`.
 - **Ratchet: `tests/rls/fingerprint-lookup-index-plan.test.ts` pins the PLAN, not the clock.** The 12h retro-soak
   could not have caught this — the rig fixture is 10 rows, where a seq scan is instant. The test sets
   `enable_seqscan = off`, extracts the predicate from the LIVE `pg_proc` body, and asserts an **Index Cond** on
   `idx_anchors_fingerprint_lookup` (not merely the index name, which a full index scan with a
   `(fingerprint)::text` Filter would also satisfy). Red before / green after, with the rollback rehearsed:
-  0386 body = 3 failed, 0441 = 7 passed, 0386 re-applied = 3 failed, 0441 re-applied = 7 passed.
+  0386 body = 3 failed, 0442 = 7 passed, 0386 re-applied = 3 failed, 0442 re-applied = 7 passed.
 - **Owed and NOT done by this session:** the T3 48h soak (no rig provisioned; no rig in an open window was
   touched), the prod apply + numeric ledger reconciliation (RTE/CTO-owned), and the Jira story + Confluence
   Bug Tracker row — **the Atlassian connector is unauthenticated in this session**, so neither could be filed.
-  Paste-ready text for both: `docs/staging/fingerprint-timeout-0441/JIRA-AND-BUG-TRACKER.md`.
+  Paste-ready text for both: `docs/staging/fingerprint-timeout-0442/JIRA-AND-BUG-TRACKER.md`.
 
 ### 2026-09-08T02:20Z → 13:15Z — CTO session: #2655 merged with 0436 live, the whole queue un-conflicted, a Supabase control-plane outage took three windows
 

@@ -1,6 +1,6 @@
-# 0441 — verify-by-fingerprint times out in production
+# 0442 — verify-by-fingerprint times out in production
 
-Pre-soak verification for migration `0441_fingerprint_lookup_bpchar_cast.sql`.
+Pre-soak verification for migration `0442_fingerprint_lookup_bpchar_cast.sql`.
 Everything below was run locally on 2026-09-08 against a throwaway PostgreSQL
 17.9 cluster. Nothing here touched production, the standing rig, or any rig in
 an open soak window.
@@ -71,17 +71,17 @@ The before-cost is O(N) in the table, so it widens rather than narrows at prod's
 ## Regression test — red before, green after
 
 `tests/rls/fingerprint-lookup-index-plan.test.ts`. Run against a fixture holding
-the pre-0441 (0386) body, then after applying 0441, then after rolling back:
+the pre-0442 (0386) body, then after applying 0442, then after rolling back:
 
 | Fixture state | Result |
 |---|---|
 | 0386 body installed (pre-fix) | **3 failed / 4 passed** — `no Index Cond on idx_anchors_fingerprint_lookup`, and the plan carried `Filter: ((fingerprint)::text = …)` on `idx_anchors_status_secured_submitted`, reproducing prod's plan on a 10-row table |
-| 0441 applied | **7 passed** |
+| 0442 applied | **7 passed** |
 | rollback: 0386 re-applied verbatim | **3 failed / 4 passed** (same three) |
-| 0441 re-applied | **7 passed** |
+| 0442 re-applied | **7 passed** |
 
 That last pair is also the rollback rehearsal: the `-- ROLLBACK:` comment in
-0441 is "re-apply 0386 verbatim", and it was executed as written, reversed the
+0442 is "re-apply 0386 verbatim", and it was executed as written, reversed the
 behaviour, and the forward migration re-applied cleanly afterwards.
 
 ### Why the test pins the plan and not the clock
@@ -105,7 +105,7 @@ So the suite pins the plan, which is true or false at any table size:
    thing. Asserting the name alone passes on the broken function.
 3. The query is extracted from the live `pg_proc` body rather than re-typed into
    the test, so it degrades if someone reverts the function.
-4. A negative control runs the pre-0441 form of that same extracted query and
+4. A negative control runs the pre-0442 form of that same extracted query and
    asserts it does not reach the index, so a green result cannot be an artifact
    of a small fixture.
 5. Positive controls call the function for real — a SECURED row still resolves,
