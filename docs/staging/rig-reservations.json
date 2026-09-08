@@ -1,7 +1,7 @@
 {
   "_comment": "SCRUM-2906 R1 \u2014 parallel-rig reservation ledger (SCAFFOLD). Machine-checkable source of truth for which isolated staging rig is reserved to which rail/soak, so parallel sessions never double-book a Cloud Run service or a Supabase project (the real isolation boundary per CLAUDE.md 1.11A). Validate with: npx tsx scripts/staging/check-rig-reservations.ts docs/staging/rig-reservations.json. Rows with status='example' are ignored by the double-booking check and exist only to document the shape. Add a real row (status='active') in the SAME PR/session that stands up the rig; flip it to 'released' at teardown. This file is NOT auto-applied and stands up nothing.",
   "version": 1,
-  "updated": "2026-08-22T21:27:29Z",
+  "updated": "2026-09-07T16:41:04Z",
   "reservations": [
     {
       "reservation_id": "resv-EXAMPLE-0001",
@@ -74,6 +74,30 @@
       "preflight_result": "clean_mirror",
       "owner": "RTE",
       "notes": "Node 22 LTS worker upgrade / PR #2291. Isolated rig provisioned 2026-08-22 (USD 10/mo Supabase project arkova-node22-2026-08) because #2291 cannot share a train: co-tenant evidence would read 'soaked on Node 22' while landing on Node 20. Migration chain replayed to main head (112 files, ledger head numeric 0414; CONCURRENTLY stripped from 0366/0381/0389 under the Management API txn wrapper \u2014 greenfield-identical, disclosed). Deployed digest runs node v22.23.1 (verified by digest-pinned local run). Preflight clean_mirror from the #2291-head migration set. Stand-up: docs/staging/node22-2026-08/soak-start-2026-08-22T2127Z.md. TEAR DOWN at window close."
+    },
+    {
+      "reservation_id": "resv-PR2668-COMPUTEID-0001",
+      "status": "active",
+      "rail": "computeid-agentpassport",
+      "tier": "T2",
+      "rig": {
+        "cloud_run_service": "arkova-worker-computeid-pra-staging",
+        "supabase_ref": "yvnrdpxmkefmxtcaizbj",
+        "region": "us-central1",
+        "tag_url": "https://pr-2668---arkova-worker-computeid-pra-staging-kvojbeutfa-uc.a.run.app"
+      },
+      "pr": 2668,
+      "pr_head_sha": "6462e1b1604c849a6aea9c7a37a6eaa23029545a",
+      "worker_revision": "arkova-worker-computeid-pra-staging-00002-td9",
+      "image_digest": "sha256:e61a5271b8364c524d022e0ff7dac6d5af659f06346eca60c1299875a0d494e6",
+      "deploy_log_id": null,
+      "soak": {
+        "start": "2026-09-07T16:37:37Z",
+        "end": "2026-09-08T04:37:37Z"
+      },
+      "preflight_result": "clean_mirror",
+      "owner": "CTO",
+      "notes": "ComputeID AgentPassport PR-A (#2668, epic SCRUM-4492, soak subtask SCRUM-4499). Isolated rig provisioned 2026-09-07T16:15Z at head ca96420a7 (USD 10/mo Supabase project arkova-soak-computeid-pra); soak revision redeployed on the final head with ENABLE_COMPUTEID_INTEGRATION=true, rig-only webhook secret + self-signed CA pin, min-instances=1. Driver scripts/staging/targeted/computeid-passport-driver.ts, 5-min cycles. No PR migration, so the clean_mirror preflight at provisioning covers the soak head. Stand-up: docs/staging/computeid-pra/STANDUP.md. TEAR DOWN at window close."
     }
   ]
 }
