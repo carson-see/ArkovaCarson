@@ -1,0 +1,4 @@
+{"retired_window":{"started_at":"2026-09-07T12:18:03Z","failed_at":"2026-09-07T12:48:12Z","cycles_passed":2,
+ "cause":"driver defect: audit-row assertion used a sliding 30-minute window at a 15-minute cadence; cycle-1 rows (12:18:03) aged out of the window during cycle 3 (12:48:03-12:48:12) exactly as cycle-3 rows entered, so before==after==10. Cycles 1 and 2 each wrote 5 SECURITY MCP_TOOL_CALL rows (9->14, 14->19). Not a product regression.",
+ "fix":"driver-patch-20260907T1300Z.diff: count rows created after a DB-side cycle-start timestamp and assert >= 5 per cycle",
+ "clock":"fresh 12h window from relaunch"}}

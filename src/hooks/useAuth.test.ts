@@ -16,6 +16,13 @@ const mockSignUp = vi.hoisted(() => vi.fn());
 const mockSignInWithOAuth = vi.hoisted(() => vi.fn());
 const mockSignOut = vi.hoisted(() => vi.fn());
 const mockOnAuthStateChange = vi.hoisted(() => vi.fn());
+// R11 (PR #2637 review round 2): useAuth.ts's signOut() now imports
+// clearMfaAssuranceCache from useMfaAssurance.ts, which itself calls
+// supabase.auth.mfa.getAuthenticatorAssuranceLevel() — the mock below needs
+// this key present (even though most tests in this file never touch it) or
+// any test that renders the real useMfaAssurance hook against this same
+// mocked module throws on an undefined `auth.mfa`.
+const mockGetAAL = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -26,6 +33,9 @@ vi.mock('@/lib/supabase', () => ({
       signInWithOAuth: mockSignInWithOAuth,
       signOut: mockSignOut,
       onAuthStateChange: mockOnAuthStateChange,
+      mfa: {
+        getAuthenticatorAssuranceLevel: mockGetAAL,
+      },
     },
   },
 }));
@@ -310,6 +320,196 @@ describe('useAuth', () => {
     expect(callOrder[0]).toBe('sessionStorage.setItem');
     expect(callOrder[1]).toBe('supabase.signOut');
     expect(mockSessionStorage.setItem).toHaveBeenCalledWith('arkova_signed_out', '1');
+  });
+
+  it('signOut still completes (calls supabase.signOut and redirects) when sessionStorage.setItem throws (CTO ruling A4-10)', async () => {
+    const mockUser = { id: 'user-1', email: 'test@test.com' };
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: mockUser } },
+      error: null,
+    });
+    mockSignOut.mockResolvedValue({ error: null });
+
+    const mockSessionStorage = {
+      getItem: vi.fn(),
+      setItem: vi.fn(() => {
+        throw new Error('storage blocked (private browsing / quota exceeded)');
+      }),
+      removeItem: vi.fn(),
+    };
+    Object.defineProperty(window, 'sessionStorage', { value: mockSessionStorage, writable: true });
+
+    const originalLocation = window.location;
+    const mockLocation = { ...originalLocation, href: '' };
+    Object.defineProperty(window, 'location', {
+      value: mockLocation,
+      writable: true,
+      configurable: true,
+    });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await expect(
+      act(async () => {
+        await result.current.signOut();
+      })
+    ).resolves.not.toThrow();
+
+    // The throwing setItem must not have prevented the actual sign-out.
+    expect(mockSignOut).toHaveBeenCalled();
+    expect(mockLocation.href).toBe('/login');
+
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('signOut resolves and resets loading (no unhandled rejection) when supabase.signOut() errors AND sessionStorage.removeItem() throws (PR #2637 review item 29)', async () => {
+    const mockUser = { id: 'user-1', email: 'test@test.com' };
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: mockUser } },
+      error: null,
+    });
+    mockSignOut.mockResolvedValue({ error: { message: 'sign out failed' } });
+
+    const mockSessionStorage = {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+      removeItem: vi.fn(() => {
+        throw new Error('storage blocked (private browsing / quota exceeded)');
+      }),
+    };
+    Object.defineProperty(window, 'sessionStorage', { value: mockSessionStorage, writable: true });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await expect(
+      act(async () => {
+        await result.current.signOut();
+      })
+    ).resolves.not.toThrow();
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe('sign out failed');
+    // The throwing removeItem must still have been attempted (not skipped
+    // entirely) — only its failure is swallowed.
+    expect(mockSessionStorage.removeItem).toHaveBeenCalledWith('arkova_signed_out');
+  });
+
+  it('R17(c) (PR #2637 review round 2): signOut clears the current user\'s MFA capability cooldown before the redirect', async () => {
+    const { armMfaCapabilityCooldown, isMfaCapabilityCooldownActive, __resetMfaCapabilityCooldownForTests } =
+      await import('../lib/mfaCapabilityCooldown');
+    __resetMfaCapabilityCooldownForTests();
+
+    const mockUser = { id: 'user-being-signed-out', email: 'test@test.com' };
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: mockUser } },
+      error: null,
+    });
+    mockSignOut.mockResolvedValue({ error: null });
+
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, href: '' },
+      writable: true,
+      configurable: true,
+    });
+
+    armMfaCapabilityCooldown(mockUser.id);
+    expect(isMfaCapabilityCooldownActive(mockUser.id)).toBe(true);
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.user).toEqual(mockUser);
+    });
+
+    await act(async () => {
+      await result.current.signOut();
+    });
+
+    expect(isMfaCapabilityCooldownActive(mockUser.id)).toBe(false);
+
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    });
+    __resetMfaCapabilityCooldownForTests();
+  });
+
+  it('R11 (PR #2637 review round 2): signOut clears the module-scope MFA assurance cache before the redirect', async () => {
+    const { useMfaAssurance, clearMfaAssuranceCache, __resetMfaAssuranceCacheForTests } = await import(
+      './useMfaAssurance'
+    );
+    __resetMfaAssuranceCacheForTests();
+
+    const mockUser = { id: 'user-being-signed-out', email: 'test@test.com' };
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: mockUser } },
+      error: null,
+    });
+    mockSignOut.mockResolvedValue({ error: null });
+    mockGetAAL.mockResolvedValue({
+      data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+      error: null,
+    });
+
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, href: '' },
+      writable: true,
+      configurable: true,
+    });
+
+    // Seed the cache directly via the real hook rather than reaching into
+    // module internals — proves the ACTUAL cache useMfaAssurance reads is
+    // the one signOut() clears.
+    const seeded = renderHook(() => useMfaAssurance(mockUser.id, 'token-a'));
+    await waitFor(() => {
+      expect(seeded.result.current.status).toBe('challenge_required');
+    });
+    seeded.unmount();
+    const rehydrated = renderHook(() => useMfaAssurance(mockUser.id, 'token-a'));
+    expect(rehydrated.result.current.status).toBe('challenge_required');
+    rehydrated.unmount();
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => {
+      expect(result.current.user).toEqual(mockUser);
+    });
+
+    await act(async () => {
+      await result.current.signOut();
+    });
+
+    // The cache is gone: a fresh mount for the SAME (userId, sessionKey)
+    // no longer renders synchronously from it.
+    const afterSignOut = renderHook(() => useMfaAssurance(mockUser.id, 'token-a'));
+    expect(afterSignOut.result.current.status).toBe('loading');
+    afterSignOut.unmount();
+
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    });
+    __resetMfaAssuranceCacheForTests();
+    clearMfaAssuranceCache();
   });
 
   it('signOut calls supabase signOut and redirects to /login (UAT-LR1-02)', async () => {

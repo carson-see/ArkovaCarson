@@ -1,5 +1,103 @@
 # agents.md — e2e/
 
+_Last updated: 2026-09-03 (MFA enrollment + login-challenge spec added, made fully self-contained for seed-less rigs; auth.setup.ts now injects an enforcement-date override)._
+
+## 2026-09-03 — MFA enrollment/challenge spec + `helpers/totp.ts` + `helpers/mfa.ts` (SCRUM-3167 / SCRUM-3584)
+
+New `e2e/mfa-enrollment-and-challenge.spec.ts`, plus two new helper modules, covering the
+Settings-page 2FA rewrite (`TwoFactorSetup.tsx`, `src/components/auth/agents.md`) and the
+login-time MFA gate being built in parallel on the sibling branch
+`security/mfa-enforcement-3167` (`AuthGuard` / `MfaChallenge` / `MfaEnrollmentRequired` /
+`MfaGraceNudge` / `src/lib/mfaPolicy.ts`). **Written against that branch's agreed test-id
+contract before it merged — not executed against a live stack this session** (no dev server /
+local Supabase reachable here; another session owns the shared local stack per
+`project_local_supabase_shared_project_id`). Run it for real at integration once both branches
+land, before citing it as merge-grade evidence.
+
+**Fully self-contained — no `SEED_USERS`, no `.auth/*.json`.** The MFA-3167 soak rig
+(`fizyjojbebyalirtjjht`) has none of the usual seed users (`demo-admin@arkova.local` /
+`demo-user@arkova.local` / `sarah@arkova.ai` are all absent there), so every scenario creates
+its own disposable user (and, where needed, its own disposable org) via the service client and
+logs in through the real `/login` UI. The spec sets its own empty
+`test.use({ storageState: { cookies: [], origins: [] } })`, so it never depends on the `setup`
+project's saved sessions either. **Item 36 correction (PR #2637 review):** every checked-in
+project in `playwright.config.ts` declares `dependencies: ['setup']` — there is no
+`dependencies: []` project in this repo. In CI, this spec therefore still runs under `setup`
+and pays for seed-user logins it never reads (harmless waste, not a correctness issue, since
+the empty storageState override above means it never touches `.auth/*.json` regardless).
+Against a rig with NO seed users at all (e.g. the MFA-3167 soak rig, which has none of the
+usual seed users), run it with a config whose project has `dependencies: []` instead — the
+soak harness ships one outside this repo.
+
+- **`helpers/totp.ts`** — dependency-free RFC 6238 TOTP (`base32Decode`, `totp`; SHA-1, 6 or
+  8 digits, 30s step; only `node:crypto`, no new npm dependency). Ported from a CTO-session
+  scratchpad script proven against the RFC 6238 Appendix B vectors. `e2e/` is **not** in
+  `vitest.config.ts`'s `include` globs, so the vector re-assertions live as a Playwright
+  `test.describe('totp helper')` block inside the new spec, not a `.test.ts` file — that block
+  needs no `page` fixture and no live stack, so it is the one part of the spec that genuinely
+  could run standalone. Item 26 (SonarCloud typescript:S8786, PR #2637 review): the base32
+  cleanup no longer trims trailing `=` padding with a regex quantifier anchored at the end
+  (`/=+$/`, flagged for potential super-linear backtracking) — `stripTrailingBase32Padding()`
+  does a plain backward character scan instead (no backtracking, O(n) in the padding length).
+  Behaviourally identical; re-verified against the RFC vectors after the change.
+- **`helpers/mfa.ts`** — `createDisposableUser`/`deleteDisposableUser` (same idiom as
+  `withProfileSession` in `helpers/profile-session.ts`: `auth.admin.createUser()` then an
+  **explicit** `profiles` upsert — never assume an `auth.users` trigger populates it),
+  `createDisposableOrg`/`deleteDisposableOrg` (a throwaway `organizations` row — needed because
+  `RouteGuard` sends an ORG_ADMIN with a NULL `org_id` to `/onboarding/org`, never `/dashboard`;
+  only `display_name`/`legal_name` are required on that table, everything else defaults safely
+  and `hipaa_mfa_required` defaults `false`), `loginViaUi` (drives the real `/login` form via
+  the `#email`/`#password` locators from `auth.setup.ts` — unlike `createProfileSession`'s
+  storageState injection, these specs need a real login because that's what the AuthGuard MFA
+  gate runs on), `setEnforceDateOverride` (writes `arkova_mfa_enforce_from_override` via
+  `page.addInitScript` so it's present before the app's first script runs),
+  `readSecretFromSettings` (reads `twofactor-secret` on `/settings`),
+  `submitTotpCodeWithBoundaryRetry` (item 23/A2-6, PR #2637 review — guards the RFC 6238 30s
+  step boundary: computes the code as late as possible, nudging forward one step if within 3s
+  of the boundary, and retries EXACTLY ONCE — waiting out a full step first — if the server
+  rejects it as a wrong code; a second failure is a real defect and is left to fail the test).
+  Every TOTP fill+submit in the spec goes through this helper now, not a raw `.fill(totp(...))`.
+- **The spec** covers: (a) a disposable INDIVIDUAL enrolling TOTP in Settings then completing
+  the SAME factor as a login challenge (`mfa-challenge*` test ids) on the next sign-in; (b) a
+  disposable ORG_ADMIN with its own throwaway org seeing the dismissible `mfa-grace-nudge`
+  before the enforcement date (future override) while still reaching the app, and the dismissal
+  surviving a reload (sessionStorage); (c) a disposable ORG_ADMIN past the enforcement date
+  (past override) hitting the hard `mfa-enrollment-required` block and completing it — proves
+  the block is a real onboarding step, not a dead end (this one does NOT need a disposable org:
+  `AuthGuard` runs before `RouteGuard`, so the MFA block renders regardless of `org_id`, and
+  landing on `/onboarding/org` afterward still satisfies `APP_URL_PATTERN`); (d) adding and
+  removing a second "backup" `TwoFactorSetup` factor, handling the optional AAL2
+  `twofactor-stepup` prompt.
+- **`auth.setup.ts`** (unchanged by the self-containment pass — the CI local stack still has
+  seed users) patches `arkova_mfa_enforce_from_override=2099-01-01T00:00:00Z` into every seed
+  user's saved `storageState` file after login (under `resolveE2EFrontendOrigin()` — Playwright
+  matches storageState by origin, same reasoning as `createProfileSession`), then verifies the
+  entry landed the same way it already verifies the Supabase session token. Without this, the
+  ~100 existing specs that reuse `.auth/*.json` would start seeing the grace nudge / hard block
+  for `orgAdmin`/`orgBAdmin` sessions once the 2026-09-21 default enforcement date
+  (`src/lib/mfaPolicy.ts`) passes. A plain UI login never writes this key on its own — it has to
+  be patched into the file, not read back from the page.
+- **Item 17/B4 (PR #2637 review) — the `arkova_mfa_enforce_from_override` localStorage key is
+  NOT unconditionally honoured.** `src/lib/mfaPolicy.ts`'s `resolveMfaEnforceFrom()` only reads
+  it when `import.meta.env.DEV === true` OR `import.meta.env.VITE_MFA_ALLOW_DATE_OVERRIDE ===
+  'true'` (CTO ruling A4-1) — never on a plain production build with neither set. `npm run dev`
+  (what CI's E2E job runs) always satisfies `DEV === true`, so the override works there with no
+  extra flag. A **built-preview** run (`vite build` + `vite preview`, or any Vercel-style
+  production bundle) does NOT satisfy `DEV`, so after 2026-09-21 (the baked default enforcement
+  date) it will stop honouring the override UNLESS `VITE_MFA_ALLOW_DATE_OVERRIDE=true` was set
+  at build time — the MFA-3167 soak build sets this flag explicitly for exactly this reason
+  (`docs/reference/ENV.md`: never set it on Vercel prod). If this spec (or `auth.setup.ts`'s
+  patched override) is ever run against a built-preview instead of `npm run dev`, confirm that
+  build set the flag first — otherwise every override-dependent assertion here (the grace-nudge
+  scenario's future date, the hard-block scenario's past date, and `auth.setup.ts`'s far-future
+  patch protecting the other ~100 specs) silently stops working with no error, just the real
+  (unoverridden) enforcement date taking over.
+- **Do not widen `AnchorUpdateSchema` or any other spec's fixtures for this feature** — MFA
+  state lives entirely in `auth.mfa_factors` / `auth.sessions`, the disposable users' own
+  `profiles` rows, and (for scenario (b)) one disposable `organizations` row — never on
+  `anchors`.
+- **Do not assume any seed user or a `setup`-project `.auth/*.json` file exists** when adding a
+  new case to this spec — the whole point of this file is that it works on a rig with neither.
 ## SCRUM-4448 — isolated securing layout regression
 
 `secure-dialog-layout.spec.ts` mounts the real securing dialog, children and CSS through a development-only HTML fixture. Run `npx playwright test -c e2e/secure-dialog-layout.config.ts` for isolated headless Chromium on port 5200 (or set `E2E_BASE_URL` to another loopback Vite server). No seeded account or remote service is needed. The spec deliberately imports the base Playwright test rather than the authenticated fixture barrel: that barrel requires live credential environment variables at module load, while this layout suite uses deterministic boundary mocks and blocks non-loopback requests. This is a presentation/interaction proof, not production anchoring or auth evidence. Geometry, intact attestation labels, extracted-field editing, enabled actions, field focus, keyboard navigation and screenshots cover four viewport sizes; keep the real components and transition logic in this fixture.
@@ -317,3 +415,24 @@ E2E job is low-risk.
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
+
+## 2026-09-05 — SCRUM-4035 OAuth confirmation routing
+
+`oauth-email-confirmation.spec.ts` runs via `playwright.uat03.config.ts` in CI before hosted-stack setup. Its seven real-app browser cases mock only external Auth/worker boundaries and verify pending routing without profile reads, delivery/retry, explicit proof confirmation, account switching/recovery, normal authenticated routing, and profile loading after confirmation. The default config excludes this separately executed fixture; no tests are conditionally skipped. Screenshots at 1280/375 are uploaded. This does not prove hosted Google consent or real mailbox receipt.
+## PR #2637 soak closeout timing correction (2026-09-05)
+
+The 12h UI window contained three failures and is preserved as failed evidence.
+`mfa-harness-timing.spec.ts` reproduces premature helper completion on delayed
+success/error using real browser DOM timing. MFA scenarios wait for completed
+verification and asynchronous step-up outcomes. Their total 90s budget permits
+two real RFC6238 step changes; individual action deadlines remain bounded.
+
+The closeout suite additionally rotates a real GoTrue token through the browser
+BroadcastChannel while the backup QR is visible, asserts the same QR/secret
+survive, and requires the AAL downgrade challenge after factor removal. It covers
+platform-admin enrollment plus ordinary-user and org-admin platform-route and
+foreign-private-profile denials. Enrollment screenshots mask QR and secret data.
+
+At375px the header account button is named by initials, because the full name
+is hidden. MFA sign-out probes use the banner's menu trigger across widths;
+they still click the real Sign out action and require a new-login challenge.
