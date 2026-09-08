@@ -2,7 +2,7 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
-## 2026-09-08 — SCRUM-4520: broadcast recovery was unbounded at every layer, so a 10k stuck cohort could never drain
+## 2026-09-08 — SCRUM-4521: broadcast recovery was unbounded at every layer, so a 10k stuck cohort could never drain
 
 A batch-anchoring run on staging rig `txvvrxngyfnnqahujbld` (Cloud Run
 `arkova-worker-oldest-worker-0905-staging`, worker source

@@ -1385,7 +1385,7 @@ cronRouter.post('/anchor-attestations', async (_req, res) => {
 
 cronRouter.post('/recover-broadcasts', async (_req, res) => {
   try {
-    // SCRUM-4520: the response carries `passes` / `incomplete` as well as
+    // SCRUM-4521: the response carries `passes` / `incomplete` as well as
     // `recovered`, so an operator polling this endpoint can tell a drained
     // queue from a stalled one — the 2026-09-07 rig incident returned 200 with
     // `recovered: 0` for ten minutes while 10,000 rows sat stuck.

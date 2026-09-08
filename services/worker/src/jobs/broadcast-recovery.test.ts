@@ -214,7 +214,7 @@ describe('recoverStuckBroadcasts — RPC path', () => {
 
     const result = await recoverStuckBroadcasts(7);
 
-    // SCRUM-4520: the call is now bounded — p_limit is part of the contract.
+    // SCRUM-4521: the call is now bounded — p_limit is part of the contract.
     expect(mockRpc).toHaveBeenCalledWith('recover_stuck_broadcasts', {
       p_stale_minutes: 7,
       p_limit: RECOVERY_BATCH_SIZE,
@@ -440,7 +440,7 @@ describe('recoverStuckBroadcasts — manualRecovery fallback (F-3, migration 037
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// SCRUM-4520 — bounded batching (2026-09-07 rig txvvrxngyfnnqahujbld incident)
+// SCRUM-4521 — bounded batching (2026-09-07 rig txvvrxngyfnnqahujbld incident)
 //
 // A batch-anchoring run was SIGTERM'd mid-flight on the oldest-worker-0905
 // staging rig, leaving 10,000 anchors BROADCASTING with a NULL chain_tx_id.
@@ -463,7 +463,7 @@ describe('recoverStuckBroadcasts — manualRecovery fallback (F-3, migration 037
 // is a liveness bug: the queue does not drain until the cohort clears.
 // ────────────────────────────────────────────────────────────────────────────
 
-describe('recoverStuckBroadcasts — bounded batching (SCRUM-4520)', () => {
+describe('recoverStuckBroadcasts — bounded batching (SCRUM-4521)', () => {
   /** Models the real RPC: claims at most `p_limit` rows out of a live cohort. */
   function seedRpcCohort(size: number): { remaining: () => number; limitsSeen: number[] } {
     let remaining = size;
@@ -580,7 +580,7 @@ describe('recoverStuckBroadcasts — bounded batching (SCRUM-4520)', () => {
   });
 });
 
-describe('manualRecovery — bounded batching + visibility (SCRUM-4520)', () => {
+describe('manualRecovery — bounded batching + visibility (SCRUM-4521)', () => {
   function forceRpcUnavailable(): void {
     mockRpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'function not found' } });
   }

@@ -1,4 +1,4 @@
--- SCRUM-4520 — bound recover_stuck_broadcasts() to a batch size.
+-- SCRUM-4521 — bound recover_stuck_broadcasts() to a batch size.
 --
 -- ## The incident (staging rig txvvrxngyfnnqahujbld, 2026-09-07)
 --
@@ -144,7 +144,7 @@ NOTIFY pgrst, 'reload schema';
 -- ROLLBACK (run on an isolated mirror, then re-apply this migration):
 --   Drop the bounded two-argument function and restore 0379's unbounded
 --   one-argument definition verbatim. NOTE: rolling back re-introduces the
---   SCRUM-4520 statement-timeout stall on any cohort large enough to exceed
+--   SCRUM-4521 statement-timeout stall on any cohort large enough to exceed
 --   the 60s statement_timeout — roll back only alongside a worker revision
 --   that does not pass p_limit.
 --

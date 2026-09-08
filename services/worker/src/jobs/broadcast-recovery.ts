@@ -1,6 +1,6 @@
 /**
  * Broadcast Recovery Job (RACE-1, extended by F-3 / migration 0379,
- * bounded into batches by SCRUM-4520 / migration 0442)
+ * bounded into batches by SCRUM-4521 / migration 0442)
  *
  * Recovers anchors stuck in BROADCASTING state due to worker crashes, AND
  * (F-3, docs/staging/SOAK-FINDINGS-2026-08.md) anchors left SUBMITTED with a
@@ -15,7 +15,7 @@
  * by migration 0358 (extended to the SUBMITTED branch by 0379) and by the
  * manual compatibility fallback below.
  *
- * ## Why every path here is bounded (SCRUM-4520, rig incident 2026-09-07)
+ * ## Why every path here is bounded (SCRUM-4521, rig incident 2026-09-07)
  *
  * On staging rig `txvvrxngyfnnqahujbld` a batch-anchoring run was SIGTERM'd
  * mid-flight, leaving 10,000 anchors BROADCASTING with a NULL chain_tx_id.
@@ -143,7 +143,7 @@ interface RecoveryBatch {
  * Recover anchors stuck in BROADCASTING state, and (F-3, migration 0379)
  * anchors stuck SUBMITTED with a NULL chain_tx_id.
  *
- * Loops over bounded batches (SCRUM-4520). Each RPC call atomically:
+ * Loops over bounded batches (SCRUM-4521). Each RPC call atomically:
  * 1. Finds up to `p_limit` BROADCASTING or SUBMITTED anchors older than the
  *    stale threshold with no chain_tx_id, oldest first (a SUBMITTED anchor
  *    that already carries a real chain_tx_id is never touched — the broadcast
@@ -318,7 +318,7 @@ export async function recoverStuckBroadcasts(
  * its OWN previous status (a mixed BROADCASTING+SUBMITTED result set must
  * never cross-tag or cross-filter between the two).
  *
- * SCRUM-4520: reads at most `limit` rows, oldest first, so head-of-line
+ * SCRUM-4521: reads at most `limit` rows, oldest first, so head-of-line
  * blockers clear first and one pass can never fan out over a whole 10k
  * cohort. The caller loops. A fetch failure is reported as `aborted` and
  * logged — it must never be laundered into a silent `recovered: 0`.

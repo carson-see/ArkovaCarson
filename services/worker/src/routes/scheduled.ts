@@ -115,7 +115,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
           'Recovered stuck BROADCASTING anchors',
         );
       }
-      // SCRUM-4520: `recovered: 0` alone is ambiguous — it was the shape of the
+      // SCRUM-4521: `recovered: 0` alone is ambiguous — it was the shape of the
       // 2026-09-07 rig stall, where every pass returned 200 and moved nothing.
       // An incomplete run is always reported, recovered rows or not.
       if (result.incomplete) {
