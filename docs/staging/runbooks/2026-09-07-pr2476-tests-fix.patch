@@ -1,0 +1,23 @@
+diff --git a/services/worker/scripts/load-test/lib/docusign-synth.test.ts b/services/worker/scripts/load-test/lib/docusign-synth.test.ts
+index 49ca69795..cec3338d0 100644
+--- a/services/worker/scripts/load-test/lib/docusign-synth.test.ts
++++ b/services/worker/scripts/load-test/lib/docusign-synth.test.ts
+@@ -22,6 +22,18 @@ import { describe, it, expect, vi } from 'vitest';
+ // utils/db.ts → config.ts (env-validated at module load). We only exercise the
+ // PURE parse/verify/notary surface here, so stub those side-effecting modules —
+ // the same db/jobQueue/logger mock trio the receiver's own test suite uses.
++//
++// config.js is mocked for the SAME reason but needs its own entry: webhooks/
++// docusign.ts imports `config` DIRECTLY (not only transitively through
++// utils/db.ts), and src/config.ts runs `loadConfig()` at module scope, which
++// throws `Invalid worker configuration` under a bare `vitest run` where no
++// worker env is set. Mocking db.js alone does not shortcut that import edge.
++// Same shape as the existing worker-side pattern (src/middleware/*.test.ts).
++// Only `config.enableDocusignInbound` is read, and only inside a request
++// handler this suite never invokes, so a minimal literal is faithful.
++vi.mock('../../../src/config.js', () => ({
++  config: { enableDocusignInbound: false },
++}));
+ vi.mock('../../../src/utils/db.js', () => ({
+   db: { from: vi.fn(), rpc: vi.fn() },
+ }));

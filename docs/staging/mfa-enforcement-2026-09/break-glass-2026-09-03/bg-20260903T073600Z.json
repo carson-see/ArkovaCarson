@@ -1,0 +1,164 @@
+{
+  "driver": "mfa-3584-break-glass",
+  "batch": "ops/mfa-break-glass-3584",
+  "pr_head": "bccc24a09f274484f0079afac0ab7f30905d7233",
+  "cycle_id": "0004-20260903T073551Z",
+  "captured_at": "2026-09-03T07:36:00.632Z",
+  "supabase_ref": "nesuwjlscilzzbhpvbkt",
+  "ok": 34,
+  "fail": 0,
+  "detail": {
+    "setup": {
+      "ok": 8,
+      "fail": 0,
+      "last": {
+        "name": "listFactors == 1 verified",
+        "ok": true,
+        "code": "count=1",
+        "at": "2026-09-03T07:35:53.331Z"
+      },
+      "codes": [
+        "aal2/aal2",
+        "count=1"
+      ]
+    },
+    "dry_run": {
+      "ok": 3,
+      "fail": 0,
+      "last": {
+        "name": "audit_events count == 0 after dry run",
+        "ok": true,
+        "code": "count=0",
+        "at": "2026-09-03T07:35:54.681Z"
+      },
+      "codes": [
+        "0",
+        "present",
+        "count=0"
+      ]
+    },
+    "neg_confirm_mismatch": {
+      "ok": 3,
+      "fail": 0,
+      "last": {
+        "name": "factor A still present (delete was correctly blocked)",
+        "ok": true,
+        "code": "true",
+        "at": "2026-09-03T07:35:56.030Z"
+      },
+      "codes": [
+        "1",
+        "count=0",
+        "true"
+      ]
+    },
+    "neg_foreign_factor": {
+      "ok": 2,
+      "fail": 0,
+      "last": {
+        "name": "audit_events count == 0 for the foreign id",
+        "ok": true,
+        "code": "count=0",
+        "at": "2026-09-03T07:35:57.162Z"
+      },
+      "codes": [
+        "1",
+        "count=0"
+      ]
+    },
+    "neg_missing_confirm_all": {
+      "ok": 3,
+      "fail": 0,
+      "last": {
+        "name": "factor A still present (delete was correctly blocked)",
+        "ok": true,
+        "code": "true",
+        "at": "2026-09-03T07:35:58.302Z"
+      },
+      "codes": [
+        "1",
+        "count=0",
+        "true"
+      ]
+    },
+    "apply": {
+      "ok": 2,
+      "fail": 0,
+      "last": {
+        "name": "admin.mfa.listFactors == 0",
+        "ok": true,
+        "code": "count=0",
+        "at": "2026-09-03T07:35:59.519Z"
+      },
+      "codes": [
+        "0",
+        "count=0"
+      ]
+    },
+    "audit_rows": {
+      "ok": 5,
+      "fail": 0,
+      "last": {
+        "name": "no secret-shaped strings in details",
+        "ok": true,
+        "code": "true",
+        "at": "2026-09-03T07:35:59.627Z"
+      },
+      "codes": [
+        "2ffb4979-b995-4dfb-a92b-5c162f26cde3",
+        "31947283-985c-4954-a7ca-ace20fa4e184",
+        "2026-09-03T07:35:59.173425+00:00 <= 2026-09-03T07:35:59.421266+00:00",
+        "requested=SCRUM-3584 completed=SCRUM-3584",
+        "true"
+      ],
+      "requested_id": "2ffb4979-b995-4dfb-a92b-5c162f26cde3",
+      "completed_id": "31947283-985c-4954-a7ca-ace20fa4e184",
+      "requested_created_at": "2026-09-03T07:35:59.173425+00:00",
+      "completed_created_at": "2026-09-03T07:35:59.421266+00:00",
+      "order_ok": true,
+      "ticket_ok": true,
+      "no_secrets_ok": true,
+      "factor_a_id": "bacf8f51-a80b-46aa-bd01-b417c2311fa3",
+      "foreign_factor_id_probed": "eeba41e2-d97c-4d6b-9558-2f8f4b93bdfc"
+    },
+    "re_enrol": {
+      "ok": 6,
+      "fail": 0,
+      "last": {
+        "name": "listFactors == 1 verified",
+        "ok": true,
+        "code": "count=1",
+        "at": "2026-09-03T07:36:00.398Z"
+      },
+      "codes": [
+        "aal2/aal2",
+        "count=1"
+      ]
+    },
+    "cleanup": {
+      "ok": 2,
+      "fail": 0,
+      "last": {
+        "name": "profiles row cascaded away on its own",
+        "ok": true,
+        "code": "no-orphan",
+        "at": "2026-09-03T07:36:00.596Z"
+      },
+      "codes": [
+        "no-orphan"
+      ]
+    }
+  },
+  "script_exit_codes": {
+    "dry": 0,
+    "apply": 0,
+    "neg1": 1,
+    "neg2": 1,
+    "neg3": 1
+  },
+  "disposable_user_prefix": "mfa-bg-0004-20260903T073551Z-",
+  "cleanup": {
+    "user_deleted": true,
+    "orphan_profile_cleaned": false
+  }
+}
