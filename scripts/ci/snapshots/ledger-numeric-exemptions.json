@@ -4,6 +4,11 @@
     {
       "date": "2026-09-08",
       "author": "CTO session — RTE prod-apply",
+      "note": "ADDED 0427 (0427_proof_tx_inclusion_branch, owned jointly by PR #2524 and #2527). Applied to prod vzwyaatejekddvltxyye via MCP apply_migration ahead of either PR merging, per CLAUDE.md §0 rule 10 (migrate-before-merge, apply and exemption in the same motion). Evidence: the proof window on isolated rig bajuefkqhizsyycaeqff completed 2026-09-07T16:14:21Z with 577 cycles and 0 failures on candidate cda99aaf5; the 0427 file is byte-identical (sha256 32fdc65808cddb7e5c1b4c00d28780c8e9684831b57666547e282aff4c6ae0b3) across that candidate and the current heads of both #2524 and #2527. Additive nullable columns on public.anchor_proofs, metadata-only, SET LOCAL lock_timeout='5s'. REMOVE when the first of #2524/#2527 merges and lands the file."
+    },
+    {
+      "date": "2026-09-08",
+      "author": "CTO session — RTE prod-apply",
       "note": "REMOVED 0436: PR #2655 merged 2026-09-08T04:21:52Z, so 0436_scrum4035_oauth_email_confirmation.sql is on main AND the prefix is in the prod ledger — present in both places, which is the file's own definition of a stale exemption. A stale entry is not inert: auditLedgerVsRepo returns early on an exempt prefix BEFORE the localPrefixes check, so leaving it would suppress the orphan audit for 0436."
     },
     {
@@ -169,6 +174,7 @@
   ],
   "exemptPrefixes": [
     "0415",
-    "0425"
+    "0425",
+    "0427"
   ]
 }

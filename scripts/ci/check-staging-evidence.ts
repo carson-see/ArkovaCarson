@@ -702,6 +702,16 @@ function isS33OfflineAcceptanceFile(file: string, opts?: TierClassifyOpts): bool
 // then `uses:`.
 const deployWorkerUsesLineRe = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*\S/;
 const deployWorkerCheckoutUsesLineRe = /^[^\S\r\n]*-[^\S\r\n]*uses:[^\S\r\n]*actions\/checkout@\S/;
+// The zk-artifact cache step is written `- name: …` / `id: …` / `uses:
+// actions/cache@…`, so unlike checkout the `uses:` is NOT the step's first
+// line and carries no list dash. Both shapes are accepted; the dash is
+// optional here for exactly that reason.
+const deployWorkerCacheUsesLineRe = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*actions\/cache@\S/;
+// Deliberately permissive on the value: eligibility is gated by BEING INSIDE an
+// actions/cache step on an ADDED line, not by the shape of the key's value, so
+// the regex stays trivial (no backtracking surface) and `restore-keys: |` and
+// the single-line `restore-keys: prefix-` form are both covered.
+const deployWorkerRestoreKeysKeyRe = /^[^\S\r\n]*restore-keys:/;
 const deployWorkerFullHistoryLineRe = /^[^\S\r\n]*fetch-depth:[^\S\r\n]*0[^\S\r\n]*(?:#.*)?$/;
 const deployWorkerIsolatedCredentialsLineRe = /^[^\S\r\n]*persist-credentials:[^\S\r\n]*false[^\S\r\n]*(?:#.*)?$/;
 const yamlStepStartRe = /^[^\S\r\n]*-[^\S\r\n]*[A-Za-z][\w-]*:/;
@@ -720,19 +730,56 @@ function checkoutStepContext(content: string, current: boolean): boolean {
     : current;
 }
 
+function cacheStepContext(content: string, current: boolean): boolean {
+  // A new `- <key>:` step ends whatever step we were in; it re-opens a cache
+  // step only if that same line is the `uses:`. Otherwise a bare `uses:
+  // actions/cache@…` later in the SAME step (the `- name:` form) opens one.
+  if (yamlStepStartRe.test(content)) return deployWorkerCacheUsesLineRe.test(content);
+  return deployWorkerCacheUsesLineRe.test(content) || current;
+}
+
+function indentWidth(content: string): number {
+  return /^[^\S\r\n]*/u.exec(content)?.[0].length ?? 0;
+}
+
+interface DeployWorkerStepContext {
+  inCheckoutStep: boolean;
+  inCacheStep: boolean;
+  inRestoreKeysBlock: boolean;
+}
+
 function deployWorkerChange(
   rawLine: string,
   content: string,
-  inCheckoutStep: boolean,
+  ctx: DeployWorkerStepContext,
 ): DeployWorkerChange {
   if (yamlCommentOrBlankRe.test(content)) return 'ignored';
   if (deployWorkerUsesLineRe.test(content)) return 'eligible';
-  if (!rawLine.startsWith('+') || !inCheckoutStep) return 'invalid';
-  if (deployWorkerFullHistoryLineRe.test(content)
-    || deployWorkerIsolatedCredentialsLineRe.test(content)) return 'eligible';
-  // `with:` is structural YAML required when checkout had no existing input
-  // map. It is permitted only there and does not make a diff eligible itself.
-  return yamlWithLineRe.test(content) ? 'ignored' : 'invalid';
+  // Removals are never eligible under any of the carve-outs below: dropping a
+  // `restore-keys` fallback, shallowing a checkout, or un-persisting
+  // credentials all REMOVE a protection, which is the direction that must
+  // fail closed.
+  if (!rawLine.startsWith('+')) return 'invalid';
+  if (ctx.inCheckoutStep) {
+    if (deployWorkerFullHistoryLineRe.test(content)
+      || deployWorkerIsolatedCredentialsLineRe.test(content)) return 'eligible';
+    // `with:` is structural YAML required when checkout had no existing input
+    // map. It is permitted only there and does not make a diff eligible itself.
+    return yamlWithLineRe.test(content) ? 'ignored' : 'invalid';
+  }
+  if (ctx.inCacheStep) {
+    // An additive cache `restore-keys:` prefix fallback is the same class of CI
+    // mechanics as a `uses:` pin: it changes no min-instances, env var, secret,
+    // service account, region or image reference, and nothing about what is
+    // built. It cannot ship a stale artifact either — a PREFIX restore does not
+    // set `cache-hit`, so the install/build steps still rerun and regenerate
+    // from source; what it carries over are the SHA-256-pinned build inputs.
+    // `key:` and `path:` are deliberately NOT covered: those decide what the
+    // cache IS, not whether a miss can fall back, so they stay T2.
+    if (deployWorkerRestoreKeysKeyRe.test(content) || ctx.inRestoreKeysBlock) return 'eligible';
+    return yamlWithLineRe.test(content) ? 'ignored' : 'invalid';
+  }
+  return 'invalid';
 }
 
 /**
@@ -751,6 +798,10 @@ export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boo
   if (!diff || diff.trim().length === 0) return false;
 
   let inCheckoutStep = false;
+  let inCacheStep = false;
+  // Indent of the `restore-keys:` key whose block we are inside, or null. A
+  // continuation entry is any deeper-indented line before the block closes.
+  let restoreKeysIndent: number | null = null;
   let sawEligibleChange = false;
   for (const rawLine of diff.split(/\r?\n/)) {
     // Unified-diff file headers are not content lines.
@@ -759,14 +810,37 @@ export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boo
     }
     if (rawLine.startsWith('@@')) {
       inCheckoutStep = false;
+      inCacheStep = false;
+      restoreKeysIndent = null;
       continue;
     }
 
     const isChangedLine = rawLine.startsWith('+') || rawLine.startsWith('-');
     const content = diffContent(rawLine);
+    const startsNewStep = yamlStepStartRe.test(content);
     inCheckoutStep = checkoutStepContext(content, inCheckoutStep);
+    inCacheStep = cacheStepContext(content, inCacheStep);
+
+    const isBlankOrComment = yamlCommentOrBlankRe.test(content);
+    let inRestoreKeysBlock = false;
+    if (startsNewStep || !inCacheStep) {
+      restoreKeysIndent = null;
+    } else if (deployWorkerRestoreKeysKeyRe.test(content)) {
+      restoreKeysIndent = indentWidth(content);
+    } else if (restoreKeysIndent !== null && !isBlankOrComment) {
+      if (indentWidth(content) > restoreKeysIndent) {
+        inRestoreKeysBlock = true;
+      } else {
+        restoreKeysIndent = null;
+      }
+    }
+
     if (!isChangedLine) continue;
-    const change = deployWorkerChange(rawLine, content, inCheckoutStep);
+    const change = deployWorkerChange(rawLine, content, {
+      inCheckoutStep,
+      inCacheStep,
+      inRestoreKeysBlock,
+    });
     if (change === 'invalid') return false;
     if (change === 'eligible') sawEligibleChange = true;
   }
@@ -1433,6 +1507,24 @@ const INCOMPLETE_PHRASE_PATTERNS = [
 // "Not applicable" markers — legitimate for some fields (e.g. `Migration
 // applied: none`) but never for a concrete deploy artifact.
 const NOT_APPLICABLE_VALUE_RE = /^(?:n\/?a|n\.?a\.?|none|not[\s-]?applicable|null|nil)\.?$/i;
+/**
+ * LEADING "not applicable" tokens for an ARTIFACT-class field (tenth closure,
+ * 2026-09-08). The seventh and ninth closures gave the approver-class fields
+ * the leading-token treatment ({@link NOT_A_PERSON_PREFIX_RE},
+ * {@link INCOMPLETE_PREFIX_RE}) but left the artifact fields anchored to the
+ * WHOLE value, so `Worker revision: N/A — no worker image is built by this
+ * change` sailed through the T2 artifact guard while a bare `N/A` was rejected.
+ * The prose after the token does not make a deploy auditable; a value that
+ * BEGINS with one of these names no artifact regardless of what follows.
+ *
+ * Bare `na`, `n.a.` and `nil` are deliberately absent, mirroring the approver
+ * rule: they stay rejected as whole values by {@link NOT_APPLICABLE_VALUE_RE},
+ * but a real Cloud Run revision or deploy id may legitimately begin with those
+ * letters. `-` is not a firing boundary, so a hyphenated identifier such as
+ * `none-of-your-business-00001-abc` cannot false-positive.
+ */
+const NOT_AN_ARTIFACT_PREFIX_RE =
+  /^(?:none|n\/a|not[\s-]?applicable|null)(?:$|[\s,;:.()!?—–])/i;
 const URL_RE = /\bhttps?:\/\/\S+/i;
 const IMAGE_DIGEST_RE = /\bsha256:[0-9a-f]{64}\b/i;
 
@@ -1471,8 +1563,13 @@ function validateArtifactEvidenceField(body: string, field: string): string | nu
   const filled = validateFilledEvidenceField(body, field);
   if (filled !== null) return filled;
   const value = extractEvidenceFieldValue(body, field);
-  if (value !== null && isNotApplicablePlaceholder(value)) {
-    return `${field} must reference a real staging deploy artifact; \`${value.trim()}\` is not auditable evidence for a T2/T3 soak.`;
+  if (value === null) return null;
+  const trimmed = value.trim();
+  // Whole-value N/A, or an N/A token followed by any amount of explanation —
+  // both name no artifact. See NOT_AN_ARTIFACT_PREFIX_RE for why the second
+  // form had to be closed separately.
+  if (isNotApplicablePlaceholder(value) || NOT_AN_ARTIFACT_PREFIX_RE.test(trimmed)) {
+    return `${field} must reference a real staging deploy artifact; \`${trimmed}\` is not auditable evidence for a T2/T3 soak.`;
   }
   return null;
 }
@@ -2479,7 +2576,16 @@ function gitFileDiffProvider(baseSha: string): DiffProvider {
     try {
       const out = execFileSync(
         GIT_BIN,
-        ['diff', '--unified=3', `${baseSha}...HEAD`, '--', file],
+        // --unified=20, not 3. The deploy-worker carve-outs are STATE MACHINES
+        // over YAML step boundaries: a line is only exempt because of the step
+        // it sits in. With 3 lines of context a hunk can begin mid-step — PR
+        // #2692's real diff starts at `with:`/`path:`/`key:`, five lines below
+        // its `uses: actions/cache@…` — so the step is invisible and the change
+        // fails closed for the wrong reason. Wider context cannot loosen the
+        // gate: the extra lines are unchanged context, which never counts as an
+        // eligible change, and MORE visible step boundaries make detection
+        // stricter, not laxer.
+        ['diff', '--unified=20', `${baseSha}...HEAD`, '--', file],
         { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
       );
       return out.trim().length > 0 ? out : null;

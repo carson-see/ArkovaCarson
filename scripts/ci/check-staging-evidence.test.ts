@@ -71,6 +71,73 @@ const credentialPersistenceWeakeningDiff = `@@ -28,8 +28,8 @@ jobs:
 +          persist-credentials: true
 `;
 
+// PR #2692: an additive `restore-keys:` prefix fallback on the zk-artifact cache
+// step. The exact cache key embeds services/worker/package-lock.json, so every
+// worker dependency bump rotates it; without a fallback the rebuild re-downloads
+// powersOfTau28_hez_final_14.ptau, whose public hosts have 403'd since
+// 2026-09-02, and prod cannot be deployed at all. Note the step's `uses:` is NOT
+// its first line — it is the `- name:` form — which is why cache-step detection
+// cannot reuse the checkout regex.
+const cacheRestoreKeysDeployWorkerDiff = `@@ -145,6 +145,9 @@ jobs:
+       - name: Cache zk circuit artifacts
+         id: cache-zk-artifacts
+         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+         with:
+           path: services/worker/circuits/artifacts
+           key: zk-artifacts-circom2.1.9-lockhash
++          restore-keys: |
++            zk-artifacts-circom2.1.9-
+`;
+
+// The same added lines in a step that is NOT actions/cache. `restore-keys` is
+// only ever CI mechanics inside a cache step; anywhere else the gate has no
+// basis to reason about it, so it must stay T2.
+const restoreKeysOutsideCacheStepDiff = `@@ -60,6 +60,9 @@ jobs:
+       - name: Deploy to Cloud Run
+         uses: google-github-actions/deploy-cloudrun@v2
+         with:
+           service: arkova-worker
++          restore-keys: |
++            zk-artifacts-circom2.1.9-
+`;
+
+// Additive restore-keys AND a real runtime change in the same diff. Fail closed:
+// one prod-runtime line keeps the whole file T2 regardless of what rides along.
+const cacheRestoreKeysPlusRuntimeDiff = `@@ -145,6 +145,8 @@ jobs:
+       - name: Cache zk circuit artifacts
+         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+         with:
+           key: zk-artifacts-circom2.1.9-lockhash
++          restore-keys: |
++            zk-artifacts-circom2.1.9-
+@@ -190,7 +192,7 @@ jobs:
+           --set-env-vars \\
+-          ENABLE_AI_EXTRACTION=true \\
++          ENABLE_AI_EXTRACTION=false \\
+`;
+
+// REMOVING the fallback is the direction that breaks prod deploys. Never exempt.
+const cacheRestoreKeysRemovalDiff = `@@ -145,9 +145,7 @@ jobs:
+       - name: Cache zk circuit artifacts
+         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+         with:
+           key: zk-artifacts-circom2.1.9-lockhash
+-          restore-keys: |
+-            zk-artifacts-circom2.1.9-
+`;
+
+// `key:` decides what the cache IS, not whether a miss can fall back. Editing it
+// can silently change which artifacts a build consumes, so it stays T2.
+const cacheKeyChangeDiff = `@@ -145,7 +145,7 @@ jobs:
+       - name: Cache zk circuit artifacts
+         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+         with:
+-          key: zk-artifacts-circom2.1.9-lockhash
++          key: zk-artifacts-circom2.1.9-static
+           restore-keys: |
+             zk-artifacts-circom2.1.9-
+`;
+
 // A real runtime-config change in deploy-worker.yml: bumps --min-instances. This
 // MUST keep classifying T2 — it is exactly the prod-runtime surface the gate guards.
 const RUNTIME_CONFIG_DEPLOY_WORKER_DIFF = `@@ -78,7 +78,7 @@ jobs:
@@ -1062,6 +1129,46 @@ describe('check-staging-evidence', () => {
 
     it('returns false for a mixed uses-bump + env-var change (fail-closed)', () => {
       expect(isDeployWorkerUsesOnlyBump(MIXED_DEPLOY_WORKER_DIFF)).toBe(false);
+    });
+
+    // ── additive cache `restore-keys:` fallback (PR #2692) ──
+    // Verified out of band before granting this carve-out: a PREFIX restore does
+    // not set `cache-hit`, so the install/build steps rerun and all four zk
+    // artifacts regenerate byte-identical to the reference build. The fallback
+    // carries only the SHA-256-pinned build INPUTS, which build.sh re-verifies.
+    it('returns true for an additive restore-keys block inside an actions/cache step', () => {
+      expect(isDeployWorkerUsesOnlyBump(cacheRestoreKeysDeployWorkerDiff)).toBe(true);
+    });
+
+    it('returns false for the same restore-keys lines outside a cache step', () => {
+      expect(isDeployWorkerUsesOnlyBump(restoreKeysOutsideCacheStepDiff)).toBe(false);
+    });
+
+    it('returns false when a runtime env change rides along with restore-keys', () => {
+      expect(isDeployWorkerUsesOnlyBump(cacheRestoreKeysPlusRuntimeDiff)).toBe(false);
+    });
+
+    it('returns false for REMOVING a restore-keys fallback', () => {
+      expect(isDeployWorkerUsesOnlyBump(cacheRestoreKeysRemovalDiff)).toBe(false);
+    });
+
+    it('returns false for a change to the cache key itself', () => {
+      expect(isDeployWorkerUsesOnlyBump(cacheKeyChangeDiff)).toBe(false);
+    });
+
+    // Why gitFileDiffProvider asks for --unified=20: with only 3 lines of
+    // context PR #2692's real hunk begins at `with:`/`path:`/`key:`, below its
+    // own `uses: actions/cache@…`, so the step is invisible. The parser must
+    // fail closed in that case rather than guess it is in a cache step.
+    it('returns false when the cache step start is not visible in the hunk', () => {
+      const truncated = `@@ -148,4 +148,6 @@ jobs:
+         with:
+           path: services/worker/circuits/artifacts
+           key: zk-artifacts-circom2.1.9-lockhash
++          restore-keys: |
++            zk-artifacts-circom2.1.9-
+`;
+      expect(isDeployWorkerUsesOnlyBump(truncated)).toBe(false);
     });
 
     it('returns false for an empty / unobtainable diff (fail-closed)', () => {
@@ -2808,6 +2915,62 @@ describe('check-staging-evidence', () => {
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/clean_mirror/i);
+    });
+
+    // Tenth closure (2026-09-08): the artifact fields were anchored to the
+    // WHOLE value, so a bare `N/A` was rejected but `N/A — no worker image is
+    // built by this change` passed the T2 artifact guard. The prose after the
+    // token does not make a deploy auditable. The approver-class fields already
+    // had this leading-token treatment; the artifact fields did not.
+    const artifactBody = (revision: string): string => `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: ${revision}
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+- Human approver: Carson See
+`;
+
+    const runArtifactCheck = (revision: string) => check({
+      body: artifactBody(revision),
+      files: ['services/worker/src/api/v1/docusign.ts'],
+      headSha: '1234567890abcdef1234567890abcdef12345678',
+      baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+    });
+
+    it('rejects an artifact field whose value BEGINS with N/A and then explains', () => {
+      const r = runArtifactCheck('N/A — no worker image is built by this change');
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/not auditable evidence/i);
+    });
+
+    it('rejects a leading `none`/`not applicable` artifact value with trailing prose', () => {
+      for (const value of ['none, this PR ships no worker code', 'Not applicable: CI-only change']) {
+        const r = runArtifactCheck(value);
+        expect(r.ok, `\`${value}\` must not satisfy the artifact guard`).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/not auditable evidence/i);
+      }
+    });
+
+    it('still accepts a real revision that merely begins with those letters', () => {
+      // `-` is not a firing boundary, so a hyphenated identifier is safe.
+      const r = runArtifactCheck('none-of-the-above-00099-xyz');
+      expect(r.errors.join(' ')).not.toMatch(/not auditable evidence/i);
     });
 
     it('fails completed T2 evidence copied from an older PR head', () => {
