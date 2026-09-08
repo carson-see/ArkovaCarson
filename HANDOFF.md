@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-09-08T14:00Z → 15:00Z — MFA E2E job flake root-caused: StrictMode double-invoke, not a TOTP step boundary (PR #2691, DRAFT)
+
+`e2e/mfa-enrollment-and-challenge.spec.ts` failed on three unrelated PRs in one window — #2442 (run 34176885437), #2485 (34177317909), #2496 (34176908799, needed two re-runs) — always as `MFA verification failed; probe will not retry a platform error`, always on the two `mfa-enrollment-required` scenarios (spec lines 208 and 385), never on the `TwoFactorSetup`/`MfaChallenge` ones in the same file. `main` at `f25dff43e` passed the same job in the same window, so it was never any of those PRs.
+
+Cause: `src/main.tsx` wraps the app in `<React.StrictMode>`, so every dev/CI build mounts → unmounts → remounts each component and double-invokes its effects. `MfaEnrollmentRequired`'s mount-time `enroll()` effect was therefore NOT the mount-once its own comment claims — it created two unverified factors and rendered whichever call resolved last, silently moving the displayed QR/secret onto a different factor after the spec had already snapshotted it. Every TOTP code the probe then submitted was for the wrong factor, which is why it failed identically on the retry (deterministic inside a job) while depending on stack latency to happen at all (intermittent across jobs). Fixed with an `enrollmentStartedRef` guard; pinned by two StrictMode-wrapped component tests that fail on the pre-fix component.
+
+Two facts worth keeping, both verified against supabase/auth source rather than assumed:
+- **The RFC 6238 step boundary cannot explain an MFA rejection here.** GoTrue validates with `totp.ValidateCustom(..., ValidateOpts{Period: 30, Skew: 1, ...})` (`internal/api/mfa.go`, `verifyTOTPFactor`) — previous, current and next step all pass. The harness's one-shot boundary retry was never going to recover this class of failure.
+- **MFA rate limiting is inert in the local CI stack.** The Supabase CLI sets neither `GOTRUE_MFA_RATE_LIMIT_CHALLENGE_AND_VERIFY` nor `GOTRUE_RATE_LIMIT_HEADER`, and `performRateLimiting` no-ops without one, so `over_request_rate_limit` is not a local-CI explanation (it still is on a rig or hosted project).
+
+The probe now names the endpoint, HTTP status, GoTrue code, server `msg` and the on-screen text instead of throwing one generic string that discarded the code it had already parsed — that discard is why three PRs' worth of CI logs could not be triaged.
+
+**Two separate findings, each filed on its own because of how the tier detector treats repo-root files.** (a) ci.yml's "Upload Playwright report" step has never uploaded anything: `playwright.config.ts` sets `reporter: CI ? 'list' : 'html'`, and `list` never creates `playwright-report/`, so every failed E2E job since that step was added has lost its trace, screenshot and `error-context.md`. Run 34176908799 attempt 1 is the proof — the job log references `trace.zip` and `error-context.md`, and the run has no `playwright-report` artifact. That fix is T1 by path. (b) **`HANDOFF.md` itself is T0 alone but is NOT in `FRONTEND_ONLY_PATH_RE`** — it sits at the repo root, so carrying a HANDOFF entry inside a frontend PR flips `isFrontendOnlyChange()` to false and pushes that PR off the frontend-targeted T2 evidence path onto the full worker-artifact path, demanding a Cloud Run revision, image digest and staging deploy-log id a frontend-only change can never produce. #2691 hit exactly that and the entry was moved here. Same shape as the `playwright.config.ts` trap: **a repo-root file in a `src/`-only PR is expensive.**
+
+#2691 is a DRAFT: it is T2 by path (`src/components/auth/` — sensitive user-facing contract surface) on the frontend-targeted evidence path, and its `RM-approved targeted evidence` / approver / soak fields are human-owned.
+
 ### 2026-09-08 — verify-by-fingerprint is TIMING OUT in prod; migration 0442 written, pre-soak
 
 - **The defect.** `anchors.fingerprint` is `character(64)`; `get_public_anchor_by_fingerprint`'s parameter is
@@ -2484,5 +2500,7 @@ _Last refreshed: 2026-09-07 by Claude-Fable-5.1-CTO-session — claims verified 
 _Last refreshed: 2026-09-07 by Claude-Fable-5.1 gate-fix session (ninth approver closure) — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-08 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-08 by Claude-Opus-5 MFA-E2E-flake session — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-08 by Claude-Opus-5 fingerprint-timeout session — claims verified against prod EXPLAIN, a local Postgres 17.9 repro, and red/green test output._
