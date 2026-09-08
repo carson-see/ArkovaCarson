@@ -542,7 +542,11 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## Provisioner repairs found by standing up a real rig (consolidated-mm-2026-08, 2026-08-30)',
       '## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner',
     ]);
-    expect(new Set(headings).size).toBe(18);
+    // 19, not 18: this PR adds the `seed.ts` seeds `org_integrations.webhook_id`
+    // for adobe_sign rows (2026-08-30) section listed above. The toEqual() array
+    // is the real contract (order + exact text); this line only pins that no
+    // heading is duplicated, so it must equal that array's length.
+    expect(new Set(headings).size).toBe(19);
   });
 
   it('preserves each authoritative Team2 section body exactly once', () => {
