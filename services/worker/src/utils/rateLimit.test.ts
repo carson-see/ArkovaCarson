@@ -588,6 +588,41 @@ describe('rateLimit', () => {
       expect(typeof rateLimiters.stripeWebhook).toBe('function');
     });
 
+    // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818): /webhooks/docusign
+    // was moved OFF rateLimiters.stripeWebhook onto its own global bucket, so
+    // a burst of Stripe deliveries can no longer exhaust the budget DocuSign
+    // Connect retries depend on. Nothing else in the suite invoked the new
+    // limiter, so its keyGenerator was also the uncovered function that put
+    // rateLimit.ts under its 80% function-coverage floor.
+    it('gives the DocuSign Connect webhook its own global 100/min bucket', () => {
+      expect(rateLimiters.docusignWebhook).toBeDefined();
+      expect(typeof rateLimiters.docusignWebhook).toBe('function');
+
+      // Global, not per-IP: 100 deliveries from 100 DIFFERENT source IPs all
+      // land in one bucket (DocuSign Connect originates from DocuSign's own
+      // infrastructure, so a per-IP key would bound nothing).
+      for (let i = 0; i < 100; i++) {
+        const { req, res, next } = createMockReqResWithKey(
+          `10.7.${Math.floor(i / 256)}.${i % 256}`,
+          '/webhooks/docusign',
+        );
+        rateLimiters.docusignWebhook(req, res, next);
+        expect(next, `docusign delivery ${i + 1} of 100 must be allowed`).toHaveBeenCalled();
+      }
+
+      const over = createMockReqResWithKey('10.8.0.1', '/webhooks/docusign');
+      rateLimiters.docusignWebhook(over.req, over.res, over.next);
+      expect(over.res.status).toHaveBeenCalledWith(429);
+      expect(over.res.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '100');
+
+      // Stripe's own global bucket is untouched by all of that — the whole
+      // point of the split.
+      const stripe = createMockReqResWithKey('10.8.0.2', '/webhooks/stripe');
+      rateLimiters.stripeWebhook(stripe.req, stripe.res, stripe.next);
+      expect(stripe.next).toHaveBeenCalled();
+      expect(stripe.res.status).not.toHaveBeenCalled();
+    });
+
     it('exports checkout limiter', () => {
       expect(rateLimiters.checkout).toBeDefined();
       expect(typeof rateLimiters.checkout).toBe('function');
