@@ -1,6 +1,6 @@
 /**
  * LIVE proof that `get_public_anchor_by_fingerprint` can still reach
- * `idx_anchors_fingerprint_lookup` by INDEX COND (migration 0442).
+ * `idx_anchors_fingerprint_lookup` by INDEX COND (migration 0441).
  *
  * ── THE BUG THIS PINS ───────────────────────────────────────────────────────
  *
@@ -15,7 +15,7 @@
  * drive an expression it was not built on. The fingerprint predicate was
  * demoted from an Index Cond to a Filter, the planner fell back to
  * `idx_anchors_status_secured_submitted` over the ~3.5M-row SECURED partition
- * at cost 2,302,395, and the statement blew `statement_timeout`. 0442 casts the
+ * at cost 2,302,395, and the statement blew `statement_timeout`. 0441 casts the
  * PARAMETER instead (`lower(p_fingerprint)::bpchar`); prod EXPLAIN with the cast
  * is an `Index Scan using idx_anchors_fingerprint_lookup` at 3.020 ms.
  *
@@ -44,7 +44,7 @@
  *      passing after someone reverted the function; this one degrades with it.
  *      That is the point of `tests/rls/agents.md`'s rule — a mock may stand in
  *      for a collaborator, never for the invariant under test.
- *   4. A NEGATIVE CONTROL runs the pre-0442 form of that same extracted query
+ *   4. A NEGATIVE CONTROL runs the pre-0441 form of that same extracted query
  *      and asserts it does NOT reach the index. Without it, "the plan is an
  *      index scan" could be an artifact of a small fixture rather than proof
  *      this test would have failed before the fix.
@@ -157,7 +157,7 @@ function seed(fingerprint: string, status: 'SECURED' | 'PENDING'): void {
   );
 }
 
-describe('0442 — fingerprint lookup keeps idx_anchors_fingerprint_lookup usable', () => {
+describe('0441 — fingerprint lookup keeps idx_anchors_fingerprint_lookup usable', () => {
   beforeAll(() => {
     // Prove the fixture is real before any assertion can pass vacuously against
     // a refused connection or a table that is not there.
@@ -199,7 +199,7 @@ describe('0442 — fingerprint lookup keeps idx_anchors_fingerprint_lookup usabl
     expect(filters.some((f) => /\(fingerprint\)::text/i.test(f))).toBe(false);
   });
 
-  it('NEGATIVE CONTROL — the pre-0442 uncast predicate does NOT reach the index', () => {
+  it('NEGATIVE CONTROL — the pre-0441 uncast predicate does NOT reach the index', () => {
     // Derived from the same live query so this control cannot drift away from
     // what the function actually runs. If this ever passes the index by Index
     // Cond, the fixture has stopped being able to tell the two apart and the

@@ -10,13 +10,13 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- =============================================================================
--- 0442 — get_public_anchor_by_fingerprint: cast the PARAMETER to bpchar so
+-- 0441 — get_public_anchor_by_fingerprint: cast the PARAMETER to bpchar so
 --        idx_anchors_fingerprint_lookup is usable again.
 --
 --        Verify-by-fingerprint currently TIMES OUT in production. This is a
 --        one-clause fix to a live, user-visible outage of that feature.
 --
--- ── WHICH DEFINITION THIS IS BASED ON (read this before writing an 0442) ─────
+-- ── WHICH DEFINITION THIS IS BASED ON (read this before writing an 0441) ─────
 --
 --   BASE: migration `0386_fingerprint_lookup_secured_only.sql`, which is the
 --   body running in production. 0386 was applied to prod on 2026-08-02/03 and
@@ -135,7 +135,7 @@ SET LOCAL lock_timeout = '5s';
 --   change and pins the PLAN instead of the clock: with `enable_seqscan = off`
 --   it asserts the live function's own predicate reaches
 --   `idx_anchors_fingerprint_lookup` by **Index Cond**, which is true or false
---   at ANY table size. It carries the pre-0442 predicate as a negative control,
+--   at ANY table size. It carries the pre-0441 predicate as a negative control,
 --   so the test proves it would have failed before this migration.
 --
 --   TIER: T3 (supabase/migrations/). Prod-apply is RTE/CTO-owned — NOT applied
@@ -175,7 +175,7 @@ BEGIN
   -- `{"error":"Record not found"}` envelope as a fingerprint we have never
   -- seen, so the two are indistinguishable to the caller.
   --
-  -- 0442: BOTH SIDES OF THIS COMPARISON MUST BE bpchar. `anchors.fingerprint`
+  -- 0441: BOTH SIDES OF THIS COMPARISON MUST BE bpchar. `anchors.fingerprint`
   -- is `character(64)`; `p_fingerprint` is `text`. Fingerprints are stored
   -- lowercase (the worker writes them via `.eq('fingerprint', fp.toLowerCase())`),
   -- so the input still gets lowercased — but `lower()` returns text, and there
@@ -220,7 +220,7 @@ COMMENT ON FUNCTION public.get_public_anchor_by_fingerprint(text)
      'resolving PENDING/SUBMITTED rows would make this a global existence oracle '
      'over content hashes. In-flight and unknown fingerprints both return '
      '{"error":"Record not found"} and are indistinguishable. The ::bpchar cast '
-     'on the PARAMETER is load-bearing (0442): anchors.fingerprint is '
+     'on the PARAMETER is load-bearing (0441): anchors.fingerprint is '
      'character(64), so comparing it to a bare text value makes Postgres cast the '
      'COLUMN and idx_anchors_fingerprint_lookup unusable — that cost this endpoint '
      'a statement_timeout against the ~3.5M-row SECURED partition in production. '
