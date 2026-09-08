@@ -2,6 +2,36 @@
 
 _Last updated: 2026-09-03 (MFA enrollment + login-challenge spec added, made fully self-contained for seed-less rigs; auth.setup.ts now injects an enforcement-date override)._
 
+## 2026-09-08 — every failed E2E job used to discard its own evidence
+
+`playwright.config.ts` set `reporter: process.env.CI ? 'list' : 'html'`. The `list`
+reporter never creates `playwright-report/`, so ci.yml's E2E job step "Upload
+Playwright report" (`if: failure()`, `path: playwright-report/`) had been uploading
+NOTHING since it was added. Not a silent no-op either — the job log says so out loud:
+
+```
+##[warning]No files were found with the provided path: playwright-report/. No artifacts will be uploaded.
+```
+
+(run 34176908799 attempt 1, PR #2496, 2026-09-08T02:35:14Z — the same job whose log
+names `trace.zip`, `test-failed-1.png` and `error-context.md`, none of which survived).
+That is why the MFA enrollment flake (PR #2691) had to be root-caused from the raw job
+log instead of the trace.
+
+CI now runs `[['list'], ['html', { open: 'never' }]]`: the streaming per-test output is
+unchanged, and the HTML reporter additionally embeds the `test-results/` attachments —
+trace, failure screenshot, error-context ARIA snapshot — into `playwright-report/data/`,
+which the existing upload step then carries. No workflow change was needed. `open: 'never'`
+stops the reporter trying to launch a browser on the runner.
+
+**Verified by reproduction, not by inspection:** one deliberately-failing spec run under
+`CI=true` produces no `playwright-report/` on the old config and a 2.0 MB / 22-file report
+containing the `.zip` trace, the `.png` and the `.md` error-context on the new one.
+
+**Do not "simplify" this back to a single reporter string.** `list` alone is what broke it,
+and `html` alone loses the streaming per-test lines that make a long E2E job readable while
+it runs. `playwright-report/` is gitignored (`.gitignore` line 194).
+
 ## 2026-09-03 — MFA enrollment/challenge spec + `helpers/totp.ts` + `helpers/mfa.ts` (SCRUM-3167 / SCRUM-3584)
 
 New `e2e/mfa-enrollment-and-challenge.spec.ts`, plus two new helper modules, covering the
