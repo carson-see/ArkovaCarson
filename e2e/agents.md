@@ -56,6 +56,10 @@ soak harness ships one outside this repo.
   step boundary: computes the code as late as possible, nudging forward one step if within 3s
   of the boundary, and retries EXACTLY ONCE — waiting out a full step first — if the server
   rejects it as a wrong code; a second failure is a real defect and is left to fail the test).
+  Since 2026-09-08 its failure message names the endpoint, HTTP status, GoTrue code, server
+  `msg` and the on-screen text, and it observes `/challenge` as well as `/verify` — see
+  `e2e/helpers/agents.md`, and note there that the step boundary is NOT a plausible cause of a
+  rejection (GoTrue validates with `Skew: 1`).
   Every TOTP fill+submit in the spec goes through this helper now, not a raw `.fill(totp(...))`.
 - **The spec** covers: (a) a disposable INDIVIDUAL enrolling TOTP in Settings then completing
   the SAME factor as a login challenge (`mfa-challenge*` test ids) on the next sign-in; (b) a
