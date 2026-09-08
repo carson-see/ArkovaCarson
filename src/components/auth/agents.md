@@ -68,6 +68,13 @@ Regression coverage: `AuthLinkErrorRedirect.test.tsx` drives a **real** `MemoryR
 
 Note: `eslint-rules/no-unscoped-service-test.cjs` flags any test-file variable whose name merely *contains* "from" (substring match), so a mock named `mockAuthLinkErrorFromUrl` trips it spuriously. Mock state here is named `stubbedAuthLinkError` to avoid the false positive.
 
+## SCRUM-4035 — OAuth mailbox confirmation
+
+`OAuthEmailConfirmation` owns the separate post-OAuth mailbox step; `SignUpPage` selects it
+without coupling `SignUpForm` to provider behavior. `AuthGuard` redirects signed pending
+sessions before mounting protected content. This UI is not the security boundary: the
+worker/edge verifiers and database role enforce the same state. Preserve the checked local
+sign-out + `arkova_signed_out` flag + hard navigation convention to avoid profile teardown races.
 ## 2026-09-03 SCRUM-3167 — MFA login enforcement, restored and hardened (PR #1973 lineage)
 
 Restores the MFA gate PR #1973 shipped (`3572fcd6e`) and reverted 9 minutes later (`6d10032b4`) after it walled out every ORG_ADMIN and platform admin — root cause was prod Supabase Auth having `mfa_totp_enroll_enabled=false` while the enrollment screen had no escape hatch on an `enroll()` failure. Prod TOTP is enabled now (2026-09-03, verified round-trip); the design below adds the fail-open contract PR #1973 was missing so a platform misconfiguration can never repeat that incident.

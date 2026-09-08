@@ -6694,6 +6694,16 @@ export type Database = {
         Args: { p_rows: Json }
         Returns: number
       }
+      manage_oauth_email_confirmation: {
+        Args: {
+          p_action: string
+          p_attempt_id?: string
+          p_challenge_digest?: string
+          p_email?: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
       persist_supplementary_journal: {
         Args: {
           p_anchor_ids: string[]
