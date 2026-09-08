@@ -1,22 +1,28 @@
 /**
  * Unit tests for Admin Actions API — handleSetOrgQuota (SCRUM-2225)
  *
- * Free-tier action cap: a platform admin sets an org's testing allowance
- * (org_credits.is_test + anchor_quota). Tests cover the admin gate, input
+ * Document cap: a platform admin sets an org's allowance
+ * (org_credits.anchor_quota + cap_enforced). Tests cover the admin gate, input
  * validation, RPC dispatch shape, and error mapping.
+ *
+ * SCRUM-4474 decoupled the cap from `is_test`. Two contract changes are pinned
+ * below: the RPC is now admin_set_org_cap, and omitting `is_test` PRESERVES the
+ * org's current billing flag instead of forcing it to true. The old default
+ * silently converted any org you capped into a Stripe-excluded test org.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---- Hoisted mocks ----
-const { mockIsPlatformAdmin, mockRpc, mockLogger } = vi.hoisted(() => ({
+const { mockIsPlatformAdmin, mockRpc, mockFrom, mockLogger } = vi.hoisted(() => ({
   mockIsPlatformAdmin: vi.fn(),
   mockRpc: vi.fn(),
+  mockFrom: vi.fn(),
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock('../utils/platformAdmin.js', () => ({ isPlatformAdmin: mockIsPlatformAdmin }));
-vi.mock('../utils/db.js', () => ({ db: { rpc: mockRpc } }));
+vi.mock('../utils/db.js', () => ({ db: { rpc: mockRpc, from: mockFrom } }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 
 import { handleSetOrgQuota, handleAdjustOrgCredit } from './admin-actions.js';
@@ -48,8 +54,21 @@ const ORG = '11111111-1111-1111-1111-111111111111';
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsPlatformAdmin.mockResolvedValue(true);
-  mockRpc.mockResolvedValue({ data: { org_id: ORG, is_test: true, anchor_quota: 10 }, error: null });
+  mockRpc.mockResolvedValue({ data: { org_id: ORG, is_test: true, anchor_quota: 10, cap_enforced: true }, error: null });
+  // Current billing flag, read only when the caller omits is_test.
+  setCurrentIsTest(false);
 });
+
+/** Stub `db.from('org_credits').select('is_test').eq(...).maybeSingle()`. */
+function setCurrentIsTest(isTest: boolean | null, error: { message: string } | null = null) {
+  mockFrom.mockImplementation(() => ({
+    select: () => ({
+      eq: () => ({
+        maybeSingle: async () => ({ data: isTest === null ? null : { is_test: isTest }, error }),
+      }),
+    }),
+  }));
+}
 
 describe('handleSetOrgQuota (SCRUM-2225)', () => {
   it('rejects a non-platform-admin with 403 and never touches the DB', async () => {
@@ -79,26 +98,82 @@ describe('handleSetOrgQuota (SCRUM-2225)', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('sets the cap with default is_test=true and dispatches the RPC with the actor', async () => {
+  it('sets the cap, enforces it by default, and dispatches the RPC with the actor', async () => {
     const res = mockRes();
     await handleSetOrgQuota(ADMIN, ORG, mockReq({ anchor_quota: 10 }), res);
     expect(res.statusCode).toBe(200);
-    expect(mockRpc).toHaveBeenCalledWith('admin_set_org_anchor_quota', {
+    expect(mockRpc).toHaveBeenCalledWith('admin_set_org_cap', {
       p_org_id: ORG,
       p_anchor_quota: 10,
-      p_is_test: true,
+      p_cap_enforced: true,
+      p_is_test: false,
       p_actor: ADMIN,
     });
     expect((res.body as { success: boolean }).success).toBe(true);
+  });
+
+  it('PRESERVES the current billing flag when is_test is omitted (SCRUM-4474)', async () => {
+    // The bug this replaced: is_test defaulted to true, so capping a billable
+    // customer silently excluded it from Stripe metered billing.
+    setCurrentIsTest(false);
+    const res = mockRes();
+    await handleSetOrgQuota(ADMIN, ORG, mockReq({ anchor_quota: 2000 }), res);
+    expect(mockRpc).toHaveBeenCalledWith(
+      'admin_set_org_cap',
+      expect.objectContaining({ p_is_test: false, p_cap_enforced: true, p_anchor_quota: 2000 }),
+    );
+  });
+
+  it('preserves a TEST org\'s flag too when is_test is omitted', async () => {
+    setCurrentIsTest(true);
+    const res = mockRes();
+    await handleSetOrgQuota(ADMIN, ORG, mockReq({ anchor_quota: 10 }), res);
+    expect(mockRpc).toHaveBeenCalledWith(
+      'admin_set_org_cap',
+      expect.objectContaining({ p_is_test: true }),
+    );
+  });
+
+  it('503s without touching the RPC when the current billing flag cannot be read', async () => {
+    // Guessing here is how an org silently changes billing state.
+    setCurrentIsTest(null, { message: 'connection reset' });
+    const res = mockRes();
+    await handleSetOrgQuota(ADMIN, ORG, mockReq({ anchor_quota: 10 }), res);
+    expect(res.statusCode).toBe(503);
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('honours an explicit cap_enforced=false — a recorded but inert cap', async () => {
+    const res = mockRes();
+    await handleSetOrgQuota(ADMIN, ORG, mockReq({ anchor_quota: 15, cap_enforced: false }), res);
+    expect(mockRpc).toHaveBeenCalledWith(
+      'admin_set_org_cap',
+      expect.objectContaining({ p_anchor_quota: 15, p_cap_enforced: false }),
+    );
+  });
+
+  it('rejects cap_enforced=true with a null quota (a cap with no number is a no-op)', async () => {
+    const res = mockRes();
+    await handleSetOrgQuota(ADMIN, ORG, mockReq({ anchor_quota: null, cap_enforced: true }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-boolean cap_enforced with 400', async () => {
+    const res = mockRes();
+    await handleSetOrgQuota(ADMIN, ORG, mockReq({ anchor_quota: 10, cap_enforced: 'yes' }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   it('allows null anchor_quota (uncapped) with is_test=false to convert an org to billable', async () => {
     const res = mockRes();
     await handleSetOrgQuota(ADMIN, ORG, mockReq({ anchor_quota: null, is_test: false }), res);
     expect(res.statusCode).toBe(200);
-    expect(mockRpc).toHaveBeenCalledWith('admin_set_org_anchor_quota', {
+    expect(mockRpc).toHaveBeenCalledWith('admin_set_org_cap', {
       p_org_id: ORG,
       p_anchor_quota: null,
+      p_cap_enforced: false,
       p_is_test: false,
       p_actor: ADMIN,
     });

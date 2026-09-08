@@ -1,0 +1,32 @@
+{"head":"6e9cf27861b946ce72c55c8e15fd4196047a62d3","merged_at":"2026-09-06T04:48:12Z","pr":2434,"title":"fix(edge): stop oracle_batch_verify discarding the whole batch on one bad member [DI-038]"}
+{"head":"eba3690c4b5392550e24b94a5449c86ee20cde44","merged_at":"2026-09-05T00:32:56Z","pr":2607,"title":"chore(deps-edge): bump fast-uri from 3.1.5 to 3.1.7 in /services/edge"}
+{"head":"6e9cf27861b946ce72c55c8e15fd4196047a62d3","merged_at":"2026-09-06T04:48:12Z","pr":2434,"title":"fix(edge): stop oracle_batch_verify discarding the whole batch on one bad member [DI-038]"}
+{"head":"f04ab43b14a456c96833234c07c3d2df431fb534","merged_at":"2026-09-05T00:32:53Z","pr":2608,"title":"chore(deps-edge): bump qs from 6.15.2 to 6.16.0 in /services/edge"}
+{"head":"eba3690c4b5392550e24b94a5449c86ee20cde44","merged_at":"2026-09-05T00:32:56Z","pr":2607,"title":"chore(deps-edge): bump fast-uri from 3.1.5 to 3.1.7 in /services/edge"}
+{"head":"6e9cf27861b946ce72c55c8e15fd4196047a62d3","merged_at":"2026-09-06T04:48:12Z","pr":2434,"title":"fix(edge): stop oracle_batch_verify discarding the whole batch on one bad member [DI-038]"}
+{"head":"6e9cf27861b946ce72c55c8e15fd4196047a62d3","merged_at":"2026-09-06T04:48:12Z","pr":2434,"title":"fix(edge): stop oracle_batch_verify discarding the whole batch on one bad member [DI-038]"}
+{"head":"58041f921da6f467562ac1d7581185b4421384da","merged_at":"2026-08-23T10:03:44Z","pr":2232,"title":"fix(mcp): audit log has never written a row + unmount'd proof-keys + anchor_document contract [P0]"}
+{"head":"09e4ebfc3e2e0da8c3d48b75c1c9f73c9183d449","merged_at":"2026-08-23T08:59:52Z","pr":2233,"title":"fix(ingestion): stop reporting total failure as HTTP 200; fix OpenStates 422 and USPTO 403 [P1]"}
+{"head":"58041f921da6f467562ac1d7581185b4421384da","merged_at":"2026-08-23T10:03:44Z","pr":2232,"title":"fix(mcp): audit log has never written a row + unmount'd proof-keys + anchor_document contract [P0]"}
+{"head":"ecf0ce5306511ad42a79d5d22a34e2e46ab1f5f2","merged_at":"2026-08-23T06:45:43Z","pr":2236,"title":"fix(claims): Nessie fails closed + priced offer retracted; Drive individual scope dropped; search described honestly"}
+{"head":"ecf0ce5306511ad42a79d5d22a34e2e46ab1f5f2","merged_at":"2026-08-23T06:45:43Z","pr":2236,"title":"fix(claims): Nessie fails closed + priced offer retracted; Drive individual scope dropped; search described honestly"}
+{"head":"58041f921da6f467562ac1d7581185b4421384da","merged_at":"2026-08-23T10:03:44Z","pr":2232,"title":"fix(mcp): audit log has never written a row + unmount'd proof-keys + anchor_document contract [P0]"}
+{"head":"09e4ebfc3e2e0da8c3d48b75c1c9f73c9183d449","merged_at":"2026-08-23T08:59:52Z","pr":2233,"title":"fix(ingestion): stop reporting total failure as HTTP 200; fix OpenStates 422 and USPTO 403 [P1]"}
+{"head":"09e4ebfc3e2e0da8c3d48b75c1c9f73c9183d449","merged_at":"2026-08-23T08:59:52Z","pr":2233,"title":"fix(ingestion): stop reporting total failure as HTTP 200; fix OpenStates 422 and USPTO 403 [P1]"}
+{"head":"2283d64054bc22c680f37b57b18c6da63169f628","merged_at":"2026-08-15T18:20:30Z","pr":2240,"title":"ci(mcp): enforce tool-claim parity across the five published MCP surfaces (BUG-026 class)"}
+{"head":"2283d64054bc22c680f37b57b18c6da63169f628","merged_at":"2026-08-15T18:20:30Z","pr":2240,"title":"ci(mcp): enforce tool-claim parity across the five published MCP surfaces (BUG-026 class)"}
+{"head":"7274ac2069dd8e67fa8c2c7a8bacbbc1334e315d","merged_at":"2026-08-15T18:05:26Z","pr":2237,"title":"ci: run the services/edge vitest suite (it gated nothing for ~10 weeks)"}
+{"head":"f99126cb590e5452b33b4d35439a0ee7831d9474","merged_at":"2026-08-11T18:25:02Z","pr":2164,"title":"fix(edge): route MCP search_credentials through real semantic search + correct SOC 2 CC3.3"}
+{"head":"d22b4037b59e6d46811ddc1d37dd71b5b863ff5a","merged_at":"2026-08-10T20:09:01Z","pr":2068,"title":"fix(dpa): stop persisting raw IPs, HMAC them, redact the 16 existing rows (migration 0404)"}
+{"head":"d22b4037b59e6d46811ddc1d37dd71b5b863ff5a","merged_at":"2026-08-10T20:09:01Z","pr":2068,"title":"fix(dpa): stop persisting raw IPs, HMAC them, redact the 16 existing rows (migration 0404)"}
+{"head":"e51087a7990b349c09adca97797718a87c173e06","merged_at":"2026-06-13T22:26:18Z","pr":1122,"title":"fix(edge-mcp): verify-by-fingerprint via DEFINER RPC (PR-2: BUG-1)"}
+{"head":"e51087a7990b349c09adca97797718a87c173e06","merged_at":"2026-06-13T22:26:18Z","pr":1122,"title":"fix(edge-mcp): verify-by-fingerprint via DEFINER RPC (PR-2: BUG-1)"}
+{"head":"e51087a7990b349c09adca97797718a87c173e06","merged_at":"2026-06-13T22:26:18Z","pr":1122,"title":"fix(edge-mcp): verify-by-fingerprint via DEFINER RPC (PR-2: BUG-1)"}
+{"head":"e51087a7990b349c09adca97797718a87c173e06","merged_at":"2026-06-13T22:26:18Z","pr":1122,"title":"fix(edge-mcp): verify-by-fingerprint via DEFINER RPC (PR-2: BUG-1)"}
+{"head":"e51087a7990b349c09adca97797718a87c173e06","merged_at":"2026-06-13T22:26:18Z","pr":1122,"title":"fix(edge-mcp): verify-by-fingerprint via DEFINER RPC (PR-2: BUG-1)"}
+{"head":"35023952a7657966c95e029ca480d38195507a14","merged_at":"2026-06-08T18:57:19Z","pr":1121,"title":"fix(edge-mcp): re-route nessie_query to worker Gemini-space search + forward caller key (PR-3: BUG-3a)"}
+{"head":"35023952a7657966c95e029ca480d38195507a14","merged_at":"2026-06-08T18:57:19Z","pr":1121,"title":"fix(edge-mcp): re-route nessie_query to worker Gemini-space search + forward caller key (PR-3: BUG-3a)"}
+{"head":"35023952a7657966c95e029ca480d38195507a14","merged_at":"2026-06-08T18:57:19Z","pr":1121,"title":"fix(edge-mcp): re-route nessie_query to worker Gemini-space search + forward caller key (PR-3: BUG-3a)"}
+{"head":"35023952a7657966c95e029ca480d38195507a14","merged_at":"2026-06-08T18:57:19Z","pr":1121,"title":"fix(edge-mcp): re-route nessie_query to worker Gemini-space search + forward caller key (PR-3: BUG-3a)"}
+{"head":"35023952a7657966c95e029ca480d38195507a14","merged_at":"2026-06-08T18:57:19Z","pr":1121,"title":"fix(edge-mcp): re-route nessie_query to worker Gemini-space search + forward caller key (PR-3: BUG-3a)"}
+DONE

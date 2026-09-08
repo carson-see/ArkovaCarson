@@ -1167,7 +1167,13 @@ describe('scrubReason (SCRUM-2625 / QUEUE-10 F-4 reason-scrub)', () => {
 // harness above) because this function's own dependencies are org_members
 // (actor resolution) and anchors (envelope-guard lookups + the insert itself)
 // — a different table shape than the rest of this file exercises.
-describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)', () => {
+// MERGE NOTE (origin/main bd72f65ff <- this branch): main's CTO ruling R2 made
+// `fingerprint_source` REQUIRED on every row this drain materializes, defaulting
+// to 'document_bytes' (it is no longer omitted/NULL for non-inbound rows). The
+// two "OMITS ..." cases below were written against the pre-R2 behavior and now
+// assert the R2 default instead. The inbound declared-hash case is unchanged and
+// remains the only producer of 'issuer_record_attestation'.
+describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376; R2 default)', () => {
   /** A chainable object whose every method returns itself, and which resolves `result` when awaited at any point in the chain. */
   function chainable(result: { data: unknown; error: unknown }) {
     const obj: Record<string, unknown> = {};
@@ -1243,7 +1249,7 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
     }));
   });
 
-  it('OMITS fingerprint_source (undefined, not "document_bytes") for a normal outbound/fetched connector row', async () => {
+  it('sets fingerprint_source=document_bytes (R2 default) for a normal outbound/fetched connector row', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({
       insertResult: { data: { id: 'anchor-outbound-1', public_id: 'ARK-OUTBOUND-1' }, error: null },
@@ -1257,10 +1263,10 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
 
     expect(insertSpy).toHaveBeenCalledTimes(1);
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect('fingerprint_source' in payload).toBe(false);
+    expect(payload.fingerprint_source).toBe('document_bytes');
   });
 
-  it('OMITS fingerprint_source for a non-inbound _direction value (never guesses toward the class)', async () => {
+  it('sets fingerprint_source=document_bytes for a non-inbound _direction value (only _direction==="inbound" reaches the attestation class)', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({
       insertResult: { data: { id: 'anchor-outbound-2', public_id: 'ARK-OUTBOUND-2' }, error: null },
@@ -1273,6 +1279,6 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
     );
 
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect('fingerprint_source' in payload).toBe(false);
+    expect(payload.fingerprint_source).toBe('document_bytes');
   });
 });

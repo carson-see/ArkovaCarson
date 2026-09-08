@@ -78,14 +78,22 @@ export const AnchorInsertPayload = z
     filename: z.string().min(1).max(255),
     credential_type: z.literal('CONTRACT_POSTSIGNING'),
     metadata: z.record(z.string(), z.unknown()),
-    // docusign-bilateral-2026-08 (R19 CHECK enum, migration 0376): omitted
-    // (undefined) for every pre-existing connector path — those are all
-    // server-FETCHED bytes, and 0376 never classified connector-fetch anchors
-    // at all (NULL = "unclassified", the correct answer for a class this
-    // migration doesn't measure). Only the NEW inbound declared-hash branch of
-    // `defaultMaterializeAnchor` sets this, to 'issuer_record_attestation' —
-    // never 'document_bytes' from this file (no fetch ever happens here).
-    fingerprint_source: z.enum(['document_bytes', 'issuer_record_attestation']).optional(),
+    // Evidence class of the fingerprint on every row this drain materializes
+    // (migration 0376/0384; CHECK-constrained on `anchors.fingerprint_source`).
+    // REQUIRED, never omitted — R2 (CTO Decision Record,
+    // docusign-bilateral-2026-08) settled that this drain must always classify
+    // what it persists rather than leaving NULL "unclassified".
+    //
+    // 'document_bytes' is the R2 default and covers every pre-existing
+    // connector path (DocuSign outbound, Google Drive): those fingerprints are
+    // server-side hashes of bytes fetched from a connected third party under
+    // the §1.6A carve-out (DS-03 `enqueueSignedDocument` and its twins).
+    //
+    // 'issuer_record_attestation' has exactly ONE producer — the inbound
+    // declared-hash branch of `defaultMaterializeAnchor` below, where the
+    // fingerprint was declared by the issuer and never measured from bytes
+    // Arkova fetched (§1.5). That is why this is an enum and not a literal.
+    fingerprint_source: z.enum(['document_bytes', 'issuer_record_attestation']),
   })
   .strict();
 
@@ -431,14 +439,15 @@ export async function defaultMaterializeAnchor(
       connector_artifact_id: row.id,
       external_ref: row.external_ref,
     },
-    // R19 (migration 0376): 'issuer_record_attestation' ONLY for the inbound
-    // declared-hash branch — this fingerprint was never measured from bytes
-    // Arkova fetched (§1.5). Every other connector-drained anchor OMITS this
-    // field (undefined, not 'document_bytes' — this file never fetches bytes
-    // itself either; §1.6A fetching happens upstream in
-    // docusign-envelope-completed.ts, which this materializer has no
-    // visibility into, so it must not assert a class it didn't measure).
-    ...(isInboundDeclaredHash ? { fingerprint_source: 'issuer_record_attestation' as const } : {}),
+    // R2 default is 'document_bytes': the fingerprint is a server-computed hash
+    // of fetched document bytes (DS-03 enqueueSignedDocument and its Drive /
+    // other connector twins). The inbound declared-hash branch is the ONLY
+    // producer of 'issuer_record_attestation' — there the fingerprint was
+    // declared by the issuer, never measured from bytes Arkova fetched (§1.5).
+    // Always set, never omitted. See the schema comment on AnchorInsertPayload.
+    fingerprint_source: isInboundDeclaredHash
+      ? ('issuer_record_attestation' as const)
+      : ('document_bytes' as const),
   };
 
   // Validate the persisted row before insert (§1.2). Parse failures throw into
