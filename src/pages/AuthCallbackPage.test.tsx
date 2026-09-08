@@ -102,6 +102,22 @@ describe('AuthCallbackPage', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
   });
 
+  it.each(['INITIAL_SESSION', 'SIGNED_IN', 'TOKEN_REFRESHED'])(
+    'keeps a pending OAuth identity on signup after %s (SCRUM-4035)',
+    (event) => {
+      render(<MemoryRouter><AuthCallbackPage /></MemoryRouter>);
+      const payload = btoa(JSON.stringify({ role: 'arkova_email_pending' }));
+      act(() => {
+        authChangeCallback?.(event, {
+          access_token: `header.${payload}.signature`,
+          user: { id: '123', email_confirmed_at: '2026-09-05T00:00:00Z' },
+        });
+      });
+      expect(mockNavigate).toHaveBeenCalledWith('/signup', { replace: true });
+      expect(mockNavigate).not.toHaveBeenCalledWith('/dashboard', expect.anything());
+    },
+  );
+
   it('redirects to login on INITIAL_SESSION without session', () => {
     render(
       <MemoryRouter>

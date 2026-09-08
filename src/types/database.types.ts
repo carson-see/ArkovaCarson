@@ -7218,6 +7218,16 @@ export type Database = {
         Returns: undefined
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
+      manage_oauth_email_confirmation: {
+        Args: {
+          p_action: string
+          p_attempt_id?: string
+          p_challenge_digest?: string
+          p_email?: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
       next_webhook_sequence: { Args: never; Returns: number }
       org_credit_ledger_divergence: {
         Args: { p_org_id?: string }
