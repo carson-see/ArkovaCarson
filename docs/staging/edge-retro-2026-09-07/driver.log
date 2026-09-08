@@ -1,0 +1,61 @@
+edge retro-soak opened 2026-09-07T12:18:03.060193+00:00 earliest end 2026-09-08T00:18:03.060193+00:00
+cycle 1 passed
+cycle 2 passed
+SOAK FAILED: no MCP_TOOL_CALL audit rows written (10 -> 10)
+Traceback (most recent call last):
+  File "/Volumes/Extreme/offload/arkova-edge-retro-0907/driver.py", line 307, in <module>
+    result = cycle()
+  File "/Volumes/Extreme/offload/arkova-edge-retro-0907/driver.py", line 245, in cycle
+    assert after > before, f'no MCP_TOOL_CALL audit rows written ({before} -> {after})'
+           ^^^^^^^^^^^^^^
+AssertionError: no MCP_TOOL_CALL audit rows written (10 -> 10)
+edge retro-soak opened 2026-09-07T12:54:21.474534+00:00 earliest end 2026-09-08T00:54:21.474534+00:00
+cycle 1 passed
+cycle 2 passed
+cycle 3 passed
+cycle 4 passed
+cycle 5 passed
+cycle 6 passed
+cycle 7 passed
+cycle 8 passed
+cycle 9 passed
+cycle 10 passed
+cycle 11 passed
+cycle 12 passed
+cycle 13 passed
+cycle 14 passed
+cycle 15 passed
+cycle 16 passed
+cycle 17 passed
+cycle 18 passed
+cycle 19 passed
+cycle 20 passed
+cycle 21 passed
+cycle 22 passed
+cycle 23 passed
+cycle 24 passed
+cycle 25 passed
+cycle 26 passed
+cycle 27 passed
+cycle 28 passed
+cycle 29 passed
+cycle 30 passed
+cycle 31 passed
+cycle 32 passed
+cycle 33 passed
+cycle 34 passed
+cycle 35 passed
+cycle 36 passed
+cycle 37 passed
+cycle 38 passed
+cycle 39 passed
+cycle 40 passed
+cycle 41 passed
+cycle 42 passed
+cycle 43 passed
+cycle 44 passed
+cycle 45 passed
+cycle 46 passed
+cycle 47 passed
+cycle 48 passed
+cycle 49 passed
