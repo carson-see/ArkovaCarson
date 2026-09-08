@@ -6,6 +6,8 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { clearMfaCapabilityCooldown } from '../lib/mfaCapabilityCooldown';
+import { clearMfaAssuranceCache } from './useMfaAssurance';
 import type { User, Session } from '@supabase/supabase-js';
 
 type OAuthProvider = Parameters<typeof supabase.auth.signInWithOAuth>[0]['provider'];
@@ -197,9 +199,35 @@ export function useAuth(): AuthState & AuthActions {
   }, [signInWithProvider]);
 
   const signOut = useCallback(async () => {
+    // R17(c) (PR #2637 review round 2, CONFIRMED cross-user bypass): clear
+    // THIS user's MFA capability cooldown before the redirect below. The
+    // cooldown is already keyed by userId (mfaCapabilityCooldown.ts), so a
+    // DIFFERENT user signing in afterward was never actually at risk — but
+    // clearing it here also means the SAME user's next sign-in doesn't
+    // inherit a stale cooldown from a platform outage that may have
+    // already resolved. `clearMfaCapabilityCooldown` itself is a no-op for
+    // a null/undefined userId and swallows any storage error internally.
+    clearMfaCapabilityCooldown(user?.id);
+
+    // R11 (PR #2637 review round 2): also clear the assurance-check module
+    // cache — a genuinely new sign-in always mints a fresh session token,
+    // which already makes the cache naturally miss on its own (see that
+    // hook's module doc comment), but clearing it explicitly here is a
+    // belt-and-suspenders measure that costs nothing.
+    clearMfaAssuranceCache();
+
     // Set flag BEFORE any state changes so AuthGuard won't show
-    // misleading "sign in required" toast during the sign-out transition
-    sessionStorage.setItem('arkova_signed_out', '1');
+    // misleading "sign in required" toast during the sign-out transition.
+    // Wrapped in try/catch (CTO ruling A4-10, SCRUM-3167): a private-
+    // browsing or storage-disabled environment throwing here must not
+    // prevent sign-out itself from completing — losing the "just signed
+    // out" toast suppression is a cosmetic regression, but blocking
+    // sign-out entirely would be a lockout the user cannot self-resolve.
+    try {
+      sessionStorage.setItem('arkova_signed_out', '1');
+    } catch {
+      // ignore storage access errors in restricted environments
+    }
 
     setLoading(true);
     setError(null);
@@ -207,7 +235,15 @@ export function useAuth(): AuthState & AuthActions {
     const { error } = await supabase.auth.signOut();
 
     if (error) {
-      sessionStorage.removeItem('arkova_signed_out');
+      // Same rationale as the setItem above (A4-10 / PR #2637 review item
+      // 29) — a throwing removeItem must not crash the signOut() error
+      // path. Worst case the flag lingers and self-corrects the next time
+      // AuthGuard's redirect-toast effect reads and clears it.
+      try {
+        sessionStorage.removeItem('arkova_signed_out');
+      } catch {
+        // ignore storage access errors in restricted environments
+      }
       setError(error.message);
       setLoading(false);
       return;
@@ -218,7 +254,7 @@ export function useAuth(): AuthState & AuthActions {
     // causing ErrorBoundary "Something went wrong" before navigate() takes effect.
     // Hard redirect avoids the React re-render entirely.
     window.location.href = '/login';
-  }, []);
+  }, [user]);
 
   const clearError = useCallback(() => {
     setError(null);

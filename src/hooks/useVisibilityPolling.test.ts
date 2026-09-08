@@ -117,4 +117,76 @@ describe('useVisibilityPolling', () => {
     });
     expect(cb).toHaveBeenCalledTimes(2);
   });
+
+  // ---------------------------------------------------------------------
+  // SCRUM-3167 (PR #2637 review, R7): extended with `options.immediate`
+  // (default `true` — every existing caller above is unaffected) and
+  // `options.enabled`, plus the ref-for-callback discipline `
+  // useForegroundInterval` had (this hook now replaces it — see that
+  // file's deletion note).
+  // ---------------------------------------------------------------------
+
+  it('R7: immediate:false skips the mount-time fire, but still polls on the interval', async () => {
+    const cb = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => useVisibilityPolling(cb, 30_000, { immediate: false }));
+    expect(cb).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('R7: immediate defaults to true when options is omitted entirely (backward compatible)', () => {
+    const cb = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => useVisibilityPolling(cb, 30_000));
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('R7: enabled:false skips the mount fire, the interval, and the visibility listener entirely', async () => {
+    const cb = vi.fn().mockResolvedValue(undefined);
+    const addSpy = vi.spyOn(document, 'addEventListener');
+    renderHook(() => useVisibilityPolling(cb, 30_000, { enabled: false }));
+
+    expect(cb).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(cb).not.toHaveBeenCalled();
+    expect(addSpy).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+  });
+
+  it('R7: does not re-arm the interval/listener just because a new cb identity is passed on re-render (ref discipline)', async () => {
+    let cb = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = renderHook(({ callback }) => useVisibilityPolling(callback, 30_000, { immediate: false }), {
+      initialProps: { callback: cb },
+    });
+
+    cb = vi.fn().mockResolvedValue(undefined);
+    rerender({ callback: cb });
+
+    // The LATEST callback still fires on the next tick — proves the hook
+    // reads live state via a ref rather than closing over a stale one.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('R7: a callback-identity change alone does not trigger a duplicate immediate fire', () => {
+    let cb = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = renderHook(({ callback }) => useVisibilityPolling(callback, 30_000), {
+      initialProps: { callback: cb },
+    });
+    expect(cb).toHaveBeenCalledTimes(1);
+
+    const secondCb = vi.fn().mockResolvedValue(undefined);
+    cb = secondCb;
+    rerender({ callback: cb });
+
+    // Re-rendering with a new (unmemoized) callback must not re-fire the
+    // "immediate" mount behaviour again — that would make `immediate` a
+    // footgun for any caller that doesn't memoize its callback.
+    expect(secondCb).not.toHaveBeenCalled();
+  });
 });
