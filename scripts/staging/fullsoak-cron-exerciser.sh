@@ -114,10 +114,15 @@
 # instrument is not allowed to quietly contaminate the evidence it supports.
 #
 # ── RATE LIMIT ───────────────────────────────────────────────────────────────
-# cronRouter's limiter is 30 requests / 60 s under ONE shared key ('cron-jobs')
-# for the whole router — the 26 scheduled jobs draw from the same budget. This
-# script paces at INTERVAL_SEC (default 6 s ≈ 10/min) and backs off on 429 so it
-# can never starve a scheduled job into a 429 that would look like a soak defect.
+# SCRUM-4475 changed cronRouter's limiting. It is no longer ONE 30/min bucket
+# for the whole router (that global bucket is what refused 66 Cloud Scheduler
+# jobs bursting at :00). It is now TWO limiters: a pre-auth 120/min-per-source-IP
+# burst guard, and a post-auth 10/min bucket PER JOB PATH. This script paces at
+# INTERVAL_SEC (default 6 s ≈ 10/min) across DISTINCT job paths and backs off on
+# 429, so it draws at most ~10/min from the burst guard's 120 and at most one
+# hit per job bucket per cycle — it still cannot starve a scheduled job into a
+# 429 that would look like a soak defect. Do NOT point it at a single path with
+# --only at this interval: that would exhaust that one job's 10/min bucket.
 #
 # ── DEPENDENCIES ─────────────────────────────────────────────────────────────
 #   gcloud (auth'd; Secret Manager read, identity token, scheduler+run list),

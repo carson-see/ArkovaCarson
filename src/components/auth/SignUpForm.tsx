@@ -6,13 +6,9 @@
  * only when signUp returns no active session (email confirmation pending);
  * when a live session is returned (auto-confirm on), proceeds into the app.
  * Note: Role is assigned during onboarding, not signup.
- *
- * Beta gate: When VITE_BETA_INVITE_CODE is set, users must enter
- * a valid invite code before the signup form is shown.
  */
 
 import { useState, FormEvent } from 'react';
-import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { User, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -21,9 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { EmailConfirmation } from '@/components/onboarding/EmailConfirmation';
-import { AUTH_FORM_LABELS, BETA_GATE_LABELS } from '@/lib/copy';
-
-const BETA_INVITE_CODE = import.meta.env.VITE_BETA_INVITE_CODE as string | undefined;
+import { AUTH_FORM_LABELS } from '@/lib/copy';
 
 interface SignUpFormProps {
   onSuccess?: () => void;
@@ -36,21 +30,9 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
-  const [inviteVerified, setInviteVerified] = useState(!BETA_INVITE_CODE);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [signupComplete, setSignupComplete] = useState(false);
   const [resending, setResending] = useState(false);
-
-  const handleInviteSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    setValidationError(null);
-    if (inviteCode.trim() === BETA_INVITE_CODE) {
-      setInviteVerified(true);
-    } else {
-      setValidationError(BETA_GATE_LABELS.INVALID_CODE);
-    }
-  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -118,57 +100,6 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
   }
 
   const displayError = validationError || error;
-
-  // Beta invite code gate
-  if (!inviteVerified) {
-    return (
-      <form onSubmit={handleInviteSubmit} className="space-y-5">
-        <div className="text-center space-y-2">
-          <ArkovaIcon className="h-8 w-8 mx-auto text-primary" />
-          <p className="text-sm text-muted-foreground">
-            {BETA_GATE_LABELS.DESCRIPTION}
-          </p>
-        </div>
-
-        {validationError && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{validationError}</AlertDescription>
-          </Alert>
-        )}
-
-        <div className="space-y-2">
-          <Label htmlFor="inviteCode">{BETA_GATE_LABELS.CODE_LABEL}</Label>
-          <Input
-            id="inviteCode"
-            type="text"
-            value={inviteCode}
-            onChange={(e) => { setInviteCode(e.target.value); setValidationError(null); }}
-            placeholder={BETA_GATE_LABELS.CODE_PLACEHOLDER}
-            required
-            autoFocus
-          />
-        </div>
-
-        <Button type="submit" className="w-full" size="lg">
-          {BETA_GATE_LABELS.CONTINUE}
-        </Button>
-
-        {onLoginClick && (
-          <p className="text-center text-sm text-muted-foreground">
-            {AUTH_FORM_LABELS.ALREADY_HAVE_ACCOUNT}{' '}
-            <button
-              type="button"
-              onClick={onLoginClick}
-              className="font-medium text-primary hover:text-primary/80 transition-colors"
-            >
-              {AUTH_FORM_LABELS.SIGN_IN}
-            </button>
-          </p>
-        )}
-      </form>
-    );
-  }
 
   const handleGoogleSignUp = async () => {
     clearError();
