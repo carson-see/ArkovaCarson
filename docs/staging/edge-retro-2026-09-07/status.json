@@ -1,0 +1,22 @@
+{
+  "window": "edge-catch-up retro-soak",
+  "tier": "T2",
+  "soaked_source_sha": "61f04403d7802bb5fb882f473dc21357b5e4cacd",
+  "bundle_sha256": "b5a8942e0650b9ee3e40bc1e3e4a4b6175f8e4854a36b7140bad239998daf365",
+  "worker_name": "arkova-edge-retro-0907",
+  "worker_url": "https://arkova-edge-retro-0907.carson-182.workers.dev",
+  "deployment_id": "69d42679-9379-4559-b914-555538697a73",
+  "version_id": "fb093cd8-304a-4bb1-90b2-cab730f0b110",
+  "staging_project_ref": "fizyjojbebyalirtjjht",
+  "preflight": "soak_artifact (prod_divergence: extra ledger row 0420 from PR #2442) \u2014 NOT clean_mirror",
+  "started_at": "2026-09-07T12:54:21.474534+00:00",
+  "not_before": "2026-09-08T00:54:21.474534+00:00",
+  "status": "window_complete_pending_review",
+  "cycles": 49,
+  "failures": 0,
+  "cycle_interval_seconds": 900,
+  "runtime_pid": 70274,
+  "scope": "origin/main services/edge bundle deployed to a THROWAWAY workers.dev worker (no route, own KV namespaces) against the standing shared staging rig. Read-only verification traffic; the only rows written are the edge worker's own MCP_TOOL_CALL audit rows.",
+  "last_cycle_at": "2026-09-08T00:54:31.693193+00:00",
+  "completed_at": "2026-09-08T00:54:31.695411+00:00"
+}
