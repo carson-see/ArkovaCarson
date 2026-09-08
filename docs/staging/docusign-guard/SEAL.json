@@ -1,0 +1,48 @@
+{
+  "soak_id": "docusign-guard-2026-09-02",
+  "pr": 2472,
+  "tier": "T3",
+  "status": "SEALED",
+  "window": {
+    "start": "2026-09-02T13:49:03Z",
+    "end": "2026-09-04T13:49:03Z",
+    "first_cycle": "2026-09-02T13:49:26Z",
+    "last_cycle": "2026-09-04T13:44:29Z"
+  },
+  "worker_uptime": {
+    "first_h": 0.02,
+    "last_h": 47.93,
+    "resets": 0,
+    "note": "last cycle 5 min before close; clock = Cloud Run worker uptime under --min-instances=1"
+  },
+  "probes": {
+    "cycles": 552,
+    "ok": 3312,
+    "fail": 0
+  },
+  "guard": {
+    "results": {
+      "1111": 552
+    },
+    "required": "1111 every cycle"
+  },
+  "triggers": {
+    "A_size": "FIRED 2026-09-03T11:28:02Z (direct log)",
+    "B_age": "FIRED 2026-09-03T11:01:46Z (by elimination; B emits no log)",
+    "D_forced_flush_cycles": 508
+  },
+  "per_org_isolation": [
+    2
+  ],
+  "rig": {
+    "project_ref": "kyaecvotcbalsfahwslt",
+    "service": "arkova-worker-docusign-guard-staging",
+    "revision": "00003-hwq",
+    "image_index": "sha256:4aa5e8cd94d19d830850647de53671c50501685be11d581843e7fa4272388b49",
+    "image_running": "sha256:1e24dd02f57b3773525195a7d305ad8e9cb4bcbb2a94fbbf8e55609f20df98ef",
+    "source_head": "bfd0aaf5b32ad24db9717f8da1dbcb5ba2dee006",
+    "preflight": "clean_mirror",
+    "post_window": "service and project found DELETED 2026-09-05T17:37Z, no teardown log entry, not this session"
+  },
+  "cycles_sha256": "da4323f085ba7049916a75d1e7b0e8d245c0a6be00796bdc89377a16ea894382"
+}

@@ -1,0 +1,62 @@
+{
+  "ts": "2026-09-07T17:54:21.558336+00:00",
+  "checks": {
+    "health": {
+      "status": "ok",
+      "service": "arkova-edge"
+    },
+    "deployment_identity": {
+      "deployment_id": "69d42679-9379-4559-b914-555538697a73",
+      "version_id": "fb093cd8-304a-4bb1-90b2-cab730f0b110"
+    },
+    "tools_list": {
+      "count": 15,
+      "set_matches": true,
+      "renames_absent": true
+    },
+    "verify_batch": {
+      "order_preserved": true,
+      "partial_results": true,
+      "bitcoin_block": [
+        880001,
+        null,
+        null
+      ]
+    },
+    "oracle_batch_verify": {
+      "alg": "HMAC-SHA256",
+      "signature_valid": true,
+      "tamper_rejected": true,
+      "partial_results": true
+    },
+    "malformed_rejected": {
+      "sanitized": true,
+      "message": "MCP error -32602: Input validation error: Invalid arguments for tool oracle_batch_verify: public_id must match ARK-<TYPE>-<SUFFIX> at public_ids[1]"
+    },
+    "verify_by_fingerprint": {
+      "verify": true,
+      "get_fingerprint": true
+    },
+    "worker_parity": {
+      "fields_compared": 9,
+      "divergences": 0
+    },
+    "auth": {
+      "positive": "X-API-Key accepted on every tool call this cycle",
+      "negatives": {
+        "no_key": 401,
+        "bad_key": 401,
+        "bearer_wrong_secret": 401,
+        "bearer_expired": 401
+      },
+      "note": "ES256 signed-request auth is NOT on origin/main (PR #2589 open); the deployed auth surface is X-API-Key + HS256 bearer."
+    },
+    "audit_rows": {
+      "before_30m": 10,
+      "cycle_t0": "2026-09-07 17:54:23.783735+00",
+      "written_since_t0": 5,
+      "event_category": "SECURITY"
+    }
+  },
+  "allExpected": true
+}
