@@ -65,7 +65,7 @@ function hasExpectedAudience(aud: string | string[]): boolean {
 }
 
 function coerceClaims(payload: unknown): SupabaseJwtClaims | null {
-  if (!isRecord(payload)) return null;
+  if (!isRecord(payload) || payload.role === 'arkova_email_pending') return null;
   const { sub, aud, iss, exp, iat } = payload;
 
   if (typeof sub !== 'string' || !sub) return null;

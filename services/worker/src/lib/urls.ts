@@ -86,3 +86,8 @@ export const BILLING_PORTAL_RETURN_URL = `${BASE}/settings`;
 
 /** Admin pipeline health dashboard (used in pipeline-health alert emails). */
 export const PIPELINE_DASHBOARD_URL = `${BASE}/admin/pipeline`;
+
+/** Mailbox proof stays in the fragment, never the server URL/referrer. */
+export function buildEmailConfirmationUrl(tokenHash: string): string {
+  return `${BASE}/signup#token=${encodeURIComponent(tokenHash)}&type=oauth_confirmation`;
+}
