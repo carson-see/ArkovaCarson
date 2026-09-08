@@ -48,3 +48,10 @@ After a clean local `supabase db reset --local`, the canonical generator added t
 - `Request.x402PayerContext` is a discriminated union: an explicit API-key or
   payments-disabled bypass, or a verified opaque `payerKey`. Never add a raw
   wallet address to this request type.
+
+## 2026-09-05 — SCRUM-4035 OAuth confirmation RPC
+
+`manage_oauth_email_confirmation` was generated using Supabase postgres-meta against the
+owned native database with 0436 applied. Its entry is byte-identical to the frontend entry;
+no temporary hand-written override remains. This is a generated delta, not a full baseline
+regen; full committed-ledger generation remains a CI/staging release check.
