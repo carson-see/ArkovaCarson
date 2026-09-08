@@ -63,7 +63,13 @@ to the next tick, it never drops it, and the run is marked `incomplete`. The
 final summary log emits at most 50 anchor ids (`anchorSample` +
 `sampleTruncated`) — a 10k-id pino line was its own hazard during the incident.
 
-Tests: `broadcast-recovery.test.ts` (+9 cases — a 10,000-row cohort drained
+A zero-recovery manual pass now says *which* zero it is: `eligible: 0` means
+every fetched row was journal-protected (working as designed — that cohort is
+not the generic sweep's to take), while `eligible > 0` with `recovered: 0`
+means the database refused every UPDATE. Both stop the loop, but only the
+second is a fault, and an operator should not be sent after the wrong one.
+
+Tests: `broadcast-recovery.test.ts` (+10 cases — a 10,000-row cohort drained
 across repeated bounded calls, every single call bounded, the pass cap
 reporting `incomplete`, a `57014` proven NOT to fan out, `PGRST202` proven to
 still fall back, manual per-pass batching/ordering/logging, and a SELECT

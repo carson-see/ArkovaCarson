@@ -669,3 +669,29 @@ describe('manualRecovery — bounded batching + visibility (SCRUM-4520)', () => 
     expect(selectCalls).toHaveLength(1);
   });
 });
+
+describe('manualRecovery — a fully journal-protected batch is named as such, not blamed on the database', () => {
+  it('distinguishes "every row was journal-protected" from "every UPDATE failed"', async () => {
+    mockRpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'function not found' } });
+    anchorRows = Array.from({ length: RECOVERY_BATCH_SIZE }, (_, i) => ({
+      id: `protected-${i}`,
+      fingerprint: `fp-${i}`,
+      status: 'BROADCASTING' as const,
+      chain_tx_id: null,
+      deleted_at: null,
+      updated_at: new Date(Date.UTC(2020, 0, 1) + i * 1000).toISOString(),
+      metadata: {},
+    }));
+    journalProtectedIds = anchorRows.map((a) => a.id);
+
+    const result = await recoverStuckBroadcasts(5);
+
+    expect(result.recovered).toBe(0);
+    expect(result.incomplete).toBe(true);
+    expect(updateCalls).toHaveLength(0);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ fetched: RECOVERY_BATCH_SIZE, eligible: 0 }),
+      expect.stringContaining('only journal-protected rows'),
+    );
+  });
+});

@@ -133,6 +133,8 @@ interface RecoveryBatch {
   rows: RecoveredAnchor[];
   /** Candidate rows the batch claimed/read — a short read means the cohort is drained. */
   fetched: number;
+  /** Of `fetched`, how many were not journal-protected and so were actually attempted. */
+  eligible: number;
   /** The batch could not run at all; the invocation must stop and say so. */
   aborted: boolean;
 }
@@ -258,11 +260,16 @@ export async function recoverStuckBroadcasts(
       break;
     }
     if (batch.rows.length === 0) {
-      // A full batch was read and not one row could be updated. Re-reading the
-      // same rows would spin; stop and make it visible.
+      // A full batch was read and nothing came out of it. Re-reading the same
+      // rows would spin, so stop — but say WHICH of the two causes it was.
+      // `eligible: 0` means every row was journal-protected (working as
+      // designed, the cohort is simply not ours to recover yet); `eligible > 0`
+      // means the database refused every UPDATE we attempted.
       logger.error(
-        { pass: passes, fetched: batch.fetched, recovered: 0 },
-        'Manual recovery pass updated zero of the rows it fetched — stopping to avoid a spin',
+        { pass: passes, fetched: batch.fetched, eligible: batch.eligible, recovered: 0 },
+        batch.eligible === 0
+          ? 'Manual recovery pass fetched only journal-protected rows — nothing recoverable, stopping'
+          : 'Manual recovery pass updated zero of the rows it fetched — stopping to avoid a spin',
       );
       incomplete = true;
       break;
@@ -343,10 +350,10 @@ async function manualRecoveryBatch(
       { error: fetchError, pass: passNumber, limit },
       'Manual recovery fetch failed — recovery made no progress this pass',
     );
-    return { rows: [], fetched: 0, aborted: true };
+    return { rows: [], fetched: 0, eligible: 0, aborted: true };
   }
   if (!stuck || stuck.length === 0) {
-    return { rows: [], fetched: 0, aborted: false };
+    return { rows: [], fetched: 0, eligible: 0, aborted: false };
   }
 
   const recoveredAt = new Date().toISOString();
@@ -426,7 +433,7 @@ async function manualRecoveryBatch(
     'Manual recovery pass complete',
   );
 
-  return { rows: recovered, fetched: stuck.length, aborted: false };
+  return { rows: recovered, fetched: stuck.length, eligible: candidates.length, aborted: false };
 }
 
 /**
