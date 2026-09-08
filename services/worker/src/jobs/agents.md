@@ -2,6 +2,84 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-09-08 — SCRUM-4520: broadcast recovery was unbounded at every layer, so a 10k stuck cohort could never drain
+
+A batch-anchoring run on staging rig `txvvrxngyfnnqahujbld` (Cloud Run
+`arkova-worker-oldest-worker-0905-staging`, worker source
+`19abd51339cd69ca289bf7fe0c7195f7746646ec`) was interrupted mid-flight by a
+SIGTERM on 2026-09-07, leaving **10,000** `anchors` rows `BROADCASTING` with a
+NULL `chain_tx_id` — precisely the cohort `broadcast-recovery.ts` exists to
+recover. It recovered none of them. `POST /jobs/recover-broadcasts` returned
+200 on every pass while the worker logged, at pino level 40:
+
+    "recover_stuck_broadcasts RPC failed — falling back to manual recovery"
+    error: { code: "57014", message: "canceling statement due to statement timeout" }
+
+The row count did not move across three passes over ~10 minutes, the rig's
+PostgREST started returning Cloudflare 520s under the load, and the rows had to
+be deleted by hand to stop the every-2-minute cron re-attempting it.
+
+Three independent unbounded layers, each of which alone was enough to stall it:
+
+1. **The RPC took no `LIMIT`.** `recover_stuck_broadcasts()` selected `FOR
+   UPDATE SKIP LOCKED` — which bounds *contention*, not *cardinality* — and
+   then locked, updated and returned every matching row in one statement. At
+   10k rows that always exceeded the function's own `SET statement_timeout =
+   '60s'`. Fixed by migration `0441`: `p_limit integer DEFAULT 500`, clamped
+   server-side to `[1, 2000]`, plus `ORDER BY updated_at ASC`.
+2. **Any RPC error fell through to the JS fan-out.** `manualRecovery` exists
+   for exactly one condition — "the RPC does not exist here" (schema-cache lag
+   after a deploy, a pre-0358 database). Routing a `57014` into it meant
+   SELECTing 10,000 rows and firing 10,000 individual PostgREST UPDATEs, 100
+   concurrently, at a database that was *already* timing out. That is what
+   produced the 520s. Fallback is now gated on `RPC_ABSENT_CODES`
+   (`PGRST202`/`PGRST203`/`PGRST205`/`42883`) plus a "function does not exist"
+   message match; every other RPC error aborts the invocation and logs at
+   `error`.
+3. **A stall was indistinguishable from an idle queue.** `manualRecovery`
+   returned `{recovered: 0}` for a fetch failure and an empty cohort alike, and
+   logged only when it recovered something — so the honest answer ("I read
+   nothing and changed nothing because the database is timing out") and "all
+   clear" were the same 200. Every pass now logs `{pass, fetched, eligible,
+   recovered}` unconditionally, a fetch failure logs at `error`, and the result
+   carries `passes` + `incomplete`. `routes/scheduled.ts` and
+   `routes/cron.ts` both report an incomplete run at `error` level.
+
+**This is a liveness bug, not a cosmetic one.** A stuck `BROADCASTING` cohort
+head-of-line blocks batch anchoring: `batch_insert_anchors` keeps returning the
+same oldest-first records, `partitionRecordAnchors` buckets the `BROADCASTING`
+rows nowhere, and the drain reports "no new pending" with a 200 (the same
+mechanism the `revertClaimedAnchors` entry below documents). Until recovery
+clears the cohort, nothing anchors.
+
+`recoverStuckBroadcasts` now loops over bounded batches — `RECOVERY_BATCH_SIZE`
+500, `MAX_RECOVERY_PASSES` 40, `RECOVERY_TIME_BUDGET_MS` 90s — stopping when a
+pass comes back short (cohort drained), when a full batch yields zero updates
+(the database is refusing the writes, so re-reading it would spin), or when a
+budget is spent. The time budget matters because `scheduleInProcess` has **no
+reentrancy guard** and this cron fires every 2 minutes; an invocation has to
+finish inside its own interval rather than stacking. Hitting a cap defers work
+to the next tick, it never drops it, and the run is marked `incomplete`. The
+final summary log emits at most 50 anchor ids (`anchorSample` +
+`sampleTruncated`) — a 10k-id pino line was its own hazard during the incident.
+
+Tests: `broadcast-recovery.test.ts` (+9 cases — a 10,000-row cohort drained
+across repeated bounded calls, every single call bounded, the pass cap
+reporting `incomplete`, a `57014` proven NOT to fan out, `PGRST202` proven to
+still fall back, manual per-pass batching/ordering/logging, and a SELECT
+failure surfaced rather than laundered into `recovered: 0`); the query-builder
+mock now honours `.limit()`/`.order()` so a "bounded batch" assertion can
+actually fail. `src/tests/migrations/recover-stuck-broadcasts-bounded-batch.test.ts`
+(static structural assertions over `0441`, no DB). `recover-stuck-broadcasts-bounded.local.test.ts`
+(new, env-gated `RECOVER_STUCK_BROADCASTS_PG=1`, REAL local Postgres — proves
+the SQL actually stops at `p_limit`, that the clamp holds, that a NULL
+`p_limit` defaults rather than unbounds, that only the 2-arg signature
+survives, and that the post-DROP grants are still service_role-only). The
+real-Postgres file has NOT been run in this branch — no local stack was
+available — so `0441`'s SQL is proven statically and by the caller-side unit
+tests only until the soak rig runs it.
+
+
 ## 2026-08-15 — the `*Fetcher.ts` family cannot report failure as success any more (BUG-020/022/023)
 
 The 2026-08 connector side-rig force-ran 42 previously-untested ingestion routes

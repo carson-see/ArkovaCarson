@@ -7277,7 +7277,7 @@ export type Database = {
         }[]
       }
       recover_stuck_broadcasts: {
-        Args: { p_stale_minutes?: number }
+        Args: { p_limit?: number; p_stale_minutes?: number }
         Returns: {
           anchor_fingerprint: string
           anchor_id: string

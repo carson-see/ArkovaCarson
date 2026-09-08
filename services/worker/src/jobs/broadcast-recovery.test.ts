@@ -40,12 +40,18 @@ let journalError: { code?: string; message?: string } | null = null;
 const updateCalls: Array<{ id: string; expectStatus: string; payload: Record<string, unknown> }> = [];
 /** Anchor ids whose UPDATE should simulate a failure (rejected/errored). */
 let failUpdateIds: Set<string> = new Set();
+/** Every SELECT the manual fallback issued — the bounded-batch evidence. */
+const selectCalls: Array<{ limit: number | null; orderAscending: boolean | null; returned: number }> = [];
+/** When set, every anchors SELECT fails with this error (e.g. statement timeout). */
+let selectFetchError: { code?: string; message?: string } | null = null;
 
 function resetFixtures(): void {
   anchorRows = [];
   journalProtectedIds = [];
   journalError = null;
   updateCalls.length = 0;
+  selectCalls.length = 0;
+  selectFetchError = null;
   failUpdateIds = new Set();
 }
 
@@ -57,6 +63,8 @@ function makeAnchorsQuery() {
   let deletedAtNull = false;
   let updatedBefore: string | null = null;
   let updatePayload: Record<string, unknown> = {};
+  let selectLimit: number | null = null;
+  let orderAscending: boolean | null = null;
   let updateId: string | null = null;
   let updateExpectStatus: string | null = null;
 
@@ -80,7 +88,14 @@ function makeAnchorsQuery() {
     if (col === 'updated_at') updatedBefore = val;
     return api;
   };
-  api.limit = () => api;
+  api.limit = (n: number) => {
+    selectLimit = n;
+    return api;
+  };
+  api.order = (col: string, opts?: { ascending?: boolean }) => {
+    if (col === 'updated_at') orderAscending = opts?.ascending !== false;
+    return api;
+  };
   api.eq = (col: string, val: string) => {
     if (mode === 'update' && col === 'id') updateId = val;
     if (mode === 'update' && col === 'status') updateExpectStatus = val;
@@ -89,13 +104,26 @@ function makeAnchorsQuery() {
   api.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
     try {
       if (mode === 'select') {
-        const rows = anchorRows.filter((a) => {
+        if (selectFetchError) {
+          selectCalls.push({ limit: selectLimit, orderAscending, returned: 0 });
+          return Promise.resolve({ data: null, error: selectFetchError }).then(resolve, reject);
+        }
+        let rows = anchorRows.filter((a) => {
           if (statusIn && !statusIn.includes(a.status)) return false;
           if (chainTxIdNull && a.chain_tx_id !== null) return false;
           if (deletedAtNull && a.deleted_at !== null) return false;
           if (updatedBefore && !(a.updated_at < updatedBefore)) return false;
           return true;
         });
+        if (orderAscending !== null) {
+          rows = [...rows].sort((a, b) =>
+            orderAscending ? a.updated_at.localeCompare(b.updated_at) : b.updated_at.localeCompare(a.updated_at),
+          );
+        }
+        // PostgREST applies the row cap server-side; the mock must too, or a
+        // "bounded batch" assertion can never fail.
+        if (selectLimit !== null) rows = rows.slice(0, selectLimit);
+        selectCalls.push({ limit: selectLimit, orderAscending, returned: rows.length });
         return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
       }
       // update
@@ -145,7 +173,9 @@ vi.mock('../utils/db.js', () => ({
   },
 }));
 
-const { recoverStuckBroadcasts } = await import('./broadcast-recovery.js');
+const { recoverStuckBroadcasts, RECOVERY_BATCH_SIZE, MAX_RECOVERY_PASSES } = await import(
+  './broadcast-recovery.js'
+);
 const { logger } = await import('../utils/logger.js');
 
 beforeEach(() => {
@@ -166,7 +196,7 @@ describe('recoverStuckBroadcasts — RPC path', () => {
 
     const result = await recoverStuckBroadcasts(5);
 
-    expect(result).toEqual({ recovered: 0, anchors: [] });
+    expect(result).toMatchObject({ recovered: 0, anchors: [] });
     expect(mockRpc).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining('Txid journal protection unavailable'),
@@ -184,7 +214,11 @@ describe('recoverStuckBroadcasts — RPC path', () => {
 
     const result = await recoverStuckBroadcasts(7);
 
-    expect(mockRpc).toHaveBeenCalledWith('recover_stuck_broadcasts', { p_stale_minutes: 7 });
+    // SCRUM-4520: the call is now bounded — p_limit is part of the contract.
+    expect(mockRpc).toHaveBeenCalledWith('recover_stuck_broadcasts', {
+      p_stale_minutes: 7,
+      p_limit: RECOVERY_BATCH_SIZE,
+    });
     expect(result.recovered).toBe(2);
     expect(result.anchors).toEqual([
       { id: 'a1', fingerprint: 'fp1', claimedBy: 'worker-1' },
@@ -195,7 +229,7 @@ describe('recoverStuckBroadcasts — RPC path', () => {
   it('returns recovered:0 when the RPC returns no rows', async () => {
     mockRpc.mockResolvedValue({ data: [], error: null });
     const result = await recoverStuckBroadcasts(5);
-    expect(result).toEqual({ recovered: 0, anchors: [] });
+    expect(result).toMatchObject({ recovered: 0, anchors: [] });
   });
 
   it('falls back to manualRecovery when the RPC itself errors', async () => {
@@ -204,7 +238,7 @@ describe('recoverStuckBroadcasts — RPC path', () => {
     // The important assertion is that it does NOT throw and does NOT report
     // the RPC's error as a hard failure.
     const result = await recoverStuckBroadcasts(5);
-    expect(result).toEqual({ recovered: 0, anchors: [] });
+    expect(result).toMatchObject({ recovered: 0, anchors: [] });
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ error: { code: 'PGRST202', message: 'function not found' } }),
       expect.stringContaining('falling back to manual recovery'),
@@ -233,7 +267,7 @@ describe('recoverStuckBroadcasts — manualRecovery fallback (F-3, migration 037
     ];
 
     const result = await recoverStuckBroadcasts(5);
-    expect(result).toEqual({ recovered: 0, anchors: [] });
+    expect(result).toMatchObject({ recovered: 0, anchors: [] });
     expect(updateCalls).toHaveLength(0);
   });
 
@@ -345,7 +379,7 @@ describe('recoverStuckBroadcasts — manualRecovery fallback (F-3, migration 037
     ];
 
     const result = await recoverStuckBroadcasts(5);
-    expect(result).toEqual({ recovered: 0, anchors: [] });
+    expect(result).toMatchObject({ recovered: 0, anchors: [] });
     expect(updateCalls).toHaveLength(0);
     expect(anchorRows[0].status).toBe('SUBMITTED');
   });
@@ -366,7 +400,7 @@ describe('recoverStuckBroadcasts — manualRecovery fallback (F-3, migration 037
     ];
 
     const result = await recoverStuckBroadcasts(5);
-    expect(result).toEqual({ recovered: 0, anchors: [] });
+    expect(result).toMatchObject({ recovered: 0, anchors: [] });
     expect(updateCalls).toHaveLength(0);
   });
 
@@ -402,5 +436,236 @@ describe('recoverStuckBroadcasts — manualRecovery fallback (F-3, migration 037
       expect.objectContaining({ anchorId: 'will-fail' }),
       'Recovery update failed for anchor',
     );
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// SCRUM-4520 — bounded batching (2026-09-07 rig txvvrxngyfnnqahujbld incident)
+//
+// A batch-anchoring run was SIGTERM'd mid-flight on the oldest-worker-0905
+// staging rig, leaving 10,000 anchors BROADCASTING with a NULL chain_tx_id.
+// `POST /jobs/recover-broadcasts` returned 200 on every pass and recovered
+// NOTHING for ~10 minutes:
+//
+//   * `recover_stuck_broadcasts()` took no LIMIT, so its single UPDATE tried
+//     to claim all 10,000 rows and died on the function's own 60s
+//     `statement_timeout` (SQLSTATE 57014) every time.
+//   * The 57014 was routed into `manualRecovery` — a fallback written for
+//     "the RPC does not exist yet" — which SELECTed 10,000 rows and fired
+//     10,000 individual PostgREST UPDATEs, 100 concurrently. That is what
+//     drove the rig's PostgREST into Cloudflare 520s.
+//   * `manualRecovery` returned `{recovered: 0}` for a fetch error and a
+//     genuinely-empty cohort alike, and logged only when it recovered
+//     something — so a total stall was indistinguishable from "nothing to do".
+//
+// A stuck BROADCASTING cohort head-of-line blocks batch anchoring
+// (`batch_insert_anchors` keeps returning the same oldest-first rows), so this
+// is a liveness bug: the queue does not drain until the cohort clears.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('recoverStuckBroadcasts — bounded batching (SCRUM-4520)', () => {
+  /** Models the real RPC: claims at most `p_limit` rows out of a live cohort. */
+  function seedRpcCohort(size: number): { remaining: () => number; limitsSeen: number[] } {
+    let remaining = size;
+    const limitsSeen: number[] = [];
+    mockRpc.mockImplementation(async (_fn: string, params: { p_limit?: number }) => {
+      const limit = params.p_limit ?? Number.POSITIVE_INFINITY;
+      limitsSeen.push(limit);
+      const take = Math.min(limit, remaining);
+      remaining -= take;
+      return {
+        data: Array.from({ length: take }, (_, i) => ({
+          anchor_id: `stuck-${size - remaining - take + i}`,
+          anchor_fingerprint: `fp-${i}`,
+          claimed_by: 'worker-sigterm',
+          stuck_since: '2026-09-07T00:00:00Z',
+        })),
+        error: null,
+      };
+    });
+    return { remaining: () => remaining, limitsSeen };
+  }
+
+  it('asks the RPC for a bounded batch — one call can never try to claim the whole cohort', async () => {
+    const cohort = seedRpcCohort(10_000);
+
+    await recoverStuckBroadcasts(5);
+
+    expect(RECOVERY_BATCH_SIZE).toBeGreaterThan(0);
+    expect(RECOVERY_BATCH_SIZE).toBeLessThanOrEqual(1_000);
+    // Every single call is bounded — this is the assertion that would have
+    // caught the unbounded RPC that timed out at 60s on 10k rows.
+    for (const limit of cohort.limitsSeen) {
+      expect(limit).toBe(RECOVERY_BATCH_SIZE);
+    }
+    expect(mockRpc).toHaveBeenCalledWith(
+      'recover_stuck_broadcasts',
+      expect.objectContaining({ p_stale_minutes: 5, p_limit: RECOVERY_BATCH_SIZE }),
+    );
+  });
+
+  it('drains a 10,000-row cohort across repeated bounded calls in a single invocation', async () => {
+    const cohort = seedRpcCohort(10_000);
+
+    const result = await recoverStuckBroadcasts(5);
+
+    expect(result.recovered).toBe(10_000);
+    expect(cohort.remaining()).toBe(0);
+    // Bounded batches ⇒ many calls, not one giant one.
+    expect(mockRpc.mock.calls.length).toBeGreaterThanOrEqual(10_000 / RECOVERY_BATCH_SIZE);
+    expect(result.passes).toBe(mockRpc.mock.calls.length);
+    expect(result.incomplete).toBe(false);
+  });
+
+  it('stops at the pass cap and reports incomplete rather than looping forever', async () => {
+    seedRpcCohort(Number.MAX_SAFE_INTEGER);
+
+    const result = await recoverStuckBroadcasts(5);
+
+    expect(result.passes).toBe(MAX_RECOVERY_PASSES);
+    expect(result.incomplete).toBe(true);
+    expect(result.recovered).toBe(MAX_RECOVERY_PASSES * RECOVERY_BATCH_SIZE);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ incomplete: true }),
+      expect.stringContaining('pass budget'),
+    );
+  });
+
+  it('does NOT fan out to manualRecovery on a statement timeout — that is what melted the rig', async () => {
+    anchorRows = Array.from({ length: 200 }, (_, i) => ({
+      id: `stuck-${i}`,
+      fingerprint: `fp-${i}`,
+      status: 'BROADCASTING' as const,
+      chain_tx_id: null,
+      deleted_at: null,
+      updated_at: '2020-01-01T00:00:00.000Z',
+      metadata: {},
+    }));
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { code: '57014', message: 'canceling statement due to statement timeout' },
+    });
+
+    const result = await recoverStuckBroadcasts(5);
+
+    expect(result.recovered).toBe(0);
+    expect(result.incomplete).toBe(true);
+    // The whole point: no 200-row JS fan-out behind a timing-out database.
+    expect(updateCalls).toHaveLength(0);
+    expect(selectCalls).toHaveLength(0);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: '57014' }) }),
+      expect.stringContaining('recover_stuck_broadcasts RPC failed'),
+    );
+  });
+
+  it('still falls back to manualRecovery when the RPC is genuinely absent (schema-cache lag / pre-0358 db)', async () => {
+    mockRpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'function not found' } });
+    anchorRows = [
+      {
+        id: 'absent-rpc-1',
+        fingerprint: 'fp-absent',
+        status: 'BROADCASTING',
+        chain_tx_id: null,
+        deleted_at: null,
+        updated_at: '2020-01-01T00:00:00.000Z',
+        metadata: {},
+      },
+    ];
+
+    const result = await recoverStuckBroadcasts(5);
+
+    expect(result.recovered).toBe(1);
+    expect(selectCalls.length).toBeGreaterThan(0);
+  });
+});
+
+describe('manualRecovery — bounded batching + visibility (SCRUM-4520)', () => {
+  function forceRpcUnavailable(): void {
+    mockRpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'function not found' } });
+  }
+
+  function seedStuck(count: number): void {
+    anchorRows = Array.from({ length: count }, (_, i) => ({
+      id: `manual-${String(i).padStart(6, '0')}`,
+      fingerprint: `fp-${i}`,
+      status: 'BROADCASTING' as const,
+      chain_tx_id: null,
+      deleted_at: null,
+      // Distinct, ascending timestamps so oldest-first ordering is observable.
+      updated_at: new Date(Date.UTC(2020, 0, 1) + i * 1000).toISOString(),
+      metadata: {},
+    }));
+  }
+
+  it('never SELECTs more than one bounded batch per pass', async () => {
+    forceRpcUnavailable();
+    seedStuck(10_000);
+
+    await recoverStuckBroadcasts(5);
+
+    expect(selectCalls.length).toBeGreaterThan(1);
+    for (const call of selectCalls) {
+      expect(call.limit).toBe(RECOVERY_BATCH_SIZE);
+      expect(call.returned).toBeLessThanOrEqual(RECOVERY_BATCH_SIZE);
+    }
+  });
+
+  it('drains a 10,000-row cohort across repeated passes, oldest first', async () => {
+    forceRpcUnavailable();
+    seedStuck(10_000);
+
+    const result = await recoverStuckBroadcasts(5);
+
+    expect(result.recovered).toBe(10_000);
+    expect(anchorRows.every((a) => a.status === 'PENDING')).toBe(true);
+    // Head-of-line blockers clear first.
+    expect(selectCalls.every((c) => c.orderAscending === true)).toBe(true);
+    expect(updateCalls[0].id).toBe('manual-000000');
+  });
+
+  it('logs how many rows each pass actually recovered, so a stall is visible not silent', async () => {
+    forceRpcUnavailable();
+    seedStuck(RECOVERY_BATCH_SIZE + 10);
+
+    await recoverStuckBroadcasts(5);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ pass: 1, fetched: RECOVERY_BATCH_SIZE, recovered: RECOVERY_BATCH_SIZE }),
+      expect.stringContaining('Manual recovery pass'),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ pass: 2, fetched: 10, recovered: 10 }),
+      expect.stringContaining('Manual recovery pass'),
+    );
+  });
+
+  it('reports a SELECT failure loudly instead of returning a silent recovered:0', async () => {
+    forceRpcUnavailable();
+    seedStuck(50);
+    selectFetchError = { code: '57014', message: 'canceling statement due to statement timeout' };
+
+    const result = await recoverStuckBroadcasts(5);
+
+    expect(result.recovered).toBe(0);
+    expect(result.incomplete).toBe(true);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: '57014' }) }),
+      expect.stringContaining('Manual recovery fetch failed'),
+    );
+  });
+
+  it('a pass that recovers zero of the rows it fetched stops the loop instead of spinning', async () => {
+    forceRpcUnavailable();
+    seedStuck(RECOVERY_BATCH_SIZE * 3);
+    failUpdateIds = new Set(anchorRows.map((a) => a.id));
+
+    const result = await recoverStuckBroadcasts(5);
+
+    expect(result.recovered).toBe(0);
+    expect(result.incomplete).toBe(true);
+    // One fetch, one failed attempt at it, then stop — not an infinite re-read
+    // of the same rows the database refuses to update.
+    expect(selectCalls).toHaveLength(1);
   });
 });

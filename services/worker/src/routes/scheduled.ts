@@ -111,8 +111,17 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
       const result = await trackOperation(recoverStuckBroadcasts());
       if (result.recovered > 0) {
         logger.warn(
-          { recovered: result.recovered },
+          { recovered: result.recovered, passes: result.passes, incomplete: result.incomplete },
           'Recovered stuck BROADCASTING anchors',
+        );
+      }
+      // SCRUM-4520: `recovered: 0` alone is ambiguous — it was the shape of the
+      // 2026-09-07 rig stall, where every pass returned 200 and moved nothing.
+      // An incomplete run is always reported, recovered rows or not.
+      if (result.incomplete) {
+        logger.error(
+          { recovered: result.recovered, passes: result.passes },
+          'Stuck-broadcast recovery finished INCOMPLETE — stuck anchors may remain and batch anchoring stays head-of-line blocked',
         );
       }
     } catch (error) {
