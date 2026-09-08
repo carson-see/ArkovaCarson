@@ -1978,11 +1978,15 @@ function validateResidualRiskNote(
     // `Approved by: N/A — …` grant the exception once any prose trailed the
     // marker — the same leading-token shape the 2026-08-29 addendum closed for
     // self-references.
+    // INCOMPLETE_APPROVER_PREFIX_RE (ninth closure): the seventh never
+    // reached the pending/tbd vocabulary, so `Approved by: PENDING — Carson
+    // must decide.` still granted the exception on 2026-09-07.
     if (
       trimmed.length === 0
       || isIncompletePlaceholder(trimmed)
       || isNotApplicablePlaceholder(trimmed)
       || NOT_A_PERSON_PREFIX_RE.test(trimmed)
+      || INCOMPLETE_APPROVER_PREFIX_RE.test(trimmed)
     ) {
       missing.push('Approved by: (must name a real approver, not a blank or placeholder)');
     }
@@ -2047,6 +2051,31 @@ const SELF_REFERENCE_PREFIX_RE =
  */
 const NOT_A_PERSON_PREFIX_RE =
   /^(?:none|n\/a|not[\s-]?applicable|null|nobody|no[\s-]one)(?:$|[\s,;:.()!?—–])/i;
+
+/**
+ * LEADING "not filled in yet" tokens for an approver-class field (ninth
+ * closure, Batch-I stand-up for PR #2589, 2026-09-07). The seventh closure
+ * gave `none` / `n/a` the leading-token treatment above but left
+ * {@link INCOMPLETE_VALUE_PATTERNS} whole-value anchored, so
+ * `Approved by: PENDING — Carson must decide.` and
+ * `Approved by: NOT YET APPROVED — requires Carson.` both GRANTED a
+ * residual-risk / base-drift exception while plainly saying no one had
+ * approved it — the same prose-after-the-marker shape, one vocabulary over.
+ * A value that BEGINS with one of these tokens names no one regardless of
+ * what follows. Scoped to approver-class fields only: `isIncompletePlaceholder`
+ * stays whole-value because other fields legitimately carry prose after a
+ * marker (`Migration applied: pending 0441 — see rollback note`). `not yet` is
+ * open-ended on purpose (`not yet approved`, `not yet decided`, `not yet —`):
+ * whatever follows, a value that opens "not yet" is describing an absence.
+ * Same firing boundary as {@link SELF_REFERENCE_PREFIX_RE}: `-` is not a
+ * boundary, so a hyphenated name cannot false-positive, and a real surname
+ * that merely STARTS with a token (`Todorov`, `Pendleton`) needs the boundary
+ * it never gets. The one exception is `not yet`, which ALSO accepts `-` as
+ * its boundary: `not-yet-approved (Carson)` is a real spelling of the hole
+ * and no human name opens with "Not-yet-".
+ */
+const INCOMPLETE_APPROVER_PREFIX_RE =
+  /^(?:(?:pending|tbd|tba|todo|to[\s-]?do|to[\s-]?be[\s-]?(?:determined|announced|filled(?:[\s-]?in)?)|wip|work[\s-]?in[\s-]?progress|planned|placeholder)(?:$|[\s,;:.()!?—–])|not[\s-]?yet(?:$|[\s,;:.()!?—–-]))/i;
 
 /**
  * The agent naming itself as the approver. CLAUDE.md §1.12 and the T1 tier
@@ -2161,10 +2190,13 @@ function validateHumanApproverField(body: string): string | null {
   if (value === null) return null; // label absent → missingFields() owns it
   const trimmed = value.trim();
   if (trimmed.length === 0) return null; // empty → validateNonEmptyEvidenceField owns it
+  // Ninth closure: `Human approver: PENDING — Carson must decide.` is the
+  // T1 spelling of the residual-risk hole; both fields share the guard.
   if (
     isIncompletePlaceholder(trimmed)
     || isNotApplicablePlaceholder(trimmed)
     || NOT_A_PERSON_PREFIX_RE.test(trimmed)
+    || INCOMPLETE_APPROVER_PREFIX_RE.test(trimmed)
   ) {
     return `${field} must name the human who approved this PR — \`${trimmed}\` names no one. `
       + 'NONE/N/A/TBD/pending do not satisfy the T1 human-approval requirement; if no human '
