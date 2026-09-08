@@ -7155,10 +7155,6 @@ export type Database = {
           isSetofReturn: true
         }
       }
-      insert_supplementary_proofs: {
-        Args: { p_rows: Json }
-        Returns: number
-      }
       manage_oauth_email_confirmation: {
         Args: {
           p_action: string
