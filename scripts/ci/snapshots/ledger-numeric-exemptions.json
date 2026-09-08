@@ -4,6 +4,21 @@
     {
       "date": "2026-09-07",
       "author": "CTO session \u2014 RTE prod-apply",
+      "note": "REMOVED 0440: PR #2658 merged 2026-09-07T22:23:49Z, so 0440_org_credits_cap_enforced.sql is on main and the prefix is present in both places (stale exemption per the INVARIANT)."
+    },
+    {
+      "date": "2026-09-07",
+      "author": "CTO session \u2014 RTE prod-apply",
+      "note": "REMOVED 0428: PR #2564 merged 2026-09-07T20:54:10Z, so 0428_admin_profile_rpcs_remove_hot_table_trigger_ddl.sql is on main and the prefix is present in both places (stale exemption per the INVARIANT)."
+    },
+    {
+      "date": "2026-09-07",
+      "author": "CTO session \u2014 RTE prod-apply",
+      "note": "ADDED 0440 (0440_org_credits_cap_enforced, PR #2658 head aad1c1b67eb76759275a90c3af469589cd158bf3 bound in the Batch-F 48h T3 window on rig fgkgyhfcsqwsdalapbqk, window 2026-09-05T21:55:02Z \u2192 2026-09-07T21:55:02Z). Applied to prod vzwyaatejekddvltxyye via MCP apply_migration ahead of #2658 merging (migration-first is the SAFE direction: anchorQuotaGate fails open on a missing column, so the worker must never ship before the column), ledger reconciled to 0440 per CLAUDE.md \u00a70 rule 10. REMOVE when #2658 merges."
+    },
+    {
+      "date": "2026-09-07",
+      "author": "CTO session \u2014 RTE prod-apply",
       "note": "ADDED 0428 (0428_admin_profile_rpcs_remove_hot_table_trigger_ddl, PR #2564 head c3bcbf22c647af72694e8cffaf502277c441891e bound in the Batch-D 48h T3 window on rig puuoxpurnystnvbednrj, window 2026-09-05T19:54:35Z \u2192 2026-09-07T19:54:35Z). Applied to prod vzwyaatejekddvltxyye via MCP apply_migration ahead of #2564 merging, ledger reconciled to 0428 per CLAUDE.md \u00a70 rule 10. REMOVE when #2564 merges (its .sql lands on main and the prefix becomes stale)."
     },
     {
@@ -144,7 +159,6 @@
   ],
   "exemptPrefixes": [
     "0415",
-    "0425",
-    "0428"
+    "0425"
   ]
 }
