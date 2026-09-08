@@ -20,6 +20,28 @@ needs to move to a neutral module, move it — do not copy it.
 providers would collide onto ONE secret and each connect would clobber the other's refresh token.
 `adobe-sign-token-store.test.ts` asserts the two names differ for identical `(org, account)` inputs
 rather than merely asserting the Adobe name matches a regex.
+_Last updated: 2026-08-03 (PR #1944 review rounds 2-3: create-then-stop CRITICAL fix, PII scrub, concurrency bound, account_label parser convergence)._
+_Last updated: 2026-09-07 (`docusign-token-store.ts` version retention — BUG 2026-09-05 Secret Manager version churn)._
+
+## 2026-09-07 — `docusign-token-store.ts` now prunes superseded Secret Manager versions (BUG 2026-09-05, infra-cost / security-hygiene)
+
+**What was wrong.** `put()` only ever appended a version. DocuSign rotates the refresh token on every refresh, and two hourly Cloud Scheduler jobs each refresh the grant through `jobs/docusign-reconciliation-deps.ts`'s shared `getAccessToken` (`docusign-connect-failures-poll` at `:00`, `docusign-listener-drift` at `:15` — confirmed from the Secret Manager audit log: `AddSecretVersion` by the compute SA at 13:00:16Z and 13:15:12Z on 2026-09-07, matching the worker request log). So the prod org secret `arkova-docusign-40383eb2-…-d0d00bc8…-refresh-token` gained 2 versions/hour from 2026-08-03 and reached **1,645 ENABLED versions on 2026-09-05** (1,731 by 2026-09-07T13:15Z). Every one held a distinct payload (SHA-256 of v1728–v1731 all differ) — the existing `result.refresh_token !== refreshToken` guards in the callers were correct and never the problem. Secret Manager bills every ENABLED/DISABLED version, so that was ~$99/month, growing ~$6/month per day, for versions nothing can read (`get()` only ever calls `versions/latest:access`).
+
+**What changed (red-first; `docusign-token-store.test.ts` "version retention" block):**
+
+- **Compare-before-write.** `put()` reads `versions/latest:access` and skips `:addVersion` when the payload is byte-identical (`timingSafeEqual`). A 404 (fresh secret) or any read failure still writes — losing a rotated token severs the integration, one extra version costs cents.
+- **Prune after write.** After a successful `:addVersion`, `put()` lists `state:ENABLED` versions (500/page, hard cap 20 pages) and `:destroy`s everything older than the newest `keepVersions` (**2**), oldest first, at most `maxDestroyPerPut` (**10**) per call. Both knobs are `deps.retention`; defaults are `DEFAULT_DOCUSIGN_REFRESH_TOKEN_RETENTION`. `selectSupersededVersions()` is the exported pure selector — it sorts **numerically** (`10` > `9`; the API returns names) and reports `remaining` so the log line is honest about backlog.
+- **Prune never throws.** The token is already stored by then; any list/destroy failure is a `warn` with counts (`destroyed`, `failed`, `remainingSuperseded`) and the next rotation retries. Failed destroys count as still-superseded.
+- **Never logs a payload.** Log lines carry `secretId` and counts only; the test suite asserts the serialized log never contains a token value. `deps.logger` is injectable (`DocusignRefreshTokenStoreLogger`) so tests capture it; default is `utils/logger.js`.
+- **Why destroy, not disable.** Disabled versions are still billed. Two enabled versions stay so a `get` that raced a `put` still sees a valid value.
+- **Why no server-side TTL.** Secret Manager's `versionDestroyTtl` is a *delay* on destroy (the version sits DISABLED — still billed — until the TTL elapses), and `expireTime`/`ttl` destroy the whole secret; neither expires individual versions. So the guarantee against a crashed-run backlog is the prune being **self-healing on every write** plus the two ops scripts below, not a server-side field.
+
+**Steady state after the backlog is cleared:** 2 enabled versions per secret, one destroy per rotation. **Backlog** (1,729 versions on the prod org secret) is the ops script's job — the worker deliberately drains only 10 per rotation so a cron run never spends minutes on Secret Manager.
+
+**Ops tooling (root `scripts/ops/`, see that folder's `agents.md`):** `prune-docusign-refresh-token-versions.ts` (dry-run by default; `--apply` needs `CONFIRM_DESTROY_SECRET_VERSIONS=<exact secret id>`; refuses any id outside the `arkova-docusign-[member-]<owner>-<32 hex>-refresh-token` pattern) and `audit-secret-version-counts.ts` (flags any secret in the project with >20 enabled versions; wired into the `infra-hygiene-sweep` skill). **Do not run `--apply` without Carson's explicit approval — version destruction is irreversible.**
+
+**Permission note.** The worker's runtime SA (`270018525501-compute@…`) can `:destroy` because it currently holds `roles/owner` on `arkova1` (a known, separately tracked over-grant — verified with `gcloud projects get-iam-policy arkova1` on 2026-09-07). When that role is finally reduced, the store needs `secretmanager.versions.destroy` + `secretmanager.versions.list` on these secrets (both are in `roles/secretmanager.admin`; `secretAccessor` alone is NOT enough) — the prune would degrade to a `warn` per rotation, not a failure, but the backlog would resume growing.
+
 _Last updated: 2026-08-29 (docusign-bilateral PR-2: `DocusignCapturedSigner` schema + job-payload `_signers`/`docusignEnv` threading)._
 
 ## 2026-08-03 — PR #1944 review rounds 2-3 on top of the Lane 3 bug blitz
@@ -205,6 +227,29 @@ consumer's unit test. Denials are logged by the route via `logConnectDenial`, on
 
 `buildGoogleDriveAuthorizationUrl` inherits its scope set + URL params from `oauth/drive.ts` `buildAuthorizationUrl`. That URL no longer sends `include_granted_scopes` (it let a connect inherit a 33-scope grant from the shared OAuth client) and the scope set is the exact three-scope allowlist in `DRIVE_DEFAULT_SCOPES`. Pinned in `googleDrive.test.ts`; do not loosen either assertion.
 
+## 2026-09-07 Refresh-token version retention — the newest version is never destroyable (Batch-J review)
+
+`docusign-token-store.ts` prunes superseded Secret Manager versions after every `put`. Two rules are
+load-bearing and both are pinned by tests; do not relax either:
+
+1. **`selectSupersededVersions` floors `keepVersions` at 1 and re-asserts before returning.**
+   `keepVersions` arrives from a caller-supplied `deps.retention`. `0` — or any non-finite value,
+   which `Array.prototype.slice` coerces to `0` — used to put the newest ENABLED version in the
+   destroy list. That version is the one `versions/latest` resolves to and the only one any reader
+   ever uses, so destroying it severs the DocuSign grant with no recovery path. `normalizeKeepVersions`
+   is the floor; the `throw` on `destroy.includes(newest)` is the defense in depth, mirroring the
+   guard the ops script (`scripts/ops/prune-docusign-refresh-token-versions.ts`) already had.
+2. **The prune runs on the compare-before-write SKIP path too**, not only after a successful
+   `:addVersion`. It is the self-healing mechanism for a backlog left by crashed runs; reachable only
+   through a value *change*, it would never drain if the provider ever returned the same token twice.
+
+Nothing in the worker ever reads a pinned secret version — every read is `versions/latest:access`,
+and `connector_integrations.token_secret_name` names the SECRET, not a version. That is why no
+integration row can reference a version the prune destroys.
+
+A prune failure is a `warn`, never a throw: the token is already stored by then. When the LIST call
+is what failed, the log reports `remainingSuperseded: 'unknown'` — reporting `0` there read as
+"backlog drained" while the real secret still held 1,729 superseded versions.
 
 ## PR #2474 release review — 2026-09-05
 
