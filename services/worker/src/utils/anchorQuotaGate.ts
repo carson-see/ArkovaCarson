@@ -1,15 +1,25 @@
 /**
  * SCRUM-1740 — anchor quota gate for partner-sandbox orgs.
  *
- * Sandbox orgs (`org_credits.is_test = true` AND `anchor_quota IS NOT NULL`)
- * have a hard cap on the number of anchors they may submit during the beta
- * window. The migration 0297 added the column; this helper enforces it.
+ * An org with `org_credits.cap_enforced = true` AND `anchor_quota IS NOT NULL`
+ * has a hard cap on the number of anchors it may submit. Migration 0297 added
+ * the quota column; 0440 (SCRUM-4474) added `cap_enforced`.
+ *
+ * `cap_enforced` — NOT `is_test` — is the switch. Before 0440 this gate keyed
+ * on `is_test`, which also means "never bill this org through Stripe"
+ * (meteredBilling.ts). That made a billable customer with a contractual cap
+ * unrepresentable: HakiChain, invoiced and capped at 2,000 documents, had to be
+ * flagged a TEST org on 2026-09-02 purely to get its cap enforced — silently
+ * excluding it from metered billing. The two concepts are now separate.
  *
  * Behavior matrix:
- *   - org has `anchor_quota = NULL` (every prod org)            → `{allowed: true}` (no cap)
- *   - org has `is_test = false`                                  → `{allowed: true}` (only test orgs are gated)
+ *   - org has `anchor_quota = NULL`                              → `{allowed: true}` (no cap)
+ *   - org has `cap_enforced = false`                             → `{allowed: true}` (cap recorded but inert)
  *   - org has `anchor_quota = N` and current count < N           → `{allowed: true}` (under cap)
  *   - org has `anchor_quota = N` and current count >= N          → `{allowed: false}` → 402 `quota_exhausted`
+ *
+ * `is_test` is deliberately NOT consulted here any more. An org may be billable
+ * and capped, a sandbox and uncapped, or any other combination.
  *
  * "Current count" is non-deleted anchors (`deleted_at IS NULL`) for the
  * org. Re-submissions of an existing fingerprint already short-circuit at
@@ -30,8 +40,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from './logger.js';
 
 interface OrgQuotaRow {
-  is_test: boolean | null;
   anchor_quota: number | null;
+  /** SCRUM-4474 — the sole switch for whether anchor_quota bites. */
+  cap_enforced: boolean | null;
 }
 
 /**
@@ -48,7 +59,7 @@ export async function ensureAnchorQuotaAvailable(
   // Read the quota config for this org.
   const { data: row, error } = await db
     .from('org_credits')
-    .select('is_test, anchor_quota')
+    .select('anchor_quota, cap_enforced')
     .eq('org_id', orgId)
     .maybeSingle<OrgQuotaRow>();
 
@@ -58,8 +69,14 @@ export async function ensureAnchorQuotaAvailable(
     return true;
   }
 
-  // No row, or non-sandbox org, or no cap configured → no gating.
-  if (!row || row.is_test !== true || row.anchor_quota == null) return true;
+  // No row, cap not enforced, or no cap configured → no gating.
+  //
+  // Both halves are required. A row carrying `anchor_quota` with
+  // `cap_enforced = false` is a RECORDED but INERT cap — that is a real state
+  // in prod (Login Defense holds anchor_quota = 15 that has never applied), and
+  // treating a stored number as permission to start refusing requests would cap
+  // a live partner nobody decided to cap.
+  if (!row || row.cap_enforced !== true || row.anchor_quota == null) return true;
 
   // We only need to know if usage is >= quota — an exact total is unnecessary.
   // SELECT id LIMIT (quota+1) on the (org_id, deleted_at) index returns at

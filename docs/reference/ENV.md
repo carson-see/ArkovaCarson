@@ -286,6 +286,27 @@ ENABLE_SENTRY_CRON_CHECKINS=         # fix/sentry-cron-checkins-prod-only (CTO d
 #  post-freeze gate item — see the PR body.
 ```
 
+## MFA enforcement (browser, SCRUM-3167)
+```bash
+VITE_MFA_ENFORCE_FROM=               # optional — ISO 8601 UTC instant (strict: YYYY-MM-DDTHH:MM:SS[.fff]Z)
+                                      # overriding the baked default (2026-09-21T00:00:00Z, src/lib/mfaPolicy.ts
+                                      # MFA_ADMIN_ENFORCE_FROM_DEFAULT). From this instant (inclusive), MFA is
+                                      # mandatory for ORG_ADMIN + platform-admin roles — AuthGuard forces
+                                      # enrollment via MfaEnrollmentRequired for anyone in that tier with no
+                                      # verified factor. An invalid/malformed string is ignored (falls back to
+                                      # the baked default), never treated as "never enforce." Carson can move
+                                      # the deadline by setting this in Vercel + redeploying, no code change.
+VITE_MFA_ALLOW_DATE_OVERRIDE=        # optional — exact string 'true' only. Lets a NON-DEV build (a soak or
+                                      # E2E preview build) additionally honour a
+                                      # localStorage['arkova_mfa_enforce_from_override'] value set by the test
+                                      # driver, so a disposable ORG_ADMIN with a past override date can drive
+                                      # the real MfaEnrollmentRequired screen end to end. In a `npm run dev`
+                                      # build (import.meta.env.DEV === true) the localStorage override always
+                                      # works regardless of this flag. NEVER SET THIS ON VERCEL PROD — it would
+                                      # let anyone with browser devtools access rewrite the enforcement date for
+                                      # their own session via localStorage.
+```
+
 ## AI
 ```bash
 ENABLE_AI_FALLBACK=false
