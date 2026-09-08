@@ -1,6 +1,6 @@
 /**
  * Broadcast Recovery Job (RACE-1, extended by F-3 / migration 0379,
- * bounded into batches by SCRUM-4520 / migration 0441)
+ * bounded into batches by SCRUM-4520 / migration 0442)
  *
  * Recovers anchors stuck in BROADCASTING state due to worker crashes, AND
  * (F-3, docs/staging/SOAK-FINDINGS-2026-08.md) anchors left SUBMITTED with a
@@ -41,7 +41,7 @@
  * 200), so this is a liveness bug, not a cosmetic one.
  *
  * Fix, in three parts:
- *   - The RPC takes `p_limit` (migration 0441) so a single call always
+ *   - The RPC takes `p_limit` (migration 0442) so a single call always
  *     completes well inside the 60s statement timeout.
  *   - This job loops over bounded batches until a pass comes back short,
  *     under a pass cap AND a wall-clock budget (the recovery cron fires every
@@ -69,7 +69,7 @@ const DEFAULT_STALE_MINUTES = 5;
 /**
  * Rows claimed per RPC call / per manual SELECT. Sized so one call finishes
  * far inside the RPC's 60s statement_timeout even when the journal-protection
- * NOT EXISTS has to be evaluated for every candidate row. Migration 0441
+ * NOT EXISTS has to be evaluated for every candidate row. Migration 0442
  * clamps the server side to the same order of magnitude, so a caller cannot
  * re-create the unbounded sweep by passing a huge limit.
  */
@@ -279,7 +279,7 @@ export async function recoverStuckBroadcasts(
 
   if (anchors.length > 0) {
     // The RPC's public row shape is deliberately unchanged by migrations 0379
-    // and 0441 (no per-row previous-status column), so a
+    // and 0442 (no per-row previous-status column), so a
     // BROADCASTING/SUBMITTED breakdown isn't available here without an extra
     // query; each recovered row's `anchors.metadata->>'_recovered_from_status'`
     // carries that provenance for post-hoc investigation.

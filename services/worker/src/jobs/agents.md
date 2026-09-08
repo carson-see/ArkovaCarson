@@ -25,7 +25,7 @@ Three independent unbounded layers, each of which alone was enough to stall it:
    UPDATE SKIP LOCKED` — which bounds *contention*, not *cardinality* — and
    then locked, updated and returned every matching row in one statement. At
    10k rows that always exceeded the function's own `SET statement_timeout =
-   '60s'`. Fixed by migration `0441`: `p_limit integer DEFAULT 500`, clamped
+   '60s'`. Fixed by migration `0442`: `p_limit integer DEFAULT 500`, clamped
    server-side to `[1, 2000]`, plus `ORDER BY updated_at ASC`.
 2. **Any RPC error fell through to the JS fan-out.** `manualRecovery` exists
    for exactly one condition — "the RPC does not exist here" (schema-cache lag
@@ -70,13 +70,13 @@ still fall back, manual per-pass batching/ordering/logging, and a SELECT
 failure surfaced rather than laundered into `recovered: 0`); the query-builder
 mock now honours `.limit()`/`.order()` so a "bounded batch" assertion can
 actually fail. `src/tests/migrations/recover-stuck-broadcasts-bounded-batch.test.ts`
-(static structural assertions over `0441`, no DB). `recover-stuck-broadcasts-bounded.local.test.ts`
+(static structural assertions over `0442`, no DB). `recover-stuck-broadcasts-bounded.local.test.ts`
 (new, env-gated `RECOVER_STUCK_BROADCASTS_PG=1`, REAL local Postgres — proves
 the SQL actually stops at `p_limit`, that the clamp holds, that a NULL
 `p_limit` defaults rather than unbounds, that only the 2-arg signature
 survives, and that the post-DROP grants are still service_role-only). The
 real-Postgres file has NOT been run in this branch — no local stack was
-available — so `0441`'s SQL is proven statically and by the caller-side unit
+available — so `0442`'s SQL is proven statically and by the caller-side unit
 tests only until the soak rig runs it.
 
 

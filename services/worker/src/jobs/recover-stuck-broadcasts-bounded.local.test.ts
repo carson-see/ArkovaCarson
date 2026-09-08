@@ -1,5 +1,5 @@
 /**
- * SCRUM-4520 / migration 0441 — `recover_stuck_broadcasts()` bounded batch,
+ * SCRUM-4520 / migration 0442 — `recover_stuck_broadcasts()` bounded batch,
  * proven against a REAL local Postgres (local Supabase stack), not a mock.
  *
  * The 2026-09-07 staging-rig stall (rig `txvvrxngyfnnqahujbld`) was caused by
@@ -17,7 +17,7 @@
  *
  * ENV-GATED (operator-sanctioned): runs only when RECOVER_STUCK_BROADCASTS_PG=1
  * and a local stack is reachable. PRE-REQUISITE: migrations through 0379 plus
- * this PR's 0441 file. NEVER point this at a remote/staging/prod project.
+ * this PR's 0442 file. NEVER point this at a remote/staging/prod project.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -53,7 +53,7 @@ function stuckCount(): number {
   );
 }
 
-describe.skipIf(!GATED)('SCRUM-4520 — 0441 recover_stuck_broadcasts bounded batch (REAL local PG)', () => {
+describe.skipIf(!GATED)('SCRUM-4520 — 0442 recover_stuck_broadcasts bounded batch (REAL local PG)', () => {
   beforeAll(() => {
     // Distinct, ascending `updated_at` values so oldest-first ordering is
     // observable: row i is (COHORT - i) hours old, so 'bounded-000' is oldest.

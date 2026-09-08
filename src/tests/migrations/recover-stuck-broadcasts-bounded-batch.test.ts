@@ -1,5 +1,5 @@
 /**
- * SCRUM-4520 — migration 0441: bound `recover_stuck_broadcasts()` to a batch.
+ * SCRUM-4520 — migration 0442: bound `recover_stuck_broadcasts()` to a batch.
  *
  * On staging rig `txvvrxngyfnnqahujbld` (2026-09-07) a Cloud Run SIGTERM left
  * 10,000 anchors BROADCASTING with a NULL `chain_tx_id`. The recovery RPC
@@ -28,14 +28,14 @@ import * as path from 'node:path';
 
 const MIGRATION_FILE = path.join(
   process.cwd(),
-  'supabase/migrations/0441_scrum4520_recover_stuck_broadcasts_bounded_batch.sql',
+  'supabase/migrations/0442_scrum4520_recover_stuck_broadcasts_bounded_batch.sql',
 );
 
 function readMigration(): string {
   if (!fs.existsSync(MIGRATION_FILE)) {
     throw new Error(
       `Migration not found: ${MIGRATION_FILE}. ` +
-        'SCRUM-4520 expects 0441_scrum4520_recover_stuck_broadcasts_bounded_batch.sql.',
+        'SCRUM-4520 expects 0442_scrum4520_recover_stuck_broadcasts_bounded_batch.sql.',
     );
   }
   return fs.readFileSync(MIGRATION_FILE, 'utf8');
@@ -49,8 +49,8 @@ function readFunctionBody(): string {
   return sql.slice(start, sql.indexOf('$$;', start) + 3);
 }
 
-describe('SCRUM-4520 — recover_stuck_broadcasts bounded batch (0441)', () => {
-  it('migration file exists with the reserved 0441 numeric prefix', () => {
+describe('SCRUM-4520 — recover_stuck_broadcasts bounded batch (0442)', () => {
+  it('migration file exists with the reserved 0442 numeric prefix', () => {
     expect(fs.existsSync(MIGRATION_FILE)).toBe(true);
   });
 
