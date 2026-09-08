@@ -208,6 +208,13 @@ claimed "the populated `block_header` is the watermark". That stopped being true
 with migration `0427`: the watermark is now a row whose bitcoin-tree columns are
 ALL populated. The route is still mutex-free and still idempotent — the reason
 just has one more column in it. See `../jobs/agents.md`.
+## SCRUM-4035 — pending OAuth identity
+
+`email-confirmation.ts` provides status/send/complete; `email-confirmation-runtime.ts` wires
+Supabase and audited delivery. Only this router imports `verifyEmailConfirmationToken`.
+Product routes retain `verifyAuthToken`, whose pending-role denial is terminal. Never use
+`getDb().auth.verifyOtp` or `refreshSession`: even with persistence disabled, these replace the
+shared client's Authorization with a user token. Proof clients must be fresh per operation.
 ## 2026-09-05 — SCRUM-4475: the `/jobs/*` limiter was ONE global 30/min bucket
 
 The 2026-08-23 entry above records `cronJobsLimiter` as `scope: 'cron-jobs'` with

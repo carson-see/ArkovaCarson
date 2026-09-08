@@ -64,3 +64,9 @@ does not). This is the copy `TypeSafeDatabase` — and therefore every worker
 Supabase call — actually compiles against, so a column added to only the
 frontend copy will still fail the worker typecheck with a
 `SelectQueryError<"column ... does not exist">`. Update both.
+## 2026-09-05 — SCRUM-4035 OAuth confirmation RPC
+
+`manage_oauth_email_confirmation` was generated using Supabase postgres-meta against the
+owned native database with 0436 applied. Its entry is byte-identical to the frontend entry;
+no temporary hand-written override remains. This is a generated delta, not a full baseline
+regen; full committed-ledger generation remains a CI/staging release check.
