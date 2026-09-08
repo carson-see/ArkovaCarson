@@ -8,7 +8,19 @@
  * POST /api/admin/organizations/:id/credits/adjust  — Add/remove org credits (L2-A5)
  *
  * All endpoints gated behind platform admin check.
- * Uses service_role to bypass protective triggers.
+ *
+ * The profile RPCs (change-role / promote-admin / set-org) run as service_role.
+ * The protective BEFORE UPDATE triggers on `profiles` recognise service_role and
+ * step aside, so these are plain UPDATEs -- EXCEPT role immutability, which
+ * service_role alone does NOT satisfy: `check_role_immutability` additionally
+ * requires the transaction-local flag `arkova.allow_role_change` that
+ * `admin_change_user_role` sets around its own UPDATE. A direct service_role
+ * UPDATE of `profiles.role` from here would still be rejected, by design --
+ * see the backfills in invitations.ts / admin-org-members.ts, which rely on
+ * exactly that. They used to wrap the write in
+ * `ALTER TABLE profiles DISABLE/ENABLE TRIGGER`, which took ShareRowExclusiveLock
+ * on a table in the auth hot path and barriered every subsequent profile write
+ * behind it; migration 0428 removed that DDL.
  */
 
 /** Loose UUID-shape check — the RPC also validates via its `uuid` column type, but a
@@ -50,8 +62,11 @@ export async function handlePromoteAdmin(
   }
 
   try {
-    // Must disable triggers to update protected fields
-    // Use raw SQL via RPC since Supabase client can't disable triggers
+    // RPC rather than a direct table write: `is_platform_admin` is protected by
+    // trg_protect_platform_admin, which reverts the change for any caller that is
+    // not service_role. Since 0428 the RPC also re-reads the row and raises if the
+    // flag did not take, so a reverted write surfaces here as an error rather than
+    // a false success.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any).rpc('admin_set_platform_admin', {
       p_user_id: targetUserId,
@@ -167,16 +182,26 @@ export async function handleSetOrg(
 
 /**
  * POST /api/admin/organizations/:id/quota
- * Body: { anchor_quota: number | null, is_test?: boolean }
+ * Body: { anchor_quota: number | null, cap_enforced?: boolean, is_test?: boolean }
  *
- * SCRUM-2225 — platform-admin sets an org's free-tier testing cap. The cap is
- * enforced on the anchor-submit hot path by ensureAnchorQuotaAvailable():
- * when is_test=true AND anchor_quota IS NOT NULL, the org gets a 402
+ * SCRUM-2225, reworked by SCRUM-4474 — platform-admin sets an org's document
+ * cap. Enforced on the anchor-submit hot path by ensureAnchorQuotaAvailable():
+ * when cap_enforced=true AND anchor_quota IS NOT NULL, the org gets a 402
  * `quota_exhausted` once its non-deleted anchor count reaches the quota.
  *
  *   anchor_quota: non-negative integer = the cap; null = uncapped.
- *   is_test:      defaults true (a capped free-tier org). Set false to convert
- *                 an org to an uncapped/billable account.
+ *   cap_enforced: does that number actually bite? Defaults to "a number was
+ *                 supplied", so an admin who sets a cap gets a working cap.
+ *   is_test:      billing ONLY — true means never fire a Stripe meter event for
+ *                 this org (meteredBilling.ts). It no longer affects the cap.
+ *
+ * The three are independent. Before SCRUM-4474 the cap was welded to is_test,
+ * so capping a billable customer silently removed it from metered billing —
+ * which is what happened to HakiChain on 2026-09-02.
+ *
+ * `is_test` defaults to the org's CURRENT value rather than to `true`: this
+ * endpoint is "set the cap", and a caller who says nothing about billing must
+ * not have a billing flag changed underneath them.
  */
 export async function handleSetOrgQuota(
   userId: string,
@@ -190,7 +215,8 @@ export async function handleSetOrgQuota(
     return;
   }
 
-  const { anchor_quota, is_test = true } = req.body ?? {};
+  const body = req.body ?? {};
+  const { anchor_quota } = body;
 
   if (
     anchor_quota !== null &&
@@ -199,17 +225,53 @@ export async function handleSetOrgQuota(
     res.status(400).json({ error: 'anchor_quota must be a non-negative integer, or null for uncapped' });
     return;
   }
-  if (typeof is_test !== 'boolean') {
+  if (body.is_test !== undefined && typeof body.is_test !== 'boolean') {
     res.status(400).json({ error: 'is_test must be a boolean' });
+    return;
+  }
+  if (body.cap_enforced !== undefined && typeof body.cap_enforced !== 'boolean') {
+    res.status(400).json({ error: 'cap_enforced must be a boolean' });
+    return;
+  }
+
+  // Default: setting a number means you want it to bite; clearing it means you
+  // do not. An explicit cap_enforced always wins.
+  const capEnforced: boolean = body.cap_enforced ?? anchor_quota !== null;
+
+  if (capEnforced && anchor_quota === null) {
+    res.status(400).json({ error: 'cap_enforced requires a non-null anchor_quota' });
     return;
   }
 
   try {
+    // is_test is a BILLING flag and is not this endpoint's subject. Omitting it
+    // must leave it untouched, so read the current value rather than defaulting
+    // to true — the old default silently converted billable orgs into
+    // Stripe-excluded test orgs.
+    let isTest: boolean;
+    if (typeof body.is_test === 'boolean') {
+      isTest = body.is_test;
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: current, error: readError } = await (db as any)
+        .from('org_credits')
+        .select('is_test')
+        .eq('org_id', orgId)
+        .maybeSingle();
+      if (readError) {
+        logger.error({ error: readError, orgId }, 'Failed to read current is_test for quota update');
+        res.status(503).json({ error: 'Could not read current billing flag; quota unchanged' });
+        return;
+      }
+      isTest = current?.is_test === true;
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db as any).rpc('admin_set_org_anchor_quota', {
+    const { data, error } = await (db as any).rpc('admin_set_org_cap', {
       p_org_id: orgId,
       p_anchor_quota: anchor_quota,
-      p_is_test: is_test,
+      p_cap_enforced: capEnforced,
+      p_is_test: isTest,
       p_actor: userId,
     });
 
@@ -219,8 +281,8 @@ export async function handleSetOrgQuota(
       return;
     }
 
-    logger.info({ orgId, anchor_quota, is_test, setBy: userId }, 'Org anchor quota updated');
-    res.json({ success: true, org_id: orgId, anchor_quota, is_test, credits: data ?? null });
+    logger.info({ orgId, anchor_quota, cap_enforced: capEnforced, is_test: isTest, setBy: userId }, 'Org anchor quota updated');
+    res.json({ success: true, org_id: orgId, anchor_quota, cap_enforced: capEnforced, is_test: isTest, credits: data ?? null });
   } catch (error) {
     logger.error({ error, orgId }, 'Set org quota request failed');
     res.status(500).json({ error: 'Internal server error' });
