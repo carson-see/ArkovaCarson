@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { AuthGuard } from './AuthGuard';
 
 const toastInfo = vi.fn();
@@ -25,7 +25,7 @@ vi.mock('sonner', () => ({
   toast: { info: (msg: string) => toastInfo(msg) },
 }));
 
-const authState: { user: { id: string } | null; loading: boolean } = {
+const authState: { user: { id: string } | null; loading: boolean; session?: { access_token: string } | null } = {
   user: null,
   loading: false,
 };
@@ -72,9 +72,16 @@ describe('AuthGuard', () => {
     toastInfo.mockClear();
     authState.user = null;
     authState.loading = false;
+    authState.session = null;
     sessionStorage.clear();
   });
 
+  it('does not mount protected content for a provider-confirmed but Arkova-pending user', () => {
+    authState.user = { id: 'pending-user' };
+    authState.session = { access_token: `h.${btoa(JSON.stringify({ role: 'arkova_email_pending' }))}.s` };
+    render(<AuthGuard><div>private</div></AuthGuard>);
+    expect(screen.queryByText('private')).not.toBeInTheDocument();
+  });
   it('shows the redirect toast for unauthorized access when no prior session and no sign-out flag', () => {
     render(<AuthGuard><div>private</div></AuthGuard>);
     expect(toastInfo).toHaveBeenCalledTimes(1);

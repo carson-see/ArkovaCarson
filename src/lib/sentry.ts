@@ -21,7 +21,7 @@ const API_KEY_REGEX = /\bak_(live|test)_[a-zA-Z0-9]+/g;
 const JWT_REGEX = /\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g;
 const PHONE_REGEX = /(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g;
 const IPV4_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
-const URL_TOKEN_REGEX = /(access_token|token|key|secret|password|auth)=[^&\s]+/gi;
+const URL_TOKEN_REGEX = /(access_token|token_hash|email_confirmation|token|key|secret|password|auth)=[^&\s]+/gi;
 // SCRUM-2249 (HARDEN-1-F): UUIDs are org_id/user_id/anchor.id identifiers that
 // leak through transaction names and request URLs (e.g. /admin/organizations/<uuid>).
 // Collapsed to a stable placeholder so Sentry issue grouping stays coherent.
@@ -58,6 +58,7 @@ const SENSITIVE_EXTRA_KEYS = [
 
 function scrubString(str: string): string {
   return str
+    .replace(URL_TOKEN_REGEX, '$1=[FILTERED]')
     .replace(EMAIL_REGEX, '[EMAIL]')
     .replace(SHA256_REGEX, '[FINGERPRINT]')
     .replace(SSN_REGEX, '[SSN]')
@@ -157,8 +158,10 @@ export function scrubPiiFromBreadcrumb(breadcrumb: Breadcrumb | null): Breadcrum
 
   if (breadcrumb.data) {
     // Scrub URLs containing tokens
-    if (breadcrumb.data.url && typeof breadcrumb.data.url === 'string') {
-      breadcrumb.data.url = scrubUrl(breadcrumb.data.url);
+    for (const field of ['url', 'from', 'to']) {
+      if (typeof breadcrumb.data[field] === 'string') {
+        breadcrumb.data[field] = scrubUrl(breadcrumb.data[field]);
+      }
     }
 
     // Strip request bodies from fetch breadcrumbs
