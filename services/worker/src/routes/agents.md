@@ -201,6 +201,13 @@ Body params are all validated positive-int / string-array or dropped — an out-
 - **`POST /calibration-refit` 500'd with `PGRST205`** because `public.calibration_features` does not exist — including in prod. Recreated by migration `0413`; no route change. The job itself was never broken.
 - Test note: `cron.test.ts` now mocks `../middleware/flagRegistry.js` and adds `dispatchWebhookEvent` to the `../webhooks/delivery.js` mock. `flagRegistry` is reached from exactly one cron route, so the module-level mock cannot perturb any other route.
 
+## SCRUM-4035 — pending OAuth identity
+
+`email-confirmation.ts` provides status/send/complete; `email-confirmation-runtime.ts` wires
+Supabase and audited delivery. Only this router imports `verifyEmailConfirmationToken`.
+Product routes retain `verifyAuthToken`, whose pending-role denial is terminal. Never use
+`getDb().auth.verifyOtp` or `refreshSession`: even with persistence disabled, these replace the
+shared client's Authorization with a user token. Proof clients must be fresh per operation.
 ## 2026-09-05 — SCRUM-4475: the `/jobs/*` limiter was ONE global 30/min bucket
 
 The 2026-08-23 entry above records `cronJobsLimiter` as `scope: 'cron-jobs'` with

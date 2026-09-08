@@ -32,6 +32,8 @@ dotenv.config(); // fallback to .env for any vars not in .env.test
  */
 export default defineConfig({
   testDir: './e2e',
+  // Runs separately in CI with owned external boundaries, no seeded session.
+  testIgnore: 'oauth-email-confirmation.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
