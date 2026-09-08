@@ -69,6 +69,20 @@ describe('useProfile', () => {
     return renderHook(() => useProfile(), { wrapper });
   }
 
+  it('defers profile reads until a pending session refreshes to confirmed', async () => {
+    const user = { id: 'pending-profile-user', email: 'pending@example.test' };
+    const pending = { user, access_token: `h.${btoa(JSON.stringify({ role: 'arkova_email_pending' }))}.s` };
+    mockGetSession.mockResolvedValue({ data: { session: pending }, error: null });
+    setupProfileFetch({ ...user, role: 'INDIVIDUAL' });
+    const { result } = await renderWithProvider();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mockFrom).not.toHaveBeenCalled();
+    const onChange = mockOnAuthStateChange.mock.calls[0][0];
+    await act(async () => onChange('TOKEN_REFRESHED', { user, access_token: `h.${btoa(JSON.stringify({ role: 'authenticated' }))}.s` }));
+    await waitFor(() => expect(result.current.profile?.id).toBe(user.id));
+    expect(mockFrom).toHaveBeenCalledWith('profiles');
+  });
+
   it('throws when used outside ProfileProvider', async () => {
     const { useProfile } = await import('./useProfile');
 
