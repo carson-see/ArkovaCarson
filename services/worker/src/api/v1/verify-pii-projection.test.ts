@@ -170,7 +170,10 @@ describe('academic records emit no issuer- or extraction-authored free text', ()
         expect(body.verified).toBe(true);
         expect(body.status).toBe('ACTIVE');
         expect(body.record_uri).toBeTruthy();
-        expect(body.anchor_timestamp).toBe('2026-03-30T00:00:00Z');
+        // BUG-2026-09-08-001 (SCRUM-4517): the fixture's chain_timestamp
+        // (2026-04-01), not its created_at (2026-03-30). PII omission must
+        // not quietly change which clock the anchoring moment comes from.
+        expect(body.anchor_timestamp).toBe('2026-04-01T00:00:00Z');
       });
     }
   }

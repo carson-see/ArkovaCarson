@@ -36,7 +36,12 @@ const CACHE_TTL_SECONDS = 300; // 5 minutes
 // connector anchor cached before the deploy keeps serving a response with NO
 // re-derivability statement for the whole TTL — the exact honesty gap this
 // change closes.
-const KEY_PREFIX = 'verify:v6:';
+// v7 (BUG-2026-09-08-001 / SCRUM-4517): `anchor_timestamp` changed from
+// `created_at` to the chain-observed time. Cached v6 bodies carry the wrong
+// value; without this bump they would keep serving it for the full TTL after
+// deploy, so the fix would look half-landed in exactly the spot-check a
+// reviewer runs first.
+const KEY_PREFIX = 'verify:v7:';
 
 /**
  * BUG-018 / D-8 (follow-up to #2231) — every key carries an environment
