@@ -82,10 +82,10 @@ export interface Env {
   // and answering with a success-shaped `{total, results}` payload.
   ENABLE_NESSIE_QUERY?: string;
 
-  // SCRUM-926 / MCP-SEC-07: HS256 secret used to verify caller-supplied
-  // bearer JWTs locally before round-tripping to /auth/v1/user. Required —
-  // edge worker must reject all bearer auth if unset (fail-closed).
-  SUPABASE_JWT_SECRET: string;
+  // SCRUM-926 / MCP-SEC-07: only legacy HS256 bearer verification requires
+  // this shared secret. ES256 verifies against the project JWKS; an absent
+  // secret still rejects HS256 before the /auth/v1/user lookup.
+  SUPABASE_JWT_SECRET?: string;
 
   // Authentication (AUDIT-03)
   CRON_SECRET: string;
