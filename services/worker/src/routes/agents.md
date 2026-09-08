@@ -208,3 +208,53 @@ claimed "the populated `block_header` is the watermark". That stopped being true
 with migration `0427`: the watermark is now a row whose bitcoin-tree columns are
 ALL populated. The route is still mutex-free and still idempotent — the reason
 just has one more column in it. See `../jobs/agents.md`.
+## 2026-09-05 — SCRUM-4475: the `/jobs/*` limiter was ONE global 30/min bucket
+
+The 2026-08-23 entry above records `cronJobsLimiter` as `scope: 'cron-jobs'` with
+`keyGenerator: () => 'global'` and calls the single global 30/min bucket "unchanged" and "never at
+risk". That was true about the SCRUM-3418 collision mechanism and **wrong about the budget**. One
+30/min bucket served all 111 routes on this router. Prod runs 66 Cloud Scheduler jobs whose two-,
+five-, ten-, fifteen- and thirty-minute cadences all coincide with the hourly ones at :00, so from
+the 31st job of that burst onwards Cloud Scheduler got a 429 — recorded as status 8
+RESOURCE_EXHAUSTED, **not retried inside the window**, so the run was skipped outright rather than
+delayed. Cloud Logging 2026-09-03T18Z..09-05T18Z: 46 refusals of `org-queue-scheduler`, 43 of
+`lock-wait`, 43 of `embed-public-records`, 28 of `fetch-dapip`, 27 of `refresh-treasury-cache`, and
+the nightly `daily-anchor-flush` (`POST /jobs/batch-anchors?force=true`) refused at
+2026-09-04T07:00:51Z and 2026-09-05T07:00:41Z after last succeeding 2026-09-03T07:00:49Z.
+
+There are now TWO limiters on this router and they must not be collapsed back into one:
+
+- **`cronBurstGuard`** — mounted BEFORE `cronAuth`, 120/min keyed on `req.ip`. This is the limiter
+  that still applies to an **unauthenticated** caller, and it is what bounds how often anyone can
+  drive the JWKS fetch / JWT verification inside `verifyCronAuth`. It is per-IP rather than global
+  on purpose: a global bucket is the exact shape that caused this outage, and per-IP means an
+  abusive caller exhausts its own budget instead of starving Cloud Scheduler. 120 is ~1.8x the
+  whole 66-job fleet landing in one minute — **raise it if the scheduler job count grows past ~80.**
+- **`cronJobsLimiter`** — mounted AFTER `cronAuth`, 10/min keyed on the job path. No job on this
+  router legitimately fires faster than once a minute (`lock-wait` at every-minute is the fastest),
+  so this is ~10x headroom while still bounding one runaway trigger without taking the other 65
+  jobs down with it.
+
+**Why the per-job limiter sits behind auth.** A per-path key in front of auth would let an
+anonymous caller multiply its budget by enumerating URLs, and would let it grow the process-wide
+bucket Map one entry per URL it invents. Behind auth it cannot mint a bucket at all — it is refused
+401 having been counted only against its own IP's burst bucket. Belt and braces: the key is
+normalised (lowercased, trailing slash stripped — Express routing here is case-insensitive and
+non-strict, so `/Lock-Wait/` and `/lock-wait` must share a bucket) and looked up against the
+router's own registered route table, read lazily off `cronRouter.stack`. Anything unrouted collapses
+into one shared `__unrouted__` bucket, so cardinality is bounded by the route table (111 + 1), not
+by the URL.
+
+Tests: **`cron-jobs-ratelimit.test.ts`** (new, beside `cron.test.ts`). It deliberately does NOT mock
+`../utils/rateLimit.js` — `cron.test.ts` replaces the limiter with a pass-through, which is exactly
+why this was invisible for the life of the router — so the REAL limiters run behind the REAL
+`cronAuth` on the REAL `cronRouter`. It replays a 40-distinct-job :00 burst and asserts zero 429s,
+pins the 11th-hit-on-one-path 429 + `Retry-After`, asserts one runaway job does not refuse another,
+asserts an unauthenticated caller gets 401 without minting a per-path bucket, asserts the
+unauthenticated flood is still refused, and asserts bucket cardinality is bounded against
+attacker-chosen paths. Adding a route needs no change here; the allowlist is read off the router.
+
+Note `scripts/staging/fullsoak-cron-exerciser.sh` documented the old 30/min global bucket in its
+RATE LIMIT header; that comment is corrected in the same change. Its 6 s pacing across distinct job
+paths is still safe under both new limiters, but `--only <one-path>` at that interval would now
+exhaust that single job's 10/min bucket.
