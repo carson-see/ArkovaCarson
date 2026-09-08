@@ -14,6 +14,40 @@
 
 ## Now
 
+### 2026-09-08 — verify-by-fingerprint is TIMING OUT in prod; migration 0441 written, pre-soak
+
+- **The defect.** `anchors.fingerprint` is `character(64)`; `get_public_anchor_by_fingerprint`'s parameter is
+  `text`. Migration `0386` (the body live in prod) compares them bare, and with no `bpchar = text` operator
+  Postgres casts the **COLUMN** — the prod plan reads `Filter: ((fingerprint)::text = …)`. A btree on the bare
+  bpchar column cannot drive that, so `idx_anchors_fingerprint_lookup` goes unused, the planner falls back to
+  `idx_anchors_status_secured_submitted` at **cost 2,302,395** over the ~3.5M-row SECURED partition, and the
+  statement exceeds `statement_timeout`. The edge MCP tools `verify` (by fingerprint) and `get_fingerprint` on
+  `https://edge.arkova.ai` return `isError: "Document verification timed out"`. Verified against prod
+  `vzwyaatejekddvltxyye` via `EXPLAIN`; found 2026-09-08 during the SCRUM-3797 edge catch-up deploy and written
+  up as finding 1 of `docs/staging/edge-retro-2026-09-07/DEPLOY.md` (HANDOFF entry `bd72f65ff`).
+- **Not a regression.** `get_public_anchor_by_fingerprint` has 0 grep hits in the June edge bundle. The catch-up
+  added the path; the path is slow. The fix is forward, not a rollback.
+- **`0441_fingerprint_lookup_bpchar_cast.sql` — file only, NOT applied to prod, NOT applied to any rig.** One
+  clause: cast the PARAMETER, `lower(p_fingerprint)::bpchar`. Same mechanism and same remedy as `0370`
+  (SCRUM-3031) on this same column — cast only the non-indexed side. 0386's SECURED-only invariant, the
+  `created_at DESC, id DESC` tiebreak, the `{"error":"Record not found"}` envelope for both the not-found and
+  in-flight cases, SECURITY DEFINER, `search_path`, grants and response shape are all byte-identical.
+- **Evidence is local, and labelled as such.** Local Postgres 17.9 repro at 300,020 rows rebuilt to prod's index
+  shapes: before = `Filter: ((fingerprint)::text = …)`, Rows Removed by Filter **300,019**, **65.788 ms**; after =
+  `Index Cond`, **0.058 ms**. Prod's own `EXPLAIN (ANALYZE)` with the cast is **3.020 ms**. Transcripts and the
+  full write-up: `docs/staging/fingerprint-timeout-0441/`.
+- **Ratchet: `tests/rls/fingerprint-lookup-index-plan.test.ts` pins the PLAN, not the clock.** The 12h retro-soak
+  could not have caught this — the rig fixture is 10 rows, where a seq scan is instant. The test sets
+  `enable_seqscan = off`, extracts the predicate from the LIVE `pg_proc` body, and asserts an **Index Cond** on
+  `idx_anchors_fingerprint_lookup` (not merely the index name, which a full index scan with a
+  `(fingerprint)::text` Filter would also satisfy). Red before / green after, with the rollback rehearsed:
+  0386 body = 3 failed, 0441 = 7 passed, 0386 re-applied = 3 failed, 0441 re-applied = 7 passed.
+- **Owed and NOT done by this session:** the T3 48h soak (no rig provisioned; no rig in an open window was
+  touched), the prod apply + numeric ledger reconciliation (RTE/CTO-owned), and the Jira story + Confluence
+  Bug Tracker row — **the Atlassian connector is unauthenticated in this session**, so neither could be filed.
+  Paste-ready text for both: `docs/staging/fingerprint-timeout-0441/JIRA-AND-BUG-TRACKER.md`.
+
+
 ### 2026-09-08T01:20Z → 02:10Z — CTO session: stale GitHub "CONFLICTING" flags cleared on 15 PRs, 0436 applied to prod, #2655 heading for the queue
 
 - **GitHub's mergeability flag was stale on eight PRs.** `gh pr view --json mergeable` said CONFLICTING for #2440 #2442 #2438 #2572 #2571 #2472 #2496 #2655 while `git merge-tree --write-tree origin/main <head>` was clean for every one of them; their `refs/pull/N/merge` test merges were still parented on `base.sha` `4aa5d2b8b` (the 15:54Z merge pushes) and had never been rebuilt. A CONFLICTING PR gets no Actions runs, so each got a `Merge origin/main (bd72f65ff)` push: HANDOFF.md byte-identical to main, PR-owned files carrying only main's already-merged hunks (listed per PR in the merge commit body and in `closeout/<PR>/NOTES-base-refresh-*.md`). All eight report MERGEABLE from the GitHub API now. Rigs untouched; every seal carries an evidence-identity rerun for the new head.
@@ -2432,3 +2466,5 @@ _Last refreshed: 2026-09-07 by Claude-Fable-5.1-CTO-session — claims verified 
 _Last refreshed: 2026-09-07 by Claude-Fable-5.1 gate-fix session (ninth approver closure) — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-08 by Claude-Fable-5.1-CTO-session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-08 by Claude-Opus-5 fingerprint-timeout session — claims verified against prod EXPLAIN, a local Postgres 17.9 repro, and red/green test output._
