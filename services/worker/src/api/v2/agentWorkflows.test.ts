@@ -187,7 +187,7 @@ describe('canonical agent workflow documentation', () => {
     const mcpBlocks = [...workflowDoc.matchAll(/^MCP:\n+```text\n([\s\S]*?)^```/gm)].map((m) => m[1]);
     expect(mcpBlocks.length).toBeGreaterThan(0);
 
-    const registered = new Set(canonicalSurface.map(([, , , mcpTool]) => mcpTool));
+    const registered = new Set<string>(canonicalSurface.map(([, , , mcpTool]) => mcpTool));
     const calls = mcpBlocks.flatMap((block) =>
       [...block.matchAll(/^([A-Za-z0-9_]+)\(/gm)].map((m) => m[1]),
     );

@@ -19,6 +19,7 @@ import { supabase } from '../lib/supabase';
 import { logAuditEvent } from '../lib/auditLog';
 import { TOAST } from '../lib/copy';
 import { queryKeys } from '../lib/queryClient';
+import { isEmailConfirmationPending } from '../lib/oauthConfirmation';
 import { useAuth } from './useAuth';
 import type { Database } from '../types/database.types';
 
@@ -97,7 +98,8 @@ async function fetchProfileData(userId: string): Promise<Profile> {
  * Uses React Query for caching and stale-while-revalidate.
  */
 function useProfileInternal(): ProfileState & ProfileActions {
-  const { user, loading: authLoading } = useAuth();
+  const { user, session, loading: authLoading } = useAuth();
+  const awaitingEmail = isEmailConfirmationPending(session);
   const qc = useQueryClient();
 
   const {
@@ -107,11 +109,11 @@ function useProfileInternal(): ProfileState & ProfileActions {
   } = useQuery({
     queryKey: queryKeys.profile(user?.id ?? ''),
     queryFn: () => fetchProfileData(user!.id),
-    enabled: !!user,
+    enabled: !!user && !awaitingEmail,
     staleTime: 60_000, // Profile rarely changes — 1 min stale time
   });
 
-  const loading = authLoading || (!!user && queryLoading);
+  const loading = authLoading || (!!user && !awaitingEmail && queryLoading);
   const error = queryError ? (queryError as Error).message : null;
 
   // Compute destination based on auth and profile state

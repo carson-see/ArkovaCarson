@@ -422,3 +422,6 @@ Verification for a change to either script: `bash -n` on the file, plus
 `node --check` on the extracted `smoke.mjs` heredoc for the SDK script (its JS
 is inside a quoted heredoc, so a syntax error there surfaces only at run time,
 mid-soak).
+## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner
+
+`uat03_mailbox_driver.py` is stdlib-only and defaults to a no-network dry run. It restricts execution to the exact PR2655 preview, named UAT03 standalone project, or the released reorg-3836 project paired with its exact existing worker URL. Manifest/evidence JSON paths stay within this checkout’s ignored `artifacts/uat03-mailbox` directory; traversal/symlink escapes and overwriting existing evidence are rejected. It checks committed driver/health head and readable installed hook, then exercises actual Auth/worker/Data API/mailbox timing and concurrency. IMAP credentials and mailbox proof stay in memory; artifacts contain only labels/status/booleans and created fixture IDs. It never provisions or activates anything, and its output cannot claim a complete hosted release. `uat03_mailbox_driver_test.py` tests target/recipient/proof/evidence guards without network; `uat03-mailbox-driver.test.ts` runs those checks in the existing Vitest suite.

@@ -473,3 +473,19 @@ Trigger: BUG-2026-09-02-001 — an agent holding `search_credentials` swept loca
 - **Deploy drift:** prod `arkova-edge` was a pre-2026-06-07 build with none of the fixes since (audit-log P0, pepper, sanitiser, verify-by-fingerprint). Nothing in CI deploys this worker (SCRUM-3907 / SCRUM-1032); SCRUM-3797 tracks the deploy.
 
 Verification: parity gate OK (16 tools × 6 surfaces), edge suite 56/56, `tsc` clean.
+## SCRUM-4035 — narrow ES256 confirmation dependency
+
+The OAuth confirmation candidate imports the reviewed ES256/HS256 verifier and
+bounded JWKS cache from PR2589 commit `69e24d83cfbc7a8a68f07c3c286cc870ea04de9e`,
+composed with its signed pending-role rejection after either signature path.
+Only the missing-secret/`validateBearer` auth hunk is taken from `mcp-server.ts`;
+current tool/SDK names, discovery metadata and unrelated contract files remain
+under PR2589 ownership. This is not a full PR2589 integration.
+
+`email-confirmation.test.ts` exercises the actual `validateBearer` boundary with
+real WebCrypto signatures: pending HS256/ES256 cannot reach getUser, ordinary
+ES256 works without the shared secret, returned subject mismatch denies, and
+the legacy ordinary control remains. Retain all imported verifier tests for
+shared JWKS fetches, cooldown on failures, timeout, cache and key rotation. The
+separate `supabase-jwt.ts` helper has no runtime importer; preserve its existing
+pending guard without inventing an unused ES256 implementation.

@@ -742,3 +742,9 @@ not treat one of its alerts as evidence that a deploy failed without first check
 This closed a hole that had been live for months: `ci.yml`'s SCRUM-1811 comment block, this file (twice), and `scripts/ci/agents.md` all cited `memory/project_deploy_typecheck_blackout.md`, which had never existed in the repo. Nothing could see it, because the old scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. The file now exists; the check now covers the surfaces that cite it.
 
 Note the gate is **not** in `.mergify.yml merge_conditions` and `main` carries no `required_status_checks`, so it reports without blocking. Adding it to the queue conditions is the same class of change as the `Orphaned Export Lint` and `Python SDK Tests` wirings recorded above, and has not been done here.
+
+## 2026-09-05 — SCRUM-4035 owned OAuth confirmation UI fixture
+
+The E2E job now runs `playwright.uat03.config.ts` after Chromium installation and before Supabase setup. Seven real-app routing/recovery cases use owned mocked external Auth/worker boundaries on loopback, fail the existing E2E job on error, and upload 1280/375 screenshots. The default Playwright config excludes this separately executed file; no skip or hosted seed mutation is needed. Hosted Auth/mailbox proof remains a separate release requirement.
+
+The SQL confirmation regressions receive the masked local DB URL from `supabase status`, including the actual CI port selected by the startup helper. Their role-corruption setup uses the local bootstrap administrator; a connection/administrator check precedes assertions, and failures match PostgreSQL stderr rather than SQL text embedded in a failed command.

@@ -324,6 +324,10 @@ export async function verifySupabaseJwt(
     if (!sigOk) return { ok: false, reason: 'bad_signature' };
   }
 
+  if (payload.role === 'arkova_email_pending') {
+    return { ok: false, reason: 'email_confirmation_required' };
+  }
+
   const now = nowSec ?? Math.floor(Date.now() / 1000);
 
   if (typeof payload.exp !== 'number' || now > payload.exp + CLOCK_SKEW_SEC) {
