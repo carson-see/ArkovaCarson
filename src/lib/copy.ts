@@ -4496,7 +4496,7 @@ export const ADMIN_PROVISION_ORG_LABELS = {
   DIALOG_TITLE: 'Create organization',
   DIALOG_DESCRIPTION: 'Set up a new organization and its starting allowances.',
   NAME_LABEL: 'Organization name',
-  NAME_PLACEHOLDER: 'Acme Credentialing',
+  NAME_PLACEHOLDER: 'Acme Institute',
   LEGAL_NAME_LABEL: 'Legal name (optional)',
   LEGAL_NAME_HINT: 'Defaults to the organization name.',
   CAP_TOGGLE_LABEL: 'Limit free test anchors',
