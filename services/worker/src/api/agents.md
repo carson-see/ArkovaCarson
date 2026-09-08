@@ -335,3 +335,34 @@ Two things in this folder are worth not re-litigating:
 ## 2026-08-15 BUG-2026-08-13-010 — proof-packet anchor receipt states the fetch-time caveat
 
 `proof-packet.ts` `anchor_receipt` now carries `fingerprint_rederivability: 'fetch_time_snapshot'` + the §1.5 note (from `constants/connectorFingerprint.ts`) whenever an anchor is present — every packet anchor is connector-materialized BY CONSTRUCTION (resolved via `metadata->>external_file_id`), and the auditor challenge this packet answers is exactly the flow where someone re-downloads from the source and compares fingerprints. The `not_anchored` sentinel carries neither field (no fingerprint to describe). Additive keys on an org-scoped export; no internal UUIDs added.
+
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `anchor_timestamp` has ONE definition, in `anchorTimestamp.ts`
+
+`anchor_timestamp` (and `anchored_at` where it means the same thing) is the **chain-observed**
+time — `anchors.chain_timestamp`, gated `status NOT IN ('PENDING')`. Never `anchors.created_at`.
+Import `publicAnchorTimestamp` from `api/anchorTimestamp.ts`; do not re-derive it inline.
+
+Five surfaces in this tree each decided the field's meaning independently and four chose
+`created_at`, so prod published an anchoring moment ~10 minutes early on a §1.8-frozen contract that
+§1.5 requires be Network Observed Time. A careful read of any one file would not have found it —
+the class was found by a detector.
+
+Three things worth not re-litigating:
+
+- **Do not "simplify" this by routing v1 verify through `get_public_anchor()`.** It was tried first.
+  The RPC's projection is a narrower public allowlist: it hardcodes `'merkle_proof_hash', NULL` and
+  carries none of the API-RICH fields the frozen envelope has published since SCRUM-772. Adopting it
+  blanks more of the contract than it fixes. The RPC's `CASE` lives in TypeScript instead, and
+  `anchorTimestamp.test.ts` pins the gate to `NOT IN ('PENDING')` so the two cannot drift.
+- **No `created_at` fallback, and `?? created_at` is the shape to reject in review.** The silent
+  fallback in `v2/resourceDetails.ts` read as correct and misreported only on rows with a NULL
+  `chain_timestamp`. Unmeasured is OMITTED on the frozen v1 schema (`string | undefined`, same rule
+  as `jurisdiction`) and null where the contract declares the field nullable.
+- **Changing a verify field's VALUE requires a `verifyCache` `KEY_PREFIX` bump** (v6 → v7 here).
+  Otherwise cached bodies keep serving the old value for the full TTL after deploy, and the fix
+  looks half-landed in exactly the spot-check a reviewer runs first.
+
+Still wrong at the time of writing, tracked in SCRUM-4520: `search_public_credential_embeddings`
+(`a.created_at AS anchor_timestamp` — needs a migration, feeds `v1/ai-verify-search.ts` and the edge),
+and `proof-packet-verification-view.ts:135`, where `anchor_timestamp` is `rule_executions.completed_at`
+— a different and worse defect with unbounded drift.

@@ -668,3 +668,14 @@ Consequences that are now true of the running system, and were not before:
 - `rateLimiters.auth` (5/min) is still **not mounted on any route** — referenced only by tests and
   comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
   own tier, not a cleanup.
+
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `verifyCache` KEY_PREFIX v6 → v7
+
+Bumped because `anchor_timestamp` changed VALUE (from `anchors.created_at` to the chain-observed
+time), not shape. The existing prefix comments all describe SHAPE changes, which makes it easy to
+conclude a value-only fix does not need a bump. It does: cached v6 bodies carry the wrong timestamp
+and would keep serving it for the full 5-minute TTL after deploy — precisely the window in which a
+reviewer spot-checks the fix and sees it apparently not working.
+
+Rule of thumb for this file: bump the prefix whenever a cached body's bytes change for the same
+anchor, whether the cause is a new field, a dropped field, or a corrected value.
