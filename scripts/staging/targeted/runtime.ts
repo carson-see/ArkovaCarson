@@ -13,7 +13,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import { type DriverStats } from './driver-core.js';
@@ -42,12 +42,37 @@ export function resolveEvidencePath(path: string): string {
   return resolved;
 }
 
-export function writeEvidenceFile(path: string | undefined, evidence: unknown): void {
+export interface WriteEvidenceOpts {
+  /** Suppress the `[evidence] written` line — for per-cycle checkpoint writes. */
+  quiet?: boolean;
+}
+
+/**
+ * Write an evidence document, ATOMICALLY: serialize to a sibling temp file and
+ * `rename()` it into place. Drivers now checkpoint after every cycle, so a
+ * crash, SIGTERM or full disk during a write must not leave a truncated JSON
+ * file where the previous complete checkpoint was — a half-written evidence
+ * file is worse than a slightly stale one, because it reads as corrupt rather
+ * than as "the run stopped here". `rename()` within one directory is atomic on
+ * every POSIX filesystem this runs on.
+ */
+export function writeEvidenceFile(
+  path: string | undefined,
+  evidence: unknown,
+  opts: WriteEvidenceOpts = {},
+): void {
   if (!path) return;
   const safePath = resolveEvidencePath(path);
   mkdirSync(dirname(safePath), { recursive: true }); // NOSONAR S8707 — resolveEvidencePath confines writes to docs/staging.
-  writeFileSync(safePath, JSON.stringify(evidence, null, 2) + '\n'); // NOSONAR S8707 — resolveEvidencePath confines writes to docs/staging.
-  console.log(`\n[evidence] written: ${safePath}`);
+  const tmpPath = `${safePath}.tmp-${process.pid}`;
+  try {
+    writeFileSync(tmpPath, JSON.stringify(evidence, null, 2) + '\n'); // NOSONAR S8707 — sibling of the confined safePath.
+    renameSync(tmpPath, safePath); // NOSONAR S8707 — resolveEvidencePath confines writes to docs/staging.
+  } catch (err) {
+    rmSync(tmpPath, { force: true }); // NOSONAR S8707 — sibling of the confined safePath.
+    throw err;
+  }
+  if (!opts.quiet) console.log(`\n[evidence] written: ${safePath}`);
 }
 
 // ─── IAM token (Cloud Run --no-allow-unauthenticated) ───────────────────────
