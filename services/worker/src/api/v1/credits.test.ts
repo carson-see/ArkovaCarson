@@ -148,7 +148,8 @@ describe('POST /api/v1/credits/purchase', () => {
 
   it('grants credits in dev mode (no Stripe key)', async () => {
     vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
-    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null, error: null });
+    // `deduct_unified_credits` RETURNS BOOLEAN — `true` is the only success.
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: true, error: null });
 
     const app = createApp('user-1');
     const res = await request(app)
@@ -188,9 +189,39 @@ describe('POST /api/v1/credits/purchase', () => {
     );
   });
 
+  // SCRUM-3502 — reading only `error` misses the RPC's `false`.
+  //
+  // `deduct_unified_credits` answers `false` with NO error when the caller has
+  // no `unified_credits` row (`IF NOT FOUND THEN RETURN false`). Reporting
+  // `status: 'completed', credits_added: N` for a grant that never landed is
+  // the same defect this PR removes from paymentTierRouter — and it is what
+  // makes a real regression in this RPC look like a passing manual test.
+  it('fails CLOSED when the grant RPC returns false with no error', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: false, error: null });
+
+    const app = createApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/credits/purchase')
+      .send({ pack_id: 'pack_1k' });
+
+    expect(res.status).toBe(500);
+    // Must NOT claim the credits landed.
+    expect(res.body.status).not.toBe('completed');
+    expect(res.body.credits_added).toBeUndefined();
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'deduct_unified_credits',
+        operation: 'credits.purchase.devGrant',
+        failMode: 'closed',
+      }),
+    );
+  });
+
   it('calls deduct_unified_credits with negative amount (grant)', async () => {
     vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
-    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null, error: null });
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: true, error: null });
 
     const app = createApp('user-1');
     await request(app)
