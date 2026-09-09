@@ -12,12 +12,14 @@
  *   3. `public/AGENTS.md`                          hand-copied prose
  *   4. `public/llms.txt` / `public/llms-full.txt`  per-tool one-liners
  *   5. `docs/api/mcp-tools.md`                     per-tool sections
+ *   6. `public/.well-known/agent-skills` SKILL.md files — published MCP
+ *                                            call instructions (rule 5 only)
  *
  * `tests/infra/mcp-manifest-parity.test.ts` already pins the NAME set, the
  * required-argument contract, the property names, banned UI terminology
  * (Constitution 1.3) and registry over-claims between (1) and (2). It
  * explicitly does not compare description text. That was the hole: BUG-026 —
- * `search_credentials` advertising "semantic (vector) similarity matching"
+ * `search_anchors` advertising "semantic (vector) similarity matching"
  * when the only served path is an ILIKE substring scan — survived on SIX
  * surfaces at once, and no check could see it.
  *
@@ -50,6 +52,15 @@
  *    file). Ratcheted shrink-only: a tool documented on one of those surfaces
  *    may not silently disappear from it.
  *
+ * 5. `skill-bare-tool-name` — a published Agent Skill may not instruct an MCP
+ *    call to a tool name the server does not register. The `arkova_` rename
+ *    (BUG-2026-09-02-001) left three such instructions live at `.well-known`
+ *    URLs; an agent following one gets a tool-not-found, and nothing on our
+ *    side observes that failure. Scoped to backticked code spans in an MCP
+ *    context so that `search` as a REST path and `verify` as a verb stay
+ *    legal English. Strict, no baseline: a broken instruction is not a claim
+ *    someone can own for a sprint.
+ *
  * 4. Claim rules (`CLAIM_RULES`) — a declared, reviewable table of assertions
  *    a description may not make about a given tool, each with an optional
  *    QUALIFIER that makes the claim honest. Checked against all five surfaces.
@@ -64,7 +75,7 @@
  * field. Prose surfaces are checked per REGION: the single line naming the
  * tool (table row, llms.txt bullet) plus any markdown section whose heading
  * names it. Region scoping is why a semantic claim in the `nessie_query`
- * section is not blamed on `search_credentials`.
+ * section is not blamed on `search_anchors`.
  *
  * KNOWN BOUNDARY, stated rather than papered over: module-level comments and
  * free prose that never name a tool are out of scope. `mcp-tools.ts`'s own
@@ -85,7 +96,7 @@
  * Override label: `mcp-claim-parity-reviewed`.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isMainModule, hasLabel } from './lib/ciContext';
 // Static, not dynamic: the canonical registry is a compile-time dependency, so
@@ -107,6 +118,9 @@ export const PROSE_SURFACES = [
 ] as const;
 
 export const BASELINE_FILE = 'scripts/ci/mcp-claim-parity-baseline.json';
+
+/** Published Agent Skills — a SIXTH surface carrying MCP call instructions. */
+export const AGENT_SKILLS_DIR = 'public/.well-known/agent-skills';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -190,7 +204,7 @@ function violation(rule: string, surface: string, subject: string, detail: strin
  * Matches a mention of `toolName` — and nothing else. Two forms, because the
  * 16 tool names are not equally distinctive:
  *
- *   - MULTI-TOKEN names (`search_credentials`, `get_anchor`) match on a
+ *   - MULTI-TOKEN names (`search_anchors`, `get_anchor`) match on a
  *     boundary that excludes `_` and `-` on BOTH sides. Plain `\b` is not
  *     enough: `\bverify\b` matches inside `verify_batch` (because `_` is a
  *     word character on the far side of the boundary), and `verify-anchor` —
@@ -381,6 +395,102 @@ export function checkClaimRules(
 }
 
 // ---------------------------------------------------------------------------
+// Rule 5 — bare (unprefixed) tool names in published Agent Skills
+// ---------------------------------------------------------------------------
+
+/**
+ * The 15 tool names as they read WITHOUT the `arkova_` prefix.
+ *
+ * These are not aliases. The MCP server registers only the prefixed names, so
+ * an agent that follows a skill telling it to call `get_anchor` gets a
+ * tool-not-found and stops — the skill is a broken instruction, not merely a
+ * stale one, and it is published at a `.well-known` URL where we do not see it
+ * fail. `nessie_query` is deliberately absent: it is registered unprefixed and
+ * a bare mention of it is correct.
+ */
+export const BARE_TOOL_NAMES = [
+  'search', 'verify', 'get_anchor', 'list_orgs', 'get_organization',
+  'get_record', 'get_fingerprint', 'get_document', 'verify_credential',
+  'search_credentials', 'verify_document', 'verify_batch', 'anchor_document',
+  'oracle_batch_verify', 'list_agents',
+] as const;
+
+const BARE_TOOL_NAME_SET = new Set<string>(BARE_TOOL_NAMES);
+
+/** A backticked code span. Content is compared WHOLE, which is what makes
+ *  `arkova_get_anchor` pass: its span content is not `get_anchor`. */
+const CODE_SPAN_RE = /`([^`\n]+)`/g;
+
+/** Names MCP: the protocol by name, or the endpoint agents are pointed at. */
+const MCP_CONTEXT_RE = /\bMCP\b|edge\.arkova\.ai\/mcp/i;
+
+/**
+ * A line is an MCP-call context when it names MCP itself, or when it sits
+ * inside a markdown section whose heading does. Both shapes are live in the
+ * two published skills: the `## MCP` section body ("Call `search` at
+ * <https://edge.arkova.ai/mcp>"), and a cross-reference sentence under a
+ * different heading ("with the `get_anchor` MCP tool").
+ *
+ * Scoping to MCP context is what keeps this narrow. The same bare words are
+ * legitimate elsewhere in these files — `search` is a REST path segment under
+ * `## HTTP`, `verify` is an English verb — and a file-wide match would force
+ * the skills to stop using ordinary language.
+ */
+function mcpContextLines(text: string): boolean[] {
+  const lines = text.split('\n');
+  const inContext = lines.map((line) => MCP_CONTEXT_RE.test(line));
+
+  let sectionLevel = 0;
+  let sectionIsMcp = false;
+  for (let i = 0; i < lines.length; i++) {
+    const heading = HEADING_RE.exec(lines[i]);
+    if (heading) {
+      const level = heading[1].length;
+      if (sectionIsMcp && level > sectionLevel) {
+        // A deeper sub-heading stays inside the MCP section.
+      } else {
+        sectionLevel = level;
+        sectionIsMcp = MCP_CONTEXT_RE.test(heading[2]);
+      }
+    }
+    if (sectionIsMcp) inContext[i] = true;
+  }
+  return inContext;
+}
+
+export function checkSkillBareToolNames(surfaces: ClaimSurface[]): Violation[] {
+  const RULE = 'skill-bare-tool-name';
+  const out: Violation[] = [];
+
+  for (const surface of surfaces) {
+    if (typeof surface.text !== 'string') continue;
+    const lines = surface.text.split('\n');
+    const inContext = mcpContextLines(surface.text);
+    // One violation per name per file: the fix is one edit per name, and a
+    // per-occurrence report would make a two-line skill look like a crisis.
+    const seen = new Set<string>();
+
+    for (let i = 0; i < lines.length; i++) {
+      if (!inContext[i]) continue;
+      for (const match of lines[i].matchAll(CODE_SPAN_RE)) {
+        const name = match[1].trim().replace(/\(.*\)$/, '');
+        if (!BARE_TOOL_NAME_SET.has(name) || seen.has(name)) continue;
+        seen.add(name);
+        out.push(violation(
+          RULE,
+          surface.path,
+          name,
+          `published Agent Skill instructs an MCP call to \`${name}\`, which the server does not register — `
+          + `the live tool is \`arkova_${name}\` (BUG-2026-09-02-001 rename). An agent following this skill `
+          + `gets a tool-not-found.\n      offending line: ${normalizeClaimText(lines[i]).slice(0, 240)}`,
+        ));
+      }
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Baseline
 // ---------------------------------------------------------------------------
 
@@ -411,11 +521,17 @@ export function applyBaseline(
 export const CLAIM_RULES: ClaimRule[] = [
   {
     id: 'retrieval-mechanism-claim',
-    tools: ['search_credentials'],
+    // The LIVE registered name. It carried the pre-rename `search_anchors`
+    // through the `arkova_` prefixing, which made the rule dead rather than
+    // failing: `mentionRegex` excludes `_` on both sides of the boundary, so
+    // `search_anchors` matches nothing inside `arkova_search_anchors`, no
+    // region was ever scoped to it, and the gate reported a clean pass while
+    // checking nothing. Pinned by the CLAIM_RULES orphan test.
+    tools: ['arkova_search_anchors'],
     pattern: /\bsemantic(?:ally)?\b|\bvector\b|\bembeddings?\b|\brelevance scores?\b|\bnearest[- ]neighbou?rs?\b/i,
     qualifier: /\bsearch_mode\b|\blexical\b|\bsubstring\b/i,
     reason:
-      'search_credentials serves LEXICAL SUBSTRING matching, not vector retrieval '
+      'search_anchors serves LEXICAL SUBSTRING matching, not vector retrieval '
       + `(see SEARCH_MODE_LEXICAL in ${CANONICAL_SOURCE}; the worker answers 503 when semantic search is disabled). `
       + 'A semantic/vector/relevance-ranking claim is allowed only when the same region also discloses '
       + '`search_mode` or the lexical/substring fallback.',
@@ -440,12 +556,18 @@ export interface CheckInput {
   canonical: ToolDescriptor[];
   card: { name: string; description?: string }[];
   surfaces: ClaimSurface[];
+  /** Published Agent Skills. Checked by rule 5 ONLY — they carry MCP call
+   *  instructions but no tool descriptions, so running the description rules
+   *  over them would attribute a neighbouring tool's prose to whatever the
+   *  skill happens to name. */
+  skills: ClaimSurface[];
   baseline: Baseline;
   rules?: ClaimRule[];
 }
 
 export function collectViolations(input: CheckInput): Violation[] {
   const { canonical, card, surfaces, baseline } = input;
+  const skills = input.skills ?? [];
   const rules = input.rules ?? CLAIM_RULES;
   const byPath = new Map(surfaces.map((s) => [s.path, s]));
   const reference = byPath.get(COMPLETE_REFERENCE) ?? { path: COMPLETE_REFERENCE };
@@ -456,11 +578,27 @@ export function collectViolations(input: CheckInput): Violation[] {
     ...checkReferenceCoverage(canonical, reference),
     ...checkProseCoverageRatchet(prose, baseline.proseCoverage),
     ...checkClaimRules(rules, canonical.map((t) => t.name), surfaces),
+    ...checkSkillBareToolNames(skills),
   ];
 }
 
 function readSurface(path: string): ClaimSurface {
   return { path, text: readFileSync(resolve(ROOT, path), 'utf-8') };
+}
+
+/**
+ * Every published SKILL.md, discovered from the directory rather than a list.
+ * Fail-closed by construction: a new skill is checked the moment it exists,
+ * and an unreadable directory throws into `main`'s catch.
+ */
+export function loadSkillSurfaces(): ClaimSurface[] {
+  const dir = resolve(ROOT, AGENT_SKILLS_DIR);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => `${AGENT_SKILLS_DIR}/${entry.name}/SKILL.md`)
+    .filter((path) => existsSync(resolve(ROOT, path)))
+    .map(readSurface);
 }
 
 export function loadRepoInput(): CheckInput {
@@ -475,6 +613,7 @@ export function loadRepoInput(): CheckInput {
     canonical,
     card: card.tools,
     baseline,
+    skills: loadSkillSurfaces(),
     surfaces: [
       { path: MACHINE_SURFACE, descriptions: Object.fromEntries(card.tools.map((t) => [t.name, t.description ?? ''])) },
       { path: CANONICAL_SOURCE, descriptions: Object.fromEntries(canonical.map((t) => [t.name, t.description])) },
@@ -506,7 +645,8 @@ export function main(): number {
 
   if (unbaselined.length === 0) {
     console.log(
-      `MCP claim parity OK — ${input.canonical.length} tools across ${input.surfaces.length} surfaces; `
+      `MCP claim parity OK — ${input.canonical.length} tools across ${input.surfaces.length} surfaces `
+      + `plus ${input.skills.length} published Agent Skill(s); `
       + `${input.baseline.knownViolations.length - stale.length} baselined violation(s) still outstanding.`,
     );
     return 0;
