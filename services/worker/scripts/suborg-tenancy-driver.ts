@@ -108,7 +108,12 @@ export class Rpc {
    * admin API so the rig does not accumulate accounts over 48 hours.
    */
   async createAuthUser(): Promise<string> {
-    const email = `soak-${Date.now()}-${Math.floor(Math.random() * 1e6)}@suborg-soak.invalid`;
+    // `randomUUID()` rather than `Math.random()`: the suffix only has to make the
+    // address unique, but Math.random() is a non-cryptographic PRNG and Sonar
+    // (typescript:S2245) flags every use as a security review item, which drops
+    // the PR's Security Rating on New Code to C and reds the quality gate. The
+    // crypto RNG is already imported here and is free at this call rate.
+    const email = `soak-${Date.now()}-${randomUUID().slice(0, 8)}@suborg-soak.invalid`;
     const id = await this.createAuthUserRaw(email);
     // `audit_events.actor_id` FKs to `profiles`, and an admin-API user does not
     // get one, so the RPC's audit insert would fail on an otherwise-valid call.
