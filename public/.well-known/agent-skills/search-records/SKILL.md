@@ -29,13 +29,13 @@ The API key requires the `read:search` scope. Provision a scoped key at
 
 ## MCP
 
-Call `search` at <https://edge.arkova.ai/mcp> with:
+Call `arkova_search` at <https://edge.arkova.ai/mcp> with:
 
 ```json
 { "q": "licensed nurses", "type": "record", "limit": 10 }
 ```
 
-Use a returned `public_id` with the `get_anchor` MCP tool or the
+Use a returned `public_id` with the `arkova_get_anchor` MCP tool or the
 `verify-record` skill. Do not infer identity or authorization from similarity
 ranking alone.
 

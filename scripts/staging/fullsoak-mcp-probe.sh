@@ -11,14 +11,22 @@
 # listed S12 as IN, the SDK smoke covers the *worker* REST API, and the
 # Playwright suite is browser-only. The surface was asserted, never driven.
 #
+# ── TOOL NAMES (2026-09, SCRUM-2589 / D4) ────────────────────────────────────
+# Every hosted tool is now `arkova_`-prefixed, with `nessie_query` the sole
+# documented exception. The two verification tools were RENAMED, not merely
+# prefixed: the old `verify_credential` is now `arkova_verify_anchor`, and the
+# old `search_credentials` is now `arkova_search_anchors`. Neither old name
+# resolves any more. The authoritative list is TOOL_DEFINITIONS in
+# `services/edge/src/mcp-tools.ts`; T-00 below pins the count at 16.
+#
 # ── WHY IT DOES NOT DRIVE edge.arkova.ai BY DEFAULT ──────────────────────────
 # The deployed Cloudflare Worker is bound to the PRODUCTION Supabase project.
 # The Day-0 soak key (`arkova-fullsoak-2026-08-apikey-soak-mcp`) lives in the
 # soak rig's DB, so it is rejected 401 by edge.arkova.ai — VERIFIED, see the
 # gap-closure doc. There is therefore no way to drive the deployed MCP surface
 # with soak-grade credentials, and driving it with a PRODUCTION key would put
-# `anchor_document` writes into the prod ledger. So the default target is the
-# SAME edge worker source, run locally under `wrangler dev`, bound to the
+# `arkova_anchor_document` writes into the prod ledger. So the default target
+# is the SAME edge worker source, run locally under `wrangler dev`, bound to the
 # mutable SIDE-RIG (Supabase `ehqqearcitrgloibtjqx` + the connector-sidecar
 # Cloud Run worker). Same code, same auth path, writable fixtures.
 #
@@ -26,7 +34,7 @@
 #                       probes + the reachability checks run; every tool call
 #                       is SKIPPED unless --allow-remote-tools is also given,
 #                       which you should not do without a prod-valid key and
-#                       an explicit decision about anchor_document.
+#                       an explicit decision about arkova_anchor_document.
 #
 # ── ASSERTION DISCIPLINE ─────────────────────────────────────────────────────
 # No assertion is "HTTP 200". Every tool asserts either a NAMED row it must
@@ -38,7 +46,7 @@
 # ── CONSTITUTIONAL LIMITS (CLAUDE.md §1.11A) ─────────────────────────────────
 # * NEVER touches `arkova-worker-fullsoak-2026-08-staging`, Supabase
 #   `gnkuaywlpmsaezwvlvhk`, shared staging, or prod. The only writes are to the
-#   side-rig, and the only write path is `anchor_document`, whose row is tagged
+#   side-rig, and the only write path is `arkova_anchor_document`, whose row is tagged
 #   `source=soak_probe` so it is trivially separable from real ingestion.
 # * Read-only probes against prod/soak hosts (reachability, auth-negative) are
 #   GETs and unauthenticated POSTs only.
@@ -75,7 +83,7 @@ for arg in "$@"; do
     --remote)             REMOTE=1 ; SERVE=0 ;;
     --allow-remote-tools) ALLOW_REMOTE_TOOLS=1 ;;
     --no-serve)           SERVE=0 ;;
-    -h|--help)            sed -n '2,55p' "$0" ; exit 0 ;;
+    -h|--help)            sed -n '2,62p' "$0" ; exit 0 ;;
     *) echo "unknown argument: $arg" >&2 ; exit 2 ;;
   esac
 done
@@ -248,7 +256,7 @@ else
 fi
 
 if [ "$REMOTE" = "1" ] && [ "$ALLOW_REMOTE_TOOLS" != "1" ]; then
-  record SKIP T-ALL "16 tool invocations (remote target; --allow-remote-tools not given)" "$MCP_BASE is prod-bound; soak keys 401 there and anchor_document would write the prod ledger"
+  record SKIP T-ALL "16 tool invocations (remote target; --allow-remote-tools not given)" "$MCP_BASE is prod-bound; soak keys 401 there and arkova_anchor_document would write the prod ledger"
 else
 
 # ── Phase 2 — resolve NAMED fixtures live from the side-rig ──────────────────
@@ -303,55 +311,55 @@ except Exception: print("")' "$LIST")"
   && record PASS T-00 "tools/list advertises exactly 16 tools" "$TOOLNAMES" \
   || record FAIL T-00 "tools/list advertises exactly 16 tools" "count=$NTOOLS names=$TOOLNAMES"
 
-R="$(tool_text verify_credential "{\"public_id\":\"$FIX_PID\"}")"
+R="$(tool_text arkova_verify_anchor "{\"public_id\":\"$FIX_PID\"}")"
 [ "$(jcheck "$R" "d.get('verified') is True and d.get('record_uri','').endswith('$FIX_PID')")" = "1" ] \
-  && record PASS T-01 "verify_credential($FIX_PID) returns verified=true for that exact public_id" "$R" \
-  || record FAIL T-01 "verify_credential($FIX_PID) returns verified=true for that exact public_id" "$R"
+  && record PASS T-01 "arkova_verify_anchor($FIX_PID) returns verified=true for that exact public_id" "$R" \
+  || record FAIL T-01 "arkova_verify_anchor($FIX_PID) returns verified=true for that exact public_id" "$R"
 
-R="$(tool_text search_credentials "{\"query\":\"$LEX_TERM\",\"max_results\":10}")"
+R="$(tool_text arkova_search_anchors "{\"query\":\"$LEX_TERM\",\"max_results\":10}")"
 [ "$(jcheck "$R" "any(x.get('public_id')=='$FIX_PID' for x in d.get('results',[])) and 'search_mode' in d")" = "1" ] \
-  && record PASS T-02 "search_credentials('$LEX_TERM') returns $FIX_PID and labels search_mode" "$R" \
-  || record FAIL T-02 "search_credentials('$LEX_TERM') returns $FIX_PID and labels search_mode" "$R"
+  && record PASS T-02 "arkova_search_anchors('$LEX_TERM') returns $FIX_PID and labels search_mode" "$R" \
+  || record FAIL T-02 "arkova_search_anchors('$LEX_TERM') returns $FIX_PID and labels search_mode" "$R"
 
-R="$(tool_text search "{\"q\":\"$LEX_TERM\",\"type\":\"record\",\"limit\":10}")"
+R="$(tool_text arkova_search "{\"q\":\"$LEX_TERM\",\"type\":\"record\",\"limit\":10}")"
 [ "$(jcheck "$R" "any(x.get('public_id')=='$FIX_PID' for x in d.get('results',[]))")" = "1" ] \
-  && record PASS T-03 "search(q='$LEX_TERM',type=record) returns $FIX_PID" "$R" \
-  || record FAIL T-03 "search(q='$LEX_TERM',type=record) returns $FIX_PID" "$R"
+  && record PASS T-03 "arkova_search(q='$LEX_TERM',type=record) returns $FIX_PID" "$R" \
+  || record FAIL T-03 "arkova_search(q='$LEX_TERM',type=record) returns $FIX_PID" "$R"
 
-R="$(tool_text verify "{\"fingerprint\":\"$FIX_FP\"}")"
+R="$(tool_text arkova_verify "{\"fingerprint\":\"$FIX_FP\"}")"
 [ "$(jcheck "$R" "d.get('verified') is True and d.get('public_id')=='$FIX_PID'")" = "1" ] \
-  && record PASS T-04 "verify(<fingerprint of $FIX_PID>) resolves to that public_id" "$R" \
-  || record FAIL T-04 "verify(<fingerprint of $FIX_PID>) resolves to that public_id" "$R"
+  && record PASS T-04 "arkova_verify(<fingerprint of $FIX_PID>) resolves to that public_id" "$R" \
+  || record FAIL T-04 "arkova_verify(<fingerprint of $FIX_PID>) resolves to that public_id" "$R"
 
-R="$(tool_text list_orgs '{}')"
+R="$(tool_text arkova_list_orgs '{}')"
 [ "$(jcheck "$R" "any(o.get('public_id')=='$ORG_PID' for o in d.get('organizations',[]))")" = "1" ] \
-  && record PASS T-05 "list_orgs contains the caller's own org $ORG_PID" "$R" \
-  || record FAIL T-05 "list_orgs contains the caller's own org $ORG_PID" "$R"
+  && record PASS T-05 "arkova_list_orgs contains the caller's own org $ORG_PID" "$R" \
+  || record FAIL T-05 "arkova_list_orgs contains the caller's own org $ORG_PID" "$R"
 
-R="$(tool_text get_anchor "{\"public_id\":\"$FIX_PID\"}")"
+R="$(tool_text arkova_get_anchor "{\"public_id\":\"$FIX_PID\"}")"
 [ "$(jcheck "$R" "d.get('anchor_timestamp') and d.get('status') in ('ACTIVE','REVOKED','SUPERSEDED','EXPIRED')")" = "1" ] \
-  && record PASS T-06 "get_anchor($FIX_PID) returns a lifecycle status + anchor_timestamp" "$R" \
-  || record FAIL T-06 "get_anchor($FIX_PID) returns a lifecycle status + anchor_timestamp" "$R"
+  && record PASS T-06 "arkova_get_anchor($FIX_PID) returns a lifecycle status + anchor_timestamp" "$R" \
+  || record FAIL T-06 "arkova_get_anchor($FIX_PID) returns a lifecycle status + anchor_timestamp" "$R"
 
-R="$(tool_text get_organization "{\"public_id\":\"$ORG_PID\"}")"
+R="$(tool_text arkova_get_organization "{\"public_id\":\"$ORG_PID\"}")"
 [ "$(jcheck "$R" "d.get('public_id')=='$ORG_PID' and bool(d.get('display_name'))")" = "1" ] \
-  && record PASS T-07 "get_organization($ORG_PID) returns that org's display_name" "$R" \
-  || record FAIL T-07 "get_organization($ORG_PID) returns that org's display_name" "$R"
+  && record PASS T-07 "arkova_get_organization($ORG_PID) returns that org's display_name" "$R" \
+  || record FAIL T-07 "arkova_get_organization($ORG_PID) returns that org's display_name" "$R"
 
-R="$(tool_text get_record "{\"public_id\":\"$FIX_PID\"}")"
+R="$(tool_text arkova_get_record "{\"public_id\":\"$FIX_PID\"}")"
 [ "$(jcheck "$R" "d.get('record_uri','').endswith('$FIX_PID')")" = "1" ] \
-  && record PASS T-08 "get_record($FIX_PID) returns that record" "$R" \
-  || record FAIL T-08 "get_record($FIX_PID) returns that record" "$R"
+  && record PASS T-08 "arkova_get_record($FIX_PID) returns that record" "$R" \
+  || record FAIL T-08 "arkova_get_record($FIX_PID) returns that record" "$R"
 
-R="$(tool_text get_fingerprint "{\"fingerprint\":\"$FIX_FP\"}")"
+R="$(tool_text arkova_get_fingerprint "{\"fingerprint\":\"$FIX_FP\"}")"
 [ "$(jcheck "$R" "d.get('public_id')=='$FIX_PID'")" = "1" ] \
-  && record PASS T-09 "get_fingerprint(<$FIX_PID's hash>) resolves to that public_id" "$R" \
-  || record FAIL T-09 "get_fingerprint(<$FIX_PID's hash>) resolves to that public_id" "$R"
+  && record PASS T-09 "arkova_get_fingerprint(<$FIX_PID's hash>) resolves to that public_id" "$R" \
+  || record FAIL T-09 "arkova_get_fingerprint(<$FIX_PID's hash>) resolves to that public_id" "$R"
 
-R="$(tool_text get_document "{\"public_id\":\"$FIX_PID\"}")"
+R="$(tool_text arkova_get_document "{\"public_id\":\"$FIX_PID\"}")"
 [ "$(jcheck "$R" "d.get('record_uri','').endswith('$FIX_PID')")" = "1" ] \
-  && record PASS T-10 "get_document($FIX_PID) returns that document" "$R" \
-  || record FAIL T-10 "get_document($FIX_PID) returns that document" "$R"
+  && record PASS T-10 "arkova_get_document($FIX_PID) returns that document" "$R" \
+  || record FAIL T-10 "arkova_get_document($FIX_PID) returns that document" "$R"
 
 PR_BEFORE="$(pg_count "public_records?select=id")"
 R="$(tool_text nessie_query '{"query":"SEC filing risk factors","mode":"retrieval","limit":3}')"
@@ -370,40 +378,40 @@ R="$(tool_text nessie_query '{"query":"What are the disclosed risk factors?","mo
 
 PROBE_HASH="$(python3 -c 'import secrets;print(secrets.token_hex(32))')"
 BEFORE="$(pg_count "public_records?content_hash=eq.$PROBE_HASH&select=id")"
-R="$(tool_text anchor_document "{\"content_hash\":\"$PROBE_HASH\",\"record_type\":\"document\",\"source\":\"soak_probe\",\"title\":\"MCP probe $RUN_TS\"}")"
+R="$(tool_text arkova_anchor_document "{\"content_hash\":\"$PROBE_HASH\",\"record_type\":\"document\",\"source\":\"soak_probe\",\"title\":\"MCP probe $RUN_TS\"}")"
 sleep 2
 AFTER="$(pg_count "public_records?content_hash=eq.$PROBE_HASH&select=id")"
 [ "$BEFORE" = "0" ] && [ "$AFTER" = "1" ] \
-  && record PASS T-13 "anchor_document: public_records rows for that exact content_hash 0 -> 1" "before=$BEFORE after=$AFTER resp=$R" \
-  || record FAIL T-13 "anchor_document: public_records rows for that exact content_hash 0 -> 1" "before=$BEFORE after=$AFTER resp=$R"
+  && record PASS T-13 "arkova_anchor_document: public_records rows for that exact content_hash 0 -> 1" "before=$BEFORE after=$AFTER resp=$R" \
+  || record FAIL T-13 "arkova_anchor_document: public_records rows for that exact content_hash 0 -> 1" "before=$BEFORE after=$AFTER resp=$R"
 
-# The tool's own stated follow-up ("Check status with verify_document") must
+# The tool's own stated follow-up ("Check status with arkova_verify_document") must
 # resolve the fingerprint it just accepted. It does not — public_records rows
 # are orphaned from `anchors` until a feeder links them.
-R="$(tool_text verify_document "{\"content_hash\":\"$PROBE_HASH\"}")"
+R="$(tool_text arkova_verify_document "{\"content_hash\":\"$PROBE_HASH\"}")"
 [ "$(jcheck "$R" "d.get('public_id') is not None")" = "1" ] \
-  && record PASS T-14 "verify_document resolves the fingerprint anchor_document just accepted" "$R" \
-  || record FAIL T-14 "verify_document resolves the fingerprint anchor_document just accepted" "$R"
+  && record PASS T-14 "arkova_verify_document resolves the fingerprint arkova_anchor_document just accepted" "$R" \
+  || record FAIL T-14 "arkova_verify_document resolves the fingerprint arkova_anchor_document just accepted" "$R"
 
-R="$(tool_text verify_document "{\"content_hash\":\"$FIX_FP\"}")"
+R="$(tool_text arkova_verify_document "{\"content_hash\":\"$FIX_FP\"}")"
 [ "$(jcheck "$R" "d.get('verified') is True and d.get('public_id')=='$FIX_PID'")" = "1" ] \
-  && record PASS T-15 "verify_document(<seeded hash>) resolves to $FIX_PID" "$R" \
-  || record FAIL T-15 "verify_document(<seeded hash>) resolves to $FIX_PID" "$R"
+  && record PASS T-15 "arkova_verify_document(<seeded hash>) resolves to $FIX_PID" "$R" \
+  || record FAIL T-15 "arkova_verify_document(<seeded hash>) resolves to $FIX_PID" "$R"
 
-R="$(tool_text verify_batch "{\"public_ids\":[\"$FIX_PID\",\"ARK-NOSUCH-000000\"]}")"
+R="$(tool_text arkova_verify_batch "{\"public_ids\":[\"$FIX_PID\",\"ARK-NOSUCH-000000\"]}")"
 [ "$(jcheck "$R" "d.get('total')==2 and sum(1 for x in d.get('results',[]) if x.get('verified') is True)==1")" = "1" ] \
-  && record PASS T-16 "verify_batch returns 2 results: the seeded id verified, the bogus id not" "$R" \
-  || record FAIL T-16 "verify_batch returns 2 results: the seeded id verified, the bogus id not" "$R"
+  && record PASS T-16 "arkova_verify_batch returns 2 results: the seeded id verified, the bogus id not" "$R" \
+  || record FAIL T-16 "arkova_verify_batch returns 2 results: the seeded id verified, the bogus id not" "$R"
 
-R="$(tool_text oracle_batch_verify "{\"public_ids\":[\"$FIX_PID\"]}")"
+R="$(tool_text arkova_oracle_batch_verify "{\"public_ids\":[\"$FIX_PID\"]}")"
 [ "$(jcheck "$R" "len(d.get('payload',{}).get('results',[]))==1 and (d.get('signature') or d.get('signed') is False)")" = "1" ] \
-  && record PASS T-17 "oracle_batch_verify returns a query envelope with an explicit signing state" "$R" \
-  || record FAIL T-17 "oracle_batch_verify returns a query envelope with an explicit signing state" "$R"
+  && record PASS T-17 "arkova_oracle_batch_verify returns a query envelope with an explicit signing state" "$R" \
+  || record FAIL T-17 "arkova_oracle_batch_verify returns a query envelope with an explicit signing state" "$R"
 
-R="$(tool_text list_agents '{}')"
+R="$(tool_text arkova_list_agents '{}')"
 [ "$(jcheck "$R" "any(a.get('name')=='$AGENT_NAME' for a in d.get('agents',[]))")" = "1" ] \
-  && record PASS T-18 "list_agents returns the caller-org agent '$AGENT_NAME'" "$R" \
-  || record FAIL T-18 "list_agents returns the caller-org agent '$AGENT_NAME'" "$R"
+  && record PASS T-18 "arkova_list_agents returns the caller-org agent '$AGENT_NAME'" "$R" \
+  || record FAIL T-18 "arkova_list_agents returns the caller-org agent '$AGENT_NAME'" "$R"
 
 # ── Phase 4 — claims probes ─────────────────────────────────────────────────
 head2 "Phase 4 — claims probes"
@@ -411,19 +419,19 @@ head2 "Phase 4 — claims probes"
 # A-3.1b (i): a NON-WORD internal fragment of the fixture's title. A semantic
 # (vector) engine cannot match gibberish; a literal ILIKE %fragment% can. A hit
 # here PROVES the path is substring matching, whatever `search_mode` claims.
-R="$(tool_text search_credentials "{\"query\":\"$FRAGMENT\",\"max_results\":10}")"
+R="$(tool_text arkova_search_anchors "{\"query\":\"$FRAGMENT\",\"max_results\":10}")"
 HIT="$(jcheck "$R" "any(x.get('public_id')=='$FIX_PID' for x in d.get('results',[]))")"
 MODE="$(jcheck "$R" "d.get('search_mode')=='semantic_vector'")"
 if [ "$HIT" = "1" ] && [ "$MODE" = "1" ]; then
   record FAIL A-3.1b-i "a non-word fragment ('$FRAGMENT') must NOT match while search_mode says semantic_vector" "$R"
 elif [ "$HIT" = "1" ]; then
-  record FAIL A-3.1b-i "search_credentials must not be substring matching ('$FRAGMENT' matched $FIX_PID)" "$R"
+  record FAIL A-3.1b-i "arkova_search_anchors must not be substring matching ('$FRAGMENT' matched $FIX_PID)" "$R"
 else
   record PASS A-3.1b-i "a non-word fragment ('$FRAGMENT') does not match — path is not substring matching" "$R"
 fi
 
 # A-3.1b (ii): an English paraphrase sharing no substring with the title.
-R="$(tool_text search_credentials '{"query":"documents proving professional standing issued by an accredited body","max_results":10}')"
+R="$(tool_text arkova_search_anchors '{"query":"documents proving professional standing issued by an accredited body","max_results":10}')"
 [ "$(jcheck "$R" "d.get('total',0)>0")" = "1" ] \
   && record PASS A-3.1b-ii "a semantic paraphrase returns >0 results" "$R" \
   || record FAIL A-3.1b-ii "a semantic paraphrase returns >0 results" "$R"

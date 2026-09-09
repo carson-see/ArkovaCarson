@@ -53,22 +53,22 @@ afterEach(() => {
 // ── TOOL_DEFINITIONS ──────────────────────────────────────────────────
 
 const EXPECTED_TOOL_NAMES = [
-  'verify_credential',
-  'search_credentials',
+  'arkova_verify_anchor',
+  'arkova_search_anchors',
   'nessie_query',
-  'anchor_document',
-  'verify_document',
-  'verify_batch',
-  'search',
-  'verify',
-  'list_orgs',
-  'get_anchor',
-  'get_organization',
-  'get_record',
-  'get_fingerprint',
-  'get_document',
-  'oracle_batch_verify',
-  'list_agents',
+  'arkova_anchor_document',
+  'arkova_verify_document',
+  'arkova_verify_batch',
+  'arkova_search',
+  'arkova_verify',
+  'arkova_list_orgs',
+  'arkova_get_anchor',
+  'arkova_get_organization',
+  'arkova_get_record',
+  'arkova_get_fingerprint',
+  'arkova_get_document',
+  'arkova_oracle_batch_verify',
+  'arkova_list_agents',
 ];
 
 describe('TOOL_DEFINITIONS', () => {
@@ -85,24 +85,24 @@ describe('TOOL_DEFINITIONS', () => {
     }
   });
 
-  it('exposes verify_batch and v2 agent aliases', () => {
+  it('exposes arkova_verify_batch and v2 agent aliases', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
-    expect(names).toContain('verify_batch');
+    expect(names).toContain('arkova_verify_batch');
     expect(names).toEqual(expect.arrayContaining([
-      'search',
-      'verify',
-      'list_orgs',
-      'get_anchor',
-      'get_organization',
-      'get_record',
-      'get_fingerprint',
-      'get_document',
+      'arkova_search',
+      'arkova_verify',
+      'arkova_list_orgs',
+      'arkova_get_anchor',
+      'arkova_get_organization',
+      'arkova_get_record',
+      'arkova_get_fingerprint',
+      'arkova_get_document',
     ]));
   });
 
   it('publishes full array contracts for batch public_id inputs', () => {
-    const verifyBatch = TOOL_DEFINITIONS.find((tool) => tool.name === 'verify_batch');
-    const oracleBatch = TOOL_DEFINITIONS.find((tool) => tool.name === 'oracle_batch_verify');
+    const verifyBatch = TOOL_DEFINITIONS.find((tool) => tool.name === 'arkova_verify_batch');
+    const oracleBatch = TOOL_DEFINITIONS.find((tool) => tool.name === 'arkova_oracle_batch_verify');
 
     expect(verifyBatch?.inputSchema.properties.public_ids).toMatchObject({
       type: 'array',
@@ -118,8 +118,8 @@ describe('TOOL_DEFINITIONS', () => {
     });
   });
 
-  it('publishes anchor_document idempotency_key in the advertised tool schema', () => {
-    const anchorDocument = TOOL_DEFINITIONS.find((tool) => tool.name === 'anchor_document');
+  it('publishes arkova_anchor_document idempotency_key in the advertised tool schema', () => {
+    const anchorDocument = TOOL_DEFINITIONS.find((tool) => tool.name === 'arkova_anchor_document');
 
     expect(anchorDocument?.inputSchema.properties.idempotency_key).toMatchObject({
       type: 'string',
@@ -373,7 +373,7 @@ describe('agent v2 MCP aliases', () => {
     expect(parsed.status).toBe('PENDING');
   });
 
-  it('get_anchor(public_id) delegates to public anchor lookup', async () => {
+  it('arkova_get_anchor(public_id) delegates to public anchor lookup', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () =>
@@ -390,7 +390,7 @@ describe('agent v2 MCP aliases', () => {
     expect(parsed.issuer_name).toBe('Test Org');
   });
 
-  it('get_record (alias of handleAgentGetAnchor) returns the public-safe verify shape', async () => {
+  it('arkova_get_record (alias of handleAgentGetAnchor) returns the public-safe verify shape', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () =>
@@ -415,7 +415,7 @@ describe('agent v2 MCP aliases', () => {
     expect(parsed).not.toHaveProperty('record_id');
   });
 
-  it('get_document (alias of handleAgentGetAnchor) returns the public-safe verify shape', async () => {
+  it('arkova_get_document (alias of handleAgentGetAnchor) returns the public-safe verify shape', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () =>
@@ -433,7 +433,7 @@ describe('agent v2 MCP aliases', () => {
     expect(parsed).not.toHaveProperty('record_id');
   });
 
-  it('list_orgs scopes the query by authenticated user id', async () => {
+  it('arkova_list_orgs scopes the query by authenticated user id', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ([{
@@ -459,7 +459,7 @@ describe('agent v2 MCP aliases', () => {
     expect(decodeURIComponent(requestUrl)).not.toContain('organizations(id,');
   });
 
-  it('get_organization(public_id) uses a dedicated query, scopes by caller, and never leaks internal id', async () => {
+  it('arkova_get_organization(public_id) uses a dedicated query, scopes by caller, and never leaks internal id', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ([{
@@ -479,7 +479,7 @@ describe('agent v2 MCP aliases', () => {
 
     // Public-safe contract: must contain description, must NOT contain
     // the internal `id` column nor the membership `role` (those leak
-    // through if the handler reuses list_orgs).
+    // through if the handler reuses arkova_list_orgs).
     expect(parsed).toEqual({
       public_id: 'org_acme',
       display_name: 'Acme Corp',
@@ -499,7 +499,7 @@ describe('agent v2 MCP aliases', () => {
     expect(decodeURIComponent(requestUrl)).toContain('organizations.public_id=eq.org_acme');
   });
 
-  it('get_organization returns not-found when caller has no matching membership', async () => {
+  it('arkova_get_organization returns not-found when caller has no matching membership', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
 
     const result = await handleAgentGetOrganization({ public_id: 'org_outside_scope' }, CONFIG);
@@ -507,7 +507,7 @@ describe('agent v2 MCP aliases', () => {
     expect(result.content[0].text).toContain('was not found');
   });
 
-  it('get_fingerprint (handleAgentVerify) strips record_id from the underlying verify shape', async () => {
+  it('arkova_get_fingerprint (handleAgentVerify) strips record_id from the underlying verify shape', async () => {
     const fingerprint = 'a'.repeat(64);
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -524,7 +524,7 @@ describe('agent v2 MCP aliases', () => {
     const parsed = JSON.parse(result.content[0].text);
 
     // Public-safe contract: response must NOT include the internal
-    // public_records.id (CodeRabbit Major: get_fingerprint leaks
+    // public_records.id (CodeRabbit Major: arkova_get_fingerprint leaks
     // internal record_id).
     expect(parsed).not.toHaveProperty('record_id');
     expect(JSON.stringify(parsed)).not.toContain('internal-record-id');
@@ -621,7 +621,7 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
     expect(parsed.content_hash).toBe(validHash);
     // Explicit null, not a dropped key: no anchor exists yet, so no public_id.
     expect(parsed).toHaveProperty('public_id', null);
-    expect(parsed.verify_with).toEqual({ tool: 'verify_document', content_hash: validHash });
+    expect(parsed.verify_with).toEqual({ tool: 'arkova_verify_document', content_hash: validHash });
     expect(parsed).not.toHaveProperty('record_id');
   });
 
@@ -647,7 +647,7 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBe('already_submitted');
     expect(parsed).toHaveProperty('public_id', null);
-    expect(parsed.verify_with).toEqual({ tool: 'verify_document', content_hash: validHash });
+    expect(parsed.verify_with).toEqual({ tool: 'arkova_verify_document', content_hash: validHash });
     expect(parsed).not.toHaveProperty('record_id');
     expect(JSON.stringify(parsed)).not.toContain('internal-rec-1');
     expect(mockFetch).toHaveBeenCalledTimes(1);

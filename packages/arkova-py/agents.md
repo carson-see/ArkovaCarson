@@ -39,3 +39,19 @@ wired; deleting the job fails that suite.
 ## Licensing
 - **`LICENSE`** (2026-07-28, engineering-counsel review): MIT text copied verbatim from `packages/verifier-cli/LICENSE` (same copyright line, kept exact). Python convention is a root-level `LICENSE` file, not `files` array entries like the npm packages.
 - `pyproject.toml` uses PEP 639 `license = "MIT"` + `license-files = ["LICENSE"]` (replaces the pre-639 `license = { text = "MIT" }` table form) so hatchling packages the LICENSE file into both the wheel's `dist-info/licenses/` and the sdist automatically. See `scripts/security/package-license-files.test.ts`.
+
+## 2026-09-02 — packages/integrations truth pass
+- **`VerificationResult.error`** (`src/arkova/models.py`): added a code comment stating the field
+  is unreachable via `Client.verify()` / `Client.verify_fingerprint()` (and their async twins) —
+  `_request()` calls `_raise_for_error()` before `_parse_json()` ever builds the model, so any
+  response that could carry `error` raises `ArkovaError` first. The field itself was NOT removed:
+  the worker's frozen v1 schema (CLAUDE.md §1.8) still declares it, and direct model construction
+  (tests, fixtures) can still set it.
+- **Python 3.13/3.14 classifiers** added to `pyproject.toml` (`requires-python` unchanged at
+  `>=3.10`) — `pytest` (136 tests) and `ruff check src tests` both pass clean on Python 3.14.6.
+- **README "Fixed in 2.2.1" corrected to "Fixed in 2.3.0"** — 2.2.1 was never published (this file
+  already says "starts at 2.2.1" as a doc convention, not evidence it shipped; see `CHANGELOG.md`
+  header). Install line changed to `pip install 'arkova>=2.3.0'` to match.
+- Confirmed (no edit needed): `pyproject.toml` `version = "2.3.0"` and
+  `.github/workflows/publish-python-sdk.yml`'s tag trigger (`arkova-py-v*`) would fire on a pushed
+  `arkova-py-v2.3.0` tag. No tag was pushed as part of this pass — that remains an operator step.

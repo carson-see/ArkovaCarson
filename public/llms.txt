@@ -24,7 +24,7 @@ API-key required (`X-API-Key` header, obtain at https://app.arkova.ai/settings/a
 - `POST https://app.arkova.ai/api/v1/verify/batch` — Batch verification by publicId
 - `POST https://app.arkova.ai/api/v1/verify/entity` — Entity verification
 
-OpenAPI spec: https://app.arkova.ai/api/docs (interactive)
+OpenAPI spec: https://api.arkova.ai/v2/openapi.json
 
 ## Authentication
 
@@ -46,8 +46,8 @@ MCP server for AI agent access:
 
 - **Endpoint:** `https://edge.arkova.ai/mcp`
 - **Transport:** Streamable HTTP
-- `verify_credential` — Verify by public_id
-- `search_credentials` — Keyword search by query with max_results. Lexical substring match, not meaning-based; check the `search_mode` field on every result
+- `arkova_verify_anchor` — Verify by public_id
+- `arkova_search_anchors` — Keyword search by query with max_results. Lexical substring match, not meaning-based; check the `search_mode` field on every result
 - `verify_fingerprint` — Check SHA-256 fingerprint match
 
 ## Traction
