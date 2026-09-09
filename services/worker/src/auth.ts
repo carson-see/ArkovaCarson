@@ -94,6 +94,31 @@ export async function verifyAuthToken(
   config: AuthConfig,
   logger: Pick<Logger, 'warn' | 'error'>,
 ): Promise<string | null> {
+  // This claim may only deny here, never authorize. A pending identity must
+  // not fall through to auth.getUser(), whose stored user.role can still be
+  // authenticated even though the signed token has no product authority.
+  try {
+    if (decodeJwt(token).role === 'arkova_email_pending') return null;
+  } catch {
+    // The verifier below owns malformed-token handling.
+  }
+  return verifyIdentityToken(token, config, logger);
+}
+
+/** Narrow identity verifier for email-confirmation endpoints ONLY. */
+export async function verifyEmailConfirmationToken(
+  token: string,
+  config: AuthConfig,
+  logger: Pick<Logger, 'warn' | 'error'>,
+): Promise<string | null> {
+  return verifyIdentityToken(token, config, logger);
+}
+
+async function verifyIdentityToken(
+  token: string,
+  config: AuthConfig,
+  logger: Pick<Logger, 'warn' | 'error'>,
+): Promise<string | null> {
   if (!token) return null;
 
   // A non-Supabase issuer (e.g. Google OIDC from Cloud Scheduler) can never be

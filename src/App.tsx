@@ -1,3 +1,4 @@
+import { getEmailConfirmationToken, isEmailConfirmationPending } from '@/lib/oauthConfirmation';
 /**
  * Arkova MVP - Main Application
  *
@@ -117,12 +118,21 @@ const IssuerPartnershipsPageLazy = lazyWithRetry(() => import('@/pages/IssuerPar
  * Redirect authenticated users away from login/signup.
  */
 function PublicOnly({ children }: Readonly<{ children: React.ReactNode }>) {
-  const { user, loading: authLoading } = useAuth();
+  const { user, session, loading: authLoading } = useAuth();
+  const location = useLocation();
   const { destination, loading: profileLoading } = useProfile();
 
-  if (authLoading || (user && profileLoading)) {
-    return <LoadingScreen />;
+  if (authLoading) return <LoadingScreen />;
+
+  // A pending session cannot read its profile yet. Its signup route is the
+  // confirmation flow, including a link opened while another account is active.
+  if (isEmailConfirmationPending(session) || getEmailConfirmationToken()) {
+    return location.pathname === ROUTES.SIGNUP
+      ? <>{children}</>
+      : <Navigate to={ROUTES.SIGNUP} replace />;
   }
+
+  if (user && profileLoading) return <LoadingScreen />;
 
   if (user) {
     return <Navigate to={destinationToRoute(destination)} replace />;
