@@ -11,10 +11,10 @@
  *
  * @example Auto-init
  *   <div data-arkova-credential="ARK-2026-001"></div>
- *   <script src="https://cdn.arkova.ai/embed.js"></script>
+ *   <script src="https://app.arkova.ai/embed.js"></script>
  *
  * @example Manual init
- *   <script src="https://cdn.arkova.ai/embed.js"></script>
+ *   <script src="https://app.arkova.ai/embed.js"></script>
  *   <script>
  *     ArkovaEmbed.mount({
  *       publicId: 'ARK-2026-001',
