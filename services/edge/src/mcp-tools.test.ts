@@ -815,7 +815,7 @@ describe('handleNessieQuery worker proxy (BUG-3a)', () => {
   });
 });
 
-// ── search_credentials: real semantic path + truthful mode label ──────────
+// ── arkova_search_anchors: real semantic path + truthful mode label ──────────
 //
 // The tool advertised "semantic similarity matching" on six public surfaces
 // while BOTH code paths were lexical: the `search_public_credentials` RPC is
@@ -997,7 +997,7 @@ describe('handleSearchCredentials — semantic path + search_mode labelling', ()
   });
 
   it('(h) the advertised tool description documents search_mode instead of promising semantic unconditionally', async () => {
-    const def = TOOL_DEFINITIONS.find((t) => t.name === 'search_credentials');
+    const def = TOOL_DEFINITIONS.find((t) => t.name === 'arkova_search_anchors');
     expect(def).toBeDefined();
     // The description must tell an agent how to tell the two modes apart.
     expect(def!.description).toContain('search_mode');
@@ -1125,7 +1125,7 @@ describe('handleNessieQuery — capability disabled (BUG-008/027)', () => {
   });
 });
 
-// ─── BUG-026: search_credentials must describe what it actually does ─────────
+// ─── BUG-026: arkova_search_anchors must describe what it actually does ─────────
 
 /**
  * Reproduced on the rig: the non-word fragment `aten` matched
@@ -1138,8 +1138,8 @@ describe('handleNessieQuery — capability disabled (BUG-008/027)', () => {
  * here. What is pinned: the description states the served behaviour first, and
  * does not assert semantic matching as the unconditional default.
  */
-describe('search_credentials tool description — honest by default (BUG-026)', () => {
-  const def = () => TOOL_DEFINITIONS.find((t) => t.name === 'search_credentials')!;
+describe('arkova_search_anchors tool description — honest by default (BUG-026)', () => {
+  const def = () => TOOL_DEFINITIONS.find((t) => t.name === 'arkova_search_anchors')!;
 
   it('names lexical substring matching as what the tool does', () => {
     expect(def().description.toLowerCase()).toContain('substring');
@@ -1157,5 +1157,73 @@ describe('search_credentials tool description — honest by default (BUG-026)', 
     // The vector path needs a configured worker AND an open
     // ENABLE_SEMANTIC_SEARCH gate — neither of which the caller controls.
     expect(def().description).toMatch(/\b(only when|when the|if the)\b/i);
+  });
+});
+
+// ─── F4: hand-built catch blocks must scrub errors, not interpolate them ──
+//
+// mcp-tools.ts had ~10 catch blocks that built their error text as
+// `` `<verb> failed: ${error.message}` `` — a raw `Error.message` reaching
+// `content[0].text` verbatim. `Error.message` is attacker- or
+// infrastructure-controlled (a rejected `fetch` embeds the request URL,
+// including internal hosts), so this leaked exactly the detail
+// `safeErrorText` (mcp-error-utils.ts) exists to strip. This pins that every
+// such catch block now routes through it: the tool's own error text, and any
+// value it interpolates, must never appear in the client-visible result.
+describe('F4 — tool catch blocks scrub errors via safeErrorText', () => {
+  it('handleVerifyCredential never leaks a thrown error message verbatim', async () => {
+    mockFetch.mockRejectedValueOnce(new TypeError('fetch failed: https://internal.host/x'));
+
+    const result = await handleVerifyCredential({ public_id: 'ARK-2026-001' }, CONFIG);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).not.toContain('internal.host');
+    expect(result.content[0].text).not.toContain('fetch failed');
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toEqual({ error: 'arkova_verify_anchor failed', code: 'TOOL_ERROR' });
+  });
+});
+
+// ── Review 2026-09-05: upstream bodies must never reach the MCP client ──
+
+describe('upstream error bodies are scrubbed before reaching the caller', () => {
+  const POSTGREST_400 = JSON.stringify({
+    message: 'column anchors.secret_col does not exist',
+    details: 'internal detail for anchors.secret_col',
+    hint: 'Perhaps you meant to reference the column "anchors.public_id".',
+    code: '42703',
+  });
+
+  it('arkova_search_anchors lexical fallback does not echo the PostgREST body', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 1st call: search_public_credentials RPC fails → fallback.
+    // 2nd call: the direct /rest/v1/anchors query fails with a leaky body.
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => POSTGREST_400 })
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => POSTGREST_400 });
+
+    const result = await handleSearchCredentials({ query: 'diploma' }, CONFIG);
+    const text = result.content[0].text;
+
+    expect(result.isError).toBe(true);
+    expect(text).not.toContain('secret_col');
+    expect(text).not.toContain('42703');
+    expect(JSON.parse(text)).toMatchObject({ code: 'TOOL_ERROR' });
+    // The body is still available to operators via Logpush.
+    expect(err.mock.calls.flat().join(' ')).toContain('secret_col');
+    err.mockRestore();
+  });
+
+  it('nessie_query text fallback does not echo the PostgREST body', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockFetch.mockResolvedValue({ ok: false, status: 400, text: async () => POSTGREST_400 });
+
+    const result = await handleNessieQuery({ query: 'patent filings' }, CONFIG);
+    const text = result.content[0].text;
+
+    expect(result.isError).toBe(true);
+    expect(text).not.toContain('secret_col');
+    expect(JSON.parse(text)).toMatchObject({ code: 'TOOL_ERROR' });
+    err.mockRestore();
   });
 });
