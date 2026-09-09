@@ -125,13 +125,22 @@ creditsRouter.post('/purchase', async (req: Request, res: Response) => {
   try {
     if (!config.stripeSecretKey && config.nodeEnv !== 'production') {
       // Direct credit grant for development/testing only — NEVER in production
-      const { error: grantError } = await db.rpc('deduct_unified_credits', {
+      const { data: granted, error: grantError } = await db.rpc('deduct_unified_credits', {
         p_org_id: orgId ?? undefined,
         p_user_id: userId,
         p_amount: -pack.credits, // negative deduction = grant
       });
 
-      if (grantError) {
+      // SCRUM-3502: `deduct_unified_credits` RETURNS BOOLEAN, and reading only
+      // `error` misses its `false` — which is what it answers when the caller
+      // has NO `unified_credits` row (`IF NOT FOUND THEN RETURN false`).
+      // Reporting `status: 'completed', credits_added: N` for a grant that
+      // never landed is the same defect this PR removes from
+      // `middleware/paymentTierRouter.ts`; the rule is in
+      // `services/worker/src/middleware/agents.md`. Dev/test-only path, so no
+      // production revenue rides on it — but a false "completed" here is what
+      // makes a real regression in this RPC look like a passing manual test.
+      if (grantError || granted !== true) {
         // Fail CLOSED — request errors out, no credits granted, no charge.
         // Still alert: this is the dev/test-only grant path, but a silent
         // failure here would mask a real deduct_unified_credits regression.
@@ -139,7 +148,11 @@ creditsRouter.post('/purchase', async (req: Request, res: Response) => {
           rpc: 'deduct_unified_credits',
           operation: 'credits.purchase.devGrant',
           failMode: 'closed',
-          error: new Error('deduct_unified_credits (dev grant) failed'),
+          error: new Error(
+            grantError
+              ? 'deduct_unified_credits (dev grant) failed'
+              : 'deduct_unified_credits (dev grant) returned false — no credits granted',
+          ),
           orgId,
           userId,
           extra: { packId: pack.id, credits: pack.credits },
