@@ -234,7 +234,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
   );
 
   return (
-    <Card className="max-w-2xl mx-auto">
+    <Card className="min-w-0 w-full max-w-2xl mx-auto">
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
@@ -261,7 +261,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
             <div key={s.key} className="flex items-center">
               <div
                 className={cn(
-                  'flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium',
+                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-sm font-medium sm:h-8 sm:w-8',
                   index <= currentStepIndex
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-muted text-muted-foreground'
@@ -276,7 +276,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
               {index < STEPS.length - 1 && (
                 <div
                   className={cn(
-                    'h-0.5 w-12 mx-2',
+                    'h-0.5 w-2 mx-1 sm:w-12 sm:mx-2',
                     index < currentStepIndex ? 'bg-primary' : 'bg-muted'
                   )}
                 />
@@ -393,7 +393,7 @@ function ReviewStep({
     onChange: (value: number | null) => void,
     required?: boolean
   ) => (
-    <div className="flex items-center justify-between py-2">
+    <div className="flex flex-col gap-2 py-2 sm:flex-row sm:items-center sm:justify-between">
       <span className="text-sm">
         {label}
         {required && <span className="text-destructive ml-1">*</span>}
@@ -401,7 +401,7 @@ function ReviewStep({
       <select
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value ? Number.parseInt(e.target.value) : null)}
-        className="w-48 rounded-md border border-input bg-background px-3 py-1 text-sm"
+        className="min-w-0 w-full rounded-md border border-input bg-background px-3 py-1 text-sm sm:w-48"
       >
         <option value="">Select column</option>
         {columns.map((col) => (
@@ -545,7 +545,7 @@ function ReviewStep({
         </div>
       )}
 
-      <div className="flex justify-between pt-4">
+      <div className="flex flex-col gap-2 pt-4 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={onBack}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back

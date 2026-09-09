@@ -1,5 +1,6 @@
 # scripts/ci/agents.md
 
+_Last updated: 2026-09-07 (ninth closure: approver-class fields now reject a LEADING incomplete marker — `Approved by: PENDING — Carson must decide.` no longer grants a residual-risk / base-drift exception; previously 2026-08-29 evidence-gate integrity series)._
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
 _Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditions + new do-not-merge body/label parity lint; previously: evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
 
@@ -216,6 +217,31 @@ existing blocks in `check-staging-evidence.test.ts` (the six roster-internals te
 by three that pin its removal; the ancestry test's stub taught the second bound, and a new
 sibling pinning that a pre-launch base FAILS). 433/433 green across the five affected
 suites; baseline on `origin/main` was 373/373 for the two pre-existing ones.
+
+## 2026-09-07 — ninth closure: approver-class fields accepted a LEADING incomplete marker (`PENDING — …`, `NOT YET APPROVED — …`)
+
+The seventh closure gave `none` / `n/a` a leading-token guard (`NOT_A_PERSON_PREFIX_RE`)
+but the incomplete-placeholder vocabulary stayed on the whole-value-anchored
+`INCOMPLETE_VALUE_PATTERNS` (`/^pending\.?$/i`, `/^tbd\.?$/i`, …). So the same
+prose-after-the-marker shape, one vocabulary over, still self-granted: `Approved by:
+PENDING — Carson must decide.` and `Approved by: NOT YET APPROVED — requires Carson.`
+both passed `validateResidualRiskNote()` (residual-risk, unsoakable and base-drift notes)
+and `validateHumanApproverField()` (T1), while `Approved by: No one — not granted.` was
+correctly rejected. Found by the Batch-I soak stand-up for PR #2589 (its base-drift note is
+deliberately worded `No one — …` so it fails closed either way); verified by running the
+regexes on 2026-09-07. `INCOMPLETE_APPROVER_PREFIX_RE` now rejects a value that BEGINS with
+pending / tbd / tba / todo / to-do / to be determined|announced|filled (in) / wip / work in
+progress / planned / placeholder / `not yet <anything>`, followed by the same boundary set
+as the other prefix guards. **Scoped to approver-class fields only** —
+`isIncompletePlaceholder()` is unchanged, because other fields legitimately carry prose
+after a marker. Same `-`-is-not-a-boundary rule as before, so `Jean-Luc Picard`,
+`Todorov, Georgi`, `Pendleton Ward` and `Carson See — approved 2026-09-07` still pass; the
+one exception is `not yet`, which also takes `-` as its boundary (`not-yet-approved
+(Carson)` is a real spelling and no name opens with "Not-yet-"). Red-first: 48 failed |
+387 passed on the prior head (16 shapes × residual-risk / base-drift / T1), 435/435 after.
+Landed direct to `main` as T0 per §0 rule 8 (`requiredTierFor()` on the two changed files
+→ T0 `docs/tests/CI/tooling-only`; typecheck / lint / full test / lint:copy green locally;
+Mergify queue empty at push).
 
 ## 2026-08-29 — seventh closure: the T1 `Human approver:` field was VALUE-blind (review of the six-closure PR)
 
@@ -633,7 +659,7 @@ Two design points to preserve if you touch it:
 ## `snapshots/`
 Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per gate).
 - `prod-tables.json`, `worker-env-adhoc-baseline.json`, `rls-policy-coverage-baseline.json`, `views-security-invoker-baseline.json`, `migration-prefix-baseline.json` — see the gate that reads each.
-- **`third-party-notices-drift-baseline.json`** — known-bad state for `check-third-party-notices-fresh.ts`. `driftingNames` are package names whose disclosure on `/legal/third-party-notices` is already wrong or missing (NOT approved omissions); `blockedPinnedNotices` holds platform-INDEPENDENT family roots of allowlist-cleared copyleft deps with no pinned notice, so one entry matches both the darwin and the linux package name. Retire it by resolving the pinned-notice gap, regenerating the notices file, and setting both arrays to `[]`. Regenerate the payload with `npx tsx scripts/ci/check-third-party-notices-fresh.ts --emit-baseline`.
+- **`third-party-notices-drift-baseline.json`** — known-bad state for `check-third-party-notices-fresh.ts`. `driftingNames` are package names whose disclosure on `/legal/third-party-notices` is already wrong or missing (NOT approved omissions); `blockedPinnedNotices` holds platform-INDEPENDENT family roots of allowlist-cleared copyleft deps with no pinned notice, so one entry matches both the darwin and the linux package name. **RETIRED 2026-09-02 — both arrays are `[]` and that is the correct state**, so the gate is now an exact assertion rather than a ratchet: SCRUM-3553 pinned the `@img/sharp-*` family (generator writes again) and SCRUM-3559's regenerated notices file cleared all 81 drifting names. The gate itself flags leftover exemptions ("N baseline entries are no longer drifting"), because a stale exemption is a live hole. Fix a failure by running `npm run license:notices:generate` and committing the result, or by adding the missing pinned notice — not by repopulating this file. Regenerate the payload with `npx tsx scripts/ci/check-third-party-notices-fresh.ts --emit-baseline`.
 - **`copy-terms-baseline.json`** (SCRUM-2148 / SCRUM-2149) — grandfather baseline for `scripts/check-copy-terms.ts` (`npm run lint:copy`, defined one level up in `scripts/`). Records ONLY pre-existing copy-term/raw-enum violations that can't be fixed in their PR (locked file or another in-flight track). The linter fails on NEW violations only; match key = normalised `file`+`line`+`term` (term lower-cased — two different terms on the same line are two entries). Each entry needs a `reason`. Full protocol in `scripts/agents.md` → "Copy-term linter". Never baseline a self-introduced violation.
 
 ## Conventions

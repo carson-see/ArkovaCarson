@@ -1,6 +1,115 @@
 # agents.md — pages
+_Last updated: 2026-08-31_
+
+## 2026-08-31 — `IndependentVerifyPage` told readers to run a file that does not exist
+
+The public "Verify Without Arkova" page — the page whose entire job is proving
+we are not a required intermediary — shipped two instructions nobody could
+follow. Step 3's command was `./verify.sh --fingerprint … --proof …`, and a
+"Download Verification Script" button linked to `/verify.sh`. **No file named
+`verify.sh` has ever existed in this repository**, so the button 404'd and the
+command was unrunnable. (Its origin is visible in
+`docs/stories/24_compliance_audit_readiness.md`, where "Write `public/verify.sh`"
+is still an unticked box — the copy was written against the plan, not the build.)
+
+It now points at the verifier we actually ship: `packages/verifier-cli`. The
+download button is replaced by build-from-source instructions, because **neither
+`@arkova/verifier` nor `@arkova/verifier-cli` is published to any registry** — an
+`npm install` line here would be a claim of external status we do not hold
+(§1.13 R-7). If you are tempted to add one, verify the package resolves from the
+public registry first; the scoped names 404 today.
+
+**Two things about those instructions that a first pass got wrong, both caught
+by running them:**
+
+- **The library has to be built before the CLI.** `packages/verifier-cli` depends
+  on `@arkova/verifier` as `file:../verifier`, whose `main`/`types` point into
+  `dist/` — and `dist/` is gitignored (`.gitignore:12`). On a fresh clone,
+  building only the CLI fails with `TS2307: Cannot find module '@arkova/verifier'`
+  seven times over. `VERIFIER_BUILD_CMD` therefore builds **both**, in order,
+  from the repository root.
+- **`arkova-verify` is not a command after that build.** It is the package's
+  `bin` mapping, and `npm run build` is just `tsc`; the name only reaches PATH
+  via `npm link` or a global install. A reader who completed the build and pasted
+  a bare `arkova-verify` got `command not found` — confirmed in a clean worktree.
+  `STEP_3_CMD` invokes `node packages/verifier-cli/dist/cli.js` instead, which
+  needs neither.
+
+Both were verified end to end after deleting `dist/` and `node_modules/` from
+both packages: the printed build command succeeds, and the printed step-3 command
+then returns `VERDICT: VERIFIED` against `fixtures/signed-bundle.json`. The
+ratchet in `src/lib/publishedVerificationPointers.test.ts` pins the build order
+and forbids a bare `arkova-verify` invocation from returning.
+
+**Writing an instruction you have not executed is the defect this page had.**
+Do not fix copy here by reading source; run it.
+
+`Requires: bash, curl, shasum, jq` was also a bare JSX literal (§1.3 — copy
+belongs in `copy.ts`) *and* wrong, since it described the shell script rather
+than the Node CLI. It is now `INDEPENDENT_VERIFY_LABELS.VERIFIER_REQUIREMENTS`.
+
+The page test carries the ratchet: it asserts no anchor on the page links to
+`/verify.sh` and no `[download]` anchor exists at all, so the dead button cannot
+come back quietly. `src/lib/publishedVerificationPointers.test.ts` holds the
+copy-level half of the same guard.
 _Last updated: 2026-08-30_
 
+## 2026-08-31 — `AttestationsPage.tsx`: phantom notarization columns unwired, load errors no longer silent
+
+Two defects in one page, same root cause — the page reads `attestations` through
+`const dbAny = supabase as any` and casts the result to a hand-written interface, so the
+compiler cannot see a column that does not exist.
+
+1. **`<NotarizationBadge>` was fed four columns `attestations` does not have.** Three
+   (`notary_name`, `notary_commission_state`, `docusign_envelope_id`) live on
+   `legally_binding_attestations` (migration 0314); the fourth, `notarized_at`, exists on
+   **no table in this schema** — the real column there is `notarization_completed_at`.
+   Every prop arrived `undefined`, so the badge rendered nothing on every row since it
+   shipped. The render is removed and the component is parked.
+2. **`if (!error && data)` collapsed a failed load into the empty state.** A statement
+   timeout, an RLS denial or a schema-cache miss showed the user "No attestations yet"
+   with no console signal — the shape described in
+   `memory/project_hollow_200_statement_timeout_swallow.md`. The fetch now branches on
+   `error` first and renders a distinct, retryable error state.
+
+**The guard is now the compiler, not a test.** `interface Attestation` is asserted against
+`Database['public']['Tables']['attestations']['Row']`, so declaring a phantom column is a
+`typecheck` failure naming the column — the DI-398 ruling in
+`services/worker/src/api/v1/agents.md` applied to this page. An earlier draft used a
+regex test that scraped both source files; it was replaced because it parsed on exact
+indentation and passed vacuously when the parse missed. Residual, stated plainly: this
+pins the declared interface, not every read — a `(row as any).x` access still bypasses it,
+and ~30 other `src/` files use the same cast.
+
+## 2026-08-30 SCRUM-3559 — `ThirdPartyNoticesPage.tsx` includes copyright lines + verbatim license text
+
+The page listed dependency names + SPDX identifiers only; strict MIT attribution
+wants the notice text itself included, and LGPL §4 wants a copy of the license
+(previously two `gnu.org` links). Entries now render an optional `copyright`
+line and a collapsed-by-default `<details>` block (`LicenseTextDetails`) with the
+VERBATIM upstream license text — in the DOM either way, which is what discharges
+the obligation; collapsing is presentation only. Fields come from the
+regenerated `thirdPartyNotices.generated.json` (see `scripts/security/agents.md`
+for the README-fallback guard — a package without a real license file gets no
+inline text, links only). Bundle note: the JSON is ~570KB raw but is statically
+imported ONLY by this page, which `App.tsx` loads via `lazyWithRetry`, so it
+lands in this page's own lazy chunk (57KB gzipped), never the initial bundle.
+New copy key `THIRD_PARTY_NOTICES_LABELS.LICENSE_TEXT_TOGGLE`; §1.3 clean.
+
+Tests are split by data source, deliberately: `ThirdPartyNoticesPage.test.tsx`
+(pre-existing) runs against the REAL generated JSON — its old "does not include
+a fabricated xlsx entry (no such dependency exists in the tree)" case was
+rewritten in this change because its premise went stale: `xlsx@0.18.5` IS a
+direct production dependency today, and the assertion only stayed green because
+the committed data predated it (2026-07-28) — stale data masking a missing
+attribution. The replacement derives truth from `package-lock.json` both ways
+(no entry that isn't in the lockfile; xlsx present at the lockfile's version).
+`ThirdPartyNoticesPage.license-text.test.tsx` (new, 7 cases, TDD red-first)
+mocks the JSON module and pins rendering behavior: copyright renders, text is
+inside `<details>`, toggle only for entries carrying text, pending badge only
+for `status: 'pending'`, links survive for link-only entries. Also fixed in
+passing (found in 375px UAT, pre-existing): the licenseTextUrls link labels
+embed full URLs and overflowed a 375px viewport — `break-all` added.
 ## 2026-08-30 SCRUM-3532 / SCRUM-3670 — fetch failures no longer masquerade as empty data
 
 Two page-level consumption gaps (deferred surfaces documented by SCRUM-1999, which bounded
@@ -513,3 +622,7 @@ presence so this change cannot be misread as having quietly resolved R-2. Do not
 `scripts/ci/config-drift/flag-inventory.json` also still carries the two `ENABLE_SEMANTIC_SEARCH`
 `claimedBy` entries pointing at this file (lines 65 and 240); `flagInventory.test.ts` asserts that
 finding still fires, so deleting them turns that test red.
+
+## 2026-09-05 — PR #2525 attestation actions on narrow screens
+
+Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Attestation outside the viewport. Document scrollWidth did not detect it because the shell clips overflow. Stack the heading and action group below lg and allow the actions to wrap. The staging browser regression checks every action bounding box at 375px and 1280px; it failed before this fix. Preserve this geometry check alongside actual database loading/error/retry and tenant-isolation checks.

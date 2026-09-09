@@ -1,0 +1,28 @@
+{"pr":1106,"title":"chore(SCRUM-2226): edge worker test harness + red test for shapeAnchorRow key ","mergedAt":"2026-06-21","soak_gate":"FAILURE","other_failures":[]}
+{"pr":1119,"title":"fix(edge-mcp): truthful anchor mapping + nessie source casing + edge test harn","mergedAt":"2026-06-07","soak_gate":"FAILURE/SUCCESS","other_failures":[]}
+{"pr":1121,"title":"fix(edge-mcp): re-route nessie_query to worker Gemini-space search + forward c","mergedAt":"2026-06-08","soak_gate":"FAILURE/SUCCESS","other_failures":[]}
+{"pr":1122,"title":"fix(edge-mcp): verify-by-fingerprint via DEFINER RPC (PR-2: BUG-1)","mergedAt":"2026-06-13","soak_gate":"CANCELLED/FAILURE/SUCCESS","other_failures":[]}
+{"pr":1130,"title":"chore(deps-edge): bump @cloudflare/workers-types from 4.20260602.1 to 4.202606","mergedAt":"2026-06-08","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":1171,"title":"chore(deps-edge): bump @cloudflare/workers-types from 4.20260608.1 to 4.202606","mergedAt":"2026-06-15","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":1386,"title":"chore(deps-edge): bump wrangler from 4.103.0 to 4.106.0 in /services/edge","mergedAt":"2026-07-02","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":1419,"title":"chore(deps-edge): bump @cloudflare/workers-types from 4.20260702.1 to 5.202607","mergedAt":"2026-07-06","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":1638,"title":"chore(deps-edge): bump fast-uri from 3.1.2 to 3.1.4 in /services/edge","mergedAt":"2026-07-22","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":1714,"title":"chore(deps-edge): bump @cloudflare/workers-types from 5.20260719.1 to 5.202607","mergedAt":"2026-07-27","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":1776,"title":"fix(edge): correct MCP registry server.json schema + republish with connection","mergedAt":"2026-08-02","soak_gate":"CANCELLED","other_failures":[]}
+{"pr":1981,"title":"chore(deps-edge): bump @modelcontextprotocol/sdk from 1.29.0 to 1.30.0 in /ser","mergedAt":"2026-08-03","soak_gate":"CANCELLED/SUCCESS","other_failures":["Lighthouse Performance","Tests"]}
+{"pr":1982,"title":"chore(deps-edge): bump @cloudflare/workers-types from 5.20260727.1 to 5.202607","mergedAt":"2026-08-03","soak_gate":"CANCELLED/SUCCESS","other_failures":["Tests"]}
+{"pr":2068,"title":"fix(dpa): stop persisting raw IPs, HMAC them, redact the 16 existing rows (mig","mergedAt":"2026-08-10","soak_gate":"SUCCESS","other_failures":["Check supabase/migrations vs prod","Dependency Scanning","SonarCloud Quality Gate Config"]}
+{"pr":2089,"title":"chore(deps-edge): bump @cloudflare/workers-types from 5.20260731.1 to 5.202608","mergedAt":"2026-08-10","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":2164,"title":"fix(edge): route MCP search_credentials through real semantic search + correct","mergedAt":"2026-08-11","soak_gate":"FAILURE/SUCCESS","other_failures":["Check supabase/migrations vs prod","E2E Tests","Merge Authority"]}
+{"pr":2232,"title":"fix(mcp): audit log has never written a row + unmount'd proof-keys + anchor_do","mergedAt":"2026-08-23","soak_gate":"CANCELLED/FAILURE/SUCCESS","other_failures":[]}
+{"pr":2233,"title":"fix(ingestion): stop reporting total failure as HTTP 200; fix OpenStates 422 a","mergedAt":"2026-08-23","soak_gate":"CANCELLED/FAILURE/SUCCESS","other_failures":[]}
+{"pr":2236,"title":"fix(claims): Nessie fails closed + priced offer retracted; Drive individual sc","mergedAt":"2026-08-23","soak_gate":"FAILURE/SUCCESS","other_failures":[]}
+{"pr":2237,"title":"ci: run the services/edge vitest suite (it gated nothing for ~10 weeks)","mergedAt":"2026-08-15","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":2240,"title":"ci(mcp): enforce tool-claim parity across the five published MCP surfaces (BUG","mergedAt":"2026-08-15","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":2397,"title":"chore(deps-edge): Bump @cloudflare/workers-types from 5.20260817.1 to 5.202608","mergedAt":"2026-08-23","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":2434,"title":"fix(edge): stop oracle_batch_verify discarding the whole batch on one bad memb","mergedAt":"2026-09-06","soak_gate":"CANCELLED/FAILURE/SUCCESS","other_failures":[]}
+{"pr":2443,"title":"chore(deps-edge): Bump @cloudflare/workers-types from 5.20260820.1 to 5.202608","mergedAt":"2026-08-24","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":2546,"title":"chore(deps-edge): bump wrangler from 4.125.0 to 4.127.1 in /services/edge","mergedAt":"2026-08-31","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":2607,"title":"chore(deps-edge): bump fast-uri from 3.1.5 to 3.1.7 in /services/edge","mergedAt":"2026-09-05","soak_gate":"CANCELLED/SUCCESS","other_failures":[]}
+{"pr":2608,"title":"chore(deps-edge): bump qs from 6.15.2 to 6.16.0 in /services/edge","mergedAt":"2026-09-05","soak_gate":"CANCELLED/SUCCESS","other_failures":["Tests"]}
+DONE

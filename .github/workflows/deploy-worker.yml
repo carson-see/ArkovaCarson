@@ -148,6 +148,25 @@ jobs:
         with:
           path: services/worker/circuits/artifacts
           key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
+          # Prefix fallback, mirroring ci.yml. The exact key embeds
+          # services/worker/package-lock.json, so EVERY worker dependency bump
+          # rotates it and forces a miss — and on a miss build.sh re-downloads
+          # powersOfTau28_hez_final_14.ptau, whose public hosts
+          # (storage.googleapis.com/zkevm and hermez.s3-eu-west-1) have both
+          # answered 403 AccessDenied since 2026-09-02 (SCRUM-3955). That is a
+          # PROD DEPLOY BLACKOUT, not a CI annoyance: on 2026-09-08 the #2673
+          # lockfile bump rotated the key and run 34237641990 died on
+          # `curl: (22) ... 403`, leaving prod 36 commits behind main with no
+          # way to ship. ci.yml already had this fallback; deploy-worker.yml
+          # did not — the same parity gap PR #693 left behind for the circuit
+          # build itself. Only an EXACT hit sets `cache-hit`, so on a fallback
+          # the build steps below still run and regenerate wasm/zkey/vkey from
+          # source; what the fallback carries over is the SHA-256-pinned build
+          # INPUTS (the ptau and circomlib-v2.0.5.tar.gz) that build.sh would
+          # otherwise fetch, and build.sh re-verifies both against its pins
+          # before use.
+          restore-keys: |
+            zk-artifacts-${{ runner.os }}-circom2.1.9-
 
       - name: Install circom (cache miss only)
         if: steps.cache-zk-artifacts.outputs.cache-hit != 'true'

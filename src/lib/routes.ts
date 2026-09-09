@@ -182,13 +182,47 @@ export function issuerRegistryPath(orgId: string): string {
   return `/issuer/${orgId}`;
 }
 
+/**
+ * The canonical, permanent origin for public verification links.
+ *
+ * NEVER env-driven. `getAppBaseUrl()` below is deliberately overridable via
+ * `VITE_APP_URL` so in-app links follow whatever host the app is being served
+ * from — right for a share sheet, wrong for anything archived. Artifacts that
+ * outlive the build that produced them must use `canonicalVerifyUrl()`.
+ */
+export const CANONICAL_APP_ORIGIN = 'https://app.arkova.ai';
+
 /** Production-safe base URL — prefers VITE_APP_URL, falls back to production domain */
 export function getAppBaseUrl(): string {
-  const rawBaseUrl = import.meta.env.VITE_APP_URL || 'https://app.arkova.ai';
+  const rawBaseUrl = import.meta.env.VITE_APP_URL || CANONICAL_APP_ORIGIN;
   return rawBaseUrl.replace(/\/+$/, '');
 }
 
-/** Build a full verification URL for a given public ID */
+/**
+ * Build a full verification URL for a given public ID, honouring `VITE_APP_URL`.
+ *
+ * For LIVE UI only — a share sheet, a copy-link button, an on-screen QR — where
+ * pointing at the host the user is already on is correct. Do NOT use it for
+ * anything the user keeps: see `canonicalVerifyUrl()`.
+ */
 export function verifyUrl(publicId: string): string {
   return `${getAppBaseUrl()}${verifyPath(publicId)}`;
+}
+
+/**
+ * Build a verification URL for an ARCHIVED artifact — a downloaded certificate,
+ * an emailed proof, anything that outlives the build that produced it.
+ *
+ * Always the production origin, never `VITE_APP_URL`. `.env.example` ships
+ * `VITE_APP_URL=http://localhost:5173`, and preview deploys set it to an
+ * ephemeral host, so a build-time value baked into a permanent PDF resolves to
+ * localhost or a dead preview host forever. The document cannot be reissued
+ * once it has been handed to an auditor, so it gets the URL that will still
+ * work — not the one this particular build happened to be served from.
+ *
+ * It reads no environment at all, which also keeps its callers runnable outside
+ * a Vite transform (`import.meta.env` is undefined under plain `tsx`/node).
+ */
+export function canonicalVerifyUrl(publicId: string): string {
+  return `${CANONICAL_APP_ORIGIN}${verifyPath(publicId)}`;
 }

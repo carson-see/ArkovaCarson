@@ -1,5 +1,9 @@
 # e2e/helpers/agents.md
 
+## SCRUM-4448 — securing layout boundary helpers
+
+`secure-dialog-layout.ts` supplies deterministic auth/data/extraction boundaries for the isolated real-component layout fixture and rejects non-loopback network requests. Geometry checks cover the viewport, horizontal overflow, real action hit targets and reachable fields; screenshots capture top and bottom of scrolling steps after viewport/scroll anchoring settles. This fixture uses synthetic IDs and captured in-memory requests, never seed credentials or service clients. Do not replace rendering components or add production test-only state to make these assertions pass.
+
 Shared utility functions for E2E Playwright tests.
 
 ## Files
@@ -17,3 +21,44 @@ Shared utility functions for E2E Playwright tests.
 - Profile sessions create real Supabase auth users via `admin.createUser`; clean up after tests.
 - **Never hardcode a Supabase auth storage key.** `profile-session.ts` inlined `sb-127-auth-token`, which is not a constant: supabase-js derives `sb-<first host label>-auth-token`, and `127` is just the first label of `127.0.0.1`. Against a hosted project the app reads `sb-<project-ref>-auth-token`, so the injected session was invisible and 15 tests across `onboarding` / `identity` / `route-guards` could only ever run against a local Supabase. Derive it from the URL the APP uses (`VITE_SUPABASE_URL`, falling back to `E2E_SUPABASE_URL`). The same applies to the `storageState` **origin** — Playwright matches by origin, so it must be `E2E_BASE_URL` when set, not a hardcoded `http://localhost:5173`.
 - **A spec that deletes a SEEDED row must restore it.** CI runs against a `db reset` database, so destroying seed data is invisible there and permanent on a persistent rig or daily runner. Snapshot with `captureRows()` in `beforeAll` — before the first destructive statement — and `restore()` in `afterAll`. Cleaning up only "rows the test created" is not sufficient when the test deletes rows it did not create.
+
+## PR #2637 asynchronous MFA probe outcomes (2026-09-05)
+
+`mfa.ts` waits for successful UI transition or an explicit error after submitting.
+Only a GoTrue wrong-code rejection permits one retry at the next RFC6238 step;
+platform errors fail the probe. `waitForMfaManagementOutcome` waits for QR, step-up,
+or error before branching; `locator.isVisible({ timeout })` never waits.
+
+## 2026-09-08 — the probe now NAMES the rejection (job-level flake triage)
+
+`submitTotpCodeWithBoundaryRetry` used to throw one string for every non-retryable
+outcome — `MFA verification failed; probe will not retry a platform error` — while
+discarding the GoTrue `code` it had already parsed. On 2026-09-08 that string was
+all three of PRs #2442/#2485/#2496 got (runs 34176885437 / 34177317909 /
+34176908799), so CI could not distinguish a wrong code from a rate limit, an
+IP/challenge-reuse rejection, or a failure at `challenge()` that never reached
+`/verify` at all. It now reports endpoint, HTTP status, GoTrue code, the server
+`msg`, and the text the screen actually showed. Two shapes are parsed: current
+GoTrue puts the string code in `code`, older builds put the HTTP status there and
+the string in `error_code` — never report the numeric one. `/challenge` responses
+are observed as well as `/verify`, so a challenge-stage rejection is attributed to
+`challenge()` instead of surfacing as an empty code. `describeMfaFailure` is
+exported and pinned by `e2e/mfa-harness-timing.spec.ts`.
+
+**Do not blame the RFC 6238 step boundary for a rejection.** Verified against
+supabase/auth `internal/api/mfa.go` (`verifyTOTPFactor`): GoTrue validates with
+`totp.ValidateCustom(..., ValidateOpts{Period: 30, Skew: 1, ...})`, so it accepts
+the previous, current AND next step. A code must be more than a full step stale
+before the boundary matters, and the one-shot boundary retry cannot recover a code
+computed from a **different factor's** secret — which is what the 2026-09-08 flake
+actually was (see `src/components/auth/agents.md`). MFA rate limiting is also off
+in the CI stack: the Supabase CLI sets no `GOTRUE_MFA_RATE_LIMIT_CHALLENGE_AND_VERIFY`
+and no `GOTRUE_RATE_LIMIT_HEADER`, and `performRateLimiting` no-ops without one, so
+`over_request_rate_limit` is not a local-CI explanation (it remains one on a rig or
+hosted project, which is why the code is now printed rather than guessed at).
+
+Concurrent MFA org fixtures provide a UUID-derived `org_prefix`. The production
+auto-prefix trigger checks then inserts, so two simultaneous E2E-prefixed names
+can otherwise race on `idx_organizations_org_prefix`. The MFA suite exercises
+role isolation; it does not test that separate prefix allocator. Live batches
+must also respect shared-IP GoTrue MFA/token burst limits;429 remains a failure.

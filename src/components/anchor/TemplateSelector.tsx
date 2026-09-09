@@ -144,7 +144,7 @@ function TemplateCard({
       data-selected={selected}
       onClick={onClick}
       className={cn(
-        'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50',
+        'flex min-w-0 w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50',
         selected && 'border-primary bg-primary/5 ring-1 ring-primary'
       )}
     >
