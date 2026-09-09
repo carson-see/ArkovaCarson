@@ -99,9 +99,9 @@
         ]
       },
       {
-        "name": "verifyCredential",
-        "label": "Verify Credential",
-        "description": "Verify a credential by its Arkova public ID.",
+        "name": "verifyAnchor",
+        "label": "Verify Anchor",
+        "description": "Verify an anchor by its Arkova public ID.",
         "url": "/api/v1/verify/{{public_id}}",
         "method": "GET",
         "input": [
@@ -118,8 +118,8 @@
       },
       {
         "name": "batchVerify",
-        "label": "Batch Verify Credentials",
-        "description": "Verify up to 20 credentials in a single request.",
+        "label": "Batch Verify Anchors",
+        "description": "Verify up to 20 anchors in a single request.",
         "url": "/api/v1/verify/batch",
         "method": "POST",
         "input": [
