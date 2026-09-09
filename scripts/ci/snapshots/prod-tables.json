@@ -484,6 +484,10 @@
       {
         "name": "webhook_idempotency",
         "reason": "created in 0116, dropped out-of-band \u2014 verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
+      },
+      {
+        "name": "admin_org_provisioning_requests",
+        "reason": "PR #2571 / SCRUM-4455: migration 0439 candidate receipt table is intentionally not yet in production (read-only catalog verified 2026-09-05). Isolated owieixqcnigfpiowptop replay/rollback tests passed. Release requires 0436 (#2655) then 0439, completed fresh qualification, and approved deployment; after production apply verify pg_class and move this entry to tables. This is pending release, not an assertion of production presence."
       }
     ],
     "in_prod_only": [
