@@ -3,6 +3,11 @@
   "_history": [
     {
       "date": "2026-09-09",
+      "author": "CTO session — batch 2 prod applies",
+      "note": "ADDED 0421, 0422, 0433 (PR #2440) and 0439 (PR #2571) immediately ahead of applying each to prod vzwyaatejekddvltxyye. The exemption must precede the apply because .claude/hooks/check-prod-migration-apply.sh blocks otherwise, and must remain after it because the SCRUM-2500 orphan audit blocks every migration-touching PR on a prod ledger row with no matching .sql. §1.2 verified per file: 0421 and 0433 contain no DDL at all (public-projection function replacements only, lock_timeout present); 0422 and 0439 carry hot-table DDL guarded by SET LOCAL lock_timeout='5s' — 0422's non-CONCURRENT unique index on organizations is preceded by it, and 0422 wraps in an explicit transaction because a bare SET LOCAL outside one raises WARNING 25P01 and silently no-ops while still passing the CI grep. Applied one at a time with prod /health checked between each, ledger reconciled to the numeric prefix, and list_migrations confirmed before moving on. If any apply fails, its prefix is removed again in the same session rather than left as a false exemption. REMOVE each when its owning PR merges and lands the .sql on main."
+    },
+    {
+      "date": "2026-09-09",
       "author": "CTO session — batch 1 applied, exemptions now TRUE",
       "note": "ADDED 0420, 0423, 0424, 0426, 0434, 0435, 0438 — all seven are now APPLIED TO PROD vzwyaatejekddvltxyye and their .sql files are not yet on main, so each satisfies this file's INVARIANT exactly. Applied 2026-09-09 ~14:00Z via MCP apply_migration, ledger reconciled to the numeric prefix, verified present via list_migrations, prod /health checked healthy before, between and after. Sequencing note for whoever reads this next, because I got the order wrong once today: I reverted these exemptions BEFORE applying, on the correct reasoning that an exemption for an unapplied migration is false. But the applies then made them necessary — the 'Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)' step blocks every migration-touching PR on a prod ledger row with no matching .sql in that PR's tree, and the exemption is precisely the suppressor for the migrate-before-merge window. So the exemption is false BEFORE the apply and required AFTER it. 'Same motion' in §0 rule 10 means apply-then-exempt without a gap, not exempt-then-apply. 0423 does not appear in #2472's own orphan list because that PR carries 0423's .sql; it appears for every OTHER migration-touching PR, which is why all seven are listed rather than only the ones I noticed. Confirmed by the same run: 'PR numeric ledger drift: 0' — the numeric check passes post-apply. One apply behaved exactly as designed and is worth recording: 0423 first failed with 55P03 lock timeout on CREATE TRIGGER against the hot anchors table, rolled back completely (no trigger, no function, no ledger row), and succeeded on retry once the lock cleared. That is the §1.2 guard doing its job instead of camping at the head of the FIFO lock queue. REMOVE each prefix when its owning PR merges and lands the .sql on main."
     },
@@ -195,13 +200,17 @@
   "exemptPrefixes": [
     "0415",
     "0420",
+    "0421",
+    "0422",
     "0423",
     "0424",
     "0425",
     "0426",
     "0427",
+    "0433",
     "0434",
     "0435",
-    "0438"
+    "0438",
+    "0439"
   ]
 }
