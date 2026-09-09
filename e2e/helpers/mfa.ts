@@ -232,10 +232,21 @@ export async function readSecretFromSettings(page: Page): Promise<string> {
   return text.trim();
 }
 
-// Item 23/A2-6 (PR #2637 review) — the RFC 6238 30-second step boundary is
-// a real flake vector: a code computed right at the edge of a step can be
-// stale by the time Playwright's fill()+click() round trip reaches the
-// server, and GoTrue rejects it with `mfa_verification_failed`.
+// Item 23/A2-6 (PR #2637 review) — a code computed right at the edge of an
+// RFC 6238 step can go stale before Playwright's fill()+click() round trip
+// reaches the server, which GoTrue would reject as
+// `mfa_verification_failed`.
+//
+// SCOPE, verified 2026-09-08 against supabase/auth
+// (`internal/api/mfa.go`, `verifyTOTPFactor`): GoTrue validates with
+// `totp.ValidateCustom(..., ValidateOpts{Period: 30, Skew: 1, ...})`, so it
+// accepts the previous, current AND next step. A code has to be more than a
+// full step stale before the boundary matters at all. Keep the guard — it
+// costs nothing and covers a genuinely slow submit — but do NOT reach for
+// it when diagnosing a rejection: with Skew 1 the far likelier cause is
+// that the code was computed from a DIFFERENT factor's secret than the one
+// the app is verifying (see MfaEnrollmentRequired.tsx's StrictMode note),
+// and no amount of boundary retrying recovers from that.
 const TOTP_STEP_MS = 30_000;
 const BOUNDARY_SAFETY_MARGIN_MS = 3_000;
 
@@ -256,6 +267,24 @@ function computeTotpAvoidingBoundary(secret: string): string {
 }
 
 /**
+ * A GoTrue rejection observed on the MFA challenge/verify round trip.
+ * Only the failure metadata is kept — never a successful response body, so
+ * no freshly-minted JWT is ever retained or printed.
+ */
+interface MfaRejection {
+  endpoint: 'challenge' | 'verify';
+  status: number;
+  code?: string;
+  message?: string;
+}
+
+/** GoTrue codes that mean "that TOTP code was wrong or expired" — the only
+ *  class a retry can fix. Mirrors `WRONG_CODE_ERROR_CODES` in
+ *  `src/lib/mfaErrors.ts`, which is what decides that the app shows a
+ *  retryable inline error rather than failing open. */
+const RETRYABLE_REJECTION_CODES = ['mfa_verification_failed', 'mfa_verification_rejected', 'mfa_challenge_expired'];
+
+/**
  * Fill a 6-digit TOTP code input and submit, guarding the 30s RFC 6238
  * step-boundary flake vector: computes the code as late as possible (right
  * before fill+submit) via `computeTotpAvoidingBoundary`, and if the server
@@ -263,6 +292,17 @@ function computeTotpAvoidingBoundary(secret: string): string {
  * full step first so the freshly-computed retry code cannot straddle the
  * same boundary again. A second failure is treated as a real defect, not a
  * flake: it is left to fail the test rather than looping.
+ *
+ * DIAGNOSABILITY (2026-09-08): the thrown error names the endpoint that
+ * rejected, the HTTP status, the GoTrue `code`, and the message the screen
+ * actually showed. The previous single generic string ("MFA verification
+ * failed; probe will not retry a platform error") discarded the `code` it
+ * had already parsed, so three PRs' worth of CI logs could not distinguish
+ * a wrong code from a rate limit, an IP/challenge-reuse rejection, or a
+ * failure at the `challenge()` step that never reached `/verify` at all.
+ * CI runs the `list` reporter with no HTML report, so this message is the
+ * ONLY artifact a failing E2E job leaves behind — it has to be enough to
+ * classify the failure on its own.
  */
 export async function submitTotpCodeWithBoundaryRetry(
   page: Page,
@@ -270,20 +310,36 @@ export async function submitTotpCodeWithBoundaryRetry(
   opts: { codeTestId: string; submitTestId: string; errorTestId: string },
 ): Promise<void> {
   const input = page.getByTestId(opts.codeTestId);
-  let verification: Promise<{ code?: string } | null> | null = null;
-  const observeVerification = (response: Response) => {
-    if (/\/auth\/v1\/factors\/[^/]+\/verify$/.test(new URL(response.url()).pathname)) {
-      // Keep only the rejection code; never log or retain successful JWTs.
-      verification = response.ok() ? Promise.resolve(null) : response.json().then(
-        (body: { code?: string }) => ({ code: body.code }),
-        () => null,
-      );
-    }
+  // Both halves of the round trip are observed, not just /verify: a
+  // challenge() rejection shows the same inline error but never produces a
+  // /verify response, and used to surface as an empty, unattributable code.
+  // ONLY rejections are recorded, and a success never clears one: within a
+  // single submit the app calls challenge() then verify(), so a successful
+  // challenge must not overwrite the verify rejection that follows it.
+  let rejection: Promise<MfaRejection> | null = null;
+  const observeMfaResponse = (response: Response) => {
+    if (response.ok()) return; // never read, retain or log a successful body (fresh JWTs)
+    const match = /\/auth\/v1\/factors\/[^/]+\/(challenge|verify)$/.exec(new URL(response.url()).pathname);
+    if (!match) return;
+    const endpoint = match[1] as 'challenge' | 'verify';
+    rejection = response.json().then(
+      (body: { code?: string | number; error_code?: string; msg?: string; message?: string }) => ({
+        endpoint,
+        status: response.status(),
+        // GoTrue's newer API version puts the string code in `code`; the
+        // older shape puts the HTTP status there and the string in
+        // `error_code`. Take whichever is actually a string — reporting the
+        // numeric one would read as a code that does not exist.
+        code: typeof body.code === 'string' ? body.code : body.error_code,
+        message: body.msg ?? body.message,
+      }),
+      () => ({ endpoint, status: response.status() }),
+    );
   };
-  page.on('response', observeVerification);
+  page.on('response', observeMfaResponse);
   try {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      verification = null;
+      rejection = null;
       await input.fill(computeTotpAvoidingBoundary(secret));
       await page.getByTestId(opts.submitTestId).click();
       // isVisible({ timeout }) is an immediate snapshot, not an async wait.
@@ -293,9 +349,14 @@ export async function submitTotpCodeWithBoundaryRetry(
         page.getByTestId(opts.errorTestId).waitFor({ state: 'visible', timeout: 20_000 }).then(() => 'error'),
       ]);
       if (outcome === 'complete') return;
-      const rejection = await verification as { code?: string } | null;
-      if (attempt !== 0 || !['mfa_verification_failed', 'mfa_verification_rejected', 'mfa_challenge_expired'].includes(rejection?.code ?? '')) {
-        throw new Error('MFA verification failed; probe will not retry a platform error');
+      // The inline error is rendered in-page from the response, and the DOM
+      // poller can therefore observe it BEFORE Playwright delivers the
+      // `response` event to this process. Give the event a bounded chance to
+      // land rather than mis-reporting a real rejection as "nothing observed".
+      const observed = await waitForMfaRejection(() => rejection);
+      const shown = (await page.getByTestId(opts.errorTestId).innerText().catch(() => '')).trim();
+      if (attempt !== 0 || !RETRYABLE_REJECTION_CODES.includes(observed?.code ?? '')) {
+        throw new Error(describeMfaFailure({ attempt, observed, shown }));
       }
       // A fresh RFC6238 step is necessary; do not spend an unconditional
       // 30-second sleep inside the suite's former 30-second total budget.
@@ -303,8 +364,69 @@ export async function submitTotpCodeWithBoundaryRetry(
       await page.waitForFunction((readyAt) => Date.now() >= readyAt, retryAt, { timeout: TOTP_STEP_MS + 1_000 });
     }
   } finally {
-    page.off('response', observeVerification);
+    page.off('response', observeMfaResponse);
   }
+}
+
+/** Milliseconds to let a `response` event catch up with the DOM error it
+ *  caused. Generous enough for a loaded CI runner, short enough that a
+ *  genuine "no MFA call happened" failure still reports promptly. */
+const REJECTION_EVENT_GRACE_MS = 2_000;
+
+async function waitForMfaRejection(
+  read: () => Promise<MfaRejection> | null,
+): Promise<MfaRejection | null> {
+  const deadline = Date.now() + REJECTION_EVENT_GRACE_MS;
+  for (;;) {
+    const pending = read();
+    if (pending) return pending;
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/**
+ * Build the failure message for `submitTotpCodeWithBoundaryRetry`. Exported
+ * so its contract is unit-testable without driving a browser.
+ */
+export function describeMfaFailure(args: {
+  attempt: number;
+  observed: MfaRejection | null;
+  shown: string;
+}): string {
+  const { attempt, observed, shown } = args;
+  const where = attempt === 0 ? 'on the first submit' : 'on the post-step-boundary retry';
+  const screen = shown ? ` The screen showed: "${shown}".` : '';
+
+  if (!observed) {
+    return (
+      `MFA submit showed an inline error ${where}, but no rejected ` +
+      `/auth/v1/factors/:id/challenge or /verify response was observed within ` +
+      `${REJECTION_EVENT_GRACE_MS}ms. The failure happened before or outside the ` +
+      `challenge/verify round trip.${screen}`
+    );
+  }
+
+  const code = observed.code ?? '<no code in body>';
+  const detail = observed.message ? ` msg="${observed.message}".` : '';
+
+  if (attempt !== 0) {
+    return (
+      `MFA ${observed.endpoint} rejected again ${where} ` +
+      `(HTTP ${observed.status}, code=${code}).${detail}${screen} ` +
+      `The probe retries a stale TOTP code exactly once and will not loop. If ` +
+      `that code is a wrong-code rejection, the submitted code is wrong for the ` +
+      `factor being verified, not merely stale — check that the secret read from ` +
+      `the DOM still belongs to the factor the app is challenging.`
+    );
+  }
+
+  return (
+    `MFA ${observed.endpoint} rejected ${where} ` +
+    `(HTTP ${observed.status}, code=${code}).${detail}${screen} ` +
+    `The probe only retries ${RETRYABLE_REJECTION_CODES.join('/')}; every other ` +
+    `code is an explicit backend rejection, not a TOTP step-boundary race.`
+  );
 }
 
 /** Wait for either result of an asynchronous management action before branching. */
