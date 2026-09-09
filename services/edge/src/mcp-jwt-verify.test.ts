@@ -199,3 +199,54 @@ describe('verifySupabaseJwt — HS256 fallback + alg pinning', () => {
     expect(await verifySupabaseJwt(`${h2}.${p}.AAAA`, { supabaseUrl: SUPABASE_URL, fetchJwks: async () => ({ keys: [] }) })).toEqual({ ok: false, reason: 'wrong_alg' });
   });
 });
+
+describe('verifySupabaseJwt — malformed segments never escape as a thrown DOMException', () => {
+  beforeEach(() => resetJwksCacheForTests());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  // An unauthenticated caller controls every byte of the token. `atob` throws a
+  // DOMException on a non-base64 signature segment, and nothing between here and
+  // the Worker's fetch handler catches it — that surfaced as a generic runtime
+  // error instead of the 401 the auth contract promises.
+  it('returns bad_signature (not a throw) for a non-base64 HS256 signature segment', async () => {
+    const h = b64u(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const p = b64u(JSON.stringify(claims));
+    const r = await verifySupabaseJwt(`${h}.${p}.$$$$`, { secret: 's3cret', supabaseUrl: SUPABASE_URL });
+    expect(r).toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  it('returns bad_signature (not a throw) for a non-base64 ES256 signature segment', async () => {
+    const { jwk } = await esPair();
+    const fetchJwks: JwksFetcher = async () => ({ keys: [jwk] });
+    const h = b64u(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid: 'kid-1' }));
+    const p = b64u(JSON.stringify(claims));
+    const r = await verifySupabaseJwt(`${h}.${p}.$$$$`, { supabaseUrl: SUPABASE_URL, fetchJwks });
+    expect(r).toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  it('never rejects for garbage three-segment inputs, on either alg', async () => {
+    const { jwk } = await esPair();
+    const fetchJwks: JwksFetcher = async () => ({ keys: [jwk] });
+    const goodPayload = b64u(JSON.stringify(claims));
+    const garbage = ['$$$$', '!!', '====', '   ', 'ではない', ' ', '.', 'a', '%%%%%%%%', '~~~~'];
+    const headers = [
+      b64u(JSON.stringify({ alg: 'HS256', typ: 'JWT' })),
+      b64u(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid: 'kid-1' })),
+      ...garbage,
+    ];
+
+    for (const header of headers) {
+      for (const payload of [goodPayload, ...garbage]) {
+        for (const sig of garbage) {
+          const result = await verifySupabaseJwt(`${header}.${payload}.${sig}`, {
+            secret: 's3cret',
+            supabaseUrl: SUPABASE_URL,
+            fetchJwks,
+          });
+          expect(result.ok).toBe(false);
+          if (!result.ok) expect(typeof result.reason).toBe('string');
+        }
+      }
+    }
+  });
+});
