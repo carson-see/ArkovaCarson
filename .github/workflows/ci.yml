@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@20652fbbdefffcdaa493a5bf57ab2ac6b1db715b # v3.97.1
+        uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c # v3.97.4
         with:
           extra_args: --only-verified
 
@@ -930,11 +930,16 @@ jobs:
           SUPABASE_URL=$(supabase status --output json | jq -r '.API_URL')
           SUPABASE_ANON_KEY=$(supabase status --output json | jq -r '.ANON_KEY')
           SUPABASE_SERVICE_ROLE_KEY=$(supabase status --output json | jq -r '.SERVICE_ROLE_KEY')
+          # SQL role-corruption tests need the local bootstrap administrator and
+          # the actual free port selected by ci-supabase-start.sh (instead of the default port 54322).
+          UAT03_DATABASE_URL=$(supabase status --output json | jq -r '.DB_URL | sub("://postgres:"; "://supabase_admin:")')
           echo "::add-mask::$SUPABASE_ANON_KEY"
           echo "::add-mask::$SUPABASE_SERVICE_ROLE_KEY"
+          echo "::add-mask::$UAT03_DATABASE_URL"
           echo "url=$SUPABASE_URL" >> "$GITHUB_OUTPUT"
           echo "anon_key=$SUPABASE_ANON_KEY" >> "$GITHUB_OUTPUT"
           echo "service_role_key=$SUPABASE_SERVICE_ROLE_KEY" >> "$GITHUB_OUTPUT"
+          echo "uat03_database_url=$UAT03_DATABASE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Run database reset
         id: db-reset
@@ -998,6 +1003,7 @@ jobs:
           SUPABASE_ANON_KEY: ${{ steps.supabase-keys.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-keys.outputs.service_role_key }}
           RLS_TEST_PASSWORD: Arkova2026!
+          UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
 
       - name: Install worker dependencies
         id: worker-deps
@@ -1598,6 +1604,20 @@ jobs:
       - name: Install Playwright browsers
         if: steps.e2e-changed.outputs.changed == 'true'
         run: node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Verify OAuth email confirmation UI
+        if: steps.e2e-changed.outputs.changed == 'true'
+        # Real app routes/components; owned mocked Auth/worker boundaries, no seed setup.
+        run: node_modules/.bin/playwright test --config playwright.uat03.config.ts
+        timeout-minutes: 3
+
+      - name: Upload OAuth confirmation UI evidence
+        if: always() && steps.e2e-changed.outputs.changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oauth-email-confirmation-ui
+          path: output/playwright/uat03*
+          retention-days: 14
 
       - name: Setup Supabase CLI
         if: steps.e2e-changed.outputs.changed == 'true'
