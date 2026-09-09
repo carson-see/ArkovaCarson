@@ -1242,7 +1242,13 @@ async function loadBroadcastIntentHex(txId: string): Promise<string | null> {
       .eq('receipt_id', txId)
       .not('raw_response', 'is', null)
       .limit(5);
-    if (error || !Array.isArray(data)) return null;
+    // SCRUM-3836: `null` meant both "query failed" and "no intent stored", so a
+    // failed lookup silently looked like a missing broadcast intent.
+    if (error) {
+      logger.error({ error, txId }, 'Broadcast-intent lookup failed — treating as no intent');
+      return null;
+    }
+    if (!Array.isArray(data)) return null;
     for (const row of data) {
       const intent = (row as { raw_response?: { broadcast_intent?: { tx_id?: unknown; tx_hex?: unknown } } })
         .raw_response?.broadcast_intent;
