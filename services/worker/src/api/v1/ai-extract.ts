@@ -247,21 +247,47 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const deducted = await deductAICredits(orgId, userId, 1);
-    if (!deducted && creditBalance) {
-      // Deduction failed but credits existed — DB error, not insufficient balance.
-      // Behavior is intentionally unchanged here (fail OPEN — proceed with the
-      // extraction) per the RISK-6 product decision; this is a REVENUE LEAK
-      // (free AI extraction) and must page, not just log.
-      logger.error({ orgId, userId }, 'AI credit deduction failed — proceeding with extraction');
+    if (!deducted) {
+      // Deduction failed — either credits existed and the debit itself errored
+      // (the exhausted case already returned 402 above), OR `checkAICredits`
+      // came back null (no `ai_credits` row / its own RPC failed) and
+      // `deductAICredits` cleanly reported no debit. The two used to be handled
+      // differently: `creditBalance` was required to be truthy here, so the
+      // null-row case fell through this guard entirely and performed a FREE
+      // extraction with no credit accounting whatsoever — no `ai_credits` row
+      // means `check_ai_credits` returns zero rows (not an error) and
+      // `deduct_ai_credits` returns `false` cleanly, so `deducted` is false but
+      // `creditBalance` is also null. That is the exact "no balance row means
+      // no entitlement, not free" defect class SCRUM-2538 fixes for
+      // `check_unified_credits` in this same PR — it does not get a pass here
+      // just because it is a sibling credit system.
+      //
+      // SCRUM-3502: this now FAILS CLOSED in both cases. The RISK-6 product
+      // decision was to proceed anyway, and the previous comment here named
+      // the consequence exactly — "a REVENUE LEAK (free AI extraction)". No
+      // credit was consumed, so performing the extraction renders paid work
+      // for free, on a path that is live in production
+      // (ENABLE_AI_EXTRACTION defaults true, §1.6). Refusing costs the caller
+      // one retry; proceeding costs revenue on every occurrence.
+      logger.error({ orgId, userId }, 'AI credit deduction failed — refusing the extraction');
       captureCreditRpcFailureAlert({
         rpc: 'deduct_ai_credits',
         operation: 'ai-extract.deductAICredits',
-        failMode: 'open',
-        error: new Error('deduct_ai_credits failed — proceeding with FREE AI extraction'),
+        failMode: 'closed',
+        error: new Error('deduct_ai_credits failed — refusing AI extraction (fail CLOSED)'),
         orgId,
         userId,
         extra: { amount: 1 },
       });
+      // 503, not 402: `insufficient_credits` would tell the caller to buy more
+      // when `checkAICredits` just reported that they have some. The failure is
+      // ours and it is retryable.
+      res.status(503).json({
+        error: 'credit_system_unavailable',
+        message:
+          'Credit accounting could not be confirmed. No extraction was performed. Please try again later.',
+      });
+      return;
     }
 
     // Call AI provider
