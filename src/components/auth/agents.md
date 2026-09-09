@@ -68,6 +68,13 @@ Regression coverage: `AuthLinkErrorRedirect.test.tsx` drives a **real** `MemoryR
 
 Note: `eslint-rules/no-unscoped-service-test.cjs` flags any test-file variable whose name merely *contains* "from" (substring match), so a mock named `mockAuthLinkErrorFromUrl` trips it spuriously. Mock state here is named `stubbedAuthLinkError` to avoid the false positive.
 
+## SCRUM-4035 — OAuth mailbox confirmation
+
+`OAuthEmailConfirmation` owns the separate post-OAuth mailbox step; `SignUpPage` selects it
+without coupling `SignUpForm` to provider behavior. `AuthGuard` redirects signed pending
+sessions before mounting protected content. This UI is not the security boundary: the
+worker/edge verifiers and database role enforce the same state. Preserve the checked local
+sign-out + `arkova_signed_out` flag + hard navigation convention to avoid profile teardown races.
 ## 2026-09-03 SCRUM-3167 — MFA login enforcement, restored and hardened (PR #1973 lineage)
 
 Restores the MFA gate PR #1973 shipped (`3572fcd6e`) and reverted 9 minutes later (`6d10032b4`) after it walled out every ORG_ADMIN and platform admin — root cause was prod Supabase Auth having `mfa_totp_enroll_enabled=false` while the enrollment screen had no escape hatch on an `enroll()` failure. Prod TOTP is enabled now (2026-09-03, verified round-trip); the design below adds the fail-open contract PR #1973 was missing so a platform misconfiguration can never repeat that incident.
@@ -185,3 +192,32 @@ via `e2e/helpers/mfa.ts`'s `readSecretFromSettings` + `e2e/helpers/totp.ts`.
 query here — Amendment A4-3 dropped org-level enforcement from Phase 1 entirely; that lives only
 in `useMfaEnrollmentRequirement` (this same folder's AuthGuard entry above), and even there it's
 currently unused pending a Phase 2 audited RPC.
+
+## 2026-09-08 — `MfaEnrollmentRequired.tsx` enrolls ONCE per mount, StrictMode included
+
+`src/main.tsx` renders the app inside `<React.StrictMode>`, so every dev/CI build mounts →
+unmounts → remounts each component and invokes its effects **twice**. The mount-time
+`enroll()` effect here — the one whose own comment says "Intentionally mount-once:
+re-enrolling on every re-render would spam Supabase and burn the MaxEnrolledFactors cap
+(Amendment A3)" — was not actually mount-once under that double-invoke. It created **two**
+unverified factors and rendered whichever `enroll()` resolved LAST, so the displayed QR/secret
+could silently move onto a different factor **after** the user (or an E2E probe) had already
+read the one on screen. `enrollmentStartedRef` now guards it: the ref survives StrictMode's
+simulated remount (same component instance) but not a real one, which is exactly the
+documented intent. `TwoFactorSetup.tsx` was never affected — it enrolls from a click
+(`performEnroll`), and its mount effect only lists factors.
+
+This was the root cause of the job-level `e2e/mfa-enrollment-and-challenge.spec.ts` flake seen
+on PRs #2442/#2485/#2496 on 2026-09-08 (only the two `mfa-enrollment-required` scenarios, lines
+208 and 385 — never the `TwoFactorSetup`/`MfaChallenge` ones in the same file). The spec reads
+`mfa-enrollment-secret` once and computes every subsequent TOTP code from that snapshot; when
+the second `enroll()` landed after that read, every code was for the wrong factor. Deterministic
+within a job (all three attempts of a serial group hit the same slow-stack conditions),
+intermittent across jobs. It was **not** an RFC 6238 step-boundary race — GoTrue validates with
+`Skew: 1` — which is why the harness's one-shot boundary retry could never recover it.
+
+Pinned by `MfaEnrollmentRequired.test.tsx`'s two `renderScreenUnderStrictMode` cases: `enroll()`
+is called exactly once, and a late second `enroll()` cannot swap the displayed secret or the
+`factorId` that `challenge()`/`verify()` target. **Any new component that starts server-side
+work in a mount effect needs the same treatment and the same StrictMode-wrapped test** — the
+plain `render()` helper cannot see this class of defect at all.
