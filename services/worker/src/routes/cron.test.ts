@@ -112,8 +112,16 @@ vi.mock('../webhooks/delivery.js', () => ({
 // (/check-credential-expiry, gated on ENABLE_EXPIRY_ALERTS), so a module-level
 // mock here cannot perturb any other route's behaviour.
 const mockGetFlag = vi.fn().mockReturnValue(true);
+// DI-736: the route resolves ENABLE_EXPIRY_ALERTS through `getFlagLive`
+// (TTL-refreshed switchboard read). `getFlag` is the boot snapshot and is
+// mocked separately so a regression back to it fails a test rather than
+// silently reading stale state.
+const mockGetFlagLive = vi.fn().mockResolvedValue(true);
 vi.mock('../middleware/flagRegistry.js', () => ({
-  flagRegistry: { getFlag: (...args: unknown[]) => mockGetFlag(...args) },
+  flagRegistry: {
+    getFlag: (...args: unknown[]) => mockGetFlag(...args),
+    getFlagLive: (...args: unknown[]) => mockGetFlagLive(...args),
+  },
 }));
 
 const mockProcessMonthlyCredits = vi.fn().mockResolvedValue(10);
@@ -277,9 +285,11 @@ vi.mock('../jobs/ipedsFetcher.js', () => ({
   fetchIpedsInstitutions: (...args: unknown[]) => mockFetchIpedsInstitutions(...args),
 }));
 
-const mockDetectReorgs = vi.fn().mockResolvedValue({ reorgsDetected: 0 });
-const mockMonitorStuckTransactions = vi.fn().mockResolvedValue({ stuck: 0 });
-const mockRebroadcastDroppedTransactions = vi.fn().mockResolvedValue({ rebroadcast: 0 });
+// SCRUM-3836: `completed` is part of the ReorgCheckResult contract — the route
+// returns 503 without it, so an incomplete mock would misrepresent the route.
+const mockDetectReorgs = vi.fn().mockResolvedValue({ reorgsDetected: 0, completed: true });
+const mockMonitorStuckTransactions = vi.fn().mockResolvedValue({ stuck: 0, completed: true });
+const mockRebroadcastDroppedTransactions = vi.fn().mockResolvedValue({ rebroadcast: 0, completed: true });
 const mockConsolidateUtxos = vi.fn().mockResolvedValue({ consolidated: 0 });
 const mockMonitorFeeRates = vi.fn().mockResolvedValue({ currentRate: 5 });
 vi.mock('../jobs/chain-maintenance.js', () => ({
@@ -1853,7 +1863,21 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/detect-reorgs');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ reorgsDetected: 0 });
+      expect(res.body).toEqual({ reorgsDetected: 0, completed: true });
+    });
+
+    // SCRUM-3836: prod answered 200 on 1,108 consecutive runs whose candidate
+    // query had been killed by statement_timeout. A run that inspected nothing
+    // must not read as healthy to Cloud Scheduler.
+    it('returns 503 when the run could not complete', async () => {
+      mockDetectReorgs.mockResolvedValueOnce({
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'candidate_query_failed',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/detect-reorgs');
+      expect(res.status).toBe(503);
+      expect(res.body.reason).toBe('candidate_query_failed');
     });
 
     it('returns 500 on failure', async () => {
@@ -1869,7 +1893,17 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/monitor-stuck-txs');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ stuck: 0 });
+      expect(res.body).toEqual({ stuck: 0, completed: true });
+    });
+
+    // SCRUM-3836: a failed candidate query must not read as "nothing stuck".
+    it('returns 503 when the run could not complete', async () => {
+      mockMonitorStuckTransactions.mockResolvedValueOnce({
+        checked: 0, stuck: 0, recovered: 0, completed: false, reason: 'candidate_query_failed',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/monitor-stuck-txs');
+      expect(res.status).toBe(503);
     });
 
     it('returns 500 on failure', async () => {
@@ -2495,6 +2529,7 @@ describe('cron routes', () => {
 
     beforeEach(() => {
       mockGetFlag.mockReturnValue(true);
+      mockGetFlagLive.mockResolvedValue(true);
       mockDispatchWebhookEvent.mockResolvedValue(undefined);
     });
 
@@ -2591,6 +2626,20 @@ describe('cron routes', () => {
 
     it('skips cleanly when ENABLE_EXPIRY_ALERTS is off', async () => {
       mockGetFlag.mockReturnValue(false);
+      mockGetFlagLive.mockResolvedValue(false);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ skipped: true });
+      expect(db.from).not.toHaveBeenCalled();
+    });
+
+    // DI-736 / SCRUM-3475 — flipping the switchboard row must take effect
+    // without a worker restart, so the gate reads the live value, not the
+    // boot snapshot this process started with.
+    it('honours a switchboard flip that the boot snapshot has not seen', async () => {
+      mockGetFlag.mockReturnValue(true);
+      mockGetFlagLive.mockResolvedValue(false);
       const res = await request(createApp()).post('/cron/check-credential-expiry');
 
       expect(res.status).toBe(200);

@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach, vi } from 'vitest';
-import { readFileSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { newDriverStats } from './driver-core';
@@ -40,6 +40,26 @@ describe('runtime: writeEvidenceFile', () => {
 
   it('rejects evidence paths outside docs/staging', () => {
     expect(() => writeEvidenceFile('../escape.json', { driver: 'x' })).toThrow(/docs\/staging/);
+  });
+
+  it('overwrites in place across repeated checkpoint writes and leaves no temp file behind', () => {
+    const out = join(scratch, 'checkpointed.json');
+    writeEvidenceFile(out, { cycles: 1, checkpoint: true, complete: false }, { quiet: true });
+    writeEvidenceFile(out, { cycles: 2, checkpoint: true, complete: false }, { quiet: true });
+    writeEvidenceFile(out, { cycles: 2, checkpoint: false, complete: true });
+    const parsed = JSON.parse(readFileSync(out, 'utf8'));
+    expect(parsed).toEqual({ cycles: 2, checkpoint: false, complete: true });
+    // The temp+rename must not litter the evidence directory.
+    expect(readdirSync(scratch)).toEqual(['checkpointed.json']);
+  });
+
+  it('quiet suppresses the written line so per-cycle checkpoints do not flood the soak log', () => {
+    const out = join(scratch, 'quiet.json');
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    writeEvidenceFile(out, { a: 1 }, { quiet: true });
+    expect(spy).not.toHaveBeenCalled();
+    writeEvidenceFile(out, { a: 2 });
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
 

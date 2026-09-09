@@ -4,6 +4,43 @@ _Last updated: 2026-09-07 (ninth closure: approver-class fields now reject a LEA
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
 _Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditions + new do-not-merge body/label parity lint; previously: evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
 
+## 2026-09-05 — a claim rule that could not fire, and a sixth surface nobody checked
+
+**`CLAIM_RULES[retrieval-mechanism-claim]` was DEAD.** Its `tools` still read
+`search_anchors` after the registry renamed the tool to `arkova_search_anchors`.
+`mentionRegex` excludes `_` on both sides of the boundary — deliberately, so `verify`
+cannot match inside `verify_batch` — so the old name matched nothing inside the new one.
+No region was ever scoped to the rule; it produced no violations and the gate reported a
+clean pass while checking nothing. **A dead rule and a clean repo are indistinguishable in
+the exit code.** That is the lesson worth keeping: this file's rules are scoped by a
+string that another repository owns, and a rename there silently disarms them.
+
+The `CLAIM_RULES` orphan test now fails any rule scoped to a name `TOOL_DEFINITIONS` does
+not register — the class, not the instance. Scoped to the live name the rule fires again
+and every surface passes it, so the six baseline entries it was holding (3
+retrieval-mechanism on `arkova_search_anchors`, 3 disabled-capability on `nessie_query`)
+were genuinely stale and are removed. Shrink-only, and none of them a claim written here.
+The 3 `card-description-parity` entries stay: those violations still occur.
+
+**Rule 5, `skill-bare-tool-name` (new).** `public/.well-known/agent-skills/*/SKILL.md`
+were a SIXTH published surface carrying MCP call instructions, checked by nothing — three
+of them named tools the server does not register, so an agent following the skill got a
+tool-not-found, on the client, where we never see it. The rule flags a backticked bare
+name from the 15-name set in an MCP context (the `## MCP` section body, or a line naming
+MCP or the edge endpoint). Context scoping is what keeps it narrow: `search` is a REST
+path segment under `## HTTP` in the same file and `verify` is an English verb. Strict, no
+baseline — a broken instruction is not a claim anyone can own for a sprint. Skills are
+discovered from the directory, so a new one is covered the moment it exists. Rule 5 runs
+over `input.skills`, NOT `input.surfaces`: the skills carry no tool descriptions, so
+running the description rules over them would attribute a neighbouring tool's prose to
+whatever the skill happens to name.
+
+**`check-api-contract-drift.ts`** now DERIVES the expected `x-agent-usage.tool_name` as
+`arkova_${operationId}` rather than requiring equality (SCRUM-4465), which keeps the two
+identifiers pinned across a fixed prefix. `operationId` itself is unchanged and must stay
+so; the §1.8 reasoning is in `docs/api/agents.md` (2026-09-05).
+
+
 ## 2026-08-29 — `check-do-not-merge-body.ts` (new) + `mergify-policy-lints-gate.test.ts` (new) — SCRUM-3804
 
 **The Policy Lints job now gates the queue.** `check-success = Policy Lints` is in all three `.mergify.yml` queue rules' `merge_conditions`, closing the gap this file's own 2026-08-23 NOTE recorded (the job "fails loudly in the run log while gating nothing") — which also meant every override label documented for its steps was a no-op as a merge gate, there being nothing to override. `mergify-policy-lints-gate.test.ts` pins the condition into every queue rule, the exact `name: Policy Lints` job name in ci.yml, and the job staying free of a job-level `if:` (an unreported required check never satisfies `check-success` and deadlocks the queue). Branch protection's required-check set remains a separate, Carson/admin-only surface — as of the 2026-08-23 verification `main` has no `required_status_checks` at all, so the Mergify layer is the only in-repo merge gate.
@@ -642,7 +679,7 @@ Two design points to preserve if you touch it:
 - **`config-drift/flagInventory.ts` + `config-drift/flag-inventory.json`** (2026-08-11) — flag reconciliation, wired into `check-config-drift.ts` main(). **Read `config-drift/README.md` before touching any flag.** The headline: `expected-prod-config.json` asserted **6** flags out of a **~51-flag** code surface, so 45 flags were invisible to every config gate — and `flagSpof` only models the fail-open direction (row ABSENT → env wins). The inverse is live in prod: when the row is PRESENT the deploy env var is **inert**, so `deploy-worker.yml` sets `ENABLE_SEMANTIC_SEARCH=true` + `ENABLE_AI_FRAUD=true` while both switchboard rows are `false`. Both features are OFF; the deploy file misleads every reader. `flag-inventory.json` is now the authoritative per-flag table (sources, real resolver, live row with `absent` distinct from `false`, resolved prod value, customer reachability, soak posture, justification) and the manifest pins all 53. **`claimed-capability-off` is the highest-value finding**: it fails when a flag resolves OFF while a public/compliance surface claims the capability — an R-7 check (CLAUDE.md §1.13) that previously only ever fired at audit time. Two are live and acknowledged (`DevelopersPage.tsx:65` prices `/ai/search` at $0.010 for a 503-ing endpoint; the SOC 2 evidence matrix asserts fraud detection as a Continuous control). **Fix a claims contradiction by correcting the copy, NEVER by flipping the flag.** Also enforces the soak must-be-ON / must-be-OFF lists as code (`USE_MOCKS`, demo injector, synthetic data, Nessie, maintenance mode are must-be-off). **Do NOT re-derive the flag list by hand** — three hand-written inventories in this repo have rotted (`pendingLaunchFlags` was wrong on 4 of 5 entries); the parsers read `ENV_FLAG_GETTERS`/`DB_FLAGS`/frontend `FLAGS`/deploy env directly and fail CLOSED, and `unregistered-flag` blocks any new flag that skips the inventory. 33 tests in `flagInventory.test.ts`.
   - **`checkFlagSpof` now takes an explicit `launchRequiredFlags` set.** It used to treat every asserted-true flag as launch-required, so honestly pinning a DB-backed flag held ON by its row fired a spurious `launch-flag-off` (the deploy correctly omits the env var). That gate punished honest pinning and is the direct cause of the 6-flag manifest. Omitting the set preserves legacy behaviour; 5 new tests pin both directions.
   - **Two flags gate nothing and should be deleted, not left ambiguous:** `ENABLE_COMPLIANCE_ENGINE` (only occurrence is the `DB_FLAGS` array — `/compliance/check` is gated by `x402PaymentGate` alone, so its `false` reading falsely implies the surface is dark) and `ENABLE_ZK_PROOFS` (live `true` row, zero code references anywhere).
-  - **`flagRegistry` is not the runtime resolver you probably think it is.** `getFlag()` has exactly TWO real consumers (`ENABLE_BATCH_ANCHORING` in `jobs/batch-anchor.ts`, `ENABLE_EXPIRY_ALERTS` in `routes/cron.ts`); every other entry is startup logging. It is a BOOT-TIME snapshot and `refreshDbFlag()` has zero callers, so flipping either of those two switchboard rows does nothing until the worker restarts. Six independent resolvers exist with different fail directions for the same flag name — see the `_resolverNote` in `flag-inventory.json`.
+  - **`flagRegistry` is not the runtime resolver you probably think it is.** It exposes TWO reads with different contracts. `getFlag()` is the BOOT-TIME snapshot from `init()` — startup logging and diagnostics only; never gate on it. `getFlagLive()` (DI-736 / SCRUM-3475, fixed 2026-08-23) is the resolver: it re-reads `switchboard_flags` on a 60s TTL through `refreshDbFlag()`, and it is what the two real gates use (`ENABLE_BATCH_ANCHORING` in `jobs/batch-anchor.ts`, `ENABLE_EXPIRY_ALERTS` in `routes/cron.ts`); every other registry entry is still startup logging. Before that fix `refreshDbFlag()` had zero callers and flipping either of those two switchboard rows did nothing until the worker restarted. Six independent resolvers exist with different fail directions for the same flag name — see the `_resolverNote` in `flag-inventory.json`.
 - `pr841-ledger-remediation.test.ts` — incident regression test pinning the cleaned 0313-0315 migration order after production used `0313` for anchors index consolidation.
 - `feedback-rules/` — orchestrator + per-rule scripts (R0-7 / SCRUM-1253) for `memory/feedback_*.md` rules.
 
@@ -709,7 +746,7 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 
 ## `check-mcp-claim-parity.ts` — MCP tool-claim parity across five surfaces (BUG-026, 2026-08-15)
 
-- **The defect it closes.** MCP tool descriptions are published in five places — `services/edge/src/mcp-tools.ts` (`TOOL_DEFINITIONS`, canonical), `public/.well-known/mcp/server-card.json`, `public/AGENTS.md`, `public/llms.txt` + `public/llms-full.txt`, and `docs/api/mcp-tools.md`. Nothing compared the description TEXT between them. `tests/infra/mcp-manifest-parity.test.ts` pins the NAME set, required arguments, property names, banned UI terms and registry over-claims — and says in its own header that descriptions are out of scope. That was the hole: BUG-026 (`search_credentials` advertising "semantic (vector) similarity matching" when the served path is an ILIKE substring scan) survived on six surfaces at once.
+- **The defect it closes.** MCP tool descriptions are published in five places — `services/edge/src/mcp-tools.ts` (`TOOL_DEFINITIONS`, canonical), `public/.well-known/mcp/server-card.json`, `public/AGENTS.md`, `public/llms.txt` + `public/llms-full.txt`, and `docs/api/mcp-tools.md`. Nothing compared the description TEXT between them. `tests/infra/mcp-manifest-parity.test.ts` pins the NAME set, required arguments, property names, banned UI terms and registry over-claims — and says in its own header that descriptions are out of scope. That was the hole: BUG-026 (`search_anchors` advertising "semantic (vector) similarity matching" when the served path is an ILIKE substring scan) survived on six surfaces at once.
 - **Parity and truth are two different checks, and BUG-026 needed both.** Parity catches DIVERGENCE and can never catch a claim that is false in every copy — five identical lies are in perfect parity. The claim rules catch the false claim itself, per surface, whether or not the copies agree. A PR that only added parity would have gone green on the exact bug it was written for.
 - **Four rules.** `card-description-parity` (manifest description must START WITH the canonical text); `reference-coverage` (`docs/api/mcp-tools.md` names every registered tool — strict, no baseline); `prose-coverage` (curated surfaces are shrink-only); and the `CLAIM_RULES` table.
 - **Prefix, not equality, for the manifest — on purpose.** 8 of the 16 live tools deliberately append discovery-only guidance to the card (aliasing notes, conditional availability, item caps). Requiring equality would either delete that guidance or force it into the live `tools/list` payload. Prefix forbids exactly the BUG-026 shape: the canonical text being REWRITTEN on one side rather than extended. Measured before choosing: 5 exact, 8 append, 3 genuinely drifted.
@@ -798,3 +835,7 @@ Historical change log: [./agents-changelog.md](./agents-changelog.md)
 - **Out of scope on purpose:** `HANDOFF.md` (`## History` is an append-only dated log) and `docs/**` narrative — release runbooks, soak premortems and RC manifests carry ~120 pointers that are dead by design because the run they describe is over. Their folder-local `agents.md` files ARE scanned.
 - **Deliberately-absent paths** (negative examples, generated artifacts, a file a command writes, named planned work) go in `scripts/ci/snapshots/doc-pointer-exemptions.json` with a `reason`. `check-doc-pointers.test.ts` fails on a stale exemption (the path now resolves), a missing reason, or an exemption naming a doc outside the scan set — so the list cannot quietly grow into a bypass.
 - Tests: `check-doc-pointers.test.ts` (20 tests) — scan-set contract, the multi-base resolution rules, workflow comment-vs-config split, exemption scoping, and a live-repo ratchet asserting zero dead pointers across the whole set. That ratchet is the assertion that would have caught `memory/project_deploy_typecheck_blackout.md`, which was cited by two gate sources and three `agents.md` files while never existing in the repo.
+
+## PR #2589 — namespaced agent contract validation (SCRUM-4465)
+
+`check-api-contract-drift.ts` preserves REST operation IDs and requires the exact MCP mapping `arkova_<operationId>` in both OpenAPI metadata and the validator map. Tests import all three real contracts and reject obsolete unprefixed validators; this avoids a self-consistent toy fixture hiding actual drift. Source definitions and gate requirements remain enforced.

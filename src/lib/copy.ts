@@ -2526,9 +2526,9 @@ export const DEVELOPER_PAGE_LABELS = {
   // MCP Server
   MCP_TITLE: 'MCP Server for AI Agents',
   MCP_DESC: 'Arkova provides a Model Context Protocol (MCP) server for AI agents. Connect your agent to verify records and search the registry programmatically.',
-  MCP_TOOL_VERIFY: 'verify_credential',
+  MCP_TOOL_VERIFY: 'arkova_verify_anchor',
   MCP_TOOL_VERIFY_DESC: 'Verify a record by its public ID',
-  MCP_TOOL_SEARCH: 'search_credentials',
+  MCP_TOOL_SEARCH: 'arkova_search_anchors',
   MCP_TOOL_SEARCH_DESC: 'Search the public record registry',
 
   // API docs card on ApiKeySettingsPage
@@ -4483,6 +4483,96 @@ export const PLATFORM_METRICS = {
  * implying the whole block was re-measured.
  */
 export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
+
+// =============================================================================
+// PLATFORM-ADMIN PROVISIONING (SCRUM-3873)
+// =============================================================================
+//
+// Copy for creating a net-new organization and a net-new account from the
+// admin console. Terminology note (§1.3): these surfaces say "anchor
+// allowance" and "credits" — never wallet/transaction/blockchain wording.
+export const ADMIN_PROVISION_ORG_LABELS = {
+  BUTTON_LABEL: 'Create organization',
+  DIALOG_TITLE: 'Create organization',
+  DIALOG_DESCRIPTION: 'Set up a new organization and its starting allowances.',
+  NAME_LABEL: 'Organization name',
+  NAME_PLACEHOLDER: 'Acme Institute',
+  LEGAL_NAME_LABEL: 'Legal name (optional)',
+  LEGAL_NAME_HINT: 'Defaults to the organization name.',
+  CAP_TOGGLE_LABEL: 'Limit free test anchors',
+  CAP_TOGGLE_HINT: 'Off means this organization has no anchor allowance cap.',
+  TEST_TOGGLE_LABEL: 'Test account',
+  TEST_TOGGLE_HINT: 'Off marks this as a billable production account.',
+  QUOTA_LABEL: 'Anchor allowance',
+  CREDITS_LABEL: 'Starting credits',
+  NAME_REQUIRED_ERROR: 'Enter an organization name.',
+  QUOTA_INVALID_ERROR: 'Enter a whole number of anchors, or turn the cap off.',
+  CREDITS_INVALID_ERROR: 'Enter a whole number of credits, zero or more.',
+  DUPLICATE_TITLE: 'An organization with this name already exists',
+  DUPLICATE_CONFIRM: 'Create it anyway',
+  SUBMIT_BUTTON: 'Create organization',
+  SUBMITTING_BUTTON: 'Creating…',
+  CANCEL_BUTTON: 'Cancel',
+  SUCCESS: (name: string) => `Created ${name}.`,
+  ERROR_GENERIC: 'Failed to create the organization.',
+} as const;
+
+export const ADMIN_PROVISION_USER_LABELS = {
+  BUTTON_LABEL: 'Create account',
+  DIALOG_TITLE: 'Create account',
+  DIALOG_DESCRIPTION: 'Create an account and choose how the person gets access.',
+  EMAIL_LABEL: 'Email address',
+  EMAIL_PLACEHOLDER: 'person@example.com',
+  FULL_NAME_LABEL: 'Full name (optional)',
+  ROLE_LABEL: 'Role',
+  ROLE_INDIVIDUAL: 'Individual (no organization)',
+  ROLE_ORG_ADMIN: 'Organization admin',
+  ROLE_ORG_MEMBER: 'Organization member',
+  ORG_LABEL: 'Organization',
+  ORG_PLACEHOLDER: 'Select an organization',
+  ORG_LIST_TRUNCATED:
+    'Only the most recent organizations are listed. If the one you need is missing, create the account without an organization and assign it from the organization page.',
+  SEND_EMAIL_LABEL: 'Email them a sign-in link',
+  SEND_EMAIL_HINT: 'Recommended. They choose their own password.',
+  NO_EMAIL_WARNING:
+    'No email will be sent. You must deliver the sign-in link yourself, or the account cannot be used.',
+  EMAIL_REQUIRED_ERROR: 'Enter a valid email address.',
+  ORG_REQUIRED_ERROR: 'Select an organization for this role.',
+  SUBMIT_BUTTON: 'Create account',
+  SUBMITTING_BUTTON: 'Creating…',
+  CANCEL_BUTTON: 'Cancel',
+  SUCCESS_EMAILED: (email: string) => `Created ${email} and sent a sign-in link.`,
+  SUCCESS_NO_EMAIL: (email: string) => `Created ${email}. Copy the sign-in link below — it is shown once.`,
+  LINK_LABEL: 'Sign-in link',
+  LINK_COPY: 'Copy link',
+  LINK_COPIED: 'Link copied.',
+  ERROR_ACCOUNT_EXISTS: 'An account with this email address already exists.',
+  ERROR_ROLE_CONFLICT:
+    'This email domain is claimed by another organization, which already assigned a role that cannot be changed.',
+  ERROR_GENERIC: 'Failed to create the account.',
+  ERROR_NO_DELIVERY:
+    'The account was created, but the email could not be sent and no sign-in link could be generated. '
+    + 'Use the password-reset flow to give this person access.',
+  EMAIL_FAILED_WARNING:
+    'The email could not be sent. Copy the sign-in link below and deliver it yourself — it is shown once.',
+} as const;
+
+/** SCRUM-3873: recipient password creation after a recovery link. */
+export const SET_PASSWORD_LABELS = {
+  TITLE: 'Choose your password',
+  DESCRIPTION: 'Set a password to keep access to your Arkova account.',
+  CHECKING: 'Checking your sign-in link…',
+  MISSING: 'This sign-in link is missing or expired. Please request a new link from your administrator.',
+  PASSWORD: 'New password',
+  CONFIRMATION: 'Confirm password',
+  SAVE: 'Save password',
+  SAVING: 'Saving…',
+  INVALID: 'Choose a password between 8 and 128 characters.',
+  MISMATCH: 'The passwords do not match.',
+  FAILED: 'Unable to save your password. Try again or request a new link.',
+  SAVED: 'Your password is ready. Use it the next time you sign in.',
+  CONTINUE: 'Continue',
+} as const;
 
 /** Separate mailbox confirmation after OAuth (SCRUM-4035). */
 export const OAUTH_EMAIL_CONFIRMATION_LABELS = {

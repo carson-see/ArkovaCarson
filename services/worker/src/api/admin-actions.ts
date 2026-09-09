@@ -4,6 +4,8 @@
  * POST /api/admin/users/:id/promote-admin           — Toggle platform admin flag
  * POST /api/admin/users/:id/change-role             — Change user role (INDIVIDUAL/ORG_ADMIN)
  * POST /api/admin/users/:id/set-org                 — Assign user to an organization
+ * POST /api/admin/organizations                    — Create an organization (SCRUM-3873)
+ * POST /api/admin/users                             — Create an account (SCRUM-3873)
  * POST /api/admin/organizations/:id/quota           — Set an org's free-tier testing cap (SCRUM-2225)
  * POST /api/admin/organizations/:id/credits/adjust  — Add/remove org credits (L2-A5)
  *
@@ -32,6 +34,14 @@ import type { Request, Response } from 'express';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
+import {
+  createOrganization,
+  createUserAccount,
+  validateCreateOrganizationInput,
+  validateCreateUserAccountInput,
+  ProvisioningError,
+  PROVISIONING_ERROR_STATUS,
+} from './admin-provisioning.js';
 
 /**
  * POST /api/admin/users/:id/promote-admin
@@ -430,6 +440,91 @@ export async function handleAdjustOrgCredit(
     });
   } catch (error) {
     logger.error({ error, orgId }, 'Adjust org credit request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// ─── SCRUM-3873: provisioning (create org / create account) ───────────────
+// Business logic lives in admin-provisioning.ts (dependency-injected, unit
+// tested). These handlers own only the platform-admin gate, body validation,
+// and the error-code -> HTTP mapping.
+//
+// Gating is both per-handler (here) and structural: routes/admin.ts mounts a
+// platform-admin middleware on '/admin', so a future handler that forgets the
+// check is still not reachable unauthenticated.
+//
+// Organization provisioning uses0439's atomic, service-only RPC. Account
+// creation uses the Auth admin API with a protected explicit-placement marker.
+
+/**
+ * POST /api/admin/organizations
+ * Body: { display_name, legal_name?, anchor_quota?, credits?, is_test?, allow_duplicate_name? }
+ */
+export async function handleCreateOrganization(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!(await isPlatformAdmin(userId))) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  const parsed = validateCreateOrganizationInput(req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  try {
+    const organization = await createOrganization({ db, logger }, userId, parsed.value);
+    res.status(201).json({ success: true, organization });
+  } catch (error) {
+    if (error instanceof ProvisioningError) {
+      res.status(PROVISIONING_ERROR_STATUS[error.code]).json({
+        error: error.message,
+        code: error.code,
+        ...(error.existingOrgId ? { existing_org_id: error.existingOrgId } : {}),
+      });
+      return;
+    }
+    logger.error({ error }, 'Create organization request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * POST /api/admin/users
+ * Body: { email, full_name?, role, org_id?, org_role?, send_invite_email? }
+ *
+ * `is_platform_admin` is deliberately NOT accepted here — promotion stays on
+ * the dedicated promote-admin endpoint with its own self-demotion guard.
+ */
+export async function handleCreateUserAccount(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (!(await isPlatformAdmin(userId))) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  const parsed = validateCreateUserAccountInput(req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  try {
+    const account = await createUserAccount({ db, logger }, userId, parsed.value);
+    res.status(201).json({ success: true, account });
+  } catch (error) {
+    if (error instanceof ProvisioningError) {
+      res.status(PROVISIONING_ERROR_STATUS[error.code]).json({ error: error.message, code: error.code });
+      return;
+    }
+    logger.error({ error }, 'Create user account request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 }
