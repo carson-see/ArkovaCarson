@@ -43,7 +43,11 @@ const STRICTLY_BANNED = /\b(wallet|gas|transaction|blockchain|bitcoin|testnet|ma
 // before bumping the number — don't bump blind.
 const EXPECTED_COUNTS: Record<string, { hash: number; block: number; crypto: number }> = {
   'client.ts': { hash: 3, block: 1, crypto: 1 },
-  'types.ts': { hash: 4, block: 2, crypto: 0 },
+  // types.ts hash: 5 (was 4) — P4 type-drift fix (2026-09-02) added
+  // `merkleProofHash`, whose JSDoc ("Merkle inclusion proof hash for this
+  // anchor") is the same legitimate Merkle-proof documentation category as
+  // the pre-existing hits, not a product-copy mislabel.
+  'types.ts': { hash: 5, block: 2, crypto: 0 },
   'index.ts': { hash: 0, block: 0, crypto: 0 },
 };
 
