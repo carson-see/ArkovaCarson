@@ -43,6 +43,9 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 - Tests must mock LLM and Stripe calls — no real API calls in test runs.
 - Budget guardrails (`--limit N`, `--dry-run`) are mandatory on scripts that spend provider budget.
 
+## PR #2476 rollout replay regression
+
+`check-docusign-nonce-rollout.py` uses a disposable network-isolated PostgreSQL container. It verifies legacy-row replay denial, both orders of concurrent old/new writers across different session timezones, same-account deduplication, and acceptance for distinct known accounts. `--baseline` reproduces the replay gap in 0424 alone. No application database is touched.
 ## PR #2564 lock and flag evidence (2026-09-05)
 
 `admin-rpc-0428-lock-probe.ts` uses independent persistent psql sessions for a synthetic holder row, RPC row and third innocent row. It confirms the held RowExclusive lock and observes the RPC's locks before starting the unrelated write; fixed sleeps never establish readiness. The RPC transaction stays open so the lock observation cannot miss a completed statement. A temporary, transaction-scoped PL/pgSQL function measures the UPDATE inside PostgreSQL before its relation-lock acquisition; `pg_locks.waitstart` and `pg_blocking_pids()` record the actual barrier chain. Every asynchronous result is checked and sessions are rolled back/closed. The 3-second database-execution ceiling remains; Management API latency is not used as lock-wait evidence.
