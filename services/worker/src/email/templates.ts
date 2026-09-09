@@ -227,3 +227,14 @@ export function buildDomainVerificationEmail(data: DomainVerificationEmailData):
 
   return { subject, html };
 }
+
+/** Separate Arkova mailbox confirmation after provider consent (SCRUM-4035). */
+export function buildOAuthEmailConfirmationEmail(confirmationUrl: string): { subject: string; html: string } {
+  return {
+    subject: 'Confirm your email for Arkova',
+    html: wrapTemplate(`<h1>Confirm your email</h1>
+      <p>Confirm this email address to finish setting up your Arkova account.</p>
+      <p><a href="${esc(confirmationUrl)}" style="${STYLES.button}">Confirm email</a></p>
+      <p style="${STYLES.muted}">This link expires in 15 minutes and can be used once. If you did not create an Arkova account, you can ignore this email.</p>`),
+  };
+}

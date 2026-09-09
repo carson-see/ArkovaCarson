@@ -156,6 +156,10 @@ No `chain/` file was modified — the probe deliberately has no runtime import o
 
 ## Recent changes
 
+- **2026-08-23 (`admin.ts`, SCRUM-3569, SEC) — `GET /queue/pending` is now ORG_ADMIN-gated, and the route's authz comment no longer lies.** The comment above the ARK-101 block asserted that `list_pending_resolution_anchors` scoped the read and `resolve_anchor_queue` enforced ORG_ADMIN "inside the RPC". SCRUM-2213 replaced the listing RPC with a direct `anchors` query three months ago, so for `/queue/pending` that had become false and the route ran with no role check — any authenticated org member could list coworkers' filenames + fingerprints. **`adminRouter` has no authorization middleware to fall back on**: its `.use()` chain is only the `isAdminRouterPath` path-scoping shim, `corsMiddleware`, and `rateLimiters.checkout`, so *every* handler on this router owns its own gate. The comment now enumerates where each queue route's gate actually lives (`/queue/pending` → `handleListPendingResolution` + `_org-auth.ts`; `/queue/resolve` → the RPC; `/queue/run` → `authorizeManualRun`) rather than naming an RPC. No route wiring changed — the fix is in `../api/queue-resolution.ts`; see `services/worker/src/api/agents.md` for the full writeup. **If you add a route to `adminRouter`, it is unauthenticated-adjacent by default: `extractAuthUserId` gives you 401-on-anonymous and nothing more.**
+
+- **2026-08-23 (`admin.ts`, SCRUM-3569 review pass) — the ARK-101 authz comment now maps the WHOLE queue surface, including the one route this PR does not fix.** `GET /queue/collision/:externalFileId` (same `adminRouter`, defined ~270 lines below the ARK-101 block) returns `filename` + `fingerprint` for PENDING_RESOLUTION anchors and gates on `getCallerOrgId` only — authenticated + has-an-org, no role check. That is the same disclosure class SCRUM-3569 closed on `/queue/pending`, but narrower: the caller must already know an `external_file_id`, and with `/queue/pending` gated it can no longer be enumerated from this router. It is deliberately NOT fixed here (out of this PR's declared scope; belongs with SCRUM-3010's member-scoped visibility work) — but it IS now named in the comment, because an authz comment that reads exhaustive while omitting a route is precisely what let SCRUM-3569 sit unnoticed for three months.
+
 - **2026-08-18 (`cron.ts`, `feat/platform-admin-daily-health-digest`, draft, T2) — new `POST /jobs/platform-health-digest` route.** Delegates to `runPlatformHealthDigest()` (`../jobs/platform-health-digest-cron.js`) — a daily summary email (anchors by status, job_queue depth, last night's batch flush, connector health rollup, quota anomalies) to every `profiles.is_platform_admin=true` recipient, sourced by DB flag, never hardcoded. Same shape as the `/queue-digest` route right above it: `withCronMonitoring`, same `'0 13 * * *'` schedule string (informational only — the actual Scheduler binding is a separate, not-yet-performed step, see `scripts/gcp-setup/agents.md`), JSON-result / 500-on-error. Gated by `ENABLE_PLATFORM_HEALTH_DIGEST` (default true — an internal ops digest, not a customer-facing send). Distinct from and additive to the existing hardcoded-recipient stuck-anchor ALERT in `../jobs/pipeline-health.ts`, which is unchanged.
 - **2026-08-18 (`anchor.ts`, test-only) — invite-accept investigation: no router bug found, new full-path integration test added.** Investigated the founder's "I still cannot invite members" report (prod: 5 invitations ever, 3 confirmed EMAIL_SENT, 0 accepted, 0 `MEMBER_JOINED` audit events). `POST /invitations/accept` had router-level coverage only for error-mapping (`anchor-invitation-email.test.ts`'s "requires a token" / "maps an InvitationError code") — the full new-account happy path was only ever exercised at the bare-function level (`api/invitations.test.ts`), never through the real Express handler an unauthenticated invitee's browser actually hits. Added `anchor-invitation-accept.test.ts`: drives the real `anchorRouter` handler through (1) the complete no-session new-account provisioning sequence (createUser → profile insert → org_members insert → invitations status flip → `MEMBER_JOINED` audit insert → verification email) and (2) the exact real-prod scenario — an invitation created 2026-08-03 with `expires_at` 2026-08-10, hit on 2026-08-18 — asserting 410 `expired` and that account creation is never attempted. Both pass against the CURRENT, unmodified code — the accept endpoint is correct. See `src/components/organization/agents.md` for what the investigation found instead (admin visibility gap, fixed there) and the residual deliverability risk (documented, not fixed — DNS/founder-owned).
 
@@ -200,3 +204,61 @@ Body params are all validated positive-int / string-array or dropped — an out-
 - **`POST /smoke-test` anchor-count check now distinguishes "unknown" from "zero"** (BUG-009). `get_anchor_status_counts_fast().total` can be `-1`, the established sentinel for "no trustworthy count". Both still fail the check, but only one means the database is empty, and the detail string says which. The root cause is migration `0412`: an un-analysed `anchors` table published `{"total":0,"SECURED":0}` as measured, which this check read as "no anchors exist".
 - **`POST /calibration-refit` 500'd with `PGRST205`** because `public.calibration_features` does not exist — including in prod. Recreated by migration `0413`; no route change. The job itself was never broken.
 - Test note: `cron.test.ts` now mocks `../middleware/flagRegistry.js` and adds `dispatchWebhookEvent` to the `../webhooks/delivery.js` mock. `flagRegistry` is reached from exactly one cron route, so the module-level mock cannot perturb any other route.
+
+## SCRUM-4035 — pending OAuth identity
+
+`email-confirmation.ts` provides status/send/complete; `email-confirmation-runtime.ts` wires
+Supabase and audited delivery. Only this router imports `verifyEmailConfirmationToken`.
+Product routes retain `verifyAuthToken`, whose pending-role denial is terminal. Never use
+`getDb().auth.verifyOtp` or `refreshSession`: even with persistence disabled, these replace the
+shared client's Authorization with a user token. Proof clients must be fresh per operation.
+## 2026-09-05 — SCRUM-4475: the `/jobs/*` limiter was ONE global 30/min bucket
+
+The 2026-08-23 entry above records `cronJobsLimiter` as `scope: 'cron-jobs'` with
+`keyGenerator: () => 'global'` and calls the single global 30/min bucket "unchanged" and "never at
+risk". That was true about the SCRUM-3418 collision mechanism and **wrong about the budget**. One
+30/min bucket served all 111 routes on this router. Prod runs 66 Cloud Scheduler jobs whose two-,
+five-, ten-, fifteen- and thirty-minute cadences all coincide with the hourly ones at :00, so from
+the 31st job of that burst onwards Cloud Scheduler got a 429 — recorded as status 8
+RESOURCE_EXHAUSTED, **not retried inside the window**, so the run was skipped outright rather than
+delayed. Cloud Logging 2026-09-03T18Z..09-05T18Z: 46 refusals of `org-queue-scheduler`, 43 of
+`lock-wait`, 43 of `embed-public-records`, 28 of `fetch-dapip`, 27 of `refresh-treasury-cache`, and
+the nightly `daily-anchor-flush` (`POST /jobs/batch-anchors?force=true`) refused at
+2026-09-04T07:00:51Z and 2026-09-05T07:00:41Z after last succeeding 2026-09-03T07:00:49Z.
+
+There are now TWO limiters on this router and they must not be collapsed back into one:
+
+- **`cronBurstGuard`** — mounted BEFORE `cronAuth`, 120/min keyed on `req.ip`. This is the limiter
+  that still applies to an **unauthenticated** caller, and it is what bounds how often anyone can
+  drive the JWKS fetch / JWT verification inside `verifyCronAuth`. It is per-IP rather than global
+  on purpose: a global bucket is the exact shape that caused this outage, and per-IP means an
+  abusive caller exhausts its own budget instead of starving Cloud Scheduler. 120 is ~1.8x the
+  whole 66-job fleet landing in one minute — **raise it if the scheduler job count grows past ~80.**
+- **`cronJobsLimiter`** — mounted AFTER `cronAuth`, 10/min keyed on the job path. No job on this
+  router legitimately fires faster than once a minute (`lock-wait` at every-minute is the fastest),
+  so this is ~10x headroom while still bounding one runaway trigger without taking the other 65
+  jobs down with it.
+
+**Why the per-job limiter sits behind auth.** A per-path key in front of auth would let an
+anonymous caller multiply its budget by enumerating URLs, and would let it grow the process-wide
+bucket Map one entry per URL it invents. Behind auth it cannot mint a bucket at all — it is refused
+401 having been counted only against its own IP's burst bucket. Belt and braces: the key is
+normalised (lowercased, trailing slash stripped — Express routing here is case-insensitive and
+non-strict, so `/Lock-Wait/` and `/lock-wait` must share a bucket) and looked up against the
+router's own registered route table, read lazily off `cronRouter.stack`. Anything unrouted collapses
+into one shared `__unrouted__` bucket, so cardinality is bounded by the route table (111 + 1), not
+by the URL.
+
+Tests: **`cron-jobs-ratelimit.test.ts`** (new, beside `cron.test.ts`). It deliberately does NOT mock
+`../utils/rateLimit.js` — `cron.test.ts` replaces the limiter with a pass-through, which is exactly
+why this was invisible for the life of the router — so the REAL limiters run behind the REAL
+`cronAuth` on the REAL `cronRouter`. It replays a 40-distinct-job :00 burst and asserts zero 429s,
+pins the 11th-hit-on-one-path 429 + `Retry-After`, asserts one runaway job does not refuse another,
+asserts an unauthenticated caller gets 401 without minting a per-path bucket, asserts the
+unauthenticated flood is still refused, and asserts bucket cardinality is bounded against
+attacker-chosen paths. Adding a route needs no change here; the allowlist is read off the router.
+
+Note `scripts/staging/fullsoak-cron-exerciser.sh` documented the old 30/min global bucket in its
+RATE LIMIT header; that comment is corrected in the same change. Its 6 s pacing across distinct job
+paths is still safe under both new limiters, but `--only <one-path>` at that interval would now
+exhaust that single job's 10/min bucket.

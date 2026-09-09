@@ -1,0 +1,51 @@
+{
+ "closed_at": "2026-09-05T18:54:57Z",
+ "pr": 2637,
+ "declared_head": "1a24af93e6c132597005796861ffc2657d14f33f",
+ "rig": "nesuwjlscilzzbhpvbkt",
+ "soak_start": "2026-09-03T12:51:18Z",
+ "planned_end": "2026-09-04T00:51:18Z",
+ "api_cycles": 72,
+ "api_failing": 0,
+ "api_failing_files": [],
+ "ui_runs": 24,
+ "ui_failing": 0,
+ "ui_failing_files": [],
+ "ui_expected_total": 144,
+ "ui_unexpected_total": 0,
+ "preview_identity": [
+  {
+   "window_id": "20260903T125113Z",
+   "built_head": "1a24af93e6c132597005796861ffc2657d14f33f",
+   "worktree": "/Users/carson/arkova-soak/mfa-3167/checkouts/wt-pr-a",
+   "rig": "nesuwjlscilzzbhpvbkt",
+   "preview_pid": 43915,
+   "preview_started_at": "2026-09-03T12:51:14Z",
+   "planned_end": "2026-09-04T00:51:13Z",
+   "interval_min": 30
+  }
+ ],
+ "ui_window": [
+  {
+   "window_id": "20260903T125113Z",
+   "built_head": "1a24af93e6c132597005796861ffc2657d14f33f",
+   "rig": "nesuwjlscilzzbhpvbkt",
+   "preview_started_at": "2026-09-03T12:51:14Z",
+   "window_closed_at": "2026-09-04T00:51:15Z",
+   "runs": 24,
+   "pass_runs": 24,
+   "fail_runs": 0,
+   "preview_alive_at_close": true
+  }
+ ],
+ "first_api": "2026-09-03T12:51:15.653Z",
+ "last_api": "2026-09-04T00:47:07.939Z",
+ "heads_seen": [
+  "1a24af93e6c132597005796861ffc2657d14f33f"
+ ],
+ "rigs_seen": [
+  "nesuwjlscilzzbhpvbkt"
+ ],
+ "head_bound_ok": true,
+ "rig_bound_ok": true
+}

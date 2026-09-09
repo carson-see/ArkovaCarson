@@ -1,3 +1,4 @@
+import './oauthConfirmation';
 /**
  * Supabase Client
  *

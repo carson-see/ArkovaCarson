@@ -710,3 +710,62 @@ describe("ci.yml zk circuit artifact cache survives a key rotation", () => {
     }
   });
 });
+
+describe("deploy-worker.yml zk circuit artifact cache survives a key rotation", () => {
+  // Same defect as the ci.yml block above, one workflow later and with worse
+  // consequences. deploy-worker.yml had the cache step but NOT the
+  // `restore-keys` fallback, so on 2026-09-08 the #2673 worker lockfile bump
+  // rotated the exact key, the rebuild tried to fetch
+  // powersOfTau28_hez_final_14.ptau, and both public hosts answered 403
+  // (dead since 2026-09-02, SCRUM-3955). Run 34237641990 died on
+  // `curl: (22) ... 403` and prod could not be deployed at all — it sat 36
+  // commits behind main. ci.yml being fixed while deploy-worker.yml was not is
+  // exactly the parity gap PR #693 left behind once before, so it is pinned
+  // here rather than left to whoever edits one file and not the other.
+  const DEPLOY_WORKFLOW_PATH = resolve(REPO, ".github/workflows/deploy-worker.yml");
+  const steps = workflowSteps(readFileSync(DEPLOY_WORKFLOW_PATH, "utf8"));
+  const cacheStep = steps.find((block) => /^\s+id:\s*cache-zk-artifacts\s*$/mu.test(block));
+
+  function scalarLine(block: string, key: string): string {
+    return block.split("\n").find((line) => new RegExp(`^\\s*${key}:`, "u").test(line)) ?? "";
+  }
+
+  function blockScalarLines(block: string, key: string): string[] {
+    const lines = block.split("\n");
+    const start = lines.findIndex((line) => new RegExp(`^\\s*${key}:\\s*\\|\\s*$`, "u").test(line));
+    if (start === -1) return [];
+    const keyIndent = /^(\s*)/u.exec(lines[start])?.[1].length ?? 0;
+    const collected: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (line.trim() === "") continue;
+      const indent = /^(\s*)/u.exec(line)?.[1].length ?? 0;
+      if (indent <= keyIndent) break;
+      collected.push(line.trim());
+    }
+    return collected;
+  }
+
+  it("falls back to the newest previous entry when a lockfile bump rotates the exact key", () => {
+    expect(cacheStep, "expected a `cache-zk-artifacts` step in deploy-worker.yml").toBeDefined();
+
+    const keyLine = scalarLine(cacheStep ?? "", "key");
+    const keyPrefix = /key:\s*(.+?)\$\{\{\s*hashFiles\(/u.exec(keyLine)?.[1]?.trim();
+    expect(keyPrefix, "exact key must have the shape `<static prefix>${{ hashFiles(...) }}`").toBeTruthy();
+
+    expect(
+      blockScalarLines(cacheStep ?? "", "restore-keys"),
+      "restore-keys must list the exact key's static prefix, or a worker dependency bump blacks out prod deploys entirely",
+    ).toContain(keyPrefix);
+  });
+
+  it("still rebuilds from source on a prefix fallback, so the fallback never ships stale artifacts", () => {
+    for (const name of ["Install circom (cache miss only)", "Build zk circuit artifacts (cache miss only)"]) {
+      const step = steps.find((block) => block.includes(`- name: ${name}`));
+      expect(step, `expected the \`${name}\` step`).toBeDefined();
+      expect(
+        scalarLine(step ?? "", "if"),
+        `${name} must run whenever the exact key missed — a restore-keys fallback does not set cache-hit`,
+      ).toMatch(/steps\.cache-zk-artifacts\.outputs\.cache-hit\s*!=\s*'true'/u);
+    }
+  });
+});
