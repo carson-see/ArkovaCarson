@@ -21,6 +21,9 @@ own recomputation.
 
 ## Install
 
+> **Not yet published to npm** — `npm view arkova-verifier-cli` currently returns 404. Until it
+> publishes, use "Build from source" below (or `packages/verifier-cli/PUBLISHING.md`).
+
 The package is `arkova-verifier-cli`; the command it installs is
 `arkova-verify`. Node >= 18.
 

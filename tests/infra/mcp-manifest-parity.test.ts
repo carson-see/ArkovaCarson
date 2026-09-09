@@ -6,9 +6,9 @@
  * the connector — read BEFORE ever calling `tools/list` against the live
  * server. It drifted badly: the live server (services/edge/src/mcp-tools.ts,
  * wired into services/edge/src/mcp-server.ts) registers 16 tools, but the
- * manifest advertised only 2 (`search`, `get_anchor`). An agent or founder
- * reading the manifest had no way to discover verify_batch, nessie_query,
- * anchor_document, or any of the other 12 real tools.
+ * manifest advertised only 2 (`arkova_search`, `arkova_get_anchor`). An agent or founder
+ * reading the manifest had no way to discover arkova_verify_batch, nessie_query,
+ * arkova_anchor_document, or any of the other 12 real tools.
  *
  * `TOOL_DEFINITIONS` in mcp-tools.ts is the single source of truth both
  * `mcp-server.ts` (tool descriptions) and this test consume — mirrors the
@@ -49,7 +49,7 @@ function loadManifest(): ServerCard {
   return JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8')) as ServerCard;
 }
 
-// anchor_document is registered on the live server only when
+// arkova_anchor_document is registered on the live server only when
 // MCP_ENABLE_ANCHOR_DOCUMENT=true AND the caller holds a write:anchors /
 // anchor:write scope (services/edge/src/mcp-server.ts
 // isMcpAnchorDocumentAllowed). That's a per-request authorization gate,
@@ -129,7 +129,7 @@ describe('MCP discovery manifest parity (L2-A6)', () => {
 
   it('does not use banned UI terminology in tool descriptions (Constitution 1.3)', () => {
     // Scoped to prose `description` fields only — technical field/tool
-    // names (content_hash, get_fingerprint, etc.) are internal API
+    // names (content_hash, arkova_get_fingerprint, etc.) are internal API
     // identifiers, not user-visible copy, and are explicitly out of scope
     // per Constitution 1.3 ("Internal code may use technical names").
     const banned = ['Wallet', 'Gas', 'Blockchain', 'Bitcoin', 'Crypto', 'Testnet', 'Mainnet'];
