@@ -32,6 +32,27 @@
 #      path, .github/workflows/publish-sdk.yml, which covers packages/sdk
 #      only and is tag-triggered).
 #
+# OPERATOR NOTE 1 — the CI publish identity (verified 2026-09-05).
+#   .github/workflows/publish-sdk.yml (tag `sdk-v*`) publishes packages/sdk with
+#   `secrets.NPM_TOKEN`. That token is mirrored from GCP Secret Manager
+#   `arkova1/NPM` (single version, 2026-07-22) and authenticates as npm user
+#   `crseeger`, who is the SOLE registry maintainer of both `arkova` and
+#   `arkova-mcp-server` (checked with `npm view <pkg> maintainers`). It is a
+#   user token, not an org-scoped one, so the unscoped names are publishable
+#   with it. Caveat: `npm access list packages` answers 403 with this token
+#   while `npm access get status arkova` succeeds, which is the signature of a
+#   granular token; a package allow-list is only proven by a publish. If a
+#   publish 403s, check the token's package scope on npmjs.com before anything
+#   else. Rotating it means: new version on `arkova1/NPM` AND
+#   `gh secret set NPM_TOKEN` — the two are not linked.
+#
+# OPERATOR NOTE 2 — sdks/mcp-server has NO CI publish workflow.
+#   `.github/workflows/` contains publish-sdk.yml (packages/sdk) and
+#   publish-python-sdk.yml (packages/arkova-py) and nothing else. Tagging does
+#   not publish `arkova-mcp-server`; running THIS script with
+#   `--only=mcp-server`, by hand, on an authenticated machine, is the only way
+#   that package reaches the registry. Do not assume a release tag covered it.
+#
 # What this script deliberately does NOT do:
 #   - Never runs `npm login` itself, interactively or otherwise — this
 #     script only ever checks whether a login already exists.

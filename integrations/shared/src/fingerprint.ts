@@ -2,7 +2,7 @@
  * Shared fingerprint utility for Arkova integrations.
  *
  * Uses Web Crypto API (available in browsers and Node.js 16+).
- * Identical algorithm to `arkova` Arkova.fingerprint().
+ * Identical algorithm to the `arkova` npm SDK Arkova.fingerprint().
  */
 
 /**

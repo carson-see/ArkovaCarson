@@ -41,7 +41,7 @@ The rich v1 verification response includes shipped API-RICH-02 fields `descripti
 | API key management | `POST/GET/PATCH/DELETE /keys` | Supabase JWT | [OpenAPI](./openapi.yaml) |
 | Nessie RAG — **DISABLED** (R-1) | `POST /nessie/query` | n/a — returns 503 `nessie_disabled` | [OpenAPI](./openapi.yaml) |
 | CLE compliance | `GET /cle/verify`, `GET /cle/credits`, `POST /cle/submit` | API key + x402 gate at `/api/v1/cle` | [OpenAPI](./openapi.yaml) |
-| Attestations | `POST/GET/PATCH /attestations` | Supabase JWT | [OpenAPI](./openapi.yaml) |
+| Attestations | `POST/GET/PATCH /attestations` | GET: public, no auth (attestations are a public verification registry; list filters: `anchor_id`, `subject_identifier` substring, `attestation_type`, `status`). POST/PATCH: API key | [OpenAPI](./openapi.yaml) |
 
 ### 2. API v2 — `https://api.arkova.ai/v2`
 
@@ -87,8 +87,11 @@ const result = await arkova.verify(receipt.publicId);
 ### 4. Python SDK — `arkova`
 
 Typed Python 3.10+ client with sync and async entry points. Install with `pip install arkova`.
-The canonical package supports `search`, `verify`, `verify_fingerprint`, `get_anchor`,
-and `list_orgs`; write/anchoring workflows remain in the TypeScript SDK and REST API.
+Its read methods are `search()`, `verify()`, `verify_fingerprint()`, `get_anchor()`,
+`get_organization()`, `get_record()`, `get_fingerprint()`, `get_document()` and `list_orgs()`;
+`anchor()` and `anchor_bulk()` cover the write path, and `fingerprint()` hashes in-process
+without a network call. These are SDK method names, not MCP tool names — the MCP tools all
+carry the `arkova_` prefix (see below).
 
 ```python
 from arkova import Arkova
@@ -106,14 +109,14 @@ A vanilla-JS, zero-dependency, CSP-safe `<script>` tag that drops a verification
 
 ```html
 <div data-arkova-credential="ARK-2026-001"></div>
-<script src="https://cdn.arkova.ai/embed.js"></script>
+<script src="https://app.arkova.ai/embed.js"></script>
 ```
 
 📖 [Full embed reference](../../packages/embed/README.md)
 
 ### 6. MCP server — `https://edge.arkova.ai/mcp`
 
-Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, and `get_anchor`; legacy read tools remain available as `verify_credential`, `search_credentials`, `nessie_query`, `verify_document`, and `verify_batch`. MCP launch is read-only by default: `anchor_document` is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write scope, either `write:anchors` or `anchor:write`. `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
+Model Context Protocol endpoint for AI agents. **Every tool is registered under the `arkova_` prefix, and the unprefixed names are gone — there are no aliases** (v3.0 / SCRUM-3894; the bare names were a security defect, BUG-2026-09-02-001). New integrations should prefer the v2 tools `arkova_search`, `arkova_verify`, `arkova_list_orgs`, `arkova_get_anchor`, `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, and `arkova_get_document`; the earlier read tools remain available as `arkova_verify_anchor`, `arkova_search_anchors`, `arkova_verify_document`, `arkova_verify_batch`, `arkova_oracle_batch_verify`, and `arkova_list_agents`. `nessie_query` keeps its own namespace and is DISABLED — it returns an explicit `nessie_disabled` error, never results. MCP launch is read-only by default: `arkova_anchor_document` is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write scope, either `write:anchors` or `anchor:write`. `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
 
 ```json
 {
