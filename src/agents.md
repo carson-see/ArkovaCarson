@@ -1,4 +1,9 @@
 # agents.md — src/
+
+## UAT-01 / SCRUM-4031 — signup environment type (2026-09-05)
+
+`vite-env.d.ts` no longer advertises the retired beta signup variable. The signup component ignores legacy values; API, webhook, MCP and SDK authentication contracts are unchanged.
+
 _Last updated: 2026-07-15 (WebMCP discovery tools)._
 
 ## What This Folder Contains
@@ -66,3 +71,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 - `zod` — validation
 - `pdf.js` + `tesseract.js` — client-side OCR
 - `vite` — bundler
+
+## PR #2619 generated notices refresh (2026-09-05)
+
+Regenerated `data/thirdPartyNotices.generated.json` with the installed xmldom 0.8.15 tree after incorporating PR #2493's license-body generator. The dependency is used by mammoth for on-device DOCX extraction, so verification covers actual document parsing as well as the rendered notice. No raw document bytes are sent to a backend.

@@ -1,0 +1,31 @@
+--- driver.py.pre-20260907T1300Z	2026-09-07 08:54:21
++++ driver.py	2026-09-07 08:54:21
+@@ -151,6 +151,10 @@
+     # 4. Audit rows: count before, drive traffic, re-count (row written AND re-read)
+     before = int(sql(f"select count(*) from audit_events where event_type='MCP_TOOL_CALL' "
+                      f"and event_category='SECURITY' and created_at > now() - interval '30 minutes';")[0]['count'])
++    # DB-side cycle-start timestamp: the audit assertion counts rows written AFTER this
++    # instant, not inside a sliding 30-minute window (a sliding window at a 15-minute cadence
++    # let cycle-1 rows fall out exactly as cycle-3 rows entered -> false '10 -> 10' failure).
++    cycle_t0 = sql("select now() as t0;")[0]['t0']
+ 
+     # 5. verify_batch — partial results survive a mixed batch (#2434)
+     ids = [GOOD, UNKNOWN, PENDING]
+@@ -239,13 +243,14 @@
+ 
+     # 12. Audit rows re-counted after the traffic (anti-hollow: written AND re-read)
+     after_rows = sql("select event_category, count(*) as n from audit_events "
+-                     "where event_type='MCP_TOOL_CALL' and created_at > now() - interval '30 minutes' "
++                     f"where event_type='MCP_TOOL_CALL' and created_at > '{cycle_t0}'::timestamptz "
+                      "group by 1;")
+     after = sum(int(r['n']) for r in after_rows if r['event_category'] == 'SECURITY')
+-    assert after > before, f'no MCP_TOOL_CALL audit rows written ({before} -> {after})'
++    # Every cycle drives the same tool set; cycles 1-2 of the retired window each wrote 5 rows.
++    assert after >= 5, f'MCP_TOOL_CALL audit rows written since cycle start: {after} (expected >= 5)'
+     assert all(r['event_category'] == 'SECURITY' for r in after_rows), \
+         f'lowercase event_category regression: {after_rows}'
+-    ck['audit_rows'] = {'before_30m': before, 'after_30m': after, 'delta': after - before,
++    ck['audit_rows'] = {'before_30m': before, 'cycle_t0': cycle_t0, 'written_since_t0': after,
+                         'event_category': 'SECURITY'}
+ 
+     out['allExpected'] = True

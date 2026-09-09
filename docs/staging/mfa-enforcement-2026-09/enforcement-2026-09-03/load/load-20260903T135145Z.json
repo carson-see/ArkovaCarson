@@ -1,0 +1,101 @@
+{
+  "driver": "mfa-3167",
+  "batch": "security/mfa-enforcement-3167",
+  "cycle_id": "0007-20260903T135140Z",
+  "pr_head": "1a24af93e6c132597005796861ffc2657d14f33f",
+  "checkout": "/Users/carson/arkova-soak/mfa-3167/checkouts/wt-pr-a",
+  "captured_at": "2026-09-03T13:51:45.592Z",
+  "supabase_ref": "nesuwjlscilzzbhpvbkt",
+  "ok": 27,
+  "fail": 0,
+  "detail": {
+    "L1": {
+      "ok": 9,
+      "fail": 0,
+      "last": {
+        "name": "listFactors == 1 verified",
+        "ok": true,
+        "code": "count=1",
+        "at": "2026-09-03T13:51:42.831Z"
+      },
+      "codes": [
+        "aal1/aal1",
+        "aal2/aal2",
+        "count=1"
+      ]
+    },
+    "L2": {
+      "ok": 5,
+      "fail": 0,
+      "last": {
+        "name": "duplicate-friendlyName probe expects mfa_factor_name_conflict",
+        "ok": true,
+        "code": "mfa_factor_name_conflict",
+        "at": "2026-09-03T13:51:43.964Z"
+      },
+      "codes": [
+        "count=2",
+        "mfa_factor_name_conflict"
+      ]
+    },
+    "L3": {
+      "ok": 2,
+      "fail": 0,
+      "last": {
+        "name": "verify(wrong code) expects mfa_verification_failed/rejected",
+        "ok": true,
+        "code": "mfa_verification_failed",
+        "at": "2026-09-03T13:51:44.164Z"
+      },
+      "codes": [
+        "mfa_verification_failed"
+      ]
+    },
+    "L4": {
+      "ok": 2,
+      "fail": 0,
+      "last": {
+        "name": "assert currentLevel aal1 / nextLevel aal2",
+        "ok": true,
+        "code": "aal1/aal2",
+        "at": "2026-09-03T13:51:44.368Z"
+      },
+      "codes": [
+        "aal1/aal2"
+      ]
+    },
+    "L5": {
+      "ok": 4,
+      "fail": 0,
+      "last": {
+        "name": "listFactors == 0 after full unenroll",
+        "ok": true,
+        "code": "count=0",
+        "at": "2026-09-03T13:51:44.735Z"
+      },
+      "codes": [
+        "insufficient_aal",
+        "count=0"
+      ]
+    },
+    "L6": {
+      "ok": 5,
+      "fail": 0,
+      "last": {
+        "name": "admin.mfa.listFactors == 0 after deleteFactor",
+        "ok": true,
+        "code": "count=0",
+        "at": "2026-09-03T13:51:45.408Z"
+      },
+      "codes": [
+        "count=1",
+        "count=0"
+      ]
+    }
+  },
+  "disposable_user_prefix": "mfa-soak-0007-20260903T135140Z-",
+  "cleanup": {
+    "user_deleted": true,
+    "orphan_profile_cleaned": false
+  }
+}
