@@ -14,7 +14,7 @@
  *   no-analytics — disable embed analytics event logging
  */
 
-import type { ArkovaEmbedConfig, AnchorData, EmbedMode } from './types';
+import type { AnchorData, EmbedMode } from './types';
 import { renderLoading, renderError, renderWidget } from './render';
 import { applyDarkTheme } from './themes';
 

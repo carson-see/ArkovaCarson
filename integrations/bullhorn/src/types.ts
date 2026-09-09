@@ -10,6 +10,13 @@ export interface BullhornConfig {
   bullhornRestToken: string;
   /** Arkova API key */
   arkovaApiKey: string;
+  /**
+   * Shared secret Bullhorn (or the relay in front of it) must present on
+   * every inbound subscription-event POST, via the `x-arkova-webhook-secret`
+   * header. REQUIRED for `handleEvents` — when unset every event is rejected
+   * (fail closed). Compared in constant time.
+   */
+  webhookSecret?: string;
   /** Arkova API base URL */
   arkovaBaseUrl?: string;
   /** Custom field ID for syncing verification status */
