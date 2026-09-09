@@ -9,6 +9,8 @@ import {
   refreshDocusignAccessToken,
   getDocusignUserInfo,
   fetchDocusignCombinedDocument,
+  fetchDocusignEnvelopeRecipients,
+  extractCapturedSigners,
   verifyDocusignConnectHmac,
   parseDocusignConnectPayload,
   provisionConnectListener,
@@ -16,6 +18,14 @@ import {
   DocusignApiError,
   DocusignConfigError,
 } from './docusign.js';
+
+// Signer-backfill fixtures: `n` must be an integer (its decimal digits are
+// also valid hex, giving distinct, deterministic, valid GUIDs) — mirrors the
+// convention pinned in api/v1/webhooks/docusign.test.ts's testGuid().
+function testGuid(n: number): string {
+  const suffix = String(Math.trunc(n)).padStart(12, '0').slice(-12);
+  return `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`;
+}
 
 const ENV = {
   DOCUSIGN_INTEGRATION_KEY: 'ik_test',
@@ -143,6 +153,186 @@ describe('fetchDocusignCombinedDocument', () => {
     );
     expect(doc.contentType).toBe('application/pdf');
     expect(doc.bytes.toString('utf8')).toBe('%PDF');
+  });
+});
+
+describe('fetchDocusignEnvelopeRecipients', () => {
+  it('GETs the recipients endpoint and maps signers through extractCapturedSigners', async () => {
+    let requestedUrl = '';
+    let authHeader = '';
+    const fetchImpl = async (url: FetchInput, init?: RequestInit) => {
+      requestedUrl = String(url);
+      authHeader = String(init?.headers && (init.headers as Record<string, string>).Authorization);
+      return new Response(
+        JSON.stringify({
+          signers: [
+            {
+              recipientIdGuid: testGuid(1),
+              userId: testGuid(101),
+              status: 'completed',
+              signedDateTime: '2026-08-20T10:00:00Z',
+              name: 'Should Not Appear',
+              email: 'jane@example.com',
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+
+    const signers = await fetchDocusignEnvelopeRecipients({
+      baseUri: 'https://demo.docusign.net/',
+      accountId: 'acct-1',
+      envelopeId: 'env-1',
+      accessToken: 'at',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+
+    expect(requestedUrl).toBe(
+      'https://demo.docusign.net/restapi/v2.1/accounts/acct-1/envelopes/env-1/recipients',
+    );
+    expect(authHeader).toBe('Bearer at');
+    expect(signers).toEqual([
+      {
+        recipient_id_guid: testGuid(1),
+        user_id: testGuid(101),
+        status: 'completed',
+        signed_at: '2026-08-20T10:00:00Z',
+      },
+    ]);
+    expect(JSON.stringify(signers)).not.toContain('Should Not Appear');
+    expect(JSON.stringify(signers)).not.toContain('jane@example.com');
+  });
+
+  it('returns [] when the envelope has no signers', async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ signers: [] }), { status: 200 });
+
+    const signers = await fetchDocusignEnvelopeRecipients({
+      baseUri: 'https://demo.docusign.net',
+      accountId: 'acct-1',
+      envelopeId: 'env-1',
+      accessToken: 'at',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+
+    expect(signers).toEqual([]);
+  });
+
+  it('throws DocusignApiError with the response status on a non-ok response (caller decides skip vs fail)', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ errorCode: 'ENVELOPE_DOES_NOT_EXIST' }), { status: 404 });
+
+    await expect(
+      fetchDocusignEnvelopeRecipients({
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        envelopeId: 'env-purged',
+        accessToken: 'at',
+        deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('trims a trailing slash on baseUri before composing the URL', async () => {
+    let requestedUrl = '';
+    const fetchImpl = async (url: FetchInput) => {
+      requestedUrl = String(url);
+      return new Response(JSON.stringify({ signers: [] }), { status: 200 });
+    };
+
+    await fetchDocusignEnvelopeRecipients({
+      baseUri: 'https://na1.docusign.net///',
+      accountId: 'acct-1',
+      envelopeId: 'env-1',
+      accessToken: 'at',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+
+    expect(requestedUrl).toBe(
+      'https://na1.docusign.net/restapi/v2.1/accounts/acct-1/envelopes/env-1/recipients',
+    );
+  });
+});
+
+describe('extractCapturedSigners', () => {
+  it('extracts recipient_id_guid/user_id/status/signed_at, never name/email', () => {
+    const result = extractCapturedSigners([
+      {
+        recipientIdGuid: testGuid(1),
+        userId: testGuid(101),
+        status: 'completed',
+        signedDateTime: '2026-08-20T10:00:00Z',
+        name: 'PII Name',
+        email: 'pii@example.com',
+      },
+    ]);
+    expect(result).toEqual([
+      {
+        recipient_id_guid: testGuid(1),
+        user_id: testGuid(101),
+        status: 'completed',
+        signed_at: '2026-08-20T10:00:00Z',
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain('PII Name');
+    expect(JSON.stringify(result)).not.toContain('pii@example.com');
+  });
+
+  it('omits user_id/signed_at when absent (pure email-link signer)', () => {
+    const result = extractCapturedSigners([{ recipientIdGuid: testGuid(2), status: 'sent' }]);
+    expect(result).toEqual([{ recipient_id_guid: testGuid(2), status: 'sent' }]);
+    expect(result[0]).not.toHaveProperty('user_id');
+    expect(result[0]).not.toHaveProperty('signed_at');
+  });
+
+  it('skips entries missing recipientIdGuid or status', () => {
+    const result = extractCapturedSigners([
+      { status: 'completed' },
+      { recipientIdGuid: testGuid(3) },
+      { recipientIdGuid: testGuid(4), status: 'completed' },
+    ]);
+    expect(result).toEqual([{ recipient_id_guid: testGuid(4), status: 'completed' }]);
+  });
+
+  it('skips an entry whose recipientIdGuid is email/name-shaped instead of a GUID', () => {
+    const result = extractCapturedSigners([
+      { recipientIdGuid: 'jane.doe@example.com', status: 'completed' },
+      { recipientIdGuid: 'Jane Doe', status: 'completed' },
+      { recipientIdGuid: testGuid(5), status: 'completed' },
+    ]);
+    expect(result).toEqual([{ recipient_id_guid: testGuid(5), status: 'completed' }]);
+  });
+
+  it('drops an entry whose user_id is email-shaped even with a valid recipientIdGuid', () => {
+    expect(
+      extractCapturedSigners([
+        { recipientIdGuid: testGuid(6), userId: 'not-an-email@example.com', status: 'completed' },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('dedupes repeated recipientIdGuid values (first occurrence wins)', () => {
+    const result = extractCapturedSigners([
+      { recipientIdGuid: testGuid(7), status: 'sent' },
+      { recipientIdGuid: testGuid(7), status: 'completed' },
+    ]);
+    expect(result).toEqual([{ recipient_id_guid: testGuid(7), status: 'sent' }]);
+  });
+
+  it('caps at MAX_CAPTURED_DOCUSIGN_SIGNERS (20) entries', () => {
+    const signers = Array.from({ length: 25 }, (_, i) => ({
+      recipientIdGuid: testGuid(i),
+      status: 'completed',
+    }));
+    const result = extractCapturedSigners(signers);
+    expect(result).toHaveLength(20);
+    expect(result[0]).toMatchObject({ recipient_id_guid: testGuid(0) });
+    expect(result[19]).toMatchObject({ recipient_id_guid: testGuid(19) });
+  });
+
+  it('returns [] for undefined or empty input', () => {
+    expect(extractCapturedSigners(undefined)).toEqual([]);
+    expect(extractCapturedSigners([])).toEqual([]);
   });
 });
 

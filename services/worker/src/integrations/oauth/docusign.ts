@@ -11,7 +11,11 @@
  * the caller for KMS encryption; never log response bodies from this module.
  */
 import { z } from 'zod';
-import { DocusignEnvelopeCompleted as DocusignEnvelopeCompletedSchema } from '../connectors/schemas.js';
+import {
+  DocusignEnvelopeCompleted as DocusignEnvelopeCompletedSchema,
+  captureDocusignSigners,
+  type DocusignCapturedSignerT,
+} from '../connectors/schemas.js';
 import { boundedErrorDetail } from '../../utils/byte-safety.js';
 import { verifyHmacSha256Base64 } from './hmac.js';
 
@@ -307,6 +311,76 @@ export async function fetchDocusignCombinedDocument(args: {
   }
   const bytes = Buffer.from(await res.arrayBuffer());
   return { bytes, contentType: res.headers.get('content-type') };
+}
+
+/**
+ * Recipients API response shape (subset) — GET .../envelopes/{id}/recipients.
+ * DocuSign returns per-recipient objects under `signers[]` using the SAME
+ * field names (`recipientIdGuid`/`userId`/`status`/`signedDateTime`) the
+ * Connect webhook's `recipients.signers[]` carries — see `extractCapturedSigners`.
+ */
+interface DocusignRecipientsApiResponse {
+  signers?: Array<Record<string, unknown>>;
+}
+
+/**
+ * Signer-backfill (docusign-bilateral follow-on): GET the envelope's current
+ * recipients from the eSignature REST API and map them through the SAME
+ * pseudonymous-signer contract as the Connect webhook's `extractSigners`
+ * (api/v1/webhooks/docusign.ts) — see {@link extractCapturedSigners}.
+ *
+ * Used ONLY for backfilling `_signers` onto anchors created before signer
+ * capture shipped. Never call this for an INBOUND (foreign-account) envelope —
+ * the caller's own OAuth grant does not cover it and DocuSign 26.3 is locking
+ * down cross-account access regardless; that exclusion is enforced by the
+ * caller (jobs/docusign-signer-backfill.ts), not here.
+ */
+export async function fetchDocusignEnvelopeRecipients(args: {
+  baseUri: string;
+  accountId: string;
+  envelopeId: string;
+  accessToken: string;
+  deps?: DocusignClientDeps;
+}): Promise<DocusignCapturedSignerT[]> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const base = trimTrailingSlashes(args.baseUri);
+  const url = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/envelopes/${encodeURIComponent(args.envelopeId)}/recipients`;
+  const res = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  });
+  if (!res.ok) {
+    // Non-document path: the recipients response is small metadata JSON
+    // (names/GUIDs/statuses), never document bytes — unlike
+    // fetchDocusignCombinedDocument, a bounded scrubbed detail is safe here.
+    // The caller inspects `.status` to treat 404/403/410 (purged/no-access/
+    // retention — expected for old envelopes) as a per-envelope skip rather
+    // than a run failure.
+    const json = await parseJsonResponse(res);
+    throw new DocusignApiError(
+      'DocuSign envelope recipients fetch failed',
+      res.status,
+      boundedErrorDetail(json),
+    );
+  }
+  const json = (await parseJsonResponse(res)) as DocusignRecipientsApiResponse | null;
+  return extractCapturedSigners(json?.signers);
+}
+
+/**
+ * Map a raw DocuSign recipients array into the pseudonymous
+ * `DocusignCapturedSignerT[]` shape. A thin, name-preserving wrapper around
+ * the shared `captureDocusignSigners` (`integrations/connectors/schemas.ts`)
+ * — the SAME algorithm the Connect webhook's `extractSigners`
+ * (api/v1/webhooks/docusign.ts) uses, factored out once so the two call
+ * sites cannot drift: GUID-shape validated `recipient_id_guid`/`user_id`,
+ * capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS`, deduped by `recipient_id_guid`
+ * (first occurrence wins), invalid/partial entries silently skipped — never
+ * thrown, never a name/email.
+ */
+export function extractCapturedSigners(
+  signers: Array<Record<string, unknown>> | undefined,
+): DocusignCapturedSignerT[] {
+  return captureDocusignSigners(signers);
 }
 
 export function verifyDocusignConnectHmac(args: {
