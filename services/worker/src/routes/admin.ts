@@ -281,8 +281,31 @@ adminRouter.post('/admin/organizations/:id/credits/adjust', async (req, res) => 
 });
 
 // ─── ARK-101 (SCRUM-1011): Anchor queue resolution ───
-// Authz: `list_pending_resolution_anchors` returns only caller's org rows;
-// `resolve_anchor_queue` enforces ORG_ADMIN role inside the RPC.
+// Authz, corrected (SCRUM-3569): this comment used to claim
+// `list_pending_resolution_anchors` scoped the read and `resolve_anchor_queue`
+// enforced ORG_ADMIN "inside the RPC". SCRUM-2213 replaced the listing RPC with
+// a direct query, so that stopped being true for `/queue/pending` and the route
+// ran with no role gate at all. `adminRouter` has NO authorization middleware:
+// its only `.use()` calls are a path-scoping shim (`isAdminRouterPath`, which
+// forwards non-admin paths past this router), `corsMiddleware`, and
+// `rateLimiters.checkout` — so every handler owns its own gate:
+//   - `/queue/pending`  → `handleListPendingResolution` scopes by org AND
+//     requires ORG_ADMIN via `_org-auth.ts` (api/queue-resolution.ts).
+//   - `/queue/resolve`  → `resolve_anchor_queue_by_public_id` still enforces
+//     ORG_ADMIN inside the RPC, now against the explicitly-passed caller id.
+//   - `/queue/run`      → `authorizeManualRun` (same `_org-auth.ts` resolver).
+//   - `/queue/collision/:externalFileId` (defined further down this file)
+//     → `handleCollisionContext` (api/collision-context.ts) gates on
+//     `getCallerOrgId` ONLY: any authenticated member WITH an org passes, and
+//     the response carries the same `filename` + `fingerprint` fields that
+//     motivated the SCRUM-3569 gate above. It is listed here so this block
+//     stays an exhaustive map of the queue surface rather than a partial one —
+//     a comment that reads complete but is not is the exact failure that hid
+//     SCRUM-3569 for three months. Narrower than `/queue/pending` was (the
+//     caller must already know an `external_file_id`; it cannot be enumerated
+//     from this router now), so it is a follow-up, NOT fixed by this PR:
+//     raise/track it with SCRUM-3010's member-scoped visibility work.
+// Do not re-add a claim here without checking the handler still backs it.
 adminRouter.get('/queue/pending', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
