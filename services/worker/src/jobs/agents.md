@@ -1,5 +1,9 @@
 # services/worker/src/jobs/agents.md
 
+## 2026-09-05 — PR #2495 release review: incomplete reorg scans remain failures
+
+`detectReorgs` now rejects malformed or unreadable tip heights, non-404 transaction lookup failures, missing confirmation status/block identity, and failed status reverts with `completed: false`. Successful sibling checks retain their counts, but any failed required check prevents the existing cron route from returning a healthy 200. The SECURED-to-SUBMITTED compare-and-set also repeats `legal_hold = false`, so a hold added after selection wins at write time. This enforces the existing legal-hold invariant without adding an anchor transition. Regression probes were observed failing before the changes; production is unchanged and fresh T3 staging remains required.
+
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
 ## 2026-08-15 — the `*Fetcher.ts` family cannot report failure as success any more (BUG-020/022/023)
