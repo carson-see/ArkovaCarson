@@ -9,10 +9,16 @@
  * `children` — see the inline comments below and
  * `src/components/auth/agents.md` for the full design writeup.
  *
+ * It is ALSO the mailbox-confirmation gate (SCRUM-4035): an OAuth signup
+ * that has not yet consumed an Arkova-issued mailbox challenge carries the
+ * `arkova_email_pending` role in its JWT and is sent to `/signup` before any
+ * MFA row is evaluated — see ROW 2b below.
+ *
  * DECISION ORDER (first match wins — see AuthGuard.mfaGate.test.tsx for one
  * named test per row):
  *   1 authLoading                              -> spinner
  *   2 !user                                    -> login redirect / fallback
+ *   2b pending Arkova mailbox confirmation     -> /signup redirect (SCRUM-4035)
  *   3 mfaStatus loading                        -> spinner
  *   4 policy loading                           -> spinner
  *   5 challenge_required                       -> <MfaChallenge> (ALWAYS — no cooldown/bypass check)
@@ -79,6 +85,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../hooks/useAuth';
+import { isEmailConfirmationPending } from '../../lib/oauthConfirmation';
 import { useMfaAssurance } from '../../hooks/useMfaAssurance';
 import { useMfaEnrollmentRequirement } from '../../hooks/useMfaEnrollmentRequirement';
 import { ROUTES } from '../../lib/routes';
@@ -239,6 +246,33 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
     }
     // Redirect to login, preserving the intended destination
     return <Navigate to={ROUTES.LOGIN} state={{ from: location }} replace />;
+  }
+
+  // Row 2b: MAILBOX CONFIRMATION (SCRUM-4035), evaluated after row 2 and
+  // BEFORE every MFA row. Ordering decision taken when PR #2655 was merged
+  // with PR #2637 (the reconciliation docs/uat03-email-confirmation.md
+  // deployment gate 1 calls for), on three grounds:
+  //
+  //   1. Intent: the pending role is a pre-onboarding state, not a
+  //      second authentication factor. Per that doc, "the app callback and
+  //      protected-route guard send pending sessions to /signup" and "the
+  //      existing onboarding flow resumes only after the refreshed JWT is no
+  //      longer pending". MFA authentication explicitly CANNOT clear a
+  //      pending record, so running the MFA rows first could never satisfy
+  //      this gate — it would only delay it.
+  //   2. Safety: a pending JWT is rejected terminally by the worker and edge
+  //      verifiers and its role is not granted to PostgREST, so the MFA hooks
+  //      would be operating on a session that cannot complete enrollment.
+  //      Reaching row 6 with a pending session risks tripping the fail-open
+  //      capability path, which renders `children` — i.e. the pending user
+  //      would land inside protected content. Gating first makes that
+  //      unreachable.
+  //   3. #2637 is preserved exactly: this row only ever redirects AWAY from
+  //      `children`, never toward it, so it cannot weaken row 5's
+  //      "a verified factor is ALWAYS challenged" guarantee. For every
+  //      non-pending session the rows 3-8 decision order is byte-unchanged.
+  if (isEmailConfirmationPending(session)) {
+    return <Navigate to={ROUTES.SIGNUP} replace />;
   }
 
   // Rows 3/4: either check still loading. Same spinner as the auth-loading
