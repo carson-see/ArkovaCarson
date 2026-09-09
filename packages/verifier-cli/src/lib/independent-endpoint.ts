@@ -17,6 +17,16 @@ export const DEFAULT_ESPLORA = 'https://blockstream.info/api';
 
 const ARKOVA_HOST_RE = /(^|\.)arkova\.(io|ai|com|app|dev)$/i;
 
+// Cloud Run's raw *.run.app host (e.g. the SDK's DEFAULT_BASE_URL,
+// packages/sdk/src/client.ts: arkova-worker-270018525501.us-central1.run.app)
+// IS an Arkova-operated endpoint even though it carries no arkova.* vanity
+// domain. Refuse the whole *.run.app suffix rather than just Arkova's own
+// service name: Cloud Run hostnames are shared, project-scoped infrastructure
+// with no ownership signal in the hostname itself, so a narrower match (e.g.
+// requiring "arkova-worker") would trust an operator-controlled naming
+// convention as a security boundary.
+const CLOUD_RUN_HOST_RE = /\.run\.app$/i;
+
 /**
  * Validate that `endpoint` is a well-formed URL pointing at a node that is NOT
  * Arkova-operated. Returns the parsed URL on success; throws otherwise. Called
@@ -29,7 +39,10 @@ export function assertIndependentEndpoint(endpoint: string): URL {
   } catch {
     throw new Error(`Invalid --rpc endpoint: ${endpoint}`);
   }
-  if (ARKOVA_HOST_RE.test(url.hostname)) {
+  // A final root dot denotes the same DNS host. URL.hostname retains it,
+  // so normalize it before applying the operator-host policy.
+  const hostname = url.hostname.replace(/\.$/, '');
+  if (ARKOVA_HOST_RE.test(hostname) || CLOUD_RUN_HOST_RE.test(hostname)) {
     throw new Error(
       `Refusing to verify against an Arkova-operated node (${url.hostname}). ` +
         'The reference verifier must confirm the on-chain fact independently. ' +
