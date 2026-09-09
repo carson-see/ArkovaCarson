@@ -3,6 +3,11 @@
   "_history": [
     {
       "date": "2026-09-09",
+      "author": "CTO session — self-correction",
+      "note": "REVERTED the 17 prefixes added earlier today (0420-0424, 0426, 0429-0435, 0438, 0439, 0441, 0442). They were added ahead of their prod applies so the apply hook would permit them. The applies did not happen, so every one of those entries violated this file's INVARIANT — a prefix belongs here only if it is present in the prod ledger AND absent from main; these were absent from BOTH. Leaving them would not be inert: auditLedgerVsRepo returns early on an exempt prefix BEFORE the localPrefixes check, so 17 false entries would suppress the orphan audit across most of the migration backlog. They also bought nothing: the drift check has two failure modes and the numeric-ledger exemption only covers one, so PRs whose .sql is absent from prod stayed correctly blocked throughout. Verified on #2472 and #2565, both still failing the check with the exemptions in place. Each prefix will be re-added individually at the moment its migration is actually applied, which is what CLAUDE.md §0 rule 10's 'same motion' means. SEPARATELY, a pre-existing error to correct: the 2026-08-30 entry asserts 0425 'is present in the PROD ledger on vzwyaatejekddvltxyye'. It is not — list_migrations shows prod head 0440 with 0425 absent, and idx_anchors_reorg_scan does not exist on prod. 0425 also cannot be applied through MCP apply_migration at all: CREATE INDEX CONCURRENTLY cannot run inside a transaction block (SQLSTATE 25001), and the file says so in capitals. 0425 stays listed because removing it is a separate decision from correcting the record."
+    },
+    {
+      "date": "2026-09-09",
       "author": "CTO session — founder directive 2026-09-09 backlog drain",
       "note": "ADDED 0420,0421,0422,0423,0424,0426,0429,0430,0431,0432,0433,0434,0435,0438,0439,0441,0442 (0425 was already listed). These are the migrations owned by the open PR backlog that the founder directed to merge on 2026-09-09: #2440 (0421,0433), #2442 (0420,0434), #2472 (0423), #2476 (0424,0435), #2495 (0425), #2519/#2529 (0426), #2565 (0438), #2571 (0422,0439), #2572 (0429-0432), #2693 (0442), #2694 (0441). Migrate-before-merge is the required order (CLAUDE.md §0 rule 10): the drift gate needs each NNNN present in prod before its PR can merge, and the apply is hook-blocked unless the prefix is on main or listed here. Each is applied to prod vzwyaatejekddvltxyye via MCP apply_migration with the ledger row reconciled to its numeric prefix in the same motion. HOT-TABLE REVIEW (CLAUDE.md §1.2), performed before landing this: every migration touching organizations/anchors/profiles carries SET LOCAL lock_timeout, including 0422, whose non-CONCURRENT unique index on organizations is preceded by SET LOCAL lock_timeout='5s'. 0425 uses CREATE INDEX CONCURRENTLY. 0430 reads organizations only inside function bodies and performs no DDL on it. HONEST LIMITATION: these are NOT covered by soak evidence at their PRs' current heads — eight windows were invalidated on 2026-09-09 when main was merged into soaking PRs, and the founder's directive is that these changes have already soaked repeatedly and must ship. The soak-gate bypass window was reopened to 2026-09-12 in commit 1517cb15f for the same reason. REMOVE each prefix when its owning PR merges and the .sql lands on main (the file's INVARIANT)."
     },
@@ -179,24 +184,7 @@
   ],
   "exemptPrefixes": [
     "0415",
-    "0420",
-    "0421",
-    "0422",
-    "0423",
-    "0424",
     "0425",
-    "0426",
-    "0427",
-    "0429",
-    "0430",
-    "0431",
-    "0432",
-    "0433",
-    "0434",
-    "0435",
-    "0438",
-    "0439",
-    "0441",
-    "0442"
+    "0427"
   ]
 }
