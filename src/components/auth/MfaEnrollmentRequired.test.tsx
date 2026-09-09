@@ -27,6 +27,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { StrictMode } from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MfaEnrollmentRequired } from './MfaEnrollmentRequired';
 import { MFA_ENROLLMENT_REQUIRED_LABELS } from '@/lib/copy';
@@ -83,6 +84,18 @@ describe('MfaEnrollmentRequired', () => {
 
   function renderScreen() {
     return render(<MfaEnrollmentRequired onEnrolled={onEnrolled} onCapabilityUnavailable={onCapabilityUnavailable} />);
+  }
+
+  // The real app renders inside <React.StrictMode> (src/main.tsx), and every
+  // dev/CI build therefore mounts -> unmounts -> remounts each component,
+  // double-invoking its effects. `renderScreen` above does NOT, so it cannot
+  // see that class of defect at all.
+  function renderScreenUnderStrictMode() {
+    return render(
+      <StrictMode>
+        <MfaEnrollmentRequired onEnrolled={onEnrolled} onCapabilityUnavailable={onCapabilityUnavailable} />
+      </StrictMode>,
+    );
   }
 
   it('CAN REACH ENROLLMENT: starts enrollment automatically with a unique friendly name and shows the QR code', async () => {
@@ -613,4 +626,105 @@ describe('MfaEnrollmentRequired', () => {
       await vi.advanceTimersByTimeAsync(8_000);
     });
   });
+
+  // ------------------------------------------------------------------
+  // StrictMode double-invoke (E2E flake root cause, 2026-09-08)
+  //
+  // `e2e/mfa-enrollment-and-challenge.spec.ts`'s two MfaEnrollmentRequired
+  // scenarios (lines 208 and 385) failed intermittently on PRs #2442/#2485/
+  // #2496 with "MFA verification failed; probe will not retry a platform
+  // error" — deterministic within a job, intermittent across jobs, and never
+  // on the TwoFactorSetup/MfaChallenge scenarios in the same file.
+  //
+  // Cause: the mount-time enroll() effect ran TWICE under StrictMode, so the
+  // server held two unverified factors and the component rendered whichever
+  // enroll() resolved LAST. The spec reads `mfa-enrollment-secret` once and
+  // then computes TOTP codes from that snapshot; when the second enroll()
+  // landed after that read, the displayed secret (and `enrollmentData
+  // .factorId`) silently swapped to the other factor and every code the spec
+  // submitted was computed from the wrong secret. GoTrue validates TOTP with
+  // Skew: 1 (+/- one 30s step), so this is NOT a step-boundary race — the
+  // codes were simply for a different factor, which is why the helper's
+  // one-shot boundary retry could never recover.
+  //
+  // The component's own doc comment already states the intent these tests
+  // pin: "Intentionally mount-once: re-enrolling on every re-render would
+  // spam Supabase and burn the MaxEnrolledFactors cap (Amendment A3)."
+  // ------------------------------------------------------------------
+
+  it('enrolls EXACTLY ONCE under StrictMode: the mount effect is double-invoked, the enrollment is not', async () => {
+    renderScreenUnderStrictMode();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-enrollment-secret')).toBeInTheDocument();
+    });
+    // Let any second enroll() that a double-invoked effect would have fired
+    // settle before asserting, so this cannot pass on timing alone.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockEnroll).toHaveBeenCalledTimes(1);
+    // No second factor exists, so nothing has to be cleaned up either.
+    expect(mockUnenroll).not.toHaveBeenCalled();
+  });
+
+  it('the secret shown to the user cannot be swapped by a later enroll(), and verify() targets the factor whose secret is displayed', async () => {
+    let resolveSecondEnroll!: (v: unknown) => void;
+    mockEnroll
+      .mockResolvedValueOnce({
+        data: {
+          id: 'factor-displayed',
+          type: 'totp',
+          totp: { qr_code: 'data:image/svg+xml;base64,a', secret: 'AAAAAAAAAAAAAAAA', uri: 'otpauth://a' },
+        },
+        error: null,
+      })
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSecondEnroll = resolve;
+        }),
+      );
+    mockChallenge.mockResolvedValue({ data: { id: 'challenge-1' }, error: null });
+    mockVerify.mockResolvedValue({ data: { session: {} }, error: null });
+
+    renderScreenUnderStrictMode();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mfa-enrollment-secret')).toHaveTextContent('AAAAAAAAAAAAAAAA');
+    });
+    // This is the E2E spec's read: it snapshots the secret text HERE and
+    // computes every subsequent TOTP code from it.
+    const displayedSecret = screen.getByTestId('mfa-enrollment-secret').textContent;
+
+    // A second enroll() landing after that read must not be able to move the
+    // screen onto a different factor.
+    await act(async () => {
+      resolveSecondEnroll({
+        data: {
+          id: 'factor-orphan',
+          type: 'totp',
+          totp: { qr_code: 'data:image/svg+xml;base64,b', secret: 'BBBBBBBBBBBBBBBB', uri: 'otpauth://b' },
+        },
+        error: null,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('mfa-enrollment-secret')).toHaveTextContent(displayedSecret!);
+
+    fireEvent.change(screen.getByTestId('mfa-enrollment-code'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByTestId('mfa-enrollment-submit'));
+
+    await waitFor(() => {
+      expect(mockVerify).toHaveBeenCalled();
+    });
+    expect(mockChallenge).toHaveBeenCalledWith({ factorId: 'factor-displayed' });
+    expect(mockVerify).toHaveBeenCalledWith(
+      expect.objectContaining({ factorId: 'factor-displayed', code: '123456' }),
+    );
+  });
+
 });
