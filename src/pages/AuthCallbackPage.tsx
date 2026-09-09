@@ -22,6 +22,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Loader2, MailWarning } from 'lucide-react';
 import { supabase, authLinkErrorFromUrl } from '@/lib/supabase';
+import { isEmailConfirmationPending } from '@/lib/oauthConfirmation';
+import type { Session } from '@supabase/supabase-js';
 import { ROUTES } from '@/lib/routes';
 import { AUTH_CALLBACK_LABELS } from '@/lib/copy';
 import { Button } from '@/components/ui/button';
@@ -68,11 +70,11 @@ export function AuthCallbackPage() {
 
     let redirected = false;
 
-    const goToDashboard = () => {
+    const goToDestination = (session: Session | null) => {
       if (redirected) return;
       redirected = true;
       window.history.replaceState(null, '', window.location.pathname);
-      navigate(ROUTES.DASHBOARD, { replace: true });
+      navigate(isEmailConfirmationPending(session) ? ROUTES.SIGNUP : ROUTES.DASHBOARD, { replace: true });
     };
 
     const goToLogin = () => {
@@ -87,12 +89,12 @@ export function AuthCallbackPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        goToDashboard();
+        goToDestination(session);
       } else if (event === 'INITIAL_SESSION') {
         // PKCE flow: detectSessionInUrl already exchanged the code.
         // If a session exists, the user is authenticated.
         if (session) {
-          goToDashboard();
+          goToDestination(session);
         } else {
           // No session after code exchange — auth failed
           goToLogin();
@@ -107,7 +109,7 @@ export function AuthCallbackPage() {
     const sessionCheck = setTimeout(async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        goToDashboard();
+        goToDestination(session);
       } else {
         goToLogin();
       }

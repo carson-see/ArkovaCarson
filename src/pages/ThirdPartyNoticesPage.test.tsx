@@ -4,10 +4,17 @@
  * 2026-07-28).
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, it, expect } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ThirdPartyNoticesPage } from './ThirdPartyNoticesPage';
+import thirdPartyNotices from '@/data/thirdPartyNotices.generated.json';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 describe('ThirdPartyNoticesPage', () => {
   it('renders the page heading', () => {
@@ -72,8 +79,43 @@ describe('ThirdPartyNoticesPage', () => {
     expect(screen.getAllByText(/^MIT$/).length).toBeGreaterThan(0);
   });
 
-  it('does not include a fabricated xlsx entry (no such dependency exists in the tree)', () => {
+  // Was: "does not include a fabricated xlsx entry (no such dependency exists
+  // in the tree)" — written when xlsx was absent. xlsx@0.18.5 is a real
+  // production dependency in package.json today; the old assertion only
+  // stayed green because the committed generated file predated it
+  // (2026-07-28), i.e. the STALE data was masking a missing attribution. The
+  // fabrication invariant, stated honestly, is: every entry on the page names
+  // a package@version that actually exists in package-lock.json — nothing
+  // invented, nothing suppressed.
+  it('lists only dependencies that exist in package-lock.json (fabrication guard)', () => {
+    const lock = JSON.parse(readFileSync(resolve(REPO_ROOT, 'package-lock.json'), 'utf8')) as {
+      packages: Record<string, { version?: string }>;
+    };
+    const lockVersions = new Set<string>();
+    for (const [path, info] of Object.entries(lock.packages)) {
+      if (!path.includes('node_modules/') || !info.version) continue;
+      const name = path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
+      lockVersions.add(`${name}@${info.version}`);
+    }
+
+    const { generalDependencies } = thirdPartyNotices as {
+      generalDependencies: { name: string; version: string }[];
+    };
+    expect(generalDependencies.length).toBeGreaterThan(0);
+    const fabricated = generalDependencies
+      .map((entry) => `${entry.name}@${entry.version}`)
+      .filter((key) => !lockVersions.has(key));
+    expect(fabricated).toEqual([]);
+
+    // And the direction the old test was really about, kept honest: xlsx is
+    // in the tree today (a direct production dependency), so SUPPRESSING it
+    // would now be the compliance hole. Version comes from the lockfile so a
+    // bump moves this assertion instead of staling it.
+    const xlsxVersion = lock.packages['node_modules/xlsx']?.version;
+    expect(xlsxVersion).toBeTruthy();
     render(<MemoryRouter><ThirdPartyNoticesPage /></MemoryRouter>);
-    expect(screen.queryByText(/^xlsx@/)).toBeNull();
+    expect(
+      screen.getByText((_content, el) => el?.textContent === `xlsx@${xlsxVersion}`),
+    ).toBeDefined();
   });
 });
