@@ -34,6 +34,7 @@ const callOrder = vi.hoisted(() => [] as string[]);
 
 const {
   mockGetFlag,
+  mockGetFlagLive,
   mockUpsertAnchorProofs,
   mockPrepare,
   mockBroadcastSigned,
@@ -47,6 +48,7 @@ const {
 } = vi.hoisted(() => {
   const callOrderRef = callOrder;
   const mockGetFlag = vi.fn(() => true);
+  const mockGetFlagLive = vi.fn(async () => true);
   const mockUpsertAnchorProofs = vi.fn(async (..._args: unknown[]) => {
     callOrderRef.push('persistProofs');
   });
@@ -90,6 +92,7 @@ const {
 
   return {
     mockGetFlag,
+    mockGetFlagLive,
     mockUpsertAnchorProofs,
     mockPrepare,
     mockBroadcastSigned,
@@ -109,8 +112,12 @@ vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../config.js', () => ({
   config: { nodeEnv: 'test', useMocks: true, enableOrgCreditEnforcement: true },
 }));
+// DI-736: the gate resolves ENABLE_BATCH_ANCHORING through `getFlagLive`
+// (TTL-refreshed) — `getFlag` is the boot snapshot and must NOT be what a
+// kill switch is read from. Both are mocked so a regression back to the
+// snapshot shows up as a behavioural failure, not a TypeError.
 vi.mock('../middleware/flagRegistry.js', () => ({
-  flagRegistry: { getFlag: mockGetFlag },
+  flagRegistry: { getFlag: mockGetFlag, getFlagLive: mockGetFlagLive },
 }));
 vi.mock('../utils/anchorProofs.js', () => ({
   upsertAnchorProofs: mockUpsertAnchorProofs,
@@ -361,6 +368,7 @@ beforeEach(() => {
   dbState.oldest = { data: { created_at: '2026-01-01T00:00:00Z' }, error: null };
 
   mockGetFlag.mockReturnValue(true);
+  mockGetFlagLive.mockResolvedValue(true);
   mockUpsertAnchorProofs.mockImplementation(async (..._args: unknown[]) => {
     callOrder.push('persistProofs');
   });
@@ -391,6 +399,7 @@ beforeEach(() => {
 describe('S3-P0 — ENABLE_BATCH_ANCHORING gate', () => {
   it('does nothing when the flag is off — no claim, no chain call, even with force', async () => {
     mockGetFlag.mockReturnValue(false);
+    mockGetFlagLive.mockResolvedValue(false);
     mockClaimReturns(CLAIMED_OUT_OF_ORDER);
 
     const result = await processBatchAnchors({ force: true });
@@ -405,6 +414,30 @@ describe('S3-P0 — ENABLE_BATCH_ANCHORING gate', () => {
   it('runs when the flag is on', async () => {
     mockClaimReturns(CLAIMED_OUT_OF_ORDER);
     const result = await processBatchAnchors({ force: true });
+    expect(result.processed).toBe(3);
+  });
+
+  // DI-736 / SCRUM-3475 — the kill switch must read the switchboard, not the
+  // value this process happened to boot with.
+  it('honours a mid-process kill even though the boot snapshot still says on', async () => {
+    mockGetFlag.mockReturnValue(true);
+    mockGetFlagLive.mockResolvedValue(false);
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockDbRpc).not.toHaveBeenCalled();
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+  });
+
+  it('resumes when the switchboard row is flipped back on without a restart', async () => {
+    mockGetFlag.mockReturnValue(false);
+    mockGetFlagLive.mockResolvedValue(true);
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+
+    const result = await processBatchAnchors({ force: true });
+
     expect(result.processed).toBe(3);
   });
 });
