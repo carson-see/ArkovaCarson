@@ -1,13 +1,19 @@
 /**
  * Anchor Queue Resolution API (ARK-101 — SCRUM-1011)
  *
- * GET  /api/queue/pending       → list PENDING_RESOLUTION anchors for caller's org
+ * GET  /api/queue/pending       → ORG_ADMIN lists PENDING_RESOLUTION anchors for their org
  * POST /api/queue/resolve       → admin picks terminal version; siblings → REVOKED
  *
- * The heavy lifting lives in the DB RPCs `list_pending_resolution_anchors`
- * and `resolve_anchor_queue` (migration 0228). The endpoints here are thin
- * wrappers: authenticate via Supabase JWT, forward to the RPC under the
- * user's role, shape the response, map RPC exceptions to HTTP codes.
+ * `/queue/resolve` is a thin wrapper over the `resolve_anchor_queue_by_public_id`
+ * RPC (migration 0228, service_role overload 0367): authenticate via Supabase
+ * JWT, forward the caller identity, map RPC exceptions to HTTP codes — the RPC
+ * owns the ORG_ADMIN check and the row locking.
+ *
+ * `/queue/pending` is NOT a wrapper any more: SCRUM-2213 retired its RPC
+ * (`list_pending_resolution_anchors`) because it read `auth.uid()`, which is
+ * always NULL under the worker's service_role client. It reads the `anchors`
+ * table directly, so BOTH the org scope and the ORG_ADMIN check are this
+ * module's responsibility (SCRUM-3569) — see `handleListPendingResolution`.
  */
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -18,7 +24,7 @@ import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { recordOrgQueueRunResult } from '../jobs/org-queue-scheduler.js';
 import { mapRpcErrorToStatus } from './rpc-error-status.js';
-import { getCallerProfile, isCallerOrgAdminResult } from './_org-auth.js';
+import { getCallerProfile, getCallerProfileResult, isCallerOrgAdminResult } from './_org-auth.js';
 
 export { mapRpcErrorToStatus } from './rpc-error-status.js';
 
@@ -64,6 +70,17 @@ function metadataString(metadata: unknown, key: string): string | null {
 }
 
 /**
+ * The one 500 shape `handleListPendingResolution` returns for every internal
+ * fault (profile lookup, admin lookup, anchors query) — same status/body,
+ * differing only in what gets logged. Kept as a helper so the three call
+ * sites can't drift onto three slightly different error payloads.
+ */
+function pendingResolutionInternalError(res: Response, logCtx: Record<string, unknown>, logMsg: string): void {
+  logger.error(logCtx, logMsg);
+  res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
+}
+
+/**
  * GET /api/queue/pending
  * Returns anchors currently in PENDING_RESOLUTION for the caller's org,
  * with a `sibling_count` per row so the UI can badge collisions.
@@ -76,6 +93,20 @@ function metadataString(metadata: unknown, key: string): string | null {
  * caller's org explicitly from the authenticated `callerUserId` (passed by the
  * route, which already validated the JWT) and query org-scoped directly — no
  * `auth.uid()` dependency, and bounded/indexed (no full-table scan).
+ *
+ * SCRUM-3569 (SEC): that rewrite also silently dropped the route's ONLY
+ * authorization check. The retired RPC enforced ORG_ADMIN internally; the
+ * direct query is org-scoped and nothing more, so every authenticated member
+ * of an org could enumerate their coworkers' `filename` + `fingerprint`. The
+ * published contract never agreed with that — `openapi-ciba.ts` tags this path
+ * `['Queue', 'OrgAdmin']` with `security: [{ OrgAdminBearer: [] }]`, and
+ * `adminRouter` carries no authorization middleware of its own (only CORS,
+ * logging and a rate limiter), so the gate has to live here.
+ *
+ * The admin decision is delegated to the canonical `_org-auth.ts` resolver used
+ * by `handleRunOrgAnchorQueue` below and by the `requireOrgAdmin` middleware —
+ * NOT a third, private role predicate. Its `*Result` contract is what keeps a
+ * transient `org_members`/`profiles` fault from being served as a 403.
  */
 export async function handleListPendingResolution(
   req: Request,
@@ -93,21 +124,55 @@ export async function handleListPendingResolution(
   }
 
   try {
-    const { data: profile, error: profileError } = await db
-      .from('profiles')
-      .select('org_id')
-      .eq('id', callerUserId)
-      .maybeSingle();
+    // ONE `profiles` read, owned by `_org-auth.ts`. Using the shared fetch (and
+    // not a local `select`) is what keeps the column list the admin precedence
+    // rule reads — `role`, `is_platform_admin` — from drifting away from the
+    // resolver that reads it. The row is handed straight back below as
+    // `preloadedProfile`, so the gate costs at most one extra `org_members`
+    // read and never a second `profiles` round-trip.
+    const { value: profile, error: profileError } = await getCallerProfileResult(callerUserId);
 
     if (profileError) {
-      logger.error({ error: profileError, userId: callerUserId }, 'queue/pending: profile lookup failed');
-      res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
+      pendingResolutionInternalError(res, { userId: callerUserId }, 'queue/pending: profile lookup failed');
       return;
     }
 
     // No profile or no org → empty queue (renders an empty state, never an error).
+    // Deliberately still a 200 and NOT the 403 below: there is no org, so there
+    // is nothing to disclose, and the Review Queue page's empty state is the
+    // honest rendering of "you are not in an organization yet".
     if (!profile?.org_id) {
       res.json({ items: [], count: 0 });
+      return;
+    }
+
+    // SCRUM-3569: ORG_ADMIN gate, BEFORE the read. Precedence comes from the
+    // canonical resolver (`org_members` owner/admin → profile ORG_ADMIN of THIS
+    // org → platform admin) — the same signal `AnchorQueuePage.tsx`'s
+    // `canRunAnchoringJob()` already uses client-side to decide who may act on
+    // the queue. An operational lookup failure is a 500, never a masked 403.
+    const { value: isAdmin, error: adminLookupError } = await isCallerOrgAdminResult(
+      callerUserId,
+      profile.org_id,
+      profile,
+    );
+    if (adminLookupError) {
+      pendingResolutionInternalError(
+        res,
+        { userId: callerUserId, orgId: profile.org_id },
+        'queue/pending: admin lookup failed',
+      );
+      return;
+    }
+    if (!isAdmin) {
+      // §1.3: `AnchorQueuePage.tsx` renders `body.error.message` verbatim via
+      // `setError(...)`, so this worker-assembled string IS user-facing copy.
+      res.status(403).json({
+        error: {
+          code: 'forbidden',
+          message: 'Organization administrator access is required to view the review queue.',
+        },
+      });
       return;
     }
 
@@ -126,8 +191,11 @@ export async function handleListPendingResolution(
       .limit(500);
 
     if (rowsError) {
-      logger.error({ error: rowsError, userId: callerUserId }, 'queue/pending: anchors query failed');
-      res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
+      pendingResolutionInternalError(
+        res,
+        { error: rowsError, userId: callerUserId },
+        'queue/pending: anchors query failed',
+      );
       return;
     }
 
