@@ -171,6 +171,14 @@ class VerificationResult(RichVerificationFields):
     # `str` rather than `Literal`, for the reason on `fingerprint_source`.
     proof_availability: str | None = None
     proof_availability_note: str | None = None
+    # Unreachable via Client.verify() / Client.verify_fingerprint() (and their
+    # async equivalents): _request() calls _raise_for_error(response) before
+    # _parse_json() ever builds a VerificationResult, so any non-2xx response
+    # that could carry `error` raises ArkovaError instead of returning a model
+    # instance. Kept on the model (not removed) because the worker's frozen
+    # v1 schema (CLAUDE.md §1.8) still declares the field, and a caller who
+    # constructs a VerificationResult directly (tests, fixtures) can still set
+    # it. See tests/test_client.py for the field-reachability note.
     error: str | None = None
 
 

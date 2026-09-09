@@ -2,6 +2,22 @@
 
 Operational, CI, deployment, and security scripts. Run manually or from CI workflows.
 
+## 2026-09-05 — `publish-packages.sh` is EMBED-ONLY; `arkova` has exactly one publish path
+
+`publish-packages.sh` published packages/sdk (npm name `arkova`) as well as embed, through
+a path strictly weaker than `scripts/release/publish-npm.sh`: no `npm whoami` check before
+it starts building, and no skip for a version already on the registry — it fails partway
+through the run on npm's "cannot publish over previously published version". Two paths to
+publish one package means the weaker one eventually gets used, so the target is REMOVED
+rather than documented against. `--only=sdk` exits 2 with the redirect; `--only=<anything
+else>` now fails instead of silently publishing nothing.
+
+`scripts/release/publish-npm.sh` is the path for `arkova` and `arkova-mcp-server`. Its
+header carries two operator notes worth knowing before a release: `secrets.NPM_TOKEN` was
+scoped to the `carsonarkova` org and the package is now the unscoped name `arkova` (a
+separate ownership record — confirm rights BEFORE tagging, a failed tag push has already
+burned the tag), and `sdks/mcp-server` has no CI publish workflow at all.
+
 ## Key subdirectories
 - **`ci/`** — CI gate scripts (has its own agents.md).
 - **`fixtures/`** — test fixtures read by `scripts/*.test.ts` via `readFileSync` (stored `.txt` so repo typecheck/eslint never parse them; may deliberately contain banned copy terms — do not "fix").

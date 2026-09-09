@@ -45,7 +45,8 @@ beforeAll(() => {
   }
 });
 import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-prompt-safety';
-import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
+import { enforceRateLimit, TOOL_LIMITS_RPM, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
+import { TOOL_DEFINITIONS } from '../../../services/edge/src/mcp-tools';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
 import { signEnvelope, verifyEnvelope } from '../../../services/edge/src/mcp-hmac';
 import {
@@ -53,13 +54,16 @@ import {
   getCorsOrigin,
   shouldFailClosedWhenSigningKeyMissing,
   validateBearer,
+  withTelemetry,
+  buildApiOverviewText,
+  type RequestTelemetryContext,
 } from '../../../services/edge/src/mcp-server';
 import { unwrapSignedEntry } from '../../../services/edge/src/mcp-origin-allowlist';
 import {
   buildSignedReportUrl,
   verifySignedReportUrl,
 } from '../../../services/edge/src/r2-signed-url';
-import { verifySupabaseJwt } from '../../../services/edge/src/supabase-jwt';
+import { verifySupabaseJwt } from '../../../services/edge/src/mcp-jwt-verify';
 import type { Env } from '../../../services/edge/src/env';
 
 function base64Url(value: string | Uint8Array): string {
@@ -205,7 +209,7 @@ describe('mcp-rate-limit — enforceRateLimit (SCRUM-919)', () => {
       put: vi.fn(async (k: string, v: string) => { store.set(k, v); }),
     } as unknown as KVNamespace;
 
-    const r = await enforceRateLimit(makeEnv({ kv }), 'key-A', 'search_credentials');
+    const r = await enforceRateLimit(makeEnv({ kv }), 'key-A', 'arkova_search_anchors');
     expect(r.ok).toBe(true);
     expect(kv.put).toHaveBeenCalledTimes(1);
     // First call stores count=1.
@@ -215,18 +219,38 @@ describe('mcp-rate-limit — enforceRateLimit (SCRUM-919)', () => {
 
   it('denies when the bucket is full + returns a retryAfter hint', async () => {
     const kv = {
-      get: vi.fn(async () => '10'), // already at oracle_batch_verify limit (10/min)
+      get: vi.fn(async () => '10'), // already at arkova_oracle_batch_verify limit (10/min)
       put: vi.fn(),
     } as unknown as KVNamespace;
 
-    const r = await enforceRateLimit(makeEnv({ kv }), 'key-B', 'oracle_batch_verify');
+    const r = await enforceRateLimit(makeEnv({ kv }), 'key-B', 'arkova_oracle_batch_verify');
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.toolName).toBe('oracle_batch_verify');
+      expect(r.toolName).toBe('arkova_oracle_batch_verify');
       expect(r.limit).toBe(10);
       expect(r.retryAfterSeconds).toBeGreaterThanOrEqual(1);
       expect(r.retryAfterSeconds).toBeLessThanOrEqual(60);
     }
+  });
+
+  // A key that is not a real tool name silently falls through to
+  // `default: 1000` — the per-tool limit is then never applied and nothing
+  // fails. The 2026-09-02 tool rename (`oracle_batch_verify` →
+  // `arkova_oracle_batch_verify`) is exactly the edit that can do this.
+  it('every TOOL_LIMITS_RPM key other than "default" is a real tool name', () => {
+    const toolNames = new Set(TOOL_DEFINITIONS.map((t) => t.name));
+    const unknown = Object.keys(TOOL_LIMITS_RPM)
+      .filter((key) => key !== 'default')
+      .filter((key) => !toolNames.has(key));
+    expect(unknown).toEqual([]);
+  });
+
+  it('resolves a tool-specific limit for every non-default key, and 1000 otherwise', () => {
+    for (const [key, limit] of Object.entries(TOOL_LIMITS_RPM)) {
+      expect(limit).toBeGreaterThan(0);
+      if (key !== 'default') expect(limit).not.toBe(TOOL_LIMITS_RPM.default);
+    }
+    expect(TOOL_LIMITS_RPM.default).toBe(1000);
   });
 
   it('allows traffic when KV read throws', async () => {
@@ -275,7 +299,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     await logMcpToolCall(makeEnv(), {
       apiKeyId: 'ak-1',
       userId: 'u-1',
-      toolName: 'verify_credential',
+      toolName: 'arkova_verify_anchor',
       argsJson: JSON.stringify({ public_id: 'ARK-DEG-ABC' }),
       outcome: 'success',
       latencyMs: 42,
@@ -295,7 +319,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     expect(body.event_category).toBe('SECURITY');
     expect(body.actor_id).toBe('u-1');
     expect(body.target_type).toBe('mcp_tool');
-    expect(body.target_id).toBe('verify_credential');
+    expect(body.target_id).toBe('arkova_verify_anchor');
     // details is a JSON-serialized string; parse it back
     const details = JSON.parse(body.details);
     expect(details.api_key_id).toBe('ak-1');
@@ -317,7 +341,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     await expect(logMcpToolCall(makeEnv(), {
       apiKeyId: null,
       userId: 'u-2',
-      toolName: 'list_agents',
+      toolName: 'arkova_list_agents',
       argsJson: '{}',
       outcome: 'tool_error',
       latencyMs: 99,
@@ -343,7 +367,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     await logMcpToolCall(makeEnv(), {
       apiKeyId: 'ak-1',
       userId: 'u-1',
-      toolName: 'verify_credential',
+      toolName: 'arkova_verify_anchor',
       argsJson: '{}',
       outcome: 'success',
       latencyMs: 1,
@@ -369,7 +393,7 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     await logMcpToolCall(makeEnv({ MCP_IP_HASH_PEPPER: undefined }), {
       apiKeyId: 'ak-1',
       userId: 'u-1',
-      toolName: 'verify_credential',
+      toolName: 'arkova_verify_anchor',
       argsJson: '{}',
       outcome: 'success',
       latencyMs: 1,
@@ -698,6 +722,12 @@ describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
     SUPABASE_JWT_SECRET: 'local-test-secret',
   } as Env;
 
+  // These exercised `supabase-jwt.ts`, an HS256-only duplicate verifier that
+  // no non-test file imported. It was deleted; the tests now run against the
+  // live verifier `mcp-jwt-verify.ts` — the one `validateBearer` actually
+  // calls — so a regression in the shipped path can no longer pass here.
+  const hs256Options = { secret: env.SUPABASE_JWT_SECRET!, supabaseUrl: env.SUPABASE_URL };
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -705,10 +735,11 @@ describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
   it('accepts a locally valid Supabase user token', async () => {
     const token = await signSupabaseTestJwt(env);
 
-    await expect(verifySupabaseJwt(token, env)).resolves.toMatchObject({
-      sub: 'user-123',
-      aud: 'authenticated',
-      iss: 'https://example.supabase.co/auth/v1',
+    await expect(verifySupabaseJwt(token, hs256Options)).resolves.toEqual({
+      ok: true,
+      userId: 'user-123',
+      tier: 'authenticated',
+      scopes: [],
     });
   });
 
@@ -718,10 +749,24 @@ describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
     const wrongIssuer = await signSupabaseTestJwt(env, { iss: 'https://evil.example/auth/v1' });
     const badSignature = await signSupabaseTestJwt(env, {}, 'different-secret');
 
-    await expect(verifySupabaseJwt(expired, env)).resolves.toBeNull();
-    await expect(verifySupabaseJwt(wrongAudience, env)).resolves.toBeNull();
-    await expect(verifySupabaseJwt(wrongIssuer, env)).resolves.toBeNull();
-    await expect(verifySupabaseJwt(badSignature, env)).resolves.toBeNull();
+    await expect(verifySupabaseJwt(expired, hs256Options)).resolves.toEqual({ ok: false, reason: 'expired' });
+    await expect(verifySupabaseJwt(wrongAudience, hs256Options)).resolves.toEqual({ ok: false, reason: 'wrong_aud' });
+    await expect(verifySupabaseJwt(wrongIssuer, hs256Options)).resolves.toEqual({ ok: false, reason: 'wrong_iss' });
+    await expect(verifySupabaseJwt(badSignature, hs256Options)).resolves.toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  // The deleted duplicate pinned HS256 and would have rejected every current
+  // Supabase token (BUG-2026-09-02-002). The live verifier is ES256-first:
+  // RS256 fails closed on `wrong_alg` before any JWKS work.
+  it('fails closed on a non-ES256/HS256 alg without a network call', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const rs256 = (await signSupabaseTestJwt(env)).split('.');
+    const forgedHeader = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'k' }));
+
+    await expect(
+      verifySupabaseJwt(`${forgedHeader}.${rs256[1]}.${rs256[2]}`, hs256Options),
+    ).resolves.toEqual({ ok: false, reason: 'wrong_alg' });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('short-circuits forged JWTs before the Supabase auth round-trip', async () => {
@@ -741,5 +786,122 @@ describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
 
     await expect(validateBearer(token, env)).resolves.toBeNull();
     expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+});
+
+describe('mcp-server — withTelemetry scrubs a THROWN tool error (review 2026-09-05)', () => {
+  function makeTelemetry(): RequestTelemetryContext {
+    return {
+      // No SUPABASE_* / SENTRY_DSN → the audit write and anomaly reporter
+      // both no-op; this describe only exercises the error envelope.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      env: {} as any,
+      execCtx: { waitUntil: () => {}, passThroughOnException: () => {} },
+      apiKeyId: 'key-telemetry',
+      userId: 'user-telemetry',
+      anchorDocumentEnabled: false,
+      clientIp: null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+  }
+
+  // The MCP SDK's `createToolError` (@modelcontextprotocol/sdk
+  // server/mcp.js) writes `err.message` to `content[0].text` verbatim, so a
+  // re-thrown Error hands the raw upstream detail to the MCP client.
+  it('returns a scrubbed envelope instead of re-throwing an internal URL', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const leaky = withTelemetry(
+      'arkova_verify_anchor',
+      async () => {
+        throw new Error('https://xyz.supabase.co/rest/v1/anchors?select=secret');
+      },
+      makeTelemetry(),
+    );
+
+    const result = await leaky({ public_id: 'ARK-DEG-ABC123' });
+    expect(result.isError).toBe(true);
+    const text = result.content[0].text;
+    expect(text).not.toContain('supabase.co');
+    expect(text).not.toContain('select=');
+    expect(JSON.parse(text)).toEqual({
+      error: 'arkova_verify_anchor failed',
+      code: 'TOOL_ERROR',
+    });
+    // Full detail still reaches Logpush.
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('passes a normal tool result through untouched', async () => {
+    const ok = withTelemetry(
+      'arkova_verify_anchor',
+      async () => ({ content: [{ type: 'text' as const, text: '{"ok":true}' }] }),
+      makeTelemetry(),
+    );
+    await expect(ok({ public_id: 'ARK-DEG-ABC123' })).resolves.toEqual({
+      content: [{ type: 'text', text: '{"ok":true}' }],
+    });
+  });
+});
+
+describe('mcp-server — api-overview resource is derived, not hand-typed (review 2026-09-05)', () => {
+  // The listing used to be hand-typed literals. `arkova_verify_batch` was
+  // registered as a tool but missing from the overview, so an agent reading
+  // the resource never learned it existed.
+  it('lists every TOOL_DEFINITIONS name', () => {
+    const text = buildApiOverviewText(true);
+    for (const tool of TOOL_DEFINITIONS) {
+      expect(text).toContain(tool.name);
+    }
+    expect(text).toContain('arkova_verify_batch');
+  });
+
+  it('keeps the anchor_document enabled/disabled conditional', () => {
+    expect(buildApiOverviewText(true)).toContain(
+      'Submit a document fingerprint for anchoring to the public ledger.',
+    );
+    const disabled = buildApiOverviewText(false);
+    expect(disabled).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
+    expect(disabled).toContain('arkova_anchor_document');
+  });
+
+  it('keeps nessie_query marked DISABLED and search_anchors described lexically', () => {
+    const text = buildApiOverviewText(true);
+    expect(text).toContain('DISABLED');
+    expect(text).not.toContain('semantic (vector) similarity matching');
+  });
+
+  it('pads every tool name to one column', () => {
+    const text = buildApiOverviewText(true);
+    const toolLines = text.split('\n').filter((line) => /^ {2}arkova_|^ {2}nessie_/.test(line));
+    expect(toolLines).toHaveLength(TOOL_DEFINITIONS.length);
+    const separatorColumns = new Set(toolLines.map((line) => line.indexOf('—')));
+    expect(separatorColumns.size).toBe(1);
+  });
+});
+
+describe('mcp-server — every tool registers the canonical description (review 2026-09-05)', () => {
+  // `TOOL_DEFINITIONS` in mcp-tools.ts is the single source of truth for tool
+  // description text and is CI-guarded against the five published surfaces
+  // (check-mcp-claim-parity.ts). A registration that inlines its own literal
+  // is a sixth, unguarded copy — that is how the BUG-026 `oracle_batch_verify`
+  // / `list_agents` one-word drift got in.
+  it('passes TOOL_DESC, never an inline string literal, as the description argument', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(
+      new URL('../../../services/edge/src/mcp-server.ts', import.meta.url),
+      'utf8',
+    );
+
+    // `tool(` registrations: name argument on its own line, description
+    // argument next. `arkova_anchor_document` is nested one level deeper
+    // inside the `anchorDocumentEnabled` conditional, hence the loose indent.
+    const registrations = [...source.matchAll(/\n {2,4}tool\(\n\s*'([a-z0-9_]+)',\n([\s\S]*?)\n\s*\{/g)];
+    expect(registrations.length).toBe(TOOL_DEFINITIONS.length);
+
+    const inlined = registrations
+      .filter(([, , descriptionArg]) => !descriptionArg.includes('TOOL_DESC'))
+      .map(([, name]) => name);
+    expect(inlined).toEqual([]);
   });
 });
