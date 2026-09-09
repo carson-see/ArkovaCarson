@@ -3325,21 +3325,23 @@ interface CheckOptions {
  * extending this constant is a one-line PR that is visible in review, which
  * is the entire point: the extension gets seen, the neglect does not.
  */
-const SOAK_GATE_BYPASS_EXPIRES_AT = Date.parse('2026-08-16T00:00:00Z');
+const SOAK_GATE_BYPASS_EXPIRES_AT = Date.parse('2026-09-12T00:00:00Z');
 
 /**
  * The banner a bypassed run prints. Deliberately states what was NOT done —
  * a passing check here must never be readable as "evidence present".
  */
 const SOAK_GATE_BYPASS_NOTE =
-  '⚠️  SOAK GATE BYPASSED — founder directive 2026-08-01, re-enable before the post-pentest '
+  '⚠️  SOAK GATE BYPASSED — founder directive 2026-08-01, reopened by founder directive '
+  + '2026-09-09 to drain a 29-PR backlog whose oldest PR is 19 days old and whose changes '
+  + 'have already soaked repeatedly; re-enable before the post-pentest '
   + 'consolidated soak. The repository variable SOAK_GATE_DISABLED is set to "true", so this '
   + 'PR\'s staging soak evidence has NOT been evaluated: no tier was computed, no evidence '
   + 'block was read, and no staging soak evidence is claimed to exist for this change. This '
   + 'check passing means only that the bypass is engaged. Clear the SOAK_GATE_DISABLED '
   + 'repository variable (`gh variable set SOAK_GATE_DISABLED --body false`) to restore '
   + 'CLAUDE.md §1.11/§1.12 enforcement in full before the consolidated soak is graded. '
-  + 'This bypass stops being honored after 2026-08-16T00:00:00Z regardless of the variable.';
+  + 'This bypass stops being honored after 2026-09-12T00:00:00Z regardless of the variable.';
 
 /**
  * `true` only while the bypass is both switched on AND inside its window.
@@ -3354,8 +3356,8 @@ function soakGateBypassEngaged(opts: Pick<CheckOptions, 'soakGateDisabled' | 'no
 /** Printed when the variable is still set but the window has closed. */
 const SOAK_GATE_BYPASS_EXPIRED_NOTE =
   'SOAK_GATE_DISABLED is still set to "true", but the bypass window closed at '
-  + '2026-08-16T00:00:00Z — the staging soak evidence gate is enforcing normally again. '
-  + 'This is the intended end of the founder directive of 2026-08-01, not a fault. Clear '
+  + '2026-09-12T00:00:00Z — the staging soak evidence gate is enforcing normally again. '
+  + 'This is the intended end of the founder directive of 2026-09-09, not a fault. Clear '
   + 'the variable (`gh variable set SOAK_GATE_DISABLED --body false`) so the repo state '
   + 'stops advertising a bypass that no longer applies. If the window genuinely needs to '
   + 'be extended, that is a reviewed one-line change to SOAK_GATE_BYPASS_EXPIRES_AT in '
