@@ -6,14 +6,14 @@
       "type": "skill-md",
       "description": "Retrieve public-safe Arkova verification metadata for a record by public ID.",
       "url": "https://app.arkova.ai/.well-known/agent-skills/verify-record/SKILL.md",
-      "digest": "sha256:fbb6a992fc2abbb28dc5945e96a140ac8611d46995319678f52b881ea623d98f"
+      "digest": "sha256:928fbcb1c4bc964a8b8556b2ce1bc345f33b582c7f251c8e24cadf41cd5c03d6"
     },
     {
       "name": "search-records",
       "type": "skill-md",
       "description": "Search public-safe Arkova organization, record, fingerprint, and document metadata.",
       "url": "https://app.arkova.ai/.well-known/agent-skills/search-records/SKILL.md",
-      "digest": "sha256:0229374e763707d44d57af2739db1a11b23dc2b8a39fcb3ee50706220d870296"
+      "digest": "sha256:9feee7dc41296e6a83391453b41fc95e2cb343f69164f97bad483c79ac2dd701"
     }
   ]
 }

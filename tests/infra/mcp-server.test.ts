@@ -19,15 +19,15 @@ import {
 } from '../../services/edge/src/mcp-tools';
 
 describe('MCP Tool Definitions', () => {
-  it('exports verify_credential tool', () => {
-    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'verify_credential');
+  it('exports arkova_verify_anchor tool', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'arkova_verify_anchor');
     expect(tool).toBeDefined();
     expect(tool!.description).toBeDefined();
     expect(tool!.inputSchema.properties).toHaveProperty('public_id');
   });
 
-  it('exports search_credentials tool', () => {
-    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'search_credentials');
+  it('exports arkova_search_anchors tool', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'arkova_search_anchors');
     expect(tool).toBeDefined();
     expect(tool!.description).toBeDefined();
     expect(tool!.inputSchema.properties).toHaveProperty('query');
@@ -106,10 +106,10 @@ describe('handleSearchCredentials', () => {
 });
 
 // ---------------------------------------------------------------------------
-// BUG-028 — anchor_document promised a handle it never returned.
+// BUG-028 — arkova_anchor_document promised a handle it never returned.
 // ---------------------------------------------------------------------------
 
-describe('BUG-028 — anchor_document submission receipt contract', () => {
+describe('BUG-028 — arkova_anchor_document submission receipt contract', () => {
   const CONFIG = {
     supabaseUrl: 'https://example.supabase.co',
     supabaseKey: 'test-key',
@@ -194,12 +194,12 @@ describe('BUG-028 — anchor_document submission receipt contract', () => {
     );
 
     expect(body.content_hash).toBe(FINGERPRINT);
-    expect(body.verify_with).toEqual({ tool: 'verify_document', content_hash: FINGERPRINT });
-    expect(String(body.message)).toContain('verify_document');
+    expect(body.verify_with).toEqual({ tool: 'arkova_verify_document', content_hash: FINGERPRINT });
+    expect(String(body.message)).toContain('arkova_verify_document');
     expect(String(body.message)).toContain('content_hash');
   });
 
-  it('the instructed follow-up resolves: verify_document accepts the receipt handle', async () => {
+  it('the instructed follow-up resolves: arkova_verify_document accepts the receipt handle', async () => {
     globalThis.fetch = supabaseStub() as unknown as typeof fetch;
     const receipt = payload(
       await handleAnchorDocument({ content_hash: FINGERPRINT }, CONFIG) as { content: Array<{ text: string }> },
@@ -243,7 +243,7 @@ describe('BUG-028 — anchor_document submission receipt contract', () => {
     expect(body.status).toBe('already_submitted');
     expect('public_id' in body).toBe(true);
     expect(body.public_id).toBeNull();
-    expect(body.verify_with).toEqual({ tool: 'verify_document', content_hash: FINGERPRINT });
+    expect(body.verify_with).toEqual({ tool: 'arkova_verify_document', content_hash: FINGERPRINT });
   });
 
   it('never leaks the internal public_records UUID as a substitute identifier', async () => {
@@ -257,12 +257,12 @@ describe('BUG-028 — anchor_document submission receipt contract', () => {
   });
 
   it('the tool description no longer promises a public identifier it cannot return', () => {
-    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'anchor_document');
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'arkova_anchor_document');
     expect(tool).toBeDefined();
 
     // R-7 claims gate / §1.5: state what is measured vs asserted vs NOT.
     expect(tool!.description).not.toContain('public identifier for later verification');
-    expect(tool!.description).toContain('verify_document');
+    expect(tool!.description).toContain('arkova_verify_document');
     expect(tool!.description).toContain('content_hash');
     expect(tool!.description.toLowerCase()).toContain('asynchronous');
   });

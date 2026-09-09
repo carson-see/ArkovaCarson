@@ -51,7 +51,7 @@ describe('createServer', () => {
 
     const client = await connectedClient();
     const result = await client.callTool({
-      name: 'arkova_verify_credential',
+      name: 'arkova_verify_anchor',
       arguments: { public_id: 'ARK-X' },
     });
 
