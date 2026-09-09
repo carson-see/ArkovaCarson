@@ -14,6 +14,11 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - **Scope:** layer-1 app-tree inclusion only, exactly like `verified`. Layer-2 receipt completeness is `proof_bundle`'s job. **DO NOT** widen `verdict` to cover it — `verified: true` next to `verdict: 'unverifiable'` for a layer-2 reason is a contradiction the reader cannot resolve.
 - Documented in `services/worker/src/api/v1/docs.ts` (served spec), `docs/api/openapi.yaml` (`MerkleProofResponse` + `ProofErrorResponse`), and `docs/reference/FE_PROOF_GATE_CONTRACT.md` §2.1. `/proof` does **not** use `verifyCache`, so no `KEY_PREFIX` bump is required (that rule applies to `/verify/:publicId` only).
 
+## 2026-08-23 — `openapi-ciba.ts`: `/api/queue/pending` documents its 403 (SCRUM-3569)
+
+Spec-only change, additive under §1.8: a `'403'` response and a description note on a path that was already there. Worth knowing WHY it is a doc fix and not a contract change — **the spec was already right and the implementation was wrong.** `queuePaths()` has tagged `/api/queue/pending` `['Queue', 'OrgAdmin']` with `security: [{ OrgAdminBearer: [] }]` since it was written, but the handler enforced org scope only (see `services/worker/src/api/agents.md`, SCRUM-3569). The gate now exists in `api/queue-resolution.ts`, so the documented `OrgAdminBearer` is finally load-bearing and the 403 it implies is spelled out.
+
+Note this path lives on `adminRouter`, not a v1 leaf router, so `docs.routeParity.test.ts`'s `MOUNTS` set does not cover it — the parity harness asserts route/path presence, not response codes, either way.
 ## 2026-08-23 — every limiter in `router.ts` now names its bucket scope (SCRUM-3418)
 
 `rateLimit()` used to default `scope` to `''` and key the bucket on the bare keyGenerator output, so
