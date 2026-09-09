@@ -18,6 +18,13 @@ export interface ClioConfig {
   clioBaseUrl?: string;
   /** Auto-anchor new documents on upload */
   autoAnchor?: boolean;
+  /**
+   * Shared secret Clio signs inbound webhook bodies with (HMAC-SHA256).
+   * Optional in the type, but `ClioWebhookHandler` FAILS CLOSED without it:
+   * every inbound webhook is answered `rejected_unauthenticated`, and the
+   * handler warns once at construction so that state is not silent.
+   */
+  webhookSecret?: string;
 }
 
 /** Clio document representation */

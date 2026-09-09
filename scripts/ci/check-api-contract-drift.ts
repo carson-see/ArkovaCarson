@@ -155,17 +155,18 @@ export function collectOpenApiAgentDrift(
       continue;
     }
 
-    if (toolName !== operationId) {
+    const expectedToolName = `arkova_${operationId}`;
+    if (toolName !== expectedToolName) {
       violations.push({
         source: `openapi:${path}`,
-        message: `x-agent-usage.tool_name ${toolName ?? '(missing)'} does not match operationId ${operationId}`,
+        message: `x-agent-usage.tool_name ${toolName ?? '(missing)'} does not match expected MCP tool ${expectedToolName} for operationId ${operationId}`,
       });
     }
 
-    if (!schemas[operationId]) {
+    if (!schemas[expectedToolName]) {
       violations.push({
         source: `openapi:${path}`,
-        message: `missing MCP schema for operationId ${operationId}`,
+        message: `missing MCP schema ${expectedToolName} for operationId ${operationId}`,
       });
     }
   }
