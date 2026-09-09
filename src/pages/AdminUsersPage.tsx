@@ -14,10 +14,14 @@ import {
   ChevronRight,
   AlertTriangle,
   ArrowLeft,
+  Plus,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAdminList } from '@/hooks/useAdminList';
+import { CreateUserDialog, type OrgOption } from '@/components/admin/CreateUserDialog';
+import { ADMIN_PROVISION_USER_LABELS as PROVISION } from '@/lib/copy';
+import { workerFetch } from '@/lib/workerClient';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,6 +55,29 @@ export function AdminUsersPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { items, total, page, limit, loading, error, fetchList } = useAdminList<AdminUser>('/api/admin/users');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [orgOptions, setOrgOptions] = useState<OrgOption[]>([]);
+  const [orgOptionsTruncated, setOrgOptionsTruncated] = useState(false);
+
+  // Org list backs the create-account dialog's organization picker.
+  // `minimal=1` skips the list endpoint's member/anchor/credit enrichment,
+  // which would otherwise read a row per anchor across every org returned.
+  // Fetched once and reused: the picker only renders for org-scoped roles,
+  // and the default role is INDIVIDUAL, so most opens never show it.
+  const loadOrgOptions = useCallback(async () => {
+    if (orgOptions.length > 0) return;
+    try {
+      const res = await workerFetch('/api/admin/organizations?limit=100&minimal=1');
+      const data = await res.json();
+      setOrgOptions(data.organizations ?? []);
+      // parsePagination clamps limit at 100. Past that the older orgs are
+      // simply absent from the picker, so say so rather than letting an admin
+      // conclude the org does not exist.
+      setOrgOptionsTruncated((data.total ?? 0) > (data.organizations ?? []).length);
+    } catch {
+      setOrgOptions([]);
+    }
+  }, [orgOptions.length]);
 
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
   const [roleFilter, setRoleFilter] = useState(searchParams.get('role') || 'ALL');
@@ -110,7 +137,22 @@ export function AdminUsersPage() {
           <h1 className="text-2xl font-semibold tracking-tight">All Users</h1>
           <p className="text-muted-foreground text-sm">{total.toLocaleString()} total users</p>
         </div>
+        <Button
+          className="ml-auto"
+          onClick={() => { void loadOrgOptions(); setCreateOpen(true); }}
+        >
+          <Plus className="h-4 w-4 mr-2" />
+          {PROVISION.BUTTON_LABEL}
+        </Button>
       </div>
+
+      <CreateUserDialog
+        open={createOpen}
+        organizations={orgOptions}
+        organizationsTruncated={orgOptionsTruncated}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => { void fetchList({ page: 1 }); }}
+      />
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
