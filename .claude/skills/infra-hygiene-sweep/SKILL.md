@@ -1,6 +1,6 @@
 ---
 name: infra-hygiene-sweep
-description: Recurring Arkova cost and cruft sweep — Vertex AI endpoint hygiene, Supabase staging-rig inventory and teardown, stale agent worktree pruning, and Actions-minute review. Use at release close, end of sprint, after any tuning/eval/deploy run, or when asked to check infrastructure cost, idle endpoints, leftover soak rigs, or disk usage.
+description: Recurring Arkova cost and cruft sweep — Vertex AI endpoint hygiene, Supabase staging-rig inventory and teardown, Secret Manager version sprawl, stale agent worktree pruning, and Actions-minute review. Use at release close, end of sprint, after any tuning/eval/deploy run, or when asked to check infrastructure cost, idle endpoints, leftover soak rigs, or disk usage.
 ---
 
 # Infra hygiene sweep
@@ -46,10 +46,23 @@ Two-stage cleanup, safest first:
 
 Skip any worktree modified in the last couple of days: another session may be live in it.
 
-## 4. Actions minutes
+## 4. Secret Manager version sprawl
+
+Secret Manager bills every ENABLED or DISABLED version per month, and a writer that appends a version on every run is invisible to `/health` and to Cloud Run. Found 2026-09-05: one DocuSign refresh-token secret at **1,645 enabled versions** (~$99/month, growing ~$6/month per day) because two hourly jobs each rotated the token and nothing destroyed the old versions.
+
+```bash
+GCP_ACCESS_TOKEN=$(gcloud auth print-access-token) npx tsx scripts/ops/audit-secret-version-counts.ts --project arkova1
+```
+
+Exit `1` means at least one secret has more than 20 enabled versions (a rotated secret here keeps 1–2). For a flagged secret:
+
+- If it is a DocuSign refresh-token secret (`arkova-docusign-…-refresh-token`), the worker now prunes to the newest 2 on every rotation (`services/worker/src/integrations/connectors/docusign-token-store.ts`); a backlog older than that fix is drained with `scripts/ops/prune-docusign-refresh-token-versions.ts` — dry run first, and **`--apply` only with Carson's explicit approval** (destroying a version is irreversible).
+- If it is anything else, find the writer (`gcloud logging read 'protoPayload.methodName="google.cloud.secretmanager.v1.SecretManagerService.AddSecretVersion"'` gives the principal and cadence) and fix the writer before touching versions. Do not extend the prune script's name pattern to cover it casually — that pattern is the safety rail.
+
+## 5. Actions minutes
 
 `revision-drift.yml` runs on a **10-minute cron**, unconditionally, around the clock — the dominant standing Actions cost. Review whether that cadence is still justified. Scheduled and tag-triggered workflows are the only ones that run outside PR events (see CLAUDE.md §0 rule 8).
 
-## 5. Report honestly
+## 6. Report honestly
 
 State what was found, what was deleted, what needs Carson (paid-project pause/downgrade, anything with live evidence attached), and what you deliberately left alone and why. Never report reclaimed capacity you did not verify — measure before and after.
