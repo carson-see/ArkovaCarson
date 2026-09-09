@@ -1,7 +1,7 @@
 /**
  * Action: Batch Verify
  *
- * Verify up to 20 credentials in a single request.
+ * Verify up to 20 anchors in a single request.
  * Returns results in the same order as input.
  */
 
@@ -52,8 +52,8 @@ export const batchVerifyAction = {
   key: 'batch_verify',
   noun: 'Batch Verification',
   display: {
-    label: 'Batch Verify Credentials',
-    description: 'Verify up to 20 credentials in a single request.',
+    label: 'Batch Verify Anchors',
+    description: 'Verify up to 20 anchors in a single request.',
   },
   operation: {
     perform,
