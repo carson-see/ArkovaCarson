@@ -4499,6 +4499,27 @@ export const PLATFORM_METRICS = {
  */
 export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
 
+/** Separate mailbox confirmation after OAuth (SCRUM-4035). */
+export const OAUTH_EMAIL_CONFIRMATION_LABELS = {
+  TITLE: 'Check your email',
+  DESCRIPTION: 'Confirm your email address to finish setting up your Arkova account.',
+  SENT: 'We sent a confirmation link to your email. It expires in 15 minutes. Check your spam folder if you do not see it.',
+  PREPARING: 'Preparing your confirmation email…',
+  UNSENT: 'Your email still needs confirmation before you can continue.',
+  RESEND: 'Resend confirmation email',
+  RESEND_WAIT: 'Resend in',
+  CHECK: "I've confirmed my email",
+  CONFIRM: 'Confirm email and continue',
+  LINK_DESCRIPTION: 'Continuing confirms your email and signs you in to the account associated with this link.',
+  SWITCH_NOTE: 'If another account is open in this browser, continuing switches to the account associated with the link.',
+  SIGN_OUT: 'Use a different account',
+  SIGN_IN: 'Sign in to continue',
+  COMPLETE_SIGN_IN: 'Your email is confirmed. Sign in to continue setting up your account.',
+  RETRY: 'We could not complete this step. Please try again.',
+  REFRESH_FAILED: 'Your email confirmation is still being applied. Try again or sign in to continue.',
+  WORKING: 'Please wait…',
+} as const;
+
 // ── MFA enforcement (SCRUM-3167) ──
 //
 // Phase 1, role-based only (CTO ruling A4-3 — org-level enforcement is

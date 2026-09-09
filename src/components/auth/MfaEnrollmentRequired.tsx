@@ -140,7 +140,28 @@ export function MfaEnrollmentRequired({
     };
   }, []);
 
+  // STRICTMODE DOUBLE-INVOKE (E2E flake, 2026-09-08): `src/main.tsx` renders
+  // the whole app inside `<React.StrictMode>`, so every dev/CI build mounts ->
+  // unmounts -> remounts each component and invokes this effect TWICE. A
+  // second `enroll()` is not harmless: it creates a SECOND unverified factor
+  // server-side, and whichever call resolves last wins `enrollmentData` —
+  // silently moving the displayed QR/secret onto a different factor AFTER the
+  // user (or an E2E probe) has already read the one on screen, so every code
+  // computed from it is then wrong for the factor `handleVerify` targets. That
+  // is exactly the intermittent
+  // `e2e/mfa-enrollment-and-challenge.spec.ts` failure on PRs #2442/#2485/
+  // #2496; GoTrue validates TOTP with Skew: 1 (+/- one 30s step), so it was
+  // never the step-boundary race the harness was built to absorb.
+  //
+  // The ref survives StrictMode's simulated remount (same component instance)
+  // but NOT a real one, which is precisely the "Intentionally mount-once"
+  // intent this effect already documents below.
+  const enrollmentStartedRef = useRef(false);
+
   useEffect(() => {
+    if (enrollmentStartedRef.current) return;
+    enrollmentStartedRef.current = true;
+
     let timedOut = false;
 
     async function startEnrollment() {
