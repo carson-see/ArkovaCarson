@@ -28,7 +28,7 @@ The API key requires the `read:records` scope. Provision a scoped key at
 
 ## MCP
 
-Call `get_anchor` at <https://edge.arkova.ai/mcp> with:
+Call `arkova_get_anchor` at <https://edge.arkova.ai/mcp> with:
 
 ```json
 { "public_id": "ARK-DOC-ABCDEF" }
