@@ -1,8 +1,5 @@
 {
   "resource": "https://app.arkova.ai",
-  "authorization_servers": [
-    "https://vzwyaatejekddvltxyye.supabase.co/auth/v1"
-  ],
   "scopes_supported": [
     "read:records",
     "read:orgs",

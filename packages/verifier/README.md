@@ -15,6 +15,10 @@ adds the Merkle recompute and report rendering around it.
 
 ## Install
 
+> **Not yet published to npm** — `npm view arkova-verifier` currently returns 404. Until it
+> publishes, build from source (see `packages/verifier/agents.md` "Publishing") or depend on it
+> via `file:../verifier` as `arkova-verifier-cli` does.
+
 ```bash
 npm install arkova-verifier
 ```
