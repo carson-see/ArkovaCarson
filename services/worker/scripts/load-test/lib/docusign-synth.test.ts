@@ -45,6 +45,18 @@ vi.mock('../../../src/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// docusign-bilateral-2026-08: webhooks/docusign.ts now imports config.js
+// DIRECTLY (config.enableDocusignInbound gates the inbound Recipient Connect
+// leg), so the db/jobQueue/logger trio above no longer keeps config.ts out of
+// this file's import graph — config.ts validates env at module load and threw
+// 'Invalid worker configuration' here (no SUPABASE_URL etc. in the test env).
+// Mock it the same way the receiver's own suite does
+// (src/api/v1/webhooks/docusign.test.ts). This file exercises only the pure
+// parse/verify/notary surface, none of which reads config.
+vi.mock('../../../src/config.js', () => ({
+  config: { enableDocusignInbound: false },
+}));
+
 import {
   DEFAULT_MIX,
   pickScenario,
