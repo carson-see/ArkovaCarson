@@ -112,7 +112,9 @@ export interface MerkleProofEntry {
  *   - app-tree (layer 1): fingerprint, merkle_root, merkle_proof, merkle_index,
  *     leaf_count
  *   - bitcoin-tree (layer 2): tx_id, block_height, block_hash, block_header,
- *     op_return_payload, block_timestamp
+ *     op_return_payload, block_timestamp, and (R1) tx_inclusion_branch +
+ *     tx_block_index — the tx's inclusion under the block merkleroot, so
+ *     transaction-inclusion is checkable without fetching a node's proof
  *   - proof_schema_version: the format version (1 = plain double-SHA256)
  *   - signature: RESERVED inline-signature placeholder, always `null` today —
  *     the signed envelope lives at the outer `?format=signed` response level,
@@ -122,6 +124,7 @@ export interface MerkleProofEntry {
  *   { fingerprint, merkle_root, merkle_proof:{hash,position}[], merkle_index,
  *     leaf_count, tx_id, block_height, block_hash(64hex), block_header(160hex),
  *     op_return_payload(ARKV‖root hex, no version byte), block_timestamp,
+ *     tx_inclusion_branch:{hash,position}[]|null, tx_block_index|null,
  *     proof_schema_version:1 (non-null), signature|null }.
  *
  * This is the contract consumed by FE-PROOF-GATE, the PROOF-04 PDF, and the
@@ -166,8 +169,66 @@ export interface ProofBundle {
   op_return_payload: string | null;
   block_timestamp: string | null;
   /**
+   * R1 — BITCOIN-tree inclusion branch: the sibling path proving `tx_id` is
+   * committed by the merkleroot inside `block_header`. With this present a
+   * verifier can close the second half of the proof LOCALLY instead of asking
+   * a Bitcoin node for an inclusion proof.
+   *
+   * NOT `merkle_proof`. That field above is the layer-1 APP tree over document
+   * fingerprints; this is the layer-2 BITCOIN tree over transactions, and the
+   * two do not fold the same way. The rule here is Bitcoin's:
+   *
+   *   - Hashes are BYTE-REVERSED (display) hex — the orientation you see for a
+   *     txid or block hash on an explorer, and what `bitcoinjs-lib` block
+   *     parsing yields. Reverse each to internal little-endian bytes first.
+   *   - Fold leaf→root with double-SHA256 over the positional concatenation:
+   *     `node = SHA256(SHA256(position === 'right' ? node‖sibling : sibling‖node))`,
+   *     starting from the byte-reversed `tx_id`.
+   *   - Reverse the final 32 bytes back to display hex and compare against the
+   *     merkleroot at `block_header` bytes [36, 68) (itself byte-reversed).
+   *
+   * An EMPTY array is a complete branch, not a missing one: a block whose only
+   * transaction is this one has no siblings. `null` means not yet populated —
+   * additive and nullable per §1.8, and never fabricated (§1.5).
+   */
+  tx_inclusion_branch: MerkleProofEntry[] | null;
+  /**
+   * R1 — 0-based index of `tx_id` within its block. Supplies the left/right bit
+   * at each level, so a verifier can re-derive the fold order independently of
+   * the stored `position` values and reject a branch that disagrees — a check
+   * this route now runs on read before either field is published.
+   *
+   * M1 — WHAT THIS DOES **NOT** DO. An earlier draft of this docstring, and of
+   * the 0427 column comment, claimed the index "arms the CVE-2012-2459
+   * duplicate-node guard on the bitcoin tree". It cannot, and the claim is
+   * withdrawn (§1.5: do not assert what is not measured). Deciding whether a
+   * self-pairing sibling sits at a LEGITIMATE rightmost-odd position requires
+   * the block's TOTAL TRANSACTION COUNT — the width of each row is
+   * `ceil(totalTx / 2^height)`, and without it a duplicated node is
+   * indistinguishable from an honest odd-row duplicate. That count is parsed in
+   * `chain/confirmation-proof.ts` (`parseMerkleBlockFields`) but is neither
+   * returned from `parseTxOutProof` nor persisted, so no read-side consumer can
+   * run the guard. Contrast the APP tree, which persists `leaf_count` for
+   * exactly this reason.
+   *
+   * The guard IS enforced — on the WRITE side, at parse time, where the total
+   * count is in hand: `walkMerkleTree` rejects `left == right` at any node with
+   * a genuine right child, `extractBranchForIndex` mirrors it, and the emitted
+   * branch is folded back to the verified root before anything is persisted. A
+   * branch that reaches this column has already passed it. What a holder cannot
+   * do is re-run that particular check for themselves from the bundle alone.
+   *
+   * `0` is a real position (the coinbase), not a blank. NOT `merkle_index` —
+   * that is the leaf index in the layer-1 APP tree. `null` = not populated.
+   */
+  tx_block_index: number | null;
+  /**
    * Proof format version (1 = plain double-SHA256 app-tree). Non-null —
    * defaults to 1 when the stored row predates the column.
+   *
+   * R1 does NOT bump this: `tx_inclusion_branch` / `tx_block_index` are
+   * nullable additions to an existing shape, which §1.8 allows without a
+   * version change. A verifier that ignores them behaves exactly as before.
    */
   proof_schema_version: number;
   /**
@@ -295,6 +356,13 @@ export function noBatchProofBody(): ProofErrorResponse {
     // Reaching this body means the route already failed to resolve a branch
     // from BOTH the stored row and the legacy metadata, so root_only is a
     // measurement here, not an assumption.
+    //
+    // B2: that sentence is only true because the `anchor_proofs` read is now
+    // checked for an error BEFORE this body can be reached (see the route's
+    // `proofError` guard). While that error was discarded, a failed read
+    // produced `proofData = null` and landed here, and this comment was then
+    // asserting a measurement that had not happened. Any new caller of this
+    // body owes the same guarantee: a READ THAT FAILED is a 500, never this.
     ...proofAvailabilityFields(false),
   };
 }
@@ -328,6 +396,13 @@ export interface ProofRecordData {
   block_hash?: string | null;
   op_return_payload?: string | null;
   proof_schema_version?: number | null;
+  /**
+   * R1 (migration 0427): bitcoin-tree inclusion evidence. `tx_inclusion_branch`
+   * is a jsonb column, so PostgREST hands it back already parsed — `unknown`
+   * because the DB cannot guarantee its shape and the reader validates it.
+   */
+  tx_inclusion_branch?: unknown;
+  tx_block_index?: number | null;
 }
 
 /** Normalised proof source threaded into the cryptographic verdict. */
@@ -341,6 +416,10 @@ interface ResolvedProofSource {
   blockHash: string | null;
   opReturnPayload: string | null;
   proofSchemaVersion: number;
+  /** R1: bitcoin-tree inclusion branch (validated) or null when unavailable. */
+  txInclusionBranch: MerkleProofEntry[] | null;
+  /** R1: 0-based tx index within its block, or null when unavailable. */
+  txBlockIndex: number | null;
 }
 
 /** Exactly 160 hex chars (case-insensitive) == an 80-byte block header. */
@@ -387,6 +466,70 @@ function readMerkleIndex(value: unknown): number | null {
 }
 
 /**
+ * R1 + H3 + H4: read the stored BITCOIN-tree inclusion evidence as ONE FACT.
+ *
+ * `tx_inclusion_branch` (jsonb) and `tx_block_index` (integer) are not two
+ * independent fields that happen to sit in the same row — they are a single
+ * claim about where this transaction sits in its block, and either half alone
+ * is unusable. Reading them separately (as this route did) let an INCOHERENT
+ * pair — a 2-entry branch labelled `tx_block_index: 17` — ship as if it were a
+ * coherent one, three lines below where the APP tree already refuses to emit a
+ * bundle whose index and tree size are mutually impossible.
+ *
+ * Four rules, all of them measurable from the row itself:
+ *
+ *   1. BOTH-OR-NEITHER. Half a pair is not evidence; it publishes as null.
+ *   2. Every sibling is EXACTLY 64 hex characters. Postgres constrains nothing
+ *      here and the shared structural predicate only asks
+ *      `typeof hash === 'string'`, so `[{"hash":"","position":"left"}]` was
+ *      being emitted as genuine inclusion evidence. A sibling that is not 32
+ *      bytes cannot take part in a double-SHA256 fold at all.
+ *   3. RANGE. A branch of length L describes a tree of height L, so the index
+ *      must satisfy `0 <= index < 2^L` (L = 0 ⇒ a single-tx block ⇒ index 0).
+ *   4. AGREEMENT. The index's bit at each level determines that level's sibling
+ *      side (even ⇒ sibling on the right). The `tx_block_index` column comment
+ *      promises exactly this — that a verifier can re-derive the fold order
+ *      from the index "and reject a branch that disagrees". This makes the
+ *      promise true on our side of the wire instead of only on theirs.
+ *
+ * Any violation ⇒ BOTH null. Never a partial, never a fabricated pairing
+ * (§1.5: measured, not asserted). An EMPTY array with index 0 is COMPLETE
+ * evidence, not missing evidence: a block whose only transaction is this one
+ * has no siblings.
+ *
+ * The structural half still goes through `isValidProofArray` — the same
+ * predicate the app-tree branch is held to — so the two layers cannot drift
+ * into two different ideas of "well-formed branch"; the hex/range/agreement
+ * rules are the bitcoin tree's own, because only this layer's convention makes
+ * them checkable.
+ */
+function readTxInclusionEvidence(
+  branchValue: unknown,
+  indexValue: unknown,
+): { branch: MerkleProofEntry[]; index: number } | null {
+  // 1. Both-or-neither + shared structural shape.
+  if (!isValidProofArray(branchValue)) return null;
+  const index = readMerkleIndex(indexValue);
+  if (index === null) return null;
+
+  // 2. Every sibling is a real 32-byte hash.
+  if (!branchValue.every((entry) => BLOCK_HASH_HEX_RE.test(entry.hash))) return null;
+
+  // 3. Range: a height-L tree holds at most 2^L leaves. Guard the shift — a
+  //    branch long enough to overflow it is malformed on its face.
+  if (branchValue.length > 31) return null;
+  if (index >= 1 << branchValue.length) return null;
+
+  // 4. Agreement: bit i of the index fixes level i's sibling side.
+  for (let level = 0; level < branchValue.length; level++) {
+    const expected = ((index >> level) & 1) === 0 ? 'right' : 'left';
+    if (branchValue[level].position !== expected) return null;
+  }
+
+  return { branch: branchValue, index };
+}
+
+/**
  * Validate that a merkle_proof array has the correct shape.
  *
  * SCRUM-2575: the implementation moved to `utils/proofBranch.ts` so
@@ -418,6 +561,15 @@ function extractStoredProof(
       typeof proof.proof_schema_version === 'number' && Number.isInteger(proof.proof_schema_version)
         ? proof.proof_schema_version
         : 1,
+    // R1/H3/H4: the jsonb branch + integer index are read as ONE fact —
+    // malformed, half-present, or mutually contradictory ⇒ both null.
+    ...(() => {
+      const evidence = readTxInclusionEvidence(proof.tx_inclusion_branch, proof.tx_block_index);
+      return {
+        txInclusionBranch: evidence?.branch ?? null,
+        txBlockIndex: evidence?.index ?? null,
+      };
+    })(),
   };
 }
 
@@ -445,6 +597,10 @@ function extractMetadataProof(
     blockHash: null,
     opReturnPayload: null,
     proofSchemaVersion: 1,
+    // R1: same reasoning — the legacy metadata blob never carried bitcoin-tree
+    // inclusion evidence, and we do not invent it.
+    txInclusionBranch: null,
+    txBlockIndex: null,
   };
 }
 
@@ -470,6 +626,12 @@ function extractMetadataProof(
  * app-tree-only records (the back catalogue) returning `proof_bundle: null`
  * rather than a misleading partial structure that a downstream verifier would
  * treat as complete and then fail to check.
+ *
+ * R1 note: `tx_inclusion_branch` / `tx_block_index` are NOT in this
+ * completeness rule. They are additive nullable fields (§1.8) that strengthen a
+ * bundle when present; requiring them would retroactively withdraw the bundle
+ * from every record confirmed before migration 0427 — a breaking change wearing
+ * an addition's clothes. They are emitted as `null` when absent, never faked.
  *
  * The field set is an explicit allowlist of cryptographic evidence — no raw
  * document bytes, PII, or `anchors.metadata` blob can leak in (§1.6).
@@ -514,6 +676,12 @@ function buildProofBundle(
     block_header: source.blockHeader.toLowerCase(),
     op_return_payload: opReturn,
     block_timestamp: anchor.chain_timestamp,
+    // R1: additive + nullable (§1.8). Deliberately NOT part of the completeness
+    // gate above — a back-catalogue row that already earned a bundle must keep
+    // earning one. Gating on these would turn an addition into a breaking
+    // change for every record populated before migration 0427.
+    tx_inclusion_branch: source.txInclusionBranch,
+    tx_block_index: source.txBlockIndex,
     proof_schema_version: source.proofSchemaVersion,
     // RESERVED — inline signature is always null on this unsigned path today;
     // the signed envelope is the outer ?format=signed wrapper. Never fabricated.
@@ -647,11 +815,36 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
         // PROOF-05 (SCRUM-2338): add the layer-2 bitcoin-tree columns (mig 0340).
         // Single-line literal so PostgREST/Supabase type inference resolves the
         // row shape (a concatenated/commented select degrades to GenericStringError).
-        const { data: proofData } = await db
+        const { data: proofData, error: proofError } = await db
           .from('anchor_proofs')
-          .select('merkle_root, proof_path, batch_id, merkle_index, block_header, block_hash, op_return_payload, proof_schema_version')
+          .select('merkle_root, proof_path, batch_id, merkle_index, block_header, block_hash, op_return_payload, proof_schema_version, tx_inclusion_branch, tx_block_index')
           .eq('anchor_id', data.id)
           .maybeSingle();
+
+        // B2: FAIL LOUDLY. This `error` used to be discarded, so a failing read
+        // collapsed to `proofData = null` — the exact same value as "this record
+        // has no proof row" — and the route answered 404 NO_BATCH_PROOF carrying
+        // `proof_availability: root_only`. A 404 is a statement ABOUT THE RECORD;
+        // emitting one when we never managed to read the record asserts a
+        // measurement we did not take (§1.5), and it does so with no 5xx and
+        // nothing in Sentry to notice.
+        //
+        // The realistic trigger is deploy ordering, not a freak fault. This
+        // revision selects `tx_inclusion_branch` / `tx_block_index`; deploy and
+        // migration-apply are separate steps, so between them (or before
+        // PostgREST reloads its schema cache) PostgREST answers `42703 column
+        // does not exist` for EVERY anchored document. Same family as the
+        // hollow-200 swallowed statement_timeout: an unread `error` turning a
+        // whole-catalogue outage into a quiet, plausible-looking answer.
+        if (proofError) {
+          const { logger } = await import('../../utils/logger.js');
+          logger.error(
+            { publicId, code: (proofError as { code?: string }).code, err: proofError.message },
+            'anchor_proofs read failed — refusing to answer 404; this is NOT a back-catalogue record',
+          );
+          res.status(500).json({ error: 'Internal server error' } as ProofErrorResponse);
+          return;
+        }
 
         anchor = {
           public_id: data.public_id ?? '',
@@ -707,6 +900,9 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
                 block_hash: proofData.block_hash ?? null,
                 op_return_payload: proofData.op_return_payload ?? null,
                 proof_schema_version: proofData.proof_schema_version ?? null,
+                // R1 (migration 0427): bitcoin-tree inclusion evidence.
+                tx_inclusion_branch: proofData.tx_inclusion_branch ?? null,
+                tx_block_index: proofData.tx_block_index ?? null,
               }
             : null,
           leafCount,

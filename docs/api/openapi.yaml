@@ -1240,6 +1240,13 @@ components:
         merkle_index AND leaf_count present (these arm the CVE-2012-2459
         duplicate-leaf guard). Any missing/short/non-canonical field ⇒ null
         (never a partial bundle).
+
+
+        Migration 0427 adds tx_inclusion_branch + tx_block_index — the layer-2
+        BITCOIN-tree evidence. They are ADDITIVE and NULLABLE (Constitution
+        1.8): the keys are always emitted, but they are NOT part of the
+        completeness rule above, because gating on them would retroactively
+        withdraw the bundle from every record confirmed before 0427.
       required:
         - fingerprint
         - merkle_root
@@ -1253,6 +1260,8 @@ components:
         - op_return_payload
         - block_timestamp
         - proof_schema_version
+        - tx_inclusion_branch
+        - tx_block_index
         - signature
       properties:
         fingerprint:
@@ -1302,7 +1311,63 @@ components:
           format: date-time
         proof_schema_version:
           type: integer
-          description: Proof format version (1 = plain double-SHA256 app-tree).
+          description: >-
+            Proof format version (1 = plain double-SHA256 app-tree). Migration
+            0427 does NOT bump it: nullable additions to an existing shape are
+            allowed without a version change, and a verifier that ignores the
+            new fields behaves exactly as before.
+        tx_inclusion_branch:
+          type: array
+          nullable: true
+          description: >-
+            Layer-2 BITCOIN-tree inclusion branch (migration 0427): the sibling
+            path proving tx_id is committed by the merkleroot inside
+            block_header, so transaction inclusion can be checked LOCALLY
+            instead of by asking a Bitcoin node.
+
+
+            NOT interchangeable with merkle_proof. Identical {hash, position}
+            shape, opposite convention: these hashes are BYTE-REVERSED
+            (display) hex folded with Bitcoin's double-SHA256 positional rule —
+            reverse the txid and each sibling to internal little-endian bytes,
+            fold leaf to root with
+            node = SHA256(SHA256(position=="right" ? node||sibling :
+            sibling||node)), reverse the final 32 bytes back to display hex, and
+            compare against the merkleroot at block_header bytes [36,68) (also
+            byte-reversed). merkle_proof is the layer-1 APP tree in its stored
+            orientation; folding one with the other's rule proves nothing.
+
+
+            An EMPTY array is a COMPLETE branch (a block whose only transaction
+            is this one has no siblings), not a missing one. null when the
+            record predates 0427, or when the stored pair is not internally
+            coherent — never fabricated.
+          items:
+            type: object
+            required: [hash, position]
+            properties:
+              hash:
+                type: string
+                description: Sibling hash, exactly 64 hex characters, display (byte-reversed) orientation.
+              position:
+                type: string
+                enum: [left, right]
+        tx_block_index:
+          type: integer
+          nullable: true
+          description: >-
+            0-based index of tx_id within its block (migration 0427). Pairs
+            indivisibly with tx_inclusion_branch — the API emits both or
+            neither, and rejects a pair whose index cannot exist in a tree of
+            the branch's height or whose bits contradict the stored sibling
+            sides. 0 is a real position (the coinbase), not a blank.
+
+
+            It does NOT arm the CVE-2012-2459 duplicate-node guard on the
+            bitcoin tree: that needs the block's total transaction count, which
+            is not carried in the bundle. That guard runs server-side at parse
+            time. (Contrast leaf_count, which DOES arm the equivalent guard on
+            the app tree.)
         signature:
           type: object
           nullable: true
