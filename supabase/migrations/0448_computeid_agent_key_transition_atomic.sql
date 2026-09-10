@@ -170,6 +170,8 @@ CREATE TABLE IF NOT EXISTS public.computeid_passport_authority (
 );
 ALTER TABLE public.computeid_passport_authority ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.computeid_passport_authority FORCE ROW LEVEL SECURITY;
+COMMENT ON TABLE public.computeid_passport_authority IS
+  'Deny-all by design (R3-2). See SCRUM-4570. Service-owned terminal passport authority: anon and authenticated must never read or mutate global revocation tombstones. Access is restricted to the service role and service-only security-definer admission/revocation RPCs.';
 REVOKE ALL ON TABLE public.computeid_passport_authority FROM PUBLIC, anon, authenticated;
 GRANT ALL ON TABLE public.computeid_passport_authority TO service_role;
 
