@@ -514,6 +514,12 @@
     "cle_metadata", "'issuer'", "'recipient'", "display_name"
   ],
   "directory_opt_out_classifications": {
+    "get_public_org_profile": {
+      "disposition": "aggregate_residual_only",
+      "residual_columns": ["credential_type"],
+      "reviewed_definition_sha256": "be71300bd746a1b97c92aae4838187b78343d064f1409df88944e7c66be36bcc",
+      "reason": "0429 returns organization-wide counts grouped only by credential_type, which this contract already records as a deliberately published residual. It emits no anchor filename, learner identity, description, dates or recipient identifier. Organization/profile names use their separate public-profile consent; they are not read from anchor fields. This is not an opt-out-aware projection and does not claim de-identification of small aggregates. The whole comment-stripped SQL definition is pinned, so any query/filter/output change requires renewed behavioral review instead of inheriting an aggregate exemption."
+    },
     "get_public_anchor": {
       "disposition": "consults_flag",
       "reason": "The primary anon-callable verification projection. Calls private.is_directory_info_suppressed via the hoisted g.suppress_directory (migration 0415)."

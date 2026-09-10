@@ -121,6 +121,18 @@ function routeFailure(status: number, error: string): RouteFailure {
   return { ok: false, status, error };
 }
 
+/** SCRUM-4467: distinguish definitive cap rejection from retryable write conflicts. */
+function subOrgCapWriteFailure(error: { code?: string; message?: string } | null): RouteFailure | null {
+  if (error?.code === '23514' && error.message === 'sub_org_limit_reached') {
+    return routeFailure(409, 'sub_org_limit_reached');
+  }
+  // Lock waits and transaction conflicts are retryable, never successful writes.
+  if (error?.code && ['55P03', '40001', '40P01'].includes(error.code)) {
+    return routeFailure(503, 'cap_check_unavailable');
+  }
+  return null;
+}
+
 /** Helper to get userId from request */
 function getUserId(req: Request): string | undefined {
   return (req as unknown as { userId?: string }).userId;
@@ -176,13 +188,18 @@ export async function resolveSubOrgCap(
   database: any,
   parentOrgId: string,
 ): Promise<SubOrgCap> {
-  const { data: org } = await database
+  const { data: org, error: parentError } = await database
     .from('organizations')
     .select('max_sub_orgs')
     .eq('id', parentOrgId)
     .maybeSingle();
 
-  const limit: number = org?.max_sub_orgs ?? DEFAULT_MAX_SUB_ORGS;
+  if (parentError || !org) {
+    logger.error({ err: parentError?.message, parentOrgId }, 'suborg_cap_parent_lookup_failed');
+    return { ok: false, limit: -1, current: -1, unavailable: true };
+  }
+
+  const limit: number = org.max_sub_orgs ?? DEFAULT_MAX_SUB_ORGS;
 
   // Deliberately NOT a PostgREST head-only exact-count select (R0-8 / SCRUM-1254):
   // PostgREST's exact count is the pattern that produced 60 s statement
@@ -297,6 +314,8 @@ async function createAffiliateOrg(
     .single();
 
   if (createError || !childOrg) {
+    const capFailure = subOrgCapWriteFailure(createError);
+    if (capFailure) return capFailure;
     logger.error({ error: createError }, 'Failed to create affiliate org');
     return routeFailure(500, 'Failed to create affiliate organization');
   }
@@ -543,14 +562,26 @@ async function updateAffiliateStatus(
     }
   }
 
-  const { error: updateError } = await db
+  // SCRUM-4468: bind the write to the affiliation we authorized. A concurrent reparent or
+  // status transition must not turn this into a write against another tenant.
+  const update = db
     .from('organizations')
     .update(buildAffiliateStatusUpdate(action.targetStatus))
-    .eq('id', context.childOrgId);
+    .eq('id', context.childOrgId)
+    .eq('parent_org_id', context.orgId);
+  const scopedUpdate = context.childOrg.parent_approval_status === null
+    ? update.is('parent_approval_status', null)
+    : update.eq('parent_approval_status', context.childOrg.parent_approval_status);
+  const { data: updatedOrg, error: updateError } = await scopedUpdate.select('id').maybeSingle();
 
   if (updateError) {
+    const capFailure = subOrgCapWriteFailure(updateError);
+    if (capFailure) return capFailure;
     logger.error({ error: updateError }, action.failureLog);
     return routeFailure(500, action.updateFailureError);
+  }
+  if (!updatedOrg) {
+    return routeFailure(409, 'Affiliation changed. Refresh and try again.');
   }
 
   return routeSuccess(undefined);

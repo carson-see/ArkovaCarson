@@ -22,11 +22,10 @@
  *   the same shape as credit allocation. A child admin helping themselves to
  *   the parent's connection is exactly what the 403 below prevents.
  *
- * WHAT THIS DOES NOT NEED
- *   No migration. 0328 already ships the column, the credential-free CHECK and
- *   the parent-linkage trigger, and the resolver re-checks parent linkage at
- *   READ time — so a marker left stale by a later re-parent is already inert
- *   without a cleanup trigger here.
+ * DATABASE BOUNDARIES
+ *   0328 supplies the credential-free marker and parent-linkage check; 0446
+ *   makes stop authorization and revocation atomic. The resolver also checks
+ *   parent linkage at read time, so stale markers cannot lend credentials.
  */
 
 import { Router, Request, Response } from 'express';
@@ -34,6 +33,7 @@ import { z } from 'zod';
 import { logger } from '../../../utils/logger.js';
 import { db as defaultDb } from '../../../utils/db.js';
 import { createLazyOAuthRouter } from './oauth-state.js';
+import { isCallerOrgAdminResult } from '../../_org-auth.js';
 
 const PROVIDER = 'docusign';
 
@@ -56,18 +56,24 @@ function getUserId(req: Request): string | undefined {
   return (req as unknown as { userId?: string }).userId;
 }
 
-/** The org's single live (non-revoked) DocuSign row, if any. */
+/** Owned accounts may be multiple; the credential-free marker is unique. */
 async function liveDocusign(
   db: DbClient,
   orgId: string,
+  kind: 'owned' | 'inherited',
 ): Promise<{ row: LiveIntegration | null; failed: boolean }> {
-  const { data, error } = await db
+  const query = db
     .from('org_integrations')
     .select('id, inherited_from_org_id')
     .eq('org_id', orgId)
     .eq('provider', PROVIDER)
-    .is('revoked_at', null)
-    .maybeSingle();
+    .is('revoked_at', null);
+  // This is an existence check, not account selection. Credential resolution
+  // chooses the actual owned account later; any owned row takes precedence.
+  const scoped = kind === 'owned'
+    ? query.is('inherited_from_org_id', null).limit(1)
+    : query.not('inherited_from_org_id', 'is', null);
+  const { data, error } = await scoped.maybeSingle();
   if (error) {
     logger.error({ err: error.message, orgId }, 'docusign_inheritance_integration_lookup_failed');
     return { row: null, failed: true };
@@ -118,21 +124,15 @@ async function requireParentAdminOfSubOrg(
     return null;
   }
 
-  const { data: membership, error: memberError } = await db
-    .from('org_members')
-    .select('role')
-    .eq('user_id', userId)
-    .eq('org_id', parentOrgId)
-    .maybeSingle();
+  const admin = await isCallerOrgAdminResult(userId, parentOrgId, undefined, db);
 
-  if (memberError) {
-    logger.error({ err: memberError.message, parentOrgId }, 'docusign_inheritance_member_lookup_failed');
+  if (admin.error) {
+    logger.error({ parentOrgId }, 'docusign_inheritance_member_lookup_failed');
     res.status(503).json({ error: 'membership_lookup_unavailable' });
     return null;
   }
 
-  const role = (membership as { role?: string } | null)?.role;
-  if (role !== 'owner' && role !== 'admin') {
+  if (!admin.value) {
     res.status(403).json({ error: 'Must be an admin of the parent organization' });
     return null;
   }
@@ -150,15 +150,23 @@ export function createDocusignInheritanceRouter(deps: DocusignInheritanceDeps = 
       if (!ctx) return;
       const { childOrgId, parentOrgId, userId } = ctx;
 
-      const child = await liveDocusign(db, childOrgId);
+      const ownedChild = await liveDocusign(db, childOrgId, 'owned');
+      if (ownedChild.failed) {
+        res.status(503).json({ error: 'integration_lookup_unavailable' });
+        return;
+      }
+      if (ownedChild.row) {
+        res.status(409).json({ error: 'already_connected' });
+        return;
+      }
+      const child = await liveDocusign(db, childOrgId, 'inherited');
       if (child.failed) {
         res.status(503).json({ error: 'integration_lookup_unavailable' });
         return;
       }
       if (child.row) {
-        // Already delegating to this parent — nothing to do. Any other live row
-        // is the sub-org's OWN connection, which the resolver prefers anyway;
-        // replacing it here would silently drop a working connection.
+        // Only the matching marker is idempotent; a stale marker needs an
+        // explicit stop before a new inheritance relationship is established.
         if (child.row.inherited_from_org_id === parentOrgId) {
           res.status(200).json({ inherited: true, from: parentOrgId, created: false });
           return;
@@ -167,20 +175,19 @@ export function createDocusignInheritanceRouter(deps: DocusignInheritanceDeps = 
         return;
       }
 
-      const parent = await liveDocusign(db, parentOrgId);
+      const parent = await liveDocusign(db, parentOrgId, 'owned');
       if (parent.failed) {
         res.status(503).json({ error: 'integration_lookup_unavailable' });
         return;
       }
       if (!parent.row) {
-        res.status(409).json({ error: 'parent_not_connected' });
-        return;
-      }
-      if (parent.row.inherited_from_org_id !== null) {
-        // The resolver refuses to chain, so a marker pointing at a marker would
-        // resolve to no credentials at job time — a connection that looks live
-        // in the UI and silently does nothing.
-        res.status(409).json({ error: 'parent_inherits' });
+        const parentMarker = await liveDocusign(db, parentOrgId, 'inherited');
+        if (parentMarker.failed) {
+          res.status(503).json({ error: 'integration_lookup_unavailable' });
+          return;
+        }
+        // The resolver never chains inheritance through another marker.
+        res.status(409).json({ error: parentMarker.row ? 'parent_inherits' : 'parent_not_connected' });
         return;
       }
 
@@ -218,7 +225,7 @@ export function createDocusignInheritanceRouter(deps: DocusignInheritanceDeps = 
       if (!ctx) return;
       const { childOrgId, parentOrgId, userId } = ctx;
 
-      const child = await liveDocusign(db, childOrgId);
+      const child = await liveDocusign(db, childOrgId, 'inherited');
       if (child.failed) {
         res.status(503).json({ error: 'integration_lookup_unavailable' });
         return;
@@ -231,19 +238,32 @@ export function createDocusignInheritanceRouter(deps: DocusignInheritanceDeps = 
         return;
       }
 
-      const now = (deps.now?.() ?? new Date()).toISOString();
-      const { error } = await db
-        .from('org_integrations')
-        .update({ revoked_at: now })
-        .eq('id', child.row.id)
-        // Redundant with the id, and deliberately so: the update then cannot
-        // touch another org's row even if the id were wrong, and the tenant
-        // scope is visible to the isolation lint rather than implied by the
-        // lookup two statements above.
-        .eq('org_id', childOrgId);
+      // The relationship can change after the reads above. Lock and recheck it
+      // with parent administration and marker revocation in one transaction.
+      const { data, error } = await db.rpc('stop_suborg_docusign_inheritance', {
+        p_parent_org_id: parentOrgId,
+        p_child_org_id: childOrgId,
+        p_integration_id: child.row.id,
+        p_inherited_from_org_id: child.row.inherited_from_org_id,
+        p_caller_user_id: userId,
+        p_revoked_at: (deps.now?.() ?? new Date()).toISOString(),
+      });
 
       if (error) {
         logger.error({ err: error.message, childOrgId }, 'docusign_inheritance_revoke_failed');
+        res.status(503).json({ error: 'inheritance_write_unavailable' });
+        return;
+      }
+      if (data?.error === 'parent_admin_required' || data?.error === 'authentication_required') {
+        res.status(403).json({ error: data.error });
+        return;
+      }
+      if (data?.error === 'child_parent_changed' || data?.error === 'inherited_connection_changed') {
+        res.status(409).json({ error: data.error });
+        return;
+      }
+      if (data?.success !== true) {
+        logger.error({ childOrgId }, 'docusign_inheritance_unexpected_stop_result');
         res.status(503).json({ error: 'inheritance_write_unavailable' });
         return;
       }

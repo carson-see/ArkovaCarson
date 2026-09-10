@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-09-10 — PR #2572 local repair prepared; release qualification remains pending
+
+The September 5 cap, affiliation race, and parent-authority fixes (SCRUM-4467–4471) have been ported onto PR head `66af07c3697a8de71ed0ad4646d65cb84af89d40` in a new isolated worktree. Existing migrations 0429–0432 remain unchanged. Reserved migrations **0443** (atomic approved-child cap), **0444** (parent-authority locking and canonical profile fallback), and **0446** (atomic DocuSign inheritance stop) are candidate files only. Prefixes 0440–0442 belong to other changes, and 0445 is reserved for #2570; recheck main and open PRs before publication.
+
+All 119 focused route tests pass, including shared authorization and queue rejection. The original port reproduced 22 failures first; the DocuSign follow-up added six more red-first regression cases. A disposable PostgreSQL 17 cluster reproduced admission and reparent races, then passed 23 cap cases and 30 authority/profile cases with the new migrations. Literal rollback reopened the defects; reapplication restored the fixes and service-only RPC grants. These are local fixture results, not a clean Supabase baseline, staging soak, or production migration application.
+
+The root FERPA contract now classifies `get_public_org_profile` honestly as a reviewed aggregate residual: it publishes credential-type counts and does not claim opt-out awareness or anonymity for small counts. Its entire SQL definition is pinned; changed private-field projections fail review. The reproducible anonymous-call proof is [verify-0429-aggregate-residual.sql](docs/staging/hakichain-suborgs-2026-09/verify-0429-aggregate-residual.sql). All 22 FERPA contract cases pass locally, and a planted filename disclosure fails the SQL behavior proof.
+
+The additional DocuSign review reproduced an old parent revoking a marker after the child changed parent, plus failures with multiple owned accounts and owned-plus-marker rows. The route now separates owned accounts from markers and uses 0446 for atomic stop authorization, revocation and audit. Six new route regressions and five SQL-backed route cases pass; 24 SQL cases cover opposing transaction order, bounded locks, role and marker denial, audit rollback and literal rollback/reapplication.
+
+Independent local review then replayed all 133 byte-identical candidate SQL files, including the complete baseline, on isolated Supabase PostgreSQL 15 and applied the canonical seed. The five DocuSign Express/SQL cases and all 24 service-authority, concurrency, audit and rollback/reapply cases pass on that full schema. Supabase postgres-meta generated the new RPC entry from the actual catalog; both canonical type files now contain the identical generated delta. Original numbered SQL remains unchanged. These local results do not establish staging or production application.
+
+The worker circuit artifacts were rebuilt from source with SHA-pinned inputs. The full worker rerun recorded 11,532 passes, 26 failures and 63 skips: 23 failures came from the shared checkout's incomplete historical Git lineage; the unchanged S33 file passes 128/128 in the standalone complete-history repository. The other four files (three assertions and an import-time timeout accounting for 51 skips) pass all 114 tests on an isolated rerun. The original full-run result is retained; this is not a claim of a single fully green run. Root build typecheck, worker typecheck and documentation pointers pass after the generated type delta.
+
+The remote PR moved to `72070341cf3f833869c63b2392178b74e5398353` during review by merging main's proof changes. That adds 0427 and shared type/documentation changes; it does not change the repaired suborg source. The local repair remains based on `66af07c` and needs integration with the current remote before publication. Current-head CI and staging qualification, real migration application, and the PR evidence body remain release gates. DocuSign findings are tracked in [SCRUM-4532](https://arkova.atlassian.net/wiki/spaces/A/pages/141623297) and [SCRUM-4533](https://arkova.atlassian.net/wiki/spaces/A/pages/141656065). No live database, soak window, queue entry, or PR state was changed by this local repair.
+
 ### 2026-09-09T04:00Z — `tmp_cleaner` swept `/private/tmp` and killed SIX soak windows. Read this before touching any oldest-release window.
 
 - **Cause, established from the binary.** `/usr/libexec/tmp_cleaner` (macOS 26; this host has NO `/etc/periodic`) runs at midnight local = **04:00:00Z daily** and runs `find -dx . -fstype local -type f -atime +3 -mtime +3 -ctime +3 -delete` plus an empty-dir pass. A file dies only when atime AND mtime AND ctime are ALL ≥4 days. It deletes FILES, never directories — which is why the window dirs still exist but their `.git` files, drivers and pinned modules are gone. **Not a `git worktree prune`**: inside one worktree's admin dir the Sep-5 files (`HEAD`, `gitdir`) were deleted while the Sep-7 files (`index`, `FETCH_HEAD`) survived, and no git operation is age-selective.
@@ -2499,3 +2515,5 @@ _Last refreshed: 2026-09-07 by Claude-Fable-5.1 gate-fix session (ninth approver
 _Last refreshed: 2026-09-08 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
 
 _Last refreshed: 2026-09-09 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-10 by Codex PR #2572 repair session — local-only claims verified against disposable PostgreSQL and test output; no new production claims._

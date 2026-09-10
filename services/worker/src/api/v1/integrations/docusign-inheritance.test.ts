@@ -39,8 +39,13 @@ interface Fixture {
   /** org_members rows: `${userId}:${orgId}` -> role */
   members?: Record<string, string>;
   /** live org_integrations docusign rows keyed by org_id */
-  integrations?: Record<string, { id: string; inherited_from_org_id: string | null }>;
+  integrations?: Record<string, { id: string; inherited_from_org_id: string | null; revoked_at?: string | null }>;
+  additionalIntegrations?: Record<string, NonNullable<Fixture['integrations']>[string][]>;
+  rpcError?: boolean;
+  beforeIntegrationUpdate?: (rows: NonNullable<Fixture['integrations']>) => void;
   orgsError?: boolean;
+  profiles?: Record<string, { org_id: string | null; role: string; is_platform_admin: boolean }>;
+  profileError?: boolean;
 }
 
 /** Minimal supabase-shaped stub covering only the queries this router issues. */
@@ -50,6 +55,18 @@ function makeDb(fx: Fixture) {
 
   const db = {
     from(table: string) {
+      if (table === 'profiles') {
+        let id = '';
+        const chain = {
+          select: () => chain,
+          eq: (_column: string, value: string) => { id = value; return chain; },
+          maybeSingle: async () => ({
+            data: fx.profileError ? null : fx.profiles?.[id] ?? null,
+            error: fx.profileError ? { message: 'profile lookup unavailable' } : null,
+          }),
+        };
+        return chain;
+      }
       if (table === 'organizations') {
         let id = '';
         const chain = {
@@ -82,11 +99,21 @@ function makeDb(fx: Fixture) {
       }
       if (table === 'org_integrations') {
         let orgId = '';
+        let inherited: boolean | undefined;
+        let limit = Infinity;
         const chain = {
           select: () => chain,
           eq: (col: string, v: string) => { if (col === 'org_id') orgId = v; return chain; },
-          is: () => chain,
-          maybeSingle: async () => ({ data: fx.integrations?.[orgId] ?? null, error: null }),
+          is: (col: string) => { if (col === 'inherited_from_org_id') inherited = false; return chain; },
+          not: (col: string) => { if (col === 'inherited_from_org_id') inherited = true; return chain; },
+          limit: (value: number) => { limit = value; return chain; },
+          maybeSingle: async () => {
+            const candidates = [fx.integrations?.[orgId], ...(fx.additionalIntegrations?.[orgId] ?? [])]
+              .filter((row) => row && !row.revoked_at && (inherited === undefined || (row.inherited_from_org_id !== null) === inherited))
+              .slice(0, limit);
+            if (candidates.length > 1) return { data: null, error: { code: 'PGRST116', message: 'Multiple rows returned' } };
+            return { data: candidates[0] ? { ...candidates[0] } : null, error: null };
+          },
           insert: (row: Record<string, unknown>) => {
             inserted.push(row);
             return {
@@ -96,12 +123,28 @@ function makeDb(fx: Fixture) {
             };
           },
           update: (patch: Record<string, unknown>) => {
+            const filters: Record<string, unknown> = {};
+            const execute = () => {
+              const rows = fx.integrations ?? {};
+              fx.beforeIntegrationUpdate?.(rows);
+              const match = Object.entries(rows).find(([rowOrgId, row]) => {
+                const current = { provider: 'docusign', revoked_at: null, ...row, org_id: rowOrgId };
+                return Object.entries(filters).every(([key, value]) => current[key as keyof typeof current] === value);
+              });
+              if (!match) return { data: null, error: null };
+              const [, row] = match;
+              updated.push({ id: row.id, patch });
+              Object.assign(row, patch);
+              return { data: { id: row.id }, error: null };
+            };
             const upd = {
               eq: (col: string, v: string) => {
-                if (col === 'id') updated.push({ id: v, patch });
+                filters[col] = v;
                 return upd;
               },
-              select: () => ({ maybeSingle: async () => ({ data: { id: 'marker-1' }, error: null }) }),
+              is: (col: string, v: null) => { filters[col] = v; return upd; },
+              select: () => ({ maybeSingle: async () => execute() }),
+              then: (resolve: (value: ReturnType<typeof execute>) => unknown) => Promise.resolve(execute()).then(resolve),
             };
             return upd;
           },
@@ -109,6 +152,28 @@ function makeDb(fx: Fixture) {
         return chain;
       }
       throw new Error(`unexpected table ${table}`);
+    },
+    async rpc(name: string, args: Record<string, string>) {
+      if (name !== 'stop_suborg_docusign_inheritance') throw new Error(`unexpected RPC ${name}`);
+      if (fx.rpcError) return { data: null, error: { code: '55P03', message: 'lock timeout' } };
+      const rows = fx.integrations ?? {};
+      fx.beforeIntegrationUpdate?.(rows);
+      if (fx.orgs?.[args.p_child_org_id]?.parent_org_id !== args.p_parent_org_id) {
+        return { data: { error: 'child_parent_changed' }, error: null };
+      }
+      const member = fx.members?.[`${args.p_caller_user_id}:${args.p_parent_org_id}`];
+      const profile = fx.profiles?.[args.p_caller_user_id];
+      const allowed = ['owner', 'admin', 'ORG_ADMIN'].includes(member ?? '') || profile?.is_platform_admin ||
+        (profile?.org_id === args.p_parent_org_id && profile?.role === 'ORG_ADMIN');
+      if (!allowed) return { data: { error: 'parent_admin_required' }, error: null };
+      const row = rows[args.p_child_org_id];
+      if (!row || row.id !== args.p_integration_id || row.inherited_from_org_id !== args.p_inherited_from_org_id || row.revoked_at) {
+        return { data: { error: 'inherited_connection_changed' }, error: null };
+      }
+      const patch = { revoked_at: args.p_revoked_at };
+      Object.assign(row, patch);
+      updated.push({ id: row.id, patch });
+      return { data: { success: true }, error: null };
     },
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -133,6 +198,40 @@ const CONNECTED: Fixture = {
   members: { [`${ADMIN}:${PARENT}`]: 'owner' },
   integrations: { [PARENT]: { id: 'int-parent', inherited_from_org_id: null } },
 };
+
+describe('parent administration through the canonical profile fallback', () => {
+  it.each([
+    ['/docusign/inherit', 201],
+    ['/docusign/inherit/stop', 200],
+  ])('recognizes the parent profile owner without an org_members row on %s', async (path, expectedStatus) => {
+    const { app } = buildApp({
+      ...CONNECTED,
+      members: {},
+      profiles: { [ADMIN]: { org_id: PARENT, role: 'ORG_ADMIN', is_platform_admin: false } },
+      integrations: path.endsWith('/stop')
+        ? { [CHILD]: { id: 'marker-1', inherited_from_org_id: PARENT } }
+        : CONNECTED.integrations,
+    }, ADMIN);
+    const res = await request(app).post('/api/v1/integrations' + path).send({ org_id: CHILD });
+    expect(res.status).toBe(expectedStatus);
+  });
+
+  it('keeps the profile administrator role scoped to its own organization', async () => {
+    const { app, inserted } = buildApp({ ...CONNECTED, members: {}, profiles: {
+      [ADMIN]: { org_id: OTHER, role: 'ORG_ADMIN', is_platform_admin: false },
+    } }, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit').send({ org_id: CHILD });
+    expect(res.status).toBe(403);
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('reports a profile lookup outage without allowing a write', async () => {
+    const { app, inserted } = buildApp({ ...CONNECTED, members: {}, profileError: true }, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit').send({ org_id: CHILD });
+    expect(res.status).toBe(503);
+    expect(inserted).toHaveLength(0);
+  });
+});
 
 describe('POST /docusign/inherit (SCRUM-3867)', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -283,6 +382,24 @@ describe('POST /docusign/inherit (SCRUM-3867)', () => {
 describe('POST /docusign/inherit/stop (SCRUM-3867)', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it.each([
+    ['converted to an own connection', (rows: NonNullable<Fixture['integrations']>) => { rows[CHILD].inherited_from_org_id = null; }],
+    ['moved to a different parent', (rows: NonNullable<Fixture['integrations']>) => { rows[CHILD].inherited_from_org_id = OTHER; }],
+    ['already revoked', (rows: NonNullable<Fixture['integrations']>) => { rows[CHILD].revoked_at = '2026-09-05T16:00:00.000Z'; }],
+    ['deleted', (rows: NonNullable<Fixture['integrations']>) => { delete rows[CHILD]; }],
+  ])('does not revoke a marker %s after the authorization read', async (_name, change) => {
+    const fx: Fixture = {
+      ...CONNECTED,
+      integrations: { [CHILD]: { id: 'marker-1', inherited_from_org_id: PARENT } },
+      beforeIntegrationUpdate: change,
+    };
+    const { app, updated } = buildApp(fx, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit/stop').send({ org_id: CHILD });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'inherited_connection_changed' });
+    expect(updated).toHaveLength(0);
+  });
+
   it('revokes the marker', async () => {
     const { app, updated } = buildApp({
       ...CONNECTED,
@@ -327,6 +444,74 @@ describe('POST /docusign/inherit/stop (SCRUM-3867)', () => {
       .send({ org_id: CHILD });
 
     expect(res.status).toBe(404);
+    expect(updated).toHaveLength(0);
+  });
+});
+
+describe('DocuSign multi-account and transactional stop regressions', () => {
+  it('can inherit from a parent with two owned accounts', async () => {
+    const { app, inserted } = buildApp({ ...CONNECTED,
+      additionalIntegrations: { [PARENT]: [{ id: 'second-parent-account', inherited_from_org_id: null }] },
+    }, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit').send({ org_id: CHILD });
+    expect(res.status).toBe(201);
+    expect(inserted).toHaveLength(1);
+  });
+
+  it('keeps an existing owned connection authoritative over a coexisting marker', async () => {
+    const { app, inserted } = buildApp({ ...CONNECTED,
+      integrations: { [CHILD]: { id: 'child-owned', inherited_from_org_id: null } },
+      additionalIntegrations: { [CHILD]: [{ id: 'marker-1', inherited_from_org_id: PARENT }] },
+    }, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit').send({ org_id: CHILD });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('already_connected');
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('stops only the marker when the child also has an owned account', async () => {
+    const own = { id: 'child-owned', inherited_from_org_id: null };
+    const { app, updated } = buildApp({ ...CONNECTED,
+      integrations: { [CHILD]: { id: 'marker-1', inherited_from_org_id: PARENT } },
+      additionalIntegrations: { [CHILD]: [own] },
+    }, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit/stop').send({ org_id: CHILD });
+    expect(res.status).toBe(200);
+    expect(updated.map((row) => row.id)).toEqual(['marker-1']);
+    expect(own).not.toHaveProperty('revoked_at');
+  });
+
+  it('rejects an old parent after a committed child reparent', async () => {
+    const fx: Fixture = { ...CONNECTED, orgs: { [CHILD]: { parent_org_id: PARENT } },
+      integrations: { [CHILD]: { id: 'marker-1', inherited_from_org_id: PARENT } },
+      beforeIntegrationUpdate: () => { fx.orgs![CHILD].parent_org_id = OTHER; },
+    };
+    const { app, updated } = buildApp(fx, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit/stop').send({ org_id: CHILD });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('child_parent_changed');
+    expect(updated).toHaveLength(0);
+  });
+
+  it('rechecks parent administration before committing the revocation', async () => {
+    const fx: Fixture = { ...CONNECTED, members: { [`${ADMIN}:${PARENT}`]: 'owner' },
+      integrations: { [CHILD]: { id: 'marker-1', inherited_from_org_id: PARENT } },
+      beforeIntegrationUpdate: () => { fx.members![`${ADMIN}:${PARENT}`] = 'member'; },
+    };
+    const { app, updated } = buildApp(fx, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit/stop').send({ org_id: CHILD });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('parent_admin_required');
+    expect(updated).toHaveLength(0);
+  });
+
+  it('reports a transactional stop outage without claiming success', async () => {
+    const { app, updated } = buildApp({ ...CONNECTED, rpcError: true,
+      integrations: { [CHILD]: { id: 'marker-1', inherited_from_org_id: PARENT } },
+    }, ADMIN);
+    const res = await request(app).post('/api/v1/integrations/docusign/inherit/stop').send({ org_id: CHILD });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('inheritance_write_unavailable');
     expect(updated).toHaveLength(0);
   });
 });

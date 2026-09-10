@@ -382,3 +382,9 @@ Live authenticated export exposed legacy DB column names in loadAnchor. Select
 chain_tx_id and chain_block_height using aliases for the existing public receipt
 keys; keep that response contract unchanged. A failed anchor query returns 500,
 never the not_anchored sentinel reserved for a successful empty lookup.
+
+## PR #2572 — canonical parent owner checks (SCRUM-4471)
+
+`isCallerOrgAdminResult` accepts an optional DB client for routers that inject their client. Both membership and profile fallback use that same client; existing callers retain the shared default. DocuSign inheritance uses this resolver so an own-org profile `ORG_ADMIN` can administer the parent without an `org_members` row, while foreign-org profile roles remain denied.
+
+PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.

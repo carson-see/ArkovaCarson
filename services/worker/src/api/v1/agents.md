@@ -1122,3 +1122,9 @@ only other records with a recognized connector marker and artifact stamp may emi
 fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
 and authenticated packet exports load the typed source; the signable proof bundle
 is unchanged. Regression reproduced before the fix; local validation is not soak evidence.
+
+## PR #2572 — cap faults and affiliation write races (SCRUM-4467 / SCRUM-4468)
+
+`resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0443 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
+
+PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.

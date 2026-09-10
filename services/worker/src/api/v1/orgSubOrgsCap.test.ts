@@ -34,7 +34,7 @@ const PARENT = '22222222-2222-4222-8222-222222222222';
  * selects the child ids and takes `.length`. `select('id')` is the child
  * lookup; anything else is the max_sub_orgs read.
  */
-function mockCap(opts: { max?: number | null; approved?: number; countError?: boolean }) {
+function mockCap(opts: { max?: number | null; approved?: number; countError?: boolean; parentError?: boolean; missingParent?: boolean }) {
   (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
     if (table === 'organizations') {
       const chain = {
@@ -58,8 +58,8 @@ function mockCap(opts: { max?: number | null; approved?: number; countError?: bo
             : chain,
         eq: () => chain,
         maybeSingle: () => Promise.resolve({
-          data: { max_sub_orgs: opts.max === undefined ? null : opts.max },
-          error: null,
+          data: opts.parentError || opts.missingParent ? null : { max_sub_orgs: opts.max === undefined ? null : opts.max },
+          error: opts.parentError ? { message: 'parent lookup failed' } : null,
         }),
       };
       return chain;
@@ -115,4 +115,9 @@ describe('sub-org cap (D3)', () => {
     expect(cap.ok).toBe(false);
     expect(cap).toMatchObject({ unavailable: true });
   });
+  it.each([{ parentError: true }, { missingParent: true }])('refuses when the parent limit is unknown: %j', async (fault) => {
+    mockCap({ ...fault, approved: 0 });
+    expect(await resolveSubOrgCap(db, PARENT)).toMatchObject({ ok: false, unavailable: true });
+  });
+
 });
