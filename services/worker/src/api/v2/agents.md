@@ -56,3 +56,18 @@ revision `arkova-worker-01322-tol` at 100% traffic (`gcloud run services describ
 So the older framing — "v2 already ships the correct design, v1 does not" — is now stale. **The two
 stores are at parity and must be changed together.** A fix applied to one and not the other
 re-opens the divergence this PR closed; `utils/agents.md` carries the v1-side note.
+
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `anchor_timestamp` comes from the chain, not `created_at`
+
+`agentTools.ts` (fingerprint verify) published `data.created_at` and did not even select
+`chain_timestamp`; `resourceDetails.ts` had a silent `stringOrNull(row.chain_timestamp) ??
+stringOrNull(row.created_at)` fallback. Both now call `publicAnchorTimestamp` from
+`../anchorTimestamp.js`.
+
+The v2 contracts declare this field **nullable**, so unmeasured is `null` here — not omitted as on
+the frozen v1 envelope. `mapPublicAnchor` was already correct because it reads the
+`get_public_anchor()` RPC row; that is the difference between the two paths in this folder and it is
+worth noticing before "harmonising" them.
+
+The `?? created_at` shape is the one to reject in review: it reads as correct and misreports only on
+the subset of rows where `chain_timestamp` is NULL, so a spot check will not catch it.

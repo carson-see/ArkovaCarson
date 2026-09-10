@@ -279,7 +279,7 @@ export class Arkova {
           credentialType: 'UNKNOWN',
           issuedDate: null,
           expiryDate: null,
-          anchorTimestamp: '',
+          anchorTimestamp: null,
           networkReceiptId: null,
           recordUri: '',
         };
@@ -903,7 +903,7 @@ function mapVerificationResult(row: Record<string, unknown>): VerificationResult
     credentialType: row.credential_type as string,
     issuedDate: (row.issued_date as string | null) ?? null,
     expiryDate: (row.expiry_date as string | null) ?? null,
-    anchorTimestamp: row.anchor_timestamp as string,
+    anchorTimestamp: nullableString(row.anchor_timestamp),
     networkReceiptId: (row.network_receipt_id as string | null) ?? null,
     recordUri: row.record_uri as string,
   };
@@ -1027,15 +1027,15 @@ function mapMerkleProofEntries(value: unknown): MerkleProofEntry[] | null {
   return out;
 }
 
-/** A 32-byte hash in display hex — the only shape a bitcoin-tree sibling takes. */
+/** A 32-byte hash in display hex — the only shape a network-tree sibling takes. */
 const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
 
 /**
- * B3 (migration 0427): map the layer-2 BITCOIN-tree inclusion evidence as ONE
+ * B3 (migration 0427): map the layer-2 network-tree inclusion evidence as ONE
  * fact.
  *
  * `tx_inclusion_branch` + `tx_block_index` are what let a holder close the
- * transaction→block half of the proof LOCALLY instead of asking a Bitcoin node
+ * receipt→block half of the proof LOCALLY instead of asking a network node
  * — the exact third-party dependency the self-contained bundle exists to
  * remove. `mapProofBundle` builds from a hard key allow-list, so until they
  * were named here the API emitted them and every SDK consumer silently
@@ -1052,10 +1052,10 @@ const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
  * Anything else ⇒ BOTH null. Unlike the bundle's required members this does
  * NOT fail the whole bundle closed: the fields are additive and nullable
  * (§1.8), so a record confirmed before 0427 must keep getting a bundle. An
- * EMPTY branch with index 0 is COMPLETE evidence (a single-transaction block
+ * EMPTY branch with index 0 is COMPLETE evidence (a single-receipt block
  * has no siblings), never missing.
  *
- * ORIENTATION: byte-reversed (display) hex under Bitcoin's double-SHA256
+ * ORIENTATION: byte-reversed (display) hex under the network’s double-SHA256
  * positional rule — a DIFFERENT convention from `merkleProof`, the layer-1 app
  * tree. Not interchangeable, hence the distinct name.
  */

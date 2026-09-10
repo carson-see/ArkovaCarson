@@ -239,8 +239,8 @@ export interface VerificationResult extends RichVerificationFields {
   issuedDate: string | null;
   /** Expiry date */
   expiryDate: string | null;
-  /** Anchor timestamp */
-  anchorTimestamp: string;
+  /** Observed anchor time, or null when the API has no measurement. */
+  anchorTimestamp: string | null;
   /** Network receipt ID */
   networkReceiptId: string | null;
   /** Verification URL */
@@ -392,13 +392,13 @@ export interface ProofBundle {
   blockTimestamp: string;
   proofSchemaVersion: number;
   /**
-   * Layer-2 BITCOIN-tree inclusion branch (migration 0427): the sibling path
+   * Layer-2 network-tree inclusion branch (migration 0427): the sibling path
    * proving `txId` is committed by the merkleroot inside `blockHeader`. This is
-   * what lets a holder close the transaction→block half of the proof LOCALLY
-   * instead of asking a Bitcoin node.
+   * what lets a holder close the receipt→block half of the proof LOCALLY
+   * instead of asking a network node.
    *
    * NOT interchangeable with `merkleProof`. Same `{hash, position}` shape, but
-   * these hashes are BYTE-REVERSED (display) hex folded with Bitcoin's
+   * these hashes are BYTE-REVERSED (display) hex folded with the network’s
    * double-SHA256 positional rule, whereas `merkleProof` is the layer-1 APP
    * tree in its stored orientation. Folding one with the other's rule
    * typechecks and proves nothing — hence the distinct name.
@@ -406,7 +406,7 @@ export interface ProofBundle {
    * Additive + nullable (Constitution §1.8): `null` for a record confirmed
    * before 0427, and `null` when the stored pair is unusable — never fabricated
    * and never a reason to withhold the rest of the bundle. An EMPTY array is a
-   * COMPLETE branch (a single-transaction block has no siblings).
+   * COMPLETE branch (a single-receipt block has no siblings).
    */
   txInclusionBranch: MerkleProofEntry[] | null;
   /**

@@ -853,3 +853,12 @@ Historical change log: [./agents-changelog.md](./agents-changelog.md)
 ## 2026-09-05 — PR #2440 subtype opt-out release review
 
 Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
+
+## 2026-09-10 — SCRUM-4565: staging workflow contract scope
+
+The canonical Mergify predicates in `staging-evidence-workflow-contract.test.ts`
+apply to enforcement steps. The separate job-level metadata routing is verified
+with the real GitHub expression evaluator; SCRUM-4565 retains the event matrix
+and negative controls for bot identity, sender identity, base changes, cancellation
+groups, and required-result preservation. All live evidence-input and per-step
+identity assertions remain enforced by the existing suite.
