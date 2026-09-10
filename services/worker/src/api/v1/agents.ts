@@ -253,6 +253,10 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
       .select()
       .single();
 
+    if (error?.code === '23514' && error.message === 'agent_revocation_is_terminal') {
+      res.status(409).json({ error: 'Agent is revoked — revocation is terminal; register a new agent instead' });
+      return;
+    }
     if (error || !agent) {
       res.status(404).json({ error: 'Agent not found or update failed' });
       return;

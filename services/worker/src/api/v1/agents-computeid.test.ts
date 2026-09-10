@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChainableBuilder as builder, routeDbTables } from '../../test-utils/chainable-builder.js';
 
 const dbFromMock = vi.fn();
+const dbRpcMock = vi.fn();
 const auditMock = vi.fn();
 const mockConfig = vi.hoisted(() => ({
   enableComputeidIntegration: true,
@@ -22,7 +23,7 @@ const mockConfig = vi.hoisted(() => ({
   apiKeyHmacSecret: 'test-api-key-hmac-secret' as string | undefined,
 }));
 vi.mock('../../config.js', () => ({ config: mockConfig }));
-vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args) } }));
+vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: (...args: unknown[]) => dbRpcMock(...args) } }));
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({
   recordAuditEvent: (...args: unknown[]) => { auditMock(...args); return Promise.resolve(); },
@@ -107,6 +108,7 @@ const validBody = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   dbFromMock.mockReset();
+  dbRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
   mockConfig.enableComputeidIntegration = true;
   mockConfig.computeidCaCertPem = CA_PEM;
   mockConfig.apiKeyHmacSecret = HMAC;
@@ -244,13 +246,49 @@ describe('POST /api/v1/agents/computeid/admit — success path', () => {
     expect(res.status).toBe(201);
     expect(agents.insert).toHaveBeenCalledWith(expect.objectContaining({ allowed_scopes: ['verify'], name: expect.stringContaining(PASSPORT.slice(0, 8)) }));
   });
-  it('compensates: when the key insert fails the freshly created agent row is deleted and 500 is returned', async () => {
+  it('requests locked empty-admission cleanup after a failed key insert and returns no raw key', async () => {
     const agents = builder([{ data: [] }, { data: insertedAgent() }]);
     routeTables({ agents, api_keys: builder({ error: { code: 'XX000', message: 'boom' } }) });
     const res = await admit(validBody());
     expect(res.status).toBe(500);
-    expect(agents.delete).toHaveBeenCalled();
-    expect(agents.eq).toHaveBeenCalledWith('id', AGENT_ID);
+    expect(dbRpcMock).toHaveBeenCalledWith('cleanup_computeid_empty_admission', {
+      p_org_id: ORG_ID, p_agent_id: AGENT_ID,
+      p_expected_metadata: agents.insert.mock.calls[0][0].metadata,
+    });
+    expect(agents.delete).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
     expect(res.body.key).toBeUndefined();
+  });
+});
+
+
+describe('admission overlapping a passport revocation', () => {
+  it('returns no key when the database authority guard rejects a late insert after revocation', async () => {
+    // Real PostgreSQL concurrency tests verify the trigger/parent lock. This
+    // signed-receipt HTTP test verifies the handler's response to that boundary.
+    const agents = builder([{ data: [] }, { data: insertedAgent() }]);
+    const keys = builder({ error: { code: '23514', message: 'agent_key_inactive_or_wrong_org' } });
+    routeTables({ agents, api_keys: keys });
+    dbRpcMock.mockResolvedValue({ data: false, error: null }); // later revocation is preserved
+    const response = await admit(validBody());
+    expect(response.status).toBe(500);
+    expect(response.body.error.code).toBe('key_issue_failed');
+    expect(response.body.key).toBeUndefined();
+    expect(agents.delete).not.toHaveBeenCalled();
+    expect(dbRpcMock).toHaveBeenCalledWith('cleanup_computeid_empty_admission', expect.objectContaining({
+      p_org_id: ORG_ID, p_agent_id: AGENT_ID,
+    }));
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to an unsafe delete if cleanup fails', async () => {
+    const agents = builder([{ data: [] }, { data: insertedAgent() }]);
+    routeTables({ agents, api_keys: builder({ error: { code: '08006', message: 'response lost' } }) });
+    dbRpcMock.mockResolvedValue({ data: null, error: { code: '55P03', message: 'lock timeout' } });
+    const response = await admit(validBody());
+    expect(response.status).toBe(500);
+    expect(response.body.key).toBeUndefined();
+    expect(agents.delete).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
   });
 });

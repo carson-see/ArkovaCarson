@@ -16,6 +16,7 @@
 import { Router, type Request, type Response } from 'express';
 import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
+import type { Json } from '../../types/database.types.js';
 import { logger } from '../../utils/logger.js';
 import { recordAuditEvent } from '../../utils/auditEvent.js';
 import { mintAgentKey } from './agent-keys.js';
@@ -200,9 +201,15 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       auditContext: `Minted at ComputeID passport admission (passport ${passportId})`,
     });
     if ('error' in minted) {
-      logger.error({ error: minted.error, agentId: agent.id }, 'ComputeID admission: key insert failed — rolling back agent');
-      const { error: rollbackErr } = await dbAny.from('agents').delete().eq('org_id', orgId).eq('id', agent.id);
-      if (rollbackErr) logger.error({ error: rollbackErr, agentId: agent.id }, 'ComputeID admission: agent rollback failed');
+      logger.error({ error: minted.error, agentId: agent.id }, 'ComputeID admission: key insert failed');
+      // The locked cleanup preserves a concurrent revocation and any key whose
+      // INSERT committed despite an uncertain response. Never detach that key.
+      const { error: cleanupError } = await db.rpc('cleanup_computeid_empty_admission', {
+        p_org_id: orgId,
+        p_agent_id: agent.id,
+        p_expected_metadata: writeBinding({}, binding) as Json,
+      });
+      if (cleanupError) logger.error({ error: cleanupError, agentId: agent.id }, 'ComputeID admission: empty agent cleanup failed');
       res.status(500).json({ error: { code: 'key_issue_failed' } });
       return;
     }

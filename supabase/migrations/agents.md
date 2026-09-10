@@ -1204,3 +1204,8 @@ Amended after the 2026-09-05 review of PR #2658 (findings F1/F2/F3/F5), still un
   so their `0327` bodies must be restored *before* the column is dropped — otherwise every signup INSERT and
   every 4-arg admin write fails on a missing column. Verified end-to-end on a disposable Postgres.
 
+
+
+## 2026-09-10 — Local 0448 authority guards (SCRUM-4558 / SCRUM-4559)
+
+Before any publication/application, the reserved local `0448` was extended with `enforce_agent_key_active_authority`, `enforce_agent_revocation_terminal`, and service-only `cleanup_computeid_empty_admission`. Active-key writes take a parent share lock; provider transitions and cleanup take its update lock. Existing-key updates can encounter a lock inversion with older callers: PostgreSQL aborts one whole transaction and the receiver returns a retryable failure. The actual two-session fault test verifies abort plus successful revocation retry, never partial commit. No data backfill or existing migration was changed. Full-schema local proof retains the real foreign keys, row security and existing agent timestamp trigger. Hosted migration/staging qualification is still required; the feature flag stays off.

@@ -7195,6 +7195,14 @@ export type Database = {
           org_id: string
         }[]
       }
+      cleanup_computeid_empty_admission: {
+        Args: {
+          p_agent_id: string
+          p_expected_metadata: Json
+          p_org_id: string
+        }
+        Returns: boolean
+      }
       cleanup_expired_data: { Args: never; Returns: Json }
       cleanup_orphaned_anchors: { Args: never; Returns: number }
       clear_payment_grace: { Args: { p_org_id: string }; Returns: Json }

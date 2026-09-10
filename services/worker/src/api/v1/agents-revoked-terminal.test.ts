@@ -48,3 +48,17 @@ describe('PATCH /api/v1/agents/:agentId on a revoked agent', () => {
     expect(agents.update).toHaveBeenCalledWith(expect.objectContaining({ name: 'renamed' }));
   });
 });
+
+
+it('returns 409 when the database rejects a stale PATCH after concurrent revocation', async () => {
+  const initial = { ...revokedRow, status: 'active' };
+  // The ownership read predates revocation. The trigger checks the actual row
+  // version under the UPDATE lock; real SQL sessions verify that interleaving.
+  const agents = builder([{ data: initial }, {
+    data: null, error: { code: '23514', message: 'agent_revocation_is_terminal' },
+  }]);
+  routeDbTables(dbFromMock, { profiles: builder({ data: { org_id: ORG_ID, role: 'ORG_ADMIN' } }), agents });
+  const response = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ status: 'active' });
+  expect(response.status).toBe(409);
+  expect(agents.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'active' }));
+});

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SCRUM-4535 / SCRUM-4536: reproduce old bugs and verify migration 0448.
+"""SCRUM-4535 / SCRUM-4536 / SCRUM-4558 / SCRUM-4559: reproduce old bugs and verify migration 0448.
 
 Usage: python3 scripts/ops/repro-computeid-agent-key-atomic.py [--output receipt.json]
 Requires Docker and its local postgres:17 image. Creates one uniquely named,
@@ -160,6 +160,20 @@ def reproduce_old_handler():
             except Exception:
                 p.kill()
                 p.communicate()
+    # Newly visible admission: revoke sees no key, then a delayed original
+    # INSERT uses its active default. A stale admin PATCH can also resurrect it.
+    reset()
+    sql(f"DELETE FROM public.api_keys WHERE id='{KEY}'; UPDATE public.agents SET status='active' WHERE id='{AGENT}';")
+    sql(KEY_REVOKE + cas('active', T1, 'revoked', 'passport.revoked', T3))
+    sql(f"""INSERT INTO public.api_keys(id,org_id,agent_id,key_prefix,key_hash,name,created_by)
+      VALUES ('{KEY}','{ORG}','{AGENT}','fixture1','not-a-real-key','late admission','{ORG}');""")
+    late = state()
+    assert late['agent_status'] == 'revoked' and late['key_active'] is True
+    result['late_admission_key'] = late
+    sql(f"UPDATE public.agents SET status='active' WHERE id='{AGENT}' AND org_id='{ORG}';")
+    revived = state()
+    assert revived['agent_status'] == 'active' and revived['metadata']['computeid']['last_event'] == 'passport.revoked'
+    result['stale_patch_resurrection'] = revived
     return result
 
 
@@ -301,7 +315,12 @@ def verify_atomic_rpc():
     migration = (SOURCE / 'supabase/migrations/0448_computeid_agent_key_transition_atomic.sql').read_text()
     sql(migration)
     assert state() == before
-    sql(f'DROP FUNCTION {signature};')
+    sql(f'''DROP TRIGGER enforce_agent_key_active_authority ON public.api_keys;
+      DROP TRIGGER enforce_agent_revocation_terminal ON public.agents;
+      DROP FUNCTION public.enforce_agent_key_active_authority();
+      DROP FUNCTION public.enforce_agent_revocation_terminal();
+      DROP FUNCTION public.cleanup_computeid_empty_admission(uuid,uuid,jsonb);
+      DROP FUNCTION {signature};''')
     assert state() == before
     sql(migration)
     assert state() == before
@@ -309,6 +328,142 @@ def verify_atomic_rpc():
     receipt = {'server_version': value('SHOW server_version;'), 'scope': 'Targeted real PostgreSQL fixture; no live database writes.', 'checks': results}
     return receipt
 
+
+
+def verify_agent_authority():
+    results = {}
+    def active_without_key():
+        reset()
+        sql(f"DELETE FROM public.api_keys WHERE id='{KEY}'; UPDATE public.agents SET status='active' WHERE id='{AGENT}';")
+        return {'agent_status': 'active', 'metadata': json.loads(metadata('passport.suspended', T1, True))}
+    def insert_key(active=True, org=ORG):
+        return f"""INSERT INTO public.api_keys(id,org_id,agent_id,key_prefix,key_hash,name,created_by,is_active)
+          VALUES ('{KEY}','{org}','{AGENT}','fixture1','not-a-real-key','authority fixture','{ORG}',{str(active).lower()});"""
+    def cleanup(expected):
+        return f"SELECT public.cleanup_computeid_empty_admission('{ORG}','{AGENT}','{json.dumps(expected['metadata'])}'::jsonb);"
+    def close_sessions(*sessions):
+        for session in sessions:
+            try:
+                if session.poll() is None: send(session, '\\q')
+                session.communicate(timeout=5)
+            except Exception:
+                session.kill(); session.communicate()
+
+    expected = active_without_key()
+    assert value(call(expected, 'passport.revoked', T3, 'revoked', 'deactivate')) == 't'
+    denied = sql(insert_key(), check=False)
+    assert denied.returncode and 'agent_key_inactive_or_wrong_org' in denied.stderr
+    assert value(f"SELECT count(*) FROM public.api_keys WHERE agent_id='{AGENT}';") == '0'
+    assert value(cleanup(expected)) == 'f'
+    assert value(f"SELECT status FROM public.agents WHERE id='{AGENT}';") == 'revoked'
+    results['late_admission_key_rejected_and_cleanup_preserves_revocation'] = True
+
+    stale_patch = sql(f"UPDATE public.agents SET status='active' WHERE id='{AGENT}' AND org_id='{ORG}';", check=False)
+    assert stale_patch.returncode and 'agent_revocation_is_terminal' in stale_patch.stderr
+    sql(f"UPDATE public.agents SET name='permitted non-status edit' WHERE id='{AGENT}';")
+    assert value(f"SELECT status FROM public.agents WHERE id='{AGENT}';") == 'revoked'
+    results['stale_admin_patch_cannot_resurrect_but_nonstatus_edit_remains_allowed'] = True
+
+    # A key INSERT holds a parent share lock through commit. Revocation must wait,
+    # then see and deactivate the newly committed key in its own transaction.
+    expected = active_without_key()
+    inserting, revoking = process(), process()
+    try:
+        send(inserting, "BEGIN; " + insert_key() + " SELECT 'KEY_INSERTED';")
+        marker(inserting, 'KEY_INSERTED')
+        send(revoking, "SET application_name='pr2668_revoke_after_mint'; " + call(expected, 'passport.revoked', T3, 'revoked', 'deactivate'))
+        wait_for("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='pr2668_revoke_after_mint' AND wait_event_type='Lock');")
+        send(inserting, "COMMIT; SELECT 'KEY_COMMITTED';"); marker(inserting, 'KEY_COMMITTED')
+        assert revoking.stdout.readline().strip() == 't'
+        assert state()['agent_status'] == 'revoked' and state()['key_active'] is False
+        results['key_insert_wins_lock_then_revoke_deactivates_committed_key'] = True
+    finally: close_sessions(inserting, revoking)
+
+    # Reverse ordering: revoke's parent update lock blocks a new key until the
+    # transaction commits. The key guard then reads REVOKED and rejects it.
+    expected = active_without_key()
+    revoking, inserting, patching = process(), process(), process()
+    try:
+        send(revoking, 'BEGIN; ' + call(expected, 'passport.revoked', T3, 'revoked', 'deactivate') + " SELECT 'REVOKE_OPEN';")
+        marker(revoking, 'REVOKE_OPEN')
+        send(inserting, "SET application_name='pr2668_mint_after_revoke'; " + insert_key())
+        send(patching, f"SET application_name='pr2668_patch_after_revoke'; UPDATE public.agents SET status='active' WHERE id='{AGENT}';")
+        for application in ['pr2668_mint_after_revoke', 'pr2668_patch_after_revoke']:
+            wait_for(f"SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='{application}' AND wait_event_type='Lock');")
+        send(revoking, "COMMIT; SELECT 'REVOKED';"); marker(revoking, 'REVOKED')
+        _, mint_error = inserting.communicate(timeout=5)
+        _, patch_error = patching.communicate(timeout=5)
+        assert inserting.returncode and 'agent_key_inactive_or_wrong_org' in mint_error
+        assert patching.returncode and 'agent_revocation_is_terminal' in patch_error
+        assert value(f"SELECT status FROM public.agents WHERE id='{AGENT}';") == 'revoked'
+        assert value(f"SELECT count(*) FROM public.api_keys WHERE agent_id='{AGENT}';") == '0'
+        results['revoke_wins_lock_then_both_new_key_and_stale_patch_are_rejected'] = True
+    finally: close_sessions(revoking, inserting, patching)
+
+    # Uncertain INSERT response: cleanup cannot detach a key committed by the
+    # original request, including while the INSERT is still in flight.
+    expected = active_without_key()
+    inserting, cleaning = process(), process()
+    try:
+        send(inserting, 'BEGIN; ' + insert_key() + " SELECT 'KEY_INSERTED';"); marker(inserting, 'KEY_INSERTED')
+        send(cleaning, "SET application_name='pr2668_cleanup_after_mint'; " + cleanup(expected))
+        wait_for("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='pr2668_cleanup_after_mint' AND wait_event_type='Lock');")
+        send(inserting, "COMMIT; SELECT 'KEY_COMMITTED';"); marker(inserting, 'KEY_COMMITTED')
+        assert cleaning.stdout.readline().strip() == 'f'
+        assert state()['agent_status'] == 'active' and state()['key_active'] is True
+        results['uncertain_committed_key_insert_cannot_be_detached_by_cleanup'] = True
+    finally: close_sessions(inserting, cleaning)
+
+    expected = active_without_key()
+    sql("UPDATE public.agents SET metadata=metadata || '{\"concurrent\":true}'::jsonb;")
+    assert value(cleanup(expected)) == 'f'
+    expected = active_without_key()
+    assert value(cleanup(expected)) == 't'
+    assert value(f"SELECT count(*) FROM public.agents WHERE id='{AGENT}';") == '0'
+    results['cleanup_deletes_only_unchanged_active_agent_without_keys'] = True
+
+    active_without_key()
+    wrong_org = '99999999-9999-4999-8999-999999999999'
+    denied = sql(insert_key(org=wrong_org), check=False)
+    assert denied.returncode and 'agent_key_inactive_or_wrong_org' in denied.stderr
+    sql(f"UPDATE public.agents SET status='suspended' WHERE id='{AGENT}';")
+    denied = sql(insert_key(), check=False)
+    assert denied.returncode and 'agent_key_inactive_or_wrong_org' in denied.stderr
+    sql(insert_key(active=False))
+    denied = sql(f"UPDATE public.api_keys SET is_active=true WHERE id='{KEY}';", check=False)
+    assert denied.returncode and 'agent_key_inactive_or_wrong_org' in denied.stderr
+    results['wrong_org_and_inactive_parent_cannot_receive_or_reactivate_key'] = True
+
+    # Legacy callers may acquire an existing key lock before its parent. Force
+    # that inversion against receiver's parent-first lock: PostgreSQL aborts one
+    # whole transaction; retrying the receiver reaches revoked/inactive safely.
+    expected = active_without_key()
+    sql(insert_key())
+    updating, revoking = process(), process()
+    try:
+        send(updating, f"BEGIN; SELECT id FROM public.api_keys WHERE id='{KEY}' FOR UPDATE; SELECT 'KEY_LOCKED';")
+        marker(updating, 'KEY_LOCKED')
+        send(revoking, f"BEGIN; SELECT id FROM public.agents WHERE id='{AGENT}' FOR UPDATE; SELECT 'PARENT_LOCKED';")
+        marker(revoking, 'PARENT_LOCKED')
+        send(updating, f"SET application_name='pr2668_existing_key_update'; UPDATE public.api_keys SET is_active=true WHERE id='{KEY}'; COMMIT;")
+        wait_for("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='pr2668_existing_key_update' AND wait_event_type='Lock');")
+        send(revoking, call(expected, 'passport.revoked', T3, 'revoked', 'deactivate') + ' COMMIT;')
+        _, update_error = updating.communicate(timeout=8)
+        _, revoke_error = revoking.communicate(timeout=8)
+        assert (updating.returncode != 0) != (revoking.returncode != 0)
+        assert 'deadlock detected' in update_error + revoke_error
+        if revoking.returncode:
+            assert value(call(expected, 'passport.revoked', T3, 'revoked', 'deactivate')) == 't'
+        final = state()
+        assert final['agent_status'] == 'revoked' and final['key_active'] is False
+        results['existing_key_parent_lock_inversion_aborts_atomically_and_revoke_retry_succeeds'] = True
+    finally: close_sessions(updating, revoking)
+
+    cleanup_signature = 'public.cleanup_computeid_empty_admission(uuid,uuid,jsonb)'
+    acl = json.loads(value(f"SELECT json_build_object('anon',has_function_privilege('anon','{cleanup_signature}','EXECUTE'),'authenticated',has_function_privilege('authenticated','{cleanup_signature}','EXECUTE'),'service_role',has_function_privilege('service_role','{cleanup_signature}','EXECUTE'));"))
+    assert acl == {'anon': False, 'authenticated': False, 'service_role': True}
+    results['cleanup_is_service_only'] = acl
+    return results
 
 
 def run():
@@ -339,7 +494,7 @@ def run():
         sql('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;')
         sql((SOURCE / 'supabase/migrations/0448_computeid_agent_key_transition_atomic.sql').read_text())
         after = verify_atomic_rpc()
-        receipt = {'negative_controls': before, 'atomic_rpc': after}
+        receipt = {'negative_controls': before, 'atomic_rpc': after, 'agent_authority': verify_agent_authority()}
         encoded = json.dumps(receipt, indent=2) + '\n'
         if args.output:
             args.output.write_text(encoded)

@@ -1190,3 +1190,8 @@ only other records with a recognized connector marker and artifact stamp may emi
 fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
 and authenticated packet exports load the typed source; the signable proof bundle
 is unchanged. Regression reproduced before the fix; local validation is not soak evidence.
+
+
+## 2026-09-10 — ComputeID admission authority and terminal PATCH (SCRUM-4558 / SCRUM-4559)
+
+Migration `0448` checks every active agent-key INSERT/reactivation against the agent row under a parent share lock, including the existing administrator mint path. A concurrent provider revoke either waits and deactivates the committed key, or wins and causes the late key write to fail. The terminal-state trigger checks the actual UPDATE row, so a stale PATCH receives 409 after revocation. Failed ComputeID admission calls service-only `cleanup_computeid_empty_admission`; it deletes only the unchanged active agent with no keys while holding the same parent lock. It preserves a later revocation and a key whose INSERT committed despite a lost reply, avoiding `ON DELETE SET NULL` detachment. SQL errors return no raw key. Signed receipt HTTP tests cover those boundary responses; the owned PostgreSQL harness proves the lock interleavings and rollback behavior.
