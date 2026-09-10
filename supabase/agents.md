@@ -15,3 +15,8 @@ Supabase project configuration, migrations, seed data, and email templates.
 - Schema changes require: migration + rollback comment + `gen:types` + seed update + Confluence page update.
 - Test with `npx supabase db reset` after any migration change.
 - Apply to staging first (`npx supabase db push --linked`) before production.
+
+
+## 2026-09-05 — DocuSign backfill attempt fixtures
+
+Migration0438 adds service-owned polling history. The existing anchors TRUNCATE CASCADE in seed.sql resets that FK-dependent table; it is intentionally not populated with synthetic attempt timestamps during normal local seed. Release qualification uses explicitly labelled, isolated fixtures and actual server-created reservations.
