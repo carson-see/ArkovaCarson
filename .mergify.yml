@@ -239,10 +239,16 @@ queue_rules:
       - check-success = Third-Party Notices Freshness
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
-    # Aug-10 release push: expand the default batch to 10 PRs so the CI-green
-    # T0/safe backlog drains in one queue cycle instead of 3-at-a-time (CTO
-    # directive 2026-07-22). Speculative checks widened to match.
-    batch_size: 10
+    # 2026-09-09: dropped from 10 to 1. Batching was merging NOTHING. Ten PRs
+    # in one speculative merge collide on the append-only `agents.md` guard
+    # ("Block dropped agents.md content"), which is the §6 collision this repo
+    # already documents: two PRs appending to the same agents.md drop each
+    # other's block when merged together. Every batch therefore failed, burned
+    # its 3 bisection rounds, and re-queued — four batches produced zero merges
+    # over two hours while each PR passed the identical check on its own.
+    # Serial merging is slower per PR and actually lands them. Raise this again
+    # only once the agents.md collisions are fixed at the source.
+    batch_size: 1
     batch_max_wait_time: 5 min
     batch_max_failure_resolution_attempts: 3
 

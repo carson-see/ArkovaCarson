@@ -1,6 +1,34 @@
 # services/worker/src/jobs/agents.md
 
+## 2026-09-05 — oldest DocuSign release candidate integration
+
+PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
+
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
+
+## 2026-08-31 — F1-heal (SCRUM-3818 go-live gate, follow-up to PR #2476): `docusign-envelope-completed.ts` auto-heals a declared/forged provenance conflict instead of only detecting it
+
+PR #2476's `enqueueSignedDocument` detected a `connector_artifact` provenance conflict (a forged/declared INBOUND row winning the `ON CONFLICT DO NOTHING` race against this outbound job's real, server-measured fingerprint) and threw — its own header called this "detection only... automatic outbound-supersedes-inbound reconciliation is separate, go-live-gated follow-up work." This closes that item, per a CTO precedence ruling: a fingerprint Arkova MEASURED from fetched document bytes ALWAYS supersedes one merely DECLARED by a notification, never the reverse — UNLESS the declared row already materialized a live anchor, which is a SEPARATE integrity event, not an auto-heal target.
+
+**Mechanism — no migration, no new RPC.** ONE atomic conditional `UPDATE connector_artifact SET fingerprint_sha256=:real, metadata=:healed, updated_at=now() WHERE id=:id AND anchor_id IS NULL`. `anchor_id IS NULL` is the authoritative "not yet materialized" signal — `connector-artifact-drain.ts`'s `markStatus` sets `status='materialized'` and `anchor_id` together, atomically, never independently, so there is no intermediate state to race. Under Postgres READ COMMITTED, a concurrent drain-job UPDATE on the same row forces this UPDATE to re-evaluate its WHERE clause against the post-commit row version (EvalPlanQual) before applying — whichever write actually happens first is the correct outcome, with no separate read-then-write TOCTOU window. Authorization: `connector_artifact_service_all` (migration 0343) already grants `service_role` unrestricted access to this table; this file authenticates as `service_role` (confirmed by migration 0423's OWN header, which names this file as one of only three legitimate writers — 0423's *trigger* itself is irrelevant here, it guards `anchors.metadata`, a different table).
+
+**Healed:** strips `_direction`/`_sending_account_id` (so a later drain read takes the SAME path as any other outbound-owned artifact — `defaultMaterializeAnchor`'s `isInboundDeclaredHash` check reads `_direction` fresh at drain time), records `_superseded_declared_fingerprint`/`_superseded_at`/`_superseded_reason`, and the call proceeds to its normal success return — the verified write now durably stands, exactly as if the RPC's own INSERT had won outright.
+
+**Refused (already materialized):** the conditional UPDATE matches zero rows. Left exactly as-is — never silently rewrite a live anchor's fingerprint, possibly already SUBMITTED/SECURED on-chain. Throws `docusign_connector_artifact_provenance_conflict_unresolved` (renamed from the old bare `docusign_connector_artifact_provenance_conflict`, which now fires only as the unconditional DETECTION signal for both outcomes — no other consumer depended on the old throw's exact string, grep-verified).
+
+**Audit — every outcome, both fingerprints, org, envelope, which won, why.** Written to `audit_events` (event_category `ANCHOR`, `target_type: 'connector_artifact'`) via a direct `await ... insert(...)` — NOT the `recordAuditEvent` helper (`utils/auditEvent.ts`), because this file already awaits its writes directly (the helper exists for the DIFFERENT, unrelated `void db.from('audit_events').insert(...)` fire-and-forget bug class it documents). Awaited-but-non-fatal on failure, matching the established convention elsewhere (`jobs/revocation.ts`, `jobs/chain-maintenance.ts`): a lost audit row must never turn a successful heal (or a correctly refused rewrite) into a job failure/retry loop over an unrelated audit-table hiccup, but IS always logged at `error` so the gap is visible. `DbClient` gained an `audit_events` overload on the existing `integration_events` insert shape, plus a separately-cast `ConnectorArtifactUpdateClient`/`DbUpdateQuery` (same convention as the pre-existing `ConnectorArtifactRpcClient` cast) so the existing select-only `connector_artifact` mocks stay valid.
+
+See `machines/docusignInboundDedup.machine.ts`'s F1-heal extension (`machines/agents.md`) for the formal model, and `docusign-envelope-completed.test.ts`'s `describe('F1-heal — auto-heal supersedes a declared/forged fingerprint with the verified one')` for the heal / refusal / audit-failure-is-non-fatal tests (the pre-existing F1 detection tests were updated in place to reflect that a conflict now heals rather than always throwing).
+
+## 2026-08-30 — F1 (security review of PR #2476): `docusign-envelope-completed.ts` verifies its own enqueue result before trusting it
+
+`enqueueSignedDocument` used to treat any non-null id returned by `enqueue_connector_artifact` as success. The RPC is `ON CONFLICT DO NOTHING` on `(org_id, source, external_ref, revision)` — the SAME key the INBOUND declared-hash webhook path (`api/v1/webhooks/docusign.ts`) writes to for the SAME envelope with an UNVERIFIED, attacker-declarable fingerprint. A same-tenant attacker who self-POSTs a forged inbound event for this org's own real outbound envelope, racing the real async fetch, can win the INSERT — after which this call's own real, measured write silently loses (DO NOTHING) and the returned id is the FORGED row's, not this call's own.
+
+Fix: after the RPC returns a non-null id, read the persisted row back (`connector_artifact.fingerprint_sha256, metadata`) and compare against what THIS call just measured. Two independent tells, either disqualifying: the persisted hash isn't the one this call computed, or the persisted row is `metadata._direction === 'inbound'` at all (this IS the org's own outbound envelope — an inbound-marked row here is anomalous regardless of hash match, belt-and-suspenders against the vanishing chance of a hash collision). On either, throws a DISTINCTLY-named error (`docusign_connector_artifact_provenance_conflict`) after a loud structured-log signal (`docusign_connector_artifact_provenance_conflict: true`) — never the silent-success path, never the existing silent-orphan path. Detection only: `ON CONFLICT DO NOTHING` means this code cannot UPDATE-supersede the pre-existing row here; automatic outbound-supersedes-inbound reconciliation is separate, go-live-gated follow-up work. `DbClient` gained a `connector_artifact` read overload. See `machines/docusignInboundDedup.machine.ts`'s F1 extension (`machines/agents.md`) for the formal model of this exact property, and `docusign-envelope-completed.test.ts`'s `describe('F1 — connector_artifact provenance conflict detection')` for the race + fail-closed-on-readback-error tests.
+
+## 2026-08-30 — docusign-bilateral-2026-08 (flag-off, not going live this cycle): `defaultMaterializeAnchor` sets `fingerprint_source` for inbound declared-hash rows
+
+`connector-artifact-drain.ts`'s `defaultMaterializeAnchor` (documented at length below) reads `row.metadata._direction` — written ONLY by the webhook classifier's new inbound branch (`api/v1/webhooks/docusign.ts`, see that folder's agents.md) — and, when it equals `'inbound'`, sets `anchors.fingerprint_source = 'issuer_record_attestation'` (migration 0376 CHECK enum) on the `AnchorInsertPayload`. Every other row (100% of traffic today: DocuSign outbound, Google Drive) omits the field entirely (`undefined`, never `'document_bytes'` — this file never fetches bytes itself either; that measurement, when it happens, is upstream in `docusign-envelope-completed.ts`, which this materializer has no visibility into). `AnchorInsertPayload` gained the field as `.optional()`; the `.strict()` schema still rejects anything else. See `constants/connectorFingerprint.ts` for the downstream `FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED` class this enables on the public verify response.
 
 ## 2026-08-15 — the `*Fetcher.ts` family cannot report failure as success any more (BUG-020/022/023)
 
@@ -920,7 +948,7 @@ _Restored 2026-07-28 — same union-merge-driver incident as above._
 
 The batch pipeline (PENDING → claim → BROADCASTING → ONE OP_RETURN tx committing the batch Merkle ROOT → SUBMITTED) now closes the documented crash window where a worker dying between broadcast and `submit_batch_anchors` caused the RACE-1 sweep to revert rows to PENDING and re-broadcast a SECOND, DIFFERENT tx (broadcast-recovery.ts "scenario 2").
 
-- **Flag gate (AC7):** `processBatchAnchors` is HARD-gated on `flagRegistry.getFlag('ENABLE_BATCH_ANCHORING')` (DB switchboard row, env fallback, fail-closed) — even `?force=true` no-ops when off. ⚠️ DEPLOY PREREQUISITE: prod's nightly 3am drain runs through this function; verify the prod `switchboard_flags` row (or env) is ON before this ships or the drain halts.
+- **Flag gate (AC7):** `processBatchAnchors` is HARD-gated on `ENABLE_BATCH_ANCHORING` (DB switchboard row, env fallback, fail-closed) — even `?force=true` no-ops when off. ⚠️ DEPLOY PREREQUISITE: prod's nightly 3am drain runs through this function; verify the prod `switchboard_flags` row (or env) is ON before this ships or the drain halts. **DI-736 / SCRUM-3475 (2026-08-23): the gate now `await`s `flagRegistry.getFlagLive(...)`, not the boot-time `getFlag()` snapshot.** Previously the value was read once at worker startup and `refreshDbFlag()` had zero callers, so flipping this row to stop or start the drain did nothing until the worker restarted — a kill switch on the money path that did not switch. `getFlagLive` re-reads `switchboard_flags` on a 60s TTL; on a failed read it holds the last-known-good DB value (a Supabase blip must not halt or resume a drain), then the boot snapshot, then false. Do NOT gate this job on `getFlag()` again.
 - **Deterministic leaf ordering (AC1):** claimed leaves sorted by (fingerprint asc, id asc) before `buildMerkleTree` — root is a pure function of the leaf SET. Per-leaf branches come from the new `tree.proofsByIndex` (position-correct even for cross-user duplicate fingerprints; the legacy fingerprint-keyed map interleaved duplicates).
 - **Intent pipeline (AC3, prepare-capable clients — Bitcoin + Mock):** Phase 3a `prepareFingerprintTx` (build+SIGN, no network) → Phase 3b persist DURABLY: `anchor_proofs` rows keyed by the precomputed txid (branch + `merkle_index` + `op_return_payload` per leaf; SIGNED TX HEX in `raw_response.broadcast_intent` on the index-0 row) + `anchors.chain_tx_id` on every claimed BROADCASTING row (shields them from `recover_stuck_broadcasts`'s `chain_tx_id IS NULL` filter) → Phase 3c `broadcastSignedTx`. Proof rows are therefore durable BEFORE broadcast (throws ⇒ safe full unwind — nothing was sent); the old post-broadcast FIX-1 write only runs on the legacy (non-prepare) path.
 - **Failure semantics (#1417-HIGH — unwind ONLY on a definitive typed reject):** the unwind (refund + delete proof rows + revert-to-PENDING) fires ⟺ `isBroadcastRejectedError(err)` (shared, typed — `chain/utxo-provider.ts`: `BroadcastRejectedError` / `RpcApplicationError` / explicit reject-text). EVERY other broadcast failure — transient 5xx/timeout, **and** auth 401 / quota 402 (GetBlock at the 3am drain) / 404 / unknown — → LEAVE rows BROADCASTING+intent (never revert; the tx may be live). Previously keyed off `!isRetryableError`, which mis-classified 401/402/unknown as "definitive reject" → a post-broadcast quota error unwound a LIVE tx → a second, different mainnet tx next tick. DEFINITIVE reject → refund queue-run credits FIRST (throw ⇒ rows stay for metadata-driven refund retry), delete this txid's proof rows, revert PENDING + chain_tx_id NULL.
@@ -1369,3 +1397,37 @@ Three changes, each with tests that fail without it:
 **Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
+
+## `rule-action-dispatcher.ts` — `fingerprint_source` is deliberately NULL (R19 §1.5)
+
+The anchor-creating actions (`AUTO_ANCHOR` / `FAST_TRACK_ANCHOR` / `INSTANT_SECURE`) set the top-level
+`anchors.fingerprint_source` column (migration `0376`) to **`NULL`**, enforced by a required `z.null()`
+in the module's local `AnchorInsertSchema` and pinned by the `fingerprint_source evidence class
+(R19 §1.5)` tests. It is a decision, not an oversight — **do not "fix the gap."**
+
+**Why neither enum value works.** This path anchors a DocuSign-**declared** hash: asserted, never
+fetched or hashed by Arkova (`docusign-anchor-reconciliation.ts` path A; `rules-engine.ts` passes the
+payload hash through verbatim). So `document_bytes` (a measurement claim we cannot make) and
+`issuer_record_attestation` ("no source document exists" — one demonstrably does) are BOTH false, in
+opposite directions. `NULL` renders as nothing and asserts nothing.
+
+**The trap.** The instinct is to reach for `document_bytes` because the sibling
+`connector-artifact-drain.ts` genuinely does fetch and hash real bytes (§1.6A). Two problems: that class
+does not describe *this* path, and that sibling sets no `fingerprint_source` at all today — grep it,
+zero occurrences. `document_bytes` there is **PR-2**'s write, not an existing value to copy.
+
+**Nothing else stops a wrong value.** `0384` freezes `fingerprint_source` post-insert for
+**non-`service_role`** callers only; this module writes as `service_role`, so the DB waves it through.
+The schema + tests ARE the guard. (That same carve-out is what keeps a future backfill possible.)
+
+**Two unrelated things share the name.** The typed top-level column vs. the free-text
+`metadata.fingerprint_source` debug label (which payload field the hash was read from). Never conflate.
+
+**If you need to find these anchors later** — e.g. the backfill to `issuer_record_attestation` +
+`DECLARED_UNVERIFIED` once PR-4 lands — the discriminator is `metadata->>'rule_action_type'`, written on
+every anchor this module has ever created. Not `connector_source`: the drain path writes `'docusign'`
+there too.
+
+Full rationale, plus the separate and higher-severity `FETCH_TIME_SNAPSHOT` mis-classification these same
+anchors still emit on three public surfaces:
+`docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.
