@@ -13,6 +13,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import { publicAnchorTimestamp } from '../anchorTimestamp.js';
 import {
   FERPA_EDUCATION_TYPES,
   FERPA_REDISCLOSURE_NOTICE,
@@ -414,12 +415,21 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   const result: VerificationResult = {
     verified: isVerified,
     status: publicStatus,
-    anchor_timestamp: anchor.created_at,
     bitcoin_block: anchor.chain_block_height ?? null,
     network_receipt_id: anchor.chain_tx_id ?? null,
     merkle_proof_hash: anchor.merkle_root ?? null,
     record_uri: buildVerifyUrl(anchor.public_id),
   };
+
+  // BUG-2026-09-08-001 (SCRUM-4517): the anchoring moment is the CHAIN's
+  // observation, never `created_at`. Frozen schema (§1.8) types this field
+  // `string | undefined`, so an unmeasured moment is OMITTED rather than
+  // emitted as null — the same rule as `jurisdiction` (CLAUDE.md §6). See
+  // `publicAnchorTimestamp` for why there is no created_at fallback.
+  const anchorTimestamp = publicAnchorTimestamp(anchor.status, anchor.chain_timestamp);
+  if (anchorTimestamp) {
+    result.anchor_timestamp = anchorTimestamp;
+  }
 
   // REG-02: When directory_info_opt_out is true for education types,
   // suppress directory-level fields (name, degree type, dates) per FERPA Section 99.37.
