@@ -807,8 +807,10 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 - SCRUM-1740 (PR #738) — quota gate awaits Carson merge + Mon deploy.
 
 ## Silent credit-RPC alerting (revenue-leak pre-mortem)
-- `ai-extract.ts` — `deduct_ai_credits` RPC failure (DB error, not insufficient balance) fails OPEN by product decision (RISK-6): the extraction proceeds for FREE. Now calls `captureCreditRpcFailureAlert({ failMode: 'open', ... })` from `utils/sentry.ts` (fatal level, `credit_rpc_fail_mode:open` tag) so the revenue leak pages instead of only logging. Behavior unchanged, observability only.
-- `credits.ts` — the dev/test-only `deduct_unified_credits` grant path (no Stripe key, non-prod) alerts (`failMode: 'closed'`) on RPC failure so a real regression in this RPC doesn't hide behind "it's just dev mode."
+- `ai-extract.ts` — `deduct_ai_credits` RPC failure (DB error, not insufficient balance — the exhausted case already returned 402 above) now **fails CLOSED** (SCRUM-3502, reversing the RISK-6 fail-OPEN product decision). `checkAICredits` just reported `has_credits` true, so the debit did not land and NO credit was consumed; performing the extraction anyway rendered paid work for free, on a path that is live in prod (`ENABLE_AI_EXTRACTION` defaults true, §1.6). The previous in-code comment named it exactly — "a REVENUE LEAK (free AI extraction)". Now returns **503 `credit_system_unavailable`** and never calls the provider, alerting `captureCreditRpcFailureAlert({ failMode: 'closed', ... })`. **503, not 402**: `insufficient_credits` would tell the caller to buy more credits when the balance check just said they have some. Refusing costs the caller one retry; proceeding cost revenue on every occurrence.
+  **Not a unilateral reversal of RISK-6:** `ai-extract-batch.ts` had already made this call for the batch endpoint — see "No free batch" above, where a falsy per-item debit skips the row and the provider is never called. This change brings the single-item endpoint to the same rule; both now debit BEFORE the provider call so a failed debit cannot buy free work.
+- `credits.ts` — the dev/test-only `deduct_unified_credits` grant path (no Stripe key, non-prod) alerts (`failMode: 'closed'`) on RPC failure so a real regression in this RPC doesn't hide behind "it's just dev mode." **It now also treats a `false` RETURN as failure** (review finding, SCRUM-3502 PR): `deduct_unified_credits` returns BOOLEAN and answers `false` with NO error when the caller has no `unified_credits` row (`IF NOT FOUND THEN RETURN false`), so reading only `error` reported `status: 'completed', credits_added: N` for a grant that never landed. Third site of the class the same PR fixed in `middleware/paymentTierRouter.ts`; the rule lives in `services/worker/src/middleware/agents.md`.
+- **Still fail-OPEN, same class, NOT covered by SCRUM-3502** (recorded so the next author does not assume "credits fail closed" is now global): `ai-search.ts` (~:146) and `ai-verify-search.ts` (~:102) both `deductAICredits` **after** the search work is already done and then ignore/only-display the result, so a failed debit yields a free AI search. Closing those means moving the debit ahead of the provider call the way `ai-extract`/`ai-extract-batch` do — a restructure with its own soak, not a one-line guard.
 
 ## 2026-07-28 L3-A6 — CE registry-anchor route (CE Noncredit Data Taxonomy POC)
 
@@ -1100,6 +1102,14 @@ Two traps specific to this folder:
 `ai-verify-search.ts` is still wrong and is NOT fixed here: its values come from the SQL function
 `search_public_credential_embeddings`, which selects `a.created_at AS anchor_timestamp`. Fixing it
 needs a migration (T3) and would also correct the edge. Tracked in SCRUM-4520.
+
+
+## PR #2442 release review — 2026-09-05
+
+PR #2442 review: an ambiguous credit debit returns 503 before extraction. Error copy states that no extraction ran without claiming an unverified credit balance.
+## 2026-09-05 — PR #2440 subtype opt-out release review
+
+Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
 ## 2026-08-30 — R1: `proof_bundle` carries tx-inclusion evidence
 
 `ProofBundle` gained `tx_inclusion_branch` + `tx_block_index` (migration `0427`)
