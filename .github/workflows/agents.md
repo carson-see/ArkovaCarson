@@ -726,3 +726,26 @@ Note the gate is **not** in `.mergify.yml merge_conditions` and `main` carries n
 The E2E job now runs `playwright.uat03.config.ts` after Chromium installation and before Supabase setup. Seven real-app routing/recovery cases use owned mocked external Auth/worker boundaries on loopback, fail the existing E2E job on error, and upload 1280/375 screenshots. The default Playwright config excludes this separately executed file; no skip or hosted seed mutation is needed. Hosted Auth/mailbox proof remains a separate release requirement.
 
 The SQL confirmation regressions receive the masked local DB URL from `supabase status`, including the actual CI port selected by the startup helper. Their role-corruption setup uses the local bootstrap administrator; a connection/administrator check precedes assertions, and failures match PostgreSQL stderr rather than SQL text embedded in a failed command.
+
+## 2026-09-10 — SCRUM-4565: isolate Mergify status edits from required checks
+
+Mergify rewrites speculative PR bodies as required checks change. The shared PR
+concurrency groups in `staging-evidence.yml` and `migration-drift.yml` cancelled
+running checks on those metadata edits; run 34518240789 lost its staging check
+before any step executed and the queue removed its original PR.
+
+Only an `edited` event with a body change, no base change, the queue branch prefix,
+the immutable `mergify[bot]` PR author, and a `mergify[bot]` event sender is
+ignored. Human/other-bot edits keep the normal gate. It has a separate
+`status-edit` concurrency group and a distinct, non-required skipped job name.
+Both are necessary: a predicate alone still permits workflow cancellation, and
+reusing the required job name could replace a failed/pending source result with a
+skipped result. Those ignored results do not change the required conditions shown
+in Mergify's body, breaking the feedback loop rather than spawning full checks.
+
+Opened/synchronized/reopened source checks and base changes keep their original
+names and enforcement steps. Ordinary PR body edits still cancel older runs and
+resolve evidence live. Existing per-step queue identity checks are unchanged.
+SCRUM-4565 records the reproducible GitHub expression-engine event matrix and
+negative controls. The staging live-input and step-identity contracts remain in
+`scripts/ci/staging-evidence-workflow-contract.test.ts`.

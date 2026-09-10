@@ -65,3 +65,7 @@ Tests for the Arkova Python SDK.
 - Tests are linted too — the publish workflow runs `ruff check src tests`, so a
   ruff finding in this folder blocks the PyPI publish exactly like a `src/` one.
   See `src/arkova/agents.md` for why `ruff` is pinned to a single minor.
+
+## PR #2695 — observed timestamp controls
+
+All four Python timestamp model families already accept omitted and explicit-null observations. `test_all_readers_preserve_nullable_observed_timestamp` runs the six actual reader methods through both sync and async HTTP clients with omitted, null and observed timestamps (36 cases), checking route and authorization headers. No Python runtime/model or package version change was necessary.
