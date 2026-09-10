@@ -192,6 +192,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProofErrorResponse"
+        "500":
+          description: >-
+            Two distinct fail-closed states. `Merkle proof data is malformed` —
+            the stored branch could not be parsed, so extraction failed before
+            any verification was attempted and the body carries NO `verdict`.
+            `Proof leaf count could not be determined` — the proof IS
+            batch-linked but its exact leaf_count is unresolvable, so the
+            CVE-2012-2459 structural guard cannot honestly run; rather than
+            silently downgrading to the weaker verdict, the request fails closed
+            and the body carries `verdict: unverifiable`. Neither is a statement
+            that the record is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofErrorResponse"
 
   /verify/batch:
     post:
@@ -1185,6 +1200,22 @@ components:
             no self-contained per-document offline proof is available from Arkova,
             and that this absence is not evidence the record is invalid
             (Constitution 1.5).
+        verdict:
+          type: string
+          enum: [unverifiable]
+          description: >-
+            R3: present ONLY on the fail-closed 500 raised when a batch-linked
+            proof's exact leaf_count could not be determined, where it is always
+            `unverifiable` — a verification was attempted and could not be
+            completed. Absent on 400/404/503 and on the "Merkle proof data is
+            malformed" 500 (that fails during extraction, before any
+            verification is attempted, so there is no verdict to report).
+            Consumers MUST fall back to `error` / the HTTP status when absent.
+        verdict_note:
+          type: string
+          description: >-
+            The Constitution 1.5 statement for `verdict`. Present exactly when
+            `verdict` is.
 
     MerkleProofResponse:
       type: object
@@ -1221,6 +1252,33 @@ components:
           nullable: true
         verified:
           type: boolean
+        verdict:
+          # R3: additive (Constitution 1.8). `verified` is unchanged and NOT deprecated.
+          type: string
+          enum: [valid, invalid, unverifiable]
+          description: >-
+            The SAME computation as `verified`, reported as three states instead
+            of two. `invalid` = a check RAN and FAILED — an alarm, and exactly
+            equivalent to `verified: false`. `unverifiable` = a check could not
+            be completed — the CVE-2012-2459 duplicate-node guard was not
+            exercised, either because the record carries no
+            merkle_index/leaf_count or because the stored branch length does not
+            match the tree its leaf_count describes (an empty branch, or one
+            longer than the tree, leaves the guard inspecting nothing). NOT an
+            alarm, and the record may be correctly anchored. `valid` = every
+            check this endpoint claims to run, ran and passed. `valid` and
+            `unverifiable` partition the old `verified: true` bucket, so the two
+            fields can never contradict. Scoped to the layer-1 app-tree
+            inclusion check only, exactly like `verified` — whether the
+            committed root appears in a confirmed receipt is reported by
+            `proof_bundle`.
+        verdict_note:
+          type: string
+          description: >-
+            The measured / asserted / NOT-asserted statement for `verdict`
+            (Constitution 1.5). Always accompanies `verdict`. The `unverifiable`
+            text states explicitly that this is the absence of a completed
+            check, not a failed one.
         proof_bundle:
           # PROOF-05 (SCRUM-2338): additive, nullable self-contained proof bundle.
           # `null` when the two-layer proof is incomplete (Constitution 1.8 / 1.5).
@@ -1240,6 +1298,13 @@ components:
         merkle_index AND leaf_count present (these arm the CVE-2012-2459
         duplicate-leaf guard). Any missing/short/non-canonical field ⇒ null
         (never a partial bundle).
+
+
+        Migration 0427 adds tx_inclusion_branch + tx_block_index — the layer-2
+        BITCOIN-tree evidence. They are ADDITIVE and NULLABLE (Constitution
+        1.8): the keys are always emitted, but they are NOT part of the
+        completeness rule above, because gating on them would retroactively
+        withdraw the bundle from every record confirmed before 0427.
       required:
         - fingerprint
         - merkle_root
@@ -1253,6 +1318,8 @@ components:
         - op_return_payload
         - block_timestamp
         - proof_schema_version
+        - tx_inclusion_branch
+        - tx_block_index
         - signature
       properties:
         fingerprint:
@@ -1302,7 +1369,63 @@ components:
           format: date-time
         proof_schema_version:
           type: integer
-          description: Proof format version (1 = plain double-SHA256 app-tree).
+          description: >-
+            Proof format version (1 = plain double-SHA256 app-tree). Migration
+            0427 does NOT bump it: nullable additions to an existing shape are
+            allowed without a version change, and a verifier that ignores the
+            new fields behaves exactly as before.
+        tx_inclusion_branch:
+          type: array
+          nullable: true
+          description: >-
+            Layer-2 BITCOIN-tree inclusion branch (migration 0427): the sibling
+            path proving tx_id is committed by the merkleroot inside
+            block_header, so transaction inclusion can be checked LOCALLY
+            instead of by asking a Bitcoin node.
+
+
+            NOT interchangeable with merkle_proof. Identical {hash, position}
+            shape, opposite convention: these hashes are BYTE-REVERSED
+            (display) hex folded with Bitcoin's double-SHA256 positional rule —
+            reverse the txid and each sibling to internal little-endian bytes,
+            fold leaf to root with
+            node = SHA256(SHA256(position=="right" ? node||sibling :
+            sibling||node)), reverse the final 32 bytes back to display hex, and
+            compare against the merkleroot at block_header bytes [36,68) (also
+            byte-reversed). merkle_proof is the layer-1 APP tree in its stored
+            orientation; folding one with the other's rule proves nothing.
+
+
+            An EMPTY array is a COMPLETE branch (a block whose only transaction
+            is this one has no siblings), not a missing one. null when the
+            record predates 0427, or when the stored pair is not internally
+            coherent — never fabricated.
+          items:
+            type: object
+            required: [hash, position]
+            properties:
+              hash:
+                type: string
+                description: Sibling hash, exactly 64 hex characters, display (byte-reversed) orientation.
+              position:
+                type: string
+                enum: [left, right]
+        tx_block_index:
+          type: integer
+          nullable: true
+          description: >-
+            0-based index of tx_id within its block (migration 0427). Pairs
+            indivisibly with tx_inclusion_branch — the API emits both or
+            neither, and rejects a pair whose index cannot exist in a tree of
+            the branch's height or whose bits contradict the stored sibling
+            sides. 0 is a real position (the coinbase), not a blank.
+
+
+            It does NOT arm the CVE-2012-2459 duplicate-node guard on the
+            bitcoin tree: that needs the block's total transaction count, which
+            is not carried in the bundle. That guard runs server-side at parse
+            time. (Contrast leaf_count, which DOES arm the equivalent guard on
+            the app tree.)
         signature:
           type: object
           nullable: true
