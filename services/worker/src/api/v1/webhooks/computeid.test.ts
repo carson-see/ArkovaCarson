@@ -81,7 +81,14 @@ const binding = (extra: Record<string, unknown> = {}) => ({
 const agentRow = (over: Record<string, unknown> = {}) => ({
   id: AGENT_ID, org_id: ORG_ID, name: 'cortex-agent-1', status: 'active', metadata: binding(), ...over,
 });
-const boundAgents = (rows: unknown[]) => builder({ data: rows });
+const boundAgents = (rows: ReturnType<typeof agentRow>[]) => {
+  const b = builder({ data: rows });
+  let cursor = '';
+  b.select.mockImplementation(() => { cursor = ''; return b; });
+  b.gt = vi.fn((_column: string, value: string) => { cursor = value; return b; });
+  b.then = (onF, onR) => Promise.resolve({ data: rows.filter((row) => row.id > cursor), error: null }).then(onF, onR);
+  return b;
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -347,7 +354,9 @@ describe('ComputeID partial-write recovery regressions', () => {
   it('does not issue a late separate key restore after the atomic snapshot loses to a revocation', async () => {
     const initial = agentRow({ status: 'suspended', metadata: binding({ suspended_by: 'computeid', last_event: 'passport.suspended', last_event_at: T1 }) });
     const revoked = agentRow({ status: 'revoked', metadata: binding({ last_event: 'passport.revoked', last_event_at: T3 }) });
-    routeTables({ agents: builder([{ data: [initial] }, { data: [revoked] }]), webhook_dlq: builder({}) });
+    const agents = builder([{ data: [initial] }, { data: [revoked] }, { data: [] }]);
+    agents.gt = vi.fn(() => agents);
+    routeTables({ agents, webhook_dlq: builder({}) });
     // A real PostgreSQL concurrency regression separately proves that a revoke
     // winning the row lock makes the older restoration CAS return false.
     dbRpcMock.mockResolvedValueOnce({ data: false, error: null });
@@ -413,4 +422,74 @@ it('rejects suffix paths before raw parsing and gates oversized bodies before pa
   expect(disabled.status).toBe(503);
   expect(disabled.body.error.code).toBe('vendor_gated');
   expect(authorityRpcMock).not.toHaveBeenCalled();
+});
+
+
+describe('cross-organization PostgREST pagination', () => {
+  function pagedAgents(rows: ReturnType<typeof agentRow>[], failAfter?: string, cap = 1000) {
+    const b = builder({});
+    let cursor = '';
+    let limit = cap;
+    b.select.mockImplementation(() => { cursor = ''; limit = cap; return b; });
+    b.gt = vi.fn((_column: string, value: string) => { cursor = value; return b; });
+    b.limit.mockImplementation((value: number) => { limit = Math.min(value, cap); return b; });
+    b.then = (onF, onR) => Promise.resolve(failAfter && cursor >= failAfter
+      ? { data: null, error: { code: 'XX000' } }
+      : { data: rows.filter((r) => r.id > cursor).slice(0, limit), error: null }).then(onF, onR);
+    return b;
+  }
+  const rows = () => Array.from({ length: 1001 }, (_, i) => agentRow({
+    id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+    org_id: i % 2 ? ORG_B : ORG_ID,
+  }));
+
+  it('revokes every binding beyond the configured 1000-row response cap before acknowledging success', async () => {
+    const all = rows();
+    const agents = pagedAgents(all);
+    routeTables({ agents });
+    const res = await post(evt('passport.revoked'));
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toBe(1001);
+    expect(new Set(dbRpcMock.mock.calls.map((call) => call[1].p_agent_id)).size).toBe(1001);
+    expect(agents.order).toHaveBeenCalledWith('id', { ascending: true });
+    expect(agents.limit).toHaveBeenCalledWith(200);
+  });
+
+  it('does not acknowledge all agents when a later page fails; an identical retry completes the remaining keys', async () => {
+    const all = rows();
+    routeTables({ agents: pagedAgents(all, all[199].id) });
+    const first = await post(evt('passport.revoked'));
+    expect(first.status).toBe(500);
+    expect(dbRpcMock).toHaveBeenCalledTimes(200);
+    routeTables({ agents: pagedAgents(all) });
+    const retry = await post(evt('passport.revoked'));
+    expect(retry.status).toBe(200);
+    expect(retry.body.applied).toBe(1001);
+    expect(authorityRpcMock).toHaveBeenCalledTimes(2);
+  });
+  it('continues through short hosted pages until an empty page proves exhaustion', async () => {
+    const all = rows().slice(0, 23);
+    const agents = pagedAgents(all, undefined, 7);
+    routeTables({ agents });
+    const res = await post(evt('passport.revoked'));
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toBe(23);
+    expect(agents.select).toHaveBeenCalledTimes(5);
+    expect(agents.gt).toHaveBeenLastCalledWith('id', all[22].id);
+  });
+
+  it('does not skip later bindings when earlier rows disappear between pages', async () => {
+    const all = rows();
+    routeTables({ agents: pagedAgents(all) });
+    let writes = 0;
+    dbRpcMock.mockImplementation(async () => {
+      if (++writes === 200) all.splice(0, 100);
+      return { data: true, error: null };
+    });
+    const res = await post(evt('passport.revoked'));
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toBe(1001);
+    expect(new Set(dbRpcMock.mock.calls.map((call) => call[1].p_agent_id)).size).toBe(1001);
+  });
+
 });

@@ -236,3 +236,8 @@ The GET challenge uses config.adobeSignClientId, populated by the existing Zod c
 ## 2026-09-10 — ComputeID historical review closure
 
 Historical review repairs reject provider timestamps beyond five minutes, canonicalize accepted timestamps, preserve terminal revocation regardless of ordering floors, and prevent equal-time reinstatement (SCRUM-4567 / SCRUM-4571). Revocation records service-owned passport authority before enumerating agents, including orphans; retries still enforce agents after partially completed tenant updates. Transition audits commit inside the RPC. `enqueue_computeid_failure` serializes duplicate payload/reason diagnostics without deleting historical evidence. Production and handler tests share `computeidWebhookBody`, including 413, suffix 404 and disabled-gate 503 behavior. Free-text reasons and their lengths are not persisted.
+
+
+## 2026-09-10 — Cross-organization revocation pagination
+
+A single PostgREST select silently stops at the configured 1000-row cap. The receiver now streams ID-ordered keyset pages of 200 and requires an empty page before success. A shorter hosted cap cannot cause early completion; deleting earlier rows cannot shift later rows out of the scan. A failed later page returns 500 so the provider retries, and the terminal authority write still runs on that retry. Signed HTTP regressions reproduce the old 1001-binding truncation and verify page failure, smaller caps and deletion between pages. Concurrent new suspension-time admissions remain a separate activation concern; terminal revocation blocks new admission through its authority sentinel.

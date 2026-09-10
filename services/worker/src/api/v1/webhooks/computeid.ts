@@ -112,20 +112,28 @@ async function dlqInsert(args: { reason: string; externalId: string | null; payl
   }
 }
 
-async function findBoundAgents(passportId: string): Promise<BoundAgentRow[]> {
-  // Cross-org by design: one passport may be admitted into several orgs, and
-  // the org is only knowable from the binding itself. `agents` is not a
-  // tenant-isolation-listed table; every write below re-scopes by org_id.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (db as any)
-    .from('agents')
-    .select('id, org_id, name, status, metadata')
-    .contains('metadata', { computeid: { passport_id: passportId } });
-  if (error) {
-    logger.error({ error }, 'ComputeID webhook: bound-agent lookup failed');
-    throw new Error('agent_lookup_failed');
+async function* findBoundAgents(passportId: string): AsyncGenerator<BoundAgentRow> {
+  // Stream bounded pages in stable primary-key order. Do not infer completion
+  // from a short page: a hosted PostgREST cap may be below our requested limit.
+  let cursor: string | undefined;
+  for (;;) {
+    // Cross-org by contract; every mutation rechecks the agent's organization.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (db as any).from('agents')
+      .select('id, org_id, name, status, metadata')
+      .contains('metadata', { computeid: { passport_id: passportId } })
+      .order('id', { ascending: true })
+      .limit(200);
+    if (cursor) query = query.gt('id', cursor);
+    const { data, error } = await query;
+    if (error) throw new Error('agent_lookup_failed');
+    const rows = (data as BoundAgentRow[] | null) ?? [];
+    if (rows.length === 0) return;
+    const next = rows[rows.length - 1].id;
+    if (cursor && next <= cursor) throw new Error('agent_lookup_cursor_not_advanced');
+    for (const row of rows) yield row;
+    cursor = next;
   }
-  return (data as BoundAgentRow[] | null) ?? [];
 }
 
 interface Reply {
@@ -307,31 +315,28 @@ computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
     }
   }
 
-  let agents: BoundAgentRow[];
+  let applied = 0;
+  let skipped = 0;
   try {
-    agents = await findBoundAgents(d.passportId);
+    for await (const agent of findBoundAgents(d.passportId)) {
+      const result = await processBoundAgent(agent, d);
+      if (result.outcome === 'failed') {
+        send(res, result.reply);
+        return;
+      }
+      if (result.outcome === 'applied') applied += 1;
+      else skipped += 1;
+    }
   } catch {
     await dlqInsert({ reason: 'agent_lookup_failed', externalId: d.passportId, payloadHash });
     send(res, reply(500, PROCESSING_FAILED));
     return;
   }
-  if (agents.length === 0) {
+  if (applied + skipped === 0) {
     logger.warn({ provider: PROVIDER, event: d.event, passportId: d.passportId }, 'ComputeID webhook: passport not bound to any agent');
     await dlqInsert({ reason: 'unbound_passport', externalId: d.passportId, payloadHash });
     send(res, reply(200, { ok: true, orphaned: true, event: d.event }));
     return;
-  }
-
-  let applied = 0;
-  let skipped = 0;
-  for (const agent of agents) {
-    const result = await processBoundAgent(agent, d);
-    if (result.outcome === 'failed') {
-      send(res, result.reply);
-      return;
-    }
-    if (result.outcome === 'applied') applied += 1;
-    else skipped += 1;
   }
 
   logger.info({ provider: PROVIDER, event: d.event, passportId: d.passportId, applied, skipped }, 'ComputeID webhook: passport event processed');
