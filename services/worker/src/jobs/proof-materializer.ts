@@ -185,7 +185,29 @@ export const SKELETON_FORBIDDEN_COLUMNS = [
   'proof_schema_version',
   'id',
   'created_at',
+  // Migration 0427 (M4): the bitcoin-tree inclusion evidence. A skeleton row
+  // carrying these would be asserting WHERE a transaction sits in its block —
+  // exactly the kind of claim this row exists not to make.
+  'tx_inclusion_branch',
+  'tx_block_index',
+  // Migration 0408: the supplementary-anchor pointer names a chain tx, which is
+  // an evidentiary claim too.
+  'is_supplementary',
+  'supplements_chain_tx_id',
 ] as const;
+
+/**
+ * M4 — the ratchet must be a DETECTOR, not a census.
+ *
+ * The two lists above and `CLASSIFIER_READ_ONLY_COLUMNS` used to be checked
+ * only against hardcoded literals inside their own tests, so a new proof column
+ * could land (as `tx_inclusion_branch` / `tx_block_index` did) and CI would
+ * report a healthy forgery guard that had quietly stopped covering the schema.
+ * The tests now derive the real column set from `types/database.types.ts` and
+ * require `SKELETON_INSERT_COLUMNS ∪ SKELETON_FORBIDDEN_COLUMNS` to cover it
+ * exactly — see `readAnchorProofsColumns` in the test files. Adding a column to
+ * `anchor_proofs` without classifying it here now fails the suite.
+ */
 
 export interface SkeletonRow {
   anchor_id: string;
