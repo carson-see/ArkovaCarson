@@ -20,6 +20,8 @@ import { sendEmail } from '../../email/sender.js';
 import { buildInvitationEmail } from '../../email/templates.js';
 import { logger } from '../../utils/logger.js';
 import { db as _db } from '../../utils/db.js';
+import { isCallerOrgAdminResult } from '../_org-auth.js';
+import { callRpc } from '../../utils/rpc.js';
 
 // Sub-org columns from migration 0128 are not yet in generated types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -119,6 +121,18 @@ function routeFailure(status: number, error: string): RouteFailure {
   return { ok: false, status, error };
 }
 
+/** SCRUM-4467: distinguish definitive cap rejection from retryable write conflicts. */
+function subOrgCapWriteFailure(error: { code?: string; message?: string } | null): RouteFailure | null {
+  if (error?.code === '23514' && error.message === 'sub_org_limit_reached') {
+    return routeFailure(409, 'sub_org_limit_reached');
+  }
+  // Lock waits and transaction conflicts are retryable, never successful writes.
+  if (error?.code && ['55P03', '40001', '40P01'].includes(error.code)) {
+    return routeFailure(503, 'cap_check_unavailable');
+  }
+  return null;
+}
+
 /** Helper to get userId from request */
 function getUserId(req: Request): string | undefined {
   return (req as unknown as { userId?: string }).userId;
@@ -139,6 +153,78 @@ async function getUserOrgInfo(
     : query.limit(1).maybeSingle());
 
   return { orgId: data?.org_id ?? null, role: data?.role ?? null };
+}
+
+/**
+ * Platform cap on sub-organizations per parent (Carson, 2026-09-01).
+ *
+ * `organizations.max_sub_orgs` already existed, was settable via POST /max and
+ * was returned by the list endpoint — and was checked by NOTHING, so a parent
+ * could create unlimited affiliates. This is the fallback when an org carries
+ * no explicit override; the override still wins in either direction.
+ */
+export const DEFAULT_MAX_SUB_ORGS = 20;
+
+export interface SubOrgCap {
+  ok: boolean;
+  limit: number;
+  current: number;
+  /** The count could not be read — refuse rather than guess. */
+  unavailable?: boolean;
+}
+
+/**
+ * How many sub-orgs may this parent still add?
+ *
+ * FAILS CLOSED. Unlike the credit-enforcement lookup, a read failure here must
+ * refuse: guessing would let a parent walk straight past the cap during a
+ * database blip, and the cost of refusing is one retry.
+ *
+ * `?? DEFAULT` and not `|| DEFAULT` is load-bearing — an org explicitly capped
+ * at 0 must stay at 0, not silently inherit the full default.
+ */
+export async function resolveSubOrgCap(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  database: any,
+  parentOrgId: string,
+): Promise<SubOrgCap> {
+  const { data: org, error: parentError } = await database
+    .from('organizations')
+    .select('max_sub_orgs')
+    .eq('id', parentOrgId)
+    .maybeSingle();
+
+  if (parentError || !org) {
+    logger.error({ err: parentError?.message, parentOrgId }, 'suborg_cap_parent_lookup_failed');
+    return { ok: false, limit: -1, current: -1, unavailable: true };
+  }
+
+  const limit: number = org.max_sub_orgs ?? DEFAULT_MAX_SUB_ORGS;
+
+  // Deliberately NOT a PostgREST head-only exact-count select (R0-8 / SCRUM-1254):
+  // PostgREST's exact count is the pattern that produced 60 s statement
+  // timeouts on hot tables, and `organizations` is one of them. This filter is
+  // an indexed equality on `parent_org_id` returning at most a handful of rows
+  // — the cap is 20 — so selecting the ids and taking `.length` is both exact
+  // and cheaper than asking the planner for a count.
+  //
+  // It stays UNBOUNDED on purpose. `current` is surfaced in the API response
+  // below, and a `.limit(cap)` would silently under-report whenever an admin
+  // lowers `max_sub_orgs` beneath the number of children already approved —
+  // exactly the case an operator needs to see accurately.
+  const { data: children, error } = await database
+    .from('organizations')
+    .select('id')
+    .eq('parent_org_id', parentOrgId)
+    .eq('parent_approval_status', 'APPROVED');
+
+  if (error || !Array.isArray(children)) {
+    logger.error({ err: error?.message, parentOrgId }, 'suborg_cap_count_failed');
+    return { ok: false, limit, current: -1, unavailable: true };
+  }
+
+  const current = children.length;
+  return { ok: current < limit, limit, current };
 }
 
 /** Check if user is admin/owner of their org */
@@ -228,6 +314,8 @@ async function createAffiliateOrg(
     .single();
 
   if (createError || !childOrg) {
+    const capFailure = subOrgCapWriteFailure(createError);
+    if (capFailure) return capFailure;
     logger.error({ error: createError }, 'Failed to create affiliate org');
     return routeFailure(500, 'Failed to create affiliate organization');
   }
@@ -459,14 +547,41 @@ async function updateAffiliateStatus(
     return routeFailure(400, action.alreadyStatusError);
   }
 
-  const { error: updateError } = await db
+  // D3 — the cap applies to BOTH paths that add a sub-org. Approving a pending
+  // request is one of them; enforcing only on create would leave a cap you can
+  // walk around by asking to be affiliated instead of being created.
+  if (action.targetStatus === 'APPROVED') {
+    const cap = await resolveSubOrgCap(db, context.orgId);
+    if (!cap.ok) {
+      return routeFailure(
+        cap.unavailable ? 503 : 409,
+        cap.unavailable
+          ? 'Could not verify the affiliated-organization limit. Try again.'
+          : `Affiliated-organization limit reached (${cap.current} of ${cap.limit}).`,
+      );
+    }
+  }
+
+  // SCRUM-4468: bind the write to the affiliation we authorized. A concurrent reparent or
+  // status transition must not turn this into a write against another tenant.
+  const update = db
     .from('organizations')
     .update(buildAffiliateStatusUpdate(action.targetStatus))
-    .eq('id', context.childOrgId);
+    .eq('id', context.childOrgId)
+    .eq('parent_org_id', context.orgId);
+  const scopedUpdate = context.childOrg.parent_approval_status === null
+    ? update.is('parent_approval_status', null)
+    : update.eq('parent_approval_status', context.childOrg.parent_approval_status);
+  const { data: updatedOrg, error: updateError } = await scopedUpdate.select('id').maybeSingle();
 
   if (updateError) {
+    const capFailure = subOrgCapWriteFailure(updateError);
+    if (capFailure) return capFailure;
     logger.error({ error: updateError }, action.failureLog);
     return routeFailure(500, action.updateFailureError);
+  }
+  if (!updatedOrg) {
+    return routeFailure(409, 'Affiliation changed. Refresh and try again.');
   }
 
   return routeSuccess(undefined);
@@ -579,8 +694,38 @@ orgSubOrgsRouter.get('/', async (req: Request, res: Response) => {
       .eq('id', orgId)
       .single();
 
+    // SCRUM-3867 — which sub-orgs currently run on THIS org's DocuSign
+    // connection. One query for the whole list rather than a per-row endpoint,
+    // and an additive field (§1.8) so existing consumers are untouched. A
+    // failure here degrades to "no sub-org is inheriting" rather than taking
+    // out the list: the toggle is additive to a panel that already worked.
+    const childIds = (subOrgs ?? []).map((s: { id: string }) => s.id);
+    let inheritingIds = new Set<string>();
+    if (childIds.length > 0) {
+      // Doubly tenant-scoped: `inherited_from_org_id = orgId` restricts to
+      // markers pointing at THIS org, and `in('org_id', childIds)` restricts to
+      // its own children. The isolation rule matches only a literal
+      // `.eq('org_id', ...)`, so the disable sits on the chain it flags.
+      // eslint-disable-next-line arkova/missing-org-filter -- see the note above
+      const { data: markers, error: markerError } = await db
+        .from('org_integrations')
+        .select('org_id')
+        .eq('provider', 'docusign')
+        .eq('inherited_from_org_id', orgId)
+        .is('revoked_at', null)
+        .in('org_id', childIds);
+      if (markerError) {
+        logger.error({ err: markerError.message, orgId }, 'suborg_docusign_marker_lookup_failed');
+      } else {
+        inheritingIds = new Set((markers ?? []).map((m: { org_id: string }) => m.org_id));
+      }
+    }
+
     res.json({
-      subOrgs: subOrgs ?? [],
+      subOrgs: (subOrgs ?? []).map((s: { id: string }) => ({
+        ...s,
+        docusignInherited: inheritingIds.has(s.id),
+      })),
       maxSubOrgs: parentOrg?.max_sub_orgs ?? null,
       count: subOrgs?.length ?? 0,
     });
@@ -627,6 +772,19 @@ orgSubOrgsRouter.post('/create', async (req: Request, res: Response) => {
 
     const { orgId } = parentContext.value;
     const adminProfile = adminLookup.value;
+
+    // D3 — refuse before creating anything. `max_sub_orgs` was settable and
+    // displayed but checked by nothing, so this cap did not exist in practice.
+    const cap = await resolveSubOrgCap(db, orgId);
+    if (!cap.ok) {
+      res.status(cap.unavailable ? 503 : 409).json({
+        error: cap.unavailable ? 'cap_check_unavailable' : 'sub_org_limit_reached',
+        limit: cap.limit,
+        current: cap.current,
+      });
+      return;
+    }
+
     const createResult = await createAffiliateOrg(orgId, parsed.data);
     if (!createResult.ok) {
       res.status(createResult.status).json({ error: createResult.error });
@@ -939,6 +1097,376 @@ orgSubOrgsRouter.post('/max', async (req: Request, res: Response) => {
     res.json({ maxSubOrgs: maxSubOrgs ?? null });
   } catch (error) {
     logger.error({ error }, 'Failed to update max_sub_orgs');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Sub-org credit provisioning (SCRUM-3865) ────────────────────────────────
+//
+// Pre-mortem F3: `allocate_credits_to_sub_org` existed, was correct, and had
+// ZERO callers anywhere in the repository — `org_credit_allocations` had never
+// had a row in production. These two endpoints are the missing path, and they
+// are the only way a parent admin can fund or defund a sub-org.
+//
+// Both call migration 0430's identity-carrying overload, because `auth.uid()`
+// is NULL under the worker's service_role client and the pre-0430 overloads
+// therefore returned `authentication_required` on every worker call.
+//
+// The caller id sent to the RPC is ALWAYS the verified session user. It is
+// never read from the request body: a client that could choose it could move
+// another organization's credits. The org-admin check below is a fast local
+// pre-check — the RPC independently re-verifies parent adminship and that the
+// child really is a sub-org of that parent, so authorization does not depend on
+// this layer being correct.
+
+/** suspend_suborg error code -> HTTP status. Anything unlisted is a 500. */
+const SUSPEND_RPC_STATUS: Record<string, number> = {
+  unauthenticated: 401,
+  parent_admin_required: 403,
+  not_a_child_of_parent: 404,
+};
+
+/** Credits are whole units; the bound is a sanity rail, not a business limit. */
+const MAX_CREDIT_TRANSFER = 100_000_000;
+
+const AllocateCreditsSchema = z.object({
+  childOrgId: z.string().uuid(),
+  // Negative = reclaim from the sub-org back to the parent (offboarding).
+  amount: z
+    .number()
+    .int()
+    .refine((n) => n !== 0, { message: 'amount must be non-zero' })
+    .refine((n) => Math.abs(n) <= MAX_CREDIT_TRANSFER, {
+      message: `amount must be within +/-${MAX_CREDIT_TRANSFER}`,
+    }),
+  note: z.string().trim().max(500).optional(),
+});
+
+interface AllocateCreditsRpcResult {
+  success?: boolean;
+  parent_balance?: number;
+  child_balance?: number;
+  error?: string;
+}
+
+interface CreditRollupRpcResult {
+  parent_org_id?: string;
+  parent_balance?: number;
+  children?: { child_org_id: string; balance: number; monthly_allocation: number }[];
+  error?: string;
+}
+
+/** RPC error code -> HTTP status. Anything unlisted is a 500.
+ *
+ * NOT `mapRpcErrorToStatus` (api/rpc-error-status.ts): that maps RAISEd
+ * exception MESSAGES by substring match. These two RPCs return structured
+ * `{ error: '<code>' }` jsonb instead of raising, so an exact-code lookup is
+ * the right shape and substring matching would be guesswork. */
+const CREDIT_RPC_STATUS: Record<string, number> = {
+  authentication_required: 401,
+  parent_admin_required: 403,
+  not_a_sub_org: 404,
+  // 409 rather than 402: the request conflicts with the current balance, and
+  // unlike the anchor path nothing here is purchasable in the moment.
+  insufficient_parent_balance: 409,
+  insufficient_child_balance: 409,
+};
+
+/**
+ * Resolves the acting parent org and rejects non-admins.
+ *
+ * `getUserOrgInfo` without an explicit org does `.limit(1).maybeSingle()` with
+ * no ORDER BY, so it returns an ARBITRARY one of the caller's memberships. That
+ * is tolerable for a list endpoint and NOT tolerable here: the affiliate flow
+ * writes the parent admin into every child's `org_members` as `owner`, so a
+ * HakiChain admin belongs to HakiChain *and* to each client org, and the org
+ * this resolved to would decide which balance a transfer debits. When the
+ * caller is ambiguous we make them say which org, rather than guessing on a
+ * money-moving path.
+ */
+async function requireParentAdmin(
+  req: Request,
+  res: Response,
+): Promise<{ userId: string; orgId: string } | null> {
+  const userId = getUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return null;
+  }
+
+  const requestedOrgId = typeof req.query.orgId === 'string' ? req.query.orgId : undefined;
+
+  // Explicit org: defer to the shared resolver rather than this file's local
+  // `getUserOrgInfo` + `isOrgAdmin` pair. `isCallerOrgAdminResult` carries the
+  // precedence rules the rest of the worker uses — org_members owner/admin,
+  // then the own-org-scoped profile `ORG_ADMIN` and platform-admin fallbacks —
+  // and distinguishes a DB fault from a definitive "not an admin" so a fault
+  // surfaces as 503 instead of masquerading as 403. The local pair silently
+  // drops both, which is exactly the drift `_org-auth.ts` exists to prevent;
+  // the RPC accepts legacy `ORG_ADMIN` too, so without this the route was the
+  // narrower gate.
+  if (requestedOrgId) {
+    const admin = await isCallerOrgAdminResult(userId, requestedOrgId);
+    if (admin.error) {
+      res.status(503).json({ error: 'membership_lookup_unavailable' });
+      return null;
+    }
+    if (!admin.value) {
+      res.status(403).json({ error: 'Admin permissions required' });
+      return null;
+    }
+    return { userId, orgId: requestedOrgId };
+  }
+
+  // No explicit org: the caller may administer several. The affiliate flow
+  // writes the parent admin into every child's `org_members` as `owner`, so a
+  // partner admin belongs to the parent AND to each client org, and whichever
+  // row we picked would decide which balance a transfer debits. Refuse rather
+  // than guess.
+  const { data: memberships, error } = await db
+    .from('org_members')
+    .select('org_id, role')
+    .eq('user_id', userId);
+
+  if (error) {
+    logger.error({ err: error.message }, 'suborg_credit_membership_lookup_failed');
+    res.status(503).json({ error: 'membership_lookup_unavailable' });
+    return null;
+  }
+
+  const adminOrgs = (memberships ?? []).filter(
+    (m: { role: string | null }) => isOrgAdmin(m.role),
+  );
+
+  if (adminOrgs.length === 0) {
+    res.status(403).json({ error: 'Admin permissions required' });
+    return null;
+  }
+  if (adminOrgs.length > 1) {
+    res.status(400).json({
+      error: 'org_id_required',
+      message: 'You administer more than one organization. Specify which one with ?orgId=.',
+    });
+    return null;
+  }
+  return { userId, orgId: adminOrgs[0].org_id };
+}
+
+orgSubOrgsRouter.post('/credits', async (req: Request, res: Response) => {
+  try {
+    const ctx = await requireParentAdmin(req, res);
+    if (!ctx) return;
+
+    const parsed = AllocateCreditsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({
+        error: 'invalid_request',
+        details: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+      return;
+    }
+
+    const { childOrgId, amount, note } = parsed.data;
+
+    const { data, error } = await callRpc<AllocateCreditsRpcResult>(db, 'allocate_credits_to_sub_org', {
+      p_parent_org_id: ctx.orgId,
+      p_child_org_id: childOrgId,
+      p_amount: amount,
+      p_note: note ?? null,
+      p_caller_user_id: ctx.userId,
+    });
+
+    if (error) {
+      logger.error({ err: error.message, orgId: ctx.orgId }, 'suborg_credit_allocation_rpc_failure');
+      res.status(503).json({ error: 'credit_allocation_unavailable' });
+      return;
+    }
+
+    if (!data || data.error) {
+      const code = data?.error ?? 'unknown_error';
+      res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code });
+      return;
+    }
+
+    logger.info(
+      { orgId: ctx.orgId, childOrgId, amount },
+      amount > 0 ? 'suborg_credits_allocated' : 'suborg_credits_reclaimed',
+    );
+
+    res.json({
+      parentBalance: data.parent_balance,
+      childBalance: data.child_balance,
+      amount,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to allocate sub-org credits');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+orgSubOrgsRouter.get('/credits', async (req: Request, res: Response) => {
+  try {
+    const ctx = await requireParentAdmin(req, res);
+    if (!ctx) return;
+
+    const { data, error } = await callRpc<CreditRollupRpcResult>(db, 'get_parent_credit_rollup', {
+      p_parent_org_id: ctx.orgId,
+      p_caller_user_id: ctx.userId,
+    });
+
+    if (error) {
+      logger.error({ err: error.message, orgId: ctx.orgId }, 'suborg_credit_rollup_rpc_failure');
+      res.status(503).json({ error: 'credit_rollup_unavailable' });
+      return;
+    }
+
+    if (!data || data.error) {
+      const code = data?.error ?? 'unknown_error';
+      res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code });
+      return;
+    }
+
+    // Balances only. Per decision D2 a parent sees what its sub-orgs SPEND,
+    // never what they secured — no record contents cross the boundary.
+    res.json({
+      parentBalance: data.parent_balance,
+      children: (data.children ?? []).map(
+        (c) => ({
+          childOrgId: c.child_org_id,
+          balance: c.balance,
+          monthlyAllocation: c.monthly_allocation,
+        }),
+      ),
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to load sub-org credit rollup');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Sub-org offboarding (SCRUM-3868) ────────────────────────────────────────
+//
+// Pre-mortem F6: "Revoke" flipped `parent_approval_status` and nothing else —
+// the ex-client kept its records, its remaining credits, its members and its
+// integrations, and carried on anchoring against a budget the parent funded.
+// `parent_approval_status = 'REVOKED'` is enforced in exactly one place
+// (cross-org queue resolution), so revocation severs the affiliation, not the
+// tenancy. This endpoint is the real lever.
+//
+// ORDER IS THE DESIGN: reclaim, then suspend. If the suspend fails after a
+// successful reclaim the credits are safely back with the parent and the
+// sub-org is merely still active, so a retry finishes the job. Suspending first
+// would strand the parent's credits inside an org nobody can act in.
+//
+// The sub-org's ANCHORED RECORDS ARE NOT TOUCHED. They are the customer's
+// evidence, not ours, and they must stay verifiable on the public surface after
+// the relationship ends.
+
+const OffboardSchema = z.object({
+  childOrgId: z.string().uuid(),
+  reason: z.string().trim().max(500).optional(),
+});
+
+interface SuspendRpcResult {
+  success?: boolean;
+  already_suspended?: boolean;
+  error?: string;
+}
+
+orgSubOrgsRouter.post('/offboard', async (req: Request, res: Response) => {
+  try {
+    const ctx = await requireParentAdmin(req, res);
+    if (!ctx) return;
+
+    const parsed = OffboardSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({
+        error: 'invalid_request',
+        details: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+      return;
+    }
+    const { childOrgId, reason } = parsed.data;
+
+    // What is left to return? Read before moving anything: a balance we cannot
+    // read is a reclaim we cannot size, and guessing would either strand
+    // credits or attempt an over-reclaim the RPC would refuse anyway.
+    const { data: credits, error: creditsError } = await db
+      .from('org_credits')
+      .select('balance')
+      .eq('org_id', childOrgId)
+      .maybeSingle();
+
+    if (creditsError) {
+      logger.error({ err: creditsError.message, childOrgId }, 'suborg_offboard_balance_read_failed');
+      res.status(503).json({ error: 'balance_lookup_unavailable' });
+      return;
+    }
+
+    const balance: number = credits?.balance ?? 0;
+    let reclaimed = 0;
+
+    if (balance > 0) {
+      const { data: reclaimData, error: reclaimError } = await callRpc<AllocateCreditsRpcResult>(
+        db,
+        'allocate_credits_to_sub_org',
+        {
+          p_parent_org_id: ctx.orgId,
+          p_child_org_id: childOrgId,
+          p_amount: -balance,
+          p_note: reason ? `offboarding: ${reason}` : 'offboarding',
+          p_caller_user_id: ctx.userId,
+        },
+      );
+
+      if (reclaimError) {
+        logger.error({ err: reclaimError.message, childOrgId }, 'suborg_offboard_reclaim_rpc_failure');
+        res.status(503).json({ error: 'credit_allocation_unavailable' });
+        return;
+      }
+      if (!reclaimData || reclaimData.error) {
+        // Stop here. Suspending an org whose credits we failed to reclaim
+        // strands them somewhere nobody can spend or recover them.
+        const code = reclaimData?.error ?? 'unknown_error';
+        res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code, reclaimed: 0, suspended: false });
+        return;
+      }
+      reclaimed = balance;
+    }
+
+    const { data: suspendData, error: suspendError } = await callRpc<SuspendRpcResult>(
+      db,
+      'suspend_suborg',
+      {
+        p_parent_org_id: ctx.orgId,
+        p_sub_org_id: childOrgId,
+        p_reason: reason ?? null,
+        p_caller_user_id: ctx.userId,
+      },
+    );
+
+    if (suspendError) {
+      logger.error({ err: suspendError.message, childOrgId, reclaimed }, 'suborg_offboard_suspend_rpc_failure');
+      res.status(503).json({ error: 'suspend_unavailable', reclaimed, suspended: false });
+      return;
+    }
+    if (!suspendData || suspendData.success !== true) {
+      // The reclaim already happened. Say so — a retry is safe, but only if the
+      // caller knows not to expect the credits to move a second time.
+      const code = suspendData?.error ?? 'unknown_error';
+      logger.warn({ childOrgId, reclaimed, code }, 'suborg_offboard_partial');
+      res.status(SUSPEND_RPC_STATUS[code] ?? 500).json({ error: code, reclaimed, suspended: false });
+      return;
+    }
+
+    logger.info({ orgId: ctx.orgId, childOrgId, reclaimed }, 'suborg_offboarded');
+    res.json({
+      reclaimed,
+      suspended: true,
+      alreadySuspended: suspendData.already_suspended === true,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to offboard sub-org');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

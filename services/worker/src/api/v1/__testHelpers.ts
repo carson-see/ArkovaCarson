@@ -56,6 +56,7 @@ export interface Builder {
   delete: ReturnType<typeof vi.fn>;
   eq: ReturnType<typeof vi.fn>;
   in: ReturnType<typeof vi.fn>;
+  is: ReturnType<typeof vi.fn>;
   gte: ReturnType<typeof vi.fn>;
   or: ReturnType<typeof vi.fn>;
   order: ReturnType<typeof vi.fn>;
@@ -89,6 +90,12 @@ export interface BuilderState {
   selectData?: unknown;
   /** Alias for `error` matching the compliance-audit field name. */
   selectError?: unknown;
+  /**
+   * Row count for head-only COUNT selects (PostgREST exact-count chains)
+   * (SCRUM-3863 D3 sub-org cap). Defaults to 0 so a builder that never opted
+   * in still answers a count query rather than failing closed.
+   */
+  count?: number;
 }
 
 /**
@@ -115,16 +122,32 @@ export function makeBuilder(state: BuilderState = {}): Builder {
   // compliance-audit awaited `.limit()`).
   const listPayload = () =>
     Object.assign(
-      Promise.resolve({ data: listData, error: listError }),
+      Promise.resolve({ data: listData, error: listError, count: state.count ?? 0 }),
       builder,
     );
 
-  builder.select = vi.fn(chain);
+  // A head-only COUNT select terminates
+  // on its last `.eq()`, not on a named terminal, so it gets its own small
+  // thenable chain. Scoped deliberately: making `.eq()` itself awaitable for
+  // every builder broke unrelated create/approve chains.
+  const countChain: Record<string, unknown> = {};
+  countChain.eq = () => countChain;
+  countChain.is = () => countChain;
+  countChain.then = (resolve: (v: unknown) => unknown) =>
+    Promise.resolve({ data: null, error: null, count: state.count ?? 0 }).then(resolve);
+
+  builder.select = vi.fn((_cols?: unknown, opts?: { count?: string }) =>
+    (opts && opts.count ? countChain : builder));
   builder.insert = vi.fn(chain);
   builder.update = vi.fn(chain);
   builder.delete = vi.fn(chain);
   builder.eq = vi.fn(chain);
-  builder.in = vi.fn(chain);
+  // `.in()` is a hybrid too (SCRUM-3867): the sub-orgs list terminates its
+  // DocuSign-marker lookup on `.in('org_id', childIds)`. Adding the payload
+  // keeps every existing chain-only use working — a hybrid is still chainable.
+  builder.in = vi.fn(listPayload);
+  // `.is('revoked_at', null)` is standard PostgREST and was simply missing.
+  builder.is = vi.fn(chain);
   builder.gte = vi.fn(chain);
   builder.or = vi.fn(chain);
   builder.order = vi.fn(listPayload);
