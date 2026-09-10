@@ -68,6 +68,22 @@ function getCreditCost(path: string): number {
   return 1; // default 1 credit
 }
 
+/**
+ * Run `fn` for its side effect only, swallowing anything it throws.
+ *
+ * Used to isolate independent best-effort reporting calls (log + Sentry
+ * alert) from each other and from the caller: each call gets its own `try`,
+ * so one throwing cannot suppress the other or bubble up into a `catch` that
+ * would silently re-open whatever fail-closed path is reporting the failure.
+ */
+function bestEffort(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // Best-effort only — see call site for why isolation matters here.
+  }
+}
+
 // ─── Tier 1: Prepaid Credits ────────────────────────────────────────────
 
 async function tryCredits(orgId: string, userId: string, cost: number): Promise<PaymentResolution | null> {
@@ -86,29 +102,75 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
     const remaining = (row as { remaining: number }).remaining ?? 0;
     if (remaining < cost) return null;
 
-    // Deduct credits
-    const { error: deductError } = await db.rpc('deduct_unified_credits', {
-      p_org_id: orgId,
-      p_user_id: userId,
-      p_amount: cost,
-    });
-
-    if (deductError) {
-      // Fail OPEN by construction: returning null here makes the caller fall
-      // through to the next payment tier (Stripe metered billing) even though
-      // the org already had credits — the customer gets CHARGED instead of a
-      // credit they already paid for being consumed. Behavior intentionally
-      // unchanged (product decision); this alert makes the leak visible.
-      logger.warn({ error: deductError }, 'Credit deduction failed');
-      captureCreditRpcFailureAlert({
-        rpc: 'deduct_unified_credits',
-        operation: 'paymentTierRouter.tryCredits',
-        failMode: 'open',
-        error: new Error('deduct_unified_credits failed — falling through to Stripe metered billing'),
-        orgId,
-        userId,
-        extra: { amount: cost },
+    // Deduct credits.
+    //
+    // SCRUM-3502: `deduct_unified_credits` RETURNS BOOLEAN, and its two failure
+    // shapes need OPPOSITE handling. Conflating them is what leaked:
+    //
+    //   * RPC ERROR    — the debit is in an UNKNOWN state and may have
+    //                    committed. Fail CLOSED.
+    //   * returns FALSE — the RPC ran and definitively did NOT debit (no
+    //                    unified_credits row, or the balance was drained
+    //                    between the check above and here). Fall through to the
+    //                    next PAID tier.
+    //
+    // The previous code destructured only `error`, so a `false` return fell
+    // straight into the authorized return below: the request was served, no
+    // credit was consumed, and nobody was billed. For an org with no
+    // `unified_credits` row — exactly the org `check_unified_credits` was
+    // handing a phantom 50 to (SCRUM-2538) — that repeated on every call.
+    let deductOk: unknown;
+    try {
+      const { data: deductData, error: deductError } = await db.rpc('deduct_unified_credits', {
+        p_org_id: orgId,
+        p_user_id: userId,
+        p_amount: cost,
       });
+      if (deductError) throw deductError;
+      // Only the RPC's literal boolean false establishes that no debit occurred.
+      // An absent/malformed response is ambiguous and must not trigger a second charge.
+      if (typeof deductData !== 'boolean') throw new Error('Credit debit returned an invalid response');
+      deductOk = deductData;
+    } catch (deductError) {
+      // FAIL CLOSED. Falling through to Stripe metered would bill a customer
+      // whose already-purchased credit may have just been spent, and serving
+      // the request would give it away. For money, neither guess is acceptable:
+      // stop, page, and let the caller retry against a known state.
+      //
+      // Reporting is best-effort and deliberately isolated — one `try` each, so
+      // neither can suppress the other OR the return below. This function's
+      // outer `catch` returns `null`, i.e. the exact fall-through this branch
+      // exists to prevent, so an unguarded throw from the logger or from
+      // `captureCreditRpcFailureAlert` (which JSON.stringifies a non-`Error`
+      // `error` — see utils/sentry.ts) would be caught out there and silently
+      // reopen the leak. Losing the page is bad; losing the fail-closed is a
+      // double-charge.
+      bestEffort(() =>
+        logger.error({ error: deductError, orgId, userId }, 'Credit deduction failed — failing closed'),
+      );
+      bestEffort(() =>
+        captureCreditRpcFailureAlert({
+          rpc: 'deduct_unified_credits',
+          operation: 'paymentTierRouter.tryCredits',
+          failMode: 'closed',
+          error: deductError,
+          orgId,
+          userId,
+          extra: { amount: cost },
+        }),
+      );
+      return { tier: 'credits', authorized: false, reason: 'credit_deduction_failed' };
+    }
+
+    if (deductOk !== true) {
+      // Not an RPC failure and not a revenue leak — no credit was consumed, and
+      // the next tier bills the customer for what they used. Warn only; a page
+      // here would be noise. A `false` alongside a healthy `remaining` above
+      // does signal ledger divergence worth investigating, hence the log.
+      logger.warn(
+        { orgId, userId, remaining, cost },
+        'deduct_unified_credits returned false — no credit consumed, falling through to the next payment tier',
+      );
       return null;
     }
 
@@ -361,6 +423,21 @@ export function paymentTierRouter() {
     // 1. Prepaid credits
     if (orgId) {
       const credits = await tryCredits(orgId, userId, creditCost);
+
+      // SCRUM-3502: an UNAUTHORIZED credits resolution is a hard stop, not a
+      // fall-through. `tryCredits` only returns one when the deduct RPC errored
+      // and the debit's fate is unknown — trying the next tier from here is how
+      // one call gets charged twice.
+      if (credits && !credits.authorized) {
+        res.setHeader('Retry-After', '30');
+        res.status(503).json({
+          error: 'credit_system_unavailable',
+          message:
+            'Credit accounting could not be confirmed. This request was not completed. Please try again later.',
+        });
+        return;
+      }
+
       if (credits) {
         payReq.paymentResolution = credits;
         res.setHeader('X-Credits-Remaining', String(credits.creditsRemaining ?? 0));
