@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const processNextJobMock = vi.hoisted(() => vi.fn());
@@ -43,6 +44,7 @@ import {
   resetDocusignAccountRateLimitStoreForTests,
 } from '../integrations/oauth/docusign-rate-limit.js';
 import { fetchDocusignCombinedDocument } from '../integrations/oauth/docusign.js';
+import type { DocusignCapturedSignerT } from '../integrations/connectors/schemas.js';
 
 describe('runDocusignEnvelopeCompletedJobs', () => {
   beforeEach(() => {
@@ -156,6 +158,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     };
 
     interface MakeDbOpts {
+      supersedeCurrent?: Record<string, unknown>;
       artifactResult?: { data: string | null; error: unknown };
       auditResult?: { data: { id: string } | null; error: unknown };
       // F1 (security review, docusign-bilateral-2026-08): override the
@@ -189,6 +192,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         insertedRow?: Record<string, unknown>;
         insertCalled: boolean;
         supersedeCalled: boolean;
+        supersedeApplied: boolean;
         supersedePayload?: Record<string, unknown>;
         provenanceAuditInsertCalled: boolean;
         provenanceAuditInsertedRow?: Record<string, unknown>;
@@ -196,6 +200,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       } = {
         insertCalled: false,
         supersedeCalled: false,
+        supersedeApplied: false,
         provenanceAuditInsertCalled: false,
         connectorArtifactFromCallCount: 0,
       };
@@ -231,16 +236,25 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
             // SECOND+ call: the F1-heal atomic conditional UPDATE, only ever
             // reached when a conflict was detected on the first call.
             const supersedeResult = opts.supersedeResult ?? { data: { id: 'artifact-1' }, error: null };
+            const filters: Array<[string, unknown]> = [];
             const supersedeQuery = {
               update: vi.fn((value: Record<string, unknown>) => {
                 state.supersedeCalled = true;
                 state.supersedePayload = value;
                 return supersedeQuery;
               }),
-              eq: vi.fn(() => supersedeQuery),
-              is: vi.fn(() => supersedeQuery),
+              eq: vi.fn((key: string, value: unknown) => { filters.push([key, value]); return supersedeQuery; }),
+              is: vi.fn((key: string, value: unknown) => { filters.push([key, value]); return supersedeQuery; }),
               select: vi.fn(() => supersedeQuery),
-              maybeSingle: vi.fn().mockResolvedValue(supersedeResult),
+              maybeSingle: vi.fn(async () => {
+                if (!opts.supersedeCurrent) return supersedeResult;
+                const matches = filters.every(([key, value]) =>
+                  JSON.stringify(opts.supersedeCurrent![key]) === JSON.stringify(key === 'metadata' && typeof value === 'string' ? JSON.parse(value) : value));
+                if (!matches) return { data: null, error: null };
+                Object.assign(opts.supersedeCurrent, state.supersedePayload);
+                state.supersedeApplied = true;
+                return supersedeResult;
+              }),
               insert: vi.fn(),
             };
             return supersedeQuery;
@@ -618,6 +632,65 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         expect(state.insertCalled).toBe(false);
       });
 
+      it.each([false, true])('a second heal cannot overwrite a first measured winner (equal hash=%s)', async (equalHash) => {
+        const declaredMetadata = { _direction: 'inbound', queue_scope: 'org' };
+        const current = {
+          id: 'forged-inbound-artifact', org_id: ORG_ID, anchor_id: null,
+          fingerprint_sha256: equalHash ? FORGED_HASH : 'e'.repeat(64),
+          metadata: { queue_scope: 'org', _superseded_reason: 'first-measured-winner' },
+        };
+        const before = structuredClone(current);
+        const { db, state } = makeDb({
+          artifactResult: { data: 'forged-inbound-artifact', error: null },
+          provenanceResult: { data: { fingerprint_sha256: FORGED_HASH, metadata: declaredMetadata }, error: null },
+          // Client B read the declared snapshot; client A committed a measured
+          // heal before B's UPDATE. Both remain unlinked, so anchor_id alone
+          // cannot preserve measured-vs-measured refusal.
+          supersedeCurrent: current,
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+          'docusign_connector_artifact_provenance_conflict_unresolved');
+        expect(state.supersedeApplied).toBe(false);
+        expect(current).toEqual(before);
+        expect(state.provenanceAuditInsertedRow?.event_type).toBe('docusign_connector_artifact_provenance_conflict_unresolved');
+      });
+
+      it('the actual PostgREST request guards org, fingerprint and serialized metadata', async () => {
+        const declaredMetadata = { _direction: 'inbound', queue_scope: 'org' };
+        const metadataAfterFirstHeal = { queue_scope: 'org', _superseded_reason: 'first-winner' };
+        const current = { fingerprint_sha256: FORGED_HASH, metadata: metadataAfterFirstHeal };
+        let patchUrl: URL | undefined;
+        const fetchImpl: typeof fetch = async (request, init) => {
+          const url = new URL(String(request));
+          if (url.pathname.endsWith('/rpc/enqueue_connector_artifact')) {
+            return new Response(JSON.stringify('forged-inbound-artifact'), { status: 200 });
+          }
+          if (url.pathname.endsWith('/connector_artifact') && init?.method === 'GET') {
+            // Both jobs observed this declared row. The first heal committed
+            // before the second worker's independently awaited PATCH below.
+            return new Response(JSON.stringify({ fingerprint_sha256: FORGED_HASH, metadata: declaredMetadata }), { status: 200 });
+          }
+          if (url.pathname.endsWith('/connector_artifact') && init?.method === 'PATCH') {
+            patchUrl = url;
+            const expectedMetadata = JSON.parse(url.searchParams.get('metadata')!.slice(3));
+            const matches = JSON.stringify(current.metadata) === JSON.stringify(expectedMetadata);
+            if (matches) Object.assign(current, JSON.parse(String(init.body)));
+            return new Response(JSON.stringify(matches ? [{ id: 'forged-inbound-artifact' }] : []), { status: 200 });
+          }
+          if (url.pathname.endsWith('/audit_events')) return new Response('[]', { status: 200 });
+          throw new Error(`unexpected test request ${url.pathname}`);
+        };
+        const db = createClient('https://pr2566.invalid', 'fixture-test-key', { global: { fetch: fetchImpl }, auth: { persistSession: false } });
+        const deps = makeDocusignEnvelopeJobDeps({ db: db as unknown as NonNullable<DocusignEnvelopeJobRuntimeDeps['db']> });
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow('docusign_connector_artifact_provenance_conflict_unresolved');
+        expect(patchUrl?.searchParams.get('org_id')).toBe(`eq.${ORG_ID}`);
+        expect(patchUrl?.searchParams.get('fingerprint_sha256')).toBe(`eq.${FORGED_HASH}`);
+        expect(patchUrl?.searchParams.get('metadata')).toBe(`eq.${JSON.stringify(declaredMetadata)}`);
+        expect(patchUrl?.searchParams.get('anchor_id')).toBe('is.null');
+        expect(current.metadata).toEqual(metadataAfterFirstHeal);
+      });
+
       it('a failed provenance audit_events insert does not block a successful heal (awaited-but-non-fatal, mirrors the audit_events convention elsewhere)', async () => {
         const { db, state } = makeDb({
           artifactResult: { data: 'forged-inbound-artifact', error: null },
@@ -750,6 +823,173 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         envelope_id: 'envelope-1',
       });
       expect(result).toEqual({ queuedId: 'artifact-1' });
+    });
+
+    // CTO Decision Record (docusign-bilateral-2026-08, rulings R6/R7).
+    describe('_signers + _docusign_env in artifact metadata (R6/R7)', () => {
+      // R6 (PR #2474 review, HIGH): DocusignCapturedSigner pins recipient_id_guid
+      // / user_id to a GUID shape now — fixtures for those two fields must be
+      // real GUID-shaped strings.
+      const SIGNERS = [
+        {
+          recipient_id_guid: '11111111-1111-4111-8111-111111111111',
+          user_id: '22222222-2222-4222-8222-222222222222',
+          status: 'completed',
+          signed_at: '2026-08-20T10:00:00Z',
+        },
+        { recipient_id_guid: '33333333-3333-4333-8333-333333333333', status: 'completed' },
+      ];
+
+      it('stamps _signers and _docusign_env into artifact metadata when present', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: SIGNERS, docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata._signers).toEqual(SIGNERS);
+        expect(metadata._docusign_env).toBe('demo');
+      });
+
+      it('stamps _docusign_env=prod for a production connection', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, docusignEnv: 'prod' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata._docusign_env).toBe('prod');
+      });
+
+      it('omits _signers entirely when the envelope had no signers (backward compat)', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: undefined, docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_signers');
+      });
+
+      it('omits _signers for an explicitly empty signers array (never persists [])', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: [], docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_signers');
+      });
+
+      it('omits _docusign_env when the caller does not supply one', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_docusign_env');
+      });
+
+      // R6: assert absence explicitly — no name/email anywhere in the metadata
+      // this RPC call sends, even when a caller (defensively) hands one through.
+      // recipient_id_guid stays valid here so the assertion is specifically
+      // about the EXTRA name/email keys being stripped (Zod's default
+      // strip-unknown-keys mode), not about the whole entry being dropped for
+      // an unrelated reason (see the next test for the GUID-shape case).
+      it('never lets a name/email survive into artifact metadata via _signers', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({
+          ...SINK_INPUT,
+          // Extra name/email keys are not part of DocusignCapturedSignerT — the
+          // cast (not `any`) simulates a caller that bypassed the type, e.g. via
+          // `as unknown as DocusignCapturedSignerT[]` upstream, which is exactly
+          // the failure mode reValidateSigners() guards against.
+          signers: [{
+            recipient_id_guid: '44444444-4444-4444-8444-444444444444',
+            status: 'completed',
+            name: 'Should Not Persist',
+            email: 'nope@example.com',
+          } as DocusignCapturedSignerT],
+          docusignEnv: 'demo',
+        });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        // The entry survives (valid GUID) but stripped down to the allowed keys.
+        expect(metadata._signers).toEqual([
+          { recipient_id_guid: '44444444-4444-4444-8444-444444444444', status: 'completed' },
+        ]);
+        const serialized = JSON.stringify(metadata);
+        expect(serialized).not.toContain('Should Not Persist');
+        expect(serialized).not.toContain('nope@example.com');
+      });
+
+      // PR #2474 review, HIGH — the actual DB-write boundary test the finding
+      // asked for: a mis-slotted email/name-shaped value in recipient_id_guid
+      // (or user_id) must be SKIPPED (fail-soft — same treatment as a missing
+      // required field), never appear in the metadata this RPC call persists.
+      it('skips a signer entry whose recipient_id_guid is email/name-shaped (HIGH, PR #2474 review)', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({
+          ...SINK_INPUT,
+          // No cast needed — recipient_id_guid's static type is plain `string`;
+          // the GUID shape is a Zod runtime refinement TypeScript cannot see.
+          signers: [
+            { recipient_id_guid: 'jane.doe@example.com', status: 'completed' },
+            { recipient_id_guid: 'Jane Doe', status: 'completed' },
+            { recipient_id_guid: '55555555-5555-4555-8555-555555555555', status: 'completed' },
+          ],
+          docusignEnv: 'demo',
+        });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata._signers).toEqual([
+          { recipient_id_guid: '55555555-5555-4555-8555-555555555555', status: 'completed' },
+        ]);
+        const serialized = JSON.stringify(metadata);
+        expect(serialized).not.toContain('jane.doe@example.com');
+        expect(serialized).not.toContain('Jane Doe');
+      });
+
+      it('drops a signer entry whose user_id is email-shaped, even with a valid recipient_id_guid', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({
+          ...SINK_INPUT,
+          // No cast needed — user_id's static type is plain `string | undefined`;
+          // the GUID shape is a Zod runtime refinement TypeScript cannot see.
+          signers: [
+            {
+              recipient_id_guid: '66666666-6666-4666-8666-666666666666',
+              user_id: 'mistakenly-an-email@example.com',
+              status: 'completed',
+            },
+          ],
+          docusignEnv: 'demo',
+        });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        // user_id fails the GUID regex, so the whole entry fails safeParse and
+        // is dropped — never persisted with a silently-omitted user_id either.
+        expect(metadata).not.toHaveProperty('_signers');
+        expect(JSON.stringify(metadata)).not.toContain('mistakenly-an-email@example.com');
+      });
+
+      it('does not put _signers into the ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=off skip breadcrumb', async () => {
+        process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'false';
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        const result = await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: SIGNERS, docusignEnv: 'demo' });
+
+        expect(rpcCalls).toHaveLength(0);
+        expect(result.queuedId).toContain('disabled');
+      });
     });
 
     // DS-04: member routing must be self-consistent — a 'member' scope with no

@@ -112,8 +112,16 @@ vi.mock('../webhooks/delivery.js', () => ({
 // (/check-credential-expiry, gated on ENABLE_EXPIRY_ALERTS), so a module-level
 // mock here cannot perturb any other route's behaviour.
 const mockGetFlag = vi.fn().mockReturnValue(true);
+// DI-736: the route resolves ENABLE_EXPIRY_ALERTS through `getFlagLive`
+// (TTL-refreshed switchboard read). `getFlag` is the boot snapshot and is
+// mocked separately so a regression back to it fails a test rather than
+// silently reading stale state.
+const mockGetFlagLive = vi.fn().mockResolvedValue(true);
 vi.mock('../middleware/flagRegistry.js', () => ({
-  flagRegistry: { getFlag: (...args: unknown[]) => mockGetFlag(...args) },
+  flagRegistry: {
+    getFlag: (...args: unknown[]) => mockGetFlag(...args),
+    getFlagLive: (...args: unknown[]) => mockGetFlagLive(...args),
+  },
 }));
 
 const mockProcessMonthlyCredits = vi.fn().mockResolvedValue(10);
@@ -490,9 +498,9 @@ vi.mock('../jobs/docusign-listener-drift.js', () => ({
 }));
 
 // PROOF-03 (SCRUM-2336): confirmation-proof backfill HTTP endpoint. Cloud
-// Scheduler hits POST /jobs/populate-confirmation-proofs because in-process
-// node-cron is dormant under Cloud Run CPU throttling (the soak proved the
-// dev/test backup never fires in prod).
+// Scheduler hits POST /jobs/populate-confirmation-proofs because it is the
+// trigger with retries and an attempt deadline; the in-process registration is
+// the dev/test backup (SCRUM-3384).
 const mockRunConfirmationProofBackfill = vi.fn().mockResolvedValue({
   skipped: false,
   scanned: 12,
@@ -1077,8 +1085,8 @@ describe('cron routes', () => {
 
   // PROOF-03 (SCRUM-2336): the Cloud Scheduler trigger for the confirmation-proof
   // backfill. Mirrors /check-confirmations: same cronAuth, same JSON-result /
-  // 500-on-error shape. This endpoint (not in-process node-cron) is what actually
-  // fires the backfill in prod, where CPU throttling leaves node-cron dormant.
+  // 500-on-error shape. This endpoint is the prod trigger for the backfill; the
+  // in-process registration is a backup, not a substitute (SCRUM-3384).
   describe('POST /populate-confirmation-proofs', () => {
     it('returns the backfill result as JSON on success', async () => {
       const app = createApp();
@@ -2495,6 +2503,7 @@ describe('cron routes', () => {
 
     beforeEach(() => {
       mockGetFlag.mockReturnValue(true);
+      mockGetFlagLive.mockResolvedValue(true);
       mockDispatchWebhookEvent.mockResolvedValue(undefined);
     });
 
@@ -2591,6 +2600,20 @@ describe('cron routes', () => {
 
     it('skips cleanly when ENABLE_EXPIRY_ALERTS is off', async () => {
       mockGetFlag.mockReturnValue(false);
+      mockGetFlagLive.mockResolvedValue(false);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ skipped: true });
+      expect(db.from).not.toHaveBeenCalled();
+    });
+
+    // DI-736 / SCRUM-3475 — flipping the switchboard row must take effect
+    // without a worker restart, so the gate reads the live value, not the
+    // boot snapshot this process started with.
+    it('honours a switchboard flip that the boot snapshot has not seen', async () => {
+      mockGetFlag.mockReturnValue(true);
+      mockGetFlagLive.mockResolvedValue(false);
       const res = await request(createApp()).post('/cron/check-credential-expiry');
 
       expect(res.status).toBe(200);

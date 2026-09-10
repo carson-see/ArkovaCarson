@@ -17,7 +17,7 @@ Every path in `services/worker/` that can return HTTP 429, with what it limits, 
 |---|---|---|---|---|
 | `anonRateLimiter` | `services/worker/src/api/v1/router.ts:156` | 100 req/min per IP | Router-wide dispatch `router.ts:167-173` (requests WITHOUT an API key) | **YES — the harness-suicide bucket.** A single-IP driver at 5k/hr (~83/min avg) bursts past 100/min/IP and 429s ITSELF before `aiRateLimiter` is ever consulted, regardless of JWT sharding. |
 | `keyedRateLimiter` | `router.ts:161` | 1,000 req/min per API key (`req.apiKey?.keyId ?? req.ip`) | Same dispatch, requests WITH an API key | Not on `/ai/*` (JWT-only per `requireAuth` `router.ts:182-186`, which rejects `Bearer ak_`), but live on every API-key surface the soak's tier-mix lane exercises. |
-| `aiRateLimiter` | `router.ts:263` | 30 req/min per user, key `ai:${authUserId ?? ip}` (`router.ts:266`) | All `/ai/*` mounts `router.ts:276-323`; also `/nessie/query` `router.ts:438`, key-inventory `router.ts:449`, regulatory alerts `router.ts:461`, compliance score/gap/cross-ref/trends `router.ts:452-468` | **YES** — the intended per-user AI limiter; requires ≥4 JWT shards at 5k/hr. |
+| `aiRateLimiter` | `router.ts:327` | 30 req/min per user, bucket key `ai:${authUserId ?? ip}` — the `ai:` prefix is now the limiter's `scope` (`router.ts:330`), not a hand-rolled keyGenerator prefix, so the resulting key is unchanged (SCRUM-3418) | All `/ai/*` mounts `router.ts:276-323`; also `/nessie/query` `router.ts:438`, key-inventory `router.ts:449`, regulatory alerts `router.ts:461`, compliance score/gap/cross-ref/trends `router.ts:452-468` | **YES** — the intended per-user AI limiter; requires ≥4 JWT shards at 5k/hr. |
 | `batchRateLimiter` | `router.ts:206` | 10 req/min | `/verify/batch` `router.ts:222`, `/webhooks` `router.ts:371`, `/audit/batch-verify` `router.ts:457` | No (not an `/ai/*` mount). |
 | `creditsRateLimiter` | `router.ts:255` | 10 req/min per user, key `credits:` | `/credits` `router.ts:260` | No. |
 
@@ -46,12 +46,49 @@ Every path in `services/worker/` that can return HTTP 429, with what it limits, 
 | Retry wrapper | `gemini.ts:1195-1237`, `MAX_RETRIES = 3` near `:54` | `withRetry()` generates one server-side UUID per provider invocation and supplies that same ID plus attempt identity (`1..3`) to every upstream HTTP-error logging path. `cloneSafeRetryError()` preserves only allowlisted status/attribution fields. Auth/validation statuses 400/401/403/422 do not retry; 429 and transient availability failures remain eligible for retry/fallback. |
 | Fallback classification | `services/worker/src/ai/fallback-chain.ts:51-98` | Validated status `429` classifies as `rate_limit`; 502/503/504 classify as `provider_unavailable`. Fallback metrics retain only the bounded classification, never a raw provider error string. |
 
+## 2a. Bucket scoping (SCRUM-3418 / SCRUM-2603) — read before joining logs
+
+Buckets are keyed `${scope}:${keyGenerator(req)}`. Until SCRUM-3418, `scope` defaulted to empty and
+every limiter that kept the default `req.ip` keyGenerator — the 60/min `apiIpShadowGuard`, the 10/min
+`checkout`, the 5/min `auth`, the 100/min `anonRateLimiter` — shared ONE Map entry per IP. Two
+consequences that invalidate any pre-fix attribution join: the lowest cap in a chain bound every
+surface sharing its IP (the checkout limiter logged `count: 60` against `maxRequests: 10`), and a
+request crossing N such limiters advanced the shared counter N times, so an effective budget was
+`min(caps) / N` rather than any documented tier.
+
+The measured case: anonymous `GET /api/v1/verify/{publicId}` crossed the 60/min `apiIpShadowGuard`
+and the 100/min `anonRateLimiter`, both of which wrote the same bare-per-IP entry, so each request
+advanced it by 2 and the 60-cap guard first-429'd at request ~#31 — an effective ~30/min against
+§1.10's 100/min. (The guard's own two mounts are charged once per request since RC #2269 —
+`COUNTED_LIMITERS` — so they are not part of that arithmetic.) `/api/v1/verify` now
+skips the IP guard and is capped by `publicVerifyAnonLimiter` (`v1-verify-anon`, 100/min) mounted in
+`index.ts` ahead of `verificationApiGate()`, so the contract holds whether or not the v1 surface is
+lit.
+
+Every limiter now owns a distinct bucket, and every production limiter names its scope explicitly —
+the auto-assigned per-instance id that `rateLimit()` falls back to is a collision floor for future
+code, not something anything in `services/worker/` relies on (it is derived from module construction
+order, so it would not be a stable log key). A `X-RateLimit-Limit` value is therefore now a truthful
+statement about one limiter rather than a shared counter's nearest ceiling, and the log key names
+which limiter said it.
+
+The one deliberate exception is `batch`: `router.ts`'s `batchRateLimiter` and `attestations.ts`'s
+`attestationBatchRateLimiter` pass the SAME explicit scope so the §1.10 batch tier is one 10/min
+budget across both surfaces. Post-SCRUM-3418 a shared explicit scope is the only way two limiters
+can share a bucket, which is what makes that sharing reviewable instead of accidental.
+
 ## 2. Why the response body cannot attribute (client-blind)
 
 Every generic `rateLimit()` 429 returns the **identical body** `{ error: 'Too many requests', retry_after }` (`services/worker/src/utils/rateLimit.ts:139-142`). The client-visible and server-visible discriminators are:
 
-- **`X-RateLimit-Limit` header value** (`rateLimit.ts:135`; also set on non-429 responses at `:153` per §1.10): `100` → anon-IP, `1000` → keyed, `30` → aiRateLimiter, `10` → batch/credits (disambiguate by path).
-- **Server log key prefix** (`rateLimit.ts:129-132` logs `{ key, count, maxRequests }` at warn): `ai:` → aiRateLimiter, `credits:` → credits, raw keyId → keyed, raw IP → anon.
+- **`X-RateLimit-Limit` header value** (also set on non-429 responses per §1.10): `1000` → keyed, `30` → aiRateLimiter, `10` → batch/credits (disambiguate by path), `60` → the `/api/*` IP backstop. `100` is now AMBIGUOUS between `v1-anon` and `v1-verify-anon` (both are the §1.10 anonymous tier); use the log key to tell them apart.
+- **Server log key prefix** (`rateLimit.ts` logs `{ key, count, maxRequests }` at warn): the key is
+  `<bucket-scope>:<keyGenerator output>`, so the scope IS the attribution — `v1-anon:` → anon-IP,
+  `v1-keyed:` → keyed, `v1-verify-anon:` → public verify, `api-ip-shadow-guard:` → the broad
+  `/api/*` IP backstop, `batch:` → batch (shared, by design, between `/verify/batch` and the
+  attestation batch routes), `ai:` → the 30/min AI bucket, `credits:` → credits, `cron-jobs:` →
+  the cron trigger bucket. Before SCRUM-3418 every unscoped limiter logged a bare IP and the
+  prefix could not distinguish them — they were literally one bucket (see §2a).
 - Quota/bespoke emitters have distinct bodies (`usageTracking.ts:171` includes `limit: 10000`; `account-export.ts:86` prose; `rules-crud.ts:394` `code: 'rate_limited'`).
 
 Attribution is therefore a **header + log join**, per-request: harness records `(timestamp, request-id/label, status, X-RateLimit-Limit, path)`; worker logs supply the key prefix; upstream events come from the `gemini.ts` structured logs.
@@ -120,8 +157,8 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 7 | services/worker/src/api/v1/router.ts | 222 | router.use('/verify/batch', requireScope('verify:batch'), batchRateLimiter, batchRouter); |
 | 8 | services/worker/src/api/v1/router.ts | 255 | const creditsRateLimiter = rateLimit({ |
 | 9 | services/worker/src/api/v1/router.ts | 260 | router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter); |
-| 10 | services/worker/src/api/v1/router.ts | 263 | const aiRateLimiter = rateLimit({ |
-| 11 | services/worker/src/api/v1/router.ts | 266 | keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`, |
+| 10 | services/worker/src/api/v1/router.ts | 327 | const aiRateLimiter = rateLimit({ |
+| 11 | services/worker/src/api/v1/router.ts | 330 | scope: 'ai', |
 | 12 | services/worker/src/api/v1/router.ts | 371 | router.use('/webhooks', batchRateLimiter, webhooksRouter); |
 | 13 | services/worker/src/api/v1/router.ts | 552 | nessieCapabilityGate(), |
 | 14 | services/worker/src/middleware/usageTracking.ts | 18 | const FREE_TIER_MONTHLY_QUOTA = 10_000; |

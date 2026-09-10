@@ -29,7 +29,7 @@ describe('SCRUM-1284 — matview anon/authenticated revoke (migration 0278)', ()
   });
 
   afterAll(async () => {
-    await authClient.auth.signOut();
+    await authClient.auth.signOut({ scope: 'local' });
   });
 
   for (const matview of ['mv_anchor_status_counts', 'mv_public_records_source_counts']) {

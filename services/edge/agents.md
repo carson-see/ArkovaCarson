@@ -460,3 +460,20 @@ const resp = await fetch(
 ```typescript
 return { content: [{ type: 'text', text: safeErrorText(error, 'tool_name') }] };
 ```
+
+## SCRUM-4035 — narrow ES256 confirmation dependency
+
+The OAuth confirmation candidate imports the reviewed ES256/HS256 verifier and
+bounded JWKS cache from PR2589 commit `69e24d83cfbc7a8a68f07c3c286cc870ea04de9e`,
+composed with its signed pending-role rejection after either signature path.
+Only the missing-secret/`validateBearer` auth hunk is taken from `mcp-server.ts`;
+current tool/SDK names, discovery metadata and unrelated contract files remain
+under PR2589 ownership. This is not a full PR2589 integration.
+
+`email-confirmation.test.ts` exercises the actual `validateBearer` boundary with
+real WebCrypto signatures: pending HS256/ES256 cannot reach getUser, ordinary
+ES256 works without the shared secret, returned subject mismatch denies, and
+the legacy ordinary control remains. Retain all imported verifier tests for
+shared JWKS fetches, cooldown on failures, timeout, cache and key rotation. The
+separate `supabase-jwt.ts` helper has no runtime importer; preserve its existing
+pending guard without inventing an unused ES256 implementation.

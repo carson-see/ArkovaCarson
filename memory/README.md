@@ -1,7 +1,12 @@
-# Arkova Memory Files — `feedback_*.md` rule index
+# Arkova Memory Files — rule index
 
 > Rule index only. This directory records durable engineering preferences and
 > enforcement mechanisms; it is not project status, backlog, or release truth.
+>
+> Most files are `feedback_*.md` — a preference or policy, with an enforcement
+> mechanism. A `project_*.md` file records a durable **failure class** that
+> existing gates exist to prevent: the mechanism, the blast radius, and which
+> gates hold it shut. Neither kind carries status, dates, or backlog.
 
 These files capture engineering preferences and policy decisions that
 should outlast individual sessions. Each rule is enforced one of three ways:
@@ -29,10 +34,18 @@ should outlast individual sessions. Each rule is enforced one of three ways:
 ## Current rules
 
 Every row below points at a file that exists in this directory — and
-`scripts/ci/check-doc-pointers.ts` now fails CI if CLAUDE.md, AGENTS.md, a
-skill, or a hook cites a `memory/` path that does not resolve. Before that
-check existed, 17 cited rule files were missing, including one named inside a
-hook's own deny message.
+`scripts/ci/check-doc-pointers.ts` fails CI if a `memory/` path cited by the
+required-reading set does not resolve. Before that check existed, 17 cited rule
+files were missing, including one named inside a hook's own deny message.
+
+The scan set was widened on 2026-08-31 to the **nested `agents.md`** files and
+the **comment lines** of `.github/workflows/*.yml`. Both cite this corpus and
+neither was covered, so `memory/project_deploy_typecheck_blackout.md` sat dead
+across six sites — including two CI gate sources — until someone found it by
+hand. That widening surfaced five more dead `memory/` pointers, each of which
+named a rule that lived only in one session's private memory. **A rule that
+exists only in a session's local memory does not exist** (CLAUDE.md §0.1): if
+you cite `memory/x.md`, the file has to be in this directory.
 
 | Memory file | Enforcement | Status |
 |---|---|---|
@@ -43,6 +56,7 @@ hook's own deny message.
 | `feedback_bounded_body_reads.md` | CI lint (`bounded-body-reads.ts`) — raw `.json()`/`.text()` on a fetch response under `services/worker/src/**`, scoped to lines the PR **adds** (145 pre-existing sites; see the rule's header for why whole-file would be wrong here). Override `unbounded-body-read-reviewed`. The companion `maxRunMs >= ttlMs` half is test-enforced in `jobs/__tests__/run-lease.deadline.test.ts`. | ✅ live (R0-7 / F-D0-5) |
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
 | `feedback_no_worktree_isolation.md` | CI lint (`no-worktree-isolation.ts`) | ✅ live (R0-7) |
+| `project_hollow_200_statement_timeout_swallow.md` | Documentation only (a detector for the `if (error || !data)` shape is plausible but not yet written) | 📖 docs only |
 | `feedback_surrogate_safe_truncation.md` | CI lint (`surrogate-safe-truncate.ts`) — ratchet vs `surrogate-truncate-baseline.json`; merge-time gate is its colocated `.test.ts` in `Tests` | ✅ live (R0-7) |
 | `feedback_local_matches_prod.md` | CI lint (`feedback_local_matches_prod.ts`) — snapshot diff vs `scripts/ci/snapshots/prod-tables.json`; fails closed. Live-MCP comparison still deferred. | ✅ live (SCRUM-1306 / R0-7-FU1) |
 | `feedback_dont_recommend_do.md` | CI lint **advisory** (`feedback_dont_recommend_do.ts`) — always exits 0, never blocks | ✅ live (SCRUM-1306) |
@@ -59,6 +73,13 @@ hook's own deny message.
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
 | `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
 | `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |
+| `feedback_no_prs_for_t0.md` | Documentation only (tier is computed by `requiredTierFor()`; no detector can tell a T0 that *should* have skipped the PR from one that legitimately opened it) | 📖 docs only |
+
+## Failure-class notes
+
+| Memory file | Enforcement | Status |
+|---|---|---|
+| `project_deploy_typecheck_blackout.md` | CI lint ×3 — `check-deploy-lint-parity.ts` (R0-4 / SCRUM-1250), `check-deploy-build-parity.ts`, `check-deploy-typecheck-parity.ts` (SCRUM-1811). All three are pure file readers in the required `typecheck-lint` job. Override `ci-config-change` at the workflow level. | ✅ live |
 
 ## Override pattern
 

@@ -1,5 +1,24 @@
 # agents.md — services/worker/src/api/
 
+## 2026-08-23 — `queue-resolution.ts`: `GET /api/queue/pending` had NO role gate (SCRUM-3569, SEC)
+
+Any authenticated member of an org could list every PENDING_RESOLUTION anchor in that org — `public_id`, **`filename`** and **`fingerprint`** for each. Not cross-tenant (the query was org-scoped), but a rank-and-file member enumerating what their coworkers uploaded is exactly the disclosure this surface was documented not to allow.
+
+**How the gate went missing.** It was never deleted on purpose — it evaporated under a bug fix. The route used to call `list_pending_resolution_anchors`, an RPC that enforced ORG_ADMIN internally. SCRUM-2213 retired that RPC (it read `auth.uid()`, always NULL under the worker's service_role client → "Profile not found" → 500 on every request) and replaced it with a direct `anchors` query. The direct query carried the org scope across and nothing else, so the authorization moved from "inside the RPC" to nowhere. The route comment in `routes/admin.ts` kept asserting the RPC guard for three months after the RPC stopped existing — the stale comment is why several passes over this file did not notice.
+
+**Nothing above the handler was covering for it.** `adminRouter` has no authorization middleware at all: its `.use()` chain is a path-scoping shim (`isAdminRouterPath`), `corsMiddleware`, `rateLimiters.checkout`. The route itself only calls `extractAuthUserId` and 401s when absent. So authenticated == authorized for this path.
+
+**The published contract always disagreed with the code.** `api/v1/openapi-ciba.ts` has tagged this path `['Queue', 'OrgAdmin']` with `security: [{ OrgAdminBearer: [] }]` since it was written. The fix makes the implementation match the spec rather than the other way round; the spec now also documents the `403` explicitly.
+
+- **Fix: `isCallerOrgAdminResult` from `_org-auth.ts`, not a new predicate.** Same resolver `handleRunOrgAnchorQueue` uses two functions down, same one `middleware/requireOrgAdmin.ts` and `v1/orgVerification.ts` use — so the precedence (org_members owner/admin → profile `ORG_ADMIN` **of this org** → `is_platform_admin`) stays in one place. It is also the exact signal `src/pages/AnchorQueuePage.tsx`'s `canRunAnchoringJob()` already computes client-side, so server and client now agree on who may act on the queue.
+- **The handler no longer hand-rolls its `profiles` select.** It calls a new `getCallerProfileResult` in `_org-auth.ts` (the `*Result` sibling of the existing `getCallerProfile`, which drops the error flag this handler needs to tell a 500 from an empty queue) and hands the row straight back as `preloadedProfile`. The gate therefore costs at most one extra `org_members` read, never a second `profiles` round-trip — pinned by a test that counts `db.from('profiles')` calls. It is the SHARED fetch rather than a local `select('org_id, role, is_platform_admin')` because of drift: the resolver decides on `role` and `is_platform_admin`, so a handler that later narrowed its own select would hand back a `preloadedProfile` missing the deciding columns and silently 403 a real ORG_ADMIN — and no handler-level test could catch it, because the query doubles ignore the column list entirely. The column list now has one owner, with a ratchet in `_org-auth.test.ts` asserting it.
+- **Error split follows the `*Result` contract:** an operational failure in the `org_members`/`profiles` lookup is a **500**, never a masked 403. A transient DB fault must not read as "not authorized" (and, inverted, must not fall open either — the resolver's `value` is fail-closed regardless).
+- **No-org callers still get `200 {items:[],count:0}`, deliberately not 403.** There is no org, so there is nothing to disclose, and the empty state is the honest rendering of "you are not in an organization yet". Pinned by an existing test.
+- **The 403 body is UI copy (§1.3).** `AnchorQueuePage.tsx`'s `fetchPending()` throws `body.error.message` and renders it via `setError` with no server→client copy layer, so the message is user-facing despite being assembled in worker code. A regex test pins the banned-terminology list, same ratchet as the BUG-2026-08-01-F9 409 message below.
+- **Not fixed here, on purpose:** the `anchors_select` RLS policy and the frontend member-scoped visibility surfaces belong to SCRUM-3010, which explicitly scopes itself to `OrgRegistryTable.tsx` / `useExportAnchors.ts` / the policy. This change is the worker route only. A non-admin who lands on `/organization/queue` now sees the 403 message in the page's existing error Alert rather than a list; adding a client-side route guard is SCRUM-3010's call, not this PR's.
+
+Tests: `queue-resolution-pending.test.ts` `describe('ORG_ADMIN authorization (SCRUM-3569)')` — TDD red→green, 4 of the 9 failing before the fix (403 for a member, 403 with no `org_members` row, 500 on admin-lookup error, and the 403 body's existence/copy). It also asserts the denied path never calls `db.from('anchors')` at all.
+
 ## 2026-08-12 — `partner-provisioning-router.ts`: the HTTP surface is STRICTER than the state machine (SCRUM-2990)
 
 The state machine (`partner-provisioning.ts`, PR #1606) had no HTTP surface for three weeks: `/api/partner-provisioning` was a gated, **routeless** prefix. This adds the router. Two things about it are non-obvious and must not be "simplified" away:
@@ -336,6 +355,9 @@ Two things in this folder are worth not re-litigating:
 
 `proof-packet.ts` `anchor_receipt` now carries `fingerprint_rederivability: 'fetch_time_snapshot'` + the §1.5 note (from `constants/connectorFingerprint.ts`) whenever an anchor is present — every packet anchor is connector-materialized BY CONSTRUCTION (resolved via `metadata->>external_file_id`), and the auditor challenge this packet answers is exactly the flow where someone re-downloads from the source and compares fingerprints. The `not_anchored` sentinel carries neither field (no fingerprint to describe). Additive keys on an org-scoped export; no internal UUIDs added.
 
+## 2026-08-30 — CORRECTION: the fetch-time caveat is NOT unconditional (declared-hash fix)
+
+The entry above was WRONG that "every packet anchor is connector-materialized BY CONSTRUCTION." A packet anchor is resolved via `metadata->>external_file_id` — a key the **declared-hash rules dispatcher** (`jobs/rule-action-dispatcher.ts`) sets — so a packet anchor is frequently a hash DocuSign **declared**, NOT one Arkova fetched. The unconditional `...connectorFingerprintRederivabilityFields()` therefore asserted a false "Measured: Arkova computed…" caveat to auditors on declared anchors (§1.5/R-7). Fixed: `proof-packet.ts` now loads `metadata` and emits via `...connectorFingerprintRederivabilityFieldsFor(anchor.metadata)`, which gates on POSITIVE server-fetch evidence (a non-empty `connector_artifact_id`, stamped only by `connector-artifact-drain.ts`). Declared anchor → omit both fields (silence). Same gate now used by `verify.ts` and `verify-proof.ts`. NOTE the gate proves nothing against a self-asserted metadata blob — no DB trigger guards either key; see the honesty boundary in `constants/agents.md` (2026-08-30). SCRUM-3299 / SCRUM-3825.
 ## 2026-08-30 SCRUM-3818 — DECLARED_UNVERIFIED disclosure propagated to `verify-proof.ts` + `proof-packet.ts` (go-live blocker for `ENABLE_DOCUSIGN_INBOUND`)
 
 A security review found that `verify-proof.ts`'s `buildProofResponse` and `proof-packet.ts`'s `anchor_receipt` both called `connectorFingerprintRederivabilityFields()` with NO argument, which always defaults to the stronger `FETCH_TIME_SNAPSHOT` class (`services/worker/src/constants/connectorFingerprint.ts`, added on branch `feat/docusign-inbound-recipient-connect` / PR #2476, not yet merged to `main` at the time of this fix — this fix branch is stacked on top of it). So an INBOUND declared-hash anchor (`fingerprint_source: 'issuer_record_attestation'`, set only by `jobs/connector-artifact-drain.ts`'s inbound branch) rendered the false "Arkova computed its fingerprint from the document bytes" claim on `GET /proof` and in audit proof packets, even though Arkova never fetched or hashed that document — a §1.5 / R-7 claims-gate violation.
@@ -344,3 +366,19 @@ A security review found that `verify-proof.ts`'s `buildProofResponse` and `proof
 `verify-proof.ts` via the new `resolveFingerprintRederivabilityClass(connectorSource, fingerprintSource)` helper (mirrors `verify.ts`'s existing correct pattern exactly; `ProofAnchorData` gained an optional `fingerprint_source` field, and the production `anchors` select now includes it), `proof-packet.ts` via a direct `fingerprint_source === 'issuer_record_attestation'` ternary (it already unconditionally emits the pair by construction, so no new gate was added — only the class picked changed; `AnchorRow` gained the same optional field + select column). `proof-packet-verification-view.ts`'s `ProofPacketAnchorReceipt` / `VerificationView` types gained the additive-nullable `fingerprint_rederivability` / `_note` pass-through fields — they were silently dropped by that mapping layer before this fix.
 
 **Regression proof (both surfaces):** a fixture with `fingerprint_source` absent or `'document_bytes'` still renders the unchanged `FETCH_TIME_SNAPSHOT` class byte-identically — see `verify-connector-fingerprint.test.ts` and `proof-packet.test.ts`.
+
+## 2026-09-05 — PR 2499 integration with inbound artifacts
+
+Inbound issuer attestations have artifact IDs too. The combined gate checks the
+explicit fingerprint_source first and emits declared_unverified with its note;
+only other records with a recognized connector marker and artifact stamp may emit
+fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
+and authenticated packet exports load the typed source; the signable proof bundle
+is unchanged. Regression reproduced before the fix; local validation is not soak evidence.
+
+## 2026-09-05 — PR 2499 real export lookup
+
+Live authenticated export exposed legacy DB column names in loadAnchor. Select
+chain_tx_id and chain_block_height using aliases for the existing public receipt
+keys; keep that response contract unchanged. A failed anchor query returns 500,
+never the not_anchored sentinel reserved for a successful empty lookup.

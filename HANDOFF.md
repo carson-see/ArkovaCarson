@@ -14,7 +14,462 @@
 
 ## Now
 
-### Soaks — DocuSign bilateral T3 (RUNNING, started 2026-08-30)
+### 2026-09-09T04:00Z — `tmp_cleaner` swept `/private/tmp` and killed SIX soak windows. Read this before touching any oldest-release window.
+
+- **Cause, established from the binary.** `/usr/libexec/tmp_cleaner` (macOS 26; this host has NO `/etc/periodic`) runs at midnight local = **04:00:00Z daily** and runs `find -dx . -fstype local -type f -atime +3 -mtime +3 -ctime +3 -delete` plus an empty-dir pass. A file dies only when atime AND mtime AND ctime are ALL ≥4 days. It deletes FILES, never directories — which is why the window dirs still exist but their `.git` files, drivers and pinned modules are gone. **Not a `git worktree prune`**: inside one worktree's admin dir the Sep-5 files (`HEAD`, `gitdir`) were deleted while the Sep-7 files (`index`, `FETCH_HEAD`) survived, and no git operation is age-selective.
+- **Dead (6 windows, 13 PRs):** DocuSign chain #2472/#2476/#2485/#2486/#2496, worker #2436/#2437/#2438, reorg #2495, #2314, migrations #2440/#2442, and #2571. All died 04:00:10–04:02:30Z on `git rev-parse` / missing-module failures.
+- **Alive and clean (6 windows):** Batch-G, Batch-H, Batch-I, sub-org #2572, #2693, verify-4517 (#2694/#2695). **Batch-I was PROVEN safe, not assumed** — 0 of its 69,595 files are eligible at the 09-10 or 09-11 sweeps, and it closes 09-11T00:27Z. It could not be repointed without a restart (cwd inode + in-memory path + cross-filesystem), so it was deliberately left running.
+- **EVACUATION DONE.** 178,693 files were eligible to die at the next sweep; 21 GB copied read-only to `/Volumes/Extreme/offload/tmp-evacuation-20260909T0430Z/` (see its `MANIFEST.md`). **Standing rule, superseding the old one: NO soak-bearing artifact may live under `/private/tmp` at all.** The previous lesson ("never clean `$TMPDIR` yourself") was too narrow — the OS sweeps that path on its own schedule regardless of what we do. `memory/project_soak_drivers_killed_by_tmp_sweep_and_cron_race.md` item 8 now carries the exact predicate and the per-window verification command.
+- **Unrecoverable, and what was ruled about each** (full text: CTO scratchpad `RULING-tmp-sweep-recovery-20260909.md`):
+  - `rig_api.py` (pinned `762fec4f…`, imported by four drivers) — no source, no `.pyc`, only no-op stubs. **RECONSTRUCTED** at `/Volumes/Extreme/offload/oldest-release-20260909-reconstruction/rig_api.py`, new sha256 `fb70d14f…`, 45/45 offline harness. Recorded as a reconstruction, NOT a restoration; the old pin is named unrecoverable.
+  - `window_catalog_guard.py` + `compare_active_rigs.py` (the cross-window contamination assertion, imported at line 1 of every driver) — destroyed, no `.pyc`. **Ruling: build a NEW guard from first principles and admit it as a new observer generation.** It must not claim the old pin or assert parity with the original. Where a check cannot be specified with confidence, leave it out and say so — a guard that asserts less honestly is evidence; one that asserts more than it can justify is not.
+  - `soak2314.py` — only a Sep-4 21:00 `.pyc` survives, predating two restarts and the 09-07/09-08 hardening rulings. **Ruling: rebuild; do NOT load that bytecode**, because it would silently revert hardening adopted for cause and be undetectable from outside.
+  - DocuSign's pinned `dist/` is EMPTY (hashes to the empty-string SHA) and `.dev.vars` holding the frozen MCP signing key is gone. **Ruling: rebuild the fixture from source with a NEW key and admit it as a new artifact.** Do not keep the zombie `wrangler`/`workerd` processes alive to preserve the old key — evidence that exists only inside an unreproducible process is not evidence.
+- **Order of work (Ruling 7):** new isolation guard first (nothing relaunches without it), then worker and reorg, then #2314, then DocuSign. Relaunch nothing until its guard, driver and preflight are all genuinely in place. Four windows relaunched honestly next week beat six relaunched on invented evidence.
+- **Schedule impact:** those 13 PRs no longer land midweek. Everything else is unaffected — **prod is current and healthy on main, all migrations applied, and the eight PRs merged 09-08 are live.**
+
+### 2026-09-08 → 09 CTO session — 8 PRs merged, prod caught up, deploy blackout fixed, every remaining PR soaking
+
+- **MERGED (8):** #2655, #2667, #2673, #2674, #2679, #2691, #2692, #2697. Queue empty at 02:00Z.
+- **PROD IS CURRENT AND HEALTHY.** Worker on `b3020bd55` (rev `arkova-worker-01339-rok`), database/anchoring/kms all ok, mainnet. Verify API, edge and app all 200. All 121 numbered migrations on main are in the prod ledger; 0415, 0427 and 0436 are applied AHEAD of their PRs (exempted). 3,788,840 documents secured, 136,109 this week.
+- **DEPLOY BLACKOUT — found and fixed.** `deploy-worker.yml` keys its zk-artifact cache on `services/worker/package-lock.json`, so #2673's dependency bump rotated the key, the rebuild reached for `powersOfTau28_hez_final_14.ptau`, and both public hosts have 403'd since 09-02 (SCRUM-3955). Prod sat 36 commits behind with no way to ship. Unblocked same-day by letting a ci.yml run on main warm the cache under the exact key (ci.yml already had the `restore-keys` fallback; deploy-worker.yml did not). Durably fixed by #2692. **`DEPLOY_WORKER_PAUSED` is now `false`** — it had been true since 07-28 and every push-triggered deploy since was silently skipping the Cloud Run step.
+- **Gate hardened twice (direct to main, both red-first verified).** `8bda8d30c`: the deploy-worker carve-out now exempts an additive `restore-keys:` block INSIDE an `actions/cache` step (removal, `key:`/`path:` edits, the same lines outside a cache step, or any runtime line riding along all still return T2), and `gitFileDiffProvider` moved to `--unified=20` because at 3 lines of context a hunk can begin mid-step and the state machine cannot see the step it is in. Same commit closed an artifact-field hole: `validateArtifactEvidenceField()` only rejected a WHOLE-value N/A, so `Worker revision: N/A — …` passed the T2 guard.
+- **ALL 27 open PRs are soaking. Seal times (UTC):** #2572 Wed 12:56 · #2519/#2529 Wed 22:56 · #2436/#2437/#2438 Wed 23:06 · #2495 Wed 23:56 · #2440/#2442 Thu 03:07 · #2314 Thu 13:03 · #2571 Thu 13:42 · #2694/#2695 Thu 19:26 · #2693 Thu 19:50 · #2565/#2566/#2570/#2589 Fri 00:27 · DocuSign chain #2472/#2476/#2485/#2486/#2496 **Fri 02:40**. #2499/#2524/#2527 have already sealed and wait only on the chain's migrations reaching prod. #2668 belongs to another session.
+- **Six windows died today and NOT ONE was a defect in the code under test.** Every one was an observer reaching outside itself without a retry or refresh budget: an `api.supabase.com` control-plane outage at 12:40Z took three windows at once on three different projects; a Cloudflare connect timeout took Batch-I; an expired `gcloud` identity token took Batch-G; and the DocuSign window's own edge fixture API key aged out mid-window, seeded 09-05 with a 4-day expiry and dying **1.141 s** before the call that failed. In that last case the product was correct and the observer's badge expired.
+- **Standing CTO ruling — transport, not assertions.** Calls to `api.supabase.com` get a bounded backoff of 3 attempts over ~90 s (2/30/60 s) gated on that API itself, never on a worker `/health`. A 401/403 re-acquires the credential and retries ONCE; a 401 that persists on a fresh credential is a real product verdict and must still fail. Never retry an application JSON body at any status. **Never blindly re-issue a mutating statement** — a Management-API timeout can still COMMIT, so re-issue only when idempotent by construction or when a `verify` callable can resolve whether it landed. Apply at each window's NEXT restart only; helpers are hash-frozen per cycle.
+- **Ruling — Batch-G.** Its first disclosed environmental failure did not void the window; a second one did, and it restarted. That condition was written before it was tested and was honoured when it became expensive.
+- **Base drift now affects EVERY window.** Preflights that read `["0415"]` on 09-07 now read `["0415","0427","0428","0436","0440"]` — the rigs mirror the REPO and prod has moved ahead. Still `clean_mirror`; this is candidate base drift, not contamination, and it is a residual-risk note at seal, not a re-soak. Think hardest about any PR touching credits (0440), `anchor_proofs` (0427) or signup (0436).
+- **HAZARD for Thursday: migration 0422 builds a unique index WITHOUT `CONCURRENTLY` on a hot table.** That is ACCESS EXCLUSIVE and the exact mechanism of the 2026-08-11 P0. It needs `SET LOCAL lock_timeout` and a live lock-wait watch during the apply.
+- **Jira filed:** SCRUM-4516 (fingerprint RPC casts the column, skipping its index), 4517 (`anchor_timestamp` published `created_at`), 4518 (MFA test flake that dequeued a train; root-caused by another session to a StrictMode double-invoke), 4527 (`recover_stuck_broadcasts` metadata strip is a no-op — Postgres binds `-` tighter than `||`, so a dead worker's claim survives on every recovered row). SCRUM-4487 raised to High after its claim-timeout truncation killed a window.
+- **Artefacts:** landing order, both rulings and the per-PR close-out packs are under the CTO session scratchpad `closeout/<PR>/` and `LANDING-ORDER-20260908.md`. A 7-day release report for regulators is in Drive.
+
+### 2026-09-08T14:00Z → 15:00Z — MFA E2E job flake root-caused: StrictMode double-invoke, not a TOTP step boundary (PR #2691, DRAFT)
+
+`e2e/mfa-enrollment-and-challenge.spec.ts` failed on three unrelated PRs in one window — #2442 (run 34176885437), #2485 (34177317909), #2496 (34176908799, needed two re-runs) — always as `MFA verification failed; probe will not retry a platform error`, always on the two `mfa-enrollment-required` scenarios (spec lines 208 and 385), never on the `TwoFactorSetup`/`MfaChallenge` ones in the same file. `main` at `f25dff43e` passed the same job in the same window, so it was never any of those PRs.
+
+Cause: `src/main.tsx` wraps the app in `<React.StrictMode>`, so every dev/CI build mounts → unmounts → remounts each component and double-invokes its effects. `MfaEnrollmentRequired`'s mount-time `enroll()` effect was therefore NOT the mount-once its own comment claims — it created two unverified factors and rendered whichever call resolved last, silently moving the displayed QR/secret onto a different factor after the spec had already snapshotted it. Every TOTP code the probe then submitted was for the wrong factor, which is why it failed identically on the retry (deterministic inside a job) while depending on stack latency to happen at all (intermittent across jobs). Fixed with an `enrollmentStartedRef` guard; pinned by two StrictMode-wrapped component tests that fail on the pre-fix component.
+
+Two facts worth keeping, both verified against supabase/auth source rather than assumed:
+- **The RFC 6238 step boundary cannot explain an MFA rejection here.** GoTrue validates with `totp.ValidateCustom(..., ValidateOpts{Period: 30, Skew: 1, ...})` (`internal/api/mfa.go`, `verifyTOTPFactor`) — previous, current and next step all pass. The harness's one-shot boundary retry was never going to recover this class of failure.
+- **MFA rate limiting is inert in the local CI stack.** The Supabase CLI sets neither `GOTRUE_MFA_RATE_LIMIT_CHALLENGE_AND_VERIFY` nor `GOTRUE_RATE_LIMIT_HEADER`, and `performRateLimiting` no-ops without one, so `over_request_rate_limit` is not a local-CI explanation (it still is on a rig or hosted project).
+
+The probe now names the endpoint, HTTP status, GoTrue code, server `msg` and the on-screen text instead of throwing one generic string that discarded the code it had already parsed — that discard is why three PRs' worth of CI logs could not be triaged.
+
+**Two separate findings, each filed on its own because of how the tier detector treats repo-root files.** (a) ci.yml's "Upload Playwright report" step has never uploaded anything: `playwright.config.ts` sets `reporter: CI ? 'list' : 'html'`, and `list` never creates `playwright-report/`, so every failed E2E job since that step was added has lost its trace, screenshot and `error-context.md`. Run 34176908799 attempt 1 is the proof — the job log references `trace.zip` and `error-context.md`, and the run has no `playwright-report` artifact. That fix is T1 by path. (b) **`HANDOFF.md` itself is T0 alone but is NOT in `FRONTEND_ONLY_PATH_RE`** — it sits at the repo root, so carrying a HANDOFF entry inside a frontend PR flips `isFrontendOnlyChange()` to false and pushes that PR off the frontend-targeted T2 evidence path onto the full worker-artifact path, demanding a Cloud Run revision, image digest and staging deploy-log id a frontend-only change can never produce. #2691 hit exactly that and the entry was moved here. Same shape as the `playwright.config.ts` trap: **a repo-root file in a `src/`-only PR is expensive.**
+
+#2691 is a DRAFT: it is T2 by path (`src/components/auth/` — sensitive user-facing contract surface) on the frontend-targeted evidence path, and its `RM-approved targeted evidence` / approver / soak fields are human-owned.
+
+
+### 2026-09-08T02:20Z → 13:15Z — CTO session: #2655 merged with 0436 live, the whole queue un-conflicted, a Supabase control-plane outage took three windows
+
+- **#2655 MERGED 04:21:52Z** (`729ab39de`) after 0436 was applied to prod. It was dequeued once at 03:09Z on a root-suite flake — `MfaChallenge.test.tsx` "R19: auto-retries listFactors() on the live re-check cadence (visibilitychange)", `Unable to find [data-testid="mfa-challenge-code"]`, on tree content that had passed 40 min earlier — filed **SCRUM-4518** (High). `@Mergifyio requeue` took it on the second train. The 0436 exemption on main is now STALE (its `.sql` landed with the merge) and must be dropped.
+- **#2667 + #2673 + #2679 are batched in one Mergify train on `729ab39de`.** #2673 now carries #2674's root bump as well: `tests/infra/seed-fixture-uuids.test.ts` pins root zod to worker zod, so the two Dependabot PRs fail `Tests` alone and pass only together — the exact pair the Batch-L rig soaked. Dependency manifests are byte-identical to candidate `ae0aae1b0`, notices regenerated (`check-third-party-notices-fresh` OK, 225 entries). #2674 is superseded on merge. #2679's KNOWN BLOCKER is resolved: `@cloudflare/workers-types` 5.20260712.1 → 5.20260907.1 so wrangler 4.129.1's peer resolves (`npm ci` 82 packages, `tsc` clean, 15/15).
+- **Every open PR except #2668 is now MERGEABLE.** GitHub had 15 flagged CONFLICTING; the sweep cleared them all against `729ab39de`. Three needed real decisions: #2519/#2529 (the `scripts/staging/agents.md` union moved to 19 sections, so the pinned heading count and sha256 in `provision-isolated-rig.test.ts` were recomputed from the MERGED file — green locally in a clean worktree); #2571 (`src/lib/copy.ts` label blocks unioned with an explicit terminator, since the single trailing `} as const;` can only close one; `database.types.ts` kept one copy of the RPC types rather than duplicating); #2565 retargeted off its already-merged parent branch onto main, where it had been getting no CI at all. **Two of my pushes were wrong and are corrected in follow-ups that say so:** #2519/#2529 went out with a failing test and a commit message claiming green, and #2565 went out with a duplicate `insert_supplementary_proofs` identifier.
+- **The drift gate's real rule, read from its own output:** it fails a PR when a migration **in that PR's own diff** has no numeric prod ledger row — and a file not yet on main counts as the PR's own. So #2499/#2519/#2524/#2527 fail on the three DocuSign chain files they merely inherit. Landing the chain is what clears them, not applying from them. Full ordering in the CTO scratchpad `LANDING-ORDER-20260908.md`.
+- **2026-09-08T12:40:30–12:40:53Z: an `api.supabase.com` control-plane outage killed three windows at once** — #2314 (non-JSON 502), Batch-G (`SQL 502`), #2571 (`HTTP 504` on the `staging_lease` read) — same `POST /v1/projects/<ref>/database/query` shape against three different projects. Cloud Run was clean (no 5xx, no recycles, `/health` 200 during the failing seconds, identities unchanged) and so was the host (outbound to `*.run.app` returned 200s in those same seconds). Recovered by 12:48:56Z. **CTO ruling:** retry-once-immediately is useless here — the measured retry landed 0.87 s in, inside a 23–40 s outage — and widening it to "any body shape" is a provable no-op because the 502 body was already non-JSON. `api.supabase.com` calls get a bounded backoff of 3 attempts over ~90 s gated on the control plane itself, never on the worker's `/health`; worker `/jobs/*` keeps its single retry. Applied at each window's NEXT restart only (helpers are hash-frozen per cycle). Memory: `project_supabase_control_plane_outage_kills_soaks.md`.
+- **#2314 relaunched twice more.** The 12:53Z attempt died at 12:56:57Z on `RemoteDisconnected` from a slow membership query; an indexed pre-filter replaced a double parallel seq-scan + hash right join (3.08 s warm, temp spill) with a nested loop off the indexed candidate set (0.76 s), verified by `EXPLAIN (ANALYZE, BUFFERS)` and an offline harness with identical result sets. Stated honestly: a later re-run of the ORIGINAL query completed in 5.21 s, so the "deterministic 61 s cap" story is not established — the patch removes exposure to the cold full-join scan only. Running since 13:03:50Z, seals 2026-09-10T13:03:50Z.
+- **#2571's window cannot be re-admitted on its old head, and that is my doing.** Its window died at 12:40:53Z; at 12:47:25Z my base-refresh merge moved the head `7827b0492` → `9ee9de580`. Nothing running was disturbed (the window was already dead), but `admit_qualification.py` binds evidence to the exact head, so a rebuild is the correct answer rather than a workaround. Authorized: a new Cloud Run revision of `arkova-worker-provisioning-3873-staging` built from the current head, re-admission with a `window10` prefix, and the backoff ruling applied to its helpers at this restart. Its preflight is `clean_mirror` with `extra_vs_prod ["0422","0439"]` (its own migrations) — the standing `0436` "unexplained extras" escalation has CLEARED now that #2655 merged.
+- **Batch-G was NOT restarted, deliberately.** Its driver records an assertion failure as a non-fatal cycle and continues; the failed cycle is retained in full with its error, the rig's `/health` was 200 on the right `git_sha` in that same cycle, and it passed again at 12:55:45Z. Restarting would burn 17.5 h of clean soak to erase a disclosed environmental blip.
+- **Windows at 13:00Z:** worker 167 cycles, DocuSign 165, reorg 157, migrations 119, suborg 97, Batch-I 72, Batch-G 71 (1 recorded failure), Batch-H 57 — all fresh within 3 minutes. Batch-J and Batch-L sealed at 49 cycles / 0 failures each.
+- **2026-09-08T14:10Z: #2667, #2673, #2674 and #2679 MERGED** (main `a5ac865c1`). Mergify batched them, the batch was dequeued once at 13:41Z on the same MFA E2E flake (`mfa-enrollment-and-challenge.spec.ts:385`, `MFA verification failed; probe will not retry a platform error` at `e2e/helpers/mfa.ts:298` — failed on the train and on #2679's three Playwright retries while identical content passed on #2673). Mergify then bisected into per-PR trains and all four landed. Recorded on **SCRUM-4518**, with two asks: the helper throws away `rejection.code` so the GoTrue answer is unknowable from CI logs, and the leading hypothesis is per-project MFA rate limiting under CI load (14 runs started inside 17 minutes after the conflict sweep; the test uses a disposable user per run, so shared-fixture reuse is ruled out). This check is in `merge_conditions`, so an intermittent failure here stops the queue for every PR.
+- **Corrections to the landing order, from per-PR verification** (`LANDING-ORDER-20260908.md`, rewritten): #2485/#2486/#2496 were never red on inherited chain files — after the base refreshes their diff vs main contains no `.sql` at all. Only #2566 and #2570 inherit a migration, and only **0424**. The stacked conflicts are self-resolving: `main + #2476` into #2566 is clean, and `main + #2476 + #2566` into #2570 is clean — land the parents and retarget rather than hand-resolving. `requiredTierFor()` puts #2485 and #2496 at **T2**, not T3.
+- **Hazard for the Wednesday applies:** 0423, 0438 and 0422 are hot-table applies (`anchors`/`organizations`, §1.2) and **0422 builds a unique index WITHOUT `CONCURRENTLY`** — ACCESS EXCLUSIVE on a hot table, the 2026-08-11 P0 mechanism. `SET LOCAL lock_timeout` and a live lock-wait check are mandatory there. 0439's precondition (`private.requires_oauth_email_confirmation`, from 0436) is satisfied in prod.
+- **CTO ruling — Batch-G stays merge-grade with its one recorded failure** (`RULING-batch-g-merge-grade-20260908.md`): the 12:40:30Z `SQL 502` is an observer-side control-plane fault with no product assertion behind it, the rig answered `/health` 200 on the right `git_sha` inside that same cycle, and the next cycle passed. Conditional on the evidence block stating `Soak failures: 1` with its cause rather than rounding to zero, the cycle record staying unedited, and the ruling lapsing if a second failure occurs.
+- **Nine close-out packs built** for the DocuSign chain (#2472 #2476 #2485 #2486 #2496), Batch-G (#2565 #2566 #2570) and #2571 — `merge-report.md`, `evidence-block.md`, `prod-apply.sql`, guarded `closeout.sh`. All nine prepared evidence blocks pass the gate under a clock-shifted control.
+- **Real test failures found behind the gates' own self-test noise:** #2565 adds `/jobs/docusign-signer-backfill` without registering it in `JOBS` or `NOT_SCHEDULED` (`cloud-scheduler.test.ts`), and #2499 fails `scripts/load-test/lib/docusign-synth.test.ts`. Six more PRs carry a red `Tests`; all being triaged. The `##[error]` lines about anti-hollow-soak, HANDOFF claims and evidence-identity inside a Tests job are those gates' unit tests asserting they fail on bad input — expected output, not failures.
+- **Worktree hygiene:** 31 stale per-PR worktrees from this session removed; 0 of mine remain. All 13 soak drivers unaffected.
+
+### 2026-09-08T01:20Z → 02:10Z — CTO session: stale GitHub "CONFLICTING" flags cleared on 15 PRs, 0436 applied to prod, #2655 heading for the queue
+
+- **GitHub's mergeability flag was stale on eight PRs.** `gh pr view --json mergeable` said CONFLICTING for #2440 #2442 #2438 #2572 #2571 #2472 #2496 #2655 while `git merge-tree --write-tree origin/main <head>` was clean for every one of them; their `refs/pull/N/merge` test merges were still parented on `base.sha` `4aa5d2b8b` (the 15:54Z merge pushes) and had never been rebuilt. A CONFLICTING PR gets no Actions runs, so each got a `Merge origin/main (bd72f65ff)` push: HANDOFF.md byte-identical to main, PR-owned files carrying only main's already-merged hunks (listed per PR in the merge commit body and in `closeout/<PR>/NOTES-base-refresh-*.md`). All eight report MERGEABLE from the GitHub API now. Rigs untouched; every seal carries an evidence-identity rerun for the new head.
+- **Seven real conflicts cleared the same way:** #2667 (HANDOFF.md), #2589 (pre-emptive, its HANDOFF differed from both merge-base and main), #2519 #2529 #2499 #2524 #2527 (HANDOFF.md plus `services/edge/package.json`/lock: Dependabot's zod 4.5.4 / workers-types 5.20260904.1 / vitest 5.0.0 / wrangler 4.129.0 vs each PR's added devDependency `@types/node` 26.3.0; both edge package files are T0 by `requiredTierFor`, so main's pins + `@types/node` + a regenerated lockfile). The sealed bodies of #2499 #2524 #2527 #2655 were re-sealed with the new `PR head SHA`, `Base SHA: bd72f65ff…` and a `Base refresh:` line (readback identical). #2476 and #2485 have real code conflicts (`docusign.test.ts` import/test unions; `connector-artifact-drain.ts` R2 `fingerprint_source` default vs the inbound `issuer_record_attestation` branch); an Opus agent is resolving them as R2 default + inbound branch with worker typecheck/lint/vitest before the push. #2565 stays CONFLICTING against its stacked base `feat/docusign-signer-capture-outbound` (retarget after the chain lands). #2668 belongs to the other session (BLOCKER F1 open) and was not touched.
+- **0436 applied to prod `vzwyaatejekddvltxyye` at 02:03Z for #2655.** Exemption `0436` landed on main first (`3cfa8b2c8`, `check-ledger-numeric-integrity` test 45/45). Payload = the PR-head file (byte-identical to the Batch-F candidate `bf9c3d924`) minus BEGIN/COMMIT with `SET LOCAL lock_timeout = '5s'` first; MCP `apply_migration` returned success; ledger reconciled with `UPDATE supabase_migrations.schema_migrations SET version='0436'` (RETURNING one row) and the `list_migrations` MCP tool now shows numeric `0436` between 0428 and 0440. Verification `SELECT … query output`: ungranted hot-table locks 0; policy row `t/NULL` (ships DISABLED; activation is a separate deliberate step with server time); trigger `aa_enroll_oauth_email_confirmation` enabled on `auth.users`; role `arkova_email_pending` super/bypassrls/login/inherit all false, only the PG16 creator admin-membership; `pg_proc` has `manage_oauth_email_confirmation` with anon=f / authenticated=f / service_role=t; both `private.oauth_email_*` tables RLS on + forced; hook EXECUTE granted to `supabase_auth_admin`; `auto_associate_profile_to_org_by_email_domain` service_role-only; zero non-numeric ledger rows. Prod `/health` healthy on `e9e9882f8`; `/api/v1/verify/ARK-DOC-6Y9RK6` 200. Receipt in `~/arkova-soak/cto-closeouts/prod-apply.log`. `Check supabase/migrations vs prod` on #2655 had run before the apply (red) and was re-run; once the head is green the PR is readied and Mergify takes it; drop the 0436 exemption after the merge. #2571 (needs 0436 in prod) is unblocked for its Wed 22:30Z seal.
+- **Finding: `0425` is in `exemptPrefixes` but NOT in the prod ledger.** The `list_migrations` MCP tool shows 0419 → 0428 with no 0425 and `SELECT count(*) … WHERE version='0425'` returns 0, although the 08-30 exemption note recorded it as present in prod. It no longer satisfies the file's own invariant. Leave the exemption in place until #2495's close-out (Wed 23:56Z) applies 0425 fresh, and verify the ledger then rather than trusting either note.
+- **Jira filed from the edge catch-up findings:** SCRUM-4516 (P1: `get_public_anchor_by_fingerprint` compares the `character(64)` column to a `text` parameter, the fingerprint index is skipped and the edge verify-by-fingerprint path times out fail-closed; fix casts the parameter `::bpchar`) and SCRUM-4517 (`/api/v1/verify/:id` reports `created_at` as `anchor_timestamp` on the frozen v1 contract).
+- **Windows at 01:19Z:** all 13 running on the revision-identity rule (worker 27 cycles, DocuSign 25, migrations 22, reorg 17, #2314 93, #2571 window9, Batch-G 25, Batch-H 10, Batch-I 25, Batch-J 25, Batch-L 16, sub-org 50; all 0 failures; every driver pid alive). Next seals: Batch-J #2667 Tue 07:06Z, Batch-L #2673/#2674 Tue 09:26Z.
+
+### edge.arkova.ai CAUGHT UP — the pre-June bundle is gone, the MCP audit log writes for the first time (2026-09-08T01:03Z, SCRUM-3797, release-engineering session)
+
+**Deployed:** `arkova-edge` deployment **`7af4cd88-8d8d-4970-8b15-04b54aacc5eb`** / version `078e6ee8-a052-48c6-8b9b-ce18f1e40a98`, 100%, created **2026-09-08T01:03:13.431389Z**, built from **`61f04403d7802bb5fb882f473dc21357b5e4cacd`**, bundle sha256 **`b5a8942e0650b9ee3e40bc1e3e4a4b6175f8e4854a36b7140bad239998daf365`** (1,471,744 bytes). It replaced deployment `16750862-68d7-4c8b-8e41-8e5372bf5150` (version `bc380943-…`), built 2026-06-07 from `68671aec3…` — 96 `services/edge` commits of drift, landed in one `wrangler deploy`. Verified by reading the live script back off the Cloudflare API and re-hashing it: `b5a8942e…`, byte-identical to the soaked artifact. Full record: [docs/staging/edge-retro-2026-09-07/DEPLOY.md](docs/staging/edge-retro-2026-09-07/DEPLOY.md); rollback point (bundle + bindings + SHA256SUMS) under `/Volumes/Extreme/offload/arkova-edge-prod-rollback-20260908/`.
+
+**Authorised by** the 12 h T2 retro-soak of that exact bundle — 2026-09-07T12:54:21Z → 2026-09-08T00:54:21Z, 49 cycles, 0 failures, throwaway worker `arkova-edge-retro-0907` against the standing rig `fizyjojbebyalirtjjht` — persisted at `6843204bd` under [docs/staging/edge-retro-2026-09-07/](docs/staging/edge-retro-2026-09-07/). Deployed the **soaked SHA, not `origin/main`'s head**: four dependency-only commits (`zod` 4.4.3→4.5.4, `vitest` 5.0.0, `wrangler`, `@cloudflare/workers-types`) landed on `services/edge` after the window opened and `zod` plus the bundler change the bundle. `61f04403d..origin/main` over `services/edge` is `package.json` + lockfile only, **no source change** — that refresh is owed a later, smaller window.
+
+**The audit-log P0 is closed, and the proof is a count.** `select count(*), min(created_at) from audit_events where event_type='MCP_TOOL_CALL'` on prod `vzwyaatejekddvltxyye` returns **6 rows, earliest `2026-09-08T01:04:49.199215Z`, all `event_category = 'SECURITY'`** — every such row that has ever existed in production was written after this deploy. The old bundle sent lowercase `'security'` into the `audit_events_event_category_valid` CHECK and every insert was rejected for ~2.5 months. `ip_hash` is `null`: `MCP_IP_HASH_PEPPER` is unset on prod and the code fails closed rather than writing the enumerable bare digest.
+
+**Smoke 01:04Z–01:09Z against `https://edge.arkova.ai`:** `/health` 200; `tools/list` = 15 tools, exactly the expected set, with `verify_anchor`/`search_anchors`/`anchor_status` **absent**; `get_anchor ARK-SEC-RUJ2V7` → `verified:true` + **`bitcoin_block: 944369`** (#1106 live, carrying a real value); `verify_batch` × 3 preserves input order and returns the unknown member instead of dropping the batch (#2434 live); no key / bad key / bad bearer all 401. **The MCP `*_anchor` renames and ES256 auth are NOT in this catch-up** — they are in PR #2589, still open; the window asserts their absence so this cannot be misread later.
+
+**One smoke failure, and it was not rolled back — deliberately.** Verify-by-fingerprint (`verify` and `get_fingerprint`) returns `isError: "Document verification timed out"` in prod. Root cause proven by `EXPLAIN` on prod: `get_public_anchor_by_fingerprint` compares the `character(64)` column to a `text` parameter, so Postgres casts the **column** and `idx_anchors_fingerprint_lookup` cannot be used — cost **2,302,395**, over `statement_timeout`. With `lower(p_fingerprint)::bpchar` the same query is an index scan at **3.0 ms**. The 10-row rig fixture could not surface it (`project_hollow_200_statement_timeout_swallow.md`, except this one fails **closed**). It is **additive, not a regression** — the symbol has 0 hits in the June bundle — so rolling back would have deleted a newly-working security audit trail and two verified fixes to remove a feature that is merely unavailable. **Owed: a one-line T3 migration** to the DEFINER function, plus a Bug Tracker row.
+
+**Second finding, in the worker not the edge:** `api.arkova.ai/api/v1/verify/:id` returns `created_at` under the field `anchor_timestamp`. For `ARK-SEC-RUJ2V7` the worker says `2026-04-09T18:01:01.848397Z` while prod's `chain_timestamp` — and `get_public_anchor()`, and the new edge bundle — say `18:11:26Z`. The old edge mapped `r.created_at` too; fixing the edge exposed the worker. That understates the anchoring moment by up to ten minutes on a frozen public contract (§1.8) and violates §1.5's "Network Observed Time". Envelope parity was otherwise 8/9 fields identical. **Owed: a worker fix + Bug Tracker row.**
+
+**Binding parity:** all 11 live bindings byte-identical before and after; `wrangler deploy` inherited every secret. Nothing prod lacks can fail the worker at startup — the only `throw` on a missing secret is in `r2-signed-url.ts`, on a path R2 does not mount. `SUPABASE_JWT_SECRET`, `CRON_SECRET`, `MCP_IP_HASH_PEPPER`, `BASE_RPC_URL` are all unset and all fail closed, exactly as before. **`wrangler deploy` exited non-zero** on the *route* step (`PUT /zones/…/workers/routes` → `Authentication error 10000`) because the Secret Manager `cloudflare-api-token` lacks Zone→Workers-Routes edit; the route already existed and needed no change, so the deploy is complete. **Owed: widen that token's scope, or the next edge deploy looks failed again.**
+
+**Teardown:** `arkova-edge-retro-0907` deleted (API returns `10007`, workers.dev URL 404s), both throwaway KV namespaces deleted (prod `a8a78436…`/`5ace0a24…` untouched), retro worktree removed, credentials shredded. **Left undone on purpose:** `TEARDOWN.sh` step 4 deletes the window's `api_keys` row `8b353184-da64-4065-afcf-8367ec4bc6d5` (`edge-retro-0907`) from the **standing shared rig** `fizyjojbebyalirtjjht` — a write to a rig other sessions may be soaking against, so it was skipped. Whoever holds that rig should run `delete from public.api_keys where id = '8b353184-da64-4065-afcf-8367ec4bc6d5';`.
+
+**Still true and still unfixed (R3):** the edge `/health` carries no build identity, so a running edge worker still cannot be asked what it is — the reason the June build went unnoticed for three months. SCRUM-3907's version-parity check has nothing to read. SCRUM-3797's deploy is done; the **pipeline** is not.
+
+### Staging-evidence gate — ninth approver closure landed direct to `main` (2026-09-07, T0 per §0 rule 8)
+
+`Approved by:` / `Human approver:` values that BEGIN with an incomplete marker (`PENDING — Carson must decide.`, `NOT YET APPROVED — requires Carson.`, `TBD (…)`, `WIP — …`) no longer grant a residual-risk, unsoakable or base-drift exception, nor pass the T1 approver check. The 2026-08-29 seventh closure gave only `none`/`n/a` the leading-token treatment; the pending/tbd vocabulary was still whole-value anchored. Found by the Batch-I stand-up for #2589 (whose base-drift note says `No one — …` and already failed closed). New guard `INCOMPLETE_APPROVER_PREFIX_RE` in `scripts/ci/check-staging-evidence.ts`, approver-class fields only; 48 red-first cases in the test file, 435/435 green. Detail in `scripts/ci/agents.md`. **Consequence for the landing runbook:** any Batch body whose `Approved by:` reads `PENDING …` now fails the gate on that field too, not only on `Soak end: PENDING` — the founder decision on the base-drift trap must be written as a named approver.
+
+### ComputeID AgentPassport integration — PR-A #2668 DRAFT, reviewed; T2 soak RUNNING on isolated rig `yvnrdpxmkefmxtcaizbj` — do not touch (2026-09-07, epic SCRUM-4492, CTO session)
+
+**Soak (SCRUM-4499, T2 12 h, clock = worker uptime):** isolated Supabase project **`yvnrdpxmkefmxtcaizbj`** (`arkova-soak-computeid-pra`, us-east-2), Cloud Run **`arkova-worker-computeid-pra-staging`** rev **`arkova-worker-computeid-pra-staging-00002-td9`**, tag URL `https://pr-2668---arkova-worker-computeid-pra-staging-kvojbeutfa-uc.a.run.app`, image `sha256:e61a5271…` built by [deploy-staging run 34141573314](https://github.com/carson-see/ArkovaCarson/actions/runs/34141573314) from PR head **`ca96420a74225fa4ad712f5882b000e9e0780f66`** (the digest was also tagged with the full source SHA for the provisioner's provenance check). Preflight `clean_mirror` at 2026-09-07T16:15Z (provisioning head ca96420a7; the PR has no migration, so the same project/schema serves the soak head) (`docs/staging/computeid-pra/`). Rig-only config: `ENABLE_COMPUTEID_INTEGRATION=true`, `COMPUTEID_WEBHOOK_SECRET` = per-rig secret **plus** the golden fixture's throwaway secret (so the soak replays the REAL 2026-09-07 ComputeID delivery bytes), `COMPUTEID_CA_CERT_PEM` = a rig-only self-signed X.509 CA whose private key lives only on the Mac mini (`~/arkova-soak/computeid-pra/`, never in the repo). Window opened **2026-09-07T16:37:37Z (revision Ready; /health uptime continuous through the 16:39Z rollback rehearsal)**, closes no earlier than **2026-09-08T04:37:37Z**. Driver: `scripts/staging/targeted/computeid-passport-driver.ts` (detached, 5-min cycles, evidence flushed every cycle to the PR worktree's `docs/staging/computeid-pra/driver-evidence.json`; log `~/arkova-soak/computeid-pra/driver.log`). Reservation row `resv-PR2668-COMPUTEID-0001` in `docs/staging/rig-reservations.json`. **Tear down only after the window closes** (§7 sweep, `teardown-isolated-rig.sh`).
+
+**Partner reply 2026-09-07T18:32Z (thread "Revocation webhooks is live!"; Carson's 15:28Z email was sent from Gmail, the follow-up reply is a DRAFT for Carson):** ComputeID issued **Arkova's API key** (account CID-00005) → Secret Manager `computeid-api-key`, never in the repo. With it the **first REAL receipts were fetched and verified offline** (`/v1/agents/{id}/verify` for Archer `b390e5e6-…` and the Integration Test Agent `adff394c-…` → the PR head's `verifyComputeIdReceipt` against the committed CA fixture → `ok:true` ×2; `key_id ebb276c2f18ed34f`; receipts **expire 5 minutes** after issue) — the SCRUM-4501 real-receipt gate is satisfied on evidence (`~/arkova-soak/computeid-pra/evidence/real-receipts/`, persisted at close; permanent fixture+test → PR-B). ComputeID **fixed the register endpoint live** (authenticated, account-scoped, server-generated secret, `DELETE /v1/webhooks/:id`, `POST /v1/webhooks/:id/rotate`) and **confirmed it has no retry** on non-2xx/timeout — so our `409 conflict_retry` is honoured only by our own driver; PR-B (SCRUM-4497) gets in-process CAS retry + an hourly re-verify sweep. A scratch capture receiver is registered under our key (`webhook_id bf2d0f10-610d-4eaa-8c3a-b89e48fa8966`, cloudflared quick tunnel from the Mac mini, `~/arkova-soak/computeid-pra/capture/`) so Praveen can revoke a real passport of his own inside the window and we capture the genuine `passport.revoked` bytes; their `/v1/webhooks/test` delivery already arrived there with a valid HMAC. Delete that webhook at close.
+
+**What exists now:** [PR #2668](https://github.com/carson-see/ArkovaCarson/pull/2668) (draft, T2; head above, re-stamped in the PR body on every push) — `integrations/computeid/` (pinned-CA loader, offline RSA receipt verifier with per-verification CA window, JSONB binding with ordering floor + ownership + key enforcement), `POST /webhooks/computeid` (keys-first, compare-and-set, own limiter, content-type-agnostic raw parsing, real 413), `POST /api/v1/agents/computeid/admit` (config-sourced HMAC secret, revoked-binding check, shared key minting), `middleware/computeidGate.ts`, `machines/agentPassport.machine.ts` (TLC green: 4 invariants, 16/16 states, equivalence true), the targeted driver + 16 unit tests. All dark behind `ENABLE_COMPUTEID_INTEGRATION=false`. No migration. `deploy-worker.yml` untouched on purpose (activation = SCRUM-4495). HANDOFF.md is deliberately NOT in the PR (state lives here). Jira: SCRUM-4493/4494 In Progress, 4495–4498 To Do, subtasks 4499–4502. Confluence: [epic AUDIT 138543105](https://arkova.atlassian.net/wiki/spaces/A/pages/138543105) + one page per story.
+
+**Review (2026-09-07, `/code-review 2668 high`: 10 finder angles → 43 candidates → 4 verifiers → sweep):** 15 findings reported, 14 fixed on the branch (commit `8b8071b00`), 1 (org-admin-writable JSONB binding) mitigated and scheduled for PR-B. The two that mattered most: `req.hmacSecret` is attached only by the JWT `requireAuth` the API-key mount omits, so every real admission would have 500'd (tests had shimmed it in); and the revoke path flipped the agent row before deactivating keys, so a failed key update left a revoked passport's keys live forever. Also found: passport.suspended left keys active (the auth path never reads `agents.status`), a pre-revocation receipt could re-admit, no compare-and-set on the agent row, partner `reinstated` lifting an org's own suspension, no ordering floor before the first event, the shared Stripe limiter bucket, body-parser oversize → 500, `PATCH /agents/:id {status:'active'}` un-revoking a revoked agent (pre-existing route; guard added), and the CA fixture being gitignored by `*.pem` so CI's Tests job hit ENOENT.
+
+**Prod state (read-only, verified 2026-09-07 via Supabase MCP execute_sql on `vzwyaatejekddvltxyye`):** no ComputeID/Cortex org; `agents` exists with **0 rows**; `api_keys.agent_id IS NOT NULL` → **0**; `audit_events.event_type` is free text (≤100), `event_category` CHECK includes `SECURITY`. Nothing from this branch is deployed to prod.
+
+**Partner facts verified live 2026-09-07 against `https://api.aicomputeid.com` (curl):** webhook signature `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>` over `Content-Type: application/json` — end-to-end delivery captured and committed as a golden fixture; `POST /v1/webhooks/register` **unauthenticated, no URL validation, no DELETE** (which is why the rig URL was NOT registered there — the soak replays the captured real delivery instead); `POST /v1/agents/register` **requires X-API-Key** (spec says public) — Arkova holds no key, so **no real receipt has been verified yet**; CA is RSA-2048 only (`pq: null`), `key_id ebb276c2f18ed34f = sha256(SPKI PEM)[:16]`. Full table: SCRUM-4498.
+
+**Next (owner):** ① Praveen reply — **drafted, not sent**, Gmail draft `r-8434177638965826908` (Carson to send). ② At window close: rollback rehearsal record, evidence block with the gate's field names, `gh pr ready` (CTO), evidence + reservation release persisted to main as T0, rig teardown. ③ SCRUM-4495 activation only after a golden test on a **real** receipt (SCRUM-4501). ④ SCRUM-4496 org provisioning + guide before **2026-10-01** (operator-approved prod writes). ⑤ PR-B SCRUM-4497 (T3 migration): binding columns + unique index + expression index, service-role-only writes, nonce table, re-verify cron, `anchors.acting_agent_id` (the traceability promise), admission RPC. **Do not flip the prod flag, register a prod URL, or provision the org from this branch's claims — each needs its own artifact.**
+
+**Incidental, not fixed here:** the `soak-evidence` skill's T2 template uses labels the gate does not read (`Staging project ref`, `Soak start -> end`, `Approver`); the gate requires `Staging branch:`, `Worker revision:`, `Image digest:`, `Evidence scope:`, `Preflight timestamp:`, `Preflight result:`, `Soak start:`, `Soak end:`, `E2E result:`, `Migration applied:`, `Rollback rehearsed:`, `Staging deploy log id:`, plus `Changed behavior:` / `Targeted evidence:` / `Load/concurrency evidence:`. A T0 skill fix is owed. `provision-isolated-rig.sh` requires the image to carry a tag equal to the full source SHA while `deploy-staging.yml` tags `pr-N-<8>` — every PR-built image needs a `gcloud artifacts docker tags add` before provisioning (tooling gap, T0). `docs/partners/hakichain-integration-guide.md` still names the SDK `@carsonarkova/sdk` (published packages are unscoped) — Bug Tracker row owed at SCRUM-4500. `PATCH /api/v1/agents/:id {status:'suspended'}` is decorative (keys stay active) — pre-existing, reported.
+
+### State as of 2026-09-05T21:40Z (CTO session, Claude) — read this block first; everything below it in `## Now` is dated and superseded where it disagrees
+
+**Verified live this session:** `curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health`, `gcloud run services describe arkova-worker --project arkova1 --region us-central1`, `gh variable list`, Supabase MCP `list_projects` / `list_migrations` / `execute_sql` on `vzwyaatejekddvltxyye`, `gcloud scheduler jobs list --location us-central1`, `gcloud logging read`, Sentry `search_issues`, `gh pr view` on every open PR, and the driver `status.json` files of the running soaks.
+
+
+#### 21:40Z delta — what changed after the 19:05Z block below was written
+
+- **Windows failed and were restarted.** At 18:39Z the docusign (#2472/#2476/#2485/#2486/#2496) and attest (#2525) drivers died because a stale-worktree sweep unlinked their Playwright daemon sockets under `$TMPDIR` (`pw-*/`, mtime 18:35Z); at 19:24–19:29Z the migrations (#2440/#2442) and evidence (#2499) drivers failed their "exactly 4000 PENDING" age-experiment because the rig worker's own in-process `process-batch-anchors` cron (10 min) legitimately drained the cohort first (no instance recycle: pid 1 constant, one revision). Neither is a PR defect. All four were restarted from clean preflights; the three age-experiment drivers were restarted again at **20:37Z** after their lifecycle helper was patched to accept a verified cron-driven natural-age drain (`observation_mode: cron_natural_age`, helper diff in each window's evidence dir). **New closes: migrations/evidence/docusign 2026-09-07T20:37Z; attest 2026-09-06T08:08Z.** Memory: `project_soak_drivers_killed_by_tmp_sweep_and_cron_race.md`.
+- **Three new isolated windows stood up (every open PR now has one):**
+
+  | Window | PRs | Rig → service | Candidate | Started | Closes |
+  |---|---|---|---|---|---|
+  | Batch-D | #2474 #2564 #2547 #2589 | `puuoxpurnystnvbednrj` → `arkova-worker-batch-d-0905-staging` (`-00004-qcd`) | `rc/batch-d-2026-09-05` @ `b5016ead79585f8ae145c0a30fcbd2bee93e7e4b` | 2026-09-05T19:54:35Z | 2026-09-07T19:54:35Z |
+  | Batch-E | #2519 #2529 #2569 | `urdcobgboqiutifnruvf` → `arkova-worker-batch-e-0905-staging` (`-00004-chd`) | `rc/batch-e-2026-09-05` @ `23a7c66e397881bfa5b21e07a2daa64d324cbd89` | 2026-09-05T20:29:55Z | 2026-09-07T20:29:55Z |
+  | Batch-F | #2655 #2658 #2663 | `fgkgyhfcsqwsdalapbqk` → `arkova-worker-batch-f-0905-staging` (`-00005-fsw`) | `rc/batch-f-2026-09-05` @ `bf9c3d924eb8b80f1713f33b16c645f198717d29` (re-bound to #2658's fixed head `aad1c1b67…`; a 12-min first window on `a3c6d1a19…` was discarded) | 2026-09-05T21:55:02Z | 2026-09-07T21:55:02Z |
+
+  Drivers, status and evidence under `~/arkova-soak/batch-{d,e,f}-0905/` (detached, PPID 1). Each PR body carries its block. Residuals disclosed in the bodies: #2589 tip moved to `58d73112…` after the Batch-D image (comment-only change in `scripts/release/publish-npm.sh`); #2569's conflict with main was resolved in the candidate, not by Dependabot; #2658's Batch-F binding is its current head `aad1c1b67…` (the window was re-bound and restarted after the test-only fixture commit). Teardown when each closes: `scripts/staging/teardown-isolated-rig.sh`.
+- **New PR #2663** (draft, T2): cron `/jobs/*` limiter keyed per job path + per-IP burst guard (SCRUM-4475), TDD red→green, CI green except the soak gate; in Batch-F. **Interim prod mitigation applied 20:47Z:** Cloud Scheduler `daily-anchor-flush` moved to `7 3 * * *` (America/New_York) and `anchor-expiry-sweep` to `4 3 * * *` (UTC) so they miss the :00 burst (`gcloud scheduler jobs describe` read back ENABLED with the new schedules).
+- **New Jira from the day's forensics:** SCRUM-4486 (tier detector lets worker dependency manifests escape T3), SCRUM-4487 (`claim_pending_anchors` timeout truncates the run and mis-reports `eligible`), SCRUM-4488 (run-lease transport error reported as `lease-held`, 30-min silent batch stall), SCRUM-4489 (`auth.users` signup triggers exist in prod but in no migration file — CI and fresh rigs diverge on signup; Batch-F reinstated the trigger on its rig by hand). Bug Tracker rows 005–008.
+- **#2655** is green except the soak/drift gates after its RLS fixture was corrected (the test needed the prod signup trigger the migrations do not ship — SCRUM-4489). **#2658** took a CTO takeover: F1–F3 and F5 from the 18:15Z review fixed (seed writes `cap_enforced`, 4-arg RPC writes it, `NOTIFY pgrst`, CHECK constraint, quota payload), rollback block corrected, `seed_free_tier_org_credits` REVOKEd from anon/authenticated; head `aad1c1b67eb76759275a90c3af469589cd158bf3`.
+- **Monday landing order is now two trains:** (1) 16:14Z–17:44Z closes: #2436 #2437 #2438, #2495, #2524 #2527, #2572, #2637 (#2314 lands Wed 05:56Z; a sub-48 h waiver cannot pass the gate); (2) ~20:37Z closes: #2440 #2442 #2499, then Batch-D/E/F 19:54Z–21:55Z; Tuesday: DocuSign chain #2472 #2476 #2485 #2486 #2496 at 04:19Z (then #2566/#2570/#2565 retarget), #2571 at 23:23Z. #2434 merged 2026-09-06T04:48Z (watcher-driven close-out); #2525 merged 2026-09-06T11:18Z (watcher-driven close-out + doc-only main merge + block rewrite). Ten migrations still need pre-merge prod apply + §0 rule 10 reconcile before their drift gate clears; the runbook is [docs/staging/runbooks/2026-09-07-monday-landing-runbook.md](docs/staging/runbooks/2026-09-07-monday-landing-runbook.md) (with the #2476 Tests patch beside it). Batch-D/E/F bodies were made gate-parseable at 22:50Z; every one now fails only on `Soak end: PENDING`, except #2589/#2658 which additionally need a base refresh once their windows close because GitHub's reported base is behind the evidence base `cfd158d0…`.
+- Soak-health monitor (`~/arkova-soak/cto-closeouts/soak-health.py`) polls every driver status file every 15 min.
+- **23:25Z:** the #2571 qualification window (Codex supervisor, rig `owieixqcnigfpiowptop`, revision `arkova-worker-provisioning-3873-staging-00014-vek`) failed at 23:09:40Z on cycle 77 — `subprocess.TimeoutExpired` (240 s per-cycle driver timeout). **Corrected cause (agent forensics 23:40Z):** the soak target revision `…-00014-vek` never restarted (same PID 1, uptime 23,901 s at 23:17Z); the 23:11Z STARTUP line belonged to the base service's historical revision `00004-mtq`. The driver's own PostgREST read of `org_credits` stalled on the host outbound path (supabase-js/undici has no request timeout) until the 240 s budget expired — typical cycles ran ~135 s, ~104 s headroom, with ~10 drivers on the host. Environment, not a PR defect. Archived under `pr2571-review-evidence/failed-before-2026-09-05T230940Z/`, relaunched with a longer per-cycle timeout at **2026-09-05T23:23:27Z** (pid 89139, 2/2 cycles 48/48 checks); **earliest completion now 2026-09-07T23:23:27Z** (Tuesday, not Monday). Supervisor timeout raised 240→600 s (MAX_GAP 900); only the supervisor hash changed in the re-admission. **Merge-grade condition:** the rig's honest preflight is `soak_artifact` because it carries `0436` (declared dependency, owned by #2655) which no repo tree yet explains; CTO ruling: #2571 lands only AFTER #2655 (Batch-F, closes 2026-09-07T21:55Z) has merged and 0436 is in prod, at which point the preflight can be re-run clean. Landing order: … → Batch-F (#2655) → #2571 last.
+- **2026-09-06T00:28Z: DocuSign window restarted a third time** (#2472 #2476 #2485 #2486 #2496; #2474 not qualified). Cycle 39 failed at 23:52Z because the e-sign probe's `drain-connector-artifacts` call took the documented deferral while the rig cron held the shared batch-anchoring run lease for the 4,000-row age cohort — the product then anchored both envelopes unaided (`ARK-DOC-X86YAP`/`X9Q4TZ` SUBMITTED with tx ids at 23:55Z). Not a PR defect. Probe now polls up to 900 s for the run to settle (`helper-patch-20260906T000119Z.diff`). Two further relaunches died on a second blocker: the lifecycle size proof's membership read (`chain_tx_id = tx OR batch_id = bid`, unindexed OR across two tables) takes 61 s at ~143k anchors and the Supabase Management API gateway cuts it at 60 s (`helper-patch-20260906T002500Z.diff`, indexed pre-filter, 3.2 s, result-identical). New window **2026-09-06T00:27:53Z → 2026-09-08T00:27:53Z** (pid 45397, clean_mirror preflight 00:27:38Z, 2/2 cycles). Earliest merge for those five PRs is now **Tuesday 00:28Z**.
+- **Latent hazard for the other six Codex windows (worker, reorg, proof, 2314, evidence, migrations):** the same 61 s query is in their lifecycle helpers at line 88/160. It runs in the size phase (already passed for the running windows), so they are safe until a restart; **before restarting any of them, apply the 00:25Z diff to that helper first** — do NOT patch a helper while its driver runs, the drivers hash-check helpers every cycle and would fail. `soak2314-recovery.py` IS running (pid 70032, 521 cycles at 00:35Z); an agent's process grep missed it because its path is under `/Volumes/Extreme/offload/`.
+- **2026-09-06T04:48Z: #2434 MERGED** (`6e9cf27861b946ce72c55c8e15fd4196047a62d3`) — the edge window sealed at 04:00:05Z with 145 cycles / 0 failures; the close-out watcher rewrote `Soak end`, lifted `do-not-merge` and refreshed Mergify; the gate then rejected `Image digest: N/A`, so the field now carries the sha256 of the frozen 43-file edge source manifest the workerd runtime executed (`edge-runtime/input-hashes.json`), explicitly labelled as not a worker image; gate run 34010574693 green, Mergify queued 04:05Z, merged 04:48Z. **Edge has no deploy pipeline** (`memory/project_edge_deploy_drift_2026_09.md`): `edge.arkova.ai` still runs the pre-merge bundle until someone does the wrangler deploy — add to the Monday train.
+- **2026-09-06T04:19Z: DocuSign window fourth relaunch.** The 00:27Z window failed at 03:43Z inside `prove_cron_natural_age()`: its "no forced flush during the cohort lifetime" taint check counted the driver's own org-scoped e-sign drains (`Forced org batch flush orgId=99ff…a1/b1`, one pair every 5 min, 78 lines) although the cohort (orgs 99ee…) was drained by the unforced cron after its floor (`claimed=4001 … correlationId=None`, batch `batch_1788665560814_4001`). Driver-internal conflict, not a PR defect. Helper patched (`helper-patch-20260906T043000Z.diff`: org-aware taint, correlation-aware claim pairing, probe rows classified at the age checkpoint, lease-aware `flush_until`), validated on the archived data (pre-patch fails, patched passes, synthetic unscoped/cohort-org/size triggers still fail; flush-phase harness 6/6). New window **2026-09-06T04:19:14Z → 2026-09-08T04:19:14Z** (pid 75191, clean_mirror 04:16Z, 6 cycles green). Only migrations and evidence carry the same natural-age proof; both already passed their floors. Earliest merge for #2472 #2476 #2485 #2486 #2496 is now **Tuesday 04:19Z**.
+- **2026-09-06T11:18Z: #2525 MERGED** (`26714cfb4f8434a2a193da83a9a5aa25cbbcdf73`) — fourth merge of the session. Its 12 h attest window sealed 08:08:14Z (145 cycles, 0 failures, watcher-driven close-out). Two things had to happen before Mergify could take it: (1) it was `DIRTY` against main, and **a DIRTY PR gets no `pull_request` workflow runs at all** (GitHub cannot build the merge ref), so the body edit at 08:10Z triggered nothing until origin/main was merged in (doc-only merge, verified: the 23-file PR diff is byte-identical before/after; residual note in the body); (2) the Codex-written block still had T2 fields as PENDING — rewritten from the window's real artifacts (rig `hlbddnfpxisjlthmklig`, revision `…-00005-xm6`, digest `sha256:2c51d883…`, clean_mirror preflight 20:07:12Z, rollback receipts `rollback-reapply.json` / `ui-rollback-reapply.json`), the ci.yml Evidence-identity job re-run by hand (ci.yml does not trigger on `edited`). First queue attempt was dequeued at 10:14Z when the speculative merge's E2E job died in its **Seed database** step (infra, not a test; E2E had passed on the identical head); requeued at 10:16Z and merged. **Expect the same three steps for every PR sealing Monday: merge main first (doc-only), then body, then re-run the evidence-identity job.**
+- **Batch-D found a real baseline defect (SCRUM-4490, P1; SCRUM-4491, P2; Bug Tracker rows 2026-09-06-001/002, page v45).** Cycle 49 (07:54Z) failed because the fixture org's credit balance hit 0: `debit_and_enqueue_anchor` returns `insufficient_credits` before looking at anchor status, `handleDebitFailure` re-queues on that first, so 50 artifacts whose anchors were already SECURED were re-claimed every pass (`ORDER BY created_at ASC LIMIT 50`), counted as `failed` with no per-row log, and starved every newer artifact. Prod-reachable (leaves SECURED, never-billed anchors). `connector-artifact-drain.ts` is identical on main and the Batch-D candidate apart from #2474's `fingerprint_source` literal — **#2474 is exonerated**; #2566/#2570 do not cover it. Rig repaired through product paths only (`admin_adjust_org_credit` +2000; the product's own reconcile terminalized all 52 rows at zero charge); clock unchanged; cycles 50+ pass with terminal `anchored`. Disclosed in the four Batch-D bodies, including that cycles 1–48 evidenced materialization only.
+- Soak-health monitor now ignores sealed windows and already-counted failures (only NEW failures, unsealed non-running drivers, stale >45 min, or a driver count below 8 alert).
+- **2026-09-07T05:34Z: #2314's recovery window failed at cycle 2259 of a 48 h clock (37 h 39 m in — the earlier "45 h 40 m" in this file was an arithmetic error; 2,258 clean cycles).** One request of the `sql:not_found_control` label got HTTP status 0 in 41 ms — a client-side transport drop on the Mac host to the rig's PostgREST endpoint (the driver writes 0 only in its `fetch` catch; fastest of 2,259 samples; the worker logged 200s for every other request of that pass; no rig restart). Environment, not a PR defect. Probe patched to retry a single status-0 request once with both attempts recorded (`driver-patch-20260907T055053Z.diff`, 5 new unit tests, admission hashes updated); window relaunched **2026-09-07T05:56:46Z → 2026-09-09T05:56:46Z** (pid 75283, clean_mirror preflight before the clock, 4/4 cycles green, fresh 10,000-member size proof). The retired window's 2,258 cycles are retained as diagnostic evidence under `superseded-20260907-0555/`. **Waiver is not a label flip:** the shortfall is 10 h 21 m (21.6 % of the floor) and `scripts/ci/check-staging-evidence.ts` has NO path that passes a T3 window under 48 h (the only duration waiver is T2-only, no override label exists, `SOAK_GATE_BYPASS_EXPIRES_AT` expired 2026-08-16) — verified by the 12:08Z prep dry-run, which fails on exactly `T3 soak duration (37.65h) is below the 48h minimum` and nothing else. Landing it early would require Carson to admin-merge over a red required check. CTO recommendation: let the current window run (2026-09-09T05:56:46Z); 0415 is already in prod, so nothing else waits on #2314. The prepared close-out (`scratchpad/closeout/2314/closeout.sh`) works for either path.
+- The shared checkout `/Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main` is deliberately on a **detached HEAD at origin/main** (the CTO session moved it off the dead `fix/ledger-drift-false-positive` branch; `main` itself is checked out by another session's worktree so it cannot be attached). Work in your own worktree, not there.
+- **2026-09-07T09:39Z: #2571 window restarted twice more (now window7).** Cycle 402 of the 23:23Z window failed at 08:49Z because Cloud Run replaced the rig worker's container mid-cycle (`Received shutdown signal SIGTERM` 08:48:49Z → `Starting new instance. Reason: MANUAL_OR_CUSTOMER_MIN_INSTANCE`; the probe's next call got Cloud Run's own 14-byte `Rate exceeded.` 429 with no app log, then a transport throw). Environment. The 09:07Z relaunch died on the documented cron run-lease race (lifecycle drain `skipped:true` while the `*/10` in-process batch cron held the lease). Fixes: frozen driver retries exactly once only when the app never answered, gated on `/health` healthy + `git_sha == source head`; supervisor parks the lifecycle half 150–540 s into each cron period; the lifecycle module (`provisioning_lifecycle_cycle.py`) got the same retry-once guard (assertions byte-identical, 21/21 self-test). Window7: **started 2026-09-07T09:39:08.939Z, earliest completion 2026-09-09T09:39:08.939Z**, pid 99828, admission `gs://arkova1-s33-immutable-authority-ledger/release-qualification/2026-09-05/pr2571-window7/admission.json`, cycles 48/48. Preflight still `soak_artifact` on `[0436]` (declared dependency owned by #2655): #2571 lands only after #2655/0436 is in prod. Its body also needs two format fixes at close-out (`Evidence scope:` literal, `Load/concurrency evidence:` wording).
+- **2026-09-07T12:30Z — Monday plan revised after the close-out pre-staging (22 packs under the CTO session scratchpad `closeout/<PR>/`, each with a byte-identity-proven main merge, sealed evidence block, prod-apply SQL and a gated `closeout.sh`).** Facts that change today's train: (1) **the worker window (#2436 #2437 #2438) and the reorg window (#2495) died at cycle 529 at 12:15–12:16Z**, four hours before their seal — worker on a host transport failure during a probe (`fetch failed` / 504; host load ~4 with agent builds running), reorg on a driver assertion after its own `tx_unconfirmed` fault injection; both being restarted (earliest Wednesday ~12:30Z). (2) **#2572 is not sealable:** its `run-soak.sh` wrote 7 evidence rows and none since 2026-09-05T18:14Z (the inner `npx tsx` is redirected to /dev/null, so it has been failing silently for 42 h); no rollback artifact; three conflicting head SHAs. It needs a real driver and a fresh 48 h. (3) **Base-drift trap:** main's DI-038 commits edited `services/edge/src/mcp-server.ts` (T2) after the evidence base; #2589, #2519, #2529 and #2655 also change that file. GitHub freezes `base.sha` until a head push, so today they pass the gate; the merge-from-main push they need refreshes the base and trips FD-GATE-3 carve-out (a), which no residual note can cover. **#2655 merges clean → body edit only, no push. #2589/#2519/#2529 are CONFLICTING and must re-soak on a current base** (#2519/#2529 after the DocuSign chain lands Tuesday; #2589's rename cannot be split out). (4) #2524/#2527/#2499 inherit 0423/0424/0435 and land only after the DocuSign chain (Tuesday 04:19Z). (5) Prod applies need each prefix in `scripts/ci/snapshots/ledger-numeric-exemptions.json` on main FIRST (`.claude/hooks/check-prod-migration-apply.sh`), with a `_history` entry — a gate-data snapshot lands direct per §0 rule 8. (6) `Soak end:` must be a bare ISO timestamp; every current body's `Soak start` belongs to a retired window — use `status.json started_at`.
+  **Lands today:** #2637 (16:32Z; real `src/lib/env.ts` conflict, resolved copy in the pack), Batch-D #2474 #2564 (0428) #2547 (19:54Z), #2569 (20:29Z), #2440 (0421, 0433) #2442 (0420, 0434) (20:37Z), Batch-F #2655 (0436) #2658 (0440) #2663 (21:55Z). **Tuesday 04:19Z:** #2472 #2476 #2485 #2486 #2496 (0423, 0424, 0435), then #2524 #2527 (0427), #2499, then #2566/#2570/#2565 retarget. **Wednesday:** #2314 (05:56Z), #2571 (09:39Z), worker three + #2495 (~12:30Z), #2572 (re-soak). **Thursday:** #2519 #2529 (0426) #2589 (re-soaks started Tuesday).
+  Edge: the #2434 hand-deploy was a NO-GO (live bundle 60 PRs / 3 months behind, one June admin-merge over a red gate); a 12 h T2 retro-soak of the exact origin/main edge bundle on a throwaway `workers.dev` worker is being stood up; the catch-up ships on that evidence.
+- **Batch-D needs two processes alive:** the driver (pid 24899) and `queue-due-helper.py` (pid 58664), which rolls the fixture orgs' `last_run_at` back before each cycle so `org-queue-scheduler` claims work every 15 min (otherwise #2547's chain path fires once per 24 h). Clock not re-anchored; disclosed in the four bodies as "Queue-cadence disclosure".
+- **2026-09-07T12:35Z: worker window (#2436 #2437 #2438) and reorg window (#2495) relaunched with fresh 48 h clocks** — `soak_worker_batch.py` at 2026-09-07T12:34:56Z and `soak_reorg2495.py` at 12:34:43Z, both closing 2026-09-09T12:34Z. Cause of the 12:15Z deaths at cycle 529: the worker driver got a host-side `fetch failed` transport error on one probe (same class as #2314's status-0 drop, Mac host → rig), and the reorg driver lost its injected `hold_race` timer race (the timer fired before the competing hold was observed). Both lifecycle helpers received the 00:25Z 61 s-query pre-filter diff and a transport retry-once guard **before** relaunch (helper diffs and `restart-note.json` archived next to each window under `/Volumes/Extreme/offload/codex-release-evidence/2026-09-05/migration-audit/`). Wednesday 12:34Z is now the earliest close for #2436 #2437 #2438 #2495.
+- **2026-09-07T12:54Z: edge catch-up retro-soak relaunched (fresh 12 h T2 clock, closes 2026-09-08T00:54Z).** The 12:18Z window failed at cycle 3 (12:48:12Z) on `no MCP_TOOL_CALL audit rows written (10 -> 10)` — a driver defect, not an edge regression: the audit assertion counted rows inside a sliding 30-minute window at a 15-minute cadence, so cycle-1 rows (12:18:03Z) aged out during cycle 3 exactly as cycle-3 rows entered. Cycles 1 and 2 each wrote 5 `SECURITY` rows (9→14, 14→19). The driver now counts rows created after a DB-side cycle-start timestamp and asserts ≥5 per cycle (`driver-patch-20260907T1300Z.diff`; retired window archived as `cycles-failed-1/` + `status-failed-1.json` under `/Volumes/Extreme/offload/arkova-edge-retro-0907/`). Cycle 1 of the new window: 5 rows written since `cycle_t0`.
+- **2026-09-07T15:22Z: a ~10 s host-side network blip on the Mac killed two projection-driver windows in the same second** — #2314's recovery window (cycle 565: three `fetch() threw` attempts at ~4.0 s each, one label failed even after its single v1 retry) and the migrations window #2440/#2442 (cycle 514: one status-0 request). Cloud Run logged 200 for every request that arrived on both rigs; nothing WARNING+. Environment, not a PR defect; Docker Desktop had been up since 09-05 and is not the cause; the host origin is unattributed. Fix: **projection-driver patch v2** (status-0 retry budget 1→3 per label per pass, 5 s spacing, HTTP responses never retried; 53/53 driver tests, 158/158 targeted suite; `recovery-2314-auth-1540/driver-patch-20260907T1540Z-v2.diff`, cumulative sha256 `111386c5…`). Both windows relaunched on it with fresh 48 h clocks, clean_mirror preflights and fresh 10,000-member size proofs: **#2314 started 2026-09-07T15:42:45Z → 2026-09-09T15:42:45Z** (pid 16504); **#2440/#2442 started 2026-09-07T15:43:42Z → 2026-09-09T15:43:42Z** (pid 31235; its `lifecycle_evidence_migrations.py` also received the 61 s-query pre-filter, 9.56 s → 1.91 s, identical id set). Retired windows archived as `superseded-20260907-1522/` in each evidence dir; PR bodies carry the restart history (#2442 has no evidence block by design — history paragraph only). #2440 #2442 (0420/0421/0433/0434) now land **Wednesday ~15:45Z**, not today.
+- **2026-09-07T15:27Z: #2571 window8** (pid 71109). Window7 died at cycle 65 (15:02:39Z) because Cloud Run recycled the rig worker's min-instance for the third time (`Starting new instance … MANUAL_OR_CUSTOMER_MIN_INSTANCE` 15:02:22Z) and the lifecycle probe's first call got a non-JSON front-end body that its 429/503-only classifier did not treat as "never answered" → `JSONDecodeError`. The lifecycle module now treats any non-JSON body as an infrastructure rejection and takes the existing health-gated retry-once path (`lifecycle-patch-2026-09-07T151900Z.diff`, 21/21 self-test, check lines byte-identical). **Started 2026-09-07T15:27:22Z → 2026-09-09T15:27:22Z**; admission `pr2571-window8/admission.json` gen `1788794747887988`; preflight unchanged `soak_artifact` on the declared `[0436]` dependency (lands after #2655). Cycles 1–3 48/48.
+- **2026-09-07T13:03Z: #2525's attest rig torn down** — `hlbddnfpxisjlthmklig` (Management API http=200), Cloud Run `arkova-worker-oldest-attest-0905-staging`, three per-rig secrets; logged in `~/arkova-soak/cto-closeouts/teardown.log`. Rigs `hgmluvnqgfcigevqeebu` (#2655's old rig; its evidence is Batch-F) and `vofhfzyosxlneupohsem` (referenced by #2565's body) are left until those PRs close.
+- **2026-09-07T15:45Z: Sentry triage (SCRUM-4503).** No open issue is a live prod defect. ~22k "Cron failure: webhook-retries" events = nine dead soak-rig environments still registered on that monitor (production checks in OK every 2 min); every other cron monitor was disabled 08-30. Four issues ignored-forever with reasons; the stale environments need deleting in the Sentry UI (no API token here). `ARKOVA-WORKER-2F` = the internal "Arkova Test" org's DocuSign integration, user-revoked 05-20, alerting hourly since (ignored; product gap). `ARKOVA-WORKER-B` (worker drift) resolved after the 09-05/09-06 deploys. ARK-ACD-NSD9EU is SECURED since 09-06 07:36Z; the 9 PENDING anchors the stuck-pipeline monitor counts are all soft-deleted rows (SCRUM-4476 comment: predicate needs `deleted_at IS NULL`). Still open: `CE_API_KEY_EXPIRES_AT` unset in prod (founder), `next_webhook_sequence` RPC has no retry.
+- **2026-09-07T19:03Z: #2637 MERGED** (`174edb5315a5d98e37fc397c05a9b7b2b436dbda`) — fifth merge of the session. The 48 h MFA window sealed 16:32:48Z (2,743 heartbeats / 289 paced events / 0 failures; Trigger A 10,000-member batch, Trigger B age cohort, daily flushes 09-06 08:02Z + 09-07 08:05Z); main merged into the branch (`src/lib/env.ts` conflict, file set identical), body sealed with a base-drift residual-risk note (own-file overlap T1 only), Evidence-identity rerun green, `do-not-merge` lifted 18:59Z, Mergify merged. **Vercel Production deployment `174edb531` succeeded 19:03:54Z** (`gh api repos/carson-see/ArkovaCarson/deployments`, status `success`; `app.arkova.ai` 200) — **MFA enforcement for organization and platform administrators is live on the frontend, with the grace window.**
+- **2026-09-07T19:05Z: migration 0428 applied to prod** (`0428_admin_profile_rpcs_remove_hot_table_trigger_ddl`, PR #2564, payload = `refs/pull/2564/head` file sha256 `ac6871288484194f…` + `SET LOCAL lock_timeout='5s'`) via MCP `apply_migration`, ledger reconciled to version `0428` per §0 rule 10; `list_migrations` MCP tool shows numeric head **0428** (function bodies checked via a `pg_proc` / `pg_get_functiondef` query) (prod also carries 0415; no non-numeric rows besides the baseline). Verification: `still_has_ddl=false` on all five redefined functions, admin RPC ACLs service_role-only, zero ungranted locks on the hot tables, worker `/health` healthy on `26714cfb4`, `/api/v1/verify/ARK-DOC-6Y9RK6` 200. Exemption snapshot `f1f347135` landed on main first (`exemptPrefixes` 0415/0425/0428) — **remove 0428 when #2564 merges.** Receipt: `~/arkova-soak/cto-closeouts/prod-apply.log`.
+- **2026-09-07T20:53Z–20:54Z: #2474 and #2564 MERGED** (Mergify trains #2681/#2683 on main; `gh pr view` merged 20:53:10Z / 20:54:10Z) — sixth and seventh merges of the session. Batch-D sealed at 20:24:37Z with 195 cycles / 2 failures (cycle 49 = SCRUM-4490 product defect in the baseline; cycle 179 = host-side `npx tsx` transient in the #2589 parity probe at host load 22 — both disclosed in the bodies); the Batch-D driver has no self-seal, so the CTO session stopped it between cycles and wrote the terminal status from the driver's own last-cycle timestamp. **#2547 and #2569 were CLOSED by Dependabot at 16:46Z/16:48Z** ("updatable in another way") and superseded by **#2673** (worker deps) and **#2674** (production deps); their Batch-D/Batch-E evidence is orphaned, and the three new Dependabot PRs (#2673 #2674 #2679) are being stood up in **Batch-L** (T2, 12 h). Batch-D rig `puuoxpurnystnvbednrj` and Batch-E rig `urdcobgboqiutifnruvf` (window complete 20:30Z, 193/0) torn down 20:4xZ–20:5xZ (`teardown.log`).
+- **2026-09-07T20:58Z: migration 0440 applied to prod** (`0440_org_credits_cap_enforced`, PR #2658, payload = `refs/pull/2658/head` file sha256 `0e60eee2902b9d70…` minus its BEGIN/COMMIT, `SET LOCAL lock_timeout='5s'` first) via MCP `apply_migration`, ledger reconciled to `0440` per §0 rule 10 — the `list_migrations` MCP tool shows numeric head **0440**. Verified via `information_schema.columns` / `pg_constraint` / `pg_proc` / `pg_trigger`: `cap_enforced` column present, CHECK constraint present, `admin_set_org_cap` (5 args) + `admin_set_org_anchor_quota` (4 args) + `seed_free_tier_org_credits` all service_role-only, backfill mismatch 0, Login Defense untouched (quota 15, is_test false, cap_enforced false), signup trigger re-bound, zero ungranted hot-table locks; worker `/health` healthy on `26714cfb4`, verify 200. Migration-first is the SAFE order (the quota gate fails open on a missing column) — #2658's worker must never ship before this. Exemption snapshot `47a090b44` on main: **0440 added, 0428 removed** (stale after #2564 merged). Remove 0440 when #2658 merges.
+- **2026-09-07T22:24Z: #2658 and #2663 MERGED** (Mergify, 22:23:49Z / 22:24:03Z) — eighth and ninth merges of the session. Batch-F sealed 21:55:38Z at 193 cycles / 0 failures; both bodies sealed with recomputed base-drift notes; #2658's PR-level `Check supabase/migrations vs prod` stayed red because GitHub's cached merge ref predated #2564 (0428 file absent from that tree) — the queue rule only requires the evidence gate, and the check passed on Mergify's fresh train. Exemption snapshot `e9e9882f8`: 0440 dropped (`exemptPrefixes` back to 0415/0425). Batch-F rig `fgkgyhfcsqwsdalapbqk` torn down 22:26Z. **#2655's body is sealed too** (post-merge head `4566f930a`, both auth gates reconciled 20:49Z) but it stays draft: base-drift carve-out (a).
+- **2026-09-07T22:53Z: prod worker deployed to main `e9e9882f8211e8f4318a83010b4e050ba58fac20`** — `arkova-worker-01336-zil` serves 100 % (deploy-worker run [34166595693](https://github.com/carson-see/ArkovaCarson/actions/runs/34166595693), `workflow_dispatch`, all three jobs success; `gcloud run services describe arkova-worker` latestReadyRevision `01336-zil` / traffic 100), `/health` healthy with `git_sha e9e9882f8`, database/anchoring/kms ok. Brings #2474 (DocuSign signer capture), #2564 (admin RPCs without hot-table DDL), #2658 (cap_enforced gate) and #2663 (per-job-path cron limiter — the fix for the nightly-flush 429s) to prod. Previous revision `01333-met` / `26714cfb4` is the rollback target. `DEPLOY_WORKER_PAUSED=true` still set.
+- **2026-09-07T23:00Z–23:57Z: every Codex window converted to the revision-identity rule (CTO ruling) and relaunched on fresh 48 h clocks.** A Cloud Run `minScale=1` instance swap (`MANUAL_OR_CUSTOMER_MIN_INSTANCE`) hit **eleven** rigs tonight; the drivers' `worker uptime monotonic` assertion ("Worker restarted") and their status-0-only retries treated each swap as a dead window. Ruling: the assertion's intent is *no code change under the window*, so it is replaced by a per-cycle **revision-identity continuity** check (`/health git_sha == soaked head` AND `gcloud run services describe` shows the admitted revision + image digest at 100 %); a same-identity uptime drop is recorded as `instance_recycles` and the cycle continues; changed identity still fails with the original message. Every HTTP call now sits behind a health-gated retry-once for status 0 / 5xx-or-429-with-non-JSON-body (never for application JSON). **Two experiments falsified `--min-instances=2`:** on a worker rig the second instance's in-process cron took the batch run-lease and broke the size proof (worker window, 22:08Z); on the reorg synthetic provider its per-process fault-injection state split across instances (68/160 tip fetches served the wrong mode). Both reverted; details in `memory/project_cloud_run_min_instance_recycle_kills_soak_windows.md`. The identity rule was confirmed live at 23:59:33Z when the reorg worker recycled six minutes into its new window and the cycle continued.
+  | Window | PRs | Relaunched (UTC) | Earliest close (UTC) | pid |
+  |---|---|---|---|---|
+  | worker (`txvvrxngyfnnqahujbld`) | #2436 #2437 #2438 | 2026-09-07T23:06:25Z | 2026-09-09T23:06:25Z | 629 |
+  | DocuSign chain (`zjwtnkwnwjpcmclkuvdf`) | #2472 #2476 #2485 #2486 #2496 | 2026-09-07T23:16:35Z | 2026-09-09T23:16:35Z | 25967 |
+  | migrations (`euyzkmmstcyuuwhwtbqz`) | #2440 #2442 | 2026-09-07T23:32:50Z | 2026-09-09T23:32:50Z | 56204 |
+  | #2314 recovery (`bzzmjnfrzqkxihdtsbyl`) | #2314 | 2026-09-07T23:48:01Z | 2026-09-09T23:48:01Z | 77968 |
+  | reorg (`itenuyhkhktferocxgwa`) | #2495 | 2026-09-07T23:56:19Z | 2026-09-09T23:56:19Z | 93787 |
+  | #2571 window9 (`owieixqcnigfpiowptop`, merged head `7827b0492`, 2 instances) | #2571 | 2026-09-07T22:30:37Z | 2026-09-09T22:30:37Z | 34587 |
+  | Batch-H (`bwihigjwfuqtiggggasx`) | #2519 #2529 | 2026-09-07T22:56:51Z | 2026-09-09T22:56:51Z | 75858 |
+  | Batch-G (`cgkowohlgmpvaeinpjlw`) | #2565 #2566 #2570 (+chain) | 2026-09-07T19:09:20Z | 2026-09-09T19:09:20Z | 84480 |
+  | Batch-I (`xazszljknnlqvbuzlwsk` + edge worker) | #2589 | 2026-09-07T19:06:50Z | 2026-09-09T19:06:50Z | 74501 |
+  | Batch-J (`ylaimirueelgjsuxrsyu`, T2 12 h) | #2667 | 2026-09-07T19:06:21Z | 2026-09-08T07:06:21Z | 71514 |
+  | Batch-L (`gwacxgdpbtjwkewkwlog`, T2 12 h) | #2673 #2674 #2679 | 2026-09-07T21:26:01Z | 2026-09-08T09:26:01Z | 28088 |
+  | sub-org (`jpdhektjeawfjkznmpfe`) | #2572 | 2026-09-07T12:56:52Z | 2026-09-09T12:56:52Z | 76521 |
+  | edge retro-soak (`workers.dev`, T2 12 h) | edge catch-up | 2026-09-07T12:54:21Z | 2026-09-08T00:54:21Z | 70274 |
+  Batch-G/I/J/L and the sub-org driver never asserted uptime; a recycle there costs at most one disclosed failed cycle. Batch-L findings: **#2673 and #2674 must land together** (shared `zod` pin — each is red alone, green as a pair), #2674 needs a `license:notices:generate` commit, **#2679 fails `npm ci`** (wrangler 4.129.1 wants `@cloudflare/workers-types@^5.20260907.1`) and no CI job builds `services/api-gateway`. Sealed and torn down tonight: Batch-D (`puuoxpurnystnvbednrj`), Batch-E (`urdcobgboqiutifnruvf`), Batch-F (`fgkgyhfcsqwsdalapbqk`), proof (`bajuefkqhizsyycaeqff` + its provider service), evidence (`iyswrdnxitoyxavrlmmz`) — `teardown.log`. **Founder decision still pending on #2499 #2524 #2527 #2655** (bodies sealed, every check green except base-drift carve-out (a)); #2476 joins them when the chain seals.
+- **2026-09-07T21:19Z–22:46Z: Cloud Run min-instance recycles killed five more windows in 90 minutes** — #2571 window8 (21:19Z), the reorg provider (21:25Z), the worker window (21:46Z), the DocuSign chain (22:07Z) and Batch-H (22:43Z, via its own `uptime went backwards` assertion). Mechanism and the fix that works are in `memory/project_cloud_run_min_instance_recycle_kills_soak_windows.md`: a `minScale=1` rig instance is replaced roughly every 6 h with a 15–30 s 5xx/non-JSON gap that the drivers' status-0-only retries did not cover. Relaunches: **reorg 21:45Z** (shared 5xx/non-JSON health-gated guard; being restarted again ~23:00Z with the uptime assertion replaced by a revision/git_sha/digest identity check), **#2571 window9 22:30:37Z → 2026-09-09T22:30Z** (re-stood on a merged head `7827b0492`, rig replayed 0428/0440 to match prod, min=max=2 instances, revision `-00022-dop`), worker window and DocuSign chain and Batch-H relaunching (agents in flight). 2314 and #2440/#2442 keep their 15:42Z clocks (their drivers still assert per-instance uptime — relaunch with the identity check if a recycle hits them).
+- **Base-drift trap (a) — founder decision still pending, now for five PRs:** #2476, #2499, #2524, #2527, #2655 (all touch `services/edge/src/mcp-server.ts`, which main's DI-038 commits also edited). #2499's body is sealed (577 cycles / 0 failures, head `d96a5112d`) and its gate is red on exactly that one error; #2655's conflict with #2637's auth changes was resolved 20:49Z (new head `4566f930a`, both gates ordered mailbox-confirmation → MFA, 215 auth tests green) but its Batch-F evidence binds the pre-merge head. Options unchanged: admin-merge over the red base-drift check (the file is edge code with no deploy pipeline on merge) or land on the current-base re-soaks (Batch-G covers #2476; #2524/#2527/#2499 would need Batch-K relaunched; Batch-H/I cover #2519/#2529/#2589).
+- **2026-09-07T16:41Z: conflict-clearing `origin/main` merges pushed to #2440 #2442 #2438 #2476 #2524 #2527 #2499** (all were CONFLICTING; each PR's `HANDOFF.md` now equals main's so later HANDOFF pushes cannot re-conflict them; byte-identity of every PR's own change proven per file; all seven MERGEABLE with `.base.sha` frozen at `4aa5d2b8b`, i.e. before any migration landed tonight — that keeps them out of the gate's ledger carve-out (b)). Gate verdicts: #2440/#2442/#2438 need a `### Base-drift residual-risk note` (drift interval is T2 on the shared surface, own-file overlap below T2); **#2476/#2524/#2527/#2499 hit carve-out (a)** — all four change `services/edge/src/mcp-server.ts`, which main's DI-038 commits also edited, and that is unattestable by note. Founder decision pending: admin-merge over the red base-drift check (the file is edge code with no deploy pipeline on merge) or land them on the current-base re-soaks (Batch-G covers #2476 with the chain; Batch-K for #2524/#2527/#2499 was stood down at 16:31Z under host load and would need relaunching).
+- **2026-09-07T16:30Z–19:07Z: four new isolated windows for the PRs that had none** — Batch-H `bwihigjwfuqtiggggasx` (#2519 #2529 rebased on main, 48 h from 16:30:19Z → 2026-09-09T16:30Z); Batch-J `ylaimirueelgjsuxrsyu` (#2667 only, T2 12 h from 16:47Z; two harness 401s from an expired gcloud token → being relaunched on a token-refresh patch; #2668 reviewed read-only — BLOCKER F1 posted on the PR, its own session's rig soaks a head with that defect); Batch-G `batch-g-0907` (DocuSign chain + stacked #2565 #2566 #2570 on current main, driver running since 19:04Z); Batch-I `batch-i-0907` (#2589 on current main, running since 19:07Z). **DocuSign chain window FAILED 17:00Z** at cycle 441 — the persistent Playwright session `arkova-esign` had died on the host (`Browser 'arkova-esign' is not open`); being relaunched with a self-reopening browser helper (Tue 04:19Z close → ~Wed 19:30Z). #2571 window8 started 15:27:22Z → 2026-09-09T15:27Z after a third Cloud Run instance recycle voided window7.
+
+#### Prod
+- **Worker re-deployed 2026-09-06T11:48Z after #2525 merged:** `arkova-worker-01333-met` serves 100% with `git_sha 26714cfb4f8434a2a193da83a9a5aa25cbbcdf73` (the #2525 merge commit), `/health` healthy, zero non-cron ERROR lines in the first 10 min, deploy-worker run [34029903609](https://github.com/carson-see/ArkovaCarson/actions/runs/34029903609) (`workflow_dispatch`, success). Previous: `arkova-worker-01330-boz` / `8cc0843d9`, deployed 2026-09-05T19:2xZ by run 33985772306. The earlier text of this bullet follows for the record. **Worker DEPLOYED to main on 2026-09-05.** `arkova-worker-01330-boz` served 100% with `git_sha 8cc0843d95564c7faf7128f9e8376789310ecace` = `origin/main` head at the time; `/health` at 2026-09-05T19:2xZ `{"status":"healthy","network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`; zero non-cron ERROR log lines in the first 10 min. Landed by deploy-worker run [33985772306](https://github.com/carson-see/ArkovaCarson/actions/runs/33985772306) (`workflow_dispatch`, all three jobs success; the zk-artifact cache hit, which is what failed the 09-03 push run). Previous revision `arkova-worker-01327-vok` / `8147ed3a` (dispatched 2026-08-31) is the rollback target. `DEPLOY_WORKER_PAUSED=true` is still set — it gates only the push path; the dispatch is the documented intentional-deploy escape.
+- 29 worker files / 5,222 insertions were waiting behind the pause (health-probe honesty fixes, in-process cron double-fire audit #2429, cleanup_expired_data singleton #2335, two Dependabot bumps); all had merged through the evidence gate.
+- Anchoring is healthy: 29,936 anchors reached SECURED in the 24 h to 18:00Z, 0 SUBMITTED, 1 PENDING (`execute_sql` on prod, this session).
+- Frontend: `app.arkova.ai` serves main `00c67fb0a` — Vercel Production deployments `aeb448c2a` (#2528) and `00c67fb0a` (#2654) both `success` at 18:53–18:54Z (`gh api repos/carson-see/ArkovaCarson/deployments`).
+- Migration ledger head `0419` = `main` head `0419`. Prod also carries `0415` (PR #2314, applied 2026-09-03, exempted). No timestamp-format rows.
+- **Three prod defects found and logged (Bug Tracker rows BUG-2026-09-05-002/003/004, page version 43; Jira SCRUM-4475, SCRUM-4476):**
+  1. `/jobs/*` sits behind a 30/min GLOBAL limiter (`services/worker/src/routes/cron.ts`) while 66 Scheduler jobs collide at :00, so runs are refused with 429 (~250 in 48 h). The nightly `daily-anchor-flush` (`/jobs/batch-anchors?force=true`, 07:00Z) was refused 09-04 and 09-05 — Scheduler execution log `RESOURCE_EXHAUSTED … Original HTTP response code number = 429`. Fix is a T2 worker PR (SCRUM-4475); nothing applied.
+  2. Anchor `ARK-ACD-NSD9EU` (user upload, `org_id NULL`) PENDING since 09-03; the stuck-pipeline monitor reports age and count from different predicates (SCRUM-4476).
+  3. `fetch-uspto` (196× 502/48 h) and `fetch-courtlistener` (193× 504/502) failed 100% — **both PAUSED in Cloud Scheduler at 18:20Z** (`gcloud scheduler jobs pause`, state read back `PAUSED`).
+- Sentry `ARKOVA-FRONTEND-D` (xmldom "w:t junk" on `/legal/third-party-notices`) is a HeadlessChrome probe from a Mac in America/Detroit, i.e. a session verifying #2619 against prod, not a user error.
+
+#### Rules changed today
+- **No T0 PR, no exceptions** — `CLAUDE.md` §0 rule 8 / §1.12 / §1.13 at `6ae7d46ff30f314ae23eda48dad6d2db261c9223` (founder directive 2026-09-05). Gate logic and `CLAUDE.md` itself now land direct with the mandatory local checks named there. `.github/workflows/**` stays a PR because the detector classifies it T1.
+
+#### Soaks — RUNNING (do not touch; drivers are detached Python processes, `ps -ef | grep -E 'soak_|soak2|security-soak'`)
+A Codex "oldest-first release queue" session started these on 2026-09-05. **No driver rewrites a PR body or removes a label at close** — each writes `status: window_complete_pending_review` / `completed_pending_review` to its `status.json` and exits; the close-out is a human/CTO step (verified by reading every driver, this session).
+
+| Window (rig → driver) | PRs | Closes (UTC) | At 18:20Z |
+|---|---|---|---|
+| `bzzmjnfrzqkxihdtsbyl` → `soak2314-recovery.py` | #2314 | 2026-09-07T15:54:54Z | 142 cycles / 0 fail |
+| `bzzmjnfrzqkxihdtsbyl` → local workerd edge (`edge-runtime/status.json`) | #2434 (12 h T2) | **2026-09-06T03:59:45Z** | 32 / 0 — `~/arkova-soak/cto-closeouts/close2434.py` (pid 12399, log alongside) lifts `do-not-merge` and asks Mergify to refresh once status is clean |
+| `txvvrxngyfnnqahujbld` → `soak_worker_batch.py` | #2436 #2437 #2438 | 2026-09-07T16:13:58Z | 22–28 / 0 |
+| `euyzkmmstcyuuwhwtbqz` → `soak_migration_batch.py` | #2440 #2442 | 2026-09-07T16:13:59Z | 0 fail |
+| `zjwtnkwnwjpcmclkuvdf` → `soak_esign_batch.py` | #2472 #2476 #2485 #2486 #2496 (#2474 `included_but_not_qualified`) | 2026-09-07T16:13:58Z | 0 fail |
+| `itenuyhkhktferocxgwa` → `soak_reorg2495.py` | #2495 | 2026-09-07T16:13:58Z | 0 fail |
+| `iyswrdnxitoyxavrlmmz` → `soak_evidence2499.py` | #2499 | 2026-09-07T16:13:59Z | 0 fail |
+| `hlbddnfpxisjlthmklig` → `soak_attest2525.py` | #2525 (12 h) | see driver | 0 fail |
+| `bajuefkqhizsyycaeqff` + `arkova-release-proof-provider-0905-staging` → `soak_proof_batch.py` | #2524 #2527 | 2026-09-07 | 0 fail |
+| `ixekmrkkhqyqtycerihq` → Adobe batch (esign) | #2519 #2529 #2569 | see PR bodies | — |
+| `nesuwjlscilzzbhpvbkt` → `security-soak-supervisor.py` | #2637 (T3) | 2026-09-07T16:32:46Z | running |
+| `jpdhektjeawfjkznmpfe` → `docs/staging/suborg-3863/run-soak.sh` | #2572 | see PR body | running |
+
+**Landing order Monday (runbook: `docs/staging/runbooks/2026-09-07-monday-landing-runbook.md`, plus `2026-09-07-pr2476-tests-fix.patch` beside it):** 2314 → 2440 (`0421`, `0433`) → 2442 (`0420`, `0434`) → 2472 (`0423`) → 2476 (`0424`, `0435`) → 2499 → 2495 (`0425`, `CREATE INDEX CONCURRENTLY` — cannot go through MCP `apply_migration`, use `execute_sql` + manual ledger row) → the rest. Per PR: verify the driver's terminal status, apply the migration to prod and reconcile the ledger (§0 rule 10), fix the stale `PR head SHA:` line (2314/2434/2440/2442), union-resolve the HANDOFF.md-only conflicts (2442/2476/2499) and add the `_Last refreshed_` footer the Policy Lints job wants, apply the 2476 Tests patch, remove `do-not-merge`, `@mergify refresh`. The `Check supabase/migrations vs prod` failures on every migration PR are the **PR numeric ledger drift** sub-check (the PR's own migration is absent from prod) — NOT the 0415 orphan; editing the exempt regex would not help.
+
+#### PR board (merged today: #2528 `aeb448c2a` 18:53:01Z, #2654 `00c67fb0a` 18:53:42Z, both via Mergify after the CTO lifted `do-not-merge`; #2619 `32d6fcb39` 17:07Z, #2653 `3954ca54d` 16:49Z by other sessions)
+- **Need only their window:** #2436 #2437 #2438 #2485 #2486 #2496.
+- **Need window + prod-apply:** #2440 #2442 #2472 #2476 #2495 #2499 (#2499 is stacked on 2472+2476).
+- **Need own window:** #2474 (detector forces T3 via `connector-artifact-drain.ts`; no evidence block; head `9b46ff001c4431607d2b81735361b516edbcca61` after the agents.md wording fix, Tests now green locally 16/16). #2655 (draft, T3, migration `0436`, conflict resolved, head `9ce3f8b050272b5a8fb5d3f16fc3c192c41e6f36`, Tests still red on the RLS fixture — see below). #2658 (draft, T3, migration `0440`; **blocker F1**: `seed_free_tier_org_credits()` never writes `cap_enforced`, so every new signup would get an inert cap — review posted on the PR; branch owned by another live session).
+- **Lane B (2519, 2524, 2525, 2527, 2529, 2547, 2564, 2565, 2566, 2569, 2570, 2571, 2572, 2589, 2637):** audit still running when this block was written; results land in the next refresh. Known now: #2637 is in a 48 h window on `nesuwjlscilzzbhpvbkt` closing 2026-09-07T16:32:46Z; #2572 has the suborg soak running; #2565 says its 48 h window has not started; #2569 is admitted to the Adobe release candidate; #2547 carries a stale 09-03 T1 body with head-SHA mismatch.
+
+#### Cost (read-only report: `docs/reference/cost-report-2026-09-05.md`; Google Doc in Drive → Arkova — Finance (Aug 2026))
+~$92/mo reclaimable now with no blocker (`cft-webhook-sink`, `arkova-s33-rig-b1-bitcoin-core-signet` VM, registry retention), ~$332/mo more as the queue clears (14 per-soak Supabase projects + 14 Cloud Run rigs, every non-prod rig at `minScale>=1`), $262/mo `sekura-arkova` VM is a business decision. Vertex AI: zero deployed endpoints in us-central1 and us-east1 (§0 rule 7 clean). 136 of 297 Secret Manager secrets belong to dead rigs. Cloud Billing API is not enabled on `arkova1`, so figures are list-price estimates. Nothing was deleted this session.
+
+#### Hygiene (this session)
+- Mac mini Data volume: 938 MB free → ~20 GB free (stale session scratchpads, Docker prune, caches, 60 stale worktrees).
+- GitHub ↔ SSD: 60 worktrees removed (232 → 179 registered), 365 merged remote branches deleted (750 → 378 heads), 595 local merged branches deleted. 1,806 orphaned `refs/remotes/{pr,prmerge,prtmp,prs}/*` refs remain (local only) — `git remote prune` / manual ref deletion still owed. 29 untracked soak-evidence docs committed to main (`c579026fc`); 8 expired OIDC `idtoken` files deleted rather than committed.
+- August weekly release reports (W31–W35) are in Drive `Sprints/Release Reports` (folder `1wAT8RSk609_fsghR4ub6IBNqo9ujw7mf`).
+
+_Last refreshed: 2026-09-05 by Claude Fable 5.1 (CTO session) — claims verified against gcloud/MCP/CI output._
+
+
+### UAT-01 — public signup released (2026-09-05, SCRUM-4031)
+
+[PR #2653](https://github.com/carson-see/ArkovaCarson/pull/2653) merged via Mergify at 16:49:30 UTC (`3954ca54d5d44cc15902756af0a70b44df79c6be`). Vercel production deployment `dpl_7g6sgAjbDxiuWfog58gZTL8krFJu` was independently verified READY with `app.arkova.ai` on that merge at 16:52 UTC. Later main deployments retain the signup change. Logged-out signup passed actual headless Chrome checks at 1280/375: immediate registration controls, retired beta gate absent, keyboard/error/navigation behavior and no horizontal overflow. No account writes. [Production metadata, screenshots and independent CTO verification](https://arkova.atlassian.net/wiki/spaces/A/pages/137134081); [merge-candidate CI passed](https://github.com/carson-see/ArkovaCarson/actions/runs/33976208584) (18,992 tests and 349 E2E cases). API, worker, webhook, MCP and SDK authentication were unchanged by this frontend fix. OAuth branding/mailbox verification and MFA retain their separate UAT ownership. Final close-out is tracked in SCRUM-4031 after the required observation deadline of 17:19:30 UTC.
+
+### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
+
+**711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
+`anchors.chain_block_height`. Every single disagreement is **low** (`proof_lower=711027`,
+`proof_higher=0`). Read-only against prod `vzwyaatejekddvltxyye` on 2026-09-02.
+
+**Which value is right:** `anchors.chain_block_height`. Checked all 44 block hashes that carry more
+than one recorded height against the chain (`getblockheader` over the worker's own GetBlock RPC): in
+34 of 44 groups **neither** recorded `anchor_proofs` height is the real one, and
+`anchors.chain_block_height` equals the chain's height in **44/44**. This is not "pick the majority"
+and not an off-by-one.
+
+**Mechanism.** `SignetChainClient.broadcastSignedTx` (`services/worker/src/chain/signet.ts:859-863`)
+returns `blockHeight = getBlockchainInfo().blocks` — the chain **tip at broadcast**, with an
+in-code comment saying the real height "is recovered at confirmation time". For `anchors` it is:
+`check-confirmations.ts` overwrites `chain_block_height` with the tx's actual `status.block_height`.
+For `anchor_proofs` it never is — `ConfirmationProof` carries no height field at all, and
+`populateConfirmationProofs` re-writes `blockHeight: anchor.blockHeight ?? null`, i.e. the stale
+value onto itself. So the delta is simply the number of blocks mined between broadcast and
+confirmation: 1 (45%), 2 (36%), 3 (12%), tail to 13, plus one 89-row cluster at 2747 from the
+2026-04-15→04-29 SECURED gap.
+
+**Published-surface impact — this is a proof-integrity issue, not untidy data.**
+`/api/v1/proof`, `audit-export.ts` and the JSON "download proof package" are all **clean**: they read
+height from `anchors`. The exposed path is the **certificate PDF**:
+`src/lib/sourceProofInput.ts:183` reads `proofRow.block_height ?? anchor.chain_block_height` —
+preferring the wrong column, and it is non-null on 713,949/713,950 rows so the correct fallback
+effectively never fires. `buildProofPacket` then prefers it again over the correct `data.blockHeight`
+that `RecordDetailPage` already passes. It lands in the certificate as "Network Record #…" **and** in
+`embeddedProofJson`, the machine-readable packet published so the certificate "can be re-verified
+offline". All three Arkova verifiers bind that field to the chain and hard-reject on mismatch
+(`arkova-py` `_height_binding_failure`, `packages/verifier/src/independent-node.ts:221`,
+`packages/verifier-cli`), so a customer verifying a genuine anchor with a node gets
+`ok:false, reason_code: HEIGHT_MISMATCH` plus a failed `timestamp_honesty`. A **false negative on a
+valid document**, matching the shape of the repo's own forgery fixture
+(`packages/verifier-cli/fixtures/author-adversarial.py:401`). Offline-only verification (no node)
+still passes — the chain steps are skipped.
+
+Found incidentally while sourcing real mainnet txids for the [PR #2524](https://github.com/carson-see/ArkovaCarson/pull/2524)
+soak fixture. **Not a regression from that PR** — the rows predate it — and it does not block that soak.
+
+**No fix applied. Prod was read-only for this investigation (SELECT only).** The code fix is small
+(prefer `anchors.chain_block_height`; thread the confirmed height through `ConfirmationProof`), but
+the 711k-row backfill is a T3 migration needing operator approval and its own soak.
+**Not yet logged in the Confluence Bug Tracker** — the Atlassian MCP connector is unauthenticated in
+this session and the `Atlassian` Secret Manager token returns 401. Paste-ready entry is in the
+session report; whoever has Atlassian auth should file it as BUG-2026-09-02-001.
+
+### DB — three admin RPCs ran unguarded DDL on the hot `profiles` table (fixed, pre-soak, 2026-09-01)
+
+`admin_change_user_role`, `admin_set_platform_admin` and `admin_set_user_org` each wrapped their
+`UPDATE` in `ALTER TABLE profiles DISABLE/ENABLE TRIGGER` with no bounded `lock_timeout`. All three
+are reachable from the admin console (`services/worker/src/api/admin-actions.ts` →
+`POST /api/admin/users/:id/{change-role,promote-admin,set-org}`), so every platform-admin role
+change ran DDL against a table on the auth hot path.
+
+**Severity is narrower than the §1.2 P0 shape, and the difference is load-bearing.** Measured from
+`pg_locks` on PostgreSQL 17: `ALTER TABLE ... DISABLE/ENABLE TRIGGER` takes **ShareRowExclusiveLock**,
+not AccessExclusiveLock. Readers are never blocked, so `/api/v1/verify` and PostgREST schema-cache
+introspection were never exposed by this — it is **not** the 2026-08-11 mechanism. Writes are
+blocked, and the FIFO barrier is real on that axis: with one slow in-flight write held on `profiles`,
+an innocent write **to an unrelated row** waited **4.95 s** before the fix and **0.04 s** after.
+Unbounded, since there is no `lock_timeout`.
+
+**Two of the three trigger-disables were never load-bearing.** Measured with the triggers left
+enabled, invoked exactly as PostgREST invokes them (`SET LOCAL ROLE service_role` + service_role JWT
+claims): `protect_privileged_fields` already bypasses (`get_caller_role() = 'service_role'` early
+return) so the `org_id` write succeeded; `trg_protect_platform_admin` already permits (it gates on
+`current_setting('role')`) so the `is_platform_admin` write stuck; only `enforce_role_immutability`
+genuinely blocked, because `check_role_immutability()` had no bypass at all. Re-measured rather than
+inherited from 0395: inside a SECURITY DEFINER function owned by `postgres`, `current_user` becomes
+`postgres` but **both** `current_setting('role')` and `get_caller_role()` still report the caller's
+role.
+
+Fix: migration `0428_admin_profile_rpcs_remove_hot_table_trigger_ddl.sql`. All three RPCs lose their
+DDL entirely. `check_role_immutability()` gains an exemption scoped to the RAISE only (so `role_set_at`
+stamping still applies to every caller), keyed on a **transaction-local flag** `arkova.allow_role_change`
+that `admin_change_user_role` sets around its own UPDATE **and** a service_role caller — both must hold,
+unset reads NULL and fails closed. `protect_platform_admin_flag()` also accepts `get_caller_role()`;
+`admin_set_platform_admin` captures the stored value via `UPDATE ... RETURNING` and raises if the flag
+did not take, because that trigger reverts *silently* and would otherwise return a false success.
+
+**A review pass this session caught that the first cut of the exemption was too broad and would have
+silently mutated real user data.** Keying it on `get_caller_role() = 'service_role'` alone also unblocks
+the worker's DIRECT service_role writes to `profiles.role` in `services/worker/src/api/invitations.ts`
+and `admin-org-members.ts`, which backfill `{ org_id, role }` guarded only by `.is('org_id', null)`.
+`org_id IS NULL` does not imply `role IS NULL` — **prod `vzwyaatejekddvltxyye` currently holds 16
+profiles with `org_id IS NULL AND role IS NOT NULL`** (verified this session via Supabase MCP
+`execute_sql`). Those writes raise today and their callers log a non-fatal warning; the broad exemption
+would have started silently rewriting those users' roles on invite acceptance, with no audit row.
+`current_user = 'postgres'` is no narrower — `auto_associate_profile_to_org_by_email_domain`,
+`join_org_by_domain`, `set_onboarding_plan` and `update_profile_onboarding` are all postgres-owned
+SECDEF functions that update `profiles` (same query). The flag is the narrowest correct signal, and the
+regression guard is pinned in the test file and measured on the rig rehearsal.
+
+**Verified against prod `vzwyaatejekddvltxyye` 2026-09-01 (Supabase Management API,
+`POST /v1/projects/{ref}/database/query`, read-only):** `pg_get_functiondef` for all five routines
+returned bodies byte-identical to the committed baseline, so the fix was designed against live prod
+rather than a stale file; all three profiles triggers read `tgenabled = 'O'` (none left disabled by a
+past crash); `user_role` has exactly three enum values, so the exemption widens nothing; and
+`has_function_privilege` shows the three admin RPCs already locked down (anon=f, authenticated=f,
+service_role=t) while `protect_platform_admin_flag` is still anon/authenticated-granted — which 0428
+revokes, burning one `secdef-grants-baseline.json` entry (109 → 108).
+
+**Migration is file-only — NOT applied to prod or any rig, NOT soaked.** Rehearsed 2026-09-01 on an
+isolated throwaway Postgres 17 cluster (never prod, never a rig, never the shared local stack):
+forward → rollback → forward, 14-case behavioural matrix green, plus an explicit regression guard that
+the worker-shaped direct backfill of an INDIVIDUAL is still blocked exactly as today. TLA PreCheck
+re-run on all four machines — all green; none model `profiles`/`role`, so it is N/A to this change. Migrations are always T3
+(CLAUDE.md §1.12), so this needs its own 48 h isolated-rig soak before it can go Ready. Opened as a
+**draft** PR.
+
+**Jira story, Confluence page and Bug Tracker row are NOT filed** (CLAUDE.md §3 gates 2/3/4) — the
+Atlassian connector is unauthenticated and the session was non-interactive, so it could not run the
+OAuth flow. The full page content is staged at
+[docs/confluence/19_admin_profile_rpc_hot_table_ddl_removal.md](docs/confluence/19_admin_profile_rpc_hot_table_ddl_removal.md)
+for whoever authenticates next.
+
+
+### CI — dead `memory/` pointers were invisible to the gate built to catch them (2026-08-31)
+
+`memory/project_deploy_typecheck_blackout.md` was cited by six sites — `scripts/ci/check-deploy-build-parity.ts`, `scripts/ci/check-deploy-typecheck-parity.ts`, `scripts/ci/agents.md`, `.github/workflows/agents.md` (x2) and a `ci.yml` comment — and had **never existed in the repo**. It resolved only inside one session's private assistant memory, so any human or CI runner following it found nothing.
+
+`scripts/ci/check-doc-pointers.ts` exists to fail CI on exactly this, but its scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. Nested `agents.md` files and `.github/workflows/*.yml` were not scanned, so all six sites were invisible to it.
+
+Fixed: the memory file now exists in the repo corpus (the failure class is real and has three live parity gates holding it shut), and the scan set covers every tracked nested `agents.md` plus the **comment lines** of workflow YAML. Resolution is now multi-base (doc dir -> package root -> repo root), which is what folder-local notes actually mean; repo-root-only resolution called 59 correctly-written references dead. Widening surfaced **five more** dead `memory/` pointers, each naming a rule that lived only in a session's local memory; those citations now state the fact inline instead. Deliberately-absent paths (negative examples, generated artifacts, named planned work) live in `scripts/ci/snapshots/doc-pointer-exemptions.json` with reasons, and a test fails on a stale one. Coverage went 1,310 -> 1,323 asserted references with the gate green.
+
+**The gate is not merge-blocking.** `Doc Pointer Resolution` is not in `.mergify.yml merge_conditions`, and `main` carries **no** `required_status_checks` at all (`gh api repos/carson-see/ArkovaCarson/branches/main/protection` returns no such block). It reports red without stopping a merge. Wiring it into the queue conditions is the same class of change as the `Orphaned Export Lint` / `Python SDK Tests` entries recorded in `.github/workflows/agents.md`, and was deliberately left out of this PR.
+
+Found incidentally while adding the third-party-notices freshness gate (PR #2530); deliberately kept out of that PR. T0 — no prod surface, no staging evidence required.
+
+### Bug — Adobe Sign webhooks 500 on every delivery, never worked in prod (found 2026-08-30)
+
+`services/worker/src/api/v1/webhooks/adobe-sign.ts` `findIntegration()` queries
+`org_integrations.webhook_id`, a column that has **never existed** — absent from the baseline and
+every numbered migration. Every correctly HMAC-signed `AGREEMENT_WORKFLOW_COMPLETED` delivery
+500s on `42703: column org_integrations.webhook_id does not exist` and lands in `webhook_dlq`,
+which nothing drains — total, permanent loss for the Adobe Sign path.
+
+**Found live** during the `worker-webhook-runtime` T3 soak on isolated rig
+`sawvgrwhgsmxjlwhpsyx` (2026-08-30), reproduced with a real HMAC-signed delivery.
+
+**Confirmed via a read-only `information_schema.columns` query against prod `vzwyaatejekddvltxyye`**
+the same day (Supabase Management API, `SELECT column_name FROM information_schema.columns WHERE
+table_name = 'org_integrations'`): 23 columns returned, none named `webhook_id`. **Adobe Sign has
+never worked in any environment built from this schema, prod included** — this is not a
+stale-baseline-only gap.
+
+Fix: [PR #2519](https://github.com/carson-see/ArkovaCarson/pull/2519), migration
+`0426_org_integrations_adobe_sign_webhook_id.sql` — **DRAFT, NOT applied to prod or any rig,
+NOT soaked.** Verified forward/idempotent/rollback only on an isolated throwaway Postgres 17
+container. Migrations are always T3 (CLAUDE.md §1.12); this needs its own 48 h isolated-rig soak
+exercising a real Adobe Sign webhook delivery before it can go Ready.
+
+**Blocks [PR #2496](https://github.com/carson-see/ArkovaCarson/pull/2496)** (Adobe Sign 16KB
+rule-event payload fix) from ever being soaked — its payload builder sits downstream of this
+lookup.
+
+**Not yet logged in the Confluence Bug Tracker or Jira** (CLAUDE.md §0 rule 5 / §3 gate 2) — the
+Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` / `/mcp` OAuth
+before any session can write to Jira/Confluence; whoever picks this up should file it before
+closing out.
+
+### Soaks — MFA enforcement (SCRUM-3167 / SCRUM-3584): PR #2635 MERGED; PR #2637 in the release session's 48 h T3 window — rig `nesuwjlscilzzbhpvbkt` IN USE, do not tear down
+
+- **Rig:** isolated Supabase project **`nesuwjlscilzzbhpvbkt`** (`arkova-soak-mfa-3167`, us-east-2), created 2026-09-03T06:31Z by
+  the CTO session (schema replayed from origin/main; preflight `clean_mirror` 06:37:42Z and again mid-window 10:44:42Z). It is
+  now the staging project of PR #2637's **current** window (see the PR body: T3, head `7016f0aa70c09cfff3e54c3b0955d0122740f8d0`,
+  clock 2026-09-05T16:32:46Z → no earlier than 2026-09-07T16:32:46Z, run by the release session). **Teardown only after that
+  window closes** (§7 sweep).
+- **PR #2635 (break-glass CLI): MERGED 2026-09-05T00:33:02Z** at head `bccc24a09f274484f0079afac0ab7f30905d7233` after the 12 h
+  exercise 2026-09-03T07:05:22Z → 19:05:23Z: **71 cycles, 0 failing**. Evidence persisted under
+  `docs/staging/mfa-enforcement-2026-09/break-glass-2026-09-03/` (per-cycle JSON bound to `pr_head` + rig ref).
+- **PR #2637 (enforcement): the 09-03 window on head `1a24af93e…` closed clean** — 2026-09-03T12:51:11Z → 2026-09-04T00:51:12Z,
+  API leg 72/72 cycles, Playwright leg 24/24 runs (`docs/staging/mfa-enforcement-2026-09/enforcement-2026-09-03/`). It is
+  **superseded**: the release session added five commits on 2026-09-05 (token-refresh enrolment preservation, pending-challenge
+  preservation, mobile sign-out spec), re-tiered the PR **T3** and started the 48 h window above. PR #2637 is frozen evidence
+  (`do-not-merge` = window marker); the RM line and Ready remain Carson's.
+- **Design ruling in force:** challenge path fails CLOSED; fail-open enrolment-only (see `### Auth — MFA enforcement design ruling`);
+  server-side aal2 enforcement = SCRUM-4026.
+
+### Soaks — DocuSign **guard** T3 (SEALED 2026-09-04T13:49Z — rig since DELETED; #2472 now owned by the Codex oldest-first batch)
+
+> **Window closed clean.** 552 cycles, 3,312 probes OK, 0 fail, guard exactly `1111` on every cycle, worker uptime monotonic 0.02h → 47.93h with 0 resets. Triggers A (direct log) and B (by elimination) both fired 2026-09-03. Sealed with a sha256 over the cycle bytes: `docs/staging/docusign-guard/SEAL.json`, commit `9e3fa3aa`.
+> **Rig deleted 2026-09-05T15:10:13Z by `270018525501-compute@developer.gserviceaccount.com`** — ~25h after close, no teardown log entry, not this session. Evidence unaffected (captured live before deletion).
+> **#2472 has since been re-based and re-soaked by the Codex oldest-first release session** at head `ee083ef7` on rig `zjwtnkwnwjpcmclkuvdf` (window from 2026-09-05T14:57Z, `do-not-merge` = window marker). That block is the merge-grade one; the window below is supporting evidence at the prior head. Do not touch that PR's body, labels, or head.
+
+- **Rig:** isolated Supabase `kyaecvotcbalsfahwslt` (`arkova-soak-docusign-guard`, us-east-2), ledger head **0423**, preflight **`clean_mirror`**. Cloud Run `arkova-worker-docusign-guard-staging` rev **00003-hwq**, image `sha256:4aa5e8cd…`, source head `bfd0aaf5b32ad24db9717f8da1dbcb5ba2dee006`.
+- **Covers PR #2472 only** (migration 0423, the DocuSign metadata key write-authority trigger). Deliberately narrower than the discarded RC-2 window: #2474/#2476 are NOT in this branch and are not soaked here.
+- **Clock = Cloud Run worker uptime.** Window **2026-09-02T13:49:03Z → 2026-09-04T13:49:03Z**. Deployed `--min-instances=1` specifically so uptime is a meaningful continuity signal — the discarded window's 3 restarts came from instance recycling.
+- **Driver** `services/worker/scripts/load-test/docusign-guard-soak.sh` (detached, PPID 1), 5-min cycles. It asserts **DB deltas, not HTTP status**, and fails any cycle whose guard probe is not exactly `1111` (forged INSERT stripped · non-DocuSign `account_id`/`envelope_id` preserved · service_role preserved · forged UPDATE reverted).
+- **Cycle numbering restarts at 1 on each driver relaunch** — count evidence files and worker uptime, never the `cycle` field.
+- **`ENABLE_DOCUSIGN_INBOUND=true` on this rig is INERT** — the flag does not exist in #2472's branch. Do not read the rig config as "inbound was soaked". Scope note: `~/arkova-soak/docusign-bilateral/SCOPE-NOTE.md`.
+
+### Soaks — DocuSign bilateral **RC-2** T3 (CLOSED — evidence DISCARDED as hollow, rig deleted 2026-09-02)
+
+> **Do not treat anything below as merge-grade.** This window was discarded by the CTO session on
+> 2026-09-02 for three independent reasons: it never exercised PR #2472's changed behavior (0 of 191
+> cycles carried a guard probe), its worker restarted 3x on 09-01 so the longest continuous segment
+> was 34.2h not 48h, and its driver counted HTTP 202 as success while `connector_artifact` stayed at
+> 0 outbound rows — outbound events were being silently orphan-dropped for want of a DocuSign OAuth
+> token the rig could never have. Superseded by the **docusign-guard** soak below. Rig
+> `aqikotdkmhxmznonwmwk` was torn down by this session at 2026-09-03T00:4xZ (Cloud Run service and
+> per-rig secrets deleted, project confirmed absent) — that is the teardown the rig-inventory entry
+> further down could not attribute.
+
+- **Rig:** Supabase `aqikotdkmhxmznonwmwk`; worker `arkova-worker-docusign-bilateral-staging` rev **00004-xpn**, image `sha256:edca3f40…`, source head **`2302e815e61fca5af449ba53a7ccca2fac49606e`** (`rc/docusign-bilateral-2026-08-30`).
+- **Clock = Cloud Run revision ready 2026-08-31T00:46:58Z → T3 closes 2026-09-02T00:46:58Z.** Driver detached (PPID 1), 15-min cycles.
+- **Covers 9 PRs:** #2472 guard mig 0423 · #2473 frontend links · #2474 signer capture · #2476 inbound + mig 0424 · #2479 harness · #2485 16KB rule-event bound · #2489 DECLARED_UNVERIFIED disclosure (6 surfaces) · #2516 seed fixture · #2518 0424 rollback executable · #2520 F1 auto-heal · #2521 signer backfill.
+- **Live state:** 37/37 connector artifacts materialized, 37 anchors at `fingerprint_source=issuer_record_attestation`, 152/152 nonces account-scoped, 0 PII leaks, 0 unresolved provenance conflicts.
+- **RC-1 (`2a676981`) 35 sealed cycles** preserved in `~/arkova-soak/docusign-bilateral/round1-sealed/`; clock deliberately restarted so ONE window covers the complete feature.
+- **Documented deviations (residual risk, not defects):** outbound document-fetch cannot be exercised on a synthetic rig (no real DocuSign OAuth grant) so `document_bytes` anchors = 0 and signer capture is proven at the job layer only; the F1 auto-heal is carried by its verified TLA invariant + unit tests, not this window's load; the signer backfill has no eligible candidates for the same reason. See `docs/staging/docusign-bilateral-2026-08/evidence/E5-rc2-complete-window.md`.
+- **Prod keeps `ENABLE_DOCUSIGN_INBOUND` OFF** pending the SCRUM-3818 go-live gate. Do not touch this rig or the concurrent soaks.
 
 - **Rig:** isolated Supabase `aqikotdkmhxmznonwmwk` (`arkova-soak-docusign-bilateral`, us-east-2), ledger head **0424**. Cloud Run `arkova-worker-docusign-bilateral-staging` rev **00003-kt9**, image `sha256:642487e3…`, source head `2a676981cfcc337f87f42169b2d2085fdb886c87` (branch `rc/docusign-bilateral-2026-08-30`).
 - **Covers:** PRs #2472 (guard mig 0423), #2474 (signer capture), #2473 (frontend links), #2476 (inbound + mig 0424), harness #2479.
@@ -22,6 +477,32 @@
 - **Staging-only:** `ENABLE_DOCUSIGN_INBOUND=true` on the rig. **Prod keeps inbound OFF** pending the SCRUM-3818 go-live gate.
 - **Evidence:** `docs/staging/docusign-bilateral-2026-08/evidence/` — E1/E2 guard behavior, E3 live adversarial matrix, E4 inbound envelopes anchored end-to-end (ARK-DOC-JFQ9QR, ARK-DOC-DGHFW2, `fingerprint_source=issuer_record_attestation`), zero PII leakage.
 - **Do not touch** this rig or the concurrent `credits-2442` / `cleanup-2335` soaks.
+
+### Soaks — consolidated-mm-2026-08 T3 (CLOSED — `pause_lift_obligation` still NOT satisfied, 2026-09-01)
+
+- **Ran:** `consolidated-mm-2026-08`, RC `RC-2026-08-22-deferred-basedrift-exit`, head
+  `b2a65edddff9a3bfb0bb6ec35729bbdd7558a678`, worker rev
+  `arkova-worker-consolidated-mm-2026-08-staging-00001-7n4`. Window
+  2026-08-30T15:46:33Z → 2026-09-01T15:46:33Z, 289/289 cycles clean across every named probe
+  (health/auth/rate-limit/cron/isolation). Sealed evidence:
+  `docs/staging/consolidated-mm-2026-08/cycles/window-summary.json`. Full write-up:
+  `docs/staging/consolidated-mm-2026-08/close-out-2026-09-01.md`.
+- **CTO ruling: this soak does NOT satisfy `pause_lift_obligation`.** The rig never seeded
+  `ENABLE_BATCH_ANCHORING` into `switchboard_flags`, so the batch-anchor/chain-signing path never
+  ran — `max_secured_observed=0` against 13,204 pending anchors from real injected load, and both
+  daily flush fires returned `{"processed":0,"batchId":null,"merkleRoot":null,"txId":null}`
+  (2026-08-31T03:04:55Z and 2026-09-01T03:05:35Z, captured verbatim in the window summary). Prod
+  (`ENABLE_BATCH_ANCHORING=true` since 2026-07-17) secured 13,711 anchors in the same window —
+  confirmed by direct SQL against prod `vzwyaatejekddvltxyye`, so this is a rig-provisioning gap,
+  not a `main` defect. Jira SCRUM-3861.
+- **Everything else this soak proves stands** (289/289 clean cycles is real evidence for the
+  surfaces it covered). It just isn't the one thing `pause_lift_obligation` requires: proof that
+  the anchoring/batch path is safe at the accumulated `main` head.
+  `docs/staging/rc-manifests/rc-deferred-2026-08-22.json` `pause_lift_obligation` updated in place
+  with this same ruling, same date.
+- **`DEPLOY_WORKER_PAUSED` stays `true`.** Lifting it needs a re-soak (or a targeted extension of
+  this rig) with `ENABLE_BATCH_ANCHORING` confirmed `true` via preflight *before* the clock starts.
+  Not scheduled yet — next action for whoever picks up the pause-lift gate.
 
 
 **State as of 2026-08-27T21:00Z, verified live this session.** This block is the only current-state
@@ -113,6 +594,35 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
 > via the merge; the authored commits are tests-only. **Whether the evidence carries to the new
 > head is a §1.12 residual-risk call and is NOT decided here — do not claim the soak for
 > `99ea75fbf`.**
+
+### Auth — MFA enforcement design ruling (2026-09-03T07:30Z) — challenge path fails CLOSED
+
+- PR #2637's pre-merge sweep confirmed the "fail open on any platform error" design was a bypass (global sessionStorage
+  cooldown survived sign-out; rate-limit/IP-mismatch rejections classified as platform failures) — BUG-2026-09-03-002 /
+  SCRUM-4027, never shipped. Ruling: challenge path (aal1 + verified factor) fails closed with retry/sign-out; fail-open
+  ONLY on the enrollment path (no factor, platform cannot issue one); cooldown per-user, enrollment-only, cleared on
+  sign-out. Round-2 batch in progress on the PR branch.
+- Residual: any client-side gate is forgeable; server-side aal2 enforcement (RLS + worker API) = **SCRUM-4026** (T3).
+  Until it ships, docs/R-7 say "MFA required at sign-in (client-enforced)", never "MFA enforced".
+- Flaky test logged: BUG-2026-09-03-001 / SCRUM-4028 (`InviteMemberModal` under full-suite load; unrelated to both PRs).
+- Deferred cleanup: SCRUM-4025 (shared entrypoint guard + errMessage helpers).
+
+### Auth — MFA (2026-09-03, verified live)
+
+- **Production Supabase Auth TOTP MFA is ENABLED as of 2026-09-03T01:28:39Z** — `mfa_totp_enroll_enabled=true`,
+  `mfa_totp_verify_enabled=true`, factor enrolled/unenrolled notification mails on. Set by Management API
+  `PATCH /v1/projects/vzwyaatejekddvltxyye/config/auth` (HTTP 200) and re-read by GET; before the PATCH both TOTP
+  flags read `false`, which is why the opt-in Settings card never worked in prod and why PR #1973 locked admins out
+  on 2026-08-03. Verified by a real enroll → challenge → verify → aal2 → unenroll round trip on the UAT demo account
+  at 2026-09-03T01:29:07Z (10/10 steps PASS, account left with 0 factors). Evidence and config before/after tables:
+  [SCRUM-3167 comment 19082](https://arkova.atlassian.net/browse/SCRUM-3167?focusedCommentId=19082).
+  Still off (founder-reserved): leaked-password protection, `password_min_length` (6). Rollback: PATCH the four
+  fields back to `false`.
+- **Nothing is enforced yet.** 0 verified factors, 0 aal2 sessions in prod. Enforcement (role-based gate for
+  ORG_ADMIN + platform admins, grace window to 2026-09-21, fail-open on any platform error, backup factor UX,
+  operator break-glass) is in progress on `security/mfa-enforcement-3167` (SCRUM-3167 / SCRUM-3584, both In Progress).
+  Docs corrected to production truth in `d6cda8cd7`; local/CI `supabase/config.toml` TOTP on in `010666caf`;
+  CI e2e job needs Supabase CLI 2.x (PR #2631) because CLI 1.123.0 ignores `[auth.mfa]`.
 
 ### Prod
 
@@ -341,6 +851,39 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
   (`6860390a8`, by 6 h) renumbers. **Nobody has done it.** Whichever of the two merges second will
   land a duplicate prefix. This is the one open migration-numbering hazard on the board.
 
+### CI — new required check `Third-Party Notices Freshness` (added 2026-08-30)
+
+`src/data/thirdPartyNotices.generated.json` (the data behind the shipped `/legal/third-party-notices`
+page) is generated by `npm run license:notices:generate`, but **nothing ever ran that generator in
+CI** — a grep of `.github/workflows/*.yml` and `scripts/ci/*.ts` for `license:notices` returned zero
+hits. So it drifted silently: the committed file is stamped `generatedAt: 2026-07-28` and is out of
+sync for **81 package names**, including 13+ production dependencies that are installed and appear
+nowhere on the page (`xlsx`, `heic-decode`, `upng-js`, `utif2`, the SheetJS stack). `qrcode-generator@2.0.4`
+reached a branch undisclosed and was caught by hand, not by CI. The generator has also been failing
+closed the whole time (exits 1, writes nothing) on an allowlist-cleared `@img/sharp-libvips-*` with no
+pinned notice.
+
+`scripts/ci/check-third-party-notices-fresh.ts` closes the *detection* half. What other sessions need
+to know:
+
+- **It is now in all three `.mergify.yml` queue `merge_conditions`.** A ci.yml job absent from that
+  list gates nothing, so it was wired in the same change. The job runs unconditionally (no job-level
+  `if:`, no path filter, no `continue-on-error`) — pinned by `mergify-notices-freshness-gate.test.ts`,
+  because a `skipped` check never satisfies `check-success` and would deadlock the queue.
+- **It is a RATCHET, and green today.** The inherited drift above is recorded in
+  `scripts/ci/snapshots/third-party-notices-drift-baseline.json` with `expires: 2026-10-31`. New drift
+  fails immediately; inherited drift warns on every run; everything hard-fails past the expiry. This
+  is deliberate — failing on the inherited state would have red-ed every open PR at once.
+- **If your PR fails it:** run `npm run license:notices:generate` and commit the result. Note that this
+  currently exits 1 without writing, because of the pinned-notice gap above — that gap is owned by the
+  "Regenerate third-party notices (blocked by sharp)" task and is the blocker to retiring the baseline.
+- The comparison excludes platform-variant packages (detected from `os`/`cpu`/`libc` in
+  `package-lock.json`), so a file generated on darwin matches an ubuntu runner. Checked both ways
+  locally: darwin-arm64 excludes 3 names, a linux-x64 tree excludes 7, and both emit an identical
+  81-name drift set and exit 0.
+
+No prod state is asserted or changed by this; it is CI-only (T0).
+
 ### PR board
 
 #### Refreshed 2026-08-27 — the 2026-08-12/08-18 entries below are largely SUPERSEDED
@@ -564,31 +1107,170 @@ separately). Full verdicts, defects, and landing-order constraints:
   `/login`, `activate_user` signature mismatch). Seven further wrong mappings were disarmed before
   they could fire.
 
+### Soaks — rig inventory correction (2026-09-03T05:35Z, verified live)
+
+- **Seven rigs were torn down by another session at 2026-09-03T01:18:32Z–01:22:51Z** (`~/arkova-soak/teardown-2026-09-03.log`,
+  `teardown-isolated-rig.sh --apply`; the log actually records rc=1 and
+  `LegacyProjectsDeleteCancelledError` for all 7 — the CLI reports failure while the delete succeeds
+  server-side, confirmed by all 7 being absent from the Management API). Gone: consolidated-mm `krhegsltjkazuomynbww`,
+  credits-2442 `gsluatcqhwwynxpsidjy`, attest-park-0902 `symlfubaxyjehrshyhrw`, cleanup-2335 `bxgybbxkhuxwtgkgkwpe`,
+  contract-frontend-tooling `udpzylbccncnwvhbfjsu`, cron-chain-batch `sdkcfqprpmacxlazwjdy`, worker-webhook-runtime
+  `sawvgrwhgsmxjlwhpsyx`. docusign-bilateral `aqikotdkmhxmznonwmwk` is also gone with no entry in that log. Confirmed by
+  Supabase MCP `list_projects` at 05:35Z (13 projects remain: prod, the standing rig, 11 soak rigs) and
+  `gcloud run services describe` 404s.
+- **Consequence:** the consolidated-mm rig that the 2026-09-01 close-out kept so `pause_lift_obligation` could be
+  satisfied by extending it no longer exists. Lifting `DEPLOY_WORKER_PAUSED` now requires a fresh isolated rig and a
+  full consolidated soak of merged main. The CLOSED entry below still describes evidence that is sealed in-repo.
+- **Live state of the remaining rigs (checks: local driver process / open-PR citation / Cloud Run request log):**
+  RUNNING — provisioning-3873 `owieixqcnigfpiowptop` (#2571), rc-batch-0902 `rvdgwynxoapdzysoaayr` (~closes
+  07:49Z), docusign-guard `kyaecvotcbalsfahwslt` (to 2026-09-04T13:49Z), proof-txincl-0427 `uqobkjhlnqmcpjidngxr`,
+  admin-rpc-0428 `vofhfzyosxlneupohsem` (#2564), decl2499 `bwkxdehfjedynnjmnsos` (#2499). HOLD (open PR cites it) —
+  mig-public-projection `uayovlvdhmuovuyfxrog` (#2440/#2314), mig-docusign-trust `yfqgxycaiwgvvvbzhkma`
+  (#2518/#2476/#2472), reorg-3836 `hgmluvnqgfcigevqeebu` (#2495; its `detect-reorgs` Cloud Scheduler job is still
+  firing unattended). NEEDS CARSON — flag-live-2438 `vmfsmtilaovdjypqhjob` (4 h old, one request ever, cited by no PR)
+  and suborg-3863 `jpdhektjeawfjkznmpfe` (window nominally open to 2026-09-04T01:47Z, driver dead, 0 evidence files).
+  The standing rig `fizyjojbebyalirtjjht` was NOT used for MFA-3167: it preflights `soak_artifact` (PR-only row 0420, PR #2442).
+  The MFA soaks run on the new isolated project `nesuwjlscilzzbhpvbkt` (see `### Soaks — MFA enforcement`). No rig was torn down by this session.
+- **Orphan secrets — partially swept 2026-09-03, and the diagnosis above was wrong.** The claim that
+  teardown "deletes only `supabase-url-*` / `supabase-service-role-key-*`" is stale: it also deletes
+  `ip-hash-pepper-<rig>-staging`, which is every secret `provision-isolated-rig.sh` creates. Nothing in
+  the repo creates `supabase-db-password-*` at all — provision passes the password straight to
+  `supabase projects create` and never stores it — so those entries were hand-created by operators.
+  There is no teardown gap to fix for them.
+  **Swept:** 21 secrets whose name ends in a project ref that no longer exists (13 `db-password`,
+  plus `db-url`/`service-role-key`/`url` for three dead refs). Verified absent from the Management API
+  and unreferenced by any of the 59 secret names in use across every live Cloud Run service, then
+  deleted and re-confirmed gone.
+  **NOT swept, deliberately:** the remaining ~123 rig-named secrets. A name-pattern classifier is
+  unsafe here — it flagged `api-key-hmac-secret-staging` as orphaned, which is a SHARED secret
+  referenced right now by `arkova-worker-docusign-guard-staging` and `arkova-worker-admin-rpc-0428-staging`.
+  Deleting it would have broken two live soaks. Only ref-named secrets are unambiguous; rig-named ones
+  need per-rig confirmation.
+
 ### Soaks
 
-> ### ⚠️ A SOAK WINDOW IS OPEN — PR #2461, until 2026-08-31T09:52:56Z
->
-> **Do not tear down `arkova-soak-pii2461b` / `evkcynsqcmctugoscgeh`.** T2 soak for
-> [#2461](https://github.com/carson-see/ArkovaCarson/pull/2461) (server-side `EMAIL_PATTERN` ReDoS
-> fix), window **2026-08-30T21:52:56Z → 2026-08-31T09:52:56Z**, driven every 5 min.
->
-> | | |
-> |---|---|
-> | Supabase project | `evkcynsqcmctugoscgeh` (`arkova-soak-pii2461b`) |
-> | Cloud Run | `arkova-worker-pii2461b-staging`, revision `…-00001-b7d` |
-> | Preflight | `environment_type=clean_mirror`, 7/7, captured before the clock started |
-> | Head under soak | `f584dfe99b145502ce9a8b0527b95487247d8d0e` (`/health` `git_sha` matches) |
-> | Image digest | `sha256:c2ed527b8a5bf30f6cba9a6aa40ca14e2eb76d32868a8e9de8aca31d27749b37` |
->
-> **This entry exists because the FIRST rig for this PR was swept mid-setup.** Rig `pii2461`
-> (`wqamcbwogupiuruhkllt`) was torn down by `teardown-isolated-rig.sh` before its clock started —
-> the damage matched that script exactly (project removed, both `*-pii2461-staging` secrets deleted,
-> service deleted, `supabase-db-password-<ref>` left alone). Its provision had aborted at
-> `blocked_after_project_create`, so no admission artifact was ever persisted and the project
-> carried no lease marker. Combined with the "no soak open" bullet below, it read as abandoned.
-> If you are running a cost sweep, this block is the lease.
+**OPEN PROD FINDING (2026-09-02, SCRUM-3953, P1/T3) — `anchor_proofs.block_height` is stale on 711,250 of 714,129 rows (99.6 %).**
+The broadcast path stores the chain tip at broadcast time (`chain/signet.ts` `broadcastSignedTx`, "observability only") and `publicRecordAnchor.ts`
+persists it into `anchor_proofs`; confirmation corrects only `anchors.chain_block_height` (384/384 correct), and the populate job re-asserts the stale
+proof-row value next to the correct hash/header. `block_timestamp` is wrong on the same rows. Public API / webhooks / SDK read `anchors` and are
+correct; the downloadable audit certificate reads the proof row, prints "Network Record #N-2" and its embedded packet fails `arkova-verify --rpc`
+with `height_mismatch`. Not a regression (since PR #761, 2026-05-11); the current worker build still writes it. Audience today: the Arkova
+public-records org only. Finding, 476-row chain check and T3 fix design: `docs/staging/findings/prod-block-height-2026-09-02/finding.md`.
+Supersedes the "44 block hashes at more than one height" thread — same mechanism.
 
-**★ ONE SOAK WINDOW IS OPEN (PR #2461, above). The 2026-08-27 statement below is superseded.**
+**MAIN `Tests` RED SINCE 2026-09-02T13:58Z — fix PR #2623 (T0) open, SCRUM-3954.** Three merges combined: #2573 hardened anchoring health and
+left `health-detail-auth.test.ts`'s unprobed fixture asserting `ok`; #2584 and #2587 (merged 9 s apart) fix it in contradictory ways; dependabot #2606
+busted the zk artifact cache and the pinned ptau hosts answer 403 (durable mirror: SCRUM-3955). Nothing merges through Mergify until #2623 lands;
+the RC-batch and R1 close-outs below depend on it. Do not open another competing fix.
+
+**CLOSE-OUT RUNBOOK (drafted 2026-09-02; gate dry-runs in `docs/staging/rc-batch-0902/closeout/gate-dry-run.md`).**
+- **RC batch, window closes 2026-09-03T07:49:27Z.** (1) Stop the loop, confirm every `rc-live-NN.jsonl` is `pass`. (2) Open a separate `docs(rc):` PR
+  replacing `docs/staging/rc-manifests/rc-batch-2026-09-02.json` with `docs/staging/rc-batch-0902/closeout/rc-batch-2026-09-02.CLOSEOUT-DRAFT.json`
+  (drops the unrecognised `soak_mode`, adds `environment.revision/deploy_tag/deploy_log_id`, the `soak` object, `approval_*`, and fixes #2526's
+  `base_sha` to GitHub's live base `19d7adfb…`). Carson's CODEOWNERS review of that PR is the approval the manifest asserts — do not set
+  `approval_actor` to an agent; the gate rejects agent self-attestation. (3) After it merges and GitHub recomputes the merge previews, paste
+  `closeout/pr-252{5,6,7,8}-evidence-block.md` into the PR bodies (grep for `<<` first — the gate does not catch leftover markers).
+  #2528 is not a draft: a green gate on it is merge authorization. Main's `Tests` job must be green first (fix in flight, see below).
+- **R1 / #2524, window closes 2026-09-04T13:38:43Z.** (1) Stop the loop. (2) Run the 0427 rollback rehearsal ON THE RIG after the window
+  (apply the file's `-- ROLLBACK:` SQL, re-apply 0427, re-run the driver once). (3) Paste `docs/staging/proof-txincl-0427/closeout/pr-2524-evidence-block.md`
+  with `Soak end`, the cycle count and the rehearsal filled; human approver = Carson. The base must stay `4b3db0c0c` — **do not merge `main` into
+  the branch again**: once the base passes `1b7d8601c` the migration-ledger carve-out fires and demands a re-soak. No `staging_deploy_log` row exists on
+  either rig (manual standup); the provenance text in the blocks passes the parser, SCRUM-1803 intent unmet.
+- **Jira/Confluence (created 2026-09-02, all To Do):** #2524→SCRUM-3956 (epic SCRUM-2325, page 135036931) · #2525→SCRUM-3959 (SCRUM-1866, 135495682) ·
+  #2526→SCRUM-3962 (SCRUM-2895, 135528450) · #2527→SCRUM-3965 (SCRUM-2325, 134938627) · #2528→SCRUM-3968 (SCRUM-2325, 135561218); each has
+  `[Verify]` + `[Close-out]` subtasks. At close-out: add the key to each PR title/body, tick the page DoD lists, transition subtasks with the parent
+  only after merge + prod green. The #2525/#2526 PR bodies are stale (superseded rig, "501" now 404, "1 h" now 30 min) — replace, don't append.
+- **Then** tear both rigs down (`scripts/staging/teardown-isolated-rig.sh`, §7 cost sweep) and close the soak entries here.
+
+**RUNNING — PR #2524 T3 isolated soak (`feat/proof-tx-inclusion-branch`, migration `0427`), started 2026-09-02.**
+- **Rig:** isolated Supabase `uqobkjhlnqmcpjidngxr` (`arkova-soak-proof-txincl-0427`, us-east-2),
+  ledger head **0427** (119 rows; `0381` applied via session-pooler psql + ledger row per
+  STAGING_RIG.md item 3). Cloud Run `arkova-worker-proof-txincl-0427-staging` rev **00001-f8j**,
+  image digest `sha256:daa5e4112f280b8aa5ff65c4e24b9c4afe569a69257630ed2a2e91ecb069a956`, built from
+  `a3f1d6b36b513d2fd9d65e2d1e6f6f5f2b6cf20c`. **The PR head is `e5815e9ac`** — a merge of `origin/main`
+  (`4b3db0c0c`) into `a3f1d6b36` committed 2026-09-02T12:54Z, 44 min *before* the window opened. The
+  PR-authored diff is byte-identical across the two heads; the only runtime delta under the PR's own paths
+  is a rate-limiter bucket rename in `routes/cron.ts` from an already-merged PR. CTO decision: clock kept,
+  residual-risk note `docs/staging/proof-txincl-0427/evidence/E2-base-movement-residual-risk-2026-09-02.md`.
+  Branch still frozen — do not push to it.
+- **Preflight:** `environment_type=clean_mirror` 7/7 —
+  `docs/staging/proof-txincl-0427/clean-mirror-preflight-proof-txincl-0427.json`.
+- **Clock basis = Cloud Run worker uptime**, revision ready **2026-09-02T13:38:43Z**;
+  T3 window closes **2026-09-04T13:38:43Z**. Fixture: 3000 SECURED real-mainnet-txid anchors
+  (wedge 120 / bulk 450 / spread 2430), 2 orgs. Scheduler: only `…-populate-confirmation-proofs`
+  (`*/5`) is wired — `batch-anchors` deliberately absent, so **nothing broadcasts**.
+- **Driver:** `services/worker/scripts/pr2524-proof-txinclusion-driver.ts` on branch
+  `soak/proof-txincl-driver` @ `455dffaa0` (sha256 `6221c0a9d9f4ae862d594f759f0ddfb3c4e055ecb43d939cd950e051692a4a99`); evidence is
+  committed under `docs/staging/proof-txincl-0427/evidence/`. **`r1-live-06` (2026-09-02T20:10Z) passed A1–A9 with
+  `evidenceForSoak=true`** (`evidence/live-06.jsonl`): stored and published tx-inclusion pair identical
+  (index 1966, 12 siblings) and folds to the published header merkleroot. The `live-01..05` A7/A8 failures
+  were driver defects (missing IAM header, then the wrong route `/api/v1/proof/:id`), not reader defects —
+  see `evidence/E1-direct-probes-2026-09-02.md`.
+- **Health read 2026-09-02T19:30Z:** 2,880 / 3,000 populated; the remaining 120 are the designed
+  wedge cohort (1 shared txid, 120 distinct wrong block hashes); 0 half-pairs, 0 index-out-of-range.
+- **Do not** touch this rig, its Scheduler job, or `feat/proof-tx-inclusion-branch`.
+
+**RUNNING — RC batch T2 soak for PRs #2525 / #2526 / #2527 (T2) + #2528 (T1 frontend, targeted evidence), started 2026-09-02.**
+- Supabase `rvdgwynxoapdzysoaayr` (`arkova-soak-rc-batch-0902`), ledger head **0419** = `main`, preflight
+  `clean_mirror` 7/7 (`docs/staging/rc-batch-0902/clean-mirror-preflight-rc-batch-0902.json`).
+- Cloud Run `arkova-worker-rc-batch-0902-staging` rev **arkova-worker-rc-batch-0902-staging-00001-p4l**, image digest
+  `sha256:55c34e1fdf0423562159569c31d775343ef73f13394ff084ce7e62471caf5ccf` (built by Cloud Build — the local Docker registry path was throttled), source head
+  `78621249595e37398170da9b298ae13cd753a801` = `rc/soak-batch-2026-09-02` (clean merge of all four CURRENT PR heads).
+- **Clock basis = Cloud Run worker uptime**; 12h T2 window **2026-09-02T19:49:27Z → 2026-09-03T07:49:27Z**.
+  Scheduler: `…-populate-confirmation-proofs` + `…-check-confirmations` (`*/5`); `batch-anchors` deliberately absent → nothing broadcasts.
+- Manifest: `docs/staging/rc-manifests/rc-batch-2026-09-02.json` (per-PR head SHA coverage, `approval_status: pending`).
+- **Admission:** `docs/staging/rc-batch-0902/isolated-rig-provision-rc-batch-0902.json`. **Fixture** `scripts/staging/seed-rc-batch-0902-fixture.sql`
+  applied ~20:23Z (11 SECURED anchors on real receipts, 11 proofs, 10 attestations, 2 orgs). **Driver** `services/worker/scripts/rc-batch-0902-driver.ts`
+  on `soak/rc-batch-0902-driver` @ `31569f76e` (sha256 `29fd4c4d3824cb887464ba9e28befa334a529b966989c9783452f9b33bd994df`), 17 assertions
+  (A27 verdict/bundle, A25 attestation park + PII sweep, A26 detect-reorgs manifest + endpoint). **`rc-live-01` 20:25Z: 17/17 pass,
+  `evidenceForSoak=true`** (`docs/staging/rc-batch-0902/evidence/rc-live-01.jsonl`); a detached loop re-runs it every 2 h until the window closes.
+- **0417 replay gap, reconciled:** the post-seed preflight found migration `0417` (in the RC head; present in the prod migration ledger since 2026-08-22) missing from the rig;
+  applied 20:31:13Z via `supabase db push --linked --include-all` (one file), preflight from the RC head checkout back to `clean_mirror` 7/7
+  at 20:31:20Z (`post-reconcile-preflight-rc-batch-0902.json`). Full sequence + why `rc-live-01` stays valid: `evidence/E1-…-0417-reconciliation-2026-09-02.md`. Filed SCRUM-3951.
+- **Rollback rehearsal done 20:32Z** (`evidence/E2-rollback-rehearsal-2026-09-02.md`): prod image `8147ed3a…` booted healthy as a zero-traffic tagged
+  revision, serving instance untouched (uptime continuous), revision then deleted.
+- **#2528 targeted frontend evidence: QR works end-to-end — YES** (`evidence/frontend-2528-qr/frontend-2528-qr-e2e.md`): certificate QR decodes to
+  `https://app.arkova.ai/verify/<id>` (jsQR on the matrix and on the rasterised PDF), prod renders `ARK-DOC-9G5HQZ` Secured at 1280/375 and under an iOS
+  Safari UA, `ARK-DOC-ZZZZZZ` fails honestly, 38/38 vitest.
+- **Do not** touch this rig, its Scheduler jobs, `rc/soak-batch-2026-09-02`, or the four member PR branches.
+
+**(superseded above — RC batch rig was STANDING at the previous refresh.)**
+- Supabase `rvdgwynxoapdzysoaayr` (`arkova-soak-rc-batch-0902`), ledger head **0419** = `main`,
+  preflight `clean_mirror` 7/7. RC tree `rc/soak-batch-2026-09-02` @ `78621249595e37398170da9b298ae13cd753a801`
+  (all four CURRENT PR heads merged clean). Worker not yet deployed — image building; manifest draft
+  `docs/staging/rc-manifests/rc-batch-2026-09-02.json`. Window opens when the worker is up.
+
+**CLOSED (declared window passed 2026-09-01T16:23:20Z) — DocuSign bilateral T3 RC soak.** Its
+close-out status is whatever its own docs say (`docs/staging/docusign-bilateral-2026-08/`); this
+block no longer asserts it as RUNNING. Original entry retained below for the record.
+
+
+> ### ✅ PR #2461 soak CLOSED and SEALED — rig torn down 2026-08-31
+>
+> T2 window **2026-08-31T00:15:22Z → 12:15:22Z**, full 12 h served, on isolated rig
+> `evkcynsqcmctugoscgeh` / `arkova-worker-pii2461b-staging-00003-gb4`, head
+> `5083fbba4e27121e6bd845361ccd7dda323e3183`.
+>
+> **142 cycles, 142 pass, 0 fail.** 426 extraction jobs claimed and processed, 34,080,426 characters
+> of adversarial dotted evidence driven through `stripSensitiveString`, 426 CTDL projections probed,
+> 0 leaks, 0 under-redactions. Soak clock = Cloud Run worker uptime 43,647 s (12.12 h). Preflight
+> `clean_mirror` 7/7 at **both** ends (00:06:17Z and 12:21:56Z). Evidence is in the PR body; the
+> `Staging Soak Evidence Gate` passes in CI with `SOAK_GATE_DISABLED=false`.
+>
+> **Rig reclaimed (§7):** Supabase project deleted, Cloud Run service deleted, per-rig secrets
+> deleted, plus the two orphaned `supabase-db-password-<ref>` secrets for this rig and its swept
+> predecessor — the teardown script does not remove those, which is why one had survived a prior
+> sweep as a dead credential.
+>
+> Two failures worth carrying forward, both already fixed in tooling:
+> 1. The first rig was swept mid-setup because its provision aborted before persisting an admission
+>    artifact, so it had no lease marker. A `### Soaks` entry is that lease — use one.
+> 2. `rollback-rehearsal.sh` selected `status.traffic[0]` as "the serving revision"; with a
+>    `rollback` tag present that is the **0%** entry, so it restored traffic to the prod image and
+>    reported success while the rig served the wrong code. Select on `percent == 100` and verify by
+>    reading `/health` `git_sha` back. STAGING_RIG.md pitfall 7, recurring inside our own tooling.
+
+**★ NO SOAK WINDOW IS OPEN as of 2026-08-31T12:30Z.**
 Every window described in the dated entries Every window described in the dated entries
 below has closed. This block — not any `## History` entry, and not the presence of a Cloud Run
 service — is the authoritative answer to "is a soak running" (CLAUDE.md §0.1). Three soaks closed
@@ -837,6 +1519,16 @@ the path is `/health` only" was true before that alias landed and is false now. 
 answer (prod runs `minScale=2`), so the `uptime` field differs between calls to the two paths — that
 is two containers, not two services.
 
+_Last refreshed: 2026-09-03 by CTO session (Claude) — claims verified against Supabase MCP list_projects, gcloud run services describe, and ~/arkova-soak/teardown-2026-09-03.log._
+Scope: the "Bug — Adobe Sign webhooks" addendum only — earlier readings keep their own dates.
+`org_integrations.webhook_id` absence on prod confirmed via the Supabase Management API,
+`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name
+= 'org_integrations'` against `vzwyaatejekddvltxyye` — 23 rows returned, no `webhook_id`. The
+Adobe Sign 500 was reproduced live on isolated rig `sawvgrwhgsmxjlwhpsyx` during the same
+session's `worker-webhook-runtime` T3 soak. PR #2519's migration is verified only against an
+isolated throwaway Postgres 17 container — NOT applied to prod or any rig, NOT soaked; do not
+read this entry as prod-fix-live._
+
 _Last refreshed: 2026-08-29 by Claude Fable 5 (CTO session) — claims verified against gcloud/MCP/CI output:
 prod `/health` read 2026-08-29T14:35Z (`git_sha 0440ce7e5`, healthy); `gcloud run services describe
 arkova-worker` env scan (no ENABLE_CREDENTIAL_VERIFIED_WEBHOOK); PR #2462 merge `4ed6b280` + Vercel
@@ -979,7 +1671,7 @@ from any GCP project as a platform user. Separately, `main` carries 95 pre-exist
 typecheck errors (express-types portability) unrelated to this incident; given the deploy-typecheck
 blackout behaviour they warrant their own ticket.
 
-_Last refreshed: 2026-08-11 by carson — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-02 (rev 3, RC batch window opened) by Claude (session for carson@arkova.io) — claims verified against gcloud run describe, Cloud Run /api/health, Supabase MCP execute_sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._sql, and staging-honesty-preflight output this session; staging state only, no prod-state claims._
 
 ### 2026-08-01/02 (CTO session) — pre-pentest PII/security hardening wave, DocuSign timeout investigation, soak findings F-1..F-10
 
@@ -1793,4 +2485,17 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-30 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye`, `getblockheader` over the worker's GetBlock RPC, and (for the 0428 entry) Supabase MCP `execute_sql` plus `pg_locks` measurement on isolated rig `vofhfzyosxlneupohsem`._
+_Last refreshed: 2026-09-02 by Claude Opus 5 — claims verified against read-only SQL on prod `vzwyaatejekddvltxyye` and `getblockheader` over the worker's GetBlock RPC._
+
+_Last refreshed: 2026-09-02 by Claude — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-05 by CTO session (Claude) — claims verified against `gh pr view` (#2635 merged, #2637 head/body), the harness evidence under `~/arkova-soak/mfa-3167/`, and the Supabase Management API project list._
+
+_Last refreshed: 2026-09-07 by Claude-Fable-5.1-CTO-session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-07 by Claude-Fable-5.1 gate-fix session (ninth approver closure) — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-08 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-09 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._

@@ -2,6 +2,36 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-23 — `openapi-ciba.ts`: `/api/queue/pending` documents its 403 (SCRUM-3569)
+
+Spec-only change, additive under §1.8: a `'403'` response and a description note on a path that was already there. Worth knowing WHY it is a doc fix and not a contract change — **the spec was already right and the implementation was wrong.** `queuePaths()` has tagged `/api/queue/pending` `['Queue', 'OrgAdmin']` with `security: [{ OrgAdminBearer: [] }]` since it was written, but the handler enforced org scope only (see `services/worker/src/api/agents.md`, SCRUM-3569). The gate now exists in `api/queue-resolution.ts`, so the documented `OrgAdminBearer` is finally load-bearing and the 403 it implies is spelled out.
+
+Note this path lives on `adminRouter`, not a v1 leaf router, so `docs.routeParity.test.ts`'s `MOUNTS` set does not cover it — the parity harness asserts route/path presence, not response codes, either way.
+## 2026-08-23 — every limiter in `router.ts` now names its bucket scope (SCRUM-3418)
+
+`rateLimit()` used to default `scope` to `''` and key the bucket on the bare keyGenerator output, so
+every limiter that kept the default `req.ip` keyGenerator shared ONE Map entry per IP with every
+other unscoped limiter in the worker — including `index.ts`'s 60/min `apiIpShadowGuard` and the
+10/min `checkout`. `anonRateLimiter` could therefore never enforce its own §1.10 100/min contract.
+See `utils/agents.md` for the mechanism and `docs/staging/429-limiter-map-s33.md` §2a for what it
+does to log attribution.
+
+Two things to keep true in this file:
+
+- **Every limiter declared here passes an explicit `scope`.** The default is now a private
+  per-instance id (`rl-<n>`) rather than the shared bucket, so omitting it is no longer a
+  correctness bug — but the auto-id is derived from module construction order, which makes it a
+  useless (and unstable) thing to see in a `Rate limit exceeded` log line. The scope IS the
+  attribution.
+- **Where a limiter's keyGenerator used to carry its own string prefix** (`credits:`, `ai:`,
+  `ctdl-import:`, …), that prefix moved into `scope` and the keyGenerator now returns the bare
+  caller identifier. Doing both would produce `ai:ai:<user>` — `cpe-log-export.ts` has carried a
+  comment warning about exactly that since it was written.
+
+`batch` is the one scope deliberately shared by two limiter instances: `batchRateLimiter` here and
+`attestationBatchRateLimiter` in `attestations.ts`, so the §1.10 batch tier is one 10/min budget
+across both surfaces. Post-SCRUM-3418 a shared explicit scope is the ONLY way two limiters can share
+a bucket — which is what makes that sharing reviewable instead of accidental. Don't "tidy" it apart.
 ## 2026-08-23 — DI-398: `GET /anchor/:publicId/evidence` 404'd for EVERY anchor (three phantom columns)
 
 `anchor-evidence.ts`'s `defaultLookup.byPublicId` selected `jurisdiction, merkle_root,
@@ -524,6 +554,10 @@ test that dies without it is a comment.**
 
 The rule is written down ONCE in `scripts/ci/public-pii-projection-contract.json`. **Change it there plus all three implementations in one PR** — the contract test fails otherwise, which is the point.
 
+**FD-FERPA-1 (2026-08-21) — the REG-02 block consulted the flag and published anyway.** `suppressDirectory` was computed as `anchor.directory_info_opt_out && (anchor.credential_type && FERPA_EDUCATION_TYPES.includes(anchor.credential_type))`. The inner clause is **falsy for a null credential type**, and every anchor in production that carries `directory_info_opt_out` has `credential_type IS NULL` (measured on `vzwyaatejekddvltxyye`), so this block suppressed nothing for 100% of the records the control exists to protect. Six tests covered it; none of them passed a null type. Consulting a flag and honouring it are different things, and only a test that passes the shape production actually holds can tell them apart.
+
+It now routes through `suppressesDirectoryInfo()` in `constants/ferpa.ts` — a named, fail-closed predicate shared with the SQL projection (migration `0415`), so the two anonymous surfaces cannot answer differently for the same row. An ABSENT type suppresses; a PRESENT non-education type still publishes (§99.37 is an education-records right, and `verify.test.ts` pins that boundary on this path). Do not re-inline it: `src/tests/ferpa-directory-info-opt-out.contract.test.ts` fails if the `suppressDirectory` statement mentions `FERPA_EDUCATION_TYPES` directly. The REG-03 re-disclosure notice a few lines below **keeps** its truthiness check on purpose — that notice asserts the record IS an education record, so it must fail OPEN where suppression fails CLOSED.
+
 **The policy decision (stated, not inherited).** Academic-record suppression here is **UNCONDITIONAL**, matching the other two — deliberately NOT gated on `directory_info_opt_out`, even though the surrounding REG-02 code is. Opt-out means the default is *publish*, and default-publish is the defect class; the field was not covered by the opt-out anyway; and one row with three anonymous projections giving three answers is not a privacy posture (the verify **page** reads the SQL path, which suppresses — the API disagreeing with the page it serves *is* the drift). Cost: an issuer-authored description no longer ships on an academic record for anyone. It already did not ship on either other public projection, so nothing publicly reachable elsewhere is lost.
 
 **What the gate does.** Two layers, mirroring 0385:
@@ -688,10 +722,14 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 
 ## 2026-05-27 Attestation Verification Endpoint (SCRUM-1873)
 
+- **PARKED 2026-08-31.** `legally_binding_attestations` has no INSERT path anywhere in the tree, so this endpoint can never return a verified attestation. Verified read-only against prod `vzwyaatejekddvltxyye` on 2026-08-31: **0 table rows**, and **0 `docusign.notarization_completed` jobs ever enqueued** against 21 completed + 4 dead `docusign.envelope_completed` jobs. `GET /verify/attestation/:attestationId` is answered upstream by `services/worker/src/middleware/parkedAttestationVerify.ts`, mounted in `router.ts` **below** `apiKeyAuth` and the rate limiters (so the route keeps its §1.10 budget and `X-RateLimit-*` headers, and a bad key still 401s as it did before the park) but **above** `idempotency`/`usageTracking` (so it never charges a caller's monthly quota for a response that cannot succeed). Both halves of that position are pinned by `src/tests/api-e2e.test.ts`. The status-code contract is unchanged (400 malformed / 404 well-formed); only the 404's `error` string changed, to stop implying a corpus was searched. It is deliberately **not** a 501: the enabled CRITICAL policy `PAGE — arkova-worker 5xx burst` fires on any 5xx at >5/300s with no path dimension to exclude on, so a 501 here would page the on-call for an endpoint that cannot succeed. Unpark checklist is in `parkedAttestationVerify.ts`.
 - `GET /api/v1/verify/attestation/:attestationId` verifies legally binding attestations from `legally_binding_attestations` table (SCRUM-1871/1872/1873 chain).
 - Public, anonymous-allowed. Uses `ARK-ATT-*` public IDs only. Separate from `GET /api/v1/attestations/:publicId` which handles general `attestations` table.
 - Mounted BEFORE the generic `/verify` catch-all in router.ts to avoid route shadowing.
 - Response never includes `attestation_statement` (private per migration 0314 COMMENT).
+- **Status disclosure gate (2026-08-30):** only `notarized` and `anchored` rows are disclosed. `draft` / `pending_notarization` / `requires_review` carry `subject_name` and notary commission details for unpublished work and return the same 404 body as a missing row. Filtered in SQL by `defaultLookup` and re-checked in the route via `isPubliclyDisclosable()`. Migration 0314 grants no anon `SELECT` and its COMMENT requires public verification to be "API-mediated and **redacted**" — this gate is the redaction half.
+- **Do not repoint at `attestations`.** The table is a real but incomplete feature: 0 prod rows, an UPDATE-only writer in `jobs/docusign-notarization-completed.ts`, and no INSERT path anywhere. `ARK-ARK-VER-*` ids belong to `attestations`; a 400 that names the `ARK-ATT-` prefix is correct behaviour, not a bug.
+- A failed lookup 500s (never 404s) — `defaultLookup` throws on query error. No audit row is written on 400/404.
 
 ## 2026-05-31 CPE compliance-log export (SCRUM-1848 / SCRUM-1859 + SCRUM-1860)
 
@@ -1031,3 +1069,32 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
+
+## 2026-08-30 — `fingerprint_rederivability` (FETCH_TIME_SNAPSHOT) is gated on PROOF of a fetch
+
+`verify.ts` (`mapAnchorRow`) and `verify-proof.ts` no longer emit the fetch-time "Measured…" caveat on
+`connector_source` alone. The declared-hash rules dispatcher writes the same `connector_source='docusign'`
+without ever fetching, so both now gate on positive fetch evidence — `resolveServerFetchedConnectorSource` /
+`connectorFingerprintRederivabilityFieldsFor` (requires a non-empty `connector_artifact_id`, stamped only by
+`connector-artifact-drain.ts`). See `constants/agents.md` (2026-08-30), SCRUM-3299 / SCRUM-3825.
+
+- **`AnchorByPublicId.connector_source` was RENAMED to `server_fetched_connector_source`.** Internal transport
+  field only — never a response key, not in `API_RICH_KEYS`, so no §1.8 surface change. Renamed because the
+  old name invited exactly the bug that was fixed: assigning the raw `metadata.connector_source` marker to it
+  re-arms the false "Measured…" claim. The name now states the invariant, and the only two writers are
+  `mapAnchorRow` (via the resolver) and `EMPTY_API_RICH_FIELDS` (null). **Never assign the raw marker to it.**
+- The `isConnectorFetchSource(...)` re-check at the emission site is a closed-set STRING guard, not a
+  re-derivation of fetch evidence — it cannot see metadata. Fetch proof lives entirely in the constructor.
+- **`verifyCache.ts` `KEY_PREFIX` bumped `verify:v6:` → `verify:v7:`** — mandatory per the standing rule below:
+  this change REMOVES response fields for declared-hash anchors, and a pre-deploy cache entry would otherwise
+  keep serving the false claim for the full TTL. `invalidateVerificationCache` does not help (the row is
+  unchanged, so nothing re-fires). Ratchet test in `utils/verifyCache.namespace.test.ts`.
+
+## 2026-09-05 — PR 2499 integration with inbound artifacts
+
+Inbound issuer attestations have artifact IDs too. The combined gate checks the
+explicit fingerprint_source first and emits declared_unverified with its note;
+only other records with a recognized connector marker and artifact stamp may emit
+fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
+and authenticated packet exports load the typed source; the signable proof bundle
+is unchanged. Regression reproduced before the fix; local validation is not soak evidence.

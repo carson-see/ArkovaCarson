@@ -7215,6 +7215,28 @@ export type Database = {
         Returns: undefined
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
+      manage_oauth_email_confirmation: {
+        Args: {
+          p_action: string
+          p_attempt_id?: string
+          p_challenge_digest?: string
+          p_email?: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
+      materialize_connector_artifact_anchor: {
+        Args: {
+          p_anchor_payload: Json
+          p_artifact_id: string
+          p_existing_anchor_id?: string
+          p_expected_fingerprint: string
+          p_expected_metadata: Json
+          p_expected_updated_at: string
+          p_org_id: string
+        }
+        Returns: Json
+      }
       next_webhook_sequence: { Args: never; Returns: number }
       org_credit_ledger_divergence: {
         Args: { p_org_id?: string }

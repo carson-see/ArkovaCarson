@@ -618,3 +618,8 @@ VALUES (
   NULL,
   NOW() - INTERVAL '1 hour'
 );
+
+-- SCRUM-4035: seeding never enables the new OAuth confirmation cohort.
+-- Release activation sets enabled_at only after all enforcement paths and Auth hook are verified.
+INSERT INTO private.oauth_email_confirmation_policy(singleton, enabled_at) VALUES (true, NULL)
+ON CONFLICT (singleton) DO NOTHING;

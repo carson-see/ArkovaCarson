@@ -698,7 +698,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             Always-visible — not a tooltip, not click-to-reveal (CLAUDE.md
             §1.5). States what is measured / asserted / NOT asserted. */}
         <Separator />
-        <DoesNotAssertDisclaimer />
+        <DoesNotAssertDisclaimer fingerprintSource={data.fingerprint_source} />
 
         {/* Footer */}
         <div className="pt-4 text-center text-xs text-muted-foreground border-t">

@@ -15,11 +15,12 @@ Root cause this replaces: the failed soak fleet ran `load-harness --mode mixed` 
 | `ops-slo-driver.ts` (**#1441**) | GET `/api/admin/ops-slo-stats` — `admin-ok` (platform-admin JWT → 200, captures per-surface `available` map incl `available:false`), `non-admin-forbidden` (403), `unauthenticated` (401). |
 | `webhooks-self-service-driver.ts` (**#1443**) | ORG_ADMIN JWT-gated `/api/v1/webhooks/self-service/*` — `test` (`/:id/test`), `replay` (`/deliveries/:id/replay`), `dlq-list` (`/dlq`), `dlq-resolve` (`/dlq/:id/resolve`) against a seeded DLQ fixture, + `unauthenticated` 401. Paces one pass every 65s so the long run proves the changed behavior without accidentally turning the whole soak into a batch-limiter 429 test. |
 | `cpe-cle-exports-driver.ts` (**#1415**) | POST the three `/api/v1/exports/{cpe,cle,org/cpe}-log` endpoints in BOTH pdf+json, plus an explicit cross-user 403 isolation case, three Zod edges (bad format enum, malformed date, inverted period → 400), and a 401. |
+| `public-projection-driver.ts` (**#2314 / #2440**) | The two ANONYMOUS public-projection surfaces — `public.get_public_anchor` over PostgREST and `GET /api/v1/verify/:publicId` — asserted semantically, not just by status: FERPA §99.37 directory suppression (0415) and canonical `sub_type` projection (0421), plus cross-org issuer isolation and a not-found control. `--projection-head=0415\|0421` selects which assertions apply, because the two migrations clobber each other's `CREATE OR REPLACE` body. |
 | `classify-backcatalog-driver.ts` (**#1410**) | POST `/jobs/classify-proof-backcatalog` (back-catalogue proof-completeness classifier census) — `census-dry-run` (default; per-class plan, zero proof writes), `census-bounded` (batch_size+max_batches → resumable cursor/checkpoint path), `census-restart` (restart=true → fresh census from cursor zero), + the two 400 param guards (`batch_size` below the 50 floor; malformed `org_id` uuid). Every request is dry-run (execute never set); auth = cronAuth `X-Cron-Secret` + Cloud Run IAM. Census runs over the rig's existing anchors/anchor_proofs — no bespoke fixture (the baseline fixture supplies rows). |
 
 ## Design contract
 
-- **Pure `plan*()` + thin runtime.** Each driver's branch logic is a pure `plan*()` returning a labeled request list — unit-tested with no network. The `main()` (auto-runs only when invoked directly via `import.meta.url === file://…argv[1]`) resolves the tag URL, seeds fixtures, runs the plan, and writes evidence.
+- **Pure `plan*()` + thin runtime.** Each driver's branch logic is a pure `plan*()` returning a labeled request list — unit-tested with no network. The `main()` (auto-runs only when the module is the process entry point) resolves the tag URL, seeds fixtures, runs the plan, and writes evidence. **Write that guard as a path comparison, not a string compare.** The idiomatic `import.meta.url === \`file://${process.argv[1]}\`` holds only when argv[1] is absolute; a supervisor that launches the driver as `npm exec tsx scripts/staging/targeted/<driver>.ts` passes it RELATIVE, the compare silently fails, and `main()` never runs — a soak that looks launched and drives no load. `public-projection-driver.isDirectRun()` is the safe form: `realpathSync(resolve(...))` on both sides, which also collapses the macOS `/tmp` → `/private/tmp` symlink.
 - **Tag-URL-only.** All drivers resolve `STAGING_API_BASE` through `../load-harness-env.resolveStagingApiBase`, which refuses shared/main staging hosts — no parallel-soak contamination.
 - **Expected ≠ failure.** A 401/403/404/400 that IS the branch under test counts as expected soak evidence; `evidence.allExpected` is false only when a real status surprise occurred.
 - **Evidence out.** `--evidence-out docs/staging/<file>.json` writes the structured summary (per-label status mix + captured bodies) to drop into a PR's `## Staging Soak Evidence` block.
@@ -42,3 +43,31 @@ Each driver runs directly via `tsx scripts/staging/targeted/<driver>.ts` (delibe
 ## classify-backcatalog driver (PR #1493, L2-S8, 2026-07-10)
 
 Rescued the untracked `classify-backcatalog-driver.ts` (targeted driver for #1410's `POST /jobs/classify-proof-backcatalog`) onto a fresh branch off main and closed its folder-contract gap: it shipped without the mandatory `*-driver.test.ts`. The new red-first test covers plan purity (deterministic POST plan, capture on, `execute` never in any query), the two 400 guards as expected-evidence statuses (batch floor 50; org_id uuid), `classifyPath` query building, and the census interpreter (per-class counts extracted, unknown keys dropped, null on guard/non-object bodies). API-verified against main's `driver-core.ts` / `runtime.ts` / `load-harness-env.ts` exports — no shared-module changes needed.
+
+## 2026-09-02 — `declared-hash-rederivability-driver.ts` (PR #2499)
+
+Targeted driver for the §1.5 / R-7 honesty gate on `fingerprint_rederivability`.
+
+Drives a **controlled pair** seeded by `fixtures/pr2499-declared-vs-measured.sql`: both anchors carry `metadata.connector_source='docusign'`, only `ARK-P2499-MEASURED` carries `connector_artifact_id`. The declared row must NOT carry `fingerprint_rederivability`; the measured row MUST. The pair differs by exactly the changed predicate, so if the two ever classify identically the driver reports `DISCRIMINATOR FAILED`.
+
+Why the `measured` control is mandatory: every assertion about the declared row is that a field is **absent**, and absence passes trivially against a 404, an error body, or an unseeded rig. `judgeRederivability` therefore also asserts both rows resolved (`POSITIVE CONTROL FAILED` otherwise) and that the measured row kept its claim, so a build that suppressed the field for everything cannot pass.
+
+The `cached-declared` label re-reads the SAME declared id inside the 300s verify-cache TTL. That covers the defect found in review of this PR: without the `verify:v6:` → `verify:v7:` prefix bump, a body cached by the pre-deploy build is re-served verbatim, still carrying the claim. A stale cache shows up as a DIFFERENCE between two labels rather than a flaky sample.
+
+Unit tests pin that the judge FAILS against pre-#2499 bodies, against a stale-cache body, against over-suppression, and against a missing fixture — the driver has been made to fail for each reason it exists to catch.
+
+## 2026-09-04 — #2499 soak verdict must reach the process exit
+
+The declared-hash driver previously logged semantic failures without failing the run, and ignored the proof endpoint's 404. All 52 historical cycle artifacts had `allExpected:false` despite a successful supervisor exit. The driver now requires matching record IDs on every requested surface, checks the proof response for forbidden measurement claims, retains semantic and thrown-pass failures across the shared loop, writes failed evidence, then rejects so the CLI exits 1. Dry-run does not emit passing evidence. Runtime tests exercise the real loop with HTTP stubs for a clean result, missing proof, false measurement claim, and authentication failure. Historical evidence remains invalid; this repair does not create a valid proof fixture or certify packet-export coverage.
+
+## 2026-09-05 — PR 2499 positive control
+
+The measured control requires fetch_time_snapshot AND a nonempty accompanying
+note. Presence of either field alone cannot qualify the driver. Four malformed
+or misclassified response cases failed before this stricter judge.
+
+## 2026-09-05 — PR 2499 real verify identity
+
+The ordinary verify body identifies a record via record_uri; the proof route uses
+public_id. The driver verifies the expected URI host/path without accepting an
+arbitrary suffix or an error response as a positive control.

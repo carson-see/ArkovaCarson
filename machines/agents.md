@@ -1,5 +1,9 @@
 # machines/agents.md
 
+## 2026-09-10 — PR #2570 models independent broadcaster publication
+
+The DocuSign model now includes anchor publication and an independently schedulable broadcaster claim. `broadcastRequiresFreshLinkedAnchor` prevents a broadcaster claiming an unlinked or superseded anchor. Atomic minting publishes and links together; a separate inserted-anchor action is a negative control. The model checks the concurrency design; SQL tests separately check full metadata equality, tenant scope, permissions, and real row locks. It does not model unknown external calls or replace staging qualification.
+
 TLA+ PreCheck formal verification models for critical state machines.
 
 ## 2026-09-01 — `docusignInboundDedup.machine.ts`: the claim-to-mint TOCTOU is CLOSED (invariant now passes, unweakened)
@@ -135,7 +139,7 @@ Verified 2026-08-01: `Model checking completed. No error has been found.`
 (529 distinct states, depth 15).
 
 Invoking it from the repo root with a path prefix
-(`tla-precheck check machines/foo.machine.ts`) aborts at the typecheck phase
+(`tla-precheck check machines/<name>.machine.ts`) aborts at the typecheck phase
 with TS5096 / TS5103 against the pinned `typescript@6.0.3`. That is an
 **invocation-path artifact, not a broken gate** — a 2026-07-20 note previously
 recorded it as "cannot run for every machine / gate non-functional", which is

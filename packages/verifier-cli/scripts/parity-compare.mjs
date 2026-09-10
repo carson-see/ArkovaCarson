@@ -11,7 +11,7 @@
  * per-fixture diff table.
  *
  * Run:  npm run parity        (builds dist/ first; needs python3 >= 3.9 — see below)
- * CI:   suggested job — build @arkova/verifier + this package, then `npm run parity`.
+ * CI:   suggested job — build arkova-verifier + this package, then `npm run parity`.
  *
  * The Python interpreter is NEVER resolved via $PATH (a writable dir on PATH
  * could shadow `python3` — Sonar S4036): it is taken from $ARKOVA_PYTHON when

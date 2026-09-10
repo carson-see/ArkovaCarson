@@ -11,8 +11,8 @@
  * (`check-confirmations.ts`).
  *
  * ── WHAT PROVES IT ───────────────────────────────────────────────────────────
- * The importer's ONLY write to the `anchors` table is `defaultMaterializeAnchor`,
- * and it is guarded by TWO independent app-level defences, both asserted here:
+ * `defaultMaterializeAnchor` proposes a payload to the atomic SQL transaction.
+ * Two app-level defences are asserted here; SQL also revalidates locked source:
  *
  *   1. A hard-coded `status: 'PENDING' as const` on the insert payload — the
  *      importer literally cannot ask for any other status.
@@ -26,10 +26,11 @@
  * SECURED writer, this makes an importer-set SECURED structurally impossible.
  *
  * Mocks only — NO real DB. Drives the REAL `defaultMaterializeAnchor` against a
- * fake client that records the insert, and exercises the REAL Zod schema.
+ * fake RPC that records the proposed payload, and exercises the REAL Zod schema.
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { callRpc } from '../utils/rpc.js';
 
 // The module transitively imports the eager `utils/db.js` singleton + worker
 // config; mock every side-effecting dep so this pure-guard test loads without
@@ -76,97 +77,46 @@ function artifactRow(overrides: Partial<ConnectorArtifactRow> = {}): ConnectorAr
   } as ConnectorArtifactRow;
 }
 
-/**
- * Fake client capturing exactly the two calls `defaultMaterializeAnchor` makes:
- *   - `.from('org_members')...maybeSingle()`  → the actor lookup
- *   - `.from('anchors').insert(v).select().single()` → the anchor insert
- * Records the inserted payload so the test can assert its status.
- */
+/** Capture the RPC's proposed payload; client-side inserts/updates are forbidden. */
 function makeCapturingClient(opts: { actorUserId?: string | null } = {}) {
   const inserts: Array<{ table: string; values: Record<string, unknown> }> = [];
-
+  vi.mocked(callRpc).mockImplementation(async (_db, name, args) => {
+    expect(name).toBe('materialize_connector_artifact_anchor');
+    inserts.push({ table: 'anchors', values: args!.p_anchor_payload as Record<string, unknown> });
+    return { data: { outcome: 'linked', anchor_id: ACTOR, public_id: 'anc_pub1', created: true }, error: null };
+  });
   const client = {
     from(table: string) {
-      if (table === 'org_members') {
-        return {
-          select() {
-            return {
-              eq() {
-                return {
-                  in() {
-                    return {
-                      order() {
-                        return {
-                          limit() {
-                            return {
-                              async maybeSingle() {
-                                return {
-                                  data:
-                                    opts.actorUserId === null
-                                      ? null
-                                      : { user_id: opts.actorUserId ?? ACTOR, role: 'owner' },
-                                  error: null,
-                                };
-                              },
-                            };
-                          },
-                        };
-                      },
-                    };
-                  },
-                };
-              },
-            };
-          },
-        };
+      const chain: Record<string, unknown> = {};
+      for (const method of ['select', 'eq', 'in', 'is', 'neq', 'or', 'order', 'limit']) {
+        chain[method] = () => chain;
       }
-      // anchors — SCRUM-2904 envelope-level guard reads (`.select()...maybeSingle`)
-      // before inserting; return no existing envelope anchor so materialize
-      // proceeds to the insert this test asserts on.
-      const selectChain: Record<string, unknown> = {};
-      for (const m of ['select', 'eq', 'is', 'neq', 'or', 'order', 'limit']) {
-        selectChain[m] = () => selectChain;
-      }
-      selectChain.maybeSingle = async () => ({ data: null, error: null });
-      return {
-        select: () => selectChain,
-        insert(values: Record<string, unknown>) {
-          inserts.push({ table, values });
-          return {
-            select() {
-              return {
-                async single() {
-                  return { data: { id: 'anchor-1', public_id: 'anc_pub1' }, error: null };
-                },
-              };
-            },
-          };
-        },
-      };
+      const result = { data: table === 'org_members'
+        ? (opts.actorUserId === null ? null : { user_id: opts.actorUserId ?? ACTOR, role: 'owner' })
+        : null, error: null };
+      chain.maybeSingle = async () => result;
+      chain.then = (resolve: (value: unknown) => void) => Promise.resolve(result).then(resolve);
+      return chain;
     },
   };
-
-  return {
-    db: client as unknown as Parameters<typeof defaultMaterializeAnchor>[1]['db'],
-    inserts,
-  };
+  return { db: client as unknown as Parameters<typeof defaultMaterializeAnchor>[1]['db'], inserts };
 }
 
 describe('SCRUM-2486 AC-4: importer materializes PENDING only, never SECURED', () => {
-  it('defaultMaterializeAnchor inserts an anchor with status="PENDING"', async () => {
+  it('defaultMaterializeAnchor requests atomic publication with status="PENDING"', async () => {
     const { db, inserts } = makeCapturingClient();
 
     const result = await defaultMaterializeAnchor(artifactRow(), { db });
 
-    // `created: true` — this call INSERTED the anchor (as opposed to reusing a
-    // pre-existing one), which is what licenses the claim-to-mint freshness
-    // gate to neutralize it as an orphan if the link is later rejected.
-    expect(result).toEqual({ anchorId: 'anchor-1', anchorPublicId: 'anc_pub1', created: true });
+    // The successful RPC reply confirms creation and linking committed together.
+    expect(result).toEqual({ outcome: 'linked', anchorId: ACTOR, anchorPublicId: 'anc_pub1', created: true });
     expect(inserts).toHaveLength(1);
     expect(inserts[0].table).toBe('anchors');
     expect(inserts[0].values.status).toBe('PENDING');
     expect(inserts[0].values.status).not.toBe('SECURED');
     expect(inserts[0].values.fingerprint).toBe(FP);
+    // R2: every row here was fetched + hashed server-side (§1.6A) — 'document_bytes'.
+    expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
     // The importer never writes chain data — that's the worker's job post-broadcast.
     expect(inserts[0].values.chain_tx_id).toBeUndefined();
     expect(inserts[0].values.chain_block_height).toBeUndefined();
@@ -247,6 +197,7 @@ describe('SCRUM-2486 AC-4: importer materializes PENDING only, never SECURED', (
       filename: 'contract.pdf',
       credential_type: 'CONTRACT_POSTSIGNING',
       metadata: {},
+      fingerprint_source: 'document_bytes',
     });
     expect(parsed.success).toBe(true);
   });
@@ -260,8 +211,116 @@ describe('SCRUM-2486 AC-4: importer materializes PENDING only, never SECURED', (
       filename: 'contract.pdf',
       credential_type: 'CONTRACT_POSTSIGNING',
       metadata: {},
+      fingerprint_source: 'document_bytes',
       chain_tx_id: 'forged-txid',
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+// R2 (CTO Decision Record, docusign-bilateral-2026-08): the outbound fetched-
+// document path (this drain) always fingerprints real bytes it fetched
+// server-side — never a declared/asserted hash — so it must always classify
+// as anchors.fingerprint_source='document_bytes' (migration 0376/0384).
+describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', () => {
+  it('defaultMaterializeAnchor stamps fingerprint_source=document_bytes on the proposed atomic RPC payload', async () => {
+    const { db, inserts } = makeCapturingClient();
+
+    await defaultMaterializeAnchor(artifactRow(), { db });
+
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
+  });
+
+  it('is unconditional across connector sources — google_drive rows get the same class', async () => {
+    const { db, inserts } = makeCapturingClient();
+
+    await defaultMaterializeAnchor(artifactRow({ source: 'google_drive', external_ref: 'file-1' }), { db });
+
+    expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
+  });
+
+  it('attacker-influenced metadata cannot override fingerprint_source (top-level field, not spread from metadata)', async () => {
+    const { db, inserts } = makeCapturingClient();
+
+    await defaultMaterializeAnchor(
+      artifactRow({
+        metadata: {
+          filename: 'contract.pdf',
+          fingerprint_source: 'issuer_record_attestation',
+        },
+      }),
+      { db },
+    );
+
+    // The metadata sub-key is a distinct, unrelated JSONB field (free text,
+    // no CHECK constraint) — it never reaches the top-level typed column,
+    // which is always set by this path, never derived from metadata.
+    expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
+  });
+
+  it('AnchorInsertPayload rejects declared evidence without inbound provenance', () => {
+    const parsed = AnchorInsertPayload.safeParse({
+      fingerprint: FP,
+      status: 'PENDING',
+      org_id: ORG,
+      user_id: ACTOR,
+      filename: 'contract.pdf',
+      credential_type: 'CONTRACT_POSTSIGNING',
+      metadata: {},
+      fingerprint_source: 'issuer_record_attestation',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('AnchorInsertPayload Zod schema REJECTS a missing fingerprint_source', () => {
+    const parsed = AnchorInsertPayload.safeParse({
+      fingerprint: FP,
+      status: 'PENDING',
+      org_id: ORG,
+      user_id: ACTOR,
+      filename: 'contract.pdf',
+      credential_type: 'CONTRACT_POSTSIGNING',
+      metadata: {},
+    });
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe('atomic publication RPC boundary', () => {
+  it('preserves declared provenance for the explicitly inbound branch', async () => {
+    const { db, inserts } = makeCapturingClient();
+    await defaultMaterializeAnchor(artifactRow({ metadata: { filename: 'inbound.pdf', _direction: 'inbound' } }), { db });
+    expect(inserts[0].values.fingerprint_source).toBe('issuer_record_attestation');
+  });
+
+  it('passes the complete captured source and retains an already linked anchor id', async () => {
+    const { db } = makeCapturingClient();
+    const row = artifactRow({ status: 'processing', updated_at: '2026-09-05T10:00:00Z',
+      anchor_id: ORG, metadata: { _direction: 'inbound', filename: 'contract.pdf' } });
+    await defaultMaterializeAnchor(row, { db });
+    expect(callRpc).toHaveBeenLastCalledWith(db, 'materialize_connector_artifact_anchor', expect.objectContaining({
+      p_artifact_id: row.id, p_org_id: ORG, p_expected_updated_at: row.updated_at,
+      p_expected_fingerprint: FP, p_expected_metadata: row.metadata, p_existing_anchor_id: ORG,
+    }));
+  });
+
+  it.each([
+    { data: null, error: { message: 'connection lost' } },
+    { data: null, error: null },
+    { data: { outcome: 'linked', anchor_id: ACTOR, public_id: 'pub' }, error: null },
+    { data: { outcome: 'linked', anchor_id: 'invalid', public_id: 'pub', created: true }, error: null },
+    { data: { outcome: 'unknown' }, error: null },
+  ])('unconfirmed or malformed reply never licenses a debit: %j', async (reply) => {
+    const { db } = makeCapturingClient();
+    vi.mocked(callRpc).mockResolvedValueOnce(reply);
+    await expect(defaultMaterializeAnchor(artifactRow(), { db })).resolves.toEqual({ outcome: 'lost_lease' });
+  });
+
+  it.each(['superseded', 'lost_lease'] as const)('passes through the SQL %s rejection without a write', async (outcome) => {
+    const { db, inserts } = makeCapturingClient();
+    vi.mocked(callRpc).mockResolvedValueOnce({ data: { outcome }, error: null });
+    await expect(defaultMaterializeAnchor(artifactRow(), { db })).resolves.toEqual({ outcome });
+    expect(inserts).toEqual([]);
   });
 });

@@ -12,6 +12,7 @@
  * Stripe, or Bitcoin (CLAUDE.md §1.7).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { callRpc } from '../utils/rpc.js';
 
 // The drain module imports db/logger/batch-anchor/sentry at module load; those
 // transitively load worker config (which needs prod env). Every dep is injected
@@ -31,7 +32,6 @@ const {
   defaultListDrainableOrgIds,
   scrubReason,
   defaultMaterializeAnchor,
-  defaultNeutralizeOrphanAnchor,
 } = await import('./connector-artifact-drain.js');
 type ConnectorArtifactDrainDeps =
   import('./connector-artifact-drain.js').ConnectorArtifactDrainDeps;
@@ -80,6 +80,14 @@ function makeRow(over: Partial<Row> & Pick<Row, 'id' | 'org_id'>): Row {
   };
 }
 
+function publishLinked(rows: Row[], captured: Pick<Row, 'id' | 'anchor_id'>) {
+  const target = rows.find((row) => row.id === captured.id)!;
+  const anchorId = target.anchor_id ?? (target.id === ART_2 ? ANCHOR_2 : ANCHOR_1);
+  const created = target.anchor_id === null;
+  Object.assign(target, { status: 'materialized', anchor_id: anchorId });
+  return { outcome: 'linked' as const, anchorId, anchorPublicId: 'pub-1', created };
+}
+
 interface Harness {
   rows: Row[];
   deps: ConnectorArtifactDrainDeps;
@@ -89,7 +97,6 @@ interface Harness {
   batchAnchor: ReturnType<typeof vi.fn>;
   readAnchorStatus: ReturnType<typeof vi.fn>;
   listMaterializedArtifacts: ReturnType<typeof vi.fn>;
-  neutralizeOrphanAnchor: ReturnType<typeof vi.fn>;
   alert: ReturnType<typeof vi.fn>;
   claimAttempts: Array<{ id: string }>;
 }
@@ -168,7 +175,7 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
 
   const materialize =
     (overrides.materializeAnchor as ReturnType<typeof vi.fn>) ??
-    vi.fn(async (row: Row) => ({ anchorId: row.id === ART_2 ? ANCHOR_2 : ANCHOR_1, anchorPublicId: 'pub-1' }));
+    vi.fn(async (row: Row) => publishLinked(rows, row));
 
   const debit =
     (overrides.debitAndEnqueueAnchor as ReturnType<typeof vi.fn>) ??
@@ -196,12 +203,6 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
   const resetUnclaimedConnectorBroadcasts =
     (overrides.resetUnclaimedConnectorBroadcasts as ReturnType<typeof vi.fn>) ?? vi.fn(async () => 0);
 
-  // Default: the guarded soft-delete succeeds. Only ever called on the
-  // superseded-mint abort path (an anchor THIS pass inserted and then could not
-  // link) — every other test asserts it was NOT called.
-  const neutralizeOrphanAnchor =
-    (overrides.neutralizeOrphanAnchor as ReturnType<typeof vi.fn>) ?? vi.fn(async () => true);
-
   const deps = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     db: { from } as any,
@@ -212,12 +213,11 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
     batchAnchor,
     readAnchorStatus,
     listMaterializedArtifacts,
-    neutralizeOrphanAnchor,
     emitAlert: alert,
     ...overrides,
   } as unknown as ConnectorArtifactDrainDeps;
 
-  return { rows, deps, materialize, debit, resetUnclaimedConnectorBroadcasts, batchAnchor, readAnchorStatus, listMaterializedArtifacts, neutralizeOrphanAnchor, alert, claimAttempts };
+  return { rows, deps, materialize, debit, resetUnclaimedConnectorBroadcasts, batchAnchor, readAnchorStatus, listMaterializedArtifacts, alert, claimAttempts };
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -362,11 +362,7 @@ describe('drainConnectorArtifactsForOrg', () => {
       return builder;
     };
 
-    const materialize = vi.fn(async (r: Row) => ({
-      anchorId: ANCHOR_1,
-      anchorPublicId: 'pub-1',
-      __sawFingerprint: r.fingerprint_sha256,
-    }));
+    const materialize = vi.fn(async (r: Row) => publishLinked(h.rows, r));
     h.deps.materializeAnchor = materialize as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
 
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
@@ -398,210 +394,71 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
   });
 
-  // SECURITY (code-review follow-up, 2026-09-01): the RESIDUAL claim-to-mint
-  // window. The `claimRow`-returns-fresh-content fix above closed the LARGEST
-  // instance of this TOCTOU (the batch-order-dependent one, worth up to
-  // DRAIN_LIMIT_MAX=200 earlier rows of awaited work), but not the whole thing:
-  // `claimRow`'s CAS capture and the eventual `anchors` INSERT are still two
-  // separate statements, separated by `resolveOrgActorUserId` and
-  // `findExistingEnvelopeAnchor` (two real awaited DB round trips). The F1-heal
-  // in `docusign-envelope-completed.ts` guards ONLY on `anchor_id IS NULL` — it
-  // has no notion of "this row was already claimed into 'processing'" — so it
-  // can still land INSIDE that window and supersede the forged fingerprint
-  // while the drain holds a stale copy in memory. Formally reproduced in
-  // machines/docusignInboundDedup.machine.ts's TOCTOU extension.
-  //
-  // The fix: the `processing → materialized` CAS that sets `anchor_id` (the
-  // very column the heal's guard reads) additionally asserts
-  // `fingerprint_sha256 = <the value captured at claim time>`. Postgres
-  // evaluates that atomically under the row lock, so it is a genuine gate, not
-  // another read-then-act. A heal anywhere in the window makes it match zero
-  // rows → the anchor is NEVER linked, NEVER debited, NEVER anchored; the
-  // artifact is requeued to re-drain against the healed value.
-  it('claim-to-mint TOCTOU regression: a heal landing between the claim and the anchor link ABORTS the mint — no link, no debit, no anchor', async () => {
-    const FORGED_FP = 'f'.repeat(64);
-    const VERIFIED_FP = 'e'.repeat(64);
-    const h = makeHarness([
-      makeRow({
-        id: ART_1,
-        org_id: ORG_A,
-        status: 'queued',
-        fingerprint_sha256: FORGED_FP,
-        metadata: { _direction: 'inbound', _sending_account_id: 'acct-FOREIGN' },
-      }),
-    ]);
+  // SQL validation runs under a row lock before any anchor publication. These
+  // caller tests assert that a rejection cannot trigger debit or a stale write;
+  // the actual transaction interleavings have separate PostgreSQL coverage.
+  it.each(['fingerprint', 'metadata', 'version'] as const)(
+    'atomic rejection after a %s heal leaves the newer row untouched', async (changed) => {
+      const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+      let healed: Row | undefined;
+      h.deps.materializeAnchor = async () => {
+        if (changed === 'fingerprint') h.rows[0].fingerprint_sha256 = FP_2;
+        if (changed === 'metadata') h.rows[0].metadata = { verified: true };
+        if (changed === 'version') h.rows[0].updated_at = '2026-09-05T10:00:00Z';
+        healed = structuredClone(h.rows[0]);
+        return { outcome: 'superseded' };
+      };
+      const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+      expect(h.rows[0]).toEqual(healed);
+      expect(h.rows[0].anchor_id).toBeNull();
+      expect(h.debit).not.toHaveBeenCalled();
+      expect(h.batchAnchor).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ anchored: 0, failed: 0, supersededRequeued: 0 });
+      expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'artifact_snapshot_rejected' }));
+    },
+  );
 
-    // Model the heal landing DURING materialization — i.e. strictly between
-    // `claimRow`'s `RETURNING` (which correctly captured FORGED_FP, the value
-    // that was live at claim time) and the link CAS. In the real code this is
-    // the `resolveOrgActorUserId` + `findExistingEnvelopeAnchor` + `anchors`
-    // INSERT window; the heal's own `WHERE anchor_id IS NULL` still matches,
-    // because nothing has linked an anchor yet.
-    let sawFingerprint: string | null = null;
-    const materialize = vi.fn(async (r: Row) => {
-      sawFingerprint = r.fingerprint_sha256;
-      h.rows[0].fingerprint_sha256 = VERIFIED_FP;
-      delete (h.rows[0].metadata as Record<string, unknown>)._direction;
-      delete (h.rows[0].metadata as Record<string, unknown>)._sending_account_id;
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
-    });
-    h.deps.materializeAnchor = materialize as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
+  it('stale processing lease cannot requeue or fail a newly acquired processing lease', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    let newer: Row | undefined;
+    h.deps.materializeAnchor = async () => {
+      // Reaper + another claim is an ABA status transition: the status is again
+      // processing, but the old caller must not change this newer generation.
+      h.rows[0].updated_at = '2026-09-05T11:00:00Z';
+      h.rows[0].metadata = { owner: 'new-lease' };
+      newer = structuredClone(h.rows[0]);
+      return { outcome: 'superseded' };
+    };
+    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(h.rows[0]).toEqual(newer);
+    expect(h.debit).not.toHaveBeenCalled();
+  });
 
+  it('lost lease leaves a reaper-requeued row untouched and raises a bounded diagnostic', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    h.deps.materializeAnchor = async () => {
+      h.rows[0].status = 'queued';
+      return { outcome: 'lost_lease' };
+    };
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    // The claim itself was honest — it captured what was live at claim time.
-    expect(sawFingerprint).toBe(FORGED_FP);
-    expect(result.claimed).toBe(1);
-
-    // ...but the anchor built from that now-superseded value is NEVER linked.
-    expect(h.rows[0].anchor_id).toBeNull();
-    expect(h.rows[0].status).not.toBe('materialized');
-    expect(h.rows[0].status).not.toBe('anchored');
-    // Requeued (a drainable status) so the next pass re-claims it and captures
-    // the HEALED fingerprint — the row is retried, never stranded.
     expect(h.rows[0].status).toBe('queued');
-    expect(h.rows[0].fingerprint_sha256).toBe(VERIFIED_FP);
-
-    // No charge, no submission: the abort happens BEFORE the debit.
+    expect(result).toMatchObject({ anchored: 0, failed: 0 });
     expect(h.debit).not.toHaveBeenCalled();
     expect(h.batchAnchor).not.toHaveBeenCalled();
-
-    // The anchor row this pass inserted is now an ORPHAN (PENDING, unlinked,
-    // undebited) and `claim_pending_anchors` would happily broadcast it — so it
-    // must be neutralized (guarded soft-delete; both that RPC and
-    // `findExistingEnvelopeAnchor` filter `deleted_at IS NULL`).
-    expect(h.neutralizeOrphanAnchor).toHaveBeenCalledTimes(1);
-    expect(h.neutralizeOrphanAnchor).toHaveBeenCalledWith({ orgId: ORG_A, anchorId: ANCHOR_1 });
-
-    expect(result.supersededRequeued).toBe(1);
-    expect(result.anchored).toBe(0);
-    expect(h.alert).toHaveBeenCalledWith(
-      expect.objectContaining({ scope: 'row', orgId: ORG_A, artifactId: ART_1, reason: 'artifact_fingerprint_superseded_requeued' }),
-    );
+    expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'artifact_materialization_uncertain' }));
   });
 
-  it('claim-to-mint gate is a ROW-VERSION check: a heal that strips _direction WITHOUT changing the hash still aborts', async () => {
-    // The F1-heal is licensed by `wonByInboundRow`, NOT by `fingerprintMismatch`
-    // — `docusign-envelope-completed.ts` says it fires "even in the vanishingly
-    // unlikely case the hashes happened to coincide". Such a heal writes
-    // `fingerprint_sha256` (byte-identical) AND `metadata` (with `_direction`
-    // stripped) in one UPDATE. A fingerprint-only gate would PASS, and
-    // `defaultMaterializeAnchor` would then read `_direction` from the CAPTURED
-    // metadata and stamp `fingerprint_source: 'issuer_record_attestation'` —
-    // asserting a DECLARED evidence class for a fingerprint the system has just
-    // reclassified as MEASURED (§1.5 / R19 mislabel).
-    const SAME_FP = 'd'.repeat(64);
-    const h = makeHarness([
-      makeRow({
-        id: ART_1,
-        org_id: ORG_A,
-        status: 'queued',
-        fingerprint_sha256: SAME_FP,
-        metadata: { _direction: 'inbound', _sending_account_id: 'acct-X' },
-        updated_at: '2026-09-02T00:00:00.000Z',
-      }),
-    ]);
-    h.deps.materializeAnchor = (async () => {
-      // Heal lands: hash UNCHANGED, metadata reclassified, version bumped.
-      delete (h.rows[0].metadata as Record<string, unknown>)._direction;
-      delete (h.rows[0].metadata as Record<string, unknown>)._sending_account_id;
-      h.rows[0].updated_at = '2026-09-02T00:00:05.000Z';
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
-    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
-
+  it('an unchanged snapshot publishes, links, debits and anchors', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    // The fingerprint never moved, so ONLY a version-keyed gate catches this.
-    expect(h.rows[0].fingerprint_sha256).toBe(SAME_FP);
-    expect(result.supersededRequeued).toBe(1);
-    expect(h.rows[0].anchor_id).toBeNull();
-    expect(h.debit).not.toHaveBeenCalled();
-    expect(h.neutralizeOrphanAnchor).toHaveBeenCalledTimes(1);
-  });
-
-  it('claim-to-mint abort: an anchor this pass did NOT create (reused envelope/duplicate anchor) is never neutralized', async () => {
-    // `defaultMaterializeAnchor` reports `created:false` when it REUSED a
-    // pre-existing anchor (the `findExistingEnvelopeAnchor` envelope guard, or
-    // the 23505 duplicate-resolve path). That anchor belongs to another writer
-    // and may be live — soft-deleting it on our abort would be data loss.
-    const h = makeHarness([
-      makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: 'f'.repeat(64) }),
-    ]);
-    const materialize = vi.fn(async () => {
-      h.rows[0].fingerprint_sha256 = 'e'.repeat(64);
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: false };
-    });
-    h.deps.materializeAnchor = materialize as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
-
-    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(result.supersededRequeued).toBe(1);
-    expect(h.rows[0].status).toBe('queued');
-    expect(h.rows[0].anchor_id).toBeNull();
-    expect(h.neutralizeOrphanAnchor).not.toHaveBeenCalled();
-  });
-
-  it('claim-to-mint abort: a FAILED orphan neutralization is a loud, separate integrity alert (never swallowed)', async () => {
-    const h = makeHarness([
-      makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: 'f'.repeat(64) }),
-    ]);
-    const materialize = vi.fn(async () => {
-      h.rows[0].fingerprint_sha256 = 'e'.repeat(64);
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
-    });
-    h.deps.materializeAnchor = materialize as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
-    // Guarded soft-delete matched zero rows: the orphan already advanced past
-    // PENDING (a concurrent batch-anchor claimed it) — a real integrity event.
-    h.deps.neutralizeOrphanAnchor = h.neutralizeOrphanAnchor.mockResolvedValue(
-      false,
-    ) as unknown as ConnectorArtifactDrainDeps['neutralizeOrphanAnchor'];
-
-    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(h.alert).toHaveBeenCalledWith(
-      expect.objectContaining({ scope: 'row', artifactId: ART_1, reason: 'orphan_anchor_neutralize_failed' }),
-    );
-  });
-
-  it('claim-to-mint gate does NOT fire when the fingerprint is unchanged: the normal drain still links, debits and anchors', async () => {
-    // The gate must be a freshness check, not a new failure mode — the
-    // overwhelmingly common case (nothing healed) is untouched.
-    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: FP_1 })]);
-
-    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
     expect(result).toMatchObject({ claimed: 1, anchored: 1, supersededRequeued: 0 });
-    expect(h.rows[0].status).toBe('anchored');
     expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
-    expect(h.neutralizeOrphanAnchor).not.toHaveBeenCalled();
-  });
-
-  it('claim-to-mint abort is distinguishable from a LOST LEASE: a reaper-requeued row is not clobbered and is not counted', async () => {
-    // Zero rows on the link CAS has TWO causes: the fingerprint moved (abort +
-    // requeue) or the lease was lost (reaper/another worker took the row).
-    // These must not be conflated — a lost lease must leave the row exactly as
-    // the new owner left it.
-    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: FP_1 })]);
-    const materialize = vi.fn(async () => {
-      // Fingerprint UNCHANGED; the reaper re-queued the row out from under us.
-      h.rows[0].status = 'queued';
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
-    });
-    h.deps.materializeAnchor = materialize as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
-
-    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(result.supersededRequeued).toBe(0);
-    expect(result.anchored).toBe(0);
-    expect(h.debit).not.toHaveBeenCalled();
-    expect(h.rows[0].anchor_id).toBeNull();
-    // Ambiguous outcome → never soft-delete an anchor we cannot prove is unlinked.
-    expect(h.neutralizeOrphanAnchor).not.toHaveBeenCalled();
+    expect(h.debit).toHaveBeenCalledTimes(1);
   });
 
   it('charge-happens-once-at-securing: never debits at enqueue/claim, only after materialize', async () => {
     const order: string[] = [];
-    const materialize = vi.fn(async () => { order.push('materialize'); return { anchorId: ANCHOR_1, anchorPublicId: 'p' }; });
+    const materialize = vi.fn(async (row: import('./connector-artifact-drain.js').ConnectorArtifactRow) => { order.push('materialize'); return publishLinked(h.rows, row); });
     const debit = vi.fn(async () => { order.push('debit'); return { success: true }; });
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { materializeAnchor: materialize, debitAndEnqueueAnchor: debit });
 
@@ -631,6 +488,21 @@ describe('drainConnectorArtifactsForOrg', () => {
     const alertArg = h.alert.mock.calls[0][0];
     expect(alertArg).toMatchObject({ orgId: ORG_A, artifactId: ART_1, reason: 'insufficient_credits_requeued' });
     expect(JSON.stringify(alertArg)).not.toContain(FP_1);
+  });
+
+  it('a post-publication error cannot fail a newer processing lease', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    let newer: Row | undefined;
+    h.deps.debitAndEnqueueAnchor = async () => {
+      h.rows[0].status = 'processing';
+      h.rows[0].updated_at = '2026-09-05T12:00:00Z';
+      h.rows[0].metadata = { owner: 'new-lease' };
+      newer = structuredClone(h.rows[0]);
+      throw new Error('late old-client response');
+    };
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(h.rows[0]).toEqual(newer);
+    expect(result.failed).toBe(0);
   });
 
   it('hard debit failure (non-insufficient_credits): row marked failed (terminal), bounded alert', async () => {
@@ -765,27 +637,23 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.rows[0].status).not.toBe('failed');
   });
 
-  it('partial-failure isolation: one row fails, the next still drains', async () => {
-    const materialize = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('materialize boom'))
-      .mockResolvedValueOnce({ anchorId: ANCHOR_2, anchorPublicId: 'p2' });
-    const h = makeHarness(
-      [
-        makeRow({ id: ART_1, org_id: ORG_A, fingerprint_sha256: FP_1 }),
-        makeRow({ id: ART_2, org_id: ORG_A, external_ref: 'file-2', fingerprint_sha256: FP_2 }),
-      ],
-      { materializeAnchor: materialize },
-    );
-
+  it('partial-failure isolation: uncertain publication stays recoverable and the next row drains', async () => {
+    const h = makeHarness([
+      makeRow({ id: ART_1, org_id: ORG_A }),
+      makeRow({ id: ART_2, org_id: ORG_A, external_ref: 'file-2', fingerprint_sha256: FP_2 }),
+    ]);
+    h.deps.materializeAnchor = async (row) => {
+      if (row.id === ART_1) throw new Error('publication response lost');
+      return publishLinked(h.rows, row);
+    };
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(result.claimed).toBe(2);
-    expect(result.failed).toBe(1);
-    expect(result.anchored).toBe(1);
-    expect(h.rows.find((r) => r.id === ART_1)?.status).toBe('failed');
-    expect(h.rows.find((r) => r.id === ART_2)?.status).toBe('anchored');
-    expect(h.alert).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ claimed: 2, failed: 0, anchored: 1 });
+    expect(h.rows[0].status).toBe('processing');
+    expect(h.rows[0].anchor_id).toBeNull();
+    expect(h.rows[1].status).toBe('anchored');
+    expect(h.debit).toHaveBeenCalledTimes(1);
+    expect(h.debit).toHaveBeenCalledWith({ orgId: ORG_A, anchorId: ANCHOR_2 });
+    expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ artifactId: ART_1, reason: 'artifact_materialization_uncertain' }));
   });
 
   it('cross-org isolation: draining ORG_A never claims ORG_B rows', async () => {
@@ -834,32 +702,6 @@ describe('drainConnectorArtifactsForOrg', () => {
   });
 
   // ── FIX 1: lost-lease guarded transitions STOP the row ──────────────────────
-
-  it('lost lease at materialized transition: STOPS the row — no debit/batch, no terminal count', async () => {
-    // The row is claimed (queued→processing), but before the processing→
-    // materialized transition persists, the reaper re-queues it (or another
-    // worker reclaims it). The status-guarded markStatus then matches zero rows
-    // → the loop must STOP this row: no debit, no batch, no count, no alert.
-    const materialize = vi.fn(async () => {
-      // simulate the reaper yanking the lease right after the claim: flip the
-      // row off 'processing' so the guarded `.eq('status','processing')` misses.
-      h.rows[0].status = 'queued';
-      return { anchorId: ANCHOR_1, anchorPublicId: 'p' };
-    });
-    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued' })], { materializeAnchor: materialize });
-
-    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(result.claimed).toBe(1); // the claim itself succeeded
-    expect(result.anchored).toBe(0);
-    expect(result.failed).toBe(0); // NOT counted as failed — the lease was lost
-    expect(h.debit).not.toHaveBeenCalled();
-    expect(h.batchAnchor).not.toHaveBeenCalled();
-    // no terminal alert for a transition that didn't persist
-    expect(h.alert).not.toHaveBeenCalled();
-    // the reaper's re-queue is left intact
-    expect(h.rows[0].status).toBe('queued');
-  });
 
   it('lost lease at mark-anchored transition: STOPS the row — anchored NOT counted', async () => {
     // Debit + batch + anchor-advance all succeed, but the materialized→anchored
@@ -1465,7 +1307,7 @@ describe('scrubReason (SCRUM-2625 / QUEUE-10 F-4 reason-scrub)', () => {
 // cycle): defaultMaterializeAnchor's inbound declared-hash branch. A dedicated
 // generic chainable+thenable stub (distinct from the connector_artifact-table
 // harness above) because this function's own dependencies are org_members
-// (actor resolution) and anchors (envelope-guard lookups + the insert itself)
+// (actor resolution), anchors (envelope-guard lookups), and atomic publication
 // — a different table shape than the rest of this file exercises.
 describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)', () => {
   /** A chainable object whose every method returns itself, and which resolves `result` when awaited at any point in the chain. */
@@ -1483,26 +1325,18 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
   }
 
   function makeDb(args: {
-    insertResult: { data: unknown; error: unknown };
+    insertResult: { data: { id: string; public_id: string }; error: unknown };
     insertSpy: (payload: unknown) => void;
   }) {
+    vi.mocked(callRpc).mockImplementation(async (_db, name, rpcArgs) => {
+      expect(name).toBe('materialize_connector_artifact_anchor');
+      args.insertSpy(rpcArgs!.p_anchor_payload);
+      return { data: { outcome: 'linked', anchor_id: ANCHOR_1,
+        public_id: args.insertResult.data.public_id, created: true }, error: null };
+    });
     const from = vi.fn((table: string) => {
-      if (table === 'org_members') {
-        return chainable({ data: { user_id: MATERIALIZE_USER_ID, role: 'owner' }, error: null });
-      }
-      if (table === 'anchors') {
-        // First 3 calls per invocation are the envelope-guard lookups
-        // (ENVELOPE_ID_METADATA_KEYS = source_envelope_id/envelope_id/external_ref),
-        // each finding no existing anchor. The insert call is distinguished
-        // by actually invoking `.insert(...)`, captured by insertSpy so the
-        // test can assert on the exact payload.
-        const c = chainable({ data: [], error: null });
-        c.insert = vi.fn((payload: unknown) => {
-          args.insertSpy(payload);
-          return chainable(args.insertResult);
-        });
-        return c;
-      }
+      if (table === 'org_members') return chainable({ data: { user_id: MATERIALIZE_USER_ID, role: 'owner' }, error: null });
+      if (table === 'anchors') return chainable({ data: [], error: null });
       throw new Error(`unexpected table ${table}`);
     });
     return { from };
@@ -1537,17 +1371,15 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
       { db },
     );
 
-    // `created: true` — this call INSERTED the anchor, so it IS a
-    // neutralization candidate if the claim-to-mint freshness gate later
-    // rejects the link (see MaterializedAnchor.created).
-    expect(result).toEqual({ anchorId: 'anchor-inbound-1', anchorPublicId: 'ARK-INBOUND-1', created: true });
+    // A successful reply confirms that publication AND linking committed.
+    expect(result).toEqual({ outcome: 'linked', anchorId: ANCHOR_1, anchorPublicId: 'ARK-INBOUND-1', created: true });
     expect(insertSpy).toHaveBeenCalledWith(expect.objectContaining({
       fingerprint_source: 'issuer_record_attestation',
       metadata: expect.objectContaining({ _direction: 'inbound', _sending_account_id: 'acct-FOREIGN' }),
     }));
   });
 
-  it('OMITS fingerprint_source (undefined, not "document_bytes") for a normal outbound/fetched connector row', async () => {
+  it('classifies a normal outbound/fetched connector row as document_bytes', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({
       insertResult: { data: { id: 'anchor-outbound-1', public_id: 'ARK-OUTBOUND-1' }, error: null },
@@ -1561,10 +1393,10 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
 
     expect(insertSpy).toHaveBeenCalledTimes(1);
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect('fingerprint_source' in payload).toBe(false);
+    expect(payload.fingerprint_source).toBe('document_bytes');
   });
 
-  it('OMITS fingerprint_source for a non-inbound _direction value (never guesses toward the class)', async () => {
+  it('classifies the explicit outbound direction as document_bytes', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({
       insertResult: { data: { id: 'anchor-outbound-2', public_id: 'ARK-OUTBOUND-2' }, error: null },
@@ -1577,233 +1409,47 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
     );
 
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect('fingerprint_source' in payload).toBe(false);
+    expect(payload.fingerprint_source).toBe('document_bytes');
   });
 });
 
-/**
- * `defaultNeutralizeOrphanAnchor` is the ONE place this module can retire an
- * `anchors` row. It exists because `connector_artifact.anchor_id` is a
- * NOT-DEFERRABLE FK to `anchors(id)` (migration 0343): the anchor id cannot be
- * reserved before the `anchors` row exists, so the INSERT must precede the
- * claim-to-mint freshness gate — and a rejected gate leaves a PENDING,
- * UNLINKED anchor that `claim_pending_anchors` would claim and broadcast to
- * Bitcoin carrying the very fingerprint the heal just superseded.
- *
- * ITS ENTIRE SAFETY PROPERTY IS THE WHERE CLAUSE. These tests pin the exact
- * filter set, because a reader will not notice one going missing and the
- * failure mode is soft-deleting a LIVE anchor.
- */
-describe('defaultNeutralizeOrphanAnchor — the guarded soft-delete', () => {
-  const ANCHOR = 'a1111111-1111-4111-8111-111111111111';
-
-  /** Records every filter applied and the patch, so the WHERE clause is assertable. */
-  function makeAnchorsDb(result: { data: unknown; error: unknown }) {
-    const calls: Array<{ table: string; patch?: Record<string, unknown>; eq: Array<[string, unknown]>; is: Array<[string, unknown]>; deleted: boolean }> = [];
-    const from = vi.fn((table: string) => {
-      const rec = { table, eq: [] as Array<[string, unknown]>, is: [] as Array<[string, unknown]>, deleted: false, patch: undefined as Record<string, unknown> | undefined };
-      calls.push(rec);
-      const builder: Record<string, unknown> = {
-        update(patch: Record<string, unknown>) { rec.patch = patch; return builder; },
-        delete() { rec.deleted = true; return builder; },
-        eq(col: string, val: unknown) { rec.eq.push([col, val]); return builder; },
-        is(col: string, val: unknown) { rec.is.push([col, val]); return builder; },
-        select() { return builder; },
-        maybeSingle: async () => result,
-      };
-      return builder;
-    });
-    return { db: { from } as unknown as Parameters<typeof defaultNeutralizeOrphanAnchor>[1]['db'], calls };
-  }
-
-  it('soft-deletes ONLY an anchor that is still PENDING, unbroadcast, org-scoped and not already retired', async () => {
-    const { db, calls } = makeAnchorsDb({ data: { id: ANCHOR }, error: null });
-
-    const ok = await defaultNeutralizeOrphanAnchor({ orgId: ORG_A, anchorId: ANCHOR }, { db });
-
-    expect(ok).toBe(true);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].table).toBe('anchors');
-
-    // SOFT delete, never a hard one: `deleted_at IS NULL` is the filter BOTH
-    // `claim_pending_anchors` (broadcast eligibility) and
-    // `findExistingEnvelopeAnchor` (the drain's own reuse guard) already apply,
-    // so setting it is sufficient — while the row survives for forensics. A
-    // hard DELETE would destroy the evidence of an attempted forgery.
-    expect(calls[0].deleted).toBe(false);
-    expect(Object.keys(calls[0].patch ?? {})).toEqual(['deleted_at']);
-    expect(typeof calls[0].patch?.deleted_at).toBe('string');
-    // Never touches status/chain data — this retires the row, it does not
-    // rewrite its lifecycle.
-    expect(calls[0].patch).not.toHaveProperty('status');
-    expect(calls[0].patch).not.toHaveProperty('chain_tx_id');
-
-    // THE GUARD, in full. Each of these is load-bearing:
-    //   id      — this anchor and no other
-    //   org_id  — cross-tenant isolation (CLAUDE.md §1.4)
-    //   status  — PENDING only: never retire something already advancing
-    expect(calls[0].eq).toEqual([
-      ['id', ANCHOR],
-      ['org_id', ORG_A],
-      ['status', 'PENDING'],
-    ]);
-    //   chain_tx_id IS NULL — never retire an anchor already broadcast
-    //   deleted_at  IS NULL — idempotent; never re-stamp a retired row
-    expect(calls[0].is).toEqual([
-      ['chain_tx_id', null],
-      ['deleted_at', null],
-    ]);
-  });
-
-  it('returns false (never true) when the guard matches zero rows — a concurrent batch-anchor already claimed the orphan', async () => {
-    // This is the case the caller escalates as `orphan_anchor_neutralize_failed`:
-    // the anchor advanced past PENDING between our INSERT and here, so it may
-    // be broadcast carrying a superseded fingerprint. We must NOT report
-    // success, and must NOT race the broadcaster by retrying.
-    const { db } = makeAnchorsDb({ data: null, error: null });
-    await expect(defaultNeutralizeOrphanAnchor({ orgId: ORG_A, anchorId: ANCHOR }, { db })).resolves.toBe(false);
-  });
-
-  it('returns false on a DB error — fail-closed, never a silent success', async () => {
-    const { db } = makeAnchorsDb({ data: null, error: { message: 'connection reset' } });
-    await expect(defaultNeutralizeOrphanAnchor({ orgId: ORG_A, anchorId: ANCHOR }, { db })).resolves.toBe(false);
-  });
-});
-
-describe('claim-to-mint gate — DB-failure branches are fail-closed', () => {
-  it('a DB error on the freshness-gated link does NOT requeue: the UPDATE may have committed before the transport failed', async () => {
-    // Requeuing on an ambiguous error would clobber a row that WAS legitimately
-    // linked server-side. The reaper owns the row from here.
-    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: FP_1 })]);
-    const realFrom = h.deps.db.from.bind(h.deps.db);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (h.deps.db as any).from = (table: string) => {
-      const builder = realFrom(table);
-      const origUpdate = builder.update.bind(builder);
-      builder.update = (patch: Record<string, unknown>) => {
-        const b = origUpdate(patch);
-        if (patch.status === 'materialized') {
-          b.maybeSingle = async () => ({ data: null, error: { message: 'connection reset' } });
-        }
-        return b;
-      };
-      return builder;
+describe('atomic publication response loss and paid retry recovery', () => {
+  it.each(['return', 'throw'] as const)('committed publication with %s response failure retains the link for recovery', async (failure) => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    let committed: Row | undefined;
+    h.deps.materializeAnchor = async (row) => {
+      publishLinked(h.rows, row);
+      committed = structuredClone(h.rows[0]);
+      if (failure === 'throw') throw new Error('response lost after commit');
+      return { outcome: 'lost_lease' };
     };
-
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(result.supersededRequeued).toBe(0);
-    expect(result.anchored).toBe(0);
+    expect(h.rows[0]).toEqual(committed);
+    expect(h.rows[0]).toMatchObject({ status: 'materialized', anchor_id: ANCHOR_1 });
     expect(h.debit).not.toHaveBeenCalled();
-    // Left in-flight for the reaper — NOT requeued, NOT failed, NOT clobbered.
-    expect(h.rows[0].status).toBe('processing');
-    expect(h.neutralizeOrphanAnchor).not.toHaveBeenCalled();
+    expect(h.batchAnchor).not.toHaveBeenCalled();
+    expect(result.failed).toBe(0);
+    expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'artifact_materialization_uncertain' }));
   });
 
-  it('a THROWING neutralizer is caught and still escalates — the abort never becomes a row-level crash', async () => {
-    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: 'f'.repeat(64) })]);
-    h.deps.materializeAnchor = (async () => {
-      h.rows[0].fingerprint_sha256 = 'e'.repeat(64);
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
-    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
-    h.deps.neutralizeOrphanAnchor = (async () => {
-      throw new Error('anchors update exploded');
-    }) as unknown as ConnectorArtifactDrainDeps['neutralizeOrphanAnchor'];
-
-    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    // The throw is CONTAINED (no row-level crash) and counted...
-    expect(result.supersededRequeued).toBe(1);
-    // ...but a throw means the orphan is NOT provably gone, so the abort fails
-    // CLOSED: the lease is kept. Handing the row back while a live orphan is
-    // still discoverable by `findExistingEnvelopeAnchor` is how the forged
-    // fingerprint would get re-adopted by the next pass.
-    expect(h.rows[0].status).toBe('processing');
-    expect(h.rows[0].status).not.toBe('queued');
-    expect(h.alert).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: ART_1, reason: 'orphan_anchor_neutralize_failed' }),
-    );
-  });
-});
-
-describe('claim-to-mint abort — ORDERING (the orphan must die before the row is re-drainable)', () => {
-  it('neutralizes the orphan while STILL HOLDING the lease — never requeues first', async () => {
-    // WHY THIS ORDER IS LOAD-BEARING. `defaultMaterializeAnchor` stamps
-    // `external_ref` into the anchor's metadata, and `findExistingEnvelopeAnchor`
-    // looks anchors up by exactly `metadata->>external_ref` (filtering only
-    // deleted_at IS NULL / status != REVOKED). So an un-neutralized orphan is
-    // DISCOVERABLE by the envelope-reuse guard.
-    //
-    // If the row is requeued BEFORE the orphan is soft-deleted, a concurrent
-    // drain — prod runs Cloud Run minScale=2, so two instances run this cron
-    // simultaneously — can re-claim the row in that window, find the orphan via
-    // the envelope guard, REUSE it (`created:false`, so it is never
-    // neutralized), link it and broadcast it. That is the forged fingerprint
-    // reaching Bitcoin by a different route: the gate closed the front door and
-    // the orphan is the back one.
-    const h = makeHarness([
-      makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: 'f'.repeat(64) }),
-    ]);
-    h.deps.materializeAnchor = (async () => {
-      h.rows[0].fingerprint_sha256 = 'e'.repeat(64); // heal lands mid-materialize
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
-    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
-
-    let statusAtNeutralizeTime: string | null = null;
-    h.deps.neutralizeOrphanAnchor = (async () => {
-      statusAtNeutralizeTime = h.rows[0].status;
-      return true;
-    }) as unknown as ConnectorArtifactDrainDeps['neutralizeOrphanAnchor'];
-
-    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    // The lease is still ours when the orphan dies — no other pass can have the row.
-    expect(statusAtNeutralizeTime).toBe('processing');
-    // ...and only then is it handed back for re-drain.
-    expect(h.rows[0].status).toBe('queued');
-    expect(result.supersededRequeued).toBe(1);
-  });
-
-  it('a FAILED neutralization does NOT hand the row back: leaving it re-drainable would reuse the live orphan', async () => {
-    // Neutralize returning false means the orphan advanced past PENDING (a
-    // concurrent batch-anchor claimed it). It is now BROADCASTING — which
-    // `findExistingEnvelopeAnchor` still matches (it excludes only deleted and
-    // REVOKED). Requeuing here would hand the next pass a live, forged anchor
-    // to reuse. Fail closed: keep the lease, alert, let the operator resolve.
-    const h = makeHarness([
-      makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: 'f'.repeat(64) }),
-    ]);
-    h.deps.materializeAnchor = (async () => {
-      h.rows[0].fingerprint_sha256 = 'e'.repeat(64);
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
-    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
-    h.deps.neutralizeOrphanAnchor = (async () => false) as unknown as ConnectorArtifactDrainDeps['neutralizeOrphanAnchor'];
-
+  it('a reset paid anchor is re-driven by the SAME id and confirmation never charges it twice', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A,
+      status: 'materialized', anchor_id: ANCHOR_2, credit_deduction_id: 'existing-debit' })]);
+    const paidAnchors = new Set([ANCHOR_2]);
+    let newCharges = 0;
+    h.deps.debitAndEnqueueAnchor = async ({ anchorId }) => {
+      if (!paidAnchors.has(anchorId)) { paidAnchors.add(anchorId); newCharges += 1; }
+      return { success: true };
+    };
+    h.listMaterializedArtifacts.mockResolvedValueOnce([{ id: ART_1, anchor_id: ANCHOR_2 }]);
+    h.readAnchorStatus.mockResolvedValueOnce({ id: ANCHOR_2, status: 'PENDING', chain_tx_id: null });
+    const first = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(first).toMatchObject({ reconfirmRequeued: 1, anchored: 1 });
+    expect(h.rows[0].anchor_id).toBe(ANCHOR_2);
+    expect(h.rows[0].credit_deduction_id).toBe('existing-debit');
+    expect(newCharges).toBe(0);
     await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(h.rows[0].status).not.toBe('queued');
-    expect(h.rows[0].status).toBe('processing');
-    expect(h.alert).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: ART_1, reason: 'orphan_anchor_neutralize_failed' }),
-    );
-  });
-
-  it('a LOST LEASE after this pass inserted an anchor still ALERTS — an unlinked PENDING anchor is broadcast-eligible', async () => {
-    // `claim_pending_anchors` claims any PENDING/undeleted anchor. An orphan we
-    // created and could not link is therefore broadcast-eligible, and until now
-    // this path only wrote a logger.warn about the lease — nothing paged.
-    const h = makeHarness([
-      makeRow({ id: ART_1, org_id: ORG_A, status: 'queued', fingerprint_sha256: FP_1 }),
-    ]);
-    h.deps.materializeAnchor = (async () => {
-      h.rows[0].status = 'queued'; // reaper took the row; fingerprint UNCHANGED
-      return { anchorId: ANCHOR_1, anchorPublicId: 'pub-1', created: true };
-    }) as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
-
-    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(h.alert).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: ART_1, reason: 'unlinked_anchor_left_by_lost_lease' }),
-    );
+    expect(newCharges).toBe(0);
+    expect(h.materialize).toHaveBeenCalledTimes(1);
   });
 });

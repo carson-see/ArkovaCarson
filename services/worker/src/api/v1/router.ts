@@ -18,6 +18,10 @@ import { verificationApiGate } from '../../middleware/featureGate.js';
 import { apiKeyAuth, requireScope } from '../../middleware/apiKeyAuth.js';
 import { requireScopeAnyAuth } from '../../middleware/requireScopeAnyAuth.js';
 import { usageTracking } from '../../middleware/usageTracking.js';
+import {
+  parkedAttestationVerify,
+  PARKED_ATTESTATION_ROUTE,
+} from '../../middleware/parkedAttestationVerify.js';
 import { verifyRouter } from './verify.js';
 import { verifyProofRouter } from './verify-proof.js';
 import { batchRouter } from './batch.js';
@@ -193,15 +197,22 @@ if (!hmacSecret) {
 router.use(apiKeyAuth(hmacSecret ?? ''));
 
 // ─── Rate limiting (Constitution 1.10) ───
-// Anonymous: 100 req/min per IP, API key holders: 1,000 req/min per key
+// Anonymous: 100 req/min per IP, API key holders: 1,000 req/min per key.
+// Both carry an explicit `scope` so each tier owns its own bucket. Without one
+// they shared a bare per-IP Map entry with every other unscoped limiter in the
+// worker — including the 60/min `apiIpShadowGuard` and the 10/min checkout
+// limiter — and the anon tier could never enforce its own 100/min contract
+// (SCRUM-3418).
 const anonRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 100,
+  scope: 'v1-anon',
 });
 
 const keyedRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 1000,
+  scope: 'v1-keyed',
   keyGenerator: (req) => req.apiKey?.keyId ?? req.ip ?? 'unknown',
 });
 
@@ -212,6 +223,29 @@ router.use((req: Request, res: Response, next: NextFunction) => {
     anonRateLimiter(req, res, next);
   }
 });
+
+// ─── PARKED: legally binding attestation verification (SCRUM-1873) ───
+// Position is load-bearing in BOTH directions, and is pinned by
+// `src/tests/api-e2e.test.ts` ("parked GET /verify/attestation/:attestationId"):
+//
+//   BELOW apiKeyAuth + the rate limiters — a public endpoint stays on its
+//   §1.10 budget and keeps its `X-RateLimit-*` headers ("headers on every
+//   response"), and a caller presenting a bad key still gets the 401 it got
+//   before the park rather than a 404. Mounting above them took this path off
+//   rate limiting entirely: `publicVerifyAnonLimiter` (index.ts) skips on
+//   `hasApiKeyCredential`, a SYNTAX-only check, and `apiIpShadowGuard` skips
+//   the whole `/api/v1/verify` prefix — so any caller sending a made-up
+//   `X-API-Key: ak_…` was unthrottled.
+//
+//   ABOVE idempotency + usageTracking — the feature has no writer, so charging
+//   a caller's monthly quota for a response that can never succeed is waste,
+//   and `usageTracking` has no refund path.
+//
+// Scoped to the one GET route so every other method and path keeps its existing
+// fall-through to the sibling /verify mounts below. See
+// middleware/parkedAttestationVerify.ts for the prod evidence, why it is a 404
+// and not a 501, and the unpark checklist.
+router.get(PARKED_ATTESTATION_ROUTE, parkedAttestationVerify);
 
 // ─── Idempotency-Key support on POST endpoints (DX-4) ───
 router.use(idempotencyMiddleware());
@@ -242,8 +276,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
 // ─── Batch rate limiter (Constitution 1.10: 10 req/min) ───
 // `scope: 'batch'` keeps this bucket separate from anonRateLimiter and
 // keyedRateLimiter so a hot batch caller doesn't eat into their general
-// 1000/min budget (and vice versa). Without `scope`, all three would
-// share the same per-IP bucket after the F5 fix below.
+// 1000/min budget (and vice versa).
 const batchRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
@@ -272,7 +305,11 @@ const anchorBulkSelfServiceRateLimiter = rateLimit({
 // Agentic verification search — MUST be before /verify to avoid route shadowing (P8-S19)
 router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 
-// SCRUM-1873: Legally binding attestation verification — public, anonymous GET
+// SCRUM-1873: Legally binding attestation verification.
+// PARKED — `GET /verify/attestation/:attestationId` is answered upstream by
+// parkedAttestationVerify (above), so this mount currently serves nothing. It
+// is retained so the handler and its status-disclosure gate stay wired and
+// tested for the unpark path, and so other methods/paths keep falling through.
 // MUST be before /verify to avoid route shadowing (same pattern as search/batch)
 router.use('/verify/attestation', attestationVerifyRouter);
 
@@ -313,7 +350,8 @@ import { creditsRouter } from './credits.js';
 const creditsRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `credits:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'credits',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter);
 
@@ -321,13 +359,15 @@ router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter);
 const aiRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 30,
-  keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ai',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 const credentialSourceImportRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `credential-source-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'credential-source-import',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // SCRUM-2913: the CTDL import consumer does a live outbound CE Registry fetch,
@@ -335,7 +375,8 @@ const credentialSourceImportRateLimiter = rateLimit({
 const ctdlImportRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `ctdl-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ctdl-import',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // L3-A6: the registry-anchor route ALSO does a live outbound CE Registry
@@ -344,7 +385,8 @@ const ctdlImportRateLimiter = rateLimit({
 const ctdlRegistryAnchorRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 5,
-  keyGenerator: (req) => `ctdl-registry-anchor:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ctdl-registry-anchor',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)

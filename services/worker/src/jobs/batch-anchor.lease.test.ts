@@ -48,7 +48,7 @@ vi.mock('../config.js', () => ({
 }));
 
 vi.mock('../middleware/flagRegistry.js', () => ({
-  flagRegistry: { getFlag: mockGetFlag },
+  flagRegistry: { getFlag: mockGetFlag, getFlagLive: async () => mockGetFlag() },
 }));
 
 vi.mock('../utils/db.js', () => ({
