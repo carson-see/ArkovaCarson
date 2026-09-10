@@ -1,5 +1,123 @@
 # services/worker/src/jobs/agents.md
 
+## 2026-09-05 — PR #2565 durable attempt and provenance repair
+
+This update supersedes the earlier unresolved marker/pacing note and the historical T2/no-migration description below. Migration0438 adds a service-only completion-marker trigger without editing frozen0423, a FORCE-RLS attempt table keyed by org/envelope, and service-only candidate/claim RPCs. A claim reserves15 minutes even after a failed provider request or lost write CAS. Completed envelopes stay excluded; failed attempts can retry after cooldown. There is no claim that an envelope is never polled twice or that this grants provider approval.
+
+Candidate RPCs filter cooling rows before LIMIT and bind the selected active DocuSign account. Rows with no account identity are eligible only if the org has one distinct active account; ambiguous legacy rows fail closed. After the provider responds, the worker rereads and verifies envelope, account metadata, outbound classification, fingerprint authority and deletion state. Its serialized metadata CAS also checks fingerprint_source and deletion under the update lock. Concurrent unrelated metadata survives, while an old provider response cannot enrich a repurposed row.
+
+Verification includes real-client transport against the migration's declared RPC parameter names, concurrent orchestration, and owned PostgreSQL17 sessions proving authenticated marker forgery fails, duplicate/concurrent attempts have one winner, cooldown fairness, and wrong/revoked/ambiguous account denial. Focused local schemas are not full-schema or staging qualification. This security/concurrency migration makes the candidate T3; Ready enables CI while do-not-merge remains until exact-head clean-baseline qualification and root review close.
+
+
+
+## 2026-09-05 — PR #2565 JSONB CAS transport correction
+
+The Supabase client interpolates `.eq()` values into URL filters. Passing the metadata object directly produced `eq.[object Object]` and PostgreSQL rejected every enrichment update as invalid JSON. The backfill now serializes the exact fresh snapshot with `JSON.stringify`. Real-client RED/GREEN tests inspect the outgoing PATCH and exercise both successful watermark persistence and rejection after a concurrent metadata writer. Existing unit mocks now decode the JSON filter instead of accepting a transport shape PostgREST cannot send.
+
+This repair does not claim release qualification. `_signers_backfilled_at` was introduced by this PR and remains outside PR #2472's frozen 0423 guarded-key family; protection must be additive without editing that active-soak migration. Durable per-envelope attempt pacing is also required before claiming repeated/concurrent runs respect the polling interval. Follow-on implementation is being prepared under the same release task; Ready status enables review/CI and `do-not-merge` remains required until qualification closes.
+
+Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
+
+## 2026-08-31 — `docusign-signer-backfill.ts` + `-deps.ts`: enrich pre-existing DocuSign anchors with `_signers` (follow-on to PR #2474 signer capture; supersedes the mis-targeted PR #2521)
+
+Existing DocuSign-sourced anchors created BEFORE the signer-capture PR (#2474,
+`jobs/docusign-envelope-completed.ts` / `api/v1/webhooks/docusign.ts`) shipped
+carry no `metadata._signers`, so the record-detail UI's signer rows render
+empty for them. `runDocusignSignerBackfill()` + `makeDocusignSignerBackfillDeps()`
+enrich those anchors in place: for each candidate, GET the envelope's current
+recipients from the DocuSign eSignature REST API
+(`fetchDocusignEnvelopeRecipients`, new in `integrations/oauth/docusign.ts`,
+mapped through the SHARED `captureDocusignSigners` mapper in
+`integrations/connectors/schemas.ts` — the one algorithm both this job's
+`extractCapturedSigners` and the live webhook's `extractSigners`
+(`api/v1/webhooks/docusign.ts`) call, so the two cannot drift) and stamp
+`_signers` (+ `_docusign_env` if absent) onto the anchor's EXISTING metadata —
+merged, never clobbering any other key. Candidates are found via one indexed
+point-lookup per `ENVELOPE_ID_METADATA_KEYS` key
+(`docusign-anchor-reconciliation.ts`, migration 0381's indexes), same
+query-shape reasoning as `findExistingEnvelopeAnchor`.
+
+**Critical scope boundary — outbound only, enforced in code AND tested.**
+This job MUST NEVER fetch or enrich an anchor whose `metadata._direction ===
+'inbound'`: an inbound envelope belongs to a FOREIGN DocuSign account the
+org's OAuth grant does not cover, and DocuSign 26.3 (Demo 2026-09-12 / Prod
+2026-09-21) is locking down cross-account access regardless. (The inbound
+classification path is separate, not-yet-merged work — this branch does not
+ship it; the guard exists ahead of it landing, not because this branch can
+currently produce an inbound-classified row.) `isOutboundBackfillCandidate()`
+(exported, directly unit-tested) checks TWO signals before any DocuSign API
+call: `metadata._direction` (absent or exactly `'outbound'` passes) AND
+`anchors.fingerprint_source` (a real CHECK-constrained column, not metadata —
+anything other than `'issuer_record_attestation'` passes). These are NOT
+independent evidence against a shared misclassification bug at anchor-
+creation time (a materializer that mis-decides direction would set both from
+that one decision); what checking both DOES protect against is POST-CREATION
+drift of either signal alone — `fingerprint_source` is immutable after insert
+for non-service_role callers (migration 0384's trigger), while `_direction`
+is intended to get the equivalent guard from the separate, not-yet-merged
+DocuSign metadata-key write-authority migration. Either signal alone failing
+skips the row without ever calling `deps.fetchEnvelopeSigners`; the "CRITICAL
+SAFETY" test block in `docusign-signer-backfill.test.ts` asserts that
+function is never invoked for such a row.
+
+**Idempotent/resumable, watermark independent of whether any signers were
+found (fixed 2026-08-31 review).** The ORIGINAL version used
+`metadata->>_signers IS NULL` as BOTH the candidate filter and the sole
+completion marker — so a `continue` on a legitimately zero-signer fetch
+(voided/declined envelope, or every entry failing GUID-shape validation)
+never called `updateAnchorSigners`, leaving that row a candidate FOREVER and
+re-fetching it from DocuSign on every future run (a real anti-polling-policy
+risk with no cursor/ordering to bound the damage). Fixed by a SEPARATE
+`metadata._signers_backfilled_at` timestamp, stamped unconditionally by
+`updateAnchorSigners` on every successful write regardless of whether any
+signers were found; `listCandidateAnchors` now filters on BOTH
+`_signers IS NULL` AND `_signers_backfilled_at IS NULL`. `_signers` itself is
+still never persisted as `[]` (omit-rather-than-persist-empty convention
+preserved). **`_signers_backfilled_at` needs to be added to migration 0423's
+guarded metadata-key family before either this PR or
+`fix/docusign-metadata-key-write-authority` merges** — 0423 lives on that
+other branch and is deliberately not touched here.
+
+**Concurrent-metadata-write safety (fixed 2026-08-31 review).** The ORIGINAL
+version merged onto the metadata snapshot captured at candidate-SELECT time
+and wrote the whole column back, with an optimistic guard that only
+re-checked `_signers` — so ANY other key written by something else (fraud
+tagging, an admin annotation, another job's breadcrumb) between the SELECT
+and this job's UPDATE was silently reverted, with no error and no signal.
+Fixed WITHOUT a migration (keeping this PR T2): `updateAnchorSigners` now
+re-reads the anchor's CURRENT metadata immediately before merging — ignoring
+the stale candidate-time snapshot entirely — and writes back with a
+compare-and-swap on that exact just-read value (`.eq('metadata', fresh)`;
+Postgres `jsonb =` is deep-equality, so ANY concurrent change fails the CAS
+and the row is left for the next run, a no-op not a clobber). This shrinks
+the write's exposure window to roughly one query round trip instead of up to
+a whole run's duration (candidates are processed sequentially with a pacing
+delay). True DB-side atomicity
+(`metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object(...)` in a
+SECURITY DEFINER RPC) would close even that narrow window but needs a new
+migration — deferred, same accepted tradeoff already on record for
+`connector-artifact-drain.ts`'s `markFailed` (see that file, ~line 1121).
+
+**Rate limiting.** Sequential (never concurrent) per-envelope requests with a
+configurable delay (`DEFAULT_BACKFILL_REQUEST_DELAY_MS` = 300ms) between
+calls, on top of the existing per-account 3,000/hour token-bucket
+(`createDocusignRateLimitedFetch`) shared with the live envelope-completed
+job. Bounded page size per org (`DEFAULT_BACKFILL_PAGE_SIZE` = 50, hard max
+200) and an overall per-run cap (`DEFAULT_BACKFILL_RUN_LIMIT` = 500, hard max
+2000). 404/403/410 on the recipients fetch (purged/no-access/retention) skip
++ log without failing the run — expected for old envelopes.
+
+Cron route: `POST /jobs/docusign-signer-backfill` (`routes/cron.ts`), gated
+`ENABLE_DOCUSIGN_SIGNER_BACKFILL` (default false; `config.ts` cross-validates
+it requires `ENABLE_DOCUSIGN_OAUTH`). `page_size`/`run_limit` query params
+tune one invocation without redeploying.
+
+Tests: `docusign-signer-backfill.test.ts`, `docusign-signer-backfill-deps.test.ts`
+(the latter's `watermark durability + concurrent-metadata-write safety`
+describe block runs the fix against a real stateful in-memory `anchors` table
+— a zero-signer envelope is durably excluded on a simulated second run, and a
+simulated concurrent write to an unrelated metadata key survives the
+backfill write). T2 (worker behavior).
 ## 2026-09-05 — oldest DocuSign release candidate integration
 
 PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
@@ -1398,6 +1516,12 @@ Three changes, each with tests that fail without it:
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
 
+
+## 2026-09-05 — PR #2565 complete staging preparation
+
+After guarded baseline restoration and retention on existing vofhfzyosxlneupohsem, migration0438 was actually applied and all eight repository preflight checks passed. Full type generation covers both public and graphql_public schemas, with identical root and worker copies. Ten live scenarios cover Auth/client denials, concurrent claims from the same candidate snapshot, persistent404 cooldown, candidate fairness, provider-time envelope replacement, and real read-to-PATCH metadata/fingerprint/deletion interleavings. Operational rollback actually removed the three RPCs, confirmed HTTP unavailability, retained marker protection and cooldown data, then restored exact definitions/ACLs and proved a still-active cooldown rejects a second claim. Provider responses are deterministic injected fixtures; no real DocuSign polling approval or completed48h qualification is claimed.
+
+The final account-eligibility regression also covers a valid inherited org-integration marker with NULL credentials plus one active member grant. Credential-free marker rows are not DocuSign accounts and are excluded from the distinct-account count; otherwise legacy envelopes are falsely classified as ambiguous. The defect reproduced against both PostgreSQL fixtures and the complete staged hierarchy/integration constraints, then passed after correction.
 ## `rule-action-dispatcher.ts` — `fingerprint_source` is deliberately NULL (R19 §1.5)
 
 The anchor-creating actions (`AUTO_ANCHOR` / `FAST_TRACK_ANCHOR` / `INSTANT_SECURE`) set the top-level
