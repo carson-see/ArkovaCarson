@@ -225,6 +225,7 @@ vi.mock('./utils/rateLimit.js', () => {
       // docusign-bilateral-2026-08 (SCRUM-3418): own bucket, was sharing
       // stripeWebhook — see rateLimiters.docusignWebhook's doc comment.
       docusignWebhook: passthrough,
+      computeidWebhook: passthrough,
       checkout: passthrough,
       api: passthrough,
       auth: passthrough,
