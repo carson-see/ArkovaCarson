@@ -15,7 +15,7 @@
  *      2026-09-07 (fixtures/golden-test-delivery.json) is accepted → 200 ignored
  *   2. admit a fresh passport with a driver-signed receipt → 201, agent key minted
  *   3. the key authenticates (GET /api/v1/verify/<unknown> → 404/400, never 401)
- *   4. passport.suspended → applied:1 and the key is REFUSED (401) — keys-first enforcement
+ *   4. passport.suspended → applied:1 and the key is REFUSED (401) — atomic agent/key enforcement
  *   5. passport.reinstated → applied:1 and the key works again (ownership-aware reinstate)
  *   6. passport.revoked → applied:1, key refused; the byte-exact replay is skipped;
  *      a later passport.reinstated cannot resurrect it (revoked is terminal)
@@ -23,7 +23,7 @@
  *      response is 200 or 409 conflict_retry (compare-and-set), 409s are redelivered,
  *      the final state is revoked with the key refused (no lost terminal state)
  *   8. a signed passport.revoked OLDER than the receipt issued_at on a third passport
- *      is skipped (ordering floor) and the key keeps working; a current one then revokes it
+ *      still revokes the key; a subsequent revocation remains a terminal replay
  *   9. a receipt whose signed status is not `active` is refused at admission (401)
  *  10. a wrong-secret signature → 401 invalid_signature; a 70 KiB body → 413
  *  11. optional DB-delta assertions via the service-role client: agents.status =
@@ -445,7 +445,7 @@ async function runRace(io: CycleIo, plan: CyclePlan): Promise<void> {
   await assertDbState(io, 'race', admitted.agentId);
 }
 
-async function runOrderingFloor(io: CycleIo, plan: CyclePlan): Promise<void> {
+export async function runTerminalRevocation(io: CycleIo, plan: CyclePlan): Promise<void> {
   const pid = plan.passports.floor;
   const admitted = await admit(io, 'floor-admit-201', pid, plan, [201]);
   if (!admitted.key) return;
@@ -498,7 +498,7 @@ async function runCycle(ctx: DriverContext, rig: RigContext, stats: DriverStats,
   await runNegatives(io, plan);
   await runLifecycle(io, plan);
   await runRace(io, plan);
-  await runOrderingFloor(io, plan);
+  await runTerminalRevocation(io, plan);
   await fireLabeled({
     stats,
     label: 'health-200',

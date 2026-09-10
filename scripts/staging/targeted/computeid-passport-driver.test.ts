@@ -1,8 +1,11 @@
+// @vitest-environment node
+import { createServer } from 'node:http';
+
 import { createHmac, generateKeyPairSync, verify as cryptoVerify } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { newDriverStats } from './driver-core';
+import { newDriverStats, summarizeEvidence } from './driver-core';
 import {
   COMPUTEID_DRIVER,
   classifyKeyState,
@@ -12,6 +15,7 @@ import {
   redactAdmissionBody,
   signDelivery,
   signReceipt,
+  runTerminalRevocation,
 } from './computeid-passport-driver';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -122,7 +126,7 @@ describe('computeid-passport-driver: cycle plan is deterministic and strictly or
     expect(new Set(ts).size).toBe(4);
   });
 
-  it('the pre-admission replay timestamp is OLDER than the receipt issued_at (ordering-floor case)', () => {
+  it('the terminal revocation timestamp predates receipt issued_at', () => {
     expect(Date.parse(plan.preAdmissionRevokeAt)).toBeLessThan(Date.parse(plan.receipt.issuedAt));
   });
 
@@ -179,5 +183,92 @@ describe('computeid-passport-driver: the raw agent key never reaches evidence', 
 describe('computeid-passport-driver: identity', () => {
   it('names the PR it soaks', () => {
     expect(COMPUTEID_DRIVER).toEqual({ driver: 'computeid-passport', pr: '#2668' });
+  });
+});
+
+
+describe('computeid-passport-driver: terminal scenario over real loopback HTTP', () => {
+  async function drive(legacyOrderingFloor: boolean) {
+    const agentKey = 'ak_test_driver_only_terminal';
+    const webhookSecret = 'local-driver-test-secret';
+    const plan = planCycle(new Date('2026-09-10T12:00:00.000Z'), 1, () => PASSPORT);
+    const seen: Array<{ path: string; key?: string; body: string; signature?: string }> = [];
+    let revocations = 0;
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks).toString('utf8');
+      seen.push({
+        path: request.url ?? '',
+        key: request.headers['x-api-key'] as string | undefined,
+        body,
+        signature: request.headers['x-computeid-signature'] as string | undefined,
+      });
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/api/v1/agents/computeid/admit') {
+        response.writeHead(201).end(JSON.stringify({ agent: { id: 'fixture-agent' }, key: agentKey }));
+      } else if (request.url === '/webhooks/computeid') {
+        revocations += 1;
+        const applied = legacyOrderingFloor ? Number(revocations === 2) : Number(revocations === 1);
+        response.writeHead(200).end(JSON.stringify({ applied }));
+      } else if (request.url === '/api/v1/verify/ARK-SOAK-NOPE') {
+        response.writeHead(legacyOrderingFloor && revocations === 1 ? 404 : 401).end('{}');
+      } else {
+        response.writeHead(500).end('{}');
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing loopback address');
+      const apiBase = `http://127.0.0.1:${address.port}`;
+      const stats = newDriverStats();
+      await runTerminalRevocation({
+        apiBase, stats, capture: true,
+        rig: {
+          orgApiKey: 'local-org-fixture', webhookSecret, signerKeyPem: PRIVATE_PEM,
+          golden: { body: '', header_name: '', header_value: '', content_type: '' },
+          db: null, iam: () => ({}),
+        },
+      }, plan);
+      const evidence = summarizeEvidence(stats, { ...COMPUTEID_DRIVER, apiBase });
+      expect(seen.map(({ path }) => path)).toEqual([
+        '/api/v1/agents/computeid/admit', '/webhooks/computeid', '/api/v1/verify/ARK-SOAK-NOPE',
+        '/webhooks/computeid', '/api/v1/verify/ARK-SOAK-NOPE',
+      ]);
+      expect(seen[0].key).toBe('local-org-fixture');
+      expect(seen[2].key).toBe(agentKey);
+      expect(seen[4].key).toBe(agentKey);
+      const receipt = JSON.parse(seen[0].body).verification_receipt;
+      expect(cryptoVerify('sha256', Buffer.from(receipt.receipt_payload), publicKey,
+        Buffer.from(receipt.receipt_signature, 'base64'))).toBe(true);
+      const older = JSON.parse(seen[1].body);
+      expect(Date.parse(older.timestamp)).toBeLessThan(Date.parse(receipt.issued_at));
+      for (const delivery of [seen[1], seen[3]]) {
+        expect(delivery.signature).toBe('sha256=' + createHmac('sha256', webhookSecret).update(delivery.body).digest('hex'));
+      }
+      expect(JSON.stringify(evidence)).not.toContain(agentKey);
+      return evidence;
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  }
+
+  it('qualifies terminal revocation before admission time and its subsequent replay', async () => {
+    const evidence = await drive(false);
+    expect(evidence.allExpected).toBe(true);
+    expect(evidence.byLabel['terminal-revoke-overrides-receipt-floor'].expected).toBe(1);
+    expect(evidence.byLabel['terminal-revoke-remains-enforced'].expected).toBe(1);
+  });
+
+  it('rejects legacy ordering-floor responses even when both webhooks return 200', async () => {
+    const evidence = await drive(true);
+    expect(evidence.allExpected).toBe(false);
+    expect(evidence.byLabel['pre-admission-revoke-200'].expected).toBe(1);
+    expect(evidence.byLabel['floor-current-revoke-200'].expected).toBe(1);
+    expect(evidence.byLabel['terminal-revoke-overrides-receipt-floor'].unexpected).toBe(1);
+    expect(evidence.byLabel['terminal-revoke-remains-enforced'].unexpected).toBe(1);
+    expect(evidence.byLabel['key-refused-after-terminal-revoke'].unexpected).toBe(1);
   });
 });
