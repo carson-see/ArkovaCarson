@@ -79,6 +79,21 @@ export const DELIBERATELY_PUBLIC = new Set([
   'public.get_public_anchor_by_fingerprint',
   'public.search_public_credentials',
   'public.get_public_records_page',
+  // SCRUM-3864 — the public ORGANIZATION surface, the org-shaped counterpart of
+  // the four above. Both were already grandfathered in the baseline under the
+  // `00000000000000_baseline_at_main_HEAD.sql` key; migration 0429 re-creates
+  // them (to add sub-org listing consent), which mints a NEW key the baseline
+  // cannot cover. They belong in this set rather than the baseline: the anon
+  // grant is a live product decision, not debt to burn down.
+  //
+  // Live prod ACL verified 2026-09-01 against vzwyaatejekddvltxyye — both hold
+  // EXECUTE for anon, authenticated and service_role. Named anonymous callers:
+  // `useOrgProfile` and `useOrgSubtree` in src/hooks/usePublicSearch.ts, rendered
+  // by src/pages/IssuerRegistryPage.tsx. Both do their own projection scoping —
+  // public columns only — and 0429 TIGHTENS that scoping rather than widening
+  // it, gating the parent/child affiliation behind two-party consent.
+  'public.get_public_org_profile',
+  'public.get_org_subtree',
 ]);
 
 /**

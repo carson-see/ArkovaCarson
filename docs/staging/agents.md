@@ -90,3 +90,7 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - `s33-w3-l2-security-review.md` is changed-file/offline-test evidence only.
   It records the non-atomic cross-instance capacity residual and must never be
   represented as staging, soak, production, or release proof.
+
+## PR #2572 — local aggregate projection regression
+
+`hakichain-suborgs-2026-09/verify-0429-aggregate-residual.sql` is executable local test code, not soak evidence. Run after the existing 0429 fixture and migration in a new database named `pr2572_projection_*`. It reads the actual function as anon, verifies private anchor/profile fields do not flow to the response, and records the deliberately retained credential-type/count aggregate. The transaction rolls back all fixture changes.

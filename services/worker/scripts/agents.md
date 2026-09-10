@@ -60,3 +60,40 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 The driver now invokes C1–C3 through actual PostgREST, holds C10's transaction until the concurrent rejection is observed, requires the independent C11 fixture row, and stops on any failed cycle or cleanup. `MAX_CYCLES=1` supports a supervisor supplying a fresh worker identity token each cycle; C11 runs on the first cycle. Direct connection settings are supplied through `RIG_DB_HOST`, `RIG_DB_PORT=5432`, `RIG_DB_USER`, `RIG_DB_PASSWORD`, and optional `RIG_DB_SSLROOTCERT` (default `system`); SSL verification is required. The named project must match the direct host or session-pooler user, and production/transaction-pooler/connection redirects are denied. `RIG_SERVICE_ROLE_KEY` is needed for the actual PostgREST calls. No production credentials belong in command arguments or evidence.
 
 Before admission, seed only the dedicated `0428a11d-*` fixture identities, run the exact migration rollback/reapply rehearsal and inspect all asynchronous failure results. A local PostgreSQL reproduction is supporting evidence, not a 48-hour Supabase staging window. No stage, source, driver or dependencies may change after the shared release candidate's clock begins.
+
+## PR #2572 — SCRUM-4878 rollup authorization regression
+
+`test-suborg-rollup-authority.py --pg-bin PATH --output NEW_DIRECTORY` creates
+and stops a private PostgreSQL cluster. `--baseline` reproduces the canonical
+profile/platform administrator denial in immutable 0432. The default applies
+0450 and checks both overloads, service-only ACLs, authority revocation,
+unchanged balances and literal rollback/reapplication. Its declared focused
+schema does not replace a full Supabase replay or hosted HTTP verification.
+
+The output directory must resolve beneath the current working directory. Run
+from the intended evidence parent; traversal or symlink escapes are rejected
+before a cluster starts or any evidence file is written.
+
+
+The CLI output contract is now a single directory name: 1–64 ASCII letters,
+digits, underscores or hyphens, starting with a letter or digit. Run from the
+evidence parent and pass `--output rollup-proof`; absolute paths, separators,
+dot segments and existing paths/symlinks are rejected before cluster creation.
+This keeps arbitrary path fragments out of filesystem writes and needs no
+security-rule suppression.
+
+## PR #2572 — qualification artifact links (2026-09-10)
+
+The reviewed offline driver at source713a1f8d passed its10 CLI path controls
+and27 PostgreSQL cases. Hosted CI separately passed
+[TLA+ Verification](https://github.com/carson-see/ArkovaCarson/actions/runs/34533538903/job/103061153204)
+and [Worker Build](https://github.com/carson-see/ArkovaCarson/actions/runs/34533538903/job/103061153030).
+The [release record](https://arkova.atlassian.net/wiki/spaces/A/pages/137396545)
+retains the local full-schema, authorization, concurrency and HTTP receipts.
+Those scoped results do not claim that the still-running overall CI matrix
+has passed. This documentation addition changes no runtime, SQL or Docker
+input; the earlier713a qualification remains identified by its actual source.
+
+Keep verification links in the release commit message as well as the PR body:
+Mergify's initial speculative body may omit the source PR's artifact links,
+while the HANDOFF claim gate also inspects the inherited commit messages.
