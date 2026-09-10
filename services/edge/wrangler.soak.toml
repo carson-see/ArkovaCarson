@@ -1,0 +1,42 @@
+# Arkova Edge Worker — ISOLATED SOAK RIG configuration (SCRUM-3903 / SCRUM-3894).
+#
+# Deploy a per-rig copy of the edge MCP worker WITHOUT touching production:
+#   1. Create two KV namespaces for the rig:
+#        npx wrangler kv namespace create <rig>-rate-limit
+#        npx wrangler kv namespace create <rig>-origin-allowlist
+#   2. Substitute their ids for the REPLACE_ME_* placeholders below (sed into a
+#      scratch copy; never commit real rig ids).
+#   3. npx wrangler deploy --config <scratch copy> --name arkova-edge-<rig> \
+#        --var WORKER_BASE_URL:https://arkova-worker-<rig>-staging-….run.app
+#   4. wrangler secret put SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / CRON_SECRET /
+#      ALLOWED_ORIGINS / BASE_RPC_URL / MCP_IP_HASH_PEPPER / MCP_SIGNING_KEY
+#      --name arkova-edge-<rig>  (from the RIG's Supabase project, never prod).
+#
+# NEVER deploy a rig with the routed `wrangler.toml`: it binds
+# `edge.arkova.ai/*` and would hijack production traffic. This file carries
+# NO [[routes]] block on purpose and serves on workers.dev only.
+
+name = "arkova-edge-soak"          # overridden per rig with --name arkova-edge-<rig>
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+workers_dev = true                 # workers.dev URL is the rig's only ingress
+
+[ai]
+binding = "ARKOVA_AI"
+
+# Per-rig KV namespaces — REQUIRED. Without them mcp-rate-limit.ts and
+# mcp-origin-allowlist.ts fall back to their dev pass-through, and the soak
+# would not exercise the production gates (§1.11A: that is a hollow soak).
+[[kv_namespaces]]
+binding = "MCP_RATE_LIMIT_KV"
+id = "REPLACE_ME_RATE_LIMIT_KV"
+
+[[kv_namespaces]]
+binding = "MCP_ORIGIN_ALLOWLIST_KV"
+id = "REPLACE_ME_ORIGIN_ALLOWLIST_KV"
+
+[vars]
+ENABLE_AI_FALLBACK = "false"
+CF_AI_MODEL = "@cf/nvidia/nemotron"
+ENABLE_X402_FACILITATOR = "false"
+EDGE_REQUIRE_MCP_SIGNING = "true"  # same posture as prod so oracle_batch_verify is exercised fail-closed
