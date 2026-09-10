@@ -1261,3 +1261,26 @@ repairs. Rollback must restore only 0432's two rollup definitions, not its whole
 file. Both canonical type entries now include the pre-existing explicit-caller
 overload, regenerated from the actual catalog. Hosted qualification is pending;
 local receipts are not a staging duration or production application claim.
+
+## PR #2782 — current migration qualification checkpoint (2026-09-10)
+
+The older reservation entry above is historical. Existing Owie staging
+received immutable0443 in the reviewed native release at20:02:28UTC; its
+current canonical ledger is150 after0448/0450. Actual production application
+and independent catalog receipts at21:38UTC show149 canonical rows, including
+0429–0432 and0444–0450, but excluding0443. Source prefixes must be re-derived
+from current main, production and open PRs;0444 is no longer available.
+
+0443 remains SHA256
+`b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`.
+Its20,000-row loop is one transaction, not separately committed batches. The
+large production repair requires protected fresh preimages, bounded guarded
+updates and an actual final migration outcome. An observed zero-mismatch
+postcondition at migration time does not establish durable convergence while
+old producers remain. Corrected deployment, old-work drain and fresh final
+reconciliation precede that release claim. No production0443 application or
+new completed soak is asserted by this checkpoint.
+
+[Production149 and hosted qualification record](https://arkova.atlassian.net/wiki/spaces/A/pages/141623441)
+and [proof-repair release record](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
+retain the separately dated evidence.
