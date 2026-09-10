@@ -34,6 +34,7 @@ vi.mock('../../../utils/auditEvent.js', () => ({
 
 import { computeidWebhookRouter, computeidWebhookBody } from './computeid.js';
 import { computeidGate } from '../../../middleware/computeidGate.js';
+import { rateLimiters, setRateLimitStore } from '../../../utils/rateLimit.js';
 
 const TEST_SECRET = 'computeid-fixture-secret-aaaa';
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
@@ -55,6 +56,7 @@ function createApp(withRawParser = true) {
     app.use(
       '/webhooks/computeid',
       computeidGate,
+      rateLimiters.computeidWebhook,
       computeidWebhookBody,
       computeidWebhookRouter,
     );
@@ -98,6 +100,7 @@ beforeEach(() => {
   dlqRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
   mockConfig.enableComputeidIntegration = true;
   mockConfig.computeidWebhookSecret = TEST_SECRET;
+  setRateLimitStore(new Map());
 });
 
 describe('POST /webhooks/computeid — gating + signature', () => {
@@ -135,6 +138,7 @@ describe('POST /webhooks/computeid — gating + signature', () => {
     mockConfig.computeidWebhookSecret = fx.secret;
     const res = await post(fx.body, fx.header_value, createApp(), fx.content_type);
     expect(res.status).toBe(200);
+    expect(res.headers['x-ratelimit-limit']).toBe('100');
     expect(res.body).toMatchObject({ ok: true, ignored: true, event: 'test' });
     expect(dbFromMock).not.toHaveBeenCalled();
     expect(dbRpcMock).not.toHaveBeenCalled();
