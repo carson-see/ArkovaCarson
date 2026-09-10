@@ -141,6 +141,18 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 - **DO NOT** ask Adobe for `includeSignedDocuments` / `includeDocumentsInfo` on the webhook config. §1.6A permits a server-side fingerprint on a deliberate fetch path; it does not permit document bytes riding in on a notification body, where every error/log/DLQ surface that touches that body would carry them.
 - **DO** keep the Drive consent URL scope-minimal: the route's `/oauth/start` must request exactly `DRIVE_DEFAULT_SCOPES` (`drive.file`, `drive.activity.readonly`, `userinfo.email`) and never `include_granted_scopes` (FULLSOAK 2026-08 33-scope grant finding, shared-resource register #9). `fetchGoogleIdentity` depends on `userinfo.email` for a stable `account_id` (`sub`) — dropping it silently degrades the upsert key to a constant. End-to-end pinned in `drive-oauth.test.ts`.
 
+## docusign-inheritance.ts (SCRUM-3867)
+
+- The **write path** for `org_integrations.inherited_from_org_id`. Migration 0328 shipped the column, the credential-free CHECK and the parent-linkage trigger, and the resolver / webhook / queue reconciliation have all read it since — but nothing ever wrote a marker, and prod has zero (pre-mortem F5).
+- **The parent authorizes, not the child.** A marker makes the sub-org's envelopes consume the parent's DocuSign credentials and quota, so the caller must be an admin of the parent. A child admin helping themselves to the parent's connection is what the 403 prevents.
+- Refusals worth knowing: `parent_not_connected` (you cannot lend what you do not have), `parent_inherits` (the resolver refuses to chain, so a marker pointing at a marker would resolve to nothing at job time while looking live in the UI), `already_connected` (the sub-org has its own connection, which the resolver prefers anyway — replacing it here would silently drop a working one).
+- `/inherit/stop` revokes **only a marker**. An org's own connection is disconnected via `/docusign/disconnect`, which also deletes the refresh-token secret; revoking it here would orphan that secret in Secret Manager.
+- The marker representation is in 0328; transactional stop authority is in 0446. The resolver also re-checks parent linkage at read time, so a stale marker cannot lend credentials.
+- Lazy router like its siblings — the eager form resolves `utils/db.js` at import, which validates the whole worker config and makes the module un-importable in a unit test.
+
+## PR #2572 — inheritance owner parity, multiple accounts and atomic revocation
+
+Parent authorization delegates to `isCallerOrgAdminResult` with the injected client. Owned-account existence uses a bounded query separate from the unique inherited marker; valid multiple accounts and owned-plus-marker combinations are supported. Stop calls `stop_suborg_docusign_inheritance` (0446), which locks the current child-parent relationship, rechecks canonical administration, revokes only the inspected marker and inserts its audit row in one transaction. Changed affiliation or marker returns 409, lost administration 403, and unavailable/unknown RPC results 503. Never restore a multi-row `maybeSingle()` lookup or a separate direct UPDATE after authorization. Credit/suspension RPC locks remain in 0444.
 ## 2026-09-05 — Adobe disconnect token order
 
 Review found the code revoked the refresh credential before deleting the webhook despite the documented refresh → delete → revoke sequence. The regression models a revoked grant rejecting the subsequent DELETE and failed before the fix. Keep the refresh credential until after webhook teardown, then attempt revocation even if refresh/deletion failed; local teardown and its existing warnings remain independent of vendor availability.

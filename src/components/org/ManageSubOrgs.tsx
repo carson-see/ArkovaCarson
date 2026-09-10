@@ -16,6 +16,10 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 import { SUB_ORG_LABELS } from '@/lib/copy';
@@ -28,7 +32,18 @@ interface SubOrg {
   parent_approval_status: string;
   created_at: string;
   logo_url: string | null;
+  /** SCRUM-3867 — is this sub-org running on OUR DocuSign connection? */
+  docusignInherited?: boolean;
 }
+
+/**
+ * SCRUM-3865 — the two directions of a credit transfer. A negative amount is a
+ * reclaim, so both rows drive the same endpoint and the same handler.
+ */
+const CREDIT_ACTIONS = [
+  { dir: 1 as const, labelKey: 'CREDITS_ADD' as const, variant: undefined },
+  { dir: -1 as const, labelKey: 'CREDITS_RECLAIM' as const, variant: 'outline' as const },
+];
 
 interface ManageSubOrgsProps {
   orgId: string;
@@ -67,6 +82,15 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   const [retrying, setRetrying] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // SCRUM-3865 — credit provisioning state.
+  const [parentBalance, setParentBalance] = useState<number | null>(null);
+  const [childBalances, setChildBalances] = useState<Record<string, number>>({});
+  const [creditAmounts, setCreditAmounts] = useState<Record<string, string>>({});
+  const [creditBusy, setCreditBusy] = useState<{ id: string; dir: 1 | -1 } | null>(null);
+  const [connectorBusy, setConnectorBusy] = useState<string | null>(null);
+  // SCRUM-3868 — the sub-org awaiting an offboard confirmation, if any.
+  const [offboarding, setOffboarding] = useState<SubOrg | null>(null);
+  const [offboardBusy, setOffboardBusy] = useState(false);
 
   // `isInitialLoad` gates the full-panel error state to the mount fetch and the
   // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
@@ -102,16 +126,173 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
     }
   }, [orgId]);
 
+  /**
+   * SCRUM-3865 — parent + per-sub-org credit balances.
+   *
+   * Deliberately independent of `fetchSubOrgs`: credit provisioning is additive
+   * to a panel that already worked, so a rollup outage must degrade to "no
+   * balances shown" rather than taking out approve/revoke with it. Failures are
+   * swallowed here for exactly that reason.
+   */
+  const fetchCredits = useCallback(async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const url = `${WORKER_URL}/api/v1/org/sub-orgs/credits?orgId=${encodeURIComponent(orgId)}`;
+      const response = await fetch(url, { headers });
+      if (!response.ok) return;
+      const data = await response.json() as {
+        parentBalance: number;
+        children: { childOrgId: string; balance: number }[];
+      };
+      setParentBalance(data.parentBalance);
+      setChildBalances(
+        Object.fromEntries((data.children ?? []).map((c) => [c.childOrgId, c.balance])),
+      );
+    } catch {
+      // Balances stay hidden; the rest of the panel is unaffected.
+    }
+  }, [orgId]);
+
   const handleRetry = useCallback(async () => {
     setRetrying(true);
-    await fetchSubOrgs();
+    await Promise.all([fetchSubOrgs(), fetchCredits()]);
     setRetrying(false);
-  }, [fetchSubOrgs]);
+  }, [fetchSubOrgs, fetchCredits]);
 
   useEffect(() => {
-    async function run() { await fetchSubOrgs(); }
+    async function run() { await Promise.all([fetchSubOrgs(), fetchCredits()]); }
     void run();
-  }, [fetchSubOrgs]);
+  }, [fetchSubOrgs, fetchCredits]);
+
+  /**
+   * SCRUM-3868 — end a client relationship: return the unspent credits, then
+   * suspend. The worker does it in that order so a failure leaves the credits
+   * with the parent rather than stranded. Anchored records are untouched.
+   */
+  const handleOffboard = useCallback(async (child: SubOrg) => {
+    setOffboardBusy(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(
+        `${WORKER_URL}/api/v1/org/sub-orgs/offboard?orgId=${encodeURIComponent(orgId)}`,
+        { method: 'POST', headers, body: JSON.stringify({ childOrgId: child.id }) },
+      );
+      const data = await response.json().catch(() => ({})) as {
+        reclaimed?: number; suspended?: boolean;
+      };
+
+      if (!response.ok) {
+        // A partial offboard is its own message: the credits DID move, so the
+        // operator must not assume nothing happened and start over blind.
+        toast.error(
+          data.reclaimed && data.suspended === false
+            ? SUB_ORG_LABELS.OFFBOARD_PARTIAL
+            : SUB_ORG_LABELS.OFFBOARD_FAILED,
+        );
+        return;
+      }
+
+      setOffboarding(null);
+      await Promise.all([fetchSubOrgs(false), fetchCredits()]);
+      toast.success(SUB_ORG_LABELS.OFFBOARD_DONE);
+    } catch {
+      toast.error(SUB_ORG_LABELS.OFFBOARD_FAILED);
+    } finally {
+      setOffboardBusy(false);
+    }
+  }, [orgId, fetchSubOrgs, fetchCredits]);
+
+  /**
+   * SCRUM-3867 — lend this org's DocuSign connection to a sub-org, or take it
+   * back. The parent is the party lending credentials, which is why the control
+   * lives here rather than on the sub-org's own connector card.
+   */
+  const handleToggleInheritance = useCallback(async (childOrgId: string, inherited: boolean) => {
+    setConnectorBusy(childOrgId);
+    try {
+      const headers = await getAuthHeaders();
+      const path = inherited ? 'docusign/inherit/stop' : 'docusign/inherit';
+      const response = await fetch(`${WORKER_URL}/api/v1/integrations/${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ org_id: childOrgId }),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+
+      if (!response.ok) {
+        const message =
+          data.error === 'parent_not_connected' ? SUB_ORG_LABELS.DOCUSIGN_PARENT_NOT_CONNECTED
+          : data.error === 'already_connected' ? SUB_ORG_LABELS.DOCUSIGN_ALREADY_CONNECTED
+          : SUB_ORG_LABELS.DOCUSIGN_SHARE_FAILED;
+        toast.error(message);
+        return;
+      }
+
+      setSubOrgs((prev) => prev.map((s) =>
+        s.id === childOrgId ? { ...s, docusignInherited: !inherited } : s));
+      toast.success(
+        inherited ? SUB_ORG_LABELS.DOCUSIGN_SHARING_STOPPED : SUB_ORG_LABELS.DOCUSIGN_SHARED,
+      );
+    } catch {
+      toast.error(SUB_ORG_LABELS.DOCUSIGN_SHARE_FAILED);
+    } finally {
+      setConnectorBusy(null);
+    }
+  }, []);
+
+  /**
+   * Move credits between the parent and one sub-org. `direction` is the sign:
+   * the worker treats a negative amount as a reclaim, which is also the
+   * offboarding lever, so both buttons drive one endpoint.
+   */
+  const handleMoveCredits = useCallback(async (childOrgId: string, direction: 1 | -1) => {
+    const raw = (creditAmounts[childOrgId] ?? '').trim();
+    const parsed = Number(raw);
+    if (!raw || !Number.isInteger(parsed) || parsed <= 0) {
+      toast.error(SUB_ORG_LABELS.CREDITS_INVALID_AMOUNT);
+      return;
+    }
+
+    setCreditBusy({ id: childOrgId, dir: direction });
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(
+        `${WORKER_URL}/api/v1/org/sub-orgs/credits?orgId=${encodeURIComponent(orgId)}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ childOrgId, amount: parsed * direction }),
+        },
+      );
+      const data = await response.json() as {
+        parentBalance?: number;
+        childBalance?: number;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        const message =
+          data.error === 'insufficient_parent_balance' ? SUB_ORG_LABELS.CREDITS_INSUFFICIENT_PARENT
+          : data.error === 'insufficient_child_balance' ? SUB_ORG_LABELS.CREDITS_INSUFFICIENT_CHILD
+          : SUB_ORG_LABELS.CREDITS_FAILED;
+        toast.error(message);
+        return;
+      }
+
+      if (typeof data.parentBalance === 'number') setParentBalance(data.parentBalance);
+      if (typeof data.childBalance === 'number') {
+        setChildBalances((prev) => ({ ...prev, [childOrgId]: data.childBalance as number }));
+      }
+      setCreditAmounts((prev) => ({ ...prev, [childOrgId]: '' }));
+      toast.success(
+        direction > 0 ? SUB_ORG_LABELS.CREDITS_ADDED : SUB_ORG_LABELS.CREDITS_RECLAIMED,
+      );
+    } catch {
+      toast.error(SUB_ORG_LABELS.CREDITS_FAILED);
+    } finally {
+      setCreditBusy(null);
+    }
+  }, [creditAmounts, orgId]);
 
   const handleCreateAffiliate = useCallback(async () => {
     const displayName = affiliateName.trim();
@@ -236,12 +417,24 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
 
       <CardContent className="space-y-6">
         {/* Count display */}
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Link2 className="h-4 w-4" />
-          <span>
-            <strong className="text-foreground">{approvedCount}</strong>
-            {' '}{SUB_ORG_LABELS.COUNT_LABEL}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+          <span className="flex items-center gap-2">
+            <Link2 className="h-4 w-4" />
+            <span>
+              <strong className="text-foreground">{approvedCount}</strong>
+              {' '}{SUB_ORG_LABELS.COUNT_LABEL}
+            </span>
           </span>
+          {/* SCRUM-3865: the pool every allocation below draws from. */}
+          {parentBalance !== null && (
+            <span className="flex items-center gap-2">
+              <Users2 className="h-4 w-4" />
+              <span>
+                <strong className="text-foreground">{parentBalance}</strong>
+                {' '}{SUB_ORG_LABELS.CREDITS_AVAILABLE}
+              </span>
+            </span>
+          )}
         </div>
 
         {/* Affiliate create form */}
@@ -331,46 +524,80 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
             {subOrgs.map((sub) => (
               <div
                 key={sub.id}
-                className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
+                data-testid="sub-org-row"
+                className="p-3 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
-                    {sub.logo_url ? (
-                      <img src={sub.logo_url} alt={`${sub.display_name} organization logo`} className="h-full w-full object-cover rounded-md" loading="lazy" decoding="async" width={40} height={40} />
-                    ) : (
-                      <Building2 className="h-5 w-5 text-muted-foreground" />
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium truncate">{sub.display_name}</p>
-                      {getStatusBadge(sub.parent_approval_status)}
+                {/*
+                  Wraps at narrow widths: with the actions pinned on the same
+                  line the name truncated to a single character at 375px.
+                */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
+                      {sub.logo_url ? (
+                        <img src={sub.logo_url} alt={`${sub.display_name} organization logo`} className="h-full w-full object-cover rounded-md" loading="lazy" decoding="async" width={40} height={40} />
+                      ) : (
+                        <Building2 className="h-5 w-5 text-muted-foreground" />
+                      )}
                     </div>
-                    {sub.domain && (
-                      <p className="text-xs text-muted-foreground truncate">{sub.domain}</p>
-                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium truncate">{sub.display_name}</p>
+                        {getStatusBadge(sub.parent_approval_status)}
+                      </div>
+                      {sub.domain && (
+                        <p className="text-xs text-muted-foreground truncate">{sub.domain}</p>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-2 shrink-0 ml-2">
-                  {sub.parent_approval_status === 'PENDING' && (
-                    <>
+                  <div className="flex items-center gap-2 shrink-0 ml-2">
+                    {sub.parent_approval_status === 'PENDING' && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/10"
+                          onClick={() => handleApprove(sub.id)}
+                          disabled={actionLoading === sub.id}
+                        >
+                          {actionLoading === sub.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Check className="mr-1 h-4 w-4" />
+                              {SUB_ORG_LABELS.APPROVE}
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-red-400 border-red-500/20 hover:bg-red-500/10"
+                          onClick={() => handleRevoke(sub.id)}
+                          disabled={actionLoading === sub.id}
+                        >
+                          <X className="mr-1 h-4 w-4" />
+                          {SUB_ORG_LABELS.REVOKE}
+                        </Button>
+                      </>
+                    )}
+                    {/*
+                      SCRUM-3868 — Offboard is the real end-of-relationship
+                      action: it returns unspent credits and suspends. Revoke,
+                      beside it, only severs the affiliation edge.
+                    */}
+                    {sub.parent_approval_status === 'APPROVED' && (
                       <Button
                         size="sm"
                         variant="outline"
-                        className="text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/10"
-                        onClick={() => handleApprove(sub.id)}
-                        disabled={actionLoading === sub.id}
+                        className="text-red-400 border-red-500/20 hover:bg-red-500/10"
+                        onClick={() => setOffboarding(sub)}
                       >
-                        {actionLoading === sub.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            <Check className="mr-1 h-4 w-4" />
-                            {SUB_ORG_LABELS.APPROVE}
-                          </>
-                        )}
+                        {SUB_ORG_LABELS.OFFBOARD}
                       </Button>
+                    )}
+                    {sub.parent_approval_status === 'APPROVED' && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -378,35 +605,126 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                         onClick={() => handleRevoke(sub.id)}
                         disabled={actionLoading === sub.id}
                       >
-                        <X className="mr-1 h-4 w-4" />
-                        {SUB_ORG_LABELS.REVOKE}
+                        {actionLoading === sub.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <X className="mr-1 h-4 w-4" />
+                            {SUB_ORG_LABELS.REVOKE}
+                          </>
+                        )}
                       </Button>
-                    </>
-                  )}
-                  {sub.parent_approval_status === 'APPROVED' && (
+                    )}
+                  </div>
+                </div>
+
+                {/*
+                  SCRUM-3865 — credit provisioning. Offered only for an APPROVED
+                  affiliation: funding an org whose affiliation is pending or
+                  revoked would move credits across a boundary the parent has not
+                  (or no longer) accepted. Reclaim is the same endpoint with a
+                  negative amount, which is also the offboarding lever.
+                */}
+                {sub.parent_approval_status === 'APPROVED' && (
+                  <div className="mt-3 pt-3 border-t border-border/40 flex flex-wrap items-end gap-2">
+                    <div className="w-28 shrink-0">
+                      <Label
+                        htmlFor={`credits-${sub.id}`}
+                        className="text-xs text-muted-foreground"
+                      >
+                        {SUB_ORG_LABELS.CREDITS_AMOUNT_LABEL}
+                      </Label>
+                      <Input
+                        id={`credits-${sub.id}`}
+                        type="number"
+                        min={1}
+                        step={1}
+                        inputMode="numeric"
+                        className="h-9"
+                        value={creditAmounts[sub.id] ?? ''}
+                        onChange={(e) =>
+                          setCreditAmounts((prev) => ({ ...prev, [sub.id]: e.target.value }))
+                        }
+                      />
+                    </div>
+                    {/*
+                      Both directions are one control driven from one list. Hand-
+                      written as two blocks they had already drifted: only the Add
+                      button showed a spinner while a transfer was in flight.
+                    */}
+                    {CREDIT_ACTIONS.map(({ dir, labelKey, variant }) => {
+                      const busy = creditBusy?.id === sub.id;
+                      return (
+                        <Button
+                          key={labelKey}
+                          size="sm"
+                          variant={variant}
+                          className="h-9"
+                          onClick={() => { void handleMoveCredits(sub.id, dir); }}
+                          disabled={busy}
+                        >
+                          {busy && creditBusy?.dir === dir
+                            ? <Loader2 className="h-4 w-4 animate-spin" />
+                            : SUB_ORG_LABELS[labelKey]}
+                        </Button>
+                      );
+                    })}
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-red-400 border-red-500/20 hover:bg-red-500/10"
-                      onClick={() => handleRevoke(sub.id)}
-                      disabled={actionLoading === sub.id}
+                      className="h-9"
+                      onClick={() => { void handleToggleInheritance(sub.id, sub.docusignInherited === true); }}
+                      disabled={connectorBusy === sub.id}
                     >
-                      {actionLoading === sub.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <>
-                          <X className="mr-1 h-4 w-4" />
-                          {SUB_ORG_LABELS.REVOKE}
-                        </>
-                      )}
+                      {connectorBusy === sub.id
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : sub.docusignInherited
+                          ? SUB_ORG_LABELS.DOCUSIGN_STOP_SHARING
+                          : SUB_ORG_LABELS.DOCUSIGN_SHARE}
                     </Button>
-                  )}
-                </div>
+                    {typeof childBalances[sub.id] === 'number' && (
+                      <span className="text-xs text-muted-foreground ml-auto self-center">
+                        {childBalances[sub.id]} {SUB_ORG_LABELS.CREDITS_BALANCE_SUFFIX}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
       </CardContent>
+
+      {/*
+        SCRUM-3868 — offboarding moves money and suspends an organization, so it
+        confirms. The copy states what is NOT done as well as what is: the
+        sub-org's already-secured documents stay verifiable, which is the thing
+        an operator most needs to be sure of before clicking.
+      */}
+      <AlertDialog open={offboarding !== null} onOpenChange={(open) => { if (!open) setOffboarding(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{SUB_ORG_LABELS.OFFBOARD_TITLE}</AlertDialogTitle>
+            <AlertDialogDescription>{SUB_ORG_LABELS.OFFBOARD_BODY}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={offboardBusy}>
+              {SUB_ORG_LABELS.OFFBOARD_CANCEL}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={offboardBusy}
+              onClick={(e) => {
+                e.preventDefault();
+                if (offboarding) void handleOffboard(offboarding);
+              }}
+            >
+              {offboardBusy
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : SUB_ORG_LABELS.OFFBOARD_CONFIRM}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

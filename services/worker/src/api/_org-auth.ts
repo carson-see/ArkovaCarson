@@ -53,8 +53,9 @@ interface OrgAuthResult<T> {
  */
 async function loadCallerProfile(
   userId: string,
+  client: Pick<typeof db, 'from'> = db,
 ): Promise<{ profile: CallerProfile | null; error: boolean }> {
-  const { data, error } = await db
+  const { data, error } = await client
     .from('profiles')
     .select('org_id, role, is_platform_admin')
     .eq('id', userId)
@@ -128,10 +129,11 @@ export async function isCallerOrgAdminResult(
   userId: string,
   orgId: string,
   preloadedProfile?: CallerProfile | null,
+  client: Pick<typeof db, 'from'> = db,
 ): Promise<OrgAuthResult<boolean>> {
   // Capture the `org_members` error explicitly (was previously dropped) so a DB
   // failure here is fail-closed AND observable, not silently swallowed.
-  const { data: membership, error: memberError } = await db
+  const { data: membership, error: memberError } = await client
     .from('org_members')
     .select('role')
     .eq('user_id', userId)
@@ -150,7 +152,7 @@ export async function isCallerOrgAdminResult(
   let profile = preloadedProfile ?? null;
   let profileError = false;
   if (preloadedProfile == null) {
-    const loaded = await loadCallerProfile(userId);
+    const loaded = await loadCallerProfile(userId, client);
     profile = loaded.profile;
     profileError = loaded.error;
   }

@@ -35,6 +35,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { stripSqlComments } from '../../scripts/ci/check-views-security-invoker';
@@ -45,7 +46,7 @@ const CONTRACT_PATH = path.join(REPO, 'scripts/ci/public-pii-projection-contract
 const MIGRATIONS_DIR = path.join(REPO, 'supabase/migrations');
 
 /**
- * Four ways a surface can satisfy the obligation, and every one of them is
+ * Explicit ways a surface can satisfy the obligation, and every one of them is
  * MACHINE-CHECKED below rather than taken on trust — a classification whose
  * claim nothing verifies is a comment, and a comment is how the 0197 column
  * came to be believed implemented for a year.
@@ -59,7 +60,11 @@ interface DirectoryClassification {
     /** Carries its own auth.uid()/role guard, so `anon` never reaches the body. */
     | 'identity_guarded'
     /** `RETURNS void` — structurally incapable of emitting a record's fields. */
-    | 'returns_no_projection';
+    | 'returns_no_projection'
+    /** Only reviewed aggregate counts over already-published residual fields. */
+    | 'aggregate_residual_only';
+  residual_columns?: string[];
+  reviewed_definition_sha256?: string;
   /** For `delegates`, the function whose projection it returns verbatim. */
   delegates_to?: string;
   /** Free text — why this classification is true. Read by humans, not by regex. */
@@ -115,6 +120,35 @@ const CREATE_FN =
 const REVOKE_FROM_ANON =
   /REVOKE\s+(?:ALL|EXECUTE)[^;]*?ON\s+FUNCTION\s+(?:"?public"?\s*\.\s*)?"?([a-z0-9_]+)"?\s*\([^)]*\)\s*FROM\s+([^;]+);/gi;
 
+/** Keep named dollar delimiters inside one definition, never a following RPC. */
+function functionDefinition(rest: string): string {
+  const opening = rest.match(/\bAS\s+(\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$)/i);
+  if (!opening || opening.index === undefined) {
+    throw new Error('Unclassified SQL function body syntax: explicit review required');
+  }
+  const end = rest.indexOf(opening[1], opening.index + opening[0].length);
+  if (end < 0) throw new Error('Unterminated SQL function body');
+  return rest.slice(0, end + opening[1].length).trim();
+}
+
+/**
+ * This disposition is an exact reviewed definition, not a generic aggregate
+ * exemption. Any SQL edit invalidates it, including new filters, joins, fields
+ * or calls that could create a disclosure oracle. The real SQL behavior proof
+ * must be repeated before a reviewer updates the recorded definition digest.
+ */
+function aggregateResidualErrors(fn: string, body: string, cls: DirectoryClassification): string[] {
+  const errors: string[] = [];
+  if (fn !== 'get_public_org_profile') errors.push('aggregate surface needs independent review');
+  if (!cls.residual_columns?.length || cls.residual_columns.some(
+    (column) => !contract.directory_opt_out_residual_published_fields.includes(column),
+  )) errors.push('aggregate includes an unapproved directory field');
+  if (createHash('sha256').update(body).digest('hex') !== cls.reviewed_definition_sha256) {
+    errors.push('aggregate SQL changed since its behavioral review');
+  }
+  return errors;
+}
+
 /**
  * The newest definition of every `public.*` function, plus the newest migration
  * that revoked it from `anon`. Both are needed: the ACL is decided by the LAST
@@ -130,11 +164,7 @@ function latestDefinitions(): {
     for (const match of m.sql.matchAll(CREATE_FN)) {
       const name = match[1].toLowerCase();
       const rest = m.sql.slice(match.index as number);
-      // A dollar-quoted body ends at the first `$$;`. Falling back to a bounded
-      // slice keeps a `LANGUAGE sql` one-liner (no `$$;`) from swallowing the
-      // rest of the file and reporting phantom column reads.
-      const end = rest.indexOf('$$;');
-      defs.set(name, { file: m.file, body: end > 0 ? rest.slice(0, end + 3) : rest.slice(0, 20000) });
+      defs.set(name, { file: m.file, body: functionDefinition(rest) });
     }
     for (const match of m.sql.matchAll(REVOKE_FROM_ANON)) {
       if (/\banon\b/i.test(match[2])) revokedFromAnon.set(match[1].toLowerCase(), m.file);
@@ -158,7 +188,10 @@ function derivedDirectorySurfaces(): string[] {
   for (const [name, { body }] of defs) {
     if (!/\bFROM\s+(?:public\.)?anchors\b/i.test(body)) continue;
     if (revokedFromAnon.has(name)) continue;
-    if (!contract.directory_level_columns.some((col) => body.includes(col))) continue;
+    // A row wildcard reads the directory fields too. In particular the
+    // identity-guarded resolve_anchor_queue reads SELECT * INTO its row record.
+    const readsWholeAnchor = /\bSELECT\s+(?:[a-z_]\w*\.)?\*\s+(?:INTO\s+[a-z_]\w*\s+)?FROM\s+(?:public\.)?anchors\b/i.test(body);
+    if (!readsWholeAnchor && !contract.directory_level_columns.some((col) => body.includes(col))) continue;
     found.push(name);
   }
   return found.sort();
@@ -410,6 +443,11 @@ describe('FD-FERPA-1 — the directory-information opt-out is read by the SQL pr
       expect(def, `public.${fn} is classified but no migration defines it`).toBeTruthy();
       const body = (def as { body: string }).body;
       expect(cls.reason.length, `${fn} needs a real reason, not a placeholder`).toBeGreaterThan(30);
+      expect(['consults_flag', 'delegates', 'identity_guarded', 'returns_no_projection', 'aggregate_residual_only'])
+        .toContain(cls.disposition);
+      if (cls.disposition === 'aggregate_residual_only') {
+        expect(aggregateResidualErrors(fn, body, cls), `${fn} no longer matches its reviewed aggregate-only definition`).toEqual([]);
+      }
       if (cls.disposition === 'consults_flag') {
         expect(
           body,
@@ -527,5 +565,39 @@ describe('FD-FERPA-1 — the REST verification path fails closed on an absent cr
       ferpaSrc,
       'suppressesDirectoryInfo must read the FERPA education set, not a fourth hand-rolled list.',
     ).toMatch(/FERPA_EDUCATION_TYPES as readonly string\[\]/);
+  });
+});
+
+describe('directory projection review boundaries', () => {
+  it.each(['$$', '$function$'])('ends a %s definition before the next function', (tag) => {
+    const first = `CREATE FUNCTION public.first() RETURNS jsonb LANGUAGE sql AS ${tag} SELECT '{}'::jsonb; ${tag}`;
+    const second = `CREATE FUNCTION public.second() RETURNS jsonb LANGUAGE sql AS $$ SELECT filename FROM anchors; $$;`;
+    expect(functionDefinition(`${first};\n${second}`)).toBe(first);
+  });
+
+  it('refuses an unterminated body instead of classifying part of another function', () => {
+    expect(() => functionDefinition('CREATE FUNCTION public.first() RETURNS void AS $tag$ BEGIN')).toThrow(/Unterminated/);
+  });
+
+  it.each(['filename', 'description', 'issued_at', 'recipient_identifier'])('invalidates the aggregate review when %s is added', (field) => {
+    const def = latestDefinitions().defs.get('get_public_org_profile');
+    const cls = contract.directory_opt_out_classifications.get_public_org_profile;
+    expect(def).toBeTruthy();
+    expect(cls).toBeTruthy();
+    const changed = def!.body.replace('RETURN result;', `RETURN result || jsonb_build_object('learner', (SELECT ${field} FROM anchors LIMIT 1));`);
+    expect(changed).not.toBe(def!.body);
+    expect(aggregateResidualErrors('get_public_org_profile', changed, cls)).toContain('aggregate SQL changed since its behavioral review');
+  });
+
+  it('cannot transfer a reviewed definition to a different public function', () => {
+    const def = latestDefinitions().defs.get('get_public_org_profile')!;
+    const cls = contract.directory_opt_out_classifications.get_public_org_profile;
+    expect(aggregateResidualErrors('another_projection', def.body, cls)).toContain('aggregate surface needs independent review');
+  });
+
+  it('rejects a directory field absent from the published-residual policy', () => {
+    const def = latestDefinitions().defs.get('get_public_org_profile')!;
+    const cls = { ...contract.directory_opt_out_classifications.get_public_org_profile, residual_columns: ['recipient_identifier'] };
+    expect(aggregateResidualErrors('get_public_org_profile', def.body, cls)).toContain('aggregate includes an unapproved directory field');
   });
 });
