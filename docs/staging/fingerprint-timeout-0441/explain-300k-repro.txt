@@ -1,0 +1,42 @@
+rows: 300020  target fp: 000000000000000000000000000000000000000000000000000000000003d478
+
+######## BEFORE (0386 body: bpchar column vs text param) ########
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=12.01..23.62 rows=1 width=39) (actual time=65.765..65.766 rows=1 loops=1)
+   Buffers: shared hit=8168
+   ->  Incremental Sort  (cost=12.01..17428.37 rows=1500 width=39) (actual time=65.764..65.764 rows=1 loops=1)
+         Sort Key: created_at DESC, id DESC
+         Presorted Key: created_at
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+         Buffers: shared hit=8168
+         ->  Index Scan using idx_anchors_active_created on anchors a  (cost=0.42..17360.87 rows=1500 width=39) (actual time=54.955..65.741 rows=1 loops=1)
+               Filter: ((status = 'SECURED'::anchor_status) AND ((fingerprint)::text = '000000000000000000000000000000000000000000000000000000000003d478'::text))
+               Rows Removed by Filter: 300019
+               Buffers: shared hit=8159
+ Planning:
+   Buffers: shared hit=184
+ Planning Time: 0.601 ms
+ Execution Time: 65.788 ms
+(15 rows)
+
+
+######## AFTER (0441 body: ::bpchar on the PARAMETER) ########
+                                                                      QUERY PLAN                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=8.45..8.46 rows=1 width=39) (actual time=0.046..0.046 rows=1 loops=1)
+   Buffers: shared hit=10
+   ->  Sort  (cost=8.45..8.46 rows=1 width=39) (actual time=0.045..0.045 rows=1 loops=1)
+         Sort Key: created_at DESC, id DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=10
+         ->  Index Scan using idx_anchors_fingerprint_lookup on anchors a  (cost=0.42..8.44 rows=1 width=39) (actual time=0.035..0.035 rows=1 loops=1)
+               Index Cond: (fingerprint = '000000000000000000000000000000000000000000000000000000000003d478'::bpchar)
+               Filter: (status = 'SECURED'::anchor_status)
+               Buffers: shared hit=4
+ Planning:
+   Buffers: shared hit=176
+ Planning Time: 0.314 ms
+ Execution Time: 0.058 ms
+(14 rows)
+
