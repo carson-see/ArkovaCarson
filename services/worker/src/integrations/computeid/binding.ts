@@ -19,8 +19,11 @@
  *
  * Key enforcement is a separate output because the auth path reads only
  * `api_keys.is_active` (never `agents.status`): revoke/suspend → deactivate,
- * reinstate → reactivate, and repeat events re-assert it so a partial failure
- * heals on retry. Proven in machines/agentPassport.machine.ts.
+ * reinstate → reactivate. Migration 0448 commits that output together with the
+ * agent update under one row lock; a failed key write rolls both back, so exact
+ * retries cannot skip an incomplete transition. The bounded concurrency model
+ * is machines/agentPassportAtomic.machine.ts; lifecycle decisions remain in
+ * machines/agentPassport.machine.ts.
  */
 import { DB_UUID_RE } from '../../utils/db-row-validation.js';
 import { COMPUTEID_ISSUER, isRecord, type ComputeIdPassportEvent } from './schemas.js';

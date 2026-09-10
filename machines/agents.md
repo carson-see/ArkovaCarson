@@ -219,3 +219,9 @@ New invariants: **`supplementaryRequiresOriginalAttestation`** (supp ≠ NONE �
 Budgets raised for the added 3-valued variable: pr `2,304 × 3 = 6,912` per-anchor combos → `6,912² = 47,775,744` raw (budget 50M, was 6M); nightly `6,912³ = 330,225,942,528` (budget 350B, was 15B). `graphEquivalence` stays off on both (pre-existing — over the 100k cap).
 
 `check` results (`npm run verify:machines`, TLC2 2026.03.16.234659): **pr** proofPassed=true, **17 invariants** (was 14), **8,363 generated / 1,369 distinct** (was 3,221 / 529), deadlock checked, "No error has been found". **nightly** proofPassed=true, 464,092 / 50,653 distinct. `PASSED 4/4` across all machines.
+
+## 2026-09-10 — ComputeID atomic enforcement (SCRUM-4535 / SCRUM-4536)
+
+`agentPassportAtomic.machine.ts` models one provider-suspended agent/key and overlapping restore/revoke deliveries, including reads, row locks, transaction failure, CAS retry and an uncertain response. `pr` explicitly enables graph equivalence: the 2026-09-10 check passed all three safety invariants with 46 states / 80 edges in both TLC and TypeScript (`equivalent: true`; estimate 19,440, budget 100,000). No liveness/fairness claim is made; terminal states are allowed. Removing the atomic rollback reproduces an acknowledged incomplete restore; splitting the restore key write reproduces a revoked agent with an active key. Generated certificates and counterexample artifacts remain untracked.
+
+The operation spans `agents` and `api_keys`, outside the single-table adapter subset. This bounded model is a design proof, not a generated production adapter or a whole-system proof. Migration `0448` implements the SQL transaction boundary; the real concurrent PostgreSQL regression harness separately verifies that boundary. HMAC, timestamp ordering and suspension/key ownership are tested at their actual receiver, binding and SQL boundaries. Run `scripts/verify-machines.sh agentPassportAtomic`.

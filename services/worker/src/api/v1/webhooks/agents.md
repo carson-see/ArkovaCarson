@@ -161,3 +161,9 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 - Ambiguous account-to-org mappings fail closed.
 - Sanitized rule-event payloads may include provider IDs needed for idempotency, but not raw documents or raw webhook bodies.
 - Connector payloads that carry PII must hash values before storing long-lived operational metadata. PII scrubbing is mandatory; do not persist emails, document fingerprints, or API keys.
+
+## 2026-09-10 — ComputeID atomic agent/key transition (SCRUM-4535 / SCRUM-4536)
+
+The earlier separate-key-write / status-clock CAS notes above describe the original receiver. They are superseded for ComputeID by migration `0448` and the single `apply_computeid_agent_transition` RPC: lock the agent, compare org/binding/status/full metadata, then commit both agent and key changes in one transaction. A key-write failure rolls back the event clock too; identical redelivery remains actionable. A stale snapshot returns false and the receiver requests 409 redelivery. Transport or database failures return 500, never a successful audit/ack. Terminal revocation and ComputeID-owned suspension/key filters are preserved. The flag remains off; the new RPC must be staged/applied before enabling this receiver.
+
+`computeid.test.ts` exercises real signed HTTP delivery against the RPC boundary. `scripts/ops/repro-computeid-agent-key-atomic.py` reproduces both old defects and verifies rollback, overlapping SQL sessions, CAS, service-only execution and rollback/reapply in a disposable PostgreSQL container. The fixture is targeted, not a full production schema replay. The concurrency DSL is `machines/agentPassportAtomic.machine.ts`.

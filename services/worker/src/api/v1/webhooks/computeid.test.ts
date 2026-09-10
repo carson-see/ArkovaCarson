@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChainableBuilder as builder, routeDbTables } from '../../../test-utils/chainable-builder.js';
 
 const dbFromMock = vi.fn();
+const dbRpcMock = vi.fn();
 const logCalls = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 const auditMock = vi.fn();
 const mockConfig = vi.hoisted(() => ({
@@ -23,7 +24,7 @@ const mockConfig = vi.hoisted(() => ({
   computeidWebhookSecret: 'computeid-fixture-secret-aaaa' as string | undefined,
 }));
 vi.mock('../../../config.js', () => ({ config: mockConfig }));
-vi.mock('../../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args) } }));
+vi.mock('../../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: (...args: unknown[]) => dbRpcMock(...args) } }));
 vi.mock('../../../utils/logger.js', () => ({ logger: logCalls }));
 vi.mock('../../../utils/auditEvent.js', () => ({
   recordAuditEvent: (...args: unknown[]) => { auditMock(...args); return Promise.resolve(); },
@@ -42,7 +43,6 @@ const T1 = '2026-09-07T10:00:00.000Z';
 const T2 = '2026-09-07T11:00:00.000Z';
 const T3 = '2026-09-07T12:00:00.000Z';
 const SENSITIVE = 'SENSITIVE-REASON-XYZ john.doe@example.com';
-const LAST_EVENT_AT_COL = 'metadata->computeid->>last_event_at';
 
 const routeTables = (map: Record<string, unknown>) => routeDbTables(dbFromMock, map);
 
@@ -81,12 +81,12 @@ const binding = (extra: Record<string, unknown> = {}) => ({
 const agentRow = (over: Record<string, unknown> = {}) => ({
   id: AGENT_ID, org_id: ORG_ID, name: 'cortex-agent-1', status: 'active', metadata: binding(), ...over,
 });
-/** Lookup returns the row; every subsequent await (the CAS update) reports one affected row. */
-const agentsWithCas = (rows: unknown[], casRows: unknown[] = [{ id: AGENT_ID }]) => builder([{ data: rows }, { data: casRows }]);
+const boundAgents = (rows: unknown[]) => builder({ data: rows });
 
 beforeEach(() => {
   vi.clearAllMocks();
   dbFromMock.mockReset();
+  dbRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
   mockConfig.enableComputeidIntegration = true;
   mockConfig.computeidWebhookSecret = TEST_SECRET;
 });
@@ -98,6 +98,7 @@ describe('POST /webhooks/computeid — gating + signature', () => {
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe('vendor_gated');
     expect(dbFromMock).not.toHaveBeenCalled();
+    expect(dbRpcMock).not.toHaveBeenCalled();
   });
 
   it('503 webhook_unconfigured when the secret is missing or is only separators', async () => {
@@ -115,6 +116,7 @@ describe('POST /webhooks/computeid — gating + signature', () => {
     expect((await post(body + ' ', sign(body))).status).toBe(401);
     expect((await post(body, sign(body).slice('sha256='.length))).status).toBe(401);
     expect(dbFromMock).not.toHaveBeenCalled();
+    expect(dbRpcMock).not.toHaveBeenCalled();
   });
 
   it('GOLDEN: verifies the real delivery captured from api.aicomputeid.com on 2026-09-07 byte-for-byte, with its content type', async () => {
@@ -126,6 +128,7 @@ describe('POST /webhooks/computeid — gating + signature', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, ignored: true, event: 'test' });
     expect(dbFromMock).not.toHaveBeenCalled();
+    expect(dbRpcMock).not.toHaveBeenCalled();
     expect(sign(fx.body, fx.secret)).toBe(fx.header_value);
   });
 
@@ -171,6 +174,7 @@ describe('POST /webhooks/computeid — body validation', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, ignored: true });
     expect(dbFromMock).not.toHaveBeenCalled();
+    expect(dbRpcMock).not.toHaveBeenCalled();
   });
 
   it('400 when a passport event lacks a UUID passport_id, with a DLQ record naming the shape failure', async () => {
@@ -182,7 +186,7 @@ describe('POST /webhooks/computeid — body validation', () => {
   });
 
   it('tolerates a non-string / oversized reason and an offset-style timestamp — a surprising field never drops a revocation', async () => {
-    const agents = agentsWithCas([agentRow()]);
+    const agents = boundAgents([agentRow()]);
     routeTables({ agents, api_keys: builder({}), webhook_dlq: builder({}) });
     const body = JSON.stringify({
       event: 'passport.revoked', passport_id: PASSPORT.toUpperCase(),
@@ -196,172 +200,161 @@ describe('POST /webhooks/computeid — body validation', () => {
 });
 
 describe('POST /webhooks/computeid — passport events', () => {
-  it('passport.revoked: deactivates keys FIRST, then compare-and-sets the agent row to revoked, audits SECURITY', async () => {
-    const agents = agentsWithCas([agentRow()]);
-    const keys = builder({});
-    const dlq = builder({});
-    routeTables({ agents, api_keys: keys, webhook_dlq: dlq });
-
+  it('revocation delegates the complete snapshot and both writes to one atomic transaction, then audits SECURITY', async () => {
+    const row = agentRow();
+    const agents = boundAgents([row]);
+    routeTables({ agents, webhook_dlq: builder({}) });
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ ok: true, event: 'passport.revoked', applied: 1, skipped: 0 });
-
-    // keys before the row flip
-    expect(keys.update.mock.invocationCallOrder[0]).toBeLessThan(agents.update.mock.invocationCallOrder[0]);
-    expect(keys.update).toHaveBeenCalledWith(expect.objectContaining({ is_active: false, revocation_reason: 'computeid:passport.revoked' }));
-    expect(keys.eq).toHaveBeenCalledWith('org_id', ORG_ID);
-    expect(keys.eq).toHaveBeenCalledWith('agent_id', AGENT_ID);
-    expect(keys.eq).toHaveBeenCalledWith('is_active', true);
-
-    // compare-and-set on the snapshot we decided from
-    expect(agents.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'revoked', revoked_at: T2 }));
-    expect(agents.eq).toHaveBeenCalledWith('org_id', ORG_ID);
-    expect(agents.eq).toHaveBeenCalledWith('id', AGENT_ID);
-    expect(agents.eq).toHaveBeenCalledWith('status', 'active');
-    expect(agents.is).toHaveBeenCalledWith(LAST_EVENT_AT_COL, null);
-    expect(agents.select).toHaveBeenCalledWith('id');
-
+    expect(res.body).toMatchObject({ applied: 1, skipped: 0 });
+    expect(dbRpcMock).toHaveBeenCalledExactlyOnceWith('apply_computeid_agent_transition', {
+      p_org_id: ORG_ID, p_agent_id: AGENT_ID, p_passport_id: PASSPORT,
+      p_expected_status: 'active', p_expected_metadata: row.metadata,
+      p_update: expect.objectContaining({ status: 'revoked', revoked_at: T2 }),
+      p_key_enforcement: 'deactivate', p_event: 'passport.revoked', p_event_at: T2,
+    });
+    expect(agents.update).not.toHaveBeenCalled();
+    expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
-      event_type: 'AGENT_PASSPORT_REVOKED', event_category: 'SECURITY', target_type: 'agent', target_id: AGENT_ID, org_id: ORG_ID,
+      event_type: 'AGENT_PASSPORT_REVOKED', event_category: 'SECURITY', target_id: AGENT_ID, org_id: ORG_ID,
     }));
-    expect(dlq.insert).not.toHaveBeenCalled();
   });
 
-  it('passport.suspended deactivates keys (the auth path checks only api_keys.is_active) and marks the suspension as ours', async () => {
-    const agents = agentsWithCas([agentRow()]);
-    const keys = builder({});
-    routeTables({ agents, api_keys: keys, webhook_dlq: builder({}) });
-    const res = await post(evt('passport.suspended'));
-    expect(res.status).toBe(200);
-    expect(keys.update).toHaveBeenCalledWith(expect.objectContaining({ is_active: false, revocation_reason: 'computeid:passport.suspended' }));
-    const patch = agents.update.mock.calls[0][0] as { status: string; metadata: { computeid: { suspended_by?: string } } };
-    expect(patch.status).toBe('suspended');
-    expect(patch.metadata.computeid.suspended_by).toBe('computeid');
+  it('suspension atomically deactivates keys and marks the suspension as provider-owned', async () => {
+    routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: builder({}) });
+    expect((await post(evt('passport.suspended'))).status).toBe(200);
+    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition', expect.objectContaining({
+      p_key_enforcement: 'deactivate',
+      p_update: expect.objectContaining({ status: 'suspended', metadata: expect.objectContaining({
+        computeid: expect.objectContaining({ suspended_by: 'computeid' }),
+      }) }),
+    }));
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ event_type: 'AGENT_PASSPORT_SUSPENDED' }));
   });
 
-  it('passport.reinstated on a suspension WE applied re-activates the row and restores exactly the keys we deactivated', async () => {
-    const agents = agentsWithCas([agentRow({ status: 'suspended', metadata: binding({ suspended_by: 'computeid', last_event: 'passport.suspended', last_event_at: T2 }) })]);
-    const keys = builder({});
-    routeTables({ agents, api_keys: keys, webhook_dlq: builder({}) });
+  it('provider-owned reinstatement passes the suspended snapshot and key restoration into the same transaction', async () => {
+    const row = agentRow({ status: 'suspended', metadata: binding({ suspended_by: 'computeid', last_event: 'passport.suspended', last_event_at: T2 }) });
+    routeTables({ agents: boundAgents([row]), webhook_dlq: builder({}) });
     const res = await post(evt('passport.reinstated', { timestamp: T3 }));
-    expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ applied: 1 });
-    expect(agents.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'active', suspended_at: null }));
-    expect(agents.eq).toHaveBeenCalledWith('status', 'suspended');
-    expect(agents.eq).toHaveBeenCalledWith(LAST_EVENT_AT_COL, T2);
-    // reactivation after the row is active; only OUR suspension's keys
-    expect(agents.update.mock.invocationCallOrder[0]).toBeLessThan(keys.update.mock.invocationCallOrder[0]);
-    expect(keys.update).toHaveBeenCalledWith(expect.objectContaining({ is_active: true, revoked_at: null, revocation_reason: null }));
-    expect(keys.eq).toHaveBeenCalledWith('revocation_reason', 'computeid:passport.suspended');
-    expect(keys.eq).toHaveBeenCalledWith('is_active', false);
+    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition', expect.objectContaining({
+      p_expected_status: 'suspended', p_expected_metadata: row.metadata,
+      p_update: expect.objectContaining({ status: 'active', suspended_at: null }), p_key_enforcement: 'reactivate',
+    }));
+    expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ event_type: 'AGENT_PASSPORT_REINSTATED' }));
   });
 
-  it('passport.reinstated never lifts a suspension the ORG applied (no ownership marker): clock advances, no status change, keys untouched', async () => {
-    const agents = agentsWithCas([agentRow({ status: 'suspended' })]);
-    const keys = builder({});
-    routeTables({ agents, api_keys: keys, webhook_dlq: builder({}) });
-    const res = await post(evt('passport.reinstated', { timestamp: T3 }));
-    expect(res.body).toMatchObject({ applied: 0, skipped: 1 });
-    const patch = agents.update.mock.calls[0][0] as Record<string, unknown>;
-    expect(patch).not.toHaveProperty('status');
-    expect(patch).toHaveProperty('metadata');
-    expect(keys.update).not.toHaveBeenCalled();
+  it('org-owned suspension stays suspended: only its event clock advances, with no key restoration', async () => {
+    routeTables({ agents: boundAgents([agentRow({ status: 'suspended' })]), webhook_dlq: builder({}) });
+    expect((await post(evt('passport.reinstated', { timestamp: T3 }))).body).toMatchObject({ applied: 0, skipped: 1 });
+    const args = dbRpcMock.mock.calls[0][1];
+    expect(args.p_update).not.toHaveProperty('status');
+    expect(args.p_update).toHaveProperty('metadata');
+    expect(args.p_key_enforcement).toBe('none');
     expect(auditMock).not.toHaveBeenCalled();
   });
 
-  it('revoked is terminal: a later event advances the clock, re-asserts keys OFF (self-heal), changes no status, audits nothing', async () => {
-    const agents = agentsWithCas([agentRow({ status: 'revoked' })]);
-    const keys = builder({});
-    routeTables({ agents, api_keys: keys, webhook_dlq: builder({}) });
-    const res = await post(evt('passport.reinstated', { timestamp: T3 }));
-    expect(res.body).toMatchObject({ applied: 0, skipped: 1 });
-    expect((agents.update.mock.calls[0][0] as Record<string, unknown>)).not.toHaveProperty('status');
-    expect(keys.update).toHaveBeenCalledWith(expect.objectContaining({ is_active: false }));
+  it('revoked stays terminal and atomically reasserts keys off on a later event', async () => {
+    routeTables({ agents: boundAgents([agentRow({ status: 'revoked' })]), webhook_dlq: builder({}) });
+    expect((await post(evt('passport.reinstated', { timestamp: T3 }))).body).toMatchObject({ applied: 0, skipped: 1 });
+    const args = dbRpcMock.mock.calls[0][1];
+    expect(args.p_update).not.toHaveProperty('status');
+    expect(args.p_key_enforcement).toBe('deactivate');
     expect(auditMock).not.toHaveBeenCalled();
   });
 
-  it('ordering floor: an exact replay or an older event is a no-op with NO writes; a pre-admission revocation cannot revoke a fresh agent', async () => {
-    const replayed = agentsWithCas([agentRow({ status: 'suspended', metadata: binding({ last_event: 'passport.suspended', last_event_at: T2 }) })]);
-    const keys = builder({});
-    routeTables({ agents: replayed, api_keys: keys, webhook_dlq: builder({}) });
+  it('exact replays, older events, and pre-admission revocations do not write or reactivate keys', async () => {
+    const row = agentRow({ status: 'suspended', metadata: binding({ last_event: 'passport.suspended', last_event_at: T2 }) });
+    routeTables({ agents: boundAgents([row]), webhook_dlq: builder({}) });
     expect((await post(evt('passport.suspended', { timestamp: T2 }))).body).toMatchObject({ applied: 0, skipped: 1 });
     expect((await post(evt('passport.reinstated', { timestamp: T1 }))).body).toMatchObject({ applied: 0, skipped: 1 });
-    expect(replayed.update).not.toHaveBeenCalled();
-    expect(keys.update).not.toHaveBeenCalled();
-
-    vi.clearAllMocks();
-    const fresh = agentsWithCas([agentRow()]); // receipt_issued_at = T1
-    routeTables({ agents: fresh, api_keys: keys, webhook_dlq: builder({}) });
+    routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: builder({}) });
     expect((await post(evt('passport.revoked', { timestamp: T0 }))).body).toMatchObject({ applied: 0, skipped: 1 });
-    expect(fresh.update).not.toHaveBeenCalled();
-    expect(keys.update).not.toHaveBeenCalled();
+    expect(dbRpcMock).not.toHaveBeenCalled();
+    expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
   });
 
-  it('a passport bound in two orgs: each row is updated under its OWN org_id', async () => {
-    const rowB = agentRow({ id: AGENT_B, org_id: ORG_B });
-    const agents = builder([{ data: [agentRow(), rowB] }, { data: [{ id: AGENT_ID }] }, { data: [{ id: AGENT_B }] }]);
-    const keys = builder({});
-    routeTables({ agents, api_keys: keys, webhook_dlq: builder({}) });
-    const res = await post(evt('passport.revoked'));
-    expect(res.body).toMatchObject({ applied: 2, skipped: 0 });
-    expect(agents.eq).toHaveBeenCalledWith('org_id', ORG_ID);
-    expect(agents.eq).toHaveBeenCalledWith('org_id', ORG_B);
-    expect(keys.eq).toHaveBeenCalledWith('org_id', ORG_B);
-    expect(keys.eq).toHaveBeenCalledWith('agent_id', AGENT_B);
+  it('a passport bound in two organizations scopes each transaction to its own organization and agent', async () => {
+    routeTables({ agents: boundAgents([agentRow(), agentRow({ id: AGENT_B, org_id: ORG_B })]), webhook_dlq: builder({}) });
+    expect((await post(evt('passport.revoked'))).body).toMatchObject({ applied: 2, skipped: 0 });
+    expect(dbRpcMock).toHaveBeenNthCalledWith(1, 'apply_computeid_agent_transition', expect.objectContaining({ p_org_id: ORG_ID, p_agent_id: AGENT_ID }));
+    expect(dbRpcMock).toHaveBeenNthCalledWith(2, 'apply_computeid_agent_transition', expect.objectContaining({ p_org_id: ORG_B, p_agent_id: AGENT_B }));
   });
 
-  it('unbound passport: 200 orphaned:true and a DLQ record so the miss is visible', async () => {
+  it('an unbound passport is acknowledged and recorded without executing a transition', async () => {
     const dlq = builder({});
-    routeTables({ agents: builder({ data: [] }), webhook_dlq: dlq });
-    const res = await post(evt('passport.revoked'));
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ ok: true, orphaned: true });
-    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ provider: 'computeid', reason: 'unbound_passport', external_id: PASSPORT }));
+    routeTables({ agents: boundAgents([]), webhook_dlq: dlq });
+    expect((await post(evt('passport.revoked'))).body).toMatchObject({ orphaned: true });
+    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'unbound_passport', external_id: PASSPORT }));
+    expect(dbRpcMock).not.toHaveBeenCalled();
   });
 
-  it('lost CAS race (zero rows updated): 409 conflict_retry + DLQ so the sender redelivers against fresh state', async () => {
-    const agents = agentsWithCas([agentRow()], []);
+  it('a changed locked snapshot requests redelivery without auditing a transition that did not commit', async () => {
     const dlq = builder({});
-    routeTables({ agents, api_keys: builder({}), webhook_dlq: dlq });
+    routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: dlq });
+    dbRpcMock.mockResolvedValue({ data: false, error: null });
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('conflict_retry');
     expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'agent_update_conflict:passport.revoked' }));
+    expect(auditMock).not.toHaveBeenCalled();
   });
 
-  it('key deactivation failure: 500 + DLQ, and the agent row is NOT flipped (keys-first ordering)', async () => {
-    const agents = agentsWithCas([agentRow()]);
-    const keys = builder({}, { updateResult: { error: { code: 'XX000', message: 'boom' } } });
+  it.each(['returned error', 'transport exception', 'invalid response'])('fails closed on an atomic transition %s', async (mode) => {
+    const agents = boundAgents([agentRow()]);
     const dlq = builder({});
-    routeTables({ agents, api_keys: keys, webhook_dlq: dlq });
-    const res = await post(evt('passport.revoked'));
-    expect(res.status).toBe(500);
-    expect(agents.update).not.toHaveBeenCalled();
-    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'agent_keys_deactivate_failed:passport.revoked' }));
-  });
-
-  it('agent update failure: 500 + DLQ so the sender can retry', async () => {
-    const agents = builder([{ data: [agentRow()] }, { error: { code: 'XX000', message: 'boom' } }]);
-    const dlq = builder({});
-    routeTables({ agents, api_keys: builder({}), webhook_dlq: dlq });
+    routeTables({ agents, webhook_dlq: dlq });
+    if (mode === 'returned error') dbRpcMock.mockResolvedValue({ data: null, error: { code: 'XX000' } });
+    else if (mode === 'transport exception') dbRpcMock.mockRejectedValue(new Error('transport unavailable'));
+    else dbRpcMock.mockResolvedValue({ data: null, error: null });
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(500);
     expect(res.body.error.code).toBe('webhook_processing_failed');
-    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ reason: expect.stringContaining('agent_update_failed') }));
+    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'agent_transition_failed:passport.revoked' }));
+    expect(agents.update).not.toHaveBeenCalled();
+    expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
+    expect(auditMock).not.toHaveBeenCalled();
   });
 
-  it('never leaks the partner-supplied free-text reason or the raw body into logs, audit details, or the DLQ', async () => {
-    const agents = agentsWithCas([agentRow()]);
+  it('never passes the provider reason or raw body to the RPC, logs, audit, or DLQ', async () => {
     const dlq = builder({});
-    routeTables({ agents, api_keys: builder({}), webhook_dlq: dlq });
+    routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: dlq });
     await post(evt('passport.revoked'));
-    const serializedLogs = JSON.stringify([logCalls.info.mock.calls, logCalls.warn.mock.calls, logCalls.error.mock.calls, logCalls.debug.mock.calls]);
-    expect(serializedLogs).not.toContain('SENSITIVE-REASON');
-    expect(serializedLogs).not.toContain('john.doe@example.com');
-    expect(JSON.stringify(auditMock.mock.calls)).not.toContain('SENSITIVE-REASON');
-    expect(JSON.stringify(auditMock.mock.calls)).not.toContain('john.doe@example.com');
-    expect(JSON.stringify(dlq.insert.mock.calls)).not.toContain('SENSITIVE-REASON');
+    const serialized = JSON.stringify([dbRpcMock.mock.calls, logCalls.info.mock.calls, logCalls.warn.mock.calls,
+      logCalls.error.mock.calls, logCalls.debug.mock.calls, auditMock.mock.calls, dlq.insert.mock.calls]);
+    expect(serialized).not.toContain('SENSITIVE-REASON');
+    expect(serialized).not.toContain('john.doe@example.com');
+  });
+});
+
+describe('ComputeID partial-write recovery regressions', () => {
+  it('retries the whole restoration when its atomic transaction failed; no separate row commit can swallow the retry', async () => {
+    const initial = agentRow({ status: 'suspended', metadata: binding({ suspended_by: 'computeid', last_event: 'passport.suspended', last_event_at: T2 }) });
+    const agents = boundAgents([initial]);
+    routeTables({ agents, webhook_dlq: builder({}) });
+    dbRpcMock.mockResolvedValueOnce({ data: null, error: { message: 'temporary key write unavailable' } });
+    const body = evt('passport.reinstated', { timestamp: T3 });
+    expect((await post(body)).status).toBe(500);
+    expect((await post(body)).body).toMatchObject({ applied: 1, skipped: 0 });
+    expect(dbRpcMock).toHaveBeenCalledTimes(2);
+    expect(dbRpcMock.mock.calls[0]).toEqual(dbRpcMock.mock.calls[1]);
+    expect(agents.update).not.toHaveBeenCalled();
+    expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
+  });
+
+  it('does not issue a late separate key restore after the atomic snapshot loses to a revocation', async () => {
+    const initial = agentRow({ status: 'suspended', metadata: binding({ suspended_by: 'computeid', last_event: 'passport.suspended', last_event_at: T1 }) });
+    const revoked = agentRow({ status: 'revoked', metadata: binding({ last_event: 'passport.revoked', last_event_at: T3 }) });
+    routeTables({ agents: builder([{ data: [initial] }, { data: [revoked] }]), webhook_dlq: builder({}) });
+    // A real PostgreSQL concurrency regression separately proves that a revoke
+    // winning the row lock makes the older restoration CAS return false.
+    dbRpcMock.mockResolvedValueOnce({ data: false, error: null });
+    const body = evt('passport.reinstated', { timestamp: T2 });
+    expect((await post(body)).status).toBe(409);
+    expect((await post(body)).body).toMatchObject({ applied: 0, skipped: 1 });
+    expect(dbRpcMock).toHaveBeenCalledTimes(1);
+    expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
+    expect(auditMock).not.toHaveBeenCalled();
   });
 });

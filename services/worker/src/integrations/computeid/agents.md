@@ -48,3 +48,7 @@ Partner integration with ComputeID (Praveen Gajjala, CEO; `https://api.aicompute
 - **No uniqueness on the binding** — concurrent admits of one passport into one org can both succeed; unique index is SCRUM-4497.
 - `anchors` carries no agent attribution, so "every record names the acting agent" is not yet true (SCRUM-4497). The partner guide says so.
 - Pre-existing, reported not fixed here: `PATCH /api/v1/agents/:agentId {status:'suspended'}` records a suspension without deactivating keys (the same decorative-suspension class); the revoked-is-terminal guard on that route IS in this PR.
+
+## 2026-09-10 — Atomic enforcement correction (SCRUM-4535 / SCRUM-4536)
+
+The old separate-write retry claim above was disproved by signed HTTP and concurrent PostgreSQL tests: a committed event clock could hide a failed key restore; a delayed restore could undo a later revoke. The pure `applyPassportEvent` decisions remain unchanged. The receiver now passes their agent update and key-enforcement output to migration `0448` in one locked transaction, with a full metadata/status snapshot comparison. Exact replay is safe after both writes commit. See `machines/agentPassportAtomic.machine.ts` and `scripts/ops/repro-computeid-agent-key-atomic.py`; these checks do not resolve the partner receipt/delivery gaps or authorize enabling the flag.

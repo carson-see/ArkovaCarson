@@ -21,3 +21,7 @@ Operational scripts for database maintenance and production infrastructure.
 - Changes to cron schedules or indexes require staging soak (T2 minimum).
 - GCP Secret Manager tooling talks REST with a caller-identity access token passed as `GCP_ACCESS_TOKEN` (no shell-out to `gcloud`), never fetches a version payload, and gates any destructive `--apply` behind a `CONFIRM_*` env var that must equal the exact resource id being acted on.
 - Read-only preflight/reporting scripts (e.g. `materializer-preflight.ts`) reach Postgres only through the Supabase Management API's `/database/query/read-only` endpoint or existing RPCs — no raw `pg`/`postgres` driver dependency for one-off ops tooling; keeps DB access on the locked Supabase-only stack (CLAUDE.md §1.1).
+
+## 2026-09-10 — ComputeID atomic transition regression harness
+
+`repro-computeid-agent-key-atomic.py` reproduces SCRUM-4535/4536's old split-write failures and tests migration `0448` with concurrent real PostgreSQL sessions, injected key-write failure, exact retry, snapshot/binding checks, key ownership, terminal revocation, service-only ACL and rollback/reapply. Run with Python 3 and an already-present Docker `postgres:17` image; `--output` optionally writes a JSON receipt. It creates and removes only its own unique container (`--network none`, no published port, temporary data), accepts no external database target, and never touches a shared local stack or hosted project. It uses exact baseline table/enum definitions and CHECKs, not a full catalog/RLS replay.

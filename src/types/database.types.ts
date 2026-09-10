@@ -6684,6 +6684,20 @@ export type Database = {
         Returns: string
       }
       anonymize_user_data: { Args: { p_user_id: string }; Returns: Json }
+      apply_computeid_agent_transition: {
+        Args: {
+          p_agent_id: string
+          p_event: string
+          p_event_at: string
+          p_expected_metadata: Json
+          p_expected_status: Database["public"]["Enums"]["agent_status"]
+          p_key_enforcement: string
+          p_org_id: string
+          p_passport_id: string
+          p_update: Json
+        }
+        Returns: boolean
+      }
       archive_old_audit_events: {
         Args: { retention_days?: number }
         Returns: number

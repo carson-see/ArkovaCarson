@@ -10,11 +10,10 @@
  * Differences from the Checkr template this is forked from:
  *   - One Arkova-global registration, not per-org: the org is resolved from
  *     the passport → agent binding, so there is no account-id header lookup.
- *   - Keys are enforced BEFORE the row flips (deactivate) / AFTER (reactivate),
- *     and re-asserted on repeat events, because the auth path checks only
- *     api_keys.is_active, never agents.status.
- *   - The agents write is a compare-and-set on (status, last_event_at); a lost
- *     race answers 409 so the sender redelivers against fresh state.
+ *   - Agent state and key enforcement commit in one locked transaction, because
+ *     the auth path checks api_keys.is_active, never agents.status.
+ *   - The RPC compares the complete status/metadata snapshot under the row lock;
+ *     a lost race answers 409 so the sender redelivers against fresh state.
  *   - No nonce table (would need a migration — PR-B). Replay safety is the
  *     ordering guard on the SIGNED timestamp (`integrations/computeid/binding.ts`).
  *   - Secrets may be a comma-separated list so rotation is register-new →
@@ -30,6 +29,7 @@ import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { config } from '../../../config.js';
 import { db } from '../../../utils/db.js';
+import type { Json } from '../../../types/database.types.js';
 import { truncateUtf16Safe } from '../../../utils/utf16-truncate.js';
 import { logger } from '../../../utils/logger.js';
 import { recordAuditEvent } from '../../../utils/auditEvent.js';
@@ -41,7 +41,7 @@ import {
   ComputeIdWebhookEnvelope,
   type ComputeIdPassportEvent,
 } from '../../../integrations/computeid/schemas.js';
-import { applyPassportEvent, readBinding, type AgentStatus } from '../../../integrations/computeid/binding.js';
+import { applyPassportEvent, type AgentStatus, type KeyEnforcement } from '../../../integrations/computeid/binding.js';
 import { parseSecretList } from '../../../integrations/computeid/secrets.js';
 
 export const computeidWebhookRouter = Router();
@@ -219,77 +219,41 @@ async function parseDelivery(rawBody: Buffer, payloadHash: string): Promise<Pars
   };
 }
 
-/**
- * Keys FIRST for deactivation. The auth path reads only api_keys.is_active, so
- * if the agent row were flipped first and this write failed, a retry would see
- * the terminal status and never come back for the keys.
- */
-async function deactivateAgentKeys(agent: BoundAgentRow, d: PassportDelivery): Promise<Reply | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (db as any)
-    .from('api_keys')
-    .update({ is_active: false, revoked_at: d.timestamp, revocation_reason: `computeid:${d.event}` })
-    .eq('org_id', agent.org_id)
-    .eq('agent_id', agent.id)
-    .eq('is_active', true);
-  if (!error) return null;
-  logger.error({ error, agentId: agent.id, event: d.event }, 'ComputeID webhook: agent key deactivation failed');
-  await dlqInsert({ reason: `agent_keys_deactivate_failed:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
-  return reply(500, PROCESSING_FAILED);
-}
-
-/**
- * Reactivation AFTER the row is active, restoring only the keys WE deactivated
- * for a suspension — never keys revoked for any other reason.
- */
-async function reactivateAgentKeys(agent: BoundAgentRow, d: PassportDelivery): Promise<Reply | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (db as any)
-    .from('api_keys')
-    .update({ is_active: true, revoked_at: null, revocation_reason: null })
-    .eq('org_id', agent.org_id)
-    .eq('agent_id', agent.id)
-    .eq('is_active', false)
-    .eq('revocation_reason', 'computeid:passport.suspended');
-  if (!error) return null;
-  logger.error({ error, agentId: agent.id }, 'ComputeID webhook: agent key reinstatement failed');
-  await dlqInsert({ reason: 'agent_keys_reinstate_failed', externalId: d.passportId, payloadHash: d.payloadHash });
-  return reply(500, PROCESSING_FAILED);
-}
-
-/**
- * Compare-and-set on the row we decided from. Two concurrent deliveries both
- * read the same snapshot; only the first write lands, the second sees zero rows
- * and answers 409 so the sender re-delivers against fresh state.
- */
-async function compareAndSetAgent(
+/** Commit the complete agent/key transition, or leave both unchanged. */
+async function commitAgentTransition(
   agent: BoundAgentRow,
   update: Record<string, unknown>,
+  keyEnforcement: KeyEnforcement,
   d: PassportDelivery,
 ): Promise<Reply | null> {
-  const prevLastEventAt = readBinding(agent.metadata)?.last_event_at ?? null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let cas = (db as any).from('agents').update(update).eq('org_id', agent.org_id).eq('id', agent.id).eq('status', agent.status);
-  cas = prevLastEventAt === null
-    ? cas.is('metadata->computeid->>last_event_at', null)
-    : cas.eq('metadata->computeid->>last_event_at', prevLastEventAt);
-  const { data: casRows, error } = await cas.select('id');
-  if (error) {
-    logger.error({ error, agentId: agent.id, event: d.event }, 'ComputeID webhook: agent update failed');
-    await dlqInsert({ reason: `agent_update_failed:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
-    return reply(500, PROCESSING_FAILED);
-  }
-  if (!Array.isArray(casRows) || casRows.length === 0) {
+  try {
+    const { data: applied, error } = await db.rpc('apply_computeid_agent_transition', {
+      p_org_id: agent.org_id,
+      p_agent_id: agent.id,
+      p_passport_id: d.passportId,
+      p_expected_status: agent.status,
+      p_expected_metadata: agent.metadata as Json,
+      p_update: update as Json,
+      p_key_enforcement: keyEnforcement,
+      p_event: d.event,
+      p_event_at: d.timestamp,
+    });
+    if (error) throw error;
+    if (applied === true) return null;
+    if (applied !== false) throw new Error('invalid_agent_transition_result');
     logger.warn({ agentId: agent.id, event: d.event }, 'ComputeID webhook: agent row changed underneath us — asking for redelivery');
     await dlqInsert({ reason: `agent_update_conflict:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
     return reply(409, { error: { code: 'conflict_retry', message: 'Agent state changed concurrently; redeliver.' } });
+  } catch (error) {
+    logger.error({ error, agentId: agent.id, event: d.event }, 'ComputeID webhook: atomic agent/key transition failed');
+    await dlqInsert({ reason: `agent_transition_failed:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
+    return reply(500, PROCESSING_FAILED);
   }
-  return null;
 }
 
 type AgentOutcome = { outcome: 'applied' | 'skipped' } | { outcome: 'failed'; reply: Reply };
 
-/** One bound agent: decide → keys (deactivate) → compare-and-set row → keys (reactivate) → audit. */
+/** One bound agent: decide → atomic locked agent/key transaction → audit. */
 async function processBoundAgent(agent: BoundAgentRow, d: PassportDelivery): Promise<AgentOutcome> {
   const { decision, update, keyEnforcement } = applyPassportEvent(
     { status: agent.status, metadata: agent.metadata },
@@ -297,16 +261,8 @@ async function processBoundAgent(agent: BoundAgentRow, d: PassportDelivery): Pro
   );
   if (!update) return { outcome: 'skipped' };
 
-  if (keyEnforcement === 'deactivate') {
-    const failed = await deactivateAgentKeys(agent, d);
-    if (failed) return { outcome: 'failed', reply: failed };
-  }
-  const casFailed = await compareAndSetAgent(agent, update, d);
-  if (casFailed) return { outcome: 'failed', reply: casFailed };
-  if (keyEnforcement === 'reactivate') {
-    const failed = await reactivateAgentKeys(agent, d);
-    if (failed) return { outcome: 'failed', reply: failed };
-  }
+  const failed = await commitAgentTransition(agent, update, keyEnforcement, d);
+  if (failed) return { outcome: 'failed', reply: failed };
   if (decision.action === 'noop') return { outcome: 'skipped' };
 
   const nextStatus = typeof update.status === 'string' ? update.status : agent.status;
