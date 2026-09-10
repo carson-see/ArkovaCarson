@@ -8,10 +8,10 @@
  * uniform verification confidence" test only asserts against the
  * DECLARATIVE `TOOL_DEFINITIONS` array. It cannot see `mcp-server.ts`,
  * which is what the deployed Cloudflare Worker actually registers with the
- * MCP SDK. `oracle_batch_verify`'s registration (`mcp-server.ts` ~line 456)
+ * MCP SDK. `arkova_oracle_batch_verify`'s registration (`mcp-server.ts` ~line 456)
  * carried its own hardcoded description literal — stale, missing the
  * fingerprint_source evidence-strength caveat — even though
- * `TOOL_DEFINITIONS['oracle_batch_verify'].description` and the "no NEW
+ * `TOOL_DEFINITIONS['arkova_oracle_batch_verify'].description` and the "no NEW
  * forbidden terms" test both looked correct. A green `mcp-tools.test.ts`
  * run therefore proved nothing about what an agent actually sees for that
  * tool. This file closes that gap by reading `mcp-server.ts`'s SOURCE TEXT
@@ -53,15 +53,15 @@ const MCP_SERVER_SOURCE = readFileSync(join(__dirname, 'mcp-server.ts'), 'utf-8'
 
 /** The same 9 tools mcp-tools.test.ts pins as evidence-carrying. */
 const EVIDENCE_AWARE_TOOLS = [
-  'verify_credential',
-  'verify_document',
-  'verify_batch',
-  'verify',
-  'get_anchor',
-  'get_record',
-  'get_fingerprint',
-  'get_document',
-  'oracle_batch_verify',
+  'arkova_verify_anchor',
+  'arkova_verify_document',
+  'arkova_verify_batch',
+  'arkova_verify',
+  'arkova_get_anchor',
+  'arkova_get_record',
+  'arkova_get_fingerprint',
+  'arkova_get_document',
+  'arkova_oracle_batch_verify',
 ] as const;
 
 /**
@@ -80,7 +80,7 @@ function extractDescriptionArg(toolName: string): string {
 }
 
 /** Strip `//` line comments (registrations may carry explanatory comments
- * between the name and the description expression — see oracle_batch_verify). */
+ * between the name and the description expression — see arkova_oracle_batch_verify). */
 function stripLineComments(text: string): string {
   return text
     .split('\n')
@@ -100,7 +100,7 @@ describe('mcp-server.ts tool registrations source descriptions from TOOL_DESC (S
         `mcp-server.ts's '${name}' registration must read exactly one of ${JSON.stringify(allowed)} ` +
           `as its description argument — found: ${JSON.stringify(cleaned)}. A hardcoded string ` +
           `literal here silently diverges from TOOL_DEFINITIONS['${name}'].description in ` +
-          `mcp-tools.ts (this is exactly how oracle_batch_verify went stale — SCRUM-3818).`,
+          `mcp-tools.ts (this is exactly how arkova_oracle_batch_verify went stale — SCRUM-3818).`,
       ).toContain(cleaned);
     },
   );

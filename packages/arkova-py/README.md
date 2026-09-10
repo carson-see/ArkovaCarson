@@ -5,7 +5,7 @@ Typed Python client for the Arkova Verification APIs.
 ## Install
 
 ```bash
-pip install arkova
+pip install 'arkova>=2.3.0'
 ```
 
 Python 3.10 or newer is supported.
@@ -135,8 +135,9 @@ with Arkova(api_key="ak_live_...") as arkova:
 > **Upgrade from 2.2.0.** In 2.2.0 `verify()` raised
 > `ArkovaError: Arkova API returned an unexpected response shape` on any record
 > carrying compliance controls — `compliance_controls` was typed as a mapping,
-> but the API returns a list of control-ID strings. Fixed in 2.2.1; there is no
-> workaround on 2.2.0 short of bypassing the model layer.
+> but the API returns a list of control-ID strings. Fixed in 2.3.0 (2.2.1 was
+> never published — see CHANGELOG.md); there is no workaround on 2.2.0 short
+> of bypassing the model layer.
 
 `verify()` returns the rich v1 verification shape, including API-RICH-01 fields
 such as `compliance_controls` (a list of control-ID strings, accompanied by
