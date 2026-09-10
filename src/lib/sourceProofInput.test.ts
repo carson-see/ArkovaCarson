@@ -36,6 +36,7 @@ function securedAnchor(overrides: Partial<ProofSourceAnchor> = {}): ProofSourceA
     status: 'SECURED',
     chain_tx_id: 'd'.repeat(64),
     chain_block_height: 850123,
+    chain_block_hash: 'f'.repeat(64),
     chain_timestamp: '2026-06-02T03:00:00Z',
     ...overrides,
   };
@@ -273,6 +274,35 @@ describe('B3 — the audit packet carries the bitcoin-tree inclusion evidence', 
 // with HEIGHT_MISMATCH — a false negative on a genuine anchor.
 
 describe('sourceProofInput — block_height provenance', () => {
+  it('withholds a packet when the anchor and proof name different blocks', async () => {
+    const { client } = makeSupabase({ proofRow: SINGLE_LEAF_ROW });
+    const result = await sourceProofInput(client as never, securedAnchor({
+      chain_block_hash: 'e'.repeat(64),
+      chain_block_height: 965200,
+      chain_timestamp: '2026-09-03T03:00:00Z',
+    }));
+    expect(result).toEqual({ proof: undefined, complete: false });
+  });
+
+  it('does not borrow anchor metadata without a matching block identity', async () => {
+    const { client } = makeSupabase({ proofRow: SINGLE_LEAF_ROW });
+    const { proof } = await sourceProofInput(client as never, securedAnchor({
+      chain_block_hash: null,
+      chain_block_height: 965200,
+      chain_timestamp: '2026-09-03T03:00:00Z',
+    }));
+    expect(proof?.block_height).toBe(SINGLE_LEAF_ROW.block_height);
+    expect(proof?.block_timestamp).toBe(SINGLE_LEAF_ROW.block_timestamp);
+  });
+
+  it('matches block identity case-insensitively before taking confirmed metadata', async () => {
+    const { client } = makeSupabase({ proofRow: SINGLE_LEAF_ROW });
+    const { proof } = await sourceProofInput(client as never, securedAnchor({
+      chain_block_hash: 'F'.repeat(64), chain_block_height: 965200,
+    }));
+    expect(proof?.block_height).toBe(965200);
+  });
+
   it('publishes anchors.chain_block_height, NOT the stale anchor_proofs value', async () => {
     const { client } = makeSupabase({
       // The prod shape: proof row frozen 4 blocks behind the real height.

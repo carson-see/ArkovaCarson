@@ -670,3 +670,7 @@ lookup keyed by external text in this file needs the same guard.
 ## 2026-09-05 — Certificate pagination at supported input limits
 
 Field, section and proof-line helpers reserve page space before painting. Wrapped values that exceed one printable page continue on subsequent pages with their label repeated; no value or proof step is truncated. Keep the maximum-length filename plus a full batch proof covered together, and exercise a multiline reason long enough to cross pages. The tests read actual PDF text operators and assert both printable bounds and complete text preservation. Certificate QR callers supply the canonical production URL; pointer regression tests reject alternate Arkova domains even when their host begins with `app.`.
+
+## PR #2782 — bind certificate metadata to one block
+
+`proofBlockMetadata.ts` is shared by the database proof reader and certificate builder. Confirmed anchor height/time can replace proof metadata only after matching both block hashes. A known mismatch withholds the packet; an unknown identity retains only the proof row's existing metadata and does not establish a fresh measurement. Height values must be nonnegative safe integers. RecordDetailPage supplies the anchor hash to both readers. Regression tests cover mismatches, absent identities, case-normalized matches and the actual page callback. The finite TLA model and interpreter contract cover selection semantics; they do not prove Bitcoin consensus, stored-data accuracy or snapshot freshness.

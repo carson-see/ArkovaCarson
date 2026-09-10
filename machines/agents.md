@@ -210,3 +210,7 @@ New invariants: **`supplementaryRequiresOriginalAttestation`** (supp ≠ NONE �
 Budgets raised for the added 3-valued variable: pr `2,304 × 3 = 6,912` per-anchor combos → `6,912² = 47,775,744` raw (budget 50M, was 6M); nightly `6,912³ = 330,225,942,528` (budget 350B, was 15B). `graphEquivalence` stays off on both (pre-existing — over the 100k cap).
 
 `check` results (`npm run verify:machines`, TLC2 2026.03.16.234659): **pr** proofPassed=true, **17 invariants** (was 14), **8,363 generated / 1,369 distinct** (was 3,221 / 529), deadlock checked, "No error has been found". **nightly** proofPassed=true, 464,092 / 50,653 distinct. `PASSED 4/4` across all machines.
+
+## PR #2782 — certificate block metadata binding
+
+`proofBlockMetadata.machine.ts` models independently updated anchor/proof rows and the two captured reads. Three invariants require a known matching block before using anchor metadata, reject known mismatches, and avoid mislabeling missing identity as a mismatch. TLA PreCheck check passes with graph equivalence: 198 states and 1,386 transitions in both interpreters; deadlock checking is enabled. Two separate negative controls restore unconditional preference or remove the known-identity guard, and both violate `anchorRequiresKnownMatchingBlock`. The runtime contract enumerates every reachable decision state and metadata-availability combination against the real resolver. This machine owns no database table and has no adapter; its finite proof does not assert Bitcoin consensus, source accuracy or freshness of later database state.

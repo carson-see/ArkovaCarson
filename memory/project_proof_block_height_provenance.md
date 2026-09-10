@@ -34,7 +34,12 @@ document therefore verified as `ok: false, reason_code: HEIGHT_MISMATCH` — a f
 exact shape of the repo's own forgery fixture. `/api/v1/proof`, `audit-export.ts` and the JSON proof
 package always read from `anchors` and were never affected.
 
-**How to apply:** source a published `block_height` from `anchors.chain_block_height`. Only a height
+**How to apply:** source a published `block_height` from `anchors.chain_block_height` only when
+its `chain_block_hash` matches the proof's `block_hash`. `proofBlockMetadata.ts`
+implements that binding for both certificate readers: known mismatches withhold
+the packet; missing identities retain existing proof metadata without claiming
+a new measurement. RecordDetailPage carries the anchor block hash through both
+reader calls. Only a height
 that came back from the chain at confirmation may be written to `anchor_proofs.block_height` —
 `undefined` means "leave the column alone", never "rewrite what is already there". CI enforces the
 publication order via `scripts/ci/feedback-rules/proof-block-height-source.ts` (override label

@@ -38,6 +38,7 @@ import { CERTIFICATE_COPY } from './copy';
 import { canonicalVerifyUrl } from './routes';
 import { getStatusDisplay, isProofDownloadable } from './statusDisplay';
 import { readTxInclusionEvidence } from './txInclusionEvidence';
+import { resolveProofBlockMetadata } from './proofBlockMetadata';
 
 /**
  * Gap between a field label's painted right edge and the start of its value,
@@ -170,6 +171,7 @@ export interface AuditReportData {
   expiresAt?: string;
   networkReceipt?: string;
   blockHeight?: number;
+  blockHash?: string;
   /** Full proof inputs (from `anchor_proofs`). When absent or non-SECURED, no
    *  machine-readable proof packet is embedded. */
   proof?: ProofInput;
@@ -243,6 +245,11 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
   if (!data.proof) return null;
 
   const p = data.proof;
+  const block = resolveProofBlockMetadata(
+    { hash: data.blockHash, height: data.blockHeight, timestamp: data.securedAt },
+    { hash: p.block_hash, height: p.block_height, timestamp: p.block_timestamp },
+  );
+  if (!block) return null;
   // Preserve the structured `{ hash, position }` branch verbatim — validate
   // each entry but NEVER flatten to strings (that would drop the position the
   // offline verifier needs to recompute the root). Reject malformed entries.
@@ -262,26 +269,15 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
     merkle_index: typeof p.merkle_index === 'number' ? p.merkle_index : null,
     leaf_count: typeof p.leaf_count === 'number' ? p.leaf_count : null,
     tx_id: p.tx_id ?? data.networkReceipt ?? null,
-    // SCRUM-3953: `data.blockHeight` (= `anchors.chain_block_height`)
-    // FIRST. `p.block_height` can still carry the stale broadcast-time tip on
-    // rows written before the backfill, and this packet is what the offline
-    // verifier binds against the chain.
-    block_height:
-      typeof data.blockHeight === 'number'
-        ? data.blockHeight
-        : typeof p.block_height === 'number'
-          ? p.block_height
-          : null,
+    // The shared resolver binds height/time to the proof's block identity.
+    block_height: block.height,
     block_hash: p.block_hash ?? null,
     block_header: p.block_header ?? null,
     op_return_payload: p.op_return_payload ?? null,
     // proof_schema_version is non-null; default to 1 (plain double-SHA256).
     proof_schema_version:
       typeof p.proof_schema_version === 'number' ? p.proof_schema_version : 1,
-    // SCRUM-3953: `data.securedAt` (= `anchors.chain_timestamp`, the header
-    // time) FIRST; `p.block_timestamp` can still be the broadcast wall clock on
-    // rows written before migration 0443.
-    block_timestamp: data.securedAt ?? p.block_timestamp ?? null,
+    block_timestamp: block.timestamp,
     // Migration 0427: the bitcoin-tree half, read as ONE fact through the
     // SHARED validator (`txInclusionEvidence.ts`).
     //

@@ -98,6 +98,7 @@ function securedData(overrides: Partial<AuditReportData> = {}): AuditReportData 
     securedAt: '2026-06-02T03:00:00Z',
     networkReceipt: 'd'.repeat(64),
     blockHeight: 850123,
+    blockHash: 'f'.repeat(64),
     proof: {
       fingerprint: 'a'.repeat(64),
       merkle_root: 'b'.repeat(64),
@@ -754,6 +755,27 @@ describe('audit certificate — field label / value spacing as painted', () => {
 // ─── SCRUM-3953 ────────────────────────────────────────────────────
 
 describe('buildProofPacket — block_height provenance', () => {
+  it('withholds a packet when report and proof name different blocks', () => {
+    expect(buildProofPacket(securedData({
+      blockHash: 'e'.repeat(64), blockHeight: 965200,
+      securedAt: '2026-09-03T03:00:00Z',
+    }))).toBeNull();
+  });
+
+  it('does not replace proof metadata when the report has no block identity', () => {
+    const packet = buildProofPacket(securedData({
+      blockHash: undefined, blockHeight: 965200,
+      securedAt: '2026-09-03T03:00:00Z',
+    }));
+    expect(packet?.block_height).toBe(850123);
+    expect(packet?.block_timestamp).toBe('2026-06-02T03:00:00Z');
+  });
+
+  it('matches block identity case-insensitively before taking confirmed metadata', () => {
+    const packet = buildProofPacket(securedData({ blockHash: 'F'.repeat(64), blockHeight: 965200 }));
+    expect(packet?.block_height).toBe(965200);
+  });
+
   it('prefers the anchor height over a stale proof-row height', () => {
     const packet = buildProofPacket(
       securedData({
