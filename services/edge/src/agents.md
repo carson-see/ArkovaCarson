@@ -317,3 +317,19 @@ the legacy ordinary control remains. Retain all imported verifier tests for
 shared JWKS fetches, cooldown on failures, timeout, cache and key rotation. The
 separate `supabase-jwt.ts` helper has no runtime importer; preserve its existing
 pending guard without inventing an unused ES256 implementation.
+
+## PR #2589 — verified Bearer origin allowlist
+
+After local JWT signature/claim checks and a matching Supabase user lookup,
+`handleMcpRequest` can select `allow-user:<user_id>` in `MCP_ORIGIN_ALLOWLIST_KV`.
+This is separate from API keys' existing `allow:<api_key_id>` namespace. A Bearer
+user needs an explicit operator entry: absent, malformed, incorrectly signed,
+denied, or nonmatching entries cannot grant access. The existing signed-envelope
+contract applies in both namespaces when `MCP_ALLOWLIST_HMAC_SECRET` is set.
+API-key no-entry behavior is unchanged; an API-key result lacking its id cannot
+fall back to a user entry. No production entries are created by this change.
+
+`mcp-bearer-allowlist.test.ts` drives the actual HTTP handler and tool dispatch
+with real HS256/ES256 signatures. It covers valid user entries, namespace
+separation, missing/forged subjects, returned-subject mismatch, and terminal
+signed pending-role rejection before any user/KV/tool lookup can rescue it.

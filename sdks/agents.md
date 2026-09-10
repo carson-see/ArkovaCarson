@@ -60,3 +60,17 @@ parity — see `packages/sdk/agents.md`).
   first two lines above it. One bullet now, the correct one.
 - Both `mcp-server/` and `langchain-ts/` gained 2026-09-05 entries in their own `agents.md` for the
   503-disclosure and `VERIFY_BATCH_SYNC_LIMIT` changes in the same review pass.
+
+## 2026-09-10 — historical MCP package description preserved
+
+The following entry is retained as the description before the 2026-09-02 tool
+removal. The current six-tool entry above supersedes it. Do not restore the
+removed Nessie tools; the 2026-09-05 duplicate-removal note records that edit,
+while this section preserves the old text as history.
+
+- **`mcp-server/`** — Model Context Protocol server exposing 10 tools (6 `arkova_`-prefixed +
+  4 `nessie_`-prefixed compliance-intelligence tools, NCE-19) for Claude/OpenAI/Cursor. Published
+  to npm as unscoped `arkova-mcp-server`, `bin` entry runs the stdio server via `npx`. This is
+  the **local/stdio** MCP server — the **hosted** MCP endpoint is `edge.arkova.ai`
+  (`services/edge/`), a completely separate implementation with its own tool set; do not confuse
+  the two or assume a fix to one reaches the other.

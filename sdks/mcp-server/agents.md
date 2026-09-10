@@ -181,3 +181,16 @@ Tests: `describe('503 disabled-capability disclosure (all 6 handlers)')` — a c
 asserting the canonical phrase plus that handler's server detail, with the fallback chain exercised
 end to end (`message` only, `error` only, `code` only, unparseable body), plus 404- and
 400-unchanged cases. Suite is 49 tests.
+
+## 2026-09-10 — historical suite status preserved
+
+The paragraph below records the superseded suite and CI state. The corrected
+2026-09-02 suite-status entry above governs: the package has six tools and its
+tests run in root CI. This historical paragraph is not a current failure report
+or an instruction to exempt SDK tests from CI.
+
+**This package's suite has 2 PRE-EXISTING failures on `main`**, unrelated to the above: `should define
+6 tools` (there are 10) and `should use arkova_ prefix on all tool names` (the `nessie_*` tools do
+not). They are not covered by root CI — the root `vitest.config.ts` `include` is `tests/**`, `src/**`,
+`scripts/**`, so nothing under `sdks/` runs there. Run `npx vitest run` in this directory. Do not
+"fix" the count assertion by trimming tools; the stale number is the bug.

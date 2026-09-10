@@ -33,7 +33,6 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { z } from 'zod';
 import {
   TOOL_DEFINITIONS,
-  SHA256_HEX_RE,
   handleVerifyCredential,
   verifyCredentialRecord,
   handleSearchCredentials,
@@ -808,7 +807,8 @@ interface AuthResult {
    * The RAW API key the caller presented (X-API-Key auth only; null for
    * OAuth Bearer). BUG-3a: forwarded edge→worker on the nessie_query proxy
    * so the worker enforces the caller's org-scoping + per-caller rate limits.
-   * NEVER logged. Not used for any edge-local authorization decision.
+   * NEVER logged. Only its null/non-null state selects the verified auth
+   * identity namespace; the raw value grants no edge-local permission.
    */
   callerApiKey: string | null;
 }
@@ -1096,11 +1096,13 @@ export async function handleMcpRequest(
   // `cfBotVerdict` is injected by Cloudflare bot-management when enabled.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cfBotVerdict = ((request as any).cf?.botManagement?.verdict as string | undefined) ?? null;
+  // Only validateBearer returns a null callerApiKey. A legacy API-key RPC
+  // response missing api_key_id must not select the Bearer-user namespace.
   const allowlistDecision = await enforceOriginAllowlist(env, auth.apiKeyId, {
     clientIp,
     origin: request.headers.get('Origin'),
     cfBotVerdict,
-  });
+  }, auth.callerApiKey === null ? auth.userId : null);
   if (!allowlistDecision.ok) {
     return allowlistDecisionToResponse(allowlistDecision, corsOrigin);
   }
