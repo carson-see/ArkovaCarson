@@ -147,6 +147,88 @@ PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requ
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-09-08 — SCRUM-4521: broadcast recovery was unbounded at every layer, so a 10k stuck cohort could never drain
+
+A batch-anchoring run on staging rig `txvvrxngyfnnqahujbld` (Cloud Run
+`arkova-worker-oldest-worker-0905-staging`, worker source
+`19abd51339cd69ca289bf7fe0c7195f7746646ec`) was interrupted mid-flight by a
+SIGTERM on 2026-09-07, leaving **10,000** `anchors` rows `BROADCASTING` with a
+NULL `chain_tx_id` — precisely the cohort `broadcast-recovery.ts` exists to
+recover. It recovered none of them. `POST /jobs/recover-broadcasts` returned
+200 on every pass while the worker logged, at pino level 40:
+
+    "recover_stuck_broadcasts RPC failed — falling back to manual recovery"
+    error: { code: "57014", message: "canceling statement due to statement timeout" }
+
+The row count did not move across three passes over ~10 minutes, the rig's
+PostgREST started returning Cloudflare 520s under the load, and the rows had to
+be deleted by hand to stop the every-2-minute cron re-attempting it.
+
+Three independent unbounded layers, each of which alone was enough to stall it:
+
+1. **The RPC took no `LIMIT`.** `recover_stuck_broadcasts()` selected `FOR
+   UPDATE SKIP LOCKED` — which bounds *contention*, not *cardinality* — and
+   then locked, updated and returned every matching row in one statement. At
+   10k rows that always exceeded the function's own `SET statement_timeout =
+   '60s'`. Fixed by migration `0442`: `p_limit integer DEFAULT 500`, clamped
+   server-side to `[1, 2000]`, plus `ORDER BY updated_at ASC`.
+2. **Any RPC error fell through to the JS fan-out.** `manualRecovery` exists
+   for exactly one condition — "the RPC does not exist here" (schema-cache lag
+   after a deploy, a pre-0358 database). Routing a `57014` into it meant
+   SELECTing 10,000 rows and firing 10,000 individual PostgREST UPDATEs, 100
+   concurrently, at a database that was *already* timing out. That is what
+   produced the 520s. Fallback is now gated on `RPC_ABSENT_CODES`
+   (`PGRST202`/`PGRST203`/`PGRST205`/`42883`) plus a "function does not exist"
+   message match; every other RPC error aborts the invocation and logs at
+   `error`.
+3. **A stall was indistinguishable from an idle queue.** `manualRecovery`
+   returned `{recovered: 0}` for a fetch failure and an empty cohort alike, and
+   logged only when it recovered something — so the honest answer ("I read
+   nothing and changed nothing because the database is timing out") and "all
+   clear" were the same 200. Every pass now logs `{pass, fetched, eligible,
+   recovered}` unconditionally, a fetch failure logs at `error`, and the result
+   carries `passes` + `incomplete`. `routes/scheduled.ts` and
+   `routes/cron.ts` both report an incomplete run at `error` level.
+
+**This is a liveness bug, not a cosmetic one.** A stuck `BROADCASTING` cohort
+head-of-line blocks batch anchoring: `batch_insert_anchors` keeps returning the
+same oldest-first records, `partitionRecordAnchors` buckets the `BROADCASTING`
+rows nowhere, and the drain reports "no new pending" with a 200 (the same
+mechanism the `revertClaimedAnchors` entry below documents). Until recovery
+clears the cohort, nothing anchors.
+
+`recoverStuckBroadcasts` now loops over bounded batches — `RECOVERY_BATCH_SIZE`
+500, `MAX_RECOVERY_PASSES` 40, `RECOVERY_TIME_BUDGET_MS` 90s — stopping when a
+pass comes back short (cohort drained), when a full batch yields zero updates
+(the database is refusing the writes, so re-reading it would spin), or when a
+budget is spent. The time budget matters because `scheduleInProcess` has **no
+reentrancy guard** and this cron fires every 2 minutes; an invocation has to
+finish inside its own interval rather than stacking. Hitting a cap defers work
+to the next tick, it never drops it, and the run is marked `incomplete`. The
+final summary log emits at most 50 anchor ids (`anchorSample` +
+`sampleTruncated`) — a 10k-id pino line was its own hazard during the incident.
+
+A zero-recovery manual pass now says *which* zero it is: `eligible: 0` means
+every fetched row was journal-protected (working as designed — that cohort is
+not the generic sweep's to take), while `eligible > 0` with `recovered: 0`
+means the database refused every UPDATE. Both stop the loop, but only the
+second is a fault, and an operator should not be sent after the wrong one.
+
+Tests: `broadcast-recovery.test.ts` (+10 cases — a 10,000-row cohort drained
+across repeated bounded calls, every single call bounded, the pass cap
+reporting `incomplete`, a `57014` proven NOT to fan out, `PGRST202` proven to
+still fall back, manual per-pass batching/ordering/logging, and a SELECT
+failure surfaced rather than laundered into `recovered: 0`); the query-builder
+mock now honours `.limit()`/`.order()` so a "bounded batch" assertion can
+actually fail. `src/tests/migrations/recover-stuck-broadcasts-bounded-batch.test.ts`
+(static structural assertions over `0442`, no DB). `recover-stuck-broadcasts-bounded.local.test.ts`
+(new, env-gated `RECOVER_STUCK_BROADCASTS_PG=1`, REAL local Postgres — proves
+the SQL actually stops at `p_limit`, that the clamp holds, that a NULL
+`p_limit` defaults rather than unbounds, that only the 2-arg signature
+survives, and that the post-DROP grants are still service_role-only). The
+real-Postgres file has NOT been run in this branch — no local stack was
+available — so `0442`'s SQL is proven statically and by the caller-side unit
+tests only until the soak rig runs it.
 ## 2026-09-01 — CRITICAL: `connector-artifact-drain.ts` materialized anchors from a STALE batch-read snapshot, bypassing the F1-heal (code review)
 
 `drainConnectorArtifactsForOrg`'s per-org candidate `SELECT` read full row content (`fingerprint_sha256`, `metadata`, `anchor_id`, ...) into memory ONCE, then `claimRow` only returned a boolean, so `drainOneClaimedRow`/`defaultMaterializeAnchor` always minted the anchor from that ORIGINAL batch-read `row` object — never from what the claim's own CAS `UPDATE` actually matched. Attack: a forged inbound `connector_artifact` row wins the `enqueue_connector_artifact` `ON CONFLICT DO NOTHING` race (attacker-chosen `fingerprint_sha256`, `metadata._direction: 'inbound'`); the drain's batch `SELECT` captures the forged value; before THIS row's turn in the (sequentially-processed, up to `DRAIN_LIMIT_MAX`=200 rows) batch loop, `docusign-envelope-completed.ts`'s F1-heal (2026-08-31 entry below) correctly supersedes the row (`fingerprint_sha256 := verified`, strips `_direction`) because its guard is only `WHERE anchor_id IS NULL`; the drain then mints `anchors.fingerprint = <forged>` from the stale snapshot anyway. Net: `connector_artifact` shows the verified hash, but the ANCHOR — the thing that gets debited, submitted, and SECURED — carries the attacker's value, and can be mis-stamped `fingerprint_source: 'issuer_record_attestation'` (declared) instead of omitted (unclassified/measured), since the batch-read `metadata._direction` snapshot is also stale.
@@ -1759,6 +1841,11 @@ Full rationale, plus the separate and higher-severity `FETCH_TIME_SNAPSHOT` mis-
 anchors still emit on three public surfaces:
 `docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.
 
+## 2026-09-10 — PR #2693 independent recovery review
+
+The client-side manual fallback is retired. Five negative controls reproduced resets after a txid or journal was recorded, a zero-row CAS counted as recovered, short failed batches reported complete, and malformed RPC success reported as an empty queue. All recovery now requires the bounded 0442 SQL RPC; absence, permission failures and unknown replies defer with incomplete=true, and only validated unique RPC rows count as acknowledged progress. A process-local invocation guard prevents overlapping cron work; the 90-second budget begins before journal reconciliation and aborts subsequent RPC transport. The guard remains held if the existing journal interface is slow, so it does not claim that interface is cancellable. Migration 0442 was verified read-only in production with exact body, sole two-argument signature and service-only ACL; no migration rewrite is required. Real SQL fixtures retain metadata/txid/journal coverage for the removed fallback’s former responsibilities.
+
+- 2026-09-10 complete-schema follow-up: `broadcast-recovery.postgres.local.test.ts` runs the actual caller against real SQL behind a transport seam. It proves 10,000 stale rows drain in 21 requests, mixed SUBMITTED/BROADCASTING metadata survives, protected cohorts remain intact, and a committed reply loss leads to one later claim. Migration 0449 corrects old-claim JSON grouping and materializes the bounded cohort. These loopback-only tests require an exclusively owned complete Supabase fixture and must run with file parallelism disabled. No Bitcoin provider is contacted by this suite.
 ## 2026-09-10 — PR #2570 current-main integration review
 
 The current main merge preserves both the atomic connector publication and uncertain-debit recovery changes, alongside PR #2565 signer backfill and PR #2695 timestamp semantics. The only manual conflict was this documentation file; both complete entries were retained. Migration 0445 is unchanged. Targeted default-adapter, connector, signer and route tests qualify the combined source; production migration and deployment remain separate release prerequisites.

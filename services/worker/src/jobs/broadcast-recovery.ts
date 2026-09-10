@@ -1,57 +1,81 @@
 /**
- * Broadcast Recovery Job (RACE-1, extended by F-3 / migration 0379)
+ * Recover stale BROADCASTING/SUBMITTED anchors through the bounded SQL RPC.
+ * Migrations 0442/0449 preserve the null-txid, deleted-row and durable journal guards
+ * under row locks. Recovery eligibility belongs in that transaction.
  *
- * Recovers anchors stuck in BROADCASTING state due to worker crashes, AND
- * (F-3, docs/staging/SOAK-FINDINGS-2026-08.md) anchors left SUBMITTED with a
- * NULL chain_tx_id — the shape a broadcast attempt produces if it fails
- * between the status write and the txid write. Before migration 0379 that
- * second shape had no recovery path at all: no scheduled job's WHERE clause
- * ever selected it. Proven live during the 72h soak (fixture
- * `5eed0000-...-c1` sat unrecovered for days).
- *
- * Durable journal recovery runs first. Only unjournaled stale claims may enter
- * the generic reset; PENDING and HELD journal cohorts are excluded atomically
- * by migration 0358 (extended to the SUBMITTED branch by 0379) and by the
- * manual compatibility fallback below.
- *
- * Constitution refs:
- *   - 1.4: Treasury keys never logged
- *   - 1.9: Chain lookup is read-only and tri-state; no recovery rebroadcast
+ * The former manual fallback read journal protection once and then reset rows
+ * with only an id/status CAS. A newly persisted txid or journal could therefore
+ * be overwritten, and zero-row updates were counted as recovered. Missing or
+ * unhealthy RPCs now defer work, leaving anchors intact for the next cron tick.
+ * Both migrations must be installed before deploying this worker.
  */
-
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { reconcileTxidJournals } from './batch-anchor.js';
 
-/** Default: anchors stuck in BROADCASTING for >5 minutes are considered stuck */
 const DEFAULT_STALE_MINUTES = 5;
+export const RECOVERY_BATCH_SIZE = 500;
+export const MAX_RECOVERY_PASSES = 40;
+export const RECOVERY_TIME_BUDGET_MS = 90_000;
+const LOG_ID_SAMPLE = 50;
 
+export interface RecoveredAnchor {
+  id: string;
+  fingerprint: string;
+  claimedBy: string;
+}
 export interface BroadcastRecoveryResult {
   recovered: number;
-  anchors: Array<{ id: string; fingerprint: string; claimedBy: string }>;
+  anchors: RecoveredAnchor[];
+  /** Bounded SQL requests actually attempted. */
+  passes: number;
+  /** Work may remain, including after an unknown transport outcome. */
+  incomplete: boolean;
+}
+interface RecoveryRow {
+  anchor_id: string;
+  anchor_fingerprint: string;
+  claimed_by: string | null;
+}
+function isRecoveryRow(value: unknown): value is RecoveryRow {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.anchor_id === 'string' && row.anchor_id.length > 0
+    && typeof row.anchor_fingerprint === 'string' && row.anchor_fingerprint.length > 0
+    && (row.claimed_by === null || typeof row.claimed_by === 'string');
+}
+function deferred(): BroadcastRecoveryResult {
+  return { recovered: 0, anchors: [], passes: 0, incomplete: true };
 }
 
-/**
- * Recover anchors stuck in BROADCASTING state, and (F-3, migration 0379)
- * anchors stuck SUBMITTED with a NULL chain_tx_id.
- *
- * Calls the recover_stuck_broadcasts() RPC which atomically:
- * 1. Finds BROADCASTING or SUBMITTED anchors older than stale threshold with
- *    no chain_tx_id (a SUBMITTED anchor that already carries a real
- *    chain_tx_id is never touched — the broadcast happened; resetting it
- *    would double-spend treasury sats on the next drain)
- * 2. Resets them to PENDING with recovery metadata
- * 3. Returns the recovered anchors for logging
- */
+// A slow journal request cannot be cancelled through its current interface.
+// Hold this guard until it settles, so the two-minute in-process cron cannot
+// stack work. Other worker instances remain protected by SQL row locking.
+let running = false;
 export async function recoverStuckBroadcasts(
   staleMinutes = DEFAULT_STALE_MINUTES,
 ): Promise<BroadcastRecoveryResult> {
-  // SCRUM-2692: exact txid ADOPT/REVERT/HOLD always precedes the generic
-  // stale-claim RPC. The RPC itself repeats HELD protection transactionally.
+  if (running) {
+    logger.warn('Broadcast recovery already running — deferring this invocation');
+    return deferred();
+  }
+  running = true;
+  const deadline = Date.now() + RECOVERY_TIME_BUDGET_MS;
+  try {
+    return await runRecovery(staleMinutes, deadline);
+  } catch (error) {
+    logger.error({ error }, 'Broadcast recovery initialization failed — deferring generic recovery');
+    return deferred();
+  } finally {
+    running = false;
+  }
+}
+
+async function runRecovery(staleMinutes: number, deadline: number): Promise<BroadcastRecoveryResult> {
   const journal = await reconcileTxidJournals();
   if (!journal.protectionLoaded) {
     logger.error('Txid journal protection unavailable — refusing generic stale recovery');
-    return { recovered: 0, anchors: [] };
+    return deferred();
   }
   if (journal.scanned > 0) {
     logger.info(
@@ -60,183 +84,76 @@ export async function recoverStuckBroadcasts(
     );
   }
 
-  const { data, error } = await db.rpc('recover_stuck_broadcasts', {
-    p_stale_minutes: staleMinutes,
-  });
+  const anchors: RecoveredAnchor[] = [];
+  const recoveredIds = new Set<string>();
+  let passes = 0;
+  let incomplete = false;
+  let drained = false;
+  while (passes < MAX_RECOVERY_PASSES) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      incomplete = true;
+      logger.warn(
+        { passes, recovered: anchors.length, incomplete: true, budgetMs: RECOVERY_TIME_BUDGET_MS },
+        'Stuck-broadcast recovery hit its time budget — the next cron tick continues',
+      );
+      break;
+    }
 
-  if (error) {
-    // Fallback: if RPC doesn't exist yet, do manual recovery
-    logger.warn({ error }, 'recover_stuck_broadcasts RPC failed — falling back to manual recovery');
-    return manualRecovery(staleMinutes);
-  }
-
-  if (!data || !Array.isArray(data) || data.length === 0) {
-    return { recovered: 0, anchors: [] };
-  }
-
-  const recovered = data.map((row: { anchor_id: string; anchor_fingerprint: string; claimed_by: string }) => ({
-    id: row.anchor_id,
-    fingerprint: row.anchor_fingerprint,
-    claimedBy: row.claimed_by ?? 'unknown',
-  }));
-
-  // The RPC's public row shape is deliberately unchanged by migration 0379
-  // (no per-row previous-status column — see the migration header), so a
-  // BROADCASTING/SUBMITTED breakdown isn't available here without an extra
-  // query; each recovered row's `anchors.metadata->>'_recovered_from_status'`
-  // carries that provenance for post-hoc investigation.
-  logger.warn(
-    { count: recovered.length, anchors: recovered.map((a: { id: string }) => a.id) },
-    'Recovered stuck BROADCASTING/SUBMITTED anchors → PENDING',
-  );
-
-  return { recovered: recovered.length, anchors: recovered };
-}
-
-/**
- * Manual fallback recovery when RPC is not available.
- *
- * F-3 (migration 0379): claims BOTH the BROADCASTING branch (RACE-1) and the
- * SUBMITTED-with-NULL-chain_tx_id branch, mirroring the RPC exactly — a row
- * that already carries a real chain_tx_id is never touched regardless of
- * status, and each row's `_recovery_reason` / compare-and-set filter tracks
- * its OWN previous status (a mixed BROADCASTING+SUBMITTED result set must
- * never cross-tag or cross-filter between the two).
- *
- * SCRUM-1296: Uses chunked bulk updates instead of per-row UPDATE calls.
- * Each anchor needs unique metadata (previous_claimed_by differs), so we
- * group by claimedBy and bulk-update each group with a single .in() call.
- * For the common case (all claimed by the same worker), this collapses
- * N updates into 1.
- */
-async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryResult> {
-  const threshold = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
-  const protectedAnchorIds = await loadProtectedJournalAnchorIds();
-  if (!protectedAnchorIds) {
-    logger.error('journal protection scan failed — refusing manual stale recovery');
-    return { recovered: 0, anchors: [] };
-  }
-
-  const { data: stuck, error: fetchError } = await db
-    .from('anchors')
-    .select('id, fingerprint, status, metadata')
-    .in('status', ['BROADCASTING', 'SUBMITTED'])
-    .is('chain_tx_id', null)
-    .is('deleted_at', null)
-    .lt('updated_at', threshold)
-    .limit(10000);
-
-  if (fetchError || !stuck || stuck.length === 0) {
-    return { recovered: 0, anchors: [] };
-  }
-
-  const recoveredAt = new Date().toISOString();
-  const allAnchors = stuck.filter((anchor) => !protectedAnchorIds.has(anchor.id)).map((anchor) => {
-    const meta = (anchor.metadata as Record<string, unknown>) ?? {};
-    const claimedBy = (meta._claimed_by as string) ?? 'unknown';
-    const cleanMeta = { ...meta };
-    delete cleanMeta._claimed_by;
-    delete cleanMeta._claimed_at;
-    const previousStatus = anchor.status as 'BROADCASTING' | 'SUBMITTED';
-    return { id: anchor.id, fingerprint: anchor.fingerprint, claimedBy, cleanMeta, previousStatus };
-  });
-
-  // SCRUM-1296: Chunked bulk update — process in batches of 100
-  // Each anchor gets its own metadata preserved (cleanMeta) plus recovery fields.
-  const CHUNK_SIZE = 100;
-  const recovered: Array<{ id: string; fingerprint: string; claimedBy: string }> = [];
-
-  for (let i = 0; i < allAnchors.length; i += CHUNK_SIZE) {
-    const chunk = allAnchors.slice(i, i + CHUNK_SIZE);
-
-    // Per-anchor update to preserve existing metadata — each anchor may
-    // have different business-critical fields in metadata that must survive.
-    // The compare-and-set `.eq('status', anchor.previousStatus)` guards
-    // against a concurrent transition landing between the SELECT above and
-    // this UPDATE (e.g. a worker legitimately finishing the broadcast in the
-    // interim) — exactly the same race the RPC's FOR UPDATE SKIP LOCKED
-    // closes atomically; this JS fallback only ever runs when the RPC itself
-    // is unavailable.
-    const results = await Promise.allSettled(
-      chunk.map((anchor) =>
-        db
-          .from('anchors')
-          .update({
-            status: 'PENDING',
-            metadata: {
-              ...anchor.cleanMeta,
-              _recovery_reason:
-                anchor.previousStatus === 'BROADCASTING' ? 'stuck_broadcasting' : 'stuck_submitted_null_txid',
-              _recovered_at: recoveredAt,
-              _recovered_from_status: anchor.previousStatus,
-              _previous_claimed_by: anchor.claimedBy,
-            },
-          })
-          .eq('id', anchor.id)
-          .eq('status', anchor.previousStatus),
-      ),
-    );
-
-    for (let j = 0; j < results.length; j++) {
-      const result = results[j];
-      const anchor = chunk[j];
-      if (result.status === 'fulfilled' && !result.value.error) {
-        recovered.push({ id: anchor.id, fingerprint: anchor.fingerprint, claimedBy: anchor.claimedBy });
-      } else {
-        const err = result.status === 'rejected' ? result.reason : result.value.error;
-        logger.error({ error: err, anchorId: anchor.id }, 'Recovery update failed for anchor');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), remainingMs);
+    passes++;
+    try {
+      const { data, error } = await db.rpc('recover_stuck_broadcasts', {
+        p_stale_minutes: staleMinutes,
+        p_limit: RECOVERY_BATCH_SIZE,
+      }).abortSignal(controller.signal);
+      if (error) {
+        // Absence, permission failures and transport failures all defer. A
+        // transport failure may follow a committed reset; the next SQL call
+        // re-evaluates current status and cannot reset the same claim twice.
+        logger.error({ error, pass: passes, recovered: anchors.length },
+          'recover_stuck_broadcasts RPC failed — deferring recovery without client-side writes');
+        incomplete = true;
+        break;
       }
-    }
-  }
-
-  if (recovered.length > 0) {
-    const recoveredIds = new Set(recovered.map((a) => a.id));
-    const fromBroadcasting = allAnchors.filter(
-      (a) => a.previousStatus === 'BROADCASTING' && recoveredIds.has(a.id),
-    ).length;
-    const fromSubmitted = recovered.length - fromBroadcasting;
-    logger.warn(
-      { count: recovered.length, fromBroadcasting, fromSubmitted, anchors: recovered.map((a) => a.id) },
-      'Manually recovered stuck BROADCASTING/SUBMITTED anchors → PENDING',
-    );
-  }
-
-  return { recovered: recovered.length, anchors: recovered };
-}
-
-/**
- * Manual fallback protection for the narrow window where the SQL RPC is
- * unavailable. A missing journal table means a pre-0358 deployment and is
- * compatible with the old fallback; every other read failure is ambiguous and
- * therefore blocks recovery.
- */
-async function loadProtectedJournalAnchorIds(): Promise<Set<string> | null> {
-  try {
-    const { data, error } = await db
-      .from('anchor_txid_journal')
-      .select('anchor_ids')
-      .in('recovery_status', ['PENDING', 'HELD'])
-      .limit(1000);
-    if (error) {
-      const code = (error as { code?: string }).code;
-      const message = String((error as { message?: string }).message ?? '').toLowerCase();
-      if (code === '42P01' || code === 'PGRST205' || message.includes('anchor_txid_journal') && message.includes('not found')) {
-        return new Set();
+      if (!Array.isArray(data) || data.length > RECOVERY_BATCH_SIZE || !data.every(isRecoveryRow)
+        || new Set(data.map((row) => row.anchor_id)).size !== data.length
+        || data.some((row) => recoveredIds.has(row.anchor_id))) {
+        logger.error({ pass: passes, recovered: anchors.length },
+          'recover_stuck_broadcasts returned an invalid reply — recovery outcome is unknown');
+        incomplete = true;
+        break;
       }
-      logger.error({ error }, 'Txid journal protection scan failed');
-      return null;
+      for (const row of data) {
+        recoveredIds.add(row.anchor_id);
+        anchors.push({ id: row.anchor_id, fingerprint: row.anchor_fingerprint, claimedBy: row.claimed_by ?? 'unknown' });
+      }
+      logger.info({ pass: passes, recovered: data.length, totalRecovered: anchors.length },
+        'Stuck-broadcast recovery pass complete');
+      if (data.length < RECOVERY_BATCH_SIZE) {
+        drained = true;
+        break;
+      }
+    } catch (error) {
+      logger.error({ error, pass: passes, recovered: anchors.length },
+        'recover_stuck_broadcasts request threw — preserving acknowledged recovery progress');
+      incomplete = true;
+      break;
+    } finally {
+      clearTimeout(timeout);
     }
-    if ((data ?? []).length >= 1000) {
-      logger.error('Txid journal protection scan reached its result cap');
-      return null;
-    }
-    const ids = new Set<string>();
-    for (const row of data ?? []) {
-      for (const id of row.anchor_ids ?? []) ids.add(id);
-    }
-    return ids;
-  } catch (error) {
-    logger.error({ error }, 'Txid journal protection scan failed');
-    return null;
   }
+  if (!drained && !incomplete && passes >= MAX_RECOVERY_PASSES) {
+    incomplete = true;
+    logger.warn({ passes, recovered: anchors.length, incomplete: true, maxPasses: MAX_RECOVERY_PASSES },
+      'Stuck-broadcast recovery hit its pass budget — the next cron tick continues');
+  }
+  if (anchors.length > 0) {
+    logger.warn({ count: anchors.length, passes, incomplete,
+      anchorSample: anchors.slice(0, LOG_ID_SAMPLE).map((anchor) => anchor.id),
+      sampleTruncated: anchors.length > LOG_ID_SAMPLE },
+    'Recovered stuck BROADCASTING/SUBMITTED anchors → PENDING');
+  }
+  return { recovered: anchors.length, anchors, passes, incomplete };
 }
