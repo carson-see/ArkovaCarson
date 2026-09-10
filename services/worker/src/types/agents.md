@@ -2,6 +2,15 @@
 
 Shared TypeScript type definitions for the worker service.
 
+## 2026-08-30 — org_integrations.webhook_id (manual patch, not a live regen)
+
+Migration `0426` (file-only, unapplied) adds `public.org_integrations.webhook_id text`; hand-patched
+into `database.types.ts` here and in `src/types/` so `services/worker/src/api/v1/webhooks/adobe-sign.ts`
+`findIntegration()` — which has queried this column since it was written, against a column that
+never existed anywhere (prod included) — can drop its `(db as any)` cast once this lands. Same
+manual-patch caveat as the `0405` note below: regenerate with `npm run gen:types` once `0426` reaches
+a project this can generate against.
+
 ## 2026-08-10 — organization_field_policies (manual patch, not a live regen)
 
 Migration `0405` (file-only, unapplied) adds `public.organization_field_policies`; hand-patched into

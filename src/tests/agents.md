@@ -113,6 +113,45 @@ Comment lines are stripped before asserting on SQL (`code()` helper) — every
 `-- ROLLBACK:` header quotes the old body, so a naive substring match on the raw
 file finds the defect in its own rollback note.
 
+## 2026-08-23 — credit fail-closed content guard (SCRUM-2538 / SCRUM-3502)
+
+`scrum-2538-check-unified-credits-fail-closed.test.ts` guards migration `0420`,
+which flips `check_unified_credits` from fail-OPEN (a missing `unified_credits`
+row returned `50, 0, 50, true`) to fail-CLOSED.
+
+Two things it does that are worth copying:
+
+1. **It asserts the DEFECT against the baseline, not only the fix against the
+   migration.** If someone "fixes" the squashed baseline in place instead of
+   writing a compensating migration (§1.2 forbids that), the guard fails and
+   says so rather than silently passing because both halves now agree.
+
+2. **It runs the REAL `secdef-function-grants` linter over the new file**
+   (`findViolations`, with the production `DELIBERATELY_PUBLIC` /
+   `DELIBERATELY_AUTHENTICATED` sets) instead of regex-matching for a REVOKE.
+   `0420` does `CREATE OR REPLACE` on two SECURITY DEFINER billing RPCs, which
+   re-triggers `ALTER DEFAULT PRIVILEGES` and would re-open both to `anon` over
+   PostgREST; a presence-only check passes on a revoke written in the wrong
+   place, and the linter checks position.
+
+Same comment-stripping convention as the data-integrity cluster above — the
+`sqlOnly()` helper drops `--` lines before asserting, because the `-- ROLLBACK:`
+header quotes the old fail-open body verbatim and a naive substring match finds
+the defect inside its own rollback note.
+
+`routineBody()` anchors on `CREATE OR REPLACE FUNCTION`, not the bare function
+name: the name also appears in the REVOKE/GRANT statements that follow the
+definition, and `lastIndexOf` on the name lands on one of those, which has no
+`AS $$` body. That mistake fails loudly here; in a laxer helper it would slice
+the wrong text and assert nothing.
+## 2026-08-23 SCRUM-3529 — the projection contract test now pins `sub_type`
+
+Two assertions added to `public-anchor-pii-projection.contract.test.ts`:
+
+- **`projects sub_type from the CANONICAL COLUMN, value-gated`** — asserts the latest redefiner emits a `sub_type` key, reads it from `a.sub_type` (and explicitly NOT from `metadata->>'sub_type'`), routes it through `public_free_text_or_null`, and keeps it out of `structural_keys`.
+- **`keeps sub_type out of the academic suppression set, matching verify.ts`** — pins the SQL and TS sides of that decision together, so neither surface can be changed alone.
+
+The lesson worth keeping: this regression (migration `0355` dropping `sub_type` from the projection's metadata allow-list, silently disabling the SCRUM-952 "Other" fallback) survived for months **because every existing test asserted the `formatCredentialSubType` helper or the component props, never the RENDERED label**. Helper-level coverage cannot see a value that never reaches the browser. The end-to-end pin is `src/components/verification/PublicVerification.subtype.test.tsx`, which mounts the real `CredentialRenderer` and asserts visible text — prefer that shape for anything user-visible on the public verify page.
 ## 2026-09-05 — FERPA verification suppression contract
 
 The verify API description is emitted only when both `!isAcademicRecord` and `!suppressDirectory` hold. The public-projection contract now requires that conjunction; its previous exact single-predicate pattern rejected the stricter implementation. Removing either predicate fails the contract (mutation-checked). The real verify response suite separately covers opted-out CLE and missing credential types. This is a test repair, not a change to public response behavior.
@@ -120,3 +159,8 @@ The verify API description is emitted only when both `!isAcademicRecord` and `!s
 ## PR #2572 — public organization aggregate classification
 
 The FERPA contract explicitly classifies `get_public_org_profile` as counts grouped by the already-published `credential_type` residual. It does not claim opt-out suppression or anonymity of small aggregates. The reviewed comment-stripped function definition is pinned; added fields, predicates, joins or calls require renewed behavior review. Function extraction honors named dollar delimiters and stops before later RPCs; wildcard anchor reads remain classified. The real anon-role SQL proof is `docs/staging/hakichain-suborgs-2026-09/verify-0429-aggregate-residual.sql`; a planted filename leak must fail it.
+
+
+## 2026-09-05 — PR #2440 subtype opt-out release review
+
+Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.

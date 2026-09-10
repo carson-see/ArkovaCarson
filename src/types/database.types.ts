@@ -4030,6 +4030,7 @@ export type Database = {
           token_secret_name: string | null
           updated_at: string
           watch_renewal_failure_count: number
+          webhook_id: string | null
         }
         Insert: {
           account_id?: string | null
@@ -4055,6 +4056,7 @@ export type Database = {
           token_secret_name?: string | null
           updated_at?: string
           watch_renewal_failure_count?: number
+          webhook_id?: string | null
         }
         Update: {
           account_id?: string | null
@@ -4080,6 +4082,7 @@ export type Database = {
           token_secret_name?: string | null
           updated_at?: string
           watch_renewal_failure_count?: number
+          webhook_id?: string | null
         }
         Relationships: [
           {
