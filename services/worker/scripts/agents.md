@@ -43,6 +43,9 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 - Tests must mock LLM and Stripe calls — no real API calls in test runs.
 - Budget guardrails (`--limit N`, `--dry-run`) are mandatory on scripts that spend provider budget.
 
+## PR #2442 concurrency verification
+
+`check-credit-rollover-race.py` creates and removes its own network-isolated PostgreSQL 17 container. It executes the exact 0420 and 0434 check function bodies with a controlled two-session lock interleaving: the old function erases a committed debit, while 0434 preserves it. This verifies the SQL algorithm; it does not replace full Supabase staging evidence.
 ## PR #2476 rollout replay regression
 
 `check-docusign-nonce-rollout.py` uses a disposable network-isolated PostgreSQL container. It verifies legacy-row replay denial, both orders of concurrent old/new writers across different session timezones, same-account deduplication, and acceptance for distinct known accounts. `--baseline` reproduces the replay gap in 0424 alone. No application database is touched.
