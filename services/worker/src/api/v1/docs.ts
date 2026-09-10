@@ -181,6 +181,8 @@ export const openApiSpec: Record<string, any> = {
                     block_timestamp: { type: 'string', format: 'date-time', nullable: true },
                     batch_id: { type: 'string', nullable: true },
                     verified: { type: 'boolean', description: 'Recomputed locally from the proof path — never trusted from stored anchor status.' },
+                    verdict: { type: 'string', enum: ['valid', 'invalid', 'unverifiable'], description: 'R3: the same computation as `verified`, as three states. `invalid` means a check RAN and FAILED (an alarm; equivalent to verified=false). `unverifiable` means a check could not be completed — the duplicate-node structural guard was not exercised, either because the record carries no merkle_index/leaf_count or because the stored branch length does not match the tree its leaf_count describes — and is NOT an alarm. `valid` and `unverifiable` partition the old verified=true bucket; `verified` is unchanged and not deprecated.' },
+                    verdict_note: { type: 'string', description: 'The measured / asserted / NOT-asserted statement for `verdict` (Constitution §1.5). Always accompanies `verdict`.' },
                     proof_bundle: { type: 'object', nullable: true, additionalProperties: true, description: 'PROOF-05: self-contained bundle (block header, OP_RETURN payload, schema version, and — R1 — the tx_inclusion_branch + tx_block_index that let a verifier confirm transaction inclusion in the block locally) when the confirmation layer has been populated; null otherwise. The two R1 fields are additive and nullable (no schema-version bump) and are null on records populated before migration 0427.' },
                   },
                 },
@@ -190,7 +192,23 @@ export const openApiSpec: Record<string, any> = {
           '400': { $ref: '#/components/responses/BadRequest' },
           '404': { description: 'Record not found, or no Merkle proof available (not batch-anchored)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
-          '503': { description: 'Signed-format requested but signing is not configured, or the proof is in an indeterminate state', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '500': {
+            description:
+              'Stored proof data is malformed, OR the proof is batch-linked but its exact leaf_count could not be determined (fail-closed: the CVE-2012-2459 structural guard cannot honestly run, so the request is not downgraded to a weaker verdict). Only the leaf_count body carries `verdict`.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    error: { type: 'string' },
+                    verdict: { type: 'string', enum: ['unverifiable'], description: 'R3: present ONLY on the indeterminate-leaf_count body, where a verification was attempted and could not be completed. Absent on the malformed-proof-data body (that fails during extraction, before any verification), and absent on 400/404/503. Consumers MUST fall back to `error` / the HTTP status when it is absent.' },
+                    verdict_note: { type: 'string', description: 'The measured / asserted / NOT-asserted statement for `verdict` (Constitution §1.5). Present exactly when `verdict` is.' },
+                  },
+                },
+              },
+            },
+          },
+          '503': { description: 'Signed-format requested but signing is not configured', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
     },
