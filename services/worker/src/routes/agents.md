@@ -206,6 +206,13 @@ Body params are all validated positive-int / string-array or dropped — an out-
 - Test note: `cron.test.ts` now mocks `../middleware/flagRegistry.js` and adds `dispatchWebhookEvent` to the `../webhooks/delivery.js` mock. `flagRegistry` is reached from exactly one cron route, so the module-level mock cannot perturb any other route.
 - **DI-736 / SCRUM-3475 (2026-08-23) — `/check-credential-expiry` gates on `await flagRegistry.getFlagLive('ENABLE_EXPIRY_ALERTS')`, not `getFlag()`.** `getFlag()` is a boot-time snapshot: flipping the `switchboard_flags` row had no effect until the worker restarted. `getFlagLive` re-reads the row on a 60s TTL. The test mock supplies BOTH `getFlag` and `getFlagLive` so a regression back to the snapshot fails a test instead of silently reading stale state.
 
+## 2026-08-30 — R1: the confirmation-proof cron comment was asserting a stale watermark
+
+`POST /populate-confirmation-proofs` is unchanged, but its idempotency comment
+claimed "the populated `block_header` is the watermark". That stopped being true
+with migration `0427`: the watermark is now a row whose bitcoin-tree columns are
+ALL populated. The route is still mutex-free and still idempotent — the reason
+just has one more column in it. See `../jobs/agents.md`.
 ## SCRUM-4035 — pending OAuth identity
 
 `email-confirmation.ts` provides status/send/complete; `email-confirmation-runtime.ts` wires
