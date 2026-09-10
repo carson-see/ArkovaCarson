@@ -2,6 +2,11 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-09-10",
+      "author": "CTO session — founder backlog drain",
+      "note": "ADDED 0441 (0441_fingerprint_lookup_bpchar_cast, PR #2694) and 0442 (0442_scrum4521_recover_stuck_broadcasts_bounded_batch, PR #2693) immediately ahead of applying both to prod vzwyaatejekddvltxyye. The exemption must precede the apply because the prod-apply hook blocks otherwise, and must remain after it because the SCRUM-2500 orphan audit blocks every migration-touching PR on a prod ledger row with no matching .sql. Also records 0425: applied to prod 2026-09-10 via CREATE INDEX CONCURRENTLY through a NON-transactional session, because apply_migration wraps in a transaction and CONCURRENTLY cannot run inside one (SQLSTATE 25001). The index idx_anchors_reorg_scan was verified indisvalid AND indisready (26 MB) and its ledger row was written by hand, since that path writes none. This corrects the 2026-08-30 entry, which asserted 0425 was already in the prod ledger when it was not. REMOVE each prefix when its owning PR merges and lands the .sql on main."
+    },
+    {
       "date": "2026-09-09",
       "author": "CTO session — batch 2 prod applies",
       "note": "ADDED 0421, 0422, 0433 (PR #2440) and 0439 (PR #2571) immediately ahead of applying each to prod vzwyaatejekddvltxyye. The exemption must precede the apply because .claude/hooks/check-prod-migration-apply.sh blocks otherwise, and must remain after it because the SCRUM-2500 orphan audit blocks every migration-touching PR on a prod ledger row with no matching .sql. §1.2 verified per file: 0421 and 0433 contain no DDL at all (public-projection function replacements only, lock_timeout present); 0422 and 0439 carry hot-table DDL guarded by SET LOCAL lock_timeout='5s' — 0422's non-CONCURRENT unique index on organizations is preceded by it, and 0422 wraps in an explicit transaction because a bare SET LOCAL outside one raises WARNING 25P01 and silently no-ops while still passing the CI grep. Applied one at a time with prod /health checked between each, ledger reconciled to the numeric prefix, and list_migrations confirmed before moving on. If any apply fails, its prefix is removed again in the same session rather than left as a false exemption. REMOVE each when its owning PR merges and lands the .sql on main."
@@ -211,6 +216,8 @@
     "0434",
     "0435",
     "0438",
-    "0439"
+    "0439",
+    "0441",
+    "0442"
   ]
 }
