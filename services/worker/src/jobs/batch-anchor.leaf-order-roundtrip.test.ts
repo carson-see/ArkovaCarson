@@ -72,7 +72,9 @@ vi.mock('../utils/orgCredits.js', () => ({
   deductOrgCredit: vi.fn(async () => ({ allowed: true, reason: 'feature_disabled', balance: null })),
 }));
 vi.mock('../utils/anchorProofs.js', () => ({ upsertAnchorProofs: mockUpsertAnchorProofs }));
-vi.mock('../middleware/flagRegistry.js', () => ({ flagRegistry: { getFlag: vi.fn(() => true) } }));
+vi.mock('../middleware/flagRegistry.js', () => ({
+  flagRegistry: { getFlag: vi.fn(() => true), getFlagLive: vi.fn(async () => true) },
+}));
 
 vi.mock('../utils/db.js', async () => {
   const { grantedRunLeaseTable } = await import('./__tests__/__testHelpers.js');

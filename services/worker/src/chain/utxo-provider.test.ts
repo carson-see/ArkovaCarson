@@ -290,6 +290,74 @@ describe('createUtxoProvider', () => {
       );
     });
   });
+
+  /**
+   * SCRUM-3439 (§1.4): GetBlock carries its credential in the URL PATH — prod
+   * `BITCOIN_RPC_URL` is `https://go.getblock.io/<ACCESS_TOKEN>` — so the
+   * construction log must never carry the raw URL. PR #1320 memoized the
+   * provider so this line runs ONCE per process; once is still a live
+   * credential written to Cloud Logging on every cold start, which is exactly
+   * what §1.4 ("never hardcode secrets … never logged") forbids.
+   *
+   * The origin is deliberately kept: it is the whole correlation value of the
+   * line (which endpoint did this process dial?), and `sanitizeRpcUrlForError`
+   * provably drops path, query and userinfo. The field is named `rpcOrigin`,
+   * not `rpcUrl`, because `rpcUrl` is now a logger redact path — a log line
+   * carrying a field called `rpcUrl` is always a mistake and is dropped
+   * wholesale (see utils/logger.ts).
+   */
+  describe('construction log must not leak the RPC credential (SCRUM-3439)', () => {
+    const TOKEN = 'a1b2c3d4-super-secret-getblock-access-token';
+    const TOKEN_URL = `https://go.getblock.io/${TOKEN}`;
+
+    beforeEach(() => { vi.mocked(logger.info).mockClear(); });
+
+    /** Everything the factory handed the logger, as one searchable string. */
+    function logged(): string {
+      return JSON.stringify(vi.mocked(logger.info).mock.calls);
+    }
+
+    it('drops the path token when creating the RPC provider', () => {
+      createUtxoProvider({ type: 'rpc', rpcUrl: TOKEN_URL });
+      expect(logged()).not.toContain(TOKEN);
+      expect(logged()).toContain('https://go.getblock.io');
+    });
+
+    it('drops the path token when creating the GetBlock hybrid provider', () => {
+      createUtxoProvider({ type: 'getblock', rpcUrl: TOKEN_URL, network: 'mainnet' });
+      expect(logged()).not.toContain(TOKEN);
+      expect(logged()).toContain('https://go.getblock.io');
+    });
+
+    it('drops userinfo and query credentials as well as path tokens', () => {
+      createUtxoProvider({
+        type: 'rpc',
+        rpcUrl: 'https://user:hunter2@node.example:8332/wallet/w1?apikey=zzz',
+      });
+      const payload = logged();
+      expect(payload).not.toContain('hunter2');
+      expect(payload).not.toContain('apikey');
+      expect(payload).not.toContain('wallet/w1');
+      expect(payload).toContain('https://node.example:8332');
+    });
+
+    it('never emits a field literally named `rpcUrl` (it is a redact path)', () => {
+      createUtxoProvider({ type: 'rpc', rpcUrl: TOKEN_URL });
+      createUtxoProvider({ type: 'getblock', rpcUrl: TOKEN_URL, network: 'mainnet' });
+      for (const call of vi.mocked(logger.info).mock.calls) {
+        // pino's `info` is overloaded, so `call[0]` widens to a union; every
+        // call in this block passes a merge object, hence the `unknown` hop.
+        const payload = call[0] as unknown as Record<string, unknown>;
+        expect(Object.keys(payload)).not.toContain('rpcUrl');
+        expect(Object.keys(payload)).toContain('rpcOrigin');
+      }
+    });
+
+    it('still logs the public mempool base URL in full (it carries no credential)', () => {
+      createUtxoProvider({ type: 'getblock', rpcUrl: TOKEN_URL, network: 'mainnet' });
+      expect(logged()).toContain('mempool.space');
+    });
+  });
 });
 
 describe('HttpError', () => {
