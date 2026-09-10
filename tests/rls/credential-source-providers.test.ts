@@ -44,9 +44,17 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
   let adminClient: TypedClient;
   let betaAdminClient: TypedClient;
   let userClient: TypedClient;
-  let arkovaAdminUserId: string;
-  let betaAdminUserId: string;
-  let memberUserId: string;
+
+  // Fixture identities are the PINNED seed IDs (same pattern as p7.test.ts /
+  // rls-extended.test.ts), never derived from auth.getUser(): supabase-js
+  // signOut() defaults to scope "global", so whenever ANOTHER suite's afterAll
+  // signed a shared demo user out first, a mid-run getUser() here failed
+  // ("Auth session missing!"), the `?? ''` fallback poisoned these IDs to '',
+  // and every seed/CHECK insert below died with 22P02 — the cross-file
+  // full-parallel flake tracked as SCRUM-3618 / SCRUM-3577.
+  const arkovaAdminUserId = DEMO_CREDENTIALS.adminId;
+  const betaAdminUserId = DEMO_CREDENTIALS.betaAdminId;
+  const memberUserId = DEMO_CREDENTIALS.userId;
 
   beforeAll(async () => {
     serviceClient = createServiceClient();
@@ -54,14 +62,13 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
     betaAdminClient = await withUser(DEMO_CREDENTIALS.betaAdminEmail, 'ORG_ADMIN');
     userClient = await withIndividualUser();
 
-    const { data: arkovaAdminProfile } = await adminClient.auth.getUser();
-    arkovaAdminUserId = arkovaAdminProfile.user?.id ?? '';
-
-    const { data: betaAdminProfile } = await betaAdminClient.auth.getUser();
-    betaAdminUserId = betaAdminProfile.user?.id ?? '';
-
-    const { data: memberProfile } = await userClient.auth.getUser();
-    memberUserId = memberProfile.user?.id ?? '';
+    // Idempotent, file-scoped setup: clear leftovers of a crashed prior run.
+    // Every row this file seeds is tagged with ROW_TAG_PREFIX, so this deletes
+    // only our own fixtures.
+    await serviceClient
+      .from('member_integrations')
+      .delete()
+      .like('account_id', `${ROW_TAG_PREFIX}%`);
   });
 
   afterAll(async () => {
@@ -71,9 +78,11 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
       .delete()
       .like('account_id', `${ROW_TAG_PREFIX}%`);
 
-    await adminClient.auth.signOut();
-    await betaAdminClient.auth.signOut();
-    await userClient.auth.signOut();
+    // Local scope only: a default (global) signOut revokes EVERY session of
+    // the shared demo user, breaking suites still running in other workers.
+    await adminClient.auth.signOut({ scope: 'local' });
+    await betaAdminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
   });
 
   describe('CHECK constraint widening', () => {
@@ -152,22 +161,30 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
 
   describe('RLS policies extend to new providers', () => {
     beforeAll(async () => {
-      // Seed a beta-org credly row to test cross-org isolation
-      await serviceClient.from('member_integrations').insert({
+      // Seed a beta-org credly row to test cross-org isolation.
+      // Seeds THROW on failure — silently missing fixture rows turn the read
+      // assertions below into count flakes instead of a clear fixture error.
+      const { error: betaSeedError } = await serviceClient.from('member_integrations').insert({
         user_id: betaAdminUserId,
         org_id: BETA_ORG_ID,
         provider: 'credly',
         account_id: `${ROW_TAG_PREFIX}credly-beta`,
         account_label: 'RLS Test Credly Beta',
       });
+      if (betaSeedError) {
+        throw new Error(`fixture: beta credly row insert failed — ${betaSeedError.message}`);
+      }
 
-      await serviceClient.from('member_integrations').insert({
+      const { error: memberSeedError } = await serviceClient.from('member_integrations').insert({
         user_id: memberUserId,
         org_id: ARKOVA_ORG_ID,
         provider: 'credly',
         account_id: `${ROW_TAG_PREFIX}credly-member-own`,
         account_label: 'RLS Test Credly Individual',
       });
+      if (memberSeedError) {
+        throw new Error(`fixture: member credly row insert failed — ${memberSeedError.message}`);
+      }
     });
 
     it('member can SELECT own credly row', async () => {

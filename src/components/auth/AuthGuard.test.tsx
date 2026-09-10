@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { AuthGuard } from './AuthGuard';
 
 const toastInfo = vi.fn();
@@ -25,12 +25,36 @@ vi.mock('sonner', () => ({
   toast: { info: (msg: string) => toastInfo(msg) },
 }));
 
-const authState: { user: { id: string } | null; loading: boolean } = {
+const authState: { user: { id: string } | null; loading: boolean; session?: { access_token: string } | null } = {
   user: null,
   loading: false,
 };
 vi.mock('../../hooks/useAuth', () => ({
   useAuth: () => authState,
+}));
+
+// AuthGuard also runs the SCRUM-3167 MFA gate on every render (unconditional
+// hook calls). `useMfaEnrollmentRequirement` calls the real `useProfile()`,
+// which THROWS outside `<ProfileProvider>` — this file tests the pre-existing
+// toast-suppression behavior only, so the MFA hooks are mocked to their
+// steady-state ("nothing to do") shape rather than wrapping every render in a
+// provider. `AuthGuard.mfaGate.test.tsx` is the dedicated coverage for the
+// MFA branching itself.
+vi.mock('../../hooks/useMfaAssurance', () => ({
+  useMfaAssurance: () => ({
+    status: 'satisfied',
+    hasVerifiedFactor: false,
+    markVerified: vi.fn(),
+    markBypassed: vi.fn(),
+  }),
+}));
+vi.mock('../../hooks/useMfaEnrollmentRequirement', () => ({
+  useMfaEnrollmentRequirement: () => ({
+    loading: false,
+    mfaRequired: false,
+    mfaGraceActive: false,
+    enforceFromIso: '2026-09-21T00:00:00Z',
+  }),
 }));
 
 // Neutralize Navigate + useLocation — we're testing the effect, not router plumbing.
@@ -48,9 +72,16 @@ describe('AuthGuard', () => {
     toastInfo.mockClear();
     authState.user = null;
     authState.loading = false;
+    authState.session = null;
     sessionStorage.clear();
   });
 
+  it('does not mount protected content for a provider-confirmed but Arkova-pending user', () => {
+    authState.user = { id: 'pending-user' };
+    authState.session = { access_token: `h.${btoa(JSON.stringify({ role: 'arkova_email_pending' }))}.s` };
+    render(<AuthGuard><div>private</div></AuthGuard>);
+    expect(screen.queryByText('private')).not.toBeInTheDocument();
+  });
   it('shows the redirect toast for unauthorized access when no prior session and no sign-out flag', () => {
     render(<AuthGuard><div>private</div></AuthGuard>);
     expect(toastInfo).toHaveBeenCalledTimes(1);

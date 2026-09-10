@@ -89,14 +89,10 @@ export const AnchorInsertPayload = z
     filename: z.string().min(1).max(255),
     credential_type: z.literal('CONTRACT_POSTSIGNING'),
     metadata: z.record(z.string(), z.unknown()),
-    // docusign-bilateral-2026-08 (R19 CHECK enum, migration 0376): omitted
-    // (undefined) for every pre-existing connector path — those are all
-    // server-FETCHED bytes, and 0376 never classified connector-fetch anchors
-    // at all (NULL = "unclassified", the correct answer for a class this
-    // migration doesn't measure). Only the NEW inbound declared-hash branch of
-    // `defaultMaterializeAnchor` sets this, to 'issuer_record_attestation' —
-    // never 'document_bytes' from this file (no fetch ever happens here).
-    fingerprint_source: z.enum(['document_bytes', 'issuer_record_attestation']).optional(),
+    // Both connector paths materialize here. Outbound fingerprints were
+    // measured upstream from fetched bytes; inbound fingerprints are declared.
+    // Require an explicit evidence class on every newly materialized row.
+    fingerprint_source: z.enum(['document_bytes', 'issuer_record_attestation']),
   })
   .strict();
 
@@ -442,14 +438,11 @@ export async function defaultMaterializeAnchor(
       connector_artifact_id: row.id,
       external_ref: row.external_ref,
     },
-    // R19 (migration 0376): 'issuer_record_attestation' ONLY for the inbound
-    // declared-hash branch — this fingerprint was never measured from bytes
-    // Arkova fetched (§1.5). Every other connector-drained anchor OMITS this
-    // field (undefined, not 'document_bytes' — this file never fetches bytes
-    // itself either; §1.6A fetching happens upstream in
-    // docusign-envelope-completed.ts, which this materializer has no
-    // visibility into, so it must not assert a class it didn't measure).
-    ...(isInboundDeclaredHash ? { fingerprint_source: 'issuer_record_attestation' as const } : {}),
+    // The service-authored direction selects the evidence class; a declared
+    // inbound fingerprint must never be represented as measured document bytes.
+    fingerprint_source: isInboundDeclaredHash
+      ? 'issuer_record_attestation' as const
+      : 'document_bytes' as const,
   };
 
   // Validate the persisted row before insert (§1.2). Parse failures throw into
@@ -1405,8 +1398,10 @@ export async function defaultListDrainableOrgIds(
 /**
  * Cron entrypoint (QUEUE-06). Cloud Scheduler → `POST /jobs/drain-connector-artifacts`.
  *
- * In-process node-cron is dormant under Cloud Run CPU throttling (proven by the
- * PROOF-03 soak), so prod drives this via HTTP. No-ops (`skipped:true`) when the
+ * Prod drives this via HTTP because Cloud Scheduler is the trigger with retries
+ * and an attempt deadline; the in-process registration in routes/scheduled.ts is
+ * a backup that also fires on every warm prod instance (SCRUM-3384), which the
+ * per-row compare-and-set claim makes safe. No-ops (`skipped:true`) when the
  * flag is off. Per-org drains are isolated: one org throwing alerts (scope=cycle)
  * and the remaining orgs still drain — no silent drop.
  */

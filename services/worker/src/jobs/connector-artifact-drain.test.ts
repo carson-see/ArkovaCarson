@@ -1331,7 +1331,7 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
     }));
   });
 
-  it('OMITS fingerprint_source (undefined, not "document_bytes") for a normal outbound/fetched connector row', async () => {
+  it('classifies a normal outbound/fetched connector row as document_bytes', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({
       insertResult: { data: { id: 'anchor-outbound-1', public_id: 'ARK-OUTBOUND-1' }, error: null },
@@ -1345,10 +1345,10 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
 
     expect(insertSpy).toHaveBeenCalledTimes(1);
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect('fingerprint_source' in payload).toBe(false);
+    expect(payload.fingerprint_source).toBe('document_bytes');
   });
 
-  it('OMITS fingerprint_source for a non-inbound _direction value (never guesses toward the class)', async () => {
+  it('classifies the explicit outbound direction as document_bytes', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({
       insertResult: { data: { id: 'anchor-outbound-2', public_id: 'ARK-OUTBOUND-2' }, error: null },
@@ -1361,6 +1361,6 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
     );
 
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect('fingerprint_source' in payload).toBe(false);
+    expect(payload.fingerprint_source).toBe('document_bytes');
   });
 });

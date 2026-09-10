@@ -1,0 +1,33 @@
+# THROWAWAY retro-soak config for the 2026-09-07 edge catch-up T2 window.
+# NOT committed to any PR branch. Never deployed to a route.
+#   - workers_dev = true, NO [[routes]]  -> cannot hijack edge.arkova.ai
+#   - its OWN KV namespaces               -> never the prod ids a8a78436…/5ace0a24…
+#   - points at the standing shared staging rig fizyjojbebyalirtjjht
+# Teardown: npx wrangler delete --name arkova-edge-retro-0907
+
+name = "arkova-edge-retro-0907"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+workers_dev = true
+
+[ai]
+binding = "ARKOVA_AI"
+
+[[kv_namespaces]]
+binding = "MCP_RATE_LIMIT_KV"
+id = "1fd8e46dca01412ea099c0b9be86b531"
+
+[[kv_namespaces]]
+binding = "MCP_ORIGIN_ALLOWLIST_KV"
+id = "67fdac2426a5412c864fee4e10480fd3"
+
+[vars]
+ENABLE_AI_FALLBACK = "false"
+CF_AI_MODEL = "@cf/nvidia/nemotron"
+ENABLE_X402_FACILITATOR = "false"
+EDGE_REQUIRE_MCP_SIGNING = "true"
+SUPABASE_URL = "https://fizyjojbebyalirtjjht.supabase.co"
+ALLOWED_ORIGINS = "https://retro-soak.invalid"
+# ENABLE_NESSIE_QUERY intentionally UNSET — Nessie stays OFF (founder directive).
+# MCP_ENABLE_ANCHOR_DOCUMENT intentionally UNSET — soak is read-only.
+# WORKER_BASE_URL intentionally UNSET — no proxying to the prod worker.

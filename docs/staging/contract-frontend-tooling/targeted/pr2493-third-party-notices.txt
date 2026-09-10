@@ -1,0 +1,45 @@
+### PR #2493 targeted check — /legal/third-party-notices sharp copyleft text + generator↔pinned parity
+captured_at: 2026-08-30T22:09:55Z
+
+== (a) regenerate from the real dependency tree and diff against the COMMITTED artifact ==
+[generate-third-party-notices] Wrote 224 general + 16 copyleft entries to /private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft/src/data/thirdPartyNotices.generated.json
+-- exit=0 --
+RESULT: DRIFT — generator output differs from the committed artifact:
+2c2
+<   "generatedAt": "2026-08-30T14:25:59.339Z",
+---
+>   "generatedAt": "2026-08-30T22:09:56.345Z",
+
+== (a2) every pinned entry is present in the generated output (name@version) ==
+pinned entries: 16   generated copyleft entries: 16
+missing from generated: NONE
+sharp-family entries in generated output: 14
+  - @img/sharp-libvips-darwin-arm64@1.2.4 license=LGPL-3.0-or-later copyright=MISSING licenseText=MISSING
+  - @img/sharp-libvips-darwin-x64@1.2.4 license=LGPL-3.0-or-later copyright=MISSING licenseText=MISSING
+  - @img/sharp-libvips-linux-arm@1.2.4 license=LGPL-3.0-or-later copyright=MISSING licenseText=MISSING
+
+== (b) page-level tests: license text + copyright actually rendered ==
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:57:25). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft
+
+
+ Test Files  3 passed (3)
+      Tests  28 passed (28)
+   Start at  18:09:56
+   Duration  1.24s (transform 281ms, setup 212ms, import 368ms, tests 532ms, environment 1.29s)
+
+
+== (c) HONEST SCOPE NOTE on 'sharp license TEXT' ==
+The 14 @img/sharp-* copyleft entries do NOT ship a LICENSE file in their npm tarballs,
+so there is no verbatim text for the generator to embed. For those entries the page serves:
+  license: LGPL-3.0-or-later (and Apache-2.0 AND LGPL-3.0-or-later for the @img/sharp-win32-* / wasm32 variants)
+  licenseTextNote: 'LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked.'
+  licenseTextUrls: https://www.gnu.org/licenses/lgpl-3.0.txt , https://www.gnu.org/licenses/gpl-3.0.txt
+Verbatim licenseText + copyright ARE served for the two copyleft entries that DO ship a LICENSE file:
+  jszip@3.10.1        licenseText 33751 chars, copyright 'Copyright (c) 2009-2016 Stuart Knightley, David Duponchel, ...'
+  libheif-js@1.19.8   licenseText 7632 chars
+This is what the PR implements and what its tests assert (see the 'keeps rendering license-text links
+for entries without inline text' case). Claiming verbatim sharp license text on the page would be false.

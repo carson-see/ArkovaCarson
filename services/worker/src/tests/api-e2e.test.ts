@@ -84,8 +84,14 @@ vi.mock('../middleware/featureGate.js', () => ({
 }));
 
 // Mock usage tracking — pass through
+// Pass-through, but stamps X-Quota-Used like the real middleware, so a route
+// mounted ABOVE usageTracking (deliberately uncharged) is distinguishable from
+// one that fell through to it.
 vi.mock('../middleware/usageTracking.js', () => ({
-  usageTracking: () => (_req: Request, _res: Response, next: NextFunction) => next(),
+  usageTracking: () => (_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Quota-Used', '1');
+    next();
+  },
   incrementUsage: vi.fn(),
 }));
 
@@ -118,9 +124,17 @@ vi.mock('../utils/upstashRateLimit.js', () => ({
   initUpstashRateLimiting: vi.fn(),
 }));
 
-// Mock rate limiting — use simple pass-through to avoid state issues in tests
+// Mock rate limiting — pass-through (avoids cross-test window state), but it
+// still stamps the §1.10 headers the real middleware sets on every admitted
+// request. Without them a route mounted ABOVE the limiter is indistinguishable
+// here from one mounted below it, and middleware-order regressions stay green.
 vi.mock('../utils/rateLimit.js', () => ({
-  rateLimit: () => (_req: Request, _res: Response, next: NextFunction) => next(),
+  rateLimit: () => (_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-RateLimit-Limit', '100');
+    res.setHeader('X-RateLimit-Remaining', '99');
+    res.setHeader('X-RateLimit-Reset', '0');
+    next();
+  },
   rateLimiters: {
     api: (_req: Request, _res: Response, next: NextFunction) => next(),
     stripeWebhook: (_req: Request, _res: Response, next: NextFunction) => next(),
@@ -980,6 +994,61 @@ describe('API E2E — Verification API', () => {
   // ════════════════════════════════════════════════════════════════════════
   // Rate Limit & API Headers
   // ════════════════════════════════════════════════════════════════════════
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Parked attestation verification (PR #2525) — position in the middleware chain
+  // ════════════════════════════════════════════════════════════════════════
+
+  describe('parked GET /verify/attestation/:attestationId', () => {
+    // The park is only correct if it sits BELOW rate limiting and ABOVE
+    // usage/quota. Nothing else in the suite exercises it through the real
+    // apiV1Router, so a re-order in router.ts would otherwise stay green while
+    // silently taking a public endpoint off its §1.10 budget.
+    it('answers the parked 404 without claiming a corpus was searched', async () => {
+      const res = await request(app)
+        .get('/api/v1/verify/attestation/ARK-ATT-PARKED001')
+        .set('X-API-Key', TEST_API_KEY);
+
+      expect(res.status).toBe(404);
+      expect(res.body.verified).toBe(false);
+      expect(JSON.stringify(res.body).toLowerCase()).not.toContain('not found');
+    });
+
+    it('still carries §1.10 rate-limit headers — the park must not sit above the limiter', async () => {
+      const res = await request(app)
+        .get('/api/v1/verify/attestation/ARK-ATT-PARKED002')
+        .set('X-API-Key', TEST_API_KEY);
+
+      expect(res.headers['x-ratelimit-limit']).toBeDefined();
+      expect(res.headers['x-ratelimit-remaining']).toBeDefined();
+      expect(res.headers['x-ratelimit-reset']).toBeDefined();
+    });
+
+    it('carries rate-limit headers for an anonymous caller too', async () => {
+      const res = await request(app).get('/api/v1/verify/attestation/ARK-ATT-PARKED003');
+
+      expect(res.status).toBe(404);
+      expect(res.headers['x-ratelimit-limit']).toBeDefined();
+    });
+
+    it('does not charge the caller monthly quota — the park must stay above usageTracking', async () => {
+      const res = await request(app)
+        .get('/api/v1/verify/attestation/ARK-ATT-PARKED004')
+        .set('X-API-Key', TEST_API_KEY);
+
+      expect(res.headers['x-quota-used']).toBeUndefined();
+      expect(res.headers['x-quota-limit']).toBeUndefined();
+    });
+
+    it('keeps the 400 routing hint for a malformed id', async () => {
+      const res = await request(app)
+        .get('/api/v1/verify/attestation/INVALID!!!')
+        .set('X-API-Key', TEST_API_KEY);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/ARK-ATT/);
+    });
+  });
 
   describe('API response headers', () => {
     it('includes Link header for API spec discoverability', async () => {

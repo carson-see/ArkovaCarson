@@ -1,0 +1,69 @@
+### PR #2491 + #2490 targeted checks — fetch-failure and invite-failure surfacing
+captured_at: 2026-08-30T22:10:48Z
+
+== #2491: forced fetch failures on records dashboards + compliance pickers ==
+  - `__dirname` (vitest.config.ts:57:25). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft
+
+(node:62907) Warning: `--localstorage-file` was provided without a valid path
+(Use `node --trace-warnings ...` to show where the warning was created)
+Not implemented: navigation to another Document
+
+ Test Files  6 passed (6)
+      Tests  23 passed (23)
+   Start at  18:10:48
+   Duration  1.89s (transform 932ms, setup 638ms, import 1.75s, tests 1.47s, environment 3.72s)
+
+
+== #2490: invite against a failing backend surfaces the failure ==
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:57:25). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /private/tmp/claude-502/-Volumes-Extreme-Arkova--legacy-home-Arkova-2026-05-15-arkova-mvpcopy-main/04e5e124-a2e9-4132-9f21-62a7762a3a3b/scratchpad/wt-cft
+
+
+ Test Files  2 passed (2)
+      Tests  12 passed (12)
+   Start at  18:10:50
+   Duration  1.13s (transform 209ms, setup 161ms, import 440ms, tests 379ms, environment 779ms)
+
+
+== RATCHET PROOF: revert ONLY the production components to origin/main (dca9edb401a98f05fee7447dfe068773c6705fbb), keep the PR's tests ==
+   (if the tests still pass on main's components, they prove nothing)
+
+-- #2491: components reverted to main --
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/hooks/useComplianceScore.test.tsx > useJurisdictionRules > exposes rules with a null error on a successful fetch
+AssertionError: expected undefined to be null
+ FAIL  src/hooks/useComplianceScore.test.tsx > useJurisdictionRules > sets error on a non-ok response instead of silently presenting an empty rule set
+AssertionError: the given combination of arguments (undefined and string) is invalid for this assertion. You can use an array, a map, an object, a set, a string, or a weakset instead of a string
+ FAIL  src/hooks/useComplianceScore.test.tsx > useJurisdictionRules > sets error when the fetch itself rejects (network failure)
+AssertionError: expected undefined to be 'Failed to fetch' // Object.is equality
+ FAIL  src/hooks/useComplianceScore.test.tsx > useJurisdictionRules > refetch() recovers: error clears and rules populate once the endpoint succeeds
+AssertionError: expected undefined to be 'Failed to fetch' // Object.is equality
+ FAIL  src/pages/ComplianceDashboardPage.rulesError.test.tsx > ComplianceDashboardPage jurisdiction-rules error surfacing > renders a retryable DataErrorBanner when the rules fetch failed, keeping the pickers mounted
+ FAIL  src/pages/ComplianceDashboardPage.rulesError.test.tsx > ComplianceDashboardPage jurisdiction-rules error surfacing > wires the banner Retry button to the hook refetch
+ FAIL  src/pages/DashboardPage.fetch-error.test.tsx > DashboardPage records fetch-error surfacing > renders the DataErrorBanner instead of the onboarding empty state when the anchors fetch fails
+ FAIL  src/pages/DashboardPage.fetch-error.test.tsx > DashboardPage records fetch-error surfacing > wires the banner Retry button to refreshAnchors
+ FAIL  src/pages/DashboardPage.fetch-error.test.tsx > DashboardPage records fetch-error surfacing > keeps stale records visible below the banner when a refetch fails
+ FAIL  src/components/vault/VaultDashboard.fetch-error.test.tsx > VaultDashboard records fetch-error surfacing > renders the DataErrorBanner instead of the onboarding empty state when the anchors fetch fails
+ FAIL  src/components/vault/VaultDashboard.fetch-error.test.tsx > VaultDashboard records fetch-error surfacing > wires the banner Retry button to refreshAnchors
+ FAIL  src/components/vault/VaultDashboard.fetch-error.test.tsx > VaultDashboard records fetch-error surfacing > keeps stale records visible below the banner when a refetch fails
+ Test Files  4 failed (4)
+      Tests  12 failed | 3 passed (15)
+
+-- #2490: components reverted to main --
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/pages/OrgProfilePage.test.tsx > OrgProfilePage — handleInvite result handling (SCRUM-3524) > returns true and refreshes invitations when inviteMember succeeds
+AssertionError: expected undefined to be true // Object.is equality
+ FAIL  src/pages/OrgProfilePage.test.tsx > OrgProfilePage — handleInvite result handling (SCRUM-3524) > returns false and does not refresh invitations when inviteMember fails
+AssertionError: expected undefined to be false // Object.is equality
+ FAIL  src/components/organization/InviteMemberModal.test.tsx > InviteMemberModal > should keep the modal open and show the inline Alert when onInvite reports failure
+    139|       expect(screen.getByText(TOAST.MEMBER_INVITE_FAILED)).toBeInTheDo…
+ Test Files  2 failed (2)
+      Tests  3 failed | 9 passed (12)
+
+-- worktree restored: 1 modified files --

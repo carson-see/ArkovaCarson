@@ -7,6 +7,7 @@ import {
   baseDriftImpactErrors,
   formatBaseDriftDiagnostics,
   check,
+  hasBaseDriftResidualRiskNote,
   extractDeclaredTier,
   findS33RuntimeImporters,
   findS33Lane1RuntimeImporters,
@@ -68,6 +69,73 @@ const credentialPersistenceWeakeningDiff = `@@ -28,8 +28,8 @@ jobs:
            fetch-depth: 0
 -          persist-credentials: false
 +          persist-credentials: true
+`;
+
+// PR #2692: an additive `restore-keys:` prefix fallback on the zk-artifact cache
+// step. The exact cache key embeds services/worker/package-lock.json, so every
+// worker dependency bump rotates it; without a fallback the rebuild re-downloads
+// powersOfTau28_hez_final_14.ptau, whose public hosts have 403'd since
+// 2026-09-02, and prod cannot be deployed at all. Note the step's `uses:` is NOT
+// its first line — it is the `- name:` form — which is why cache-step detection
+// cannot reuse the checkout regex.
+const cacheRestoreKeysDeployWorkerDiff = `@@ -145,6 +145,9 @@ jobs:
+       - name: Cache zk circuit artifacts
+         id: cache-zk-artifacts
+         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+         with:
+           path: services/worker/circuits/artifacts
+           key: zk-artifacts-circom2.1.9-lockhash
++          restore-keys: |
++            zk-artifacts-circom2.1.9-
+`;
+
+// The same added lines in a step that is NOT actions/cache. `restore-keys` is
+// only ever CI mechanics inside a cache step; anywhere else the gate has no
+// basis to reason about it, so it must stay T2.
+const restoreKeysOutsideCacheStepDiff = `@@ -60,6 +60,9 @@ jobs:
+       - name: Deploy to Cloud Run
+         uses: google-github-actions/deploy-cloudrun@v2
+         with:
+           service: arkova-worker
++          restore-keys: |
++            zk-artifacts-circom2.1.9-
+`;
+
+// Additive restore-keys AND a real runtime change in the same diff. Fail closed:
+// one prod-runtime line keeps the whole file T2 regardless of what rides along.
+const cacheRestoreKeysPlusRuntimeDiff = `@@ -145,6 +145,8 @@ jobs:
+       - name: Cache zk circuit artifacts
+         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+         with:
+           key: zk-artifacts-circom2.1.9-lockhash
++          restore-keys: |
++            zk-artifacts-circom2.1.9-
+@@ -190,7 +192,7 @@ jobs:
+           --set-env-vars \\
+-          ENABLE_AI_EXTRACTION=true \\
++          ENABLE_AI_EXTRACTION=false \\
+`;
+
+// REMOVING the fallback is the direction that breaks prod deploys. Never exempt.
+const cacheRestoreKeysRemovalDiff = `@@ -145,9 +145,7 @@ jobs:
+       - name: Cache zk circuit artifacts
+         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+         with:
+           key: zk-artifacts-circom2.1.9-lockhash
+-          restore-keys: |
+-            zk-artifacts-circom2.1.9-
+`;
+
+// `key:` decides what the cache IS, not whether a miss can fall back. Editing it
+// can silently change which artifacts a build consumes, so it stays T2.
+const cacheKeyChangeDiff = `@@ -145,7 +145,7 @@ jobs:
+       - name: Cache zk circuit artifacts
+         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+         with:
+-          key: zk-artifacts-circom2.1.9-lockhash
++          key: zk-artifacts-circom2.1.9-static
+           restore-keys: |
+             zk-artifacts-circom2.1.9-
 `;
 
 // A real runtime-config change in deploy-worker.yml: bumps --min-instances. This
@@ -182,6 +250,27 @@ describe('check-staging-evidence', () => {
 
     it('returns T1 for plain frontend file', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
+    });
+
+    it('returns T0 for the src/tests/rls/ test-helper subtree (SCRUM-3618)', () => {
+      // src/tests/rls/ is the canonical RLS test-helper module tree CLAUDE.md
+      // §1.7 itself names (`withUser()` / `withAuth()` / `cleanupClient()`).
+      // It is imported ONLY by *.test.ts files — verified no src/ runtime
+      // importer — so a change to it has no surface a soak could exercise.
+      // Without this, the tests-only SCRUM-3618 parallel-safety fix
+      // (tests/rls/** sweep + the shared sign-out helper) classified T1 via
+      // the frontend default: a 2 h soak of a file prod never reads.
+      expect(requiredTierFor(['src/tests/rls/helpers.ts']).tier).toBe('T0');
+      // The full SCRUM-3618 change-set shape stays T0 with the helper included.
+      expect(
+        requiredTierFor([
+          'src/tests/rls/agents.md',
+          'src/tests/rls/helpers.ts',
+          'tests/infra/rls-suite-parallel-safety.test.ts',
+          'tests/rls/docusign-integrations.test.ts',
+          'tests/rls/credential-source-providers.test.ts',
+        ]).tier,
+      ).toBe('T0');
     });
 
     it('returns T0 for the S0-E4 release-pipeline CI tooling scripts', () => {
@@ -1040,6 +1129,46 @@ describe('check-staging-evidence', () => {
 
     it('returns false for a mixed uses-bump + env-var change (fail-closed)', () => {
       expect(isDeployWorkerUsesOnlyBump(MIXED_DEPLOY_WORKER_DIFF)).toBe(false);
+    });
+
+    // ── additive cache `restore-keys:` fallback (PR #2692) ──
+    // Verified out of band before granting this carve-out: a PREFIX restore does
+    // not set `cache-hit`, so the install/build steps rerun and all four zk
+    // artifacts regenerate byte-identical to the reference build. The fallback
+    // carries only the SHA-256-pinned build INPUTS, which build.sh re-verifies.
+    it('returns true for an additive restore-keys block inside an actions/cache step', () => {
+      expect(isDeployWorkerUsesOnlyBump(cacheRestoreKeysDeployWorkerDiff)).toBe(true);
+    });
+
+    it('returns false for the same restore-keys lines outside a cache step', () => {
+      expect(isDeployWorkerUsesOnlyBump(restoreKeysOutsideCacheStepDiff)).toBe(false);
+    });
+
+    it('returns false when a runtime env change rides along with restore-keys', () => {
+      expect(isDeployWorkerUsesOnlyBump(cacheRestoreKeysPlusRuntimeDiff)).toBe(false);
+    });
+
+    it('returns false for REMOVING a restore-keys fallback', () => {
+      expect(isDeployWorkerUsesOnlyBump(cacheRestoreKeysRemovalDiff)).toBe(false);
+    });
+
+    it('returns false for a change to the cache key itself', () => {
+      expect(isDeployWorkerUsesOnlyBump(cacheKeyChangeDiff)).toBe(false);
+    });
+
+    // Why gitFileDiffProvider asks for --unified=20: with only 3 lines of
+    // context PR #2692's real hunk begins at `with:`/`path:`/`key:`, below its
+    // own `uses: actions/cache@…`, so the step is invisible. The parser must
+    // fail closed in that case rather than guess it is in a cache step.
+    it('returns false when the cache step start is not visible in the hunk', () => {
+      const truncated = `@@ -148,4 +148,6 @@ jobs:
+         with:
+           path: services/worker/circuits/artifacts
+           key: zk-artifacts-circom2.1.9-lockhash
++          restore-keys: |
++            zk-artifacts-circom2.1.9-
+`;
+      expect(isDeployWorkerUsesOnlyBump(truncated)).toBe(false);
     });
 
     it('returns false for an empty / unobtainable diff (fail-closed)', () => {
@@ -2416,6 +2545,7 @@ describe('check-staging-evidence', () => {
         const note = r.notes.join(' ');
         expect(note).toMatch(/SOAK GATE BYPASSED/);
         expect(note).toMatch(/founder directive 2026-08-01/i);
+        expect(note).toMatch(/founder directive\s+2026-09-09/i);
         expect(note).toMatch(/re-enable before the post-pentest consolidated soak/i);
         expect(note).toMatch(/SOAK_GATE_DISABLED/);
       });
@@ -2433,7 +2563,7 @@ describe('check-staging-evidence', () => {
         const r = check({
           ...failingArgs,
           soakGateDisabled: true,
-          nowMs: Date.parse('2026-08-16T00:00:01Z'),
+          nowMs: Date.parse('2026-09-12T00:00:01Z'),
         });
         expect(r.ok).toBe(false);
         expect(r.notes.join(' ')).toMatch(/bypass window closed/i);
@@ -2444,7 +2574,7 @@ describe('check-staging-evidence', () => {
         const r = check({
           ...failingArgs,
           soakGateDisabled: true,
-          nowMs: Date.parse('2026-08-15T23:59:59Z'),
+          nowMs: Date.parse('2026-09-11T23:59:59Z'),
         });
         expect(r.ok).toBe(true);
         expect(r.notes.join(' ')).toMatch(/SOAK GATE BYPASSED/);
@@ -2786,6 +2916,62 @@ describe('check-staging-evidence', () => {
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/clean_mirror/i);
+    });
+
+    // Tenth closure (2026-09-08): the artifact fields were anchored to the
+    // WHOLE value, so a bare `N/A` was rejected but `N/A — no worker image is
+    // built by this change` passed the T2 artifact guard. The prose after the
+    // token does not make a deploy auditable. The approver-class fields already
+    // had this leading-token treatment; the artifact fields did not.
+    const artifactBody = (revision: string): string => `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: ${revision}
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+- Human approver: Carson See
+`;
+
+    const runArtifactCheck = (revision: string) => check({
+      body: artifactBody(revision),
+      files: ['services/worker/src/api/v1/docusign.ts'],
+      headSha: '1234567890abcdef1234567890abcdef12345678',
+      baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+    });
+
+    it('rejects an artifact field whose value BEGINS with N/A and then explains', () => {
+      const r = runArtifactCheck('N/A — no worker image is built by this change');
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/not auditable evidence/i);
+    });
+
+    it('rejects a leading `none`/`not applicable` artifact value with trailing prose', () => {
+      for (const value of ['none, this PR ships no worker code', 'Not applicable: CI-only change']) {
+        const r = runArtifactCheck(value);
+        expect(r.ok, `\`${value}\` must not satisfy the artifact guard`).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/not auditable evidence/i);
+      }
+    });
+
+    it('still accepts a real revision that merely begins with those letters', () => {
+      // `-` is not a firing boundary, so a hyphenated identifier is safe.
+      const r = runArtifactCheck('none-of-the-above-00099-xyz');
+      expect(r.errors.join(' ')).not.toMatch(/not auditable evidence/i);
     });
 
     it('fails completed T2 evidence copied from an older PR head', () => {
@@ -3646,6 +3832,132 @@ describe('check-staging-evidence', () => {
 - Approved by: carson@arkova.io
 `;
       expect(hasResidualRiskException(body)).toEqual({ valid: true, missing: [] });
+    });
+
+    // Ninth closure (Batch-I stand-up for PR #2589, 2026-09-07): the seventh
+    // closure gave `none` / `n/a` a LEADING-token guard but left the
+    // incomplete-placeholder vocabulary whole-value anchored, so
+    // `Approved by: PENDING — Carson must decide.` and
+    // `Approved by: NOT YET APPROVED — requires Carson.` both GRANTED the
+    // exception while plainly stating no one had approved it. The same
+    // leading-token treatment now covers pending/tbd/tba/todo/wip/planned/
+    // placeholder/to-be-* and the `not yet <anything>` shape.
+    const INCOMPLETE_LEADING_APPROVERS = [
+      'PENDING — Carson must decide.',
+      'pending: Carson',
+      'NOT YET APPROVED — requires Carson.',
+      'Not yet — waiting on the CTO',
+      'not-yet-approved (Carson)',
+      'TBD (awaiting CTO)',
+      'tba: Carson',
+      'TODO — ask Carson',
+      'To-do: get Carson to sign',
+      'To be determined by the CTO',
+      'to be announced — CTO to confirm',
+      'To be filled in before merge',
+      'WIP — Carson to confirm',
+      'Work in progress; Carson reviewing',
+      'Planned: Carson',
+      'Placeholder — replace before merge',
+      'No one — not granted.',
+    ];
+    const REAL_APPROVERS = [
+      'Jean-Luc Picard',
+      'Carson See — approved 2026-09-07',
+      'Todorov, Georgi (CTO) — approved',
+      'Pendleton Ward, 2026-09-07',
+      'carson@arkova.io',
+    ];
+
+    it.each(INCOMPLETE_LEADING_APPROVERS)(
+      'returns invalid when Approved by leads with an incomplete marker: %s',
+      (approver) => {
+        const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 ledger rows
+- Impact on this PR: none
+- Reason not cleaned: other PRs hold active staging leases
+- Approved by: ${approver}
+`;
+        const result = hasResidualRiskException(body);
+        expect(result.valid).toBe(false);
+        expect(result.missing.join(' ')).toMatch(/Approved by/i);
+      },
+    );
+
+    it.each(REAL_APPROVERS)(
+      'still returns valid for a real approver whose name is not a leading marker: %s',
+      (approver) => {
+        const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 ledger rows
+- Impact on this PR: none
+- Reason not cleaned: other PRs hold active staging leases
+- Approved by: ${approver}
+`;
+        expect(hasResidualRiskException(body)).toEqual({ valid: true, missing: [] });
+      },
+    );
+
+    describe('hasBaseDriftResidualRiskNote shares the approver guard', () => {
+      const driftFile = 'services/worker/src/chain/client.ts';
+      const note = (approver: string) => `### Base-drift residual-risk note
+- Drift files: ${driftFile}
+- Risk assessment: the drifted surface shares no code path with the changed behavior this soak exercised.
+- Evidence still valid because: the soaked behavior does not invoke the drifted surface.
+- Approved by: ${approver}
+`;
+
+      it.each(INCOMPLETE_LEADING_APPROVERS)(
+        'returns invalid when Approved by leads with an incomplete marker: %s',
+        (approver) => {
+          const result = hasBaseDriftResidualRiskNote(note(approver), [driftFile]);
+          expect(result.valid).toBe(false);
+          expect(result.missing.join(' ')).toMatch(/Approved by/i);
+        },
+      );
+
+      it.each(REAL_APPROVERS)('still returns valid for a real approver: %s', (approver) => {
+        expect(hasBaseDriftResidualRiskNote(note(approver), [driftFile])).toEqual({
+          valid: true,
+          missing: [],
+        });
+      });
+    });
+
+    describe('validateHumanApproverField (via check, T1) shares the approver guard', () => {
+      const t1Body = (approver: string) => `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
+- Health/smoke result: current-head smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
+- CI/E2E green: green
+- Rollback plan: revert PR
+- Risk rationale: frontend copy-only change, no restricted surfaces
+- Human approver: ${approver}
+`;
+      const run = (approver: string) => check({
+        body: t1Body(approver),
+        files: ['src/components/Foo.tsx'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+      });
+
+      it.each(INCOMPLETE_LEADING_APPROVERS)(
+        'rejects a Human approver that leads with an incomplete marker: %s',
+        (approver) => {
+          const r = run(approver);
+          expect(r.ok).toBe(false);
+          expect(r.errors.join(' ')).toMatch(/Human approver:.*names no one/);
+        },
+      );
+
+      it.each(REAL_APPROVERS)('accepts a real Human approver: %s', (approver) => {
+        const r = run(approver);
+        expect(r.errors.filter((e) => /Human approver/.test(e))).toEqual([]);
+        expect(r.ok).toBe(true);
+      });
     });
   });
 

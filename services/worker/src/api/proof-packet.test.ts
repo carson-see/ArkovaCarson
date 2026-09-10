@@ -22,6 +22,7 @@ const executionsMaybeSingle = vi.fn();
 const ruleEventMaybeSingle = vi.fn();
 const ruleMaybeSingle = vi.fn();
 const anchorMaybeSingle = vi.fn();
+const anchorSelectColumns: string[] = [];
 // SCRUM-1593 AC4/AC5: supersede chain walk + parent walk.
 // Both query the `anchors` table with different `.eq('id'|'parent_anchor_id', ...)` filters.
 // We dispatch by inspecting the eq-call args to keep one mock per query type.
@@ -68,7 +69,7 @@ vi.mock('../utils/db.js', () => {
   // null)` filter so soft-deleted anchors don't surface in lineage / supersede
   // responses. Mock chain extended to support it.
   const anchorsChain = {
-    select: () => ({
+    select: (columns: string) => (anchorSelectColumns.push(columns), {
       eq: (_orgCol: string, _orgVal: string) => ({
         eq: (col: string, val: string) => {
           if (col === 'metadata->>external_file_id') {
@@ -205,6 +206,12 @@ beforeEach(() => {
       revocation_reason: null,
       parent_anchor_id: null,
       version_number: 1,
+      // Default = the realistic proof-packet case: the anchor is resolved via
+      // metadata->>external_file_id, a key the DECLARED-hash rules dispatcher
+      // sets. connector_source='docusign' but NO connector_artifact_id → a hash
+      // DocuSign declared, not one Arkova fetched. Per-test overrides below add
+      // connector_artifact_id to exercise the genuinely-fetched case.
+      metadata: { connector_source: 'docusign', external_file_id: 'env-123' },
     },
     error: null,
   });
@@ -254,12 +261,42 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
     expect(packet.actor.user_id).toBe(USER_ID);
   });
 
-  it('states the connector fetch-time fingerprint caveat on the anchor receipt (BUG-2026-08-13-010, §1.5/§1.6A)', async () => {
-    // Every packet is connector-execution-scoped by construction (the anchor is
-    // resolved via metadata->>external_file_id), so an anchored packet must
-    // carry the re-derivability statement: the fingerprint attests the exact
-    // bytes fetched from the connector at fetch time, NOT that re-fetching the
-    // source document reproduces it.
+  it('OMITS the connector fetch-time caveat for a DECLARED-hash packet anchor (BUG-2026-08-13-010, §1.5/§1.6A)', async () => {
+    // A packet anchor is resolved via metadata->>external_file_id — a key the
+    // DECLARED-hash rules dispatcher sets — so it is frequently a hash DocuSign
+    // declared, NOT one Arkova fetched. The default fixture is exactly that
+    // (connector_source='docusign', no connector_artifact_id). The fetch-time
+    // "Measured: Arkova computed…" caveat must NOT be asserted to an auditor here.
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    expect(ctx.status).toHaveBeenCalledWith(200);
+    const packet = ctx.body as { anchor_receipt: Record<string, unknown> };
+    expect('fingerprint_rederivability' in packet.anchor_receipt).toBe(false);
+    expect('fingerprint_rederivability_note' in packet.anchor_receipt).toBe(false);
+  });
+
+  it('states the connector fetch-time caveat ONLY for a genuinely server-FETCHED packet anchor (connector_artifact_id present)', async () => {
+    anchorMaybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'aid_main',
+        public_id: 'pid_acmemsa1',
+        status: 'SECURED',
+        fingerprint: 'sha256:abc',
+        bitcoin_tx_id: 'txid_abc',
+        block_height: 800001,
+        revoked_at: null,
+        revocation_reason: null,
+        parent_anchor_id: null,
+        version_number: 1,
+        // Drain-materialized (§1.6A fetch): connector_artifact_id is the proof.
+        metadata: {
+          connector_source: 'docusign',
+          external_file_id: 'env-123',
+          connector_artifact_id: 'cart_1',
+        },
+      },
+      error: null,
+    });
     const ctx = buildRes();
     await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
     expect(ctx.status).toHaveBeenCalledWith(200);
@@ -308,6 +345,7 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
         parent_anchor_id: null,
         version_number: 1,
         fingerprint_source: 'issuer_record_attestation',
+        metadata: { connector_source: 'docusign', connector_artifact_id: '11111111-1111-4111-8111-111111111111' },
       },
       error: null,
     });
@@ -351,6 +389,7 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
         parent_anchor_id: null,
         version_number: 1,
         fingerprint_source: 'document_bytes',
+        metadata: { connector_source: 'docusign', connector_artifact_id: '11111111-1111-4111-8111-111111111111' },
       },
       error: null,
     });
@@ -556,5 +595,23 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
     const packet = ctx.body as { lineage: { previous: unknown[] } };
     // Cycle guard — at most 2 unique entries (B, A) before the cycle is detected.
     expect(packet.lineage.previous.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('proof packet live schema and failure handling', () => {
+  it('maps actual chain columns into the existing receipt keys', async () => {
+    anchorSelectColumns.length = 0;
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    expect(anchorSelectColumns[0]).toContain('bitcoin_tx_id:chain_tx_id');
+    expect(anchorSelectColumns[0]).toContain('block_height:chain_block_height');
+    expect(ctx.body).toMatchObject({ anchor_receipt: { bitcoin_tx_id: 'txid_abc', block_height: 800001 } });
+  });
+  it('does not describe a failed anchor lookup as not anchored', async () => {
+    anchorMaybeSingle.mockResolvedValueOnce({ data: null, error: { code: '42703' } });
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    expect(ctx.status).toHaveBeenCalledWith(500);
+    expect(ctx.body).toEqual({ error: { code: 'anchor_lookup_failed' } });
   });
 });

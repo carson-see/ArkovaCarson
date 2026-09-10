@@ -7,10 +7,9 @@
  */
 
 import { Link } from 'react-router-dom';
-import { Terminal, Download, ArrowRight, HelpCircle } from 'lucide-react';
+import { Terminal, Package, ArrowRight, HelpCircle } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { INDEPENDENT_VERIFY_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
@@ -74,15 +73,35 @@ export function IndependentVerifyPage() {
           ))}
         </section>
 
-        {/* Download script */}
-        <section className="mb-16 text-center">
-          <Button variant="outline" size="lg" asChild>
-            <a href="/verify.sh" download>
-              <Download className="h-4 w-4 mr-2" />
-              {INDEPENDENT_VERIFY_LABELS.DOWNLOAD_SCRIPT}
-            </a>
-          </Button>
-          <p className="text-xs text-muted-foreground mt-2">Requires: bash, curl, shasum, jq</p>
+        {/* How to obtain the reference verifier.
+            This replaced a "Download Verification Script" button linking to
+            `/verify.sh` — a file that has never existed in this repository, so
+            the button 404'd for every reader who clicked it and step 3's
+            `./verify.sh …` command could not be run by anyone. The verifier we
+            actually ship is packages/verifier-cli (bin `arkova-verify`), and it
+            is NOT published to any package registry, so this block says to
+            build it from source rather than implying an install (§1.13 R-7). */}
+        <section className="mb-16">
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-primary/10 text-primary">
+                  <Package className="h-4 w-4" />
+                </div>
+                <CardTitle className="text-lg">{INDEPENDENT_VERIFY_LABELS.VERIFIER_TITLE}</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground mb-3">{INDEPENDENT_VERIFY_LABELS.VERIFIER_BODY}</p>
+              <div className="bg-[#1a1a2e] rounded-sm p-3 font-mono text-sm text-emerald-400 flex items-center gap-2 overflow-x-auto">
+                <Terminal className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <code>{INDEPENDENT_VERIFY_LABELS.VERIFIER_BUILD_CMD}</code>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                {INDEPENDENT_VERIFY_LABELS.VERIFIER_REQUIREMENTS}
+              </p>
+            </CardContent>
+          </Card>
         </section>
 
         {/* FAQ */}

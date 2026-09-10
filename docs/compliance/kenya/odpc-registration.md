@@ -110,7 +110,7 @@ All personal data is processed in the United States and the European Union (Supa
 Cross-reference: `../soc2-evidence.md`
 
 - SOC 2 Type II audit scheduled (see `../soc2-evidence.md`)
-- MFA enforced on all admin access (pending REG-05 for HIPAA-equivalent)
+- Multi-factor authentication (TOTP authenticator app) available to every account as an opt-in setting; enforcement for administrator roles is in progress under SCRUM-3167 and not yet in effect (pending REG-05 for HIPAA-equivalent)
 - Encryption: TLS 1.3 + AES-256 at rest
 - Access logging (audit events — see `../../confluence/04_audit_events.md`)
 - Annual penetration testing (last: 9 findings resolved, see project directive)
@@ -187,4 +187,4 @@ Payable via bank transfer to the National Bank of Kenya account specified on the
 
 ---
 
-_Last updated: 2026-04-11 | Status: DRAFT — awaiting Kenyan legal counsel engagement_
+_Last updated: 2026-09-03 | Status: DRAFT — awaiting Kenyan legal counsel engagement | MFA wording corrected to reflect production state (R-7 claims gate)_

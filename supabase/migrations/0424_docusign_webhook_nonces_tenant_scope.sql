@@ -26,18 +26,15 @@
 -- webhooks/docusign.ts, for both the outbound and inbound branches alike —
 -- this migration does not depend on the inbound classification logic itself.
 --
--- BACKWARD COMPAT / BACKFILL POLICY (§1.5 — never assert what cannot be
--- proven): existing nonce rows are NOT backfilled with a guessed account_id.
--- `account_id` is added NULLABLE; historical rows keep NULL. This is safe
--- because (a) a standard btree UNIQUE constraint treats NULL as DISTINCT from
--- every other value including other NULLs, so historical NULL-account_id rows
--- never collide with each other or with new rows under the new composite key
--- — they simply stop participating in replay-dedup, which is acceptable
--- because (b) docusign_webhook_nonces is swept after 14 days
--- (0316_sweep_webhook_nonces_rpc.sql) and the DocuSign HMAC freshness window
--- already rejects deliveries old enough for this to matter in practice. Going
--- forward every nonce write always supplies account_id (the code path never
--- omits it), so the NULL rows are a strictly shrinking, self-expiring set.
+-- BACKWARD COMPAT / BACKFILL POLICY: existing rows keep a NULL account_id;
+-- never guess their tenant. This composite constraint alone does NOT prevent
+-- a new account-scoped retry from bypassing a recent legacy nonce. Deploy
+-- migration 0435 with this migration: its compatibility guard preserves the
+-- original global semantics for legacy rows/writers while allowing distinct
+-- known accounts to use the same tuple. The 14-day expiry does not make the
+-- rollout gap safe; deliveries inside the HMAC freshness window still matter.
+-- New workers always supply account_id; old workers remain safe during a
+-- code rollback with both additive migrations retained.
 --
 -- Not a Constitution §1.2 hot table (organizations/anchors/profiles) — this
 -- table is small and swept every 14 days — but SET LOCAL lock_timeout is
@@ -45,15 +42,28 @@
 -- self (see task brief), and because it's free.
 --
 -- ROLLBACK:
+--   Preferred worker rollback: retain this additive column/constraint and
+--   migration 0435's legacy compatibility guard. Old workers omit account_id;
+--   0435 preserves their global replay semantics without deleting tenant rows.
+--   Never deduplicate live replay markers merely to recreate the old index.
+--   Exact pre-0424 schema rollback requires paused ingress and an EMPTY nonce
+--   table after natural expiry. The following refuses to discard any data:
 --   BEGIN;
 --   SET LOCAL lock_timeout = '5s';
+--   LOCK TABLE public.docusign_webhook_nonces IN ACCESS EXCLUSIVE MODE;
+--   DO $rollback$ BEGIN
+--     IF EXISTS (SELECT 1 FROM public.docusign_webhook_nonces) THEN
+--       RAISE EXCEPTION 'Nonce table is not empty; retain the compatible schema';
+--     END IF;
+--   END $rollback$;
+--   DROP TRIGGER IF EXISTS trg_docusign_nonce_legacy_rollout_guard ON public.docusign_webhook_nonces;
+--   DROP FUNCTION IF EXISTS public.enforce_docusign_nonce_legacy_rollout();
 --   ALTER TABLE public.docusign_webhook_nonces
 --     DROP CONSTRAINT IF EXISTS docusign_webhook_nonces_account_envelope_event_gen_key;
 --   ALTER TABLE public.docusign_webhook_nonces
 --     ADD CONSTRAINT docusign_webhook_nonces_envelope_id_event_id_generated_at_key
 --       UNIQUE (envelope_id, event_id, generated_at);
---   ALTER TABLE public.docusign_webhook_nonces
---     DROP COLUMN IF EXISTS account_id;
+--   ALTER TABLE public.docusign_webhook_nonces DROP COLUMN IF EXISTS account_id;
 --   COMMIT;
 
 BEGIN;

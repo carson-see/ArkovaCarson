@@ -19,10 +19,7 @@ import type { Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
-import {
-  connectorFingerprintRederivabilityFields,
-  FINGERPRINT_REDERIVABILITY,
-} from '../constants/connectorFingerprint.js';
+import { connectorFingerprintRederivabilityFieldsFor } from '../constants/connectorFingerprint.js';
 
 export const PROOF_PACKET_SCHEMA_VERSION = 1;
 const VERIFICATION_BASE_URL = process.env.PROOF_PACKET_VERIFY_BASE_URL ?? 'https://app.arkova.io/verify';
@@ -75,13 +72,9 @@ interface AnchorRow {
   revocation_reason: string | null;
   parent_anchor_id: string | null;
   version_number: number;
-  /**
-   * SCRUM-3818 (docusign-bilateral-2026-08): R19 fingerprint evidence class
-   * from `anchors.fingerprint_source` (migration 0376) — picks the honest
-   * `fingerprint_rederivability` class below. Optional so a lookup that
-   * genuinely didn't select it (none today, but defensive) degrades to the
-   * pre-existing FETCH_TIME_SNAPSHOT behavior rather than throwing.
-   */
+  // Needed to gate the fetch-time re-derivability caveat on POSITIVE server-fetch
+  // evidence (connector_artifact_id) rather than emitting it for every packet.
+  metadata: Record<string, unknown> | null;
   fingerprint_source?: string | null;
 }
 
@@ -157,7 +150,7 @@ async function loadAnchor(externalFileId: string | null, orgId: string): Promise
   const { data, error } = await (db as any)
     .from('anchors')
     .select(
-      'id, public_id, status, fingerprint, bitcoin_tx_id, block_height, revoked_at, revocation_reason, parent_anchor_id, version_number, fingerprint_source',
+      'id, public_id, status, fingerprint, bitcoin_tx_id:chain_tx_id, block_height:chain_block_height, revoked_at, revocation_reason, parent_anchor_id, version_number, fingerprint_source, metadata',
     )
     .eq('org_id', orgId)
     .eq('metadata->>external_file_id', externalFileId)
@@ -166,7 +159,7 @@ async function loadAnchor(externalFileId: string | null, orgId: string): Promise
     .maybeSingle();
   if (error) {
     logger.warn({ error, externalFileId }, 'proof-packet: anchor lookup failed');
-    return null;
+    throw new Error('anchor_lookup_failed');
   }
   return (data as AnchorRow | null) ?? null;
 }
@@ -299,7 +292,13 @@ export async function handleProofPacketExport(
 
   // Anchor lookup is best-effort: queued/unanchored executions return a
   // sentinel "not_anchored" status without breaking packet generation.
-  const anchor = await loadAnchor(ruleEvent?.external_file_id ?? null, orgId);
+  let anchor: AnchorRow | null;
+  try {
+    anchor = await loadAnchor(ruleEvent?.external_file_id ?? null, orgId);
+  } catch {
+    res.status(500).json({ error: { code: 'anchor_lookup_failed' } });
+    return;
+  }
 
   const verificationUri = anchor?.public_id
     ? `${VERIFICATION_BASE_URL}/${anchor.public_id}`
@@ -362,28 +361,10 @@ export async function handleProofPacketExport(
           bitcoin_tx_id: anchor.bitcoin_tx_id,
           block_height: anchor.block_height,
           verification_uri: verificationUri,
-          // BUG-2026-08-13-010 (§1.5/§1.6A): every packet anchor is
-          // connector-materialized BY CONSTRUCTION (resolved via
-          // metadata->>external_file_id), so the fingerprint attests the exact
-          // bytes fetched from the connector at fetch time — NOT that
-          // re-fetching the source document reproduces it (source systems may
-          // re-render per request). The auditor challenge this packet answers
-          // is exactly the flow where someone re-downloads from the source and
-          // compares — state the caveat where the fingerprint travels.
-          //
-          // SCRUM-3818 (docusign-bilateral-2026-08): that caveat (FETCH_TIME_
-          // SNAPSHOT) is the WRONG, stronger claim for an inbound declared-hash
-          // anchor (fingerprint_source='issuer_record_attestation', set only by
-          // the connector-artifact drain's inbound branch) — Arkova never
-          // fetched or hashed that document at all. Downgrade to
-          // DECLARED_UNVERIFIED exactly when that column says so; every other
-          // packet anchor (fingerprint_source absent or 'document_bytes') keeps
-          // the prior FETCH_TIME_SNAPSHOT behavior unchanged.
-          ...connectorFingerprintRederivabilityFields(
-            anchor.fingerprint_source === 'issuer_record_attestation'
-              ? FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED
-              : FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT,
-          ),
+          // Artifact IDs alone cannot establish measurement: inbound artifacts
+          // carry declared checksums. Preserve their weaker class; omit the
+          // pair for unclassified rules records with no fetch evidence.
+          ...connectorFingerprintRederivabilityFieldsFor(anchor.metadata, anchor.fingerprint_source),
         }
       : {
           public_id: null,
