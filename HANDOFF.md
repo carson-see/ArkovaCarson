@@ -59,6 +59,14 @@ The probe now names the endpoint, HTTP status, GoTrue code, server `msg` and the
 
 #2691 is a DRAFT: it is T2 by path (`src/components/auth/` — sensitive user-facing contract surface) on the frontend-targeted evidence path, and its `RM-approved targeted evidence` / approver / soak fields are human-owned.
 
+### 2026-09-10 — fingerprint lookup review and current release record (PR #2694)
+
+Migration 0441 casts the input parameter to bpchar so the fingerprint index can narrow public verification lookups. The immutable SQL preserves SECURED-only results, deletion guards, deterministic ordering and the existing public redaction function.
+
+Read-only production catalog verification confirms the executable function body and intended grants match 0441, and the numeric migration ledger contains 0441. The September8 pre-apply observation is superseded by this readback. [SCRUM-4542 acceptance criteria and release record](https://arkova.atlassian.net/wiki/spaces/A/pages/140902420) contains the review and deployment evidence; the related production defect remains SCRUM-4516.
+
+The complete committed schema exposed two test-fixture defects: a missing profiles row and an assumption that disabling sequential scans forces the fingerprint index. The corrected suite owns its organization, profile and background records and cleans them up. All eight real plan/behavior checks pass; exact0386 rollback reproduces three failures and exact0441 reapply restores all eight. No new completed48-hour soak is claimed. Current hosted checks and Mergify admission are tracked on the PR.
+
 
 ### 2026-09-08T02:20Z → 13:15Z — CTO session: #2655 merged with 0436 live, the whole queue un-conflicted, a Supabase control-plane outage took three windows
 
@@ -2498,4 +2506,9 @@ _Last refreshed: 2026-09-07 by Claude-Fable-5.1 gate-fix session (ninth approver
 
 _Last refreshed: 2026-09-08 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
 
+_Last refreshed: 2026-09-08 by Claude-Opus-5 MFA-E2E-flake session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-08 by Claude-Opus-5 fingerprint-timeout session — claims verified against prod EXPLAIN, a local Postgres 17.9 repro, and red/green test output._
 _Last refreshed: 2026-09-09 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-10 by Codex release review — claims verified against gcloud/MCP/CI output._
