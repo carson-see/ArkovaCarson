@@ -12,6 +12,8 @@
 -- REPLACE FUNCTION (retain its service-role-only grants), then reapply this file.
 -- Rolling back restores stale claim metadata. No stored row rewrite is needed.
 
+BEGIN;
+
 SET LOCAL lock_timeout = '5s';
 
 CREATE OR REPLACE FUNCTION public.recover_stuck_broadcasts(
@@ -80,3 +82,4 @@ GRANT EXECUTE ON FUNCTION public.recover_stuck_broadcasts(integer, integer) TO s
 
 NOTIFY pgrst, 'reload schema';
 
+COMMIT;
