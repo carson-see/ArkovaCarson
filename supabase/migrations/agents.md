@@ -1174,11 +1174,11 @@ trust this line.**
 
 | Prefix | File | Story | Applied to prod | Notes |
 |---|---|---|---|---|
-| `0443` | `0443_scrum4467_atomic_sub_org_cap.sql` | SCRUM-4467 | **no — local candidate only** | Serializes approved-child admission with a bounded parent-row write; preserves NULL default 20, zero and explicit overrides. Local concurrency, RLS, rollback and reapplication verified. |
 | `0444` | `0444_scrum4470_suborg_parent_authority_lock.sql` | SCRUM-4470 / SCRUM-4471 | **no — local candidate only** | Locks the child while reading parent authority in six credit/suspension mutation overloads and recognizes canonical profile administrators. Service-only ACLs retained; rollback reapplies 0432. |
 | `0446` | `0446_suborg_docusign_stop_authority.sql` | #2572 review follow-up | **no — local candidate only** | Atomic service-only DocuSign stop with current-parent row lock, canonical admin recheck, marker CAS and transactional audit. Local opposing lock orders, 5-second timeout, audit rollback, role/marker denial and literal rollback/reapplication verified. |
+| `0447` | `0447_scrum4467_atomic_sub_org_cap.sql` | SCRUM-4467 | **no — local candidate only** | Serializes approved-child admission with a bounded parent-row write; preserves NULL default 20, zero and explicit overrides. Local concurrency, RLS, rollback and reapplication verified. |
 
-Prefixes were reserved with the release coordinator on 2026-09-10. 0440–0442 retain existing ownership; 0445 is reserved for #2570. Recheck main and all open PR filenames before publication. These local proofs do not replace candidate-baseline migration replay, generated-type verification, staging evidence or approved application.
+The unpublished cap repair moved from 0443 to 0447 after new PR #2782 claimed 0443. Its SQL body is unchanged; original replay receipts retain the earlier local filename. Prefixes 0444/0446/0447 were reserved with the release coordinator on 2026-09-10. 0440–0442 retain existing ownership; 0445 is reserved for #2570. Recheck main and all open PR filenames before publication. These local proofs do not replace candidate-baseline migration replay, generated-type verification, staging evidence or approved application.
 
 ## Recent migrations (PR: SCRUM-4474 org cap decoupling)
 

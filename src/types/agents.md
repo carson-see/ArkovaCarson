@@ -84,3 +84,7 @@ against a fresh isolated local Supabase PostgreSQL 15 database. Its generated
 entry was copied verbatim into both canonical type files. All existing entries
 are preserved; this is a catalog-generated RPC delta, not a full-file type
 refresh or evidence of staging/production application.
+
+The unpublished cap file in that first local replay was later renamed from 0443
+to 0447 after PR #2782 claimed 0443. No cap function body or generated RPC
+signature changed; integrated baseline validation must use the current filenames.

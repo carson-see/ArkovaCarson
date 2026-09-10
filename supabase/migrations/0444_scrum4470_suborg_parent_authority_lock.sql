@@ -12,7 +12,7 @@
 -- This restores all six prior definitions
 -- (and the two unchanged rollup definitions) with their original service-only
 -- ACLs. It reopens the authority race; use only for the documented rehearsal.
--- Migration 0443 and its cap trigger remain unchanged by that rollback.
+-- Migration 0447 and its cap trigger remain unchanged by that rollback.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
