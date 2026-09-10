@@ -272,10 +272,13 @@ describe('PR_LABELS ⇄ gh token parity across .github/workflows', () => {
     const perJob = Object.fromEntries(
       parseJobs(raw).map((job) => [job.name, jobSteps(job).filter(seedsPrLabels).length]),
     );
-    // 11 in dependency-scan + 7 in policy-lints = the 18 PR_LABELS lines in
-    // the file (the 7th is the do-not-merge body/label parity step,
-    // SCRUM-3804).
-    expect(perJob['dependency-scan']).toBe(11);
+    // 12 in dependency-scan + 7 in policy-lints = the 19 PR_LABELS lines in
+    // the file (the 7th in policy-lints is the do-not-merge body/label parity
+    // step, SCRUM-3804; the 12th in dependency-scan is the SCRUM-3836
+    // `check-error-swallow.ts` step this PR adds, blocking new
+    // `if (error || empty)` collapses like the one that hid the reorg
+    // detector's statement_timeout for 1,108 consecutive runs).
+    expect(perJob['dependency-scan']).toBe(12);
     expect(perJob['policy-lints']).toBe(7);
   });
 });

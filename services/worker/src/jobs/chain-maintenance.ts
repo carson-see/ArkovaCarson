@@ -24,6 +24,7 @@ import { config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { resolveMempoolHostBase } from '../utils/mempool-url.js';
 import { z } from 'zod';
+import { readJsonBounded, readTextBounded } from '../utils/body-read-timeout.js';
 import type { Json } from '../types/database.types.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────
@@ -122,7 +123,10 @@ async function getSubmittedTxChainState(txId: string, baseUrl: string): Promise<
     }
 
     return resp.status === 404 ? 'not_found' : 'unknown';
-  } catch {
+  } catch (err) {
+    // SCRUM-3836: 'unknown' is a distinguishable value and callers handle it,
+    // but a silent network failure here left no trace at all.
+    logger.warn({ error: err }, 'TX status check failed — treating as unknown');
     return 'unknown';
   }
 }
@@ -170,10 +174,24 @@ async function releaseLock(_lockId: number): Promise<void> {
 
 // ─── CRIT-2: Reorg Detection ────────────────────────────────────────────
 
+/**
+ * SCRUM-3836: `completed` distinguishes "the scan ran and found nothing" from
+ * "the scan could not run". Before this, both returned `{ checked: 0 }` and the
+ * route answered 200 either way — so a candidate query killed by
+ * `statement_timeout` was indistinguishable from a clean chain, and prod
+ * reported healthy for 1,108 consecutive runs while inspecting zero anchors.
+ * Any new early return MUST set `completed: false` and a `reason`.
+ */
+type ReorgIncompleteReason = 'tip_unavailable' | 'candidate_query_failed' | 'transaction_check_failed';
+
 interface ReorgCheckResult {
   checked: number;
   reorgsDetected: number;
   reverted: number;
+  /** false when the check could not run to completion — never treat as "no reorgs". */
+  completed: boolean;
+  /** Why the check did not complete. Absent when `completed` is true. */
+  reason?: ReorgIncompleteReason;
 }
 
 /** Recently-SECURED anchor row shape selected by detectReorgs. */
@@ -204,27 +222,30 @@ type ReorgCandidateAnchor = {
  *      dispatch outcome counts (mirrors the check-confirmations bulk pattern —
  *      failures are recorded, never silently dropped).
  *
- * Returns the number of anchors whose status was actually reverted.
+ * Returns actual reverts and failed writes separately; failed writes leave the scan incomplete.
  */
 async function revertReorgedAnchors(
   affected: ReorgCandidateAnchor[],
   txId: string,
   auditReason: string,
   logMessage: string,
-): Promise<number> {
-  if (affected.length === 0) return 0;
+): Promise<{ reverted: number; failed: number }> {
+  if (affected.length === 0) return { reverted: 0, failed: 0 };
 
   // Step 1: compare-and-set each anchor SECURED → SUBMITTED.
   const revertedAnchors: ReorgCandidateAnchor[] = [];
+  let failed = 0;
   for (const anchor of affected) {
     const { data: updatedRow, error: updateError } = await db.from('anchors')
       .update({ status: 'SUBMITTED' })
       .eq('id', anchor.id)
       .eq('status', 'SECURED')
+      .eq('legal_hold', false)
       .select('id')
       .maybeSingle();
 
     if (updateError) {
+      failed++;
       logger.error(
         { anchorId: anchor.id, txId, error: updateError },
         'Failed to revert reorged anchor SECURED → SUBMITTED',
@@ -243,7 +264,7 @@ async function revertReorgedAnchors(
     logger.warn({ anchorId: anchor.id, txId }, logMessage);
   }
 
-  if (revertedAnchors.length === 0) return 0;
+  if (revertedAnchors.length === 0) return { reverted: 0, failed };
 
   // Step 2: look up credential_type for the reverted anchors so we can also
   // dispatch credential.status_changed (which requires credential_type).
@@ -355,7 +376,7 @@ async function revertReorgedAnchors(
     logger.warn({ txId, error: auditError }, 'anchor.reorg_reverted audit insert threw');
   }
 
-  return revertedAnchors.length;
+  return { reverted: revertedAnchors.length, failed };
 }
 
 /**
@@ -369,26 +390,70 @@ async function revertReorgedAnchors(
  */
 export async function detectReorgs(): Promise<ReorgCheckResult> {
   if (config.useMocks || config.nodeEnv === 'test') {
-    return { checked: 0, reorgsDetected: 0, reverted: 0 };
+    return { checked: 0, reorgsDetected: 0, reverted: 0, completed: true };
   }
 
   if (!(await acquireLock(LOCK_REORG_DETECTION))) {
     logger.debug('Reorg detection skipped — another worker holds the lock');
-    return { checked: 0, reorgsDetected: 0, reverted: 0 };
+    return { checked: 0, reorgsDetected: 0, reverted: 0, completed: true };
   }
 
   try {
     const baseUrl = getMempoolBaseUrl();
 
-    // Get current chain tip
-    const tipResp = await fetch(`${baseUrl}/api/blocks/tip/height`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!tipResp.ok) {
-      logger.warn('Failed to fetch chain tip — skipping reorg detection');
-      return { checked: 0, reorgsDetected: 0, reverted: 0 };
+    // Get current chain tip.
+    //
+    // Soak finding (cron-chain-batch, 2026-08-30): this fetch's own
+    // AbortSignal.timeout(10000) rejects the promise (DOMException /
+    // TimeoutError) rather than resolving with a non-ok Response, and — since
+    // this whole function is a bare try/finally with no catch — that
+    // rejection used to propagate out of detectReorgs() instead of hitting
+    // the `!tipResp.ok` branch below. It never reintroduced the original
+    // false-200 (routes/cron.ts's own try/catch turns an uncaught rejection
+    // into a 500, never a 200), but it bypassed the completed/reason
+    // taxonomy this PR exists to guarantee: "Any new early return MUST set
+    // completed: false and a reason" (see the ReorgCheckResult doc comment
+    // above) — an aborted tip fetch was falling through that contract
+    // entirely. Observed 3 times in a 30-minute window on that rig, logged
+    // only as an unstructured "Reorg detection cron failed" 500. Catching it
+    // here makes a timed-out tip fetch indistinguishable, in outcome shape,
+    // from a non-ok tip response: both are tip_unavailable.
+    let tipResp: Response;
+    try {
+      tipResp = await fetch(`${baseUrl}/api/blocks/tip/height`, {
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (err) {
+      logger.error(
+        { error: err },
+        'Reorg detection could not run — chain tip fetch threw (network error or timeout)',
+      );
+      return {
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'tip_unavailable',
+      };
     }
-    const tipHeight = parseInt(await tipResp.text(), 10);
+    if (!tipResp.ok) {
+      logger.error(
+        { status: tipResp.status },
+        'Reorg detection could not run — chain tip fetch failed',
+      );
+      return {
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'tip_unavailable',
+      };
+    }
+    let tipHeight: number;
+    try {
+      const rawTip = (await readTextBounded(tipResp, 'reorg chain tip', 10000)).trim();
+      tipHeight = Number(rawTip);
+      if (!/^\d+$/.test(rawTip) || !Number.isSafeInteger(tipHeight) || tipHeight < 0) {
+        throw new Error('Invalid chain tip height');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Reorg detection could not read a valid chain tip');
+      return { checked: 0, reorgsDetected: 0, reverted: 0, completed: false, reason: 'tip_unavailable' };
+    }
     const minBlockHeight = tipHeight - REORG_CHECK_DEPTH_BLOCKS;
 
     // Fetch recently SECURED anchors within the check depth.
@@ -411,8 +476,23 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
       .is('deleted_at', null)
       .limit(100);
 
-    if (error || !recentAnchors || recentAnchors.length === 0) {
-      return { checked: 0, reorgsDetected: 0, reverted: 0 };
+    // SCRUM-3836: a failed candidate query is NOT "no reorgs". It was silently
+    // folded into the empty case here, so a `statement_timeout` kill on the
+    // 3.8M-row scan returned 200 with `checked: 0` on every run.
+    if (error) {
+      logger.error(
+        { error, minBlockHeight },
+        'Reorg detection could not run — candidate anchor query failed',
+      );
+      return {
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'candidate_query_failed',
+      };
+    }
+
+    if (!recentAnchors || recentAnchors.length === 0) {
+      logger.info({ minBlockHeight }, 'Reorg detection complete — no candidate anchors in window');
+      return { checked: 0, reorgsDetected: 0, reverted: 0, completed: true };
     }
 
     // Group by chain_tx_id to avoid duplicate API calls
@@ -421,6 +501,12 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
     let checked = 0;
     let reorgsDetected = 0;
     let reverted = 0;
+    let failedChecks = 0;
+    const revert = async (...args: Parameters<typeof revertReorgedAnchors>): Promise<number> => {
+      const result = await revertReorgedAnchors(...args);
+      failedChecks += result.failed;
+      return result.reverted;
+    };
 
     for (const txId of txIds.slice(0, 20)) {
       checked++;
@@ -435,22 +521,33 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
           if (resp.status === 404) {
             // TX not found — potential reorg or mempool drop
             reorgsDetected++;
-            reverted += await revertReorgedAnchors(
+            reverted += await revert(
               affected,
               txId,
               `TX ${txId} not found (potential reorg or mempool drop)`,
               'REORG DETECTED: TX not found — reverted SECURED → SUBMITTED',
             );
+          } else {
+            failedChecks++;
+            logger.error({ txId, status: resp.status }, 'Reorg transaction lookup unavailable');
           }
           continue;
         }
 
-        const txData = await resp.json() as { status: { confirmed: boolean; block_height?: number; block_hash?: string } };
+        const txData = z.object({
+          status: z.discriminatedUnion('confirmed', [
+            z.object({ confirmed: z.literal(false) }),
+            z.object({ confirmed: z.literal(true), block_height: z.number().int().nonnegative().safe(), block_hash: z.string().min(1).optional() }),
+          ]),
+        }).parse(await readJsonBounded(resp, 'reorg transaction status', 10000));
+        if (txData.status.confirmed && !txData.status.block_hash && affected.some(a => a.chain_block_hash != null)) {
+          throw new Error('Confirmed transaction is missing the block identity needed for comparison');
+        }
 
         if (!txData.status.confirmed) {
           // TX exists but no longer confirmed — reorg
           reorgsDetected++;
-          reverted += await revertReorgedAnchors(
+          reverted += await revert(
             affected,
             txId,
             `TX ${txId} no longer confirmed (reorg)`,
@@ -480,7 +577,7 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
             // Same-height (or any-height) block-hash divergence — the proof's
             // block no longer matches the chain. Revert + retract.
             reorgsDetected++;
-            reverted += await revertReorgedAnchors(
+            reverted += await revert(
               affected,
               txId,
               `TX ${txId} re-mined into a different block (stored hash ${storedHash} != confirmed hash ${newHash} at height ${newHeight})`,
@@ -492,7 +589,7 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
             // signal and revert (stricter than the old "just update the height"
             // behavior, which silently accepted the new block).
             reorgsDetected++;
-            reverted += await revertReorgedAnchors(
+            reverted += await revert(
               affected,
               txId,
               `TX ${txId} re-mined at a different height (stored ${storedHeight} != confirmed ${newHeight})`,
@@ -501,8 +598,14 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
           }
         }
       } catch (err) {
-        logger.debug({ txId, error: err }, 'Failed to check TX for reorg — will retry next run');
+        failedChecks++;
+        logger.error({ txId, error: err }, 'Failed to check TX for reorg — scan incomplete');
       }
+    }
+
+    if (failedChecks > 0) {
+      logger.error({ checked, failedChecks, reorgsDetected, reverted }, 'Reorg detection incomplete');
+      return { checked, reorgsDetected, reverted, completed: false, reason: 'transaction_check_failed' };
     }
 
     if (reorgsDetected > 0) {
@@ -511,10 +614,10 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
         'Reorg detection complete — reorgs found!',
       );
     } else {
-      logger.debug({ checked }, 'Reorg detection complete — no reorgs');
+      logger.info({ checked }, 'Reorg detection complete — no reorgs');
     }
 
-    return { checked, reorgsDetected, reverted };
+    return { checked, reorgsDetected, reverted, completed: true };
   } finally {
     await releaseLock(LOCK_REORG_DETECTION);
   }
@@ -526,6 +629,9 @@ interface StuckTxResult {
   checked: number;
   stuck: number;
   recovered: number;
+  /** SCRUM-3836: false when the check could not run — never treat as "nothing stuck". */
+  completed: boolean;
+  reason?: 'candidate_query_failed';
 }
 
 /**
@@ -541,11 +647,11 @@ interface StuckTxResult {
  */
 export async function monitorStuckTransactions(): Promise<StuckTxResult> {
   if (config.useMocks || config.nodeEnv === 'test') {
-    return { checked: 0, stuck: 0, recovered: 0 };
+    return { checked: 0, stuck: 0, recovered: 0, completed: true };
   }
 
   if (!(await acquireLock(LOCK_STUCK_TX_MONITOR))) {
-    return { checked: 0, stuck: 0, recovered: 0 };
+    return { checked: 0, stuck: 0, recovered: 0, completed: true };
   }
 
   try {
@@ -568,8 +674,18 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
       .order('updated_at', { ascending: true })
       .limit(50);
 
-    if (error || !stuckAnchors || stuckAnchors.length === 0) {
-      return { checked: 0, stuck: 0, recovered: 0 };
+    // SCRUM-3836: a failed candidate query is NOT "nothing is stuck". Same
+    // collapse that hid the reorg detector's statement_timeout for 1,108 runs.
+    if (error) {
+      logger.error({ error }, 'Stuck TX monitor could not run — candidate anchor query failed');
+      return {
+        checked: 0, stuck: 0, recovered: 0,
+        completed: false, reason: 'candidate_query_failed',
+      };
+    }
+
+    if (!stuckAnchors || stuckAnchors.length === 0) {
+      return { checked: 0, stuck: 0, recovered: 0, completed: true };
     }
 
     let stuck = 0;
@@ -690,7 +806,7 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
       );
     }
 
-    return { checked: stuckAnchors.length, stuck, recovered };
+    return { checked: stuckAnchors.length, stuck, recovered, completed: true };
   } finally {
     await releaseLock(LOCK_STUCK_TX_MONITOR);
   }
@@ -702,6 +818,9 @@ interface RebroadcastResult {
   checked: number;
   rebroadcast: number;
   failed: number;
+  /** SCRUM-3836: false when the sweep could not run — never treat as "nothing to rebroadcast". */
+  completed: boolean;
+  reason?: 'candidate_query_failed';
 }
 
 /**
@@ -715,11 +834,11 @@ interface RebroadcastResult {
  */
 export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResult> {
   if (config.useMocks || config.nodeEnv === 'test') {
-    return { checked: 0, rebroadcast: 0, failed: 0 };
+    return { checked: 0, rebroadcast: 0, failed: 0, completed: true };
   }
 
   if (!(await acquireLock(LOCK_REBROADCAST))) {
-    return { checked: 0, rebroadcast: 0, failed: 0 };
+    return { checked: 0, rebroadcast: 0, failed: 0, completed: true };
   }
 
   try {
@@ -739,8 +858,17 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
       .is('deleted_at', null)
       .limit(20);
 
-    if (error || !oldAnchors || oldAnchors.length === 0) {
-      return { checked: 0, rebroadcast: 0, failed: 0 };
+    // SCRUM-3836: same collapse — a failed query is not "nothing to rebroadcast".
+    if (error) {
+      logger.error({ error }, 'TX rebroadcast could not run — candidate anchor query failed');
+      return {
+        checked: 0, rebroadcast: 0, failed: 0,
+        completed: false, reason: 'candidate_query_failed',
+      };
+    }
+
+    if (!oldAnchors || oldAnchors.length === 0) {
+      return { checked: 0, rebroadcast: 0, failed: 0, completed: true };
     }
 
     const baseUrl = getMempoolBaseUrl();
@@ -844,7 +972,7 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
       'TX rebroadcast job complete',
     );
 
-    return { checked: txIds.length, rebroadcast, failed };
+    return { checked: txIds.length, rebroadcast, failed, completed: true };
   } finally {
     await releaseLock(LOCK_REBROADCAST);
   }
@@ -891,8 +1019,10 @@ export async function consolidateUtxos(): Promise<ConsolidationResult> {
         const feeData = await feeResp.json() as Record<string, number>;
         currentFeeRate = feeData.hourFee ?? 1;
       }
-    } catch {
-      // Can't check fee — skip consolidation to be safe
+    } catch (err) {
+      // Can't check fee — skip consolidation to be safe. `skipped`/`reason` were
+      // already honest; the missing piece was any log that it happened.
+      logger.warn({ error: err }, 'UTXO consolidation skipped — fee check failed');
       return { utxosSwept: 0, totalValueSats: 0, txId: null, skipped: true, reason: 'fee check failed' };
     }
 
@@ -973,7 +1103,11 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
         const data = await resp.json() as Record<string, number>;
         currentRate = data.halfHourFee ?? 0;
       }
-    } catch {
+    } catch (err) {
+      // SCRUM-3836: this catch was bare. It runs the same schedule against the
+      // same host as detectReorgs on a tighter 5s budget, so it was failing
+      // under the same conditions and reporting nothing at all.
+      logger.error({ error: err }, 'Fee monitoring could not run — fee rate fetch failed');
       return { currentRate: 0, avgRate24h: null, spikeDetected: false, recorded: false };
     }
 
