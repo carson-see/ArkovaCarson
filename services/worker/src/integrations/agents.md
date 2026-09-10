@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/
 
-_Last updated: 2026-06-01 (SCRUM-1611)_
+_Last updated: 2026-09-07 (SCRUM-4492: `computeid/` added)_
 
 ## What This Folder Contains
 
@@ -8,6 +8,7 @@ Third-party integration service layer — connectors (Drive, DocuSign), GRC plat
 
 | File / Folder | Purpose |
 |------|---------|
+| `computeid/` | **SCRUM-4492+**: ComputeID AgentPassport partner integration — pinned-CA loader, offline `verification_receipt` verifier, passport↔agent binding + forward-only event transitions. Pure `node:crypto` + Zod (imported by `config.ts`). See its own `agents.md` for the live-verified facts and the PR-B gaps |
 | `connectors/` | Vendor-specific connector services (Google Drive, DocuSign) and canonical event adapters |
 | `credential-sources/` | **SCRUM-1611+**: Credly / Accredible / Udemy issuer-partnership token storage and adapters. Reuses `oauth/crypto.ts` for KMS encryption; persists into `member_integrations`. |
 | `grc/` | GRC platform integration — evidence push to Vanta, Drata, Anecdotes on anchor SECURED |
