@@ -795,6 +795,8 @@ titled uniquely so it cannot collide at EOF with the `## Recent migrations (PR #
 
 **Prefix re-derived 2026-09-01, do not trust the older "next free is `0422`" line below.** `git log --all --diff-filter=A` over every ref shows prefixes claimed up to **`0428`** (`0420` twice — the known collision — then `0422`-`0428`). `0421` reads as a gap but was recorded as claimed in this file's own tail, so it was NOT taken. This PR claims **`0429`**. **Next author claims `0430` — re-derive, do not trust this line.**
 
+| `0438` | `0438_docusign_backfill_attempt_authority.sql` | #2565 | no — reserved, local implementation | Durable per-org/envelope attempt pacing, current-account eligibility and service-role-only completion marker. Reserved under the coordinated release review before #2571 claimed0439; full open-PR inventory2026-09-05 confirms no collision. #2570 separately owns0437; frozen0423 is unchanged. |
+
 **Prod ledger head is `0419`. `main` still tops out at `0414`.** Prod-ahead-of-main is the normal
 shape here (the `0347` precedent) — do not "reconcile" it by deleting ledger rows.
 

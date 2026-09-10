@@ -379,6 +379,36 @@ Two things in this folder are worth not re-litigating:
 
 `proof-packet.ts` `anchor_receipt` now carries `fingerprint_rederivability: 'fetch_time_snapshot'` + the §1.5 note (from `constants/connectorFingerprint.ts`) whenever an anchor is present — every packet anchor is connector-materialized BY CONSTRUCTION (resolved via `metadata->>external_file_id`), and the auditor challenge this packet answers is exactly the flow where someone re-downloads from the source and compares fingerprints. The `not_anchored` sentinel carries neither field (no fingerprint to describe). Additive keys on an org-scoped export; no internal UUIDs added.
 
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `anchor_timestamp` has ONE definition, in `anchorTimestamp.ts`
+
+`anchor_timestamp` (and `anchored_at` where it means the same thing) is the **chain-observed**
+time — `anchors.chain_timestamp`, gated `status NOT IN ('PENDING')`. Never `anchors.created_at`.
+Import `publicAnchorTimestamp` from `api/anchorTimestamp.ts`; do not re-derive it inline.
+
+Five surfaces in this tree each decided the field's meaning independently and four chose
+`created_at`, so prod published an anchoring moment ~10 minutes early on a §1.8-frozen contract that
+§1.5 requires be Network Observed Time. A careful read of any one file would not have found it —
+the class was found by a detector.
+
+Three things worth not re-litigating:
+
+- **Do not "simplify" this by routing v1 verify through `get_public_anchor()`.** It was tried first.
+  The RPC's projection is a narrower public allowlist: it hardcodes `'merkle_proof_hash', NULL` and
+  carries none of the API-RICH fields the frozen envelope has published since SCRUM-772. Adopting it
+  blanks more of the contract than it fixes. The RPC's `CASE` lives in TypeScript instead, and
+  `anchorTimestamp.test.ts` pins the gate to `NOT IN ('PENDING')` so the two cannot drift.
+- **No `created_at` fallback, and `?? created_at` is the shape to reject in review.** The silent
+  fallback in `v2/resourceDetails.ts` read as correct and misreported only on rows with a NULL
+  `chain_timestamp`. Unmeasured is OMITTED on the frozen v1 schema (`string | undefined`, same rule
+  as `jurisdiction`) and null where the contract declares the field nullable.
+- **Changing a verify field's VALUE requires a `verifyCache` `KEY_PREFIX` bump** (v6 → v7 here).
+  Otherwise cached bodies keep serving the old value for the full TTL after deploy, and the fix
+  looks half-landed in exactly the spot-check a reviewer runs first.
+
+Still wrong at the time of writing, tracked in SCRUM-4520: `search_public_credential_embeddings`
+(`a.created_at AS anchor_timestamp` — needs a migration, feeds `v1/ai-verify-search.ts` and the edge),
+and `proof-packet-verification-view.ts:135`, where `anchor_timestamp` is `rule_executions.completed_at`
+— a different and worse defect with unbounded drift.
 ## 2026-08-30 — CORRECTION: the fetch-time caveat is NOT unconditional (declared-hash fix)
 
 The entry above was WRONG that "every packet anchor is connector-materialized BY CONSTRUCTION." A packet anchor is resolved via `metadata->>external_file_id` — a key the **declared-hash rules dispatcher** (`jobs/rule-action-dispatcher.ts`) sets — so a packet anchor is frequently a hash DocuSign **declared**, NOT one Arkova fetched. The unconditional `...connectorFingerprintRederivabilityFields()` therefore asserted a false "Measured: Arkova computed…" caveat to auditors on declared anchors (§1.5/R-7). Fixed: `proof-packet.ts` now loads `metadata` and emits via `...connectorFingerprintRederivabilityFieldsFor(anchor.metadata)`, which gates on POSITIVE server-fetch evidence (a non-empty `connector_artifact_id`, stamped only by `connector-artifact-drain.ts`). Declared anchor → omit both fields (silence). Same gate now used by `verify.ts` and `verify-proof.ts`. NOTE the gate proves nothing against a self-asserted metadata blob — no DB trigger guards either key; see the honesty boundary in `constants/agents.md` (2026-08-30). SCRUM-3299 / SCRUM-3825.
@@ -412,3 +442,7 @@ never the not_anchored sentinel reserved for a successful empty lookup.
 `isCallerOrgAdminResult` accepts an optional DB client for routers that inject their client. Both membership and profile fallback use that same client; existing callers retain the shared default. DocuSign inheritance uses this resolver so an own-org profile `ORG_ADMIN` can administer the parent without an `org_members` row, while foreign-org profile roles remain denied.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+## PR #2695 — timestamp helper simplification (2026-09-10)
+
+The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.

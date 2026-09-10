@@ -18,6 +18,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { publicAnchorTimestamp } from '../anchorTimestamp.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
@@ -99,7 +100,14 @@ function toPublicCleRecord(row: Record<string, unknown>): Record<string, unknown
     delivery_method: publicString(meta.delivery_method),
     completion_date: publicString(meta.completion_date),
     anchor_status: publicString(row.status),
-    anchored_at: publicString(row.created_at),
+    // BUG-2026-09-08-001 (SCRUM-4517): `anchored_at` on a bar-compliance
+    // surface must be the chain's observation, not the row insert. Null when
+    // unmeasured — a CLE record with no observed anchoring moment must not
+    // borrow the server clock to look complete.
+    anchored_at: publicAnchorTimestamp(
+      publicString(row.status),
+      publicString(row.chain_timestamp),
+    ),
   };
   const jurisdiction = publicString(meta.jurisdiction);
   if (jurisdiction) {
@@ -175,7 +183,7 @@ router.get('/verify', async (req: Request, res: Response) => {
     // Find all CLE anchors for this bar number
     const { data: anchors } = await db
       .from('anchors')
-      .select('public_id, credential_type, metadata, status, created_at')
+      .select('public_id, credential_type, metadata, status, created_at, chain_timestamp')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .eq('credential_type', 'CLE' as any)
       .eq('status', 'SECURED')
@@ -281,7 +289,7 @@ router.get('/credits', async (req: Request, res: Response) => {
   try {
     let query = db
       .from('anchors')
-      .select('public_id, credential_type, metadata, status, created_at')
+      .select('public_id, credential_type, metadata, status, created_at, chain_timestamp')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .eq('credential_type', 'CLE' as any)
       .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
