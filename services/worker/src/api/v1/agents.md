@@ -1082,6 +1082,10 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
 
+
+## 2026-09-05 — PR #2440 subtype opt-out release review
+
+Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
 ## 2026-08-30 — R1: `proof_bundle` carries tx-inclusion evidence
 
 `ProofBundle` gained `tx_inclusion_branch` + `tx_block_index` (migration `0427`)
