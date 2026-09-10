@@ -37,6 +37,54 @@ def json_response(
     return httpx.Response(status_code, json=payload, headers=headers)
 
 
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("timestamp", ["omitted", None, "2026-09-02T02:58:11Z"])
+@pytest.mark.parametrize(
+    ("method", "path", "kind"),
+    [
+        ("verify", "/api/v1/verify/ARK-TIMESTAMP", "record"),
+        ("verify_fingerprint", "/api/v2/verify/ARK-TIMESTAMP", "fingerprint"),
+        ("get_anchor", "/api/v2/anchors/ARK-TIMESTAMP", "record"),
+        ("get_record", "/api/v2/records/ARK-TIMESTAMP", "record"),
+        ("get_fingerprint", "/api/v2/fingerprints/ARK-TIMESTAMP", "fingerprint"),
+        ("get_document", "/api/v2/documents/ARK-TIMESTAMP", "document"),
+    ],
+)
+def test_all_readers_preserve_nullable_observed_timestamp(
+    asynchronous: bool, timestamp: str | None, method: str, path: str, kind: str,
+) -> None:
+    """Both clients keep missing/null observations as None across all timestamp models."""
+    payload = {
+        "verified": True, "status": "ACTIVE", "type": kind,
+        "public_id": "ARK-TIMESTAMP", "fingerprint": "a" * 64,
+        "record_uri": "https://app.arkova.ai/verify/ARK-TIMESTAMP",
+    }
+    if timestamp != "omitted":
+        payload["anchor_timestamp"] = timestamp
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == path
+        assert request.headers["authorization"] == "Bearer ak_test"
+        return json_response(payload)
+
+    options = {
+        "api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
+        "transport": httpx.MockTransport(handler),
+    }
+
+    async def read_async():
+        async with AsyncArkova(**options) as client:
+            return await getattr(client, method)("ARK-TIMESTAMP")
+
+    if asynchronous:
+        result = asyncio.run(read_async())
+    else:
+        with Arkova(**options) as client:
+            result = getattr(client, method)("ARK-TIMESTAMP")
+
+    assert result.anchor_timestamp == (None if timestamp == "omitted" else timestamp)
+
+
 def test_search_returns_pydantic_models_and_auth_header() -> None:
     seen_headers: list[str | None] = []
 

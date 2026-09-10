@@ -42,8 +42,10 @@ const STRICTLY_BANNED = /\b(wallet|gas|transaction|blockchain|bitcoin|testnet|ma
 // proof / raw Bitcoin proof bytes / the real WebCrypto `crypto` global)
 // before bumping the number — don't bump blind.
 const EXPECTED_COUNTS: Record<string, { hash: number; block: number; crypto: number }> = {
-  'client.ts': { hash: 3, block: 1, crypto: 1 },
-  'types.ts': { hash: 4, block: 2, crypto: 0 },
+  // Reviewed 2026-09-10: migration 0427 added display-hex sibling validation
+  // and precise inclusion-proof documentation; these references remain technical.
+  'client.ts': { hash: 5, block: 3, crypto: 1 },
+  'types.ts': { hash: 5, block: 5, crypto: 0 },
   'index.ts': { hash: 0, block: 0, crypto: 0 },
 };
 

@@ -224,6 +224,8 @@ The result shape:
 
 Verification results also expose rich nullable metadata when the API returns it, including `complianceControls`, `chainConfirmations`, `parentPublicId`, `versionNumber`, `revocationTxId`, `revocationBlockHeight`, `fileMime`, and `fileSize`.
 
+`anchorTimestamp` is `string | null`: `null` means no observed anchor time is available. Both an omitted API field and an explicit `null` normalize to `null`, including in `verifyBatch()`. Check for `null` before formatting the value; the SDK does not substitute the record's creation time.
+
 When called with `(data, receipt)` and the SHA-256 fingerprint of `data` doesn't match `receipt.fingerprint`, the SDK returns `{ verified: false, status: 'UNKNOWN', ... }` **without making a network call**. This is the offline tamper detection path.
 
 ---

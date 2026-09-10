@@ -5,6 +5,7 @@ import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
 import { PUBLIC_ANCHOR_ID_RE, SHA256_HEX_RE, visibleAnchorScope } from './resourceIdentifiers.js';
+import { publicAnchorTimestamp } from '../anchorTimestamp.js';
 
 export const agentToolsRouter = Router();
 
@@ -58,7 +59,7 @@ agentToolsRouter.get(
 
     try {
       const { data, error } = await v2Db.from('anchors')
-        .select('id, public_id, fingerprint, filename, status, created_at, chain_tx_id')
+        .select('id, public_id, fingerprint, filename, status, created_at, chain_timestamp, chain_tx_id')
         .eq('fingerprint', fingerprint.toLowerCase())
         .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
         .is('deleted_at', null)
@@ -94,7 +95,11 @@ agentToolsRouter.get(
         fingerprint: data.fingerprint,
         public_id: publicId,
         title: data.filename ?? null,
-        anchor_timestamp: data.created_at,
+        // BUG-2026-09-08-001 (SCRUM-4517): chain-observed time, not row
+        // creation. This contract declares the field nullable (see the
+        // not-found branch above, which emits null), so an unmeasured moment
+        // is null here rather than omitted.
+        anchor_timestamp: publicAnchorTimestamp(status, data.chain_timestamp as string | null),
         network_receipt_id: data.chain_tx_id ?? null,
         record_uri: publicId ? `https://app.arkova.ai/verify/${publicId}` : null,
       });
