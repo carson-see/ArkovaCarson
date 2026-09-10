@@ -696,3 +696,7 @@ Consequences that are now true of the running system, and were not before:
 - `rateLimiters.auth` (5/min) is still **not mounted on any route** — referenced only by tests and
   comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
   own tier, not a cleanup.
+
+## 2026-09-05 — shared rate-limit refund coverage (PR #2529)
+
+The distributed `skipFailedRequests` regression executes the response callback against an atomic shared counter: an HTTP 500 refunds one slot, a successful retry remains charged, and the next request receives 429. Keep the existing 80% function-coverage threshold; this path must be exercised, not excluded.

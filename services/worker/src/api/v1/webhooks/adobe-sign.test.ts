@@ -9,6 +9,9 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { configMock } = vi.hoisted(() => ({ configMock: { adobeSignClientId: undefined as string | undefined } }));
+vi.mock('../../../config.js', () => ({ config: configMock }));
+
 const dbFromMock = vi.fn();
 const rpcMock = vi.fn();
 
@@ -27,6 +30,7 @@ import { adobeSignWebhookRouter, buildAdobeSignRuleEventPayload } from './adobe-
 import type { AdobeAgreementCompletedEvent } from '../../../integrations/oauth/adobe-sign.js';
 
 const TEST_SECRET = 'adobe-fixture-secret-aaaa';
+const TEST_CLIENT_ID = 'adobe-fixture-client-id-bbbb';
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
 const INTEGRATION_ID = '22222222-2222-2222-2222-222222222222';
 const WEBHOOK_ID = 'webhook-abc-123';
@@ -135,6 +139,59 @@ function dlqInsertMock() {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.ADOBE_SIGN_CLIENT_SECRET = TEST_SECRET;
+  process.env.ADOBE_SIGN_CLIENT_ID = TEST_CLIENT_ID;
+  configMock.adobeSignClientId = TEST_CLIENT_ID;
+});
+
+// Adobe will not create a webhook at all until the endpoint answers its
+// registration challenge: an HTTPS GET carrying X-AdobeSign-ClientId, which
+// must come back 2XX with the SAME client id echoed in a response header.
+// Without this, `POST /api/rest/v6/webhooks` fails Adobe-side and no
+// webhook_id is ever minted — which is why org_integrations.webhook_id has
+// never been populated in any environment.
+// https://helpx.adobe.com/sign/developer/webhook/create.html
+describe('GET /webhooks/adobe-sign — Adobe registration challenge', () => {
+  it('echoes the client id and returns 200 when the client id is recognized', async () => {
+    const res = await request(createApp())
+      .get('/webhooks/adobe-sign')
+      .set('X-AdobeSign-ClientId', TEST_CLIENT_ID);
+    expect(res.status).toBe(200);
+    expect(res.headers['x-adobesign-clientid']).toBe(TEST_CLIENT_ID);
+    expect(dbFromMock).not.toHaveBeenCalled();
+  });
+
+  it('recognizes the validated client ID when the raw environment changes after startup', async () => {
+    process.env.ADOBE_SIGN_CLIENT_ID = 'unvalidated-runtime-value';
+    const res = await request(createApp())
+      .get('/webhooks/adobe-sign')
+      .set('X-AdobeSign-ClientId', TEST_CLIENT_ID);
+    expect(res.status).toBe(200);
+    expect(res.headers['x-adobesign-clientid']).toBe(TEST_CLIENT_ID);
+    expect(dbFromMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to echo an UNRECOGNIZED client id (Adobe: must not respond success)', async () => {
+    const res = await request(createApp())
+      .get('/webhooks/adobe-sign')
+      .set('X-AdobeSign-ClientId', 'somebody-elses-client-id');
+    expect(res.status).toBe(403);
+    expect(res.headers['x-adobesign-clientid']).toBeUndefined();
+  });
+
+  it('refuses when the client id header is absent entirely', async () => {
+    const res = await request(createApp()).get('/webhooks/adobe-sign');
+    expect(res.status).toBe(403);
+    expect(res.headers['x-adobesign-clientid']).toBeUndefined();
+  });
+
+  it('503s (never echoes) when ADOBE_SIGN_CLIENT_ID is not configured', async () => {
+    configMock.adobeSignClientId = undefined;
+    const res = await request(createApp())
+      .get('/webhooks/adobe-sign')
+      .set('X-AdobeSign-ClientId', TEST_CLIENT_ID);
+    expect(res.status).toBe(503);
+    expect(res.headers['x-adobesign-clientid']).toBeUndefined();
+  });
 });
 
 describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
@@ -166,6 +223,7 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
   it('200 + orphaned=true when webhook_id has no connected integration', async () => {
     dbFromMock.mockImplementation((table: string) => {
       if (table === 'org_integrations') return integrationLookup(null);
+      if (table === 'webhook_dlq') return dlqInsertMock();
       throw new Error(`unexpected: ${table}`);
     });
     const body = validBody();
@@ -174,14 +232,61 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
   });
 
-  it('resolves the registered Adobe webhook through the actual subscription_id column', async () => {
+  it.each(['returned', 'thrown'])('retries an orphan when its DLQ persistence fails (%s)', async (failure) => {
+    const insert = failure === 'returned'
+      ? vi.fn().mockResolvedValue({ error: { code: '08006' } })
+      : vi.fn().mockRejectedValue(new Error('synthetic database unavailable'));
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') return integrationLookup(null);
+      if (table === 'webhook_dlq') return { insert };
+      throw new Error(`unexpected: ${table}`);
+    });
+    const res = await postSignedBody(validBody());
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: { code: 'webhook_processing_failed' } });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('orphaned webhook_id is recorded to the DLQ, not silently dropped', async () => {
+    // No org_integrations write path exists for adobe_sign yet (no connect
+    // flow analogous to docusign-oauth.ts), so every real delivery hits this
+    // branch today. Losing the DLQ record here means the failure leaves no
+    // trace anywhere — this pins that the record survives.
+    const dlq = dlqInsertMock();
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') return integrationLookup(null);
+      if (table === 'webhook_dlq') return dlq;
+      throw new Error(`unexpected: ${table}`);
+    });
+    const body = validBody();
+    const res = await request(createApp())
+      .post('/webhooks/adobe-sign')
+      .set('Content-Type', 'application/json')
+      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
+      .send(body);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, orphaned: true });
+    expect(dlq.insert).toHaveBeenCalledTimes(1);
+    const dlqRow = (dlq.insert as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      provider: string;
+      external_id: string;
+      webhook_id: string;
+      reason: string;
+    };
+    expect(dlqRow.provider).toBe('adobe_sign');
+    expect(dlqRow.external_id).toBe(AGREEMENT_ID);
+    expect(dlqRow.webhook_id).toBe(WEBHOOK_ID);
+    expect(dlqRow.reason).toBe('unregistered_webhook_id');
+  });
+
+  it('resolves the registered Adobe webhook through the migration 0426 webhook_id column', async () => {
     const lookup = integrationLookup({ id: INTEGRATION_ID, org_id: ORG_ID });
     dbFromMock.mockReturnValueOnce(lookup);
     dbFromMock.mockReturnValueOnce(nonceInsertMock());
     rpcMock.mockResolvedValueOnce({ data: '33333333-3333-4333-8333-333333333333', error: null });
     expect((await postSignedBody(validBody())).status).toBe(202);
     expect(lookup.select).toHaveBeenCalledWith('id, org_id');
-    expect(lookup.eq).toHaveBeenCalledWith('subscription_id', WEBHOOK_ID);
+    expect(lookup.eq).toHaveBeenCalledWith('webhook_id', WEBHOOK_ID);
     expect(lookup.eq).toHaveBeenCalledWith('provider', 'adobe_sign');
     expect(lookup.is).toHaveBeenCalledWith('revoked_at', null);
   });

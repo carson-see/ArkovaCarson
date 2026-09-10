@@ -18,10 +18,12 @@
 import crypto from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 
-// extractNotaryData lives in webhooks/docusign.ts, which transitively imports
-// utils/db.ts → config.ts (env-validated at module load). We only exercise the
-// PURE parse/verify/notary surface here, so stub those side-effecting modules —
-// the same db/jobQueue/logger mock trio the receiver's own test suite uses.
+// extractNotaryData lives in webhooks/docusign.ts, which imports config.ts
+// directly as well as through utils/db.ts. Keep env validation and I/O stubbed
+// while exercising the real parse/verify/notary functions.
+vi.mock('../../../src/config.js', () => ({
+  config: { enableDocusignInbound: false },
+}));
 vi.mock('../../../src/utils/db.js', () => ({
   db: { from: vi.fn(), rpc: vi.fn() },
 }));
