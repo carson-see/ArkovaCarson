@@ -14,6 +14,56 @@ Forked from `checkr.ts`. Three things are deliberately different and are the fir
 
 Signature contract verified against a real delivery (`integrations/computeid/__fixtures__/golden-test-delivery.json`): `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>`, no timestamp header. The `sha256=` prefix is required; a bare hex digest is rejected. Body cap 64 KiB, checked before signature verification. The partner-supplied free-text `reason` is never logged, never written to `audit_events.details`, never written to the DLQ — `computeid.test.ts` pins that with a serialized-args assertion.
 
+_Last updated: 2026-08-30 (`adobe-sign.ts`: registration challenge + DLQ the orphaned-webhook_id path)_
+
+## 2026-08-30 — `adobe-sign.ts` now answers Adobe's webhook REGISTRATION challenge (`GET /`)
+
+**This is why `org_integrations.webhook_id` was never populated anywhere — the column being
+missing (migration `0426`) was the second problem, not the first.** Adobe will not create a
+webhook until the target URL answers a registration challenge: an HTTPS GET carrying
+`X-AdobeSign-ClientId`, which must return 2XX **and** echo the same client id back in a response
+header of that name ([Adobe docs](https://helpx.adobe.com/sign/developer/webhook/create.html)).
+This router had **only** `.post('/')` — verified by test: all four new challenge cases returned
+`404` before the fix. So `POST /api/rest/v6/webhooks` would have failed Adobe-side, and manual
+registration through Adobe's admin console would have failed too. No webhook id could be minted
+by any route, which is the upstream cause of the always-null `webhook_id`.
+
+**Security shape — do not "simplify" this into a blind echo.** Adobe's guidance is explicit that
+an endpoint which does not recognize the presented client id "MUST NOT respond with the success
+response." Blindly echoing whatever arrives would let any third party register *our* endpoint
+against *their* Adobe application and start delivering us their agreements. So: `503` when
+`ADOBE_SIGN_CLIENT_ID` is unset (never echo an unconfigured value), `403` on absent/mismatched id,
+`200` + echo only on a constant-time match. The presented value is never logged — it identifies a
+third party's Adobe app. Tests: `describe('GET /webhooks/adobe-sign — Adobe registration
+challenge')` pins all four cases.
+
+**Still not sufficient for a working connector.** This makes a webhook id *obtainable*; nothing
+yet *obtains* one. See the entry below — there is still no `adobe-sign-oauth.ts` connect flow, and
+prod has no Adobe credential at all.
+
+**Related pre-existing oddity, deliberately left alone:** `signatureHeader()` falls back to
+`X-AdobeSign-ClientId` as a *signature* when the SHA256 header is absent. On a notification that
+header carries the client id, not an HMAC, so the fallback always fails the HMAC compare and 401s
+— fail-closed, not exploitable. Do not "fix" it by comparing the client id instead: that would
+turn a public identifier into the auth check and is a straight auth bypass.
+
+## 2026-08-30 — `adobe-sign.ts` orphaned-webhook_id path now DLQs (companion to migration `0426`)
+
+Migration `0426` (PR #2519) adds `org_integrations.webhook_id`, fixing the `42703` SQL error
+`findIntegration()` has always hit. **That alone does not restore Adobe Sign functionality**: no
+`adobe-sign-oauth.ts` connect flow exists anywhere in this repo (unlike `docusign-oauth.ts` /
+`drive-oauth.ts` in `api/v1/integrations/`), so nothing writes `org_integrations.webhook_id` for a
+real integration. Every real delivery therefore still hits the `if (!integration)` branch — same
+as before the migration, just without the SQL error. Before `0426`, that branch's SQL error was
+caught and DLQ'd (a record existed); after `0426`, the same branch resolves cleanly to `null` and
+was responding `200 {orphaned:true}` with **no DLQ insert at all** — a silent regression from "loud
+failure, recorded" to "quiet failure, unrecorded." Per the "webhook_dlq row is not a mitigation"
+note two sections below: this is explicitly not a fix for the underlying gap (Adobe Sign is still
+non-functional until a connect flow lands), it only restores the pre-existing record-of-loss this
+folder already treats as the baseline expectation for every handler. Test:
+`describe('POST /webhooks/adobe-sign')` → `'orphaned webhook_id is recorded to the DLQ, not
+silently dropped'` in `adobe-sign.test.ts`. **A real fix still needs its own ticket**: an Adobe
+Sign OAuth/connect flow that populates `webhook_id` at integration-connect time.
 ## 2026-09-05 — oldest DocuSign release candidate integration
 
 PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
@@ -167,3 +217,17 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 The earlier separate-key-write / status-clock CAS notes above describe the original receiver. They are superseded for ComputeID by migration `0448` and the single `apply_computeid_agent_transition` RPC: lock the agent, compare org/binding/status/full metadata, then commit both agent and key changes in one transaction. A key-write failure rolls back the event clock too; identical redelivery remains actionable. A stale snapshot returns false and the receiver requests 409 redelivery. Transport or database failures return 500, never a successful audit/ack. Terminal revocation and ComputeID-owned suspension/key filters are preserved. The flag remains off; the new RPC must be staged/applied before enabling this receiver.
 
 `computeid.test.ts` exercises real signed HTTP delivery against the RPC boundary. `scripts/ops/repro-computeid-agent-key-atomic.py` reproduces both old defects and verifies rollback, overlapping SQL sessions, CAS, service-only execution and rollback/reapply in a disposable PostgreSQL container. The fixture is targeted, not a full production schema replay. The concurrency DSL is `machines/agentPassportAtomic.machine.ts`.
+## 2026-09-05 — PR 2519 orphan durability and schema integration
+
+An orphan response may acknowledge 200 only after webhook_dlq persistence succeeds.
+Returned DB errors and thrown transport errors both reproduced false 200 before
+the fix; they now produce 500 for provider retry. Other failure branches already
+return 500 and keep DLQ recording best effort. This candidate uses the dedicated
+webhook_id introduced by its 0426 migration, matching the dependent OAuth writer
+in PR 2529; PR 2496's earlier subscription_id repair is interim. Production was
+queried read-only: subscription_id exists, webhook_id and migration 0426 do not.
+Schema application and isolated verification remain required before deployment.
+
+## 2026-09-05 — Adobe registration challenge reads validated configuration
+
+The GET challenge uses config.adobeSignClientId, populated by the existing Zod configuration loader. Request-time process.env reads can diverge from the validated startup configuration. Regressions prove the configured ID remains authoritative after raw environment mutation and an absent configured ID still returns 503 without echo. Constant-time comparison and notification HMAC behavior are unchanged.

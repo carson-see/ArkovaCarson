@@ -129,7 +129,22 @@ export function formatCredentialSubType(raw: string | null | undefined): string 
   if (raw === 'unclassified') return 'Unclassified';
   return raw
     .split('_')
-    .map(seg => SUBTYPE_ACRONYMS[seg] ?? (seg.charAt(0).toUpperCase() + seg.slice(1)))
+    // OWN properties only. `SUBTYPE_ACRONYMS[seg]` is a plain-object lookup, so
+    // a segment named after an Object.prototype member resolved to the
+    // INHERITED value and `??` never fired — `sub_type = 'constructor'` rendered
+    // "function Object() { [native code] }" as a credential Type. SCRUM-3529
+    // put this column on the anonymous verify page, where the value is
+    // writer-controlled and the column is bare `text` with no CHECK.
+    // `Object.prototype.hasOwnProperty.call`, not `Object.hasOwn`: the project
+    // compiles against `lib: ES2021` (tsconfig.json), so `Object.hasOwn` (ES2022)
+    // fails `tsc -p tsconfig.build.json` — the Vercel-safe build. It typechecks
+    // under the FULL config only because that one also includes `scripts/`, where
+    // `s33-wave1-github-evidence.ts` carries a `/// <reference lib="es2022" />`
+    // that leaks the newer lib into the program. Same guard, ES5-safe, and it
+    // matches the existing pattern in `AnchorStats.tsx`.
+    .map(seg => (Object.prototype.hasOwnProperty.call(SUBTYPE_ACRONYMS, seg)
+      ? SUBTYPE_ACRONYMS[seg]
+      : seg.charAt(0).toUpperCase() + seg.slice(1)))
     .join(' ');
 }
 
@@ -1774,6 +1789,22 @@ export const CONNECTIONS_LABELS = {
   // message and the backend gate stay in lockstep.
   DOCUSIGN_NOT_VERIFIED: 'Your organization must be verified before connecting DocuSign. Verified organizations can connect a document source. Contact support to start verification.',
   DOCUSIGN_GATE_CHECKING: 'Checking your organization’s authorization…',
+  // SCRUM-1148 follow-up — Adobe Sign connector. Same verified-org entitlement
+  // shape as DocuSign, plus one denial DocuSign has no equivalent of:
+  // ADOBE_SIGN_UNCONFIGURED, for a deployment with no registered Adobe
+  // application. That is the live production state, so it needs real copy
+  // rather than a generic "something went wrong".
+  ADOBE_SIGN_NAME: 'Adobe Sign',
+  ADOBE_SIGN_DESC: 'Trigger rules when an agreement is signed and completed',
+  ADOBE_SIGN_NOT_VERIFIED: 'Your organization must be verified before connecting Adobe Sign. Verified organizations can connect a document source. Contact support to start verification.',
+  ADOBE_SIGN_SUSPENDED: 'Your organization is currently suspended. Adobe Sign cannot be connected until the suspension is resolved.',
+  ADOBE_SIGN_GATE_CHECKING: 'Checking your organization\u2019s authorization\u2026',
+  ADOBE_SIGN_UNCONFIGURED: 'Adobe Sign is not available on this environment yet. Contact support to request access.',
+  ADOBE_SIGN_WEBHOOK_FAILED: 'Adobe accepted the sign-in but would not register Arkova to receive completed agreements. This usually means the Adobe account plan does not include webhook access. Nothing was saved \u2014 contact support before retrying.',
+  ADOBE_SIGN_ALREADY_CLAIMED: 'That Adobe account is already connected to another organization. Disconnect it there first.',
+  ADOBE_SIGN_TOAST_CONNECTED: 'Adobe Sign connected. Completed agreements will now trigger rules.',
+  ADOBE_SIGN_TOAST_DISCONNECTED: 'Adobe Sign disconnected.',
+  ADOBE_SIGN_WEBHOOK_STRANDED: 'Disconnected here, but Adobe would not remove the registration. Remove the Arkova webhook in your Adobe Acrobat Sign admin console.',
   GOOGLE_DRIVE_NAME: 'Google Drive',
   GOOGLE_DRIVE_DESC: 'Trigger rules when a watched folder’s files change',
   // DRIVE-01 (SCRUM-2366): entitlement denial copy. Each string mirrors a
@@ -4522,6 +4553,96 @@ export const PLATFORM_METRICS = {
  * implying the whole block was re-measured.
  */
 export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
+
+// =============================================================================
+// PLATFORM-ADMIN PROVISIONING (SCRUM-3873)
+// =============================================================================
+//
+// Copy for creating a net-new organization and a net-new account from the
+// admin console. Terminology note (§1.3): these surfaces say "anchor
+// allowance" and "credits" — never wallet/transaction/blockchain wording.
+export const ADMIN_PROVISION_ORG_LABELS = {
+  BUTTON_LABEL: 'Create organization',
+  DIALOG_TITLE: 'Create organization',
+  DIALOG_DESCRIPTION: 'Set up a new organization and its starting allowances.',
+  NAME_LABEL: 'Organization name',
+  NAME_PLACEHOLDER: 'Acme Institute',
+  LEGAL_NAME_LABEL: 'Legal name (optional)',
+  LEGAL_NAME_HINT: 'Defaults to the organization name.',
+  CAP_TOGGLE_LABEL: 'Limit free test anchors',
+  CAP_TOGGLE_HINT: 'Off means this organization has no anchor allowance cap.',
+  TEST_TOGGLE_LABEL: 'Test account',
+  TEST_TOGGLE_HINT: 'Off marks this as a billable production account.',
+  QUOTA_LABEL: 'Anchor allowance',
+  CREDITS_LABEL: 'Starting credits',
+  NAME_REQUIRED_ERROR: 'Enter an organization name.',
+  QUOTA_INVALID_ERROR: 'Enter a whole number of anchors, or turn the cap off.',
+  CREDITS_INVALID_ERROR: 'Enter a whole number of credits, zero or more.',
+  DUPLICATE_TITLE: 'An organization with this name already exists',
+  DUPLICATE_CONFIRM: 'Create it anyway',
+  SUBMIT_BUTTON: 'Create organization',
+  SUBMITTING_BUTTON: 'Creating…',
+  CANCEL_BUTTON: 'Cancel',
+  SUCCESS: (name: string) => `Created ${name}.`,
+  ERROR_GENERIC: 'Failed to create the organization.',
+} as const;
+
+export const ADMIN_PROVISION_USER_LABELS = {
+  BUTTON_LABEL: 'Create account',
+  DIALOG_TITLE: 'Create account',
+  DIALOG_DESCRIPTION: 'Create an account and choose how the person gets access.',
+  EMAIL_LABEL: 'Email address',
+  EMAIL_PLACEHOLDER: 'person@example.com',
+  FULL_NAME_LABEL: 'Full name (optional)',
+  ROLE_LABEL: 'Role',
+  ROLE_INDIVIDUAL: 'Individual (no organization)',
+  ROLE_ORG_ADMIN: 'Organization admin',
+  ROLE_ORG_MEMBER: 'Organization member',
+  ORG_LABEL: 'Organization',
+  ORG_PLACEHOLDER: 'Select an organization',
+  ORG_LIST_TRUNCATED:
+    'Only the most recent organizations are listed. If the one you need is missing, create the account without an organization and assign it from the organization page.',
+  SEND_EMAIL_LABEL: 'Email them a sign-in link',
+  SEND_EMAIL_HINT: 'Recommended. They choose their own password.',
+  NO_EMAIL_WARNING:
+    'No email will be sent. You must deliver the sign-in link yourself, or the account cannot be used.',
+  EMAIL_REQUIRED_ERROR: 'Enter a valid email address.',
+  ORG_REQUIRED_ERROR: 'Select an organization for this role.',
+  SUBMIT_BUTTON: 'Create account',
+  SUBMITTING_BUTTON: 'Creating…',
+  CANCEL_BUTTON: 'Cancel',
+  SUCCESS_EMAILED: (email: string) => `Created ${email} and sent a sign-in link.`,
+  SUCCESS_NO_EMAIL: (email: string) => `Created ${email}. Copy the sign-in link below — it is shown once.`,
+  LINK_LABEL: 'Sign-in link',
+  LINK_COPY: 'Copy link',
+  LINK_COPIED: 'Link copied.',
+  ERROR_ACCOUNT_EXISTS: 'An account with this email address already exists.',
+  ERROR_ROLE_CONFLICT:
+    'This email domain is claimed by another organization, which already assigned a role that cannot be changed.',
+  ERROR_GENERIC: 'Failed to create the account.',
+  ERROR_NO_DELIVERY:
+    'The account was created, but the email could not be sent and no sign-in link could be generated. '
+    + 'Use the password-reset flow to give this person access.',
+  EMAIL_FAILED_WARNING:
+    'The email could not be sent. Copy the sign-in link below and deliver it yourself — it is shown once.',
+} as const;
+
+/** SCRUM-3873: recipient password creation after a recovery link. */
+export const SET_PASSWORD_LABELS = {
+  TITLE: 'Choose your password',
+  DESCRIPTION: 'Set a password to keep access to your Arkova account.',
+  CHECKING: 'Checking your sign-in link…',
+  MISSING: 'This sign-in link is missing or expired. Please request a new link from your administrator.',
+  PASSWORD: 'New password',
+  CONFIRMATION: 'Confirm password',
+  SAVE: 'Save password',
+  SAVING: 'Saving…',
+  INVALID: 'Choose a password between 8 and 128 characters.',
+  MISMATCH: 'The passwords do not match.',
+  FAILED: 'Unable to save your password. Try again or request a new link.',
+  SAVED: 'Your password is ready. Use it the next time you sign in.',
+  CONTINUE: 'Continue',
+} as const;
 
 /** Separate mailbox confirmation after OAuth (SCRUM-4035). */
 export const OAUTH_EMAIL_CONFIRMATION_LABELS = {
