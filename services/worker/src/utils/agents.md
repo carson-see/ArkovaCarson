@@ -711,6 +711,9 @@ because sharing a prefix would let one change's pre-deploy bodies survive the ot
 
 Rule of thumb for this file: bump the prefix whenever a cached body's bytes change for the same
 anchor, whether the cause is a new field, a dropped field, or a corrected value.
+## 2026-09-05 — shared rate-limit refund coverage (PR #2529)
+
+The distributed `skipFailedRequests` regression executes the response callback against an atomic shared counter: an HTTP 500 refunds one slot, a successful retry remains charged, and the next request receives 429. Keep the existing 80% function-coverage threshold; this path must be exercised, not excluded.
 ## 2026-08-30 — R1: `updateAnchorConfirmationProofs` carries the bitcoin-tree branch
 
 `AnchorConfirmationUpdateRow` gained `txInclusionBranch` + `txBlockIndex`
