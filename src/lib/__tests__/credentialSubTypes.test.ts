@@ -151,6 +151,26 @@ describe('formatCredentialSubType (SCRUM-952)', () => {
     expect(formatCredentialSubType(input)).toBe(expected);
   });
 
+  // SCRUM-3529. The acronym table is a plain object literal, so `TABLE[seg]`
+  // reaches Object.prototype for a handful of segment names. `anchors.sub_type`
+  // is bare `text` with no CHECK, and 0421 puts it on the ANONYMOUS verify page,
+  // so the value is writer-controlled: `sub_type = 'constructor'` rendered the
+  // Object constructor's source as a credential Type label. Not an injection
+  // (React escapes it) — a nonsense claim on a verification surface, which on
+  // this product is its own defect (§1.5).
+  it.each<[string, string]>([
+    ['constructor', 'Constructor'],
+    ['toString', 'ToString'],
+    ['valueOf', 'ValueOf'],
+    ['hasOwnProperty', 'HasOwnProperty'],
+    ['nursing_constructor', 'Nursing Constructor'],
+  ])(
+    'title-cases the inherited-key segment %s instead of reading Object.prototype',
+    (input, expected) => {
+      expect(formatCredentialSubType(input)).toBe(expected);
+    },
+  );
+
   it('every subtype in CREDENTIAL_SUB_TYPES produces a non-empty, non-"Other" label', () => {
     for (const subTypes of Object.values(CREDENTIAL_SUB_TYPES)) {
       for (const sub of subTypes) {
