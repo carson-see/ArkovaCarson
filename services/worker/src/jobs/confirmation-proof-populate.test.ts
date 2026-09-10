@@ -1190,3 +1190,95 @@ describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
     });
   });
 });
+
+// ─── SCRUM-3953: never persist the stale broadcast-time tip ─────────────────
+
+/** nTime of an 80-byte header, as the ISO string the populate job must write. */
+function headerIso(headerHex: string): string {
+  return new Date(Buffer.from(headerHex, 'hex').readUInt32LE(68) * 1000).toISOString();
+}
+
+describe('populateConfirmationProofs — block_height / block_timestamp provenance (SCRUM-3953)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('persists the CHAIN height and HEADER time, not each candidate\'s stale broadcast values', async () => {
+    const leaf = makeTxidLE(77);
+    const txId = displayHex(leaf);
+    const { proofHex, headerHex, blockHash } = buildSingleTxProof(leaf);
+
+    const provider: ConfirmationProofProvider = {
+      getRawTransaction: vi.fn().mockResolvedValue({ txid: txId, confirmations: 10, blockhash: blockHash, vout: [] }),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(proofHex),
+      getBlockHeader: vi.fn().mockResolvedValue({ height: 965116 }),
+    };
+    const { client, writes } = mockRecordingClient();
+
+    // Three anchors on one tx, each carrying a DIFFERENT stale tip — exactly the
+    // prod shape that produced one block_hash with three block_heights.
+    const result = await populateConfirmationProofs(client, provider, [
+      { anchorId: 'a', chainTxId: txId, blockHeight: 965112 },
+      { anchorId: 'b', chainTxId: txId, blockHeight: 965113 },
+      { anchorId: 'c', chainTxId: txId, blockHeight: 965114 },
+    ], { minConfirmations: 6 });
+
+    expect(result.anchorsUpdated).toBe(3);
+    expect(writes.map((w) => w.anchorId).sort()).toEqual(['a', 'b', 'c']);
+    for (const w of writes) {
+      expect(w.values.block_height).toBe(965116);
+      expect(w.values.block_timestamp).toBe(headerIso(headerHex));
+      expect(w.values.block_hash).toBe(blockHash);
+    }
+  });
+
+  it('leaves block_height untouched when the chain height is unavailable', async () => {
+    const leaf = makeTxidLE(78);
+    const txId = displayHex(leaf);
+    const { proofHex, headerHex, blockHash } = buildSingleTxProof(leaf);
+
+    const provider: ConfirmationProofProvider = {
+      getRawTransaction: vi.fn().mockResolvedValue({ txid: txId, confirmations: 10, blockhash: blockHash, vout: [] }),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(proofHex),
+      // no getBlockHeader ⇒ no measured height
+    };
+    const { client, writes } = mockRecordingClient();
+    await populateConfirmationProofs(client, provider, [
+      { anchorId: 'a', chainTxId: txId, blockHeight: 965112 },
+    ], { minConfirmations: 6 });
+
+    expect(writes).toHaveLength(1);
+    const values = writes[0].values;
+    expect(values.block_hash).toBe(blockHash);
+    // Absent rather than rewritten with the stale tip — rewriting it is what
+    // re-froze the wrong value in prod. The time is still measured (it comes
+    // from the header, which this proof verified).
+    expect(Object.hasOwn(values, 'block_height')).toBe(false);
+    expect(values.block_timestamp).toBe(headerIso(headerHex));
+  });
+
+  it('falls back to the anchor\'s CONFIRMED height when getblockheader fails — same block only', async () => {
+    const leaf = makeTxidLE(79);
+    const txId = displayHex(leaf);
+    const { proofHex, headerHex, blockHash } = buildSingleTxProof(leaf);
+    const provider: ConfirmationProofProvider = {
+      getRawTransaction: vi.fn().mockResolvedValue({ txid: txId, confirmations: 10, blockhash: blockHash, vout: [] }),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(proofHex),
+      getBlockHeader: vi.fn().mockRejectedValue(new Error('transient')),
+    };
+    const { client, writes } = mockRecordingClient();
+    await populateConfirmationProofs(client, provider, [
+      // confirmation recorded THIS block ⇒ its height is trustworthy here
+      { anchorId: 'same', chainTxId: txId, blockHeight: 965112, confirmedBlockHeight: 965116, confirmedBlockHash: blockHash.toUpperCase() },
+      // confirmation recorded a DIFFERENT block ⇒ never borrow its height
+      { anchorId: 'other', chainTxId: txId, blockHeight: 965112, confirmedBlockHeight: 965200, confirmedBlockHash: 'f'.repeat(64) },
+    ], { minConfirmations: 6 });
+
+    const byId = Object.fromEntries(writes.map((w) => [w.anchorId, w.values]));
+    expect(byId.same.block_height).toBe(965116);
+    expect(Object.hasOwn(byId.other, 'block_height')).toBe(false);
+    // …and the stale broadcast tip is written for neither.
+    expect(writes.every((w) => w.values.block_height !== 965112)).toBe(true);
+  });
+});

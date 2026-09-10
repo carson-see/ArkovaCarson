@@ -53,6 +53,7 @@ you cite `memory/x.md`, the file has to be in this directory.
 | `feedback_migration_number_vs_reservations.md` | `.claude/hooks/check-constitution-on-edit.sh` — **BLOCK**; named in the deny message | ✅ live |
 | `feedback_no_credit_limits_beta.md` | CI lint (`no-credit-limits-beta.ts`) | ✅ live (R0-7) |
 | `feedback_no_aws.md` | CI lint (`no-aws.ts`) | ✅ live (R0-7) |
+| `project_proof_block_height_provenance.md` | CI lint (`proof-block-height-source.ts`) — a published proof's `block_height` must come from `anchors.chain_block_height`, never from `anchor_proofs.block_height` in preference to it (SCRUM-3953: the proof-row column is the BROADCAST-time chain tip and was wrong on 711,027 of 713,949 prod rows, making genuine anchors fail verification with `HEIGHT_MISMATCH`). Pins the coalesce/ternary ORDER at both publication sites, which is what actually regressed. Override `proof-block-height-reviewed`. | ✅ live (R0-7) |
 | `feedback_bounded_body_reads.md` | CI lint (`bounded-body-reads.ts`) — raw `.json()`/`.text()` on a fetch response under `services/worker/src/**`, scoped to lines the PR **adds** (145 pre-existing sites; see the rule's header for why whole-file would be wrong here). Override `unbounded-body-read-reviewed`. The companion `maxRunMs >= ttlMs` half is test-enforced in `jobs/__tests__/run-lease.deadline.test.ts`. | ✅ live (R0-7 / F-D0-5) |
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
 | `feedback_no_worktree_isolation.md` | CI lint (`no-worktree-isolation.ts`) | ✅ live (R0-7) |
@@ -88,6 +89,7 @@ and documented in the rule script. Examples:
 
 - `post-beta-quota-rollout` → overrides `feedback_no_credit_limits_beta`
 - `aws-intentional` → overrides `feedback_no_aws`
+- `proof-block-height-reviewed` → overrides `project_proof_block_height_provenance`
 - `local-matches-prod-skip` → overrides `feedback_local_matches_prod`
 - `confluence-drift-skip` → overrides the Confluence coverage drift guard
 - `handoff-narrative-only` → overrides R0-6 HANDOFF.md lint

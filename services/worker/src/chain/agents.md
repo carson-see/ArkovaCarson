@@ -38,6 +38,33 @@ no credential, and there the path IS the correlation value (same reasoning the
 Rule: **a URL is a credential until you have checked where the credential lives.** Query-param
 scrubbing is not URL scrubbing; this endpoint puts the secret in the path.
 
+## 2026-09-02 — `block_height` on a proof is MEASURED or absent, never echoed (SCRUM-3953)
+
+`anchor_proofs.block_height` was the chain **tip at broadcast**
+(`broadcastSignedTx` -> `getBlockchainInfo().blocks`), not the height of the block the tx was mined
+into, and nothing corrected it: `ConfirmationProof` had no height field, so
+`populateConfirmationProofs` wrote `anchor.blockHeight ?? null` — the stale value onto itself.
+`anchors.chain_block_height` IS corrected at confirmation, so the two columns diverged on
+**711,027 of 713,949** prod rows, always low, by the number of blocks mined between broadcast and
+confirmation. Because each anchor kept its own tip, one block hash ended up carrying several heights.
+
+Three rules now bind this path:
+
+1. **`ConfirmationProof.blockHeight` is measured or absent.** It comes from
+   `getBlockHeader(blockHash).height` — the only authoritative answer, since an 80-byte header does
+   not carry its own height (BIP34 puts it in the coinbase). A provider without `getBlockHeader`, a
+   transport failure, or a non-integer answer all yield **no height**. Never fall back to
+   `req.blockHeight`: that is the broadcast tip, and echoing it is what froze 711k wrong values.
+2. **The height read never downgrades a proof.** It runs last and is non-fatal — the branch above it
+   is already complete and independently checkable, so a failed height lookup still returns
+   `confirmed`, just without a height.
+3. **`undefined` means "leave the column alone".** `updateAnchorConfirmationProofs` omits
+   `block_height` entirely when unmeasured, rather than nulling it or rewriting the existing value.
+
+Backfill: migration `0442`. Publication order is CI-pinned by
+`scripts/ci/feedback-rules/proof-block-height-source.ts`. Context:
+`memory/project_proof_block_height_provenance.md`.
+
 ## 2026-08-17 FD-CHAIN-1 round 2 — `listUnspent` is a UNION; no single leg is authoritative
 
 Round 1 (below) fixed the EMPTY-result case by turning `>= 0` into `> 0` so an empty RPC

@@ -1227,6 +1227,11 @@ Amended after the 2026-09-05 review of PR #2658 (findings F1/F2/F3/F5), still un
   so their `0327` bodies must be restored *before* the column is dropped — otherwise every signup INSERT and
   every 4-arg admin write fails on a missing column. Verified end-to-end on a disposable Postgres.
 
+## Recent migrations (SCRUM-3953)
+
+| Migration | Branch | Ticket | File | Status |
+|---|---|---|---|---|
+| `0443` | `fix/scrum-3953-proof-block-height` | SCRUM-3953 (BUG-2026-09-02-005) | `0443_backfill_anchor_proof_block_height.sql` | RESERVED — file-only, **NOT applied to prod or any rig**. T3 (data repair on the anchor-lifecycle surface). Number derived as `max(main head, prod ledger head, agents.md reservations, open-PR claims) + 1`: originally drafted as `0433` on 2026-09-02; **renumbered 2026-09-10** because `0433` was since claimed twice (`0433_org_credits_cap_enforced`, `0433_scrum3529_ferpa_directory_info_get_public_anchor_reconcile`) and on 2026-09-10 the **prod numeric ledger head is `0442`** (`0442_scrum4521_recover_stuck_broadcasts_bounded_batch`, PR #2693; also `0440_org_credits_cap_enforced` and `0441_fingerprint_lookup_bpchar_cast` applied) and the highest prefix on any ref or open PR is `0442` — so `0443` is the next free slot. **Next author claims `0444` — re-derive, do not trust this line.** Data-only: no schema change, so no `database.types.ts` delta and no `NOTIFY pgrst`. Rehearsed on an isolated throwaway Postgres 17 container (never prod, never a rig, never the shared local stack): forward corrects the three-heights-one-block fixture to the true height, leaves an already-correct row and a row whose block identity disagrees untouched, re-run reports 0, and the post-condition guard was negative-tested (it raises when a bad row is planted). No rollback by design — the prior values are broadcast-time tips with no source to restore from; see the file header. |
 
 ## 2026-09-10 — 0449 broadcast recovery clears stale claim metadata (SCRUM-4539)
 
@@ -1256,3 +1261,61 @@ repairs. Rollback must restore only 0432's two rollup definitions, not its whole
 file. Both canonical type entries now include the pre-existing explicit-caller
 overload, regenerated from the actual catalog. Hosted qualification is pending;
 local receipts are not a staging duration or production application claim.
+
+## PR #2782 — current migration qualification checkpoint (2026-09-10)
+
+The older reservation entry above is historical. Existing Owie staging
+received immutable0443 in the reviewed native release at20:02:28UTC; its
+current canonical ledger is150 after0448/0450. Actual production application
+and independent catalog receipts at21:38UTC show149 canonical rows, including
+0429–0432 and0444–0450, but excluding0443. Source prefixes must be re-derived
+from current main, production and open PRs;0444 is no longer available.
+
+0443 remains SHA256
+`b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`.
+Its20,000-row loop is one transaction, not separately committed batches. The
+large production repair requires protected fresh preimages, bounded guarded
+updates and an actual final migration outcome. An observed zero-mismatch
+postcondition at migration time does not establish durable convergence while
+old producers remain. Corrected deployment, old-work drain and fresh final
+reconciliation precede that release claim. No production0443 application or
+new completed soak is asserted by this checkpoint.
+
+[Production149 and hosted qualification record](https://arkova.atlassian.net/wiki/spaces/A/pages/141623441)
+and [proof-repair release record](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
+retain the separately dated evidence.
+
+
+## PR #2782 — runtime-first release; historical repair retained in PR #2825
+
+The CTO review has separated the measured confirmation metadata and
+certificate block-binding runtime from its historical data repair. Runtime
+uses existing proof and anchor columns, and its regressions explicitly
+cover stale historical proof values, matching identities and mismatches.
+No schema, function, type or feature flag introduced by 0443 is needed.
+
+The exact unmodified 0443 file and existing prefix reservation are retained
+in [PR #2825](https://github.com/carson-see/ArkovaCarson/pull/2825), branch
+`release/scrum-3953-proof-history-0443`, source commit
+`4bca854715594b35476a8a3651194841b3cf8829`. The migration SHA256 remains
+`b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`.
+Removing that unmerged file from this runtime PR does not undo its staging
+application, change any production ledger, release its prefix, or waive its
+remaining production requirement. The original migration header and earlier
+entries above retain their historical context.
+
+Owie remains at 150 ledger entries with 0443 applied; production remains at
+149 without 0443. This data-only divergence is declared, not called a clean
+pre-migration snapshot. The runtime code, models and build inputs retain the
+reviewed combined staging source. Current-head CI and Mergify still govern
+this runtime release; no fresh 48-hour soak or historical convergence is
+asserted. The existing founder soak exception is unchanged.
+
+Historical repair remains In Progress under
+[SCRUM-4879](https://arkova.atlassian.net/browse/SCRUM-4879), with verification
+SCRUM-4880 and documentation SCRUM-4881. Its
+[release record](https://arkova.atlassian.net/wiki/spaces/A/pages/143196161)
+requires protected fresh preimages, bounded source/full-row guarded updates,
+corrected producer deployment and old-work drainage, final reconciliation,
+actual unchanged 0443 outcome and canonical numeric ledger readback. Runtime
+delivery alone does not close the broader SCRUM-3953 historical defect.

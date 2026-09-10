@@ -267,6 +267,33 @@ Fix: after the RPC returns a non-null id, read the persisted row back (`connecto
 
 `connector-artifact-drain.ts`'s `defaultMaterializeAnchor` (documented at length below) reads `row.metadata._direction` — written ONLY by the webhook classifier's new inbound branch (`api/v1/webhooks/docusign.ts`, see that folder's agents.md) — and, when it equals `'inbound'`, sets `anchors.fingerprint_source = 'issuer_record_attestation'` (migration 0376 CHECK enum) on the `AnchorInsertPayload`. Every other row (100% of traffic today: DocuSign outbound, Google Drive) omits the field entirely (`undefined`, never `'document_bytes'` — this file never fetches bytes itself either; that measurement, when it happens, is upstream in `docusign-envelope-completed.ts`, which this materializer has no visibility into). `AnchorInsertPayload` gained the field as `.optional()`; the `.strict()` schema still rejects anything else. See `constants/connectorFingerprint.ts` for the downstream `FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED` class this enables on the public verify response.
 
+## 2026-09-02 — `block_height` on a proof is MEASURED or absent, never echoed (SCRUM-3953)
+
+`anchor_proofs.block_height` was the chain **tip at broadcast**
+(`broadcastSignedTx` -> `getBlockchainInfo().blocks`), not the height of the block the tx was mined
+into, and nothing corrected it: `ConfirmationProof` had no height field, so
+`populateConfirmationProofs` wrote `anchor.blockHeight ?? null` — the stale value onto itself.
+`anchors.chain_block_height` IS corrected at confirmation, so the two columns diverged on
+**711,027 of 713,949** prod rows, always low, by the number of blocks mined between broadcast and
+confirmation. Because each anchor kept its own tip, one block hash ended up carrying several heights.
+
+Three rules now bind this path:
+
+1. **`ConfirmationProof.blockHeight` is measured or absent.** It comes from
+   `getBlockHeader(blockHash).height` — the only authoritative answer, since an 80-byte header does
+   not carry its own height (BIP34 puts it in the coinbase). A provider without `getBlockHeader`, a
+   transport failure, or a non-integer answer all yield **no height**. Never fall back to
+   `req.blockHeight`: that is the broadcast tip, and echoing it is what froze 711k wrong values.
+2. **The height read never downgrades a proof.** It runs last and is non-fatal — the branch above it
+   is already complete and independently checkable, so a failed height lookup still returns
+   `confirmed`, just without a height.
+3. **`undefined` means "leave the column alone".** `updateAnchorConfirmationProofs` omits
+   `block_height` entirely when unmeasured, rather than nulling it or rewriting the existing value.
+
+Backfill: migration `0442`. Publication order is CI-pinned by
+`scripts/ci/feedback-rules/proof-block-height-source.ts`. Context:
+`memory/project_proof_block_height_provenance.md`.
+
 ## 2026-08-15 — the `*Fetcher.ts` family cannot report failure as success any more (BUG-020/022/023)
 
 The 2026-08 connector side-rig force-ran 42 previously-untested ingestion routes

@@ -285,7 +285,7 @@ _Last refreshed: 2026-09-05 by Claude Fable 5.1 (CTO session) — claims verifie
 
 [PR #2653](https://github.com/carson-see/ArkovaCarson/pull/2653) merged via Mergify at 16:49:30 UTC (`3954ca54d5d44cc15902756af0a70b44df79c6be`). Vercel production deployment `dpl_7g6sgAjbDxiuWfog58gZTL8krFJu` was independently verified READY with `app.arkova.ai` on that merge at 16:52 UTC. Later main deployments retain the signup change. Logged-out signup passed actual headless Chrome checks at 1280/375: immediate registration controls, retired beta gate absent, keyboard/error/navigation behavior and no horizontal overflow. No account writes. [Production metadata, screenshots and independent CTO verification](https://arkova.atlassian.net/wiki/spaces/A/pages/137134081); [merge-candidate CI passed](https://github.com/carson-see/ArkovaCarson/actions/runs/33976208584) (18,992 tests and 349 E2E cases). API, worker, webhook, MCP and SDK authentication were unchanged by this frontend fix. OAuth branding/mailbox verification and MFA retain their separate UAT ownership. Final close-out is tracked in SCRUM-4031 after the required observation deadline of 17:19:30 UTC.
 
-### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
+### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, SCRUM-3953 / BUG-2026-09-02-005)
 
 **711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
 `anchors.chain_block_height`. Every single disagreement is **low** (`proof_lower=711027`,
@@ -331,7 +331,7 @@ soak fixture. **Not a regression from that PR** — the rows predate it — and 
 the 711k-row backfill is a T3 migration needing operator approval and its own soak.
 **Not yet logged in the Confluence Bug Tracker** — the Atlassian MCP connector is unauthenticated in
 this session and the `Atlassian` Secret Manager token returns 401. Paste-ready entry is in the
-session report; whoever has Atlassian auth should file it as BUG-2026-09-02-001.
+session report. (Filed the same day by another session as SCRUM-3953 / BUG-2026-09-02-005; fix is branch `fix/scrum-3953-proof-block-height`, migration `0443`.)
 
 ### DB — three admin RPCs ran unguarded DDL on the hot `profiles` table (fixed, pre-soak, 2026-09-01)
 
