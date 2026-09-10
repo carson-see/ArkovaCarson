@@ -2,9 +2,9 @@
 
 > **Historical guide — not the current API/MCP launch contract.** This March 2026 guide is retained for archival context only. Current developer-facing API docs live in [`docs/api/README.md`](../api/README.md), current v2 migration guidance lives in [`docs/api/v2-migration.md`](../api/v2-migration.md), and the current MCP launch surface is read-only by default. Do not use the agent examples below to infer that `anchor_document` is exposed in the default public MCP launch manifest; that tool is now gated by `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus a write-capable scope.
 > **Last updated:** 2026-03-28
-> **Production API:** `https://arkova-worker-270018525501.us-central1.run.app`
+> **Production API:** `https://api.arkova.ai`
 > **App:** `https://arkova-26.vercel.app`
-> **Interactive docs:** `https://arkova-worker-270018525501.us-central1.run.app/api/docs`
+> **Interactive docs:** `https://api.arkova.ai/v2/openapi.json`
 
 This guide walks you through everything you need to use the Arkova Verification API, from creating your account to making your first API call, building an AI agent that can query Arkova, and setting up x402 micropayments. No blockchain or cryptography experience required.
 
@@ -152,7 +152,7 @@ Let's verify that everything works. Open your terminal and run:
 ### Check the API is running
 
 ```bash
-curl https://arkova-worker-270018525501.us-central1.run.app/health
+curl https://api.arkova.ai/health
 ```
 
 You should see:
@@ -173,7 +173,7 @@ Let's verify a public record. Replace `YOUR_API_KEY` with your actual key, and u
 
 ```bash
 curl -H "X-API-Key: YOUR_API_KEY" \
-  https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-ABCD1234
+  https://api.arkova.ai/api/v1/verify/ARK-2026-ABCD1234
 ```
 
 If the record exists, you'll get a response like:
@@ -203,24 +203,24 @@ You can pass your API key in either of these ways — both work identically:
 ```bash
 # Method 1: X-API-Key header (recommended)
 curl -H "X-API-Key: ak_live_your_key_here" \
-  https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-DEMO-001
+  https://api.arkova.ai/api/v1/verify/ARK-DEMO-001
 
 # Method 2: Authorization Bearer header
 curl -H "Authorization: Bearer ak_live_your_key_here" \
-  https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-DEMO-001
+  https://api.arkova.ai/api/v1/verify/ARK-DEMO-001
 ```
 
 ---
 
 ## 5. Core API Endpoints
 
-**Base URL:** `https://arkova-worker-270018525501.us-central1.run.app/api/v1`
+**Base URL:** `https://api.arkova.ai/api/v1`
 
 All examples below assume you've set your API key as an environment variable:
 
 ```bash
 export ARKOVA_API_KEY="ak_live_your_key_here"
-export ARKOVA_BASE="https://arkova-worker-270018525501.us-central1.run.app/api/v1"
+export ARKOVA_BASE="https://api.arkova.ai/api/v1"
 ```
 
 ---
@@ -706,12 +706,12 @@ import anthropic
 import httpx
 
 ARKOVA_API_KEY = "ak_live_your_key_here"
-ARKOVA_BASE = "https://arkova-worker-270018525501.us-central1.run.app/api/v1"
+ARKOVA_BASE = "https://api.arkova.ai/api/v1"
 
 # Define the tools the agent can use
 tools = [
     {
-        "name": "verify_credential",
+        "name": "verify_anchor",
         "description": "Verify a credential's authenticity by its Arkova Public ID (e.g., ARK-2026-ABCD1234). Returns whether the credential is blockchain-verified, who issued it, what type it is, and when it was anchored.",
         "input_schema": {
             "type": "object",
@@ -817,7 +817,7 @@ def call_arkova_tool(tool_name: str, tool_input: dict) -> str:
     """Execute an Arkova API call based on the tool name and input."""
     headers = {"X-API-Key": ARKOVA_API_KEY, "Content-Type": "application/json"}
 
-    if tool_name == "verify_credential":
+    if tool_name == "verify_anchor":
         resp = httpx.get(
             f"{ARKOVA_BASE}/verify/{tool_input['public_id']}",
             headers=headers
@@ -913,7 +913,7 @@ import httpx
 import json
 
 ARKOVA_API_KEY = "ak_live_your_key_here"
-ARKOVA_BASE = "https://arkova-worker-270018525501.us-central1.run.app/api/v1"
+ARKOVA_BASE = "https://api.arkova.ai/api/v1"
 
 client = OpenAI()
 
@@ -922,7 +922,7 @@ tools = [
     {
         "type": "function",
         "function": {
-            "name": "verify_credential",
+            "name": "verify_anchor",
             "description": "Verify a credential by its Arkova Public ID",
             "parameters": {
                 "type": "object",
@@ -953,7 +953,7 @@ tools = [
 
 def call_tool(name, args):
     headers = {"X-API-Key": ARKOVA_API_KEY}
-    if name == "verify_credential":
+    if name == "verify_anchor":
         r = httpx.get(f"{ARKOVA_BASE}/verify/{args['public_id']}", headers=headers)
         return r.text
     elif name == "search_records":
@@ -996,7 +996,7 @@ while True:
 
 If you're using Claude Desktop or another MCP-compatible client, Arkova provides an MCP server:
 
-1. The MCP spec is at `https://arkova-worker-270018525501.us-central1.run.app/.well-known/openapi.json`
+1. The MCP spec is at `https://api.arkova.ai/.well-known/openapi.json`
 2. Point your MCP client at the Arkova API base URL
 3. The tools are automatically discovered
 
@@ -1008,7 +1008,7 @@ If you just want to query Arkova from a script without an AI framework:
 import httpx
 
 ARKOVA_API_KEY = "ak_live_your_key_here"
-BASE = "https://arkova-worker-270018525501.us-central1.run.app/api/v1"
+BASE = "https://api.arkova.ai/api/v1"
 HEADERS = {"X-API-Key": ARKOVA_API_KEY}
 
 # Verify a credential
@@ -1059,7 +1059,7 @@ x402 is an open protocol that lets you pay for API calls with stablecoins (USDC)
 **Step 1: Make a request without auth**
 
 ```bash
-curl https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-ABCD1234
+curl https://api.arkova.ai/api/v1/verify/ARK-2026-ABCD1234
 ```
 
 **Step 2: You receive a 402 response**
@@ -1106,7 +1106,7 @@ const paymentProof = {
 const encoded = btoa(JSON.stringify(paymentProof));
 
 // Make the request with payment proof
-fetch("https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-ABCD1234", {
+fetch("https://api.arkova.ai/api/v1/verify/ARK-2026-ABCD1234", {
   headers: { "X-Payment": encoded }
 });
 ```
@@ -1116,7 +1116,7 @@ fetch("https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-
 PAYMENT=$(echo -n '{"txHash":"0xabc...","network":"eip155:84532","payerAddress":"0xyour...","timestamp":1711648000}' | base64)
 
 curl -H "X-Payment: $PAYMENT" \
-  https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-ABCD1234
+  https://api.arkova.ai/api/v1/verify/ARK-2026-ABCD1234
 ```
 
 **Step 5: Get your result**
@@ -1147,7 +1147,7 @@ const ARKOVA_PAY_TO = "0xae1201D68cE24fC6...75ba04"; // Arkova's payment address
 async function payAndVerify(publicId, wallet) {
   // Step 1: Try the request
   const resp = await fetch(
-    `https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/${publicId}`
+    `https://api.arkova.ai/api/v1/verify/${publicId}`
   );
 
   if (resp.status !== 402) return await resp.json();
@@ -1173,7 +1173,7 @@ async function payAndVerify(publicId, wallet) {
   }));
 
   const result = await fetch(
-    `https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/${publicId}`,
+    `https://api.arkova.ai/api/v1/verify/${publicId}`,
     { headers: { "X-Payment": proof } }
   );
 
@@ -1195,7 +1195,7 @@ An HR department receives a candidate's credential IDs and verifies them in bulk
 import httpx
 
 HEADERS = {"X-API-Key": "ak_live_...", "Content-Type": "application/json"}
-BASE = "https://arkova-worker-270018525501.us-central1.run.app/api/v1"
+BASE = "https://api.arkova.ai/api/v1"
 
 # Candidate provides their credential IDs
 candidate_credentials = [
@@ -1409,10 +1409,10 @@ def resilient_verify(public_id, max_retries=3):
 ## 12. API Reference Quick Sheet
 
 ```
-Base URL: https://arkova-worker-270018525501.us-central1.run.app/api/v1
+Base URL: https://api.arkova.ai/api/v1
 Auth:     X-API-Key: ak_live_... (or Authorization: Bearer ak_live_...)
-Docs:     https://arkova-worker-270018525501.us-central1.run.app/api/docs
-Spec:     https://arkova-worker-270018525501.us-central1.run.app/api/docs/spec.json
+Docs:     https://api.arkova.ai/v2/openapi.json
+Spec:     https://api.arkova.ai/v2/openapi.json/spec.json
 ```
 
 | Method | Endpoint | Auth | Description |
@@ -1504,7 +1504,7 @@ x402 currently uses Base Sepolia (testnet). Get test USDC from:
 
 ### "Where can I see the interactive API docs?"
 
-Visit: `https://arkova-worker-270018525501.us-central1.run.app/api/docs`
+Visit: `https://api.arkova.ai/v2/openapi.json`
 
 This is a Swagger UI where you can try out every endpoint directly in your browser.
 
@@ -1512,7 +1512,7 @@ This is a Swagger UI where you can try out every endpoint directly in your brows
 
 ## Need Help?
 
-- **Interactive API Docs:** [Swagger UI](https://arkova-worker-270018525501.us-central1.run.app/api/docs)
-- **OpenAPI Spec:** [spec.json](https://arkova-worker-270018525501.us-central1.run.app/api/docs/spec.json)
+- **Interactive API Docs:** [Swagger UI](https://api.arkova.ai/v2/openapi.json)
+- **OpenAPI Spec:** [spec.json](https://api.arkova.ai/v2/openapi.json/spec.json)
 - **App:** [arkova-26.vercel.app](https://arkova-26.vercel.app)
 - **Email:** support@arkova.ai

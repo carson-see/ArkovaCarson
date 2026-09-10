@@ -24,7 +24,7 @@ describe('Zapier App Structure', () => {
 
   it('has required actions', () => {
     expect(App.creates.anchor_document).toBeDefined();
-    expect(App.creates.verify_credential).toBeDefined();
+    expect(App.creates.verify_anchor).toBeDefined();
     expect(App.creates.batch_verify).toBeDefined();
   });
 
@@ -124,8 +124,8 @@ describe('Anchor Document Action', () => {
   });
 });
 
-describe('Verify Credential Action', () => {
-  const action = App.creates.verify_credential;
+describe('Verify Anchor Action', () => {
+  const action = App.creates.verify_anchor;
 
   it('requires public_id input', () => {
     const fields = action.operation.inputFields;
@@ -153,6 +153,23 @@ describe('Batch Verify Action', () => {
   it('sample returns array of results', () => {
     expect(action.operation.sample.results).toHaveLength(2);
     expect(action.operation.sample.count).toBe(2);
+  });
+});
+
+// P10: "Credential" is deliberately dropped from every action's Zapier-editor
+// display copy (label/description/key) — "Verify Anchor" / "Batch Verify
+// Anchors" — per CLAUDE.md §1.3 terminology. The `credential_type` FIELD name
+// (an input/output/sample key, not display copy) is explicitly kept, so this
+// only inspects `key`, `display.label`, and `display.description`.
+describe('action display copy has no "credential" wording (§1.3)', () => {
+  const actions = [App.creates.anchor_document, App.creates.verify_anchor, App.creates.batch_verify];
+
+  it('no action key, label, or description contains "credential" (case-insensitive)', () => {
+    for (const action of actions) {
+      expect(action.key.toLowerCase()).not.toContain('credential');
+      expect(action.display.label.toLowerCase()).not.toContain('credential');
+      expect(action.display.description.toLowerCase()).not.toContain('credential');
+    }
   });
 });
 

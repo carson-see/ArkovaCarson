@@ -1,19 +1,18 @@
 /**
  * MCP IP / origin allowlist + Cloudflare bot-management gate.
  *
- * Reads per-API-key allowlist entries from `MCP_ORIGIN_ALLOWLIST_KV`
- * (keyed `allow:<api_key_id>`) and decides allow / challenge / reject.
- * Sits between auth and tool dispatch so untrusted origins never reach
- * the auth layer.
+ * Reads allowlist entries from `MCP_ORIGIN_ALLOWLIST_KV`: API keys use
+ * `allow:<api_key_id>`; verified Bearer users use `allow-user:<user_id>`.
+ * Sits after authentication and before tool dispatch.
  *
- * When no KV binding or no entry exists for the key, we default to
- * `challenge` — admins can opt a key out by writing a wildcard-CIDR
- * entry. The module is pure; `computeAllowlistDecision()` is tested
- * without the Workers runtime.
+ * An absent KV binding preserves development access. With KV bound,
+ * an API key without an entry preserves its existing unrestricted access;
+ * a Bearer user without an entry is challenged. The operator must explicitly
+ * allow that user. `computeAllowlistDecision()` is tested without Workers.
  *
  * SCRUM-1283 (R3-10) sub-issue A — KV write contract:
  *   When `MCP_ALLOWLIST_HMAC_SECRET` is set (production), each KV value
- *   under `allow:<api_key_id>` MUST be the JSON shape:
+ *   in either identity namespace MUST be the JSON shape:
  *     { "value": <inner-entry-json-string>, "signature": "<hex-hmac>" }
  *   where signature = HMAC-SHA256(value, secret) hex-encoded. Verify
  *   uses `crypto.subtle` with constant-time compare. Mismatch ⇒
@@ -126,24 +125,28 @@ export function computeAllowlistDecision(
 }
 
 /**
- * Load the per-API-key entry from KV + compute a decision. Returns a
- * pass-through decision when the KV binding is missing (dev / preview).
+ * Load the authenticated identity's entry from KV + compute a decision.
+ * `verifiedBearerUserId` must come from successful JWT verification and the
+ * matching Supabase user lookup, never decoded claims or request headers.
+ * Returns a pass-through decision when the KV binding is missing (dev / preview).
  */
 export async function enforceOriginAllowlist(
   env: Env,
   apiKeyId: string | null,
   req: AllowlistRequest,
+  verifiedBearerUserId: string | null = null,
 ): Promise<AllowlistDecision> {
   const kv = env.MCP_ORIGIN_ALLOWLIST_KV;
   if (!kv) return { ok: true, reason: 'no_kv_binding' };
-  // OAuth-bearer callers have no apiKeyId → no per-key KV entry to look
-  // up. Fall through to the "no entry" branch so the gate still
-  // challenges them instead of silently allowing. Tests lock this in.
-  if (!apiKeyId) return computeAllowlistDecision(null, req);
+  // Distinct prefixes prevent a user subject from selecting an API-key entry.
+  // API-key callers without a key id retain their previous challenge behavior.
+  const entryKey = apiKeyId ? `allow:${apiKeyId}`
+    : verifiedBearerUserId ? `allow-user:${verifiedBearerUserId}` : null;
+  if (!entryKey) return computeAllowlistDecision(null, req);
 
   let entry: AllowlistEntry | null = null;
   try {
-    const raw = await kv.get(`allow:${apiKeyId}`);
+    const raw = await kv.get(entryKey);
     if (raw) {
       // SCRUM-1283 (R3-10) sub-issue A: when an HMAC secret is configured,
       // require the `{value, signature}` envelope shape and verify the
@@ -166,6 +169,8 @@ export async function enforceOriginAllowlist(
       }
       entry = parsed.data;
     } else {
+      // Bearer access is opt-in; never inherit the API-key no-entry default.
+      if (!apiKeyId) return computeAllowlistDecision(null, req);
       // No per-key KV entry. Caller already passed API key auth
       // (apiKeyId is non-null) so they hold a valid, active key.
       // Default to allow — KV allowlist is opt-in restriction for

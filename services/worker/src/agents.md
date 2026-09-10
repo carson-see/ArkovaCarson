@@ -1,8 +1,53 @@
 # services/worker/src/
-_Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-stop/run-lease/manifest/PII-scrub/parser-convergence + ART Lane 1 bug-bounty SCRUM-3016/3017/3021)_
+_Last updated: 2026-09-07 (SCRUM-4492: ComputeID AgentPassport integration — `config.ts` gains the ComputeID flag/secret/CA-pin trio with a boot guard; `index.ts` gains the `/webhooks/computeid` mount)_
+
+## 2026-09-07 — ComputeID AgentPassport integration (SCRUM-4492 / SCRUM-4493 / SCRUM-4494)
+
+`config.ts` gains `enableComputeidIntegration` (`boolFlag(false)`), `computeidWebhookSecret` (comma-separated list allowed) and `computeidCaCertPem`. The superRefine refuses to boot when the flag is on without ≥1 non-empty secret (parsed by the SAME `integrations/computeid/secrets.ts::parseSecretList` the handler uses — a `","` value must fail at boot, not 503 every delivery) or without a parseable CA pin, and in production refuses a bare SPKI public-key pin. **New import edge:** `config.ts` → `integrations/computeid/{ca-cert,secrets}.ts`; that folder must stay logger- and config-free or the boot import cycles. `middleware/flagRegistry.ts` registers the getter; both drift snapshots + `flag-inventory.json` pin it `false`.
+
+`index.ts` gains the `WEBHOOK_PATHS.COMPUTEID` mount: `computeidGate` (503 while dark, before any work) → `rateLimiters.computeidWebhook` (its own global bucket, not Stripe's) → `express.raw({ type: () => true, limit })` with body-parser's `entity.too.large` mapped to a JSON 413 (it is not an `AppError`; the global handler would 500) → `rawBody` → `computeidWebhookRouter`. The admission router is mounted in `api/v1/router.ts` BEFORE the JWT-only `/agents` (see `api/v1/agents.md`).
+
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-09-05 — worker-side MCP test fixtures re-pinned to the registered tool names
+
+`mcp-tools.test.ts`, `mcp-tool-schemas.test.ts` and `mcp-anomaly-detection.test.ts` carried
+the pre-v3.0 names (`verify_credential`, `search_credentials`, bare `search` / `verify`) in
+their fixtures and expectations. The worker does not serve MCP — the edge worker does — but
+these suites encode the tool NAME SET, and a fixture that names a tool the registry no
+longer has is a test asserting against a world that does not exist: it stays green while
+proving nothing about the live surface. Re-pinned to `arkova_*` (with `nessie_query`
+keeping its own namespace).
+
+`mcp-tool-schemas.test.ts` reads `x-agent-usage.tool_name` out of the v2 OpenAPI spec, so
+it is one of only three readers of that extension in the repo — see
+`docs/api/agents.md` (2026-09-05) for why changing that field is not a §1.8 break.
+
+## 2026-08-31 — `config.ts` gains `enableDocusignSignerBackfill` (`feat/docusign-signer-backfill-v2`, draft, T2, stacked on `feat/docusign-signer-capture-outbound` / PR #2474)
+
+Gates `POST /jobs/docusign-signer-backfill` (`jobs/docusign-signer-backfill.ts` +
+`-deps.ts`), a one-time historical scan that enriches pre-existing DocuSign
+anchors — created before signer capture (PR #2474) shipped — with
+`metadata._signers`. Default false. Cross-field guard: requires
+`ENABLE_DOCUSIGN_OAUTH=true` (the backfill authenticates via the same
+refreshable OAuth connection that flag gates). OUTBOUND-only by construction —
+see `jobs/agents.md` for the critical inbound-exclusion writeup.
+
+**Branch structure (corrected from the original PR #2521 attempt).** This job
+reuses `DocusignCapturedSigner`, `MAX_CAPTURED_DOCUSIGN_SIGNERS`,
+`resolveDocusignEnvironment`, and `ENVELOPE_ID_METADATA_KEYS`, which do not
+exist on `main` yet — they ship in PR #2474 (`feat/docusign-signer-capture-outbound`).
+The original attempt (PR #2521) branched from `rc/docusign-bilateral-2026-08-30`
+instead, an internal soak/integration branch that is not itself a PR into
+`main` — if that RC is ever abandoned post-soak, that work would never reach
+`main`. This branch (`feat/docusign-signer-backfill-v2`) instead branches
+directly from `feat/docusign-signer-capture-outbound` and opens as a PR
+**based on** that branch, so it stacks and follows PR #2474 to `main` rather
+than depending on the RC's survival. It intentionally carries ONLY the
+signer-capture prerequisite (#2474) plus this backfill — none of the RC's
+other in-flight features (inbound webhook classification, provenance
+auto-heal, migrations 0423/0424, disclosure work).
 ## 2026-08-30 SCRUM-3374 — `index.ts` gains the anchoring RPC credential monitor
 
 Second network-blind singleton in this file, same shape as the 2026-08-11 fee-estimator finding below: `/health` asserted anchoring health without ever making an anchoring call. Prod verified 2026-08-30 — a REVOKED GetBlock token (`HTTP 401 "Unknown token"`) while `/health` served `"anchoring":"ok"`.
@@ -183,3 +228,8 @@ When mocking Supabase rows in this suite, use columns the table actually has.
 - `generateFingerprint` is client-side only — never import it here.
 - All secrets from env vars; treasury keys never logged.
 - `anchor.status = 'SECURED'` is worker-only via service_role.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+The current ComputeID mount is gate → per-IP limiter → shared `computeidWebhookBody` → receiver. The shared parser rejects suffix paths before buffering and maps oversize payloads to 413. Tests use this production middleware; disabled requests still return 503 before parsing. This supersedes the original global-bucket note above.

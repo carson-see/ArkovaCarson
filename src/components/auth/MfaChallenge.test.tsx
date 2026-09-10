@@ -323,10 +323,12 @@ describe('MfaChallenge', () => {
   it('R19: auto-retries listFactors() on the live re-check cadence while on the retry screen (visibilitychange)', async () => {
     mockListFactors.mockResolvedValueOnce({ data: null, error: { message: 'network down' } });
 
-    renderChallenge();
-    await waitFor(() => {
-      expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
+    // Flush the retry-state commit AND its passive polling effect before the event.
+    // Seeing retry DOM alone does not prove the visibility listener is registered.
+    await act(async () => {
+      renderChallenge();
     });
+    expect(screen.getByTestId('mfa-challenge-retry')).toBeInTheDocument();
     expect(mockListFactors).toHaveBeenCalledTimes(1);
 
     mockListFactors.mockResolvedValueOnce({
@@ -334,13 +336,13 @@ describe('MfaChallenge', () => {
       error: null,
     });
     Object.defineProperty(document, 'hidden', { value: false, configurable: true });
-    act(() => {
+    await act(async () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    await waitFor(() => {
-      expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
-    });
+    expect(mockListFactors).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('mfa-challenge-code')).toBeInTheDocument();
+    expect(onVerified).not.toHaveBeenCalled();
   });
 
   it('only allows digits in the code field, capped at 6', async () => {

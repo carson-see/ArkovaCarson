@@ -19,7 +19,31 @@ vi.mock('../config.js', () => ({
   },
 }));
 
-vi.mock('./db.js', () => ({ db: { rpc: mockRpc } }));
+// SCRUM-3866: `deductOrgCredit` now consults
+// `organizations.credit_enforcement_enabled` (migration 0429) when the global
+// flag is off, so the db mock needs `from` as well as `rpc`. The stub is inlined
+// in the factory (vi.mock is hoisted, so it cannot close over a top-level const)
+// and reports NOT enrolled — the state every case in this file assumes. The
+// assertions below are unchanged.
+vi.mock('./db.js', () => ({
+  db: {
+    rpc: mockRpc,
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: { credit_enforcement_enabled: false }, error: null }),
+        }),
+      }),
+    }),
+  },
+}));
+
+// SCRUM-3866: orgCredits now logs a failed enforcement lookup, so these unit
+// tests mock the logger rather than pulling pino into the import graph.
+vi.mock('./logger.js', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
 
 import { deductOrgCredit } from './orgCredits.js';
 import { db } from './db.js';

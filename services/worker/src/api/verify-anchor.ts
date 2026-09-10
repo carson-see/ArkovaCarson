@@ -13,6 +13,7 @@
  */
 
 import { buildVerifyUrl } from '../lib/urls.js';
+import { publicAnchorTimestamp } from './anchorTimestamp.js';
 
 /** Valid SHA-256 hex: exactly 64 lowercase hex characters */
 const SHA256_REGEX = /^[a-f0-9]{64}$/;
@@ -92,8 +93,18 @@ export async function verifyAnchorByFingerprint(
   const result: VerifyAnchorResult = {
     verified: isVerified,
     status: publicStatus,
-    anchor_timestamp: anchor.created_at,
   };
+
+  // BUG-2026-09-08-001 (SCRUM-4517): chain-observed time only, never
+  // `created_at`. `chain_block_timestamp` on this interface IS
+  // `anchors.chain_timestamp` — the sole production caller maps it across under
+  // the other name (`routes/anchor.ts:78`). It was already on the interface and
+  // simply never read, while the field published `created_at` sitting beside
+  // it. Omitted (not null) when unmeasured — frozen schema, §1.8 / §6.
+  const anchorTimestamp = publicAnchorTimestamp(anchor.status, anchor.chain_block_timestamp);
+  if (anchorTimestamp) {
+    result.anchor_timestamp = anchorTimestamp;
+  }
 
   // Include chain receipt if it exists (even for revoked — it was once anchored)
   if (anchor.chain_tx_id) {

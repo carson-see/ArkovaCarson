@@ -10,6 +10,8 @@
  */
 
 import { z } from 'zod';
+import { loadPinnedCa } from './integrations/computeid/ca-cert.js';
+import { parseSecretList } from './integrations/computeid/secrets.js';
 
 const boolEnv = (v: unknown) => v === 'true' || v === true;
 const boolEnvInverse = (v: unknown) => v !== 'false';
@@ -367,6 +369,17 @@ const ConfigSchema = z.object({
    * cross-field guard below for the prerequisite flags it requires when on.
    */
   enableDocusignInbound: boolFlag(false),
+  /**
+   * Signer backfill (record-detail signer rows, follow-on to
+   * signer capture / PR #2474) — gates
+   * `POST /jobs/docusign-signer-backfill`, which enriches PRE-existing
+   * DocuSign anchors (created before signer capture shipped) with
+   * `metadata._signers` by fetching each envelope's current recipients from
+   * the DocuSign eSignature REST API. OUTBOUND (own-account envelopes) only —
+   * see `jobs/docusign-signer-backfill.ts` for the inbound exclusion. Default
+   * false: this is a one-time historical scan, not launch-required.
+   */
+  enableDocusignSignerBackfill: boolFlag(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
@@ -394,6 +407,16 @@ const ConfigSchema = z.object({
   /** Veremark webhook HMAC. Required when ENABLE_VEREMARK_WEBHOOK=true. */
   veremarkWebhookSecret: z.string().optional(),
   enableVeremarkWebhook: boolFlag(false),
+  /**
+   * ComputeID AgentPassport integration (admission + revocation webhook).
+   * Both surfaces are dark unless ENABLE_COMPUTEID_INTEGRATION=true, and the
+   * flag requires the webhook HMAC secret(s) and the pinned CA PEM.
+   */
+  enableComputeidIntegration: boolFlag(false),
+  /** Comma-separated list allowed (current,next) so rotation has no failure window. */
+  computeidWebhookSecret: z.string().optional(),
+  /** Pinned ComputeID CA — X.509 certificate PEM (prod) or bare SPKI public-key PEM (staging/tests). Never fetched at runtime. */
+  computeidCaCertPem: z.string().optional(),
   /** Microsoft Graph subscription clientState. Required when ENABLE_MICROSOFT_GRAPH_WEBHOOK=true. */
   microsoftGraphClientState: z.string().optional(),
   enableMicrosoftGraphWebhook: boolFlag(false),
@@ -793,6 +816,48 @@ const ConfigSchema = z.object({
     });
   }
 
+  // ComputeID: the flag turns on an inbound revocation receiver AND an
+  // admission endpoint that mints agent keys — both must fail loudly if the
+  // secret or the CA pin is missing/unusable rather than accept unsigned or
+  // unverifiable input.
+  if (cfg.enableComputeidIntegration) {
+    if (parseSecretList(cfg.computeidWebhookSecret).length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'ENABLE_COMPUTEID_INTEGRATION=true requires COMPUTEID_WEBHOOK_SECRET. '
+          + 'Without it the revocation webhook would accept unsigned payloads.',
+        path: ['computeidWebhookSecret'],
+      });
+    }
+    if (!cfg.computeidCaCertPem?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'ENABLE_COMPUTEID_INTEGRATION=true requires COMPUTEID_CA_CERT_PEM (the pinned ComputeID CA). '
+          + 'Without it passport receipts cannot be verified offline.',
+        path: ['computeidCaCertPem'],
+      });
+    } else {
+      try {
+        const pinned = loadPinnedCa(cfg.computeidCaCertPem);
+        if (cfg.nodeEnv === 'production' && pinned.kind !== 'certificate') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'COMPUTEID_CA_CERT_PEM must be an X.509 CA certificate in production (bare public-key pins are for staging/tests only).',
+            path: ['computeidCaCertPem'],
+          });
+        }
+      } catch (err) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `COMPUTEID_CA_CERT_PEM is not a usable CA pin: ${err instanceof Error ? err.message : String(err)}`,
+          path: ['computeidCaCertPem'],
+        });
+      }
+    }
+  }
+
   // Veremark: when the webhook is enabled, the HMAC secret must be set.
   if (cfg.enableVeremarkWebhook && !cfg.veremarkWebhookSecret) {
     ctx.addIssue({
@@ -856,6 +921,21 @@ const ConfigSchema = z.object({
         'ENABLE_DOCUSIGN_INBOUND=true requires ENABLE_CONNECTOR_ARTIFACT_DRAIN=true — '
         + 'without the drain consumer, inbound connector_artifact rows enqueue but never materialize into an anchor.',
       path: ['enableDocusignInbound'],
+    });
+  }
+
+  // Signer backfill calls the DocuSign eSignature REST API using a refreshed
+  // access token resolved via the same OAuth connection flow ENABLE_DOCUSIGN_OAUTH
+  // gates — without it there is no live/refreshable connection to authenticate
+  // the recipients fetch with (the job's own guard only excludes INBOUND
+  // envelopes, not disabled OAuth).
+  if (cfg.enableDocusignSignerBackfill && !cfg.enableDocusignOauth) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_SIGNER_BACKFILL=true requires ENABLE_DOCUSIGN_OAUTH=true — '
+        + 'the backfill authenticates via the same refreshable DocuSign OAuth connection that flag gates.',
+      path: ['enableDocusignSignerBackfill'],
     });
   }
 
@@ -994,6 +1074,8 @@ function loadConfig(): Config {
     enableDocusignQueueReconciliation: process.env.ENABLE_DOCUSIGN_QUEUE_RECONCILIATION,
     // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818): inbound webhook path.
     enableDocusignInbound: process.env.ENABLE_DOCUSIGN_INBOUND,
+    // Signer backfill for pre-existing (outbound-only) DocuSign anchors.
+    enableDocusignSignerBackfill: process.env.ENABLE_DOCUSIGN_SIGNER_BACKFILL,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
     docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
@@ -1003,6 +1085,9 @@ function loadConfig(): Config {
     checkrWebhookSecret: process.env.CHECKR_WEBHOOK_SECRET,
     veremarkWebhookSecret: process.env.VEREMARK_WEBHOOK_SECRET,
     enableVeremarkWebhook: process.env.ENABLE_VEREMARK_WEBHOOK,
+    enableComputeidIntegration: process.env.ENABLE_COMPUTEID_INTEGRATION,
+    computeidWebhookSecret: process.env.COMPUTEID_WEBHOOK_SECRET,
+    computeidCaCertPem: process.env.COMPUTEID_CA_CERT_PEM,
     microsoftGraphClientState: process.env.MICROSOFT_GRAPH_CLIENT_STATE,
     enableMicrosoftGraphWebhook: process.env.ENABLE_MICROSOFT_GRAPH_WEBHOOK,
     middeskApiKey: process.env.MIDDESK_API_KEY,

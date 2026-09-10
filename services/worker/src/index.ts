@@ -43,6 +43,7 @@ import { orgKybRouter } from './api/v1/org-kyb.js';
 import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
 import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { docusignMemberOAuthRouter } from './api/v1/integrations/docusign-member-oauth.js';
+import { docusignInheritanceRouter } from './api/v1/integrations/docusign-inheritance.js';
 import { adobeSignOAuthRouter } from './api/v1/integrations/adobe-sign-oauth.js';
 // SCRUM-2082 CSI-04D — Issuer Partners admin API.
 import { createIssuerPartnershipsRouter } from './api/v1/integrations/issuer-partnerships.js';
@@ -51,6 +52,9 @@ import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
 import { checkrWebhookRouter } from './api/v1/webhooks/checkr.js';
 import { veremarkWebhookRouter } from './api/v1/webhooks/veremark.js';
+import { computeidWebhookRouter, computeidWebhookBody } from './api/v1/webhooks/computeid.js';
+import { WEBHOOK_PATHS } from './constants/webhook-paths.js';
+import { computeidGate } from './middleware/computeidGate.js';
 import { microsoftGraphWebhookRouter } from './api/v1/webhooks/microsoft-graph.js';
 import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
 import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
@@ -358,6 +362,20 @@ app.use(
   checkrWebhookRouter,
 );
 
+// ─── ComputeID AgentPassport revocation webhook — raw body required for HMAC ───
+// Gated by ENABLE_COMPUTEID_INTEGRATION (default off → 503 vendor_gated).
+// Mounted at WEBHOOK_PATHS.COMPUTEID so the registered URL and the mount cannot
+// drift. Raw parsing accepts ANY content type: the handler JSON.parses the
+// bytes itself and the HMAC is the authentication, so a partner default of
+// text/plain must not become a 500. Its own limiter bucket (not Stripe's).
+app.use(
+  WEBHOOK_PATHS.COMPUTEID,
+  computeidGate,
+  rateLimiters.computeidWebhook,
+  computeidWebhookBody,
+  computeidWebhookRouter,
+);
+
 // ─── Veremark webhook (SCRUM-1030 / 1151) — gated, defaults to 503 ───
 app.use(
   '/webhooks/veremark',
@@ -542,6 +560,16 @@ app.use(
   pathScopedMiddleware('/docusign', rateLimiters.api),
   pathScopedMiddleware('/docusign', integrationsAuthGate),
   pathScopedMiddleware('/docusign', docusignMemberOAuthRouter),
+);
+// SCRUM-3867: sub-org DocuSign inheritance. Same kill switch, limiter and auth
+// gate as the two routers above — a marker is a connection, so it lives behind
+// exactly the same door.
+app.use(
+  '/api/v1/integrations',
+  pathScopedKillSwitch('/docusign', 'ENABLE_DOCUSIGN_OAUTH'),
+  pathScopedMiddleware('/docusign', rateLimiters.api),
+  pathScopedMiddleware('/docusign', integrationsAuthGate),
+  pathScopedMiddleware('/docusign', docusignInheritanceRouter),
 );
 // SCRUM-1148 follow-up: Adobe Sign OAuth connect flow. Same shape as DocuSign
 // (kill switch -> rate limit -> auth gate that lets the provider redirect

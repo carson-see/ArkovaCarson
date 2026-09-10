@@ -1,5 +1,19 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
+_Last updated: 2026-09-07 (SCRUM-4493: ComputeID AgentPassport revocation receiver)_
+
+## 2026-09-07 — SCRUM-4493: `computeid.ts` — ComputeID AgentPassport revocation receiver (flag-gated dark)
+
+Forked from `checkr.ts`. Three things are deliberately different and are the first places to look when this handler behaves unlike its siblings:
+
+1. **One Arkova-global registration, not per-org.** ComputeID signs every delivery with the single secret we handed them at `POST /v1/webhooks/register`; the org is resolved from the passport → agent binding (`agents.metadata.computeid.passport_id`, jsonb `@>` lookup), not from an account header. `COMPUTEID_WEBHOOK_SECRET` may be a comma-separated list (current,next) because ComputeID has **no deregister/rotate endpoint** (verified live 2026-09-07) — rotation is register-new → ask the partner to retire old.
+2. **No nonce table.** A per-provider nonce table needs a migration, which is PR-B (SCRUM-4497). Replay safety comes from the ordering FLOOR on the SIGNED payload timestamp in `integrations/computeid/binding.ts` (last applied event, else the admitting receipt's `issued_at`, else `bound_at`): older events and exact replays are no-ops, a late `passport.reinstated` can never undo a later `passport.revoked`, a pre-admission replay cannot revoke a fresh agent, and `revoked` is terminal. Do not "fix" a duplicate delivery by adding a nonce here.
+4. **Keys first, then a compare-and-set.** The auth path reads only `api_keys.is_active`, so keys are deactivated BEFORE the row flips (and reactivated after, only the ones we suspended); the `agents` update is a CAS on `(status, metadata->computeid->>last_event_at)` with `.select('id')`, and zero rows → `409 conflict_retry` + DLQ. `passport.reinstated` lifts only a suspension carrying `suspended_by: 'computeid'`.
+5. **Its own limiter bucket, content-type-agnostic raw parsing, real 413.** `rateLimiters.computeidWebhook` (not the shared Stripe bucket); `express.raw({ type: () => true, limit })` because the HMAC is the authentication and a `text/plain` default must not become a 500; body-parser's `entity.too.large` is mapped to `413 payload_too_large` at the mount (it is not an `AppError`, so the global handler would have returned 500). `middleware/computeidGate.ts` runs first at the mount.
+3. **Ack semantics.** `test` and unknown event names → `200 ignored`. Unbound passport → `200 orphaned` + `webhook_dlq` row (reason `unbound_passport`). A DB failure mid-apply → `500` + DLQ so the partner can retry — but their delivery is `node-fetch` fire-and-forget with undocumented retry, so treat every 5xx as a probable loss until SCRUM-4497's re-verify cron exists.
+
+Signature contract verified against a real delivery (`integrations/computeid/__fixtures__/golden-test-delivery.json`): `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>`, no timestamp header. The `sha256=` prefix is required; a bare hex digest is rejected. Body cap 64 KiB, checked before signature verification. The partner-supplied free-text `reason` is never logged, never written to `audit_events.details`, never written to the DLQ — `computeid.test.ts` pins that with a serialized-args assertion.
+
 _Last updated: 2026-08-30 (`adobe-sign.ts`: registration challenge + DLQ the orphaned-webhook_id path)_
 
 ## 2026-08-30 — `adobe-sign.ts` now answers Adobe's webhook REGISTRATION challenge (`GET /`)
@@ -58,7 +72,7 @@ _Last updated: 2026-08-29 (docusign-bilateral PR-2: outbound signer capture)_
 
 ## 2026-08-29 — CTO Decision Record (docusign-bilateral-2026-08, PR-2): outbound signer capture (R6/R7)
 
-`docusign.ts` gained `extractSigners(rawBody)` — mirrors `extractNotaryData`'s raw-body access pattern (`envelopeSummary ?? data ?? root`, then `recipients.signers[]`; deliberately does NOT read `recipients.carbonCopies[]`, matching `findNotaryRecipient`). Produces `_signers`: an array (capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS` = 20, truncates rather than rejecting the envelope) of `{recipient_id_guid, user_id?, status, signed_at?}` — **pseudonymous GUIDs only, never name/email**. Two independent strip gates: the extraction function only ever copies four named fields into a fresh literal (never spreads the raw recipient), and `DocusignCapturedSigner` (`integrations/connectors/schemas.ts`) is a non-`.passthrough()` Zod object that strips any other key by construction. A third gate lives in `jobs/docusign-envelope-completed.ts` at the actual DB-write boundary (see that folder's agents.md).
+`docusign.ts` gained `extractSigners(rawBody)` — mirrors `extractNotaryData`'s raw-body access pattern (`envelopeSummary ?? data ?? root`, then `recipients.signers[]`; deliberately does NOT read `recipients.carbonCopies[]`, matching `findNotaryRecipient`), then hands the raw `signers[]` array to the shared `captureDocusignSigners` mapper (`integrations/connectors/schemas.ts`, factored out 2026-08-31 so this file and the signer-backfill job's `extractCapturedSigners` (`integrations/oauth/docusign.ts`) can't drift). Produces `_signers`: an array (capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS` = 20, truncates rather than rejecting the envelope) of `{recipient_id_guid, user_id?, status, signed_at?}` — **pseudonymous GUIDs only, never name/email**. Two independent strip gates, both inside the shared mapper: it only ever copies four named fields into a fresh literal (never spreads the raw recipient), and `DocusignCapturedSigner` (`integrations/connectors/schemas.ts`) is a non-`.passthrough()` Zod object that strips any other key by construction. A third gate lives in `jobs/docusign-envelope-completed.ts` at the actual DB-write boundary (see that folder's agents.md).
 
 `_signers` is threaded into the `docusign.envelope_completed` job payload (`enqueueFetchJob`) but is deliberately **kept OFF** `enqueue_rule_event`'s `p_payload` — `organization_rule_events.payload` has a DB CHECK `pg_column_size(payload) <= 16384`, and at the schema's max cardinality (100 `envelopeDocuments`) `document_ids`/`document_hashes` alone already sit close to that ceiling (measured: ~7.5KB at 100 realistic-length document ids). `_signers` only rides the job → `connector_artifact.metadata` → `anchors.metadata` path, which has no size cap. See `jobs/agents.md` for the metadata-side half and the `_docusign_env` companion field.
 
@@ -173,6 +187,7 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 | `docusign-hmac-rotation.test.ts` | Tests for multi-key HMAC verification flow and key resolution |
 | `drive.ts` | Google Drive push notification handler — headers-only signal, channel-token verification |
 | `ats.ts` | ATS webhook handler (Greenhouse, Lever) — HMAC verify, attestation verification response. SCRUM-3479: releases the nonce on the catch-all 5xx path |
+| `computeid.ts` | ComputeID AgentPassport `passport.revoked` / `.suspended` / `.reinstated` receiver — HMAC-SHA256 hex with `sha256=` prefix, comma-separated secrets for rotation, ordering floor instead of a nonce table (SCRUM-4493), keys deactivated BEFORE the row flips (suspend and revoke), compare-and-set on the agent row (409 on a lost race), ownership-aware reinstate, DLQ on orphan/failure. Gated by `ENABLE_COMPUTEID_INTEGRATION` via `computeidGate` |
 | `checkr.ts` | Checkr `report.completed` handler — HMAC-SHA256 hex, nonce replay protection, DLQ on failure. SCRUM-3479: releases the nonce on both post-nonce 5xx paths so a transient enqueue failure stays retryable |
 | `middesk.ts` | Middesk KYB handler — `business.updated/verified/rejected` events, org verification status transitions |
 | `microsoft-graph.ts` | Microsoft Graph change-notifications — `clientState` verification, validation handshake echo |
@@ -197,6 +212,11 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 - Sanitized rule-event payloads may include provider IDs needed for idempotency, but not raw documents or raw webhook bodies.
 - Connector payloads that carry PII must hash values before storing long-lived operational metadata. PII scrubbing is mandatory; do not persist emails, document fingerprints, or API keys.
 
+## 2026-09-10 — ComputeID atomic agent/key transition (SCRUM-4535 / SCRUM-4536)
+
+The earlier separate-key-write / status-clock CAS notes above describe the original receiver. They are superseded for ComputeID by migration `0448` and the single `apply_computeid_agent_transition` RPC: lock the agent, compare org/binding/status/full metadata, then commit both agent and key changes in one transaction. A key-write failure rolls back the event clock too; identical redelivery remains actionable. A stale snapshot returns false and the receiver requests 409 redelivery. Transport or database failures return 500, never a successful audit/ack. Terminal revocation and ComputeID-owned suspension/key filters are preserved. The flag remains off; the new RPC must be staged/applied before enabling this receiver.
+
+`computeid.test.ts` exercises real signed HTTP delivery against the RPC boundary. `scripts/ops/repro-computeid-agent-key-atomic.py` reproduces both old defects and verifies rollback, overlapping SQL sessions, CAS, service-only execution and rollback/reapply in a disposable PostgreSQL container. The fixture is targeted, not a full production schema replay. The concurrency DSL is `machines/agentPassportAtomic.machine.ts`.
 ## 2026-09-05 — PR 2519 orphan durability and schema integration
 
 An orphan response may acknowledge 200 only after webhook_dlq persistence succeeds.
@@ -211,3 +231,13 @@ Schema application and isolated verification remain required before deployment.
 ## 2026-09-05 — Adobe registration challenge reads validated configuration
 
 The GET challenge uses config.adobeSignClientId, populated by the existing Zod configuration loader. Request-time process.env reads can diverge from the validated startup configuration. Regressions prove the configured ID remains authoritative after raw environment mutation and an absent configured ID still returns 503 without echo. Constant-time comparison and notification HMAC behavior are unchanged.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+Historical review repairs reject provider timestamps beyond five minutes, canonicalize accepted timestamps, preserve terminal revocation regardless of ordering floors, and prevent equal-time reinstatement (SCRUM-4567 / SCRUM-4571). Revocation records service-owned passport authority before enumerating agents, including orphans; retries still enforce agents after partially completed tenant updates. Transition audits commit inside the RPC. `enqueue_computeid_failure` serializes duplicate payload/reason diagnostics without deleting historical evidence. Production and handler tests share `computeidWebhookBody`, including 413, suffix 404 and disabled-gate 503 behavior. Free-text reasons and their lengths are not persisted.
+
+
+## 2026-09-10 — Cross-organization revocation pagination
+
+A single PostgREST select silently stops at the configured 1000-row cap. The receiver now streams ID-ordered keyset pages of 200 and requires an empty page before success. A shorter hosted cap cannot cause early completion; deleting earlier rows cannot shift later rows out of the scan. A failed later page returns 500 so the provider retries, and the terminal authority write still runs on that retry. Signed HTTP regressions reproduce the old 1001-binding truncation and verify page failure, smaller caps and deletion between pages. Concurrent new suspension-time admissions remain a separate activation concern; terminal revocation blocks new admission through its authority sentinel.

@@ -2,6 +2,13 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
+
+`router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.
+
+Scopes a passport-admitted agent may hold are typed against `ApiKeyScope` and clamped to `PASSPORT_AGENT_SCOPE_ALLOWLIST` (`verify`, `verify:batch`, `anchor:write`/`write:anchors`, `anchor:read`, `read:records`, `read:search`) — never a management scope; unknown scope names are a 400 (`z.enum(API_KEY_SCOPES)`). Keys are minted through `agent-keys.ts::mintAgentKey` so passport-minted keys emit `AGENT_KEY_CREATED` like every other agent key. The raw key is returned once; if the key insert fails the freshly inserted agent row is deleted so no unkeyed binding is left behind. The API-key HMAC secret comes from `config.apiKeyHmacSecret`, NOT `req.hmacSecret` — that field is attached only by the JWT `requireAuth` this mount omits (a review-found bug that would have 500'd every real admission). Admission also refuses (`409 passport_revoked`) when a REVOKED binding for the passport exists in the org and the receipt was not provably issued after the revocation, so a captured receipt cannot resurrect a revoked passport.
+
+`PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. Known, NOT fixed here: `PATCH {status:'suspended'}` records a suspension without deactivating keys (the auth path reads only `api_keys.is_active`), so org-side suspension is decorative today.
 ## 2026-08-30 R3 — `/verify/:publicId/proof` reports a tri-state `verdict` beside `verified`
 
 - `verify-proof.ts` emits additive `verdict` (`valid` | `invalid` | `unverifiable`) + `verdict_note` on the 200 body. **`verified` is byte-unchanged and NOT deprecated** — §1.8 additive only. Vocabulary, note text and the mapping live in ONE place: `services/worker/src/constants/proofVerdict.ts` (read its `agents.md` entry before touching any of this).
@@ -1084,6 +1091,50 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
 
+## Sub-org credit provisioning (SCRUM-3865)
+
+- `orgSubOrgs.ts` gained `POST /credits` (allocate; negative amount = reclaim) and `GET /credits` (parent rollup). Before these, `allocate_credits_to_sub_org` had **zero callers anywhere in the repo** and `org_credit_allocations` had never had a row in prod — the sub-org panel could list children and toggle approval but could not move a single credit (pre-mortem F3).
+- Both call **migration 0430's identity-carrying overloads**. Do NOT call the original 4-arg/1-arg forms from the worker: they resolve the caller with `auth.uid()`, which is NULL under the service_role client, so they return `authentication_required` on every worker call. That is the SCRUM-2213 class 0367 already fixed elsewhere.
+- `p_caller_user_id` is ALWAYS the verified session user (`getUserId(req)`), never a request-body field. A client that could choose it could move another org's credits. `orgSubOrgsCredits.test.ts` pins this with a body that supplies an attacker-chosen `callerUserId` and asserts it is ignored.
+- `requireParentAdmin()` is a fast local pre-check only. The RPC independently re-verifies parent adminship and that the child is genuinely a sub-org of that parent, so authorization does not depend on the route layer being right. Note the worker's `isOrgAdmin` accepts `owner`/`admin` while the RPC also accepts the legacy `ORG_ADMIN`; the RPC is the wider, authoritative gate.
+- RPC error mapping lives in `CREDIT_RPC_STATUS`. Balance failures are **409**, not 402: the request conflicts with current balance state and, unlike the anchor path, nothing is purchasable in the moment.
+- `GET /credits` returns balances only. Per decision D2 a parent sees what its sub-orgs spend, never what they secured — no record contents cross the tenancy boundary.
+
+## Sub-org offboarding (SCRUM-3868)
+
+- `POST /offboard` is the real end-of-relationship action. `Revoke` only flips `parent_approval_status`, which is enforced in exactly one place (`queue-resolution.ts`) — it severs the affiliation, not the tenancy, so an ex-client kept its records, credits, members and integrations and carried on anchoring against a budget the parent funded (pre-mortem F6).
+- **Order is the design: reclaim, then suspend.** If the suspend fails after a successful reclaim the credits are safely back with the parent and the sub-org is merely still active, so a retry finishes the job. Suspending first would strand the parent's credits inside an org nobody can act in. On a reclaim failure the endpoint stops and does NOT suspend.
+- A partial result is reported as such — `{ error, reclaimed, suspended: false }` — because an operator told only "it failed" will retry blind against a half-done state.
+- The balance is read BEFORE anything moves: a balance we cannot read is a reclaim we cannot size, so that path 503s without touching credits.
+- **Anchored records are never touched.** They are the customer's evidence and must stay verifiable after the relationship ends; the 0431 proof asserts this explicitly.
+- Uses migration 0431's identity-carrying `suspend_suborg` overload — the 3-arg form resolves the caller via `auth.uid()` and is NULL under the worker's service_role client.
+
+## Sub-org cap (D3, Carson 2026-09-01)
+
+- `DEFAULT_MAX_SUB_ORGS = 20`. `organizations.max_sub_orgs` already existed, was settable via `POST /max` and was returned by the list endpoint — and was **checked by nothing**, so a parent could create unlimited affiliates. `resolveSubOrgCap()` is the enforcement, and it runs on **both** paths that add a sub-org: `/create` and `/approve`. Enforcing only on create would leave a cap you walk around by asking to be affiliated instead of being created.
+- Resolution is `max_sub_orgs ?? DEFAULT_MAX_SUB_ORGS` — `??` not `||`, so an org explicitly capped at 0 stays at 0 instead of silently inheriting 20. An explicit override wins in either direction.
+- **Fails CLOSED** (503) when the count cannot be read. Unlike the credit-enforcement lookup, guessing here would let a parent walk past the cap during a database blip, and the cost of refusing is one retry.
+- `org_tier_entitlements.included_sub_orgs` is **not** the source of truth and is read by no code. The live cap is the column above. Do not "fix" the entitlement row expecting it to change behaviour.
+
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `anchor_timestamp` comes from the chain, not `created_at`
+
+`buildVerificationResult` published `anchor.created_at` under `anchor_timestamp`, and
+`cle-verify.ts` published it under `anchored_at` on an anonymous bar-compliance surface. Both now
+call `publicAnchorTimestamp` from `../anchorTimestamp.js` — see that folder's `agents.md` for why
+the RPC is not swapped in wholesale and why there is no `created_at` fallback.
+
+Two traps specific to this folder:
+
+- **The blast radius is wider than the route.** `oracle.ts` and `batch.ts` both call
+  `buildVerificationResult`, so anything asserted about this envelope is asserted about them too.
+- **`verify.test.ts` asserted the `created_at` value and so pinned the bug in place**, on a fixture
+  that already set `created_at` and `chain_timestamp` two days apart. When a test's expected value
+  happens to equal a second fixture field, check which one the code actually read.
+
+`ai-verify-search.ts` is still wrong and is NOT fixed here: its values come from the SQL function
+`search_public_credential_embeddings`, which selects `a.created_at AS anchor_timestamp`. Fixing it
+needs a migration (T3) and would also correct the edge. Tracked in SCRUM-4520.
+
 
 ## PR #2442 release review — 2026-09-05
 
@@ -1183,3 +1234,19 @@ only other records with a recognized connector marker and artifact stamp may emi
 fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
 and authenticated packet exports load the typed source; the signable proof bundle
 is unchanged. Regression reproduced before the fix; local validation is not soak evidence.
+
+
+## 2026-09-10 — ComputeID admission authority and terminal PATCH (SCRUM-4558 / SCRUM-4559)
+
+Migration `0448` checks every active agent-key INSERT/reactivation against the agent row under a parent share lock, including the existing administrator mint path. A concurrent provider revoke either waits and deactivates the committed key, or wins and causes the late key write to fail. The terminal-state trigger checks the actual UPDATE row, so a stale PATCH receives 409 after revocation. Failed ComputeID admission calls service-only `cleanup_computeid_empty_admission`; it deletes only the unchanged active agent with no keys while holding the same parent lock. It preserves a later revocation and a key whose INSERT committed despite a lost reply, avoiding `ON DELETE SET NULL` detachment. SQL errors return no raw key. Signed receipt HTTP tests cover those boundary responses; the owned PostgreSQL harness proves the lock interleavings and rollback behavior.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+ComputeID admission now uses service-only `admit_computeid_agent`: one passport sentinel lock, global terminal-revocation check, agent, hashed key and both audit events in a single transaction. The prior `agent-keys.ts` helper and compensation deletion are removed. An unknown reply returns an error while preserving any committed agent/key; retries report the existing binding. Raw keys never reach the RPC. The OpenAPI surface documents org-key authority and admission errors. SCRUM-4570 covers cross-organization replay; durable tenant binding ownership remains SCRUM-4497.
+
+## PR #2572 — cap faults and affiliation write races (SCRUM-4467 / SCRUM-4468)
+
+`resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
+
+PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.

@@ -285,6 +285,7 @@ NOT_SCHEDULED=(
   # Operator-only / one-shot — running these on a schedule would be wrong.
   "/jobs/bq-export-backfill|manual one-shot historical backfill (SCRUM-1727); incremental cron resumes from its watermark"
   "/jobs/edgar-backfill|manual one-shot backfill"
+  "/jobs/docusign-signer-backfill|one-time historical enrichment of PRE-EXISTING outbound DocuSign anchors with metadata._signers (PR #2565, follow-on to docusign-bilateral-2026-08); ENABLE_DOCUSIGN_SIGNER_BACKFILL defaults false and the job is idempotent/resumable off its own `_signers IS NULL` watermark, so it is triggered on demand by an operator until the backlog drains — a recurring binding would re-scan a permanently empty candidate set forever"
   "/jobs/mainnet-migration|one-time operator migration"
   "/jobs/classify-proof-backcatalog|manual operator census (S3-A); write mode Carson-gated"
   "/jobs/materialize-proof-backcatalog|manual operator T3 run (SCRUM-2917); write mode Carson-gated"
