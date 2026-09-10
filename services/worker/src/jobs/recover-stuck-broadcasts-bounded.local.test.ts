@@ -29,17 +29,19 @@ const GATED = process.env.RECOVER_STUCK_BROADCASTS_PG === '1';
 const DB_URL = process.env.RECOVER_STUCK_BROADCASTS_PG_DB_URL
   ?? 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
 
-function sql(query: string): string {
-  return execFileSync(
-    'psql',
-    [DB_URL, '-tA', '-v', 'ON_ERROR_STOP=1', '-c', query],
-    { encoding: 'utf8' },
-  ).trim();
+const fixtureUrl = new URL(DB_URL);
+if (!['postgres:', 'postgresql:'].includes(fixtureUrl.protocol)
+  || !['127.0.0.1', 'localhost', '[::1]'].includes(fixtureUrl.hostname)
+  || !['54322', '55503', '15422', '16422', '17422', '18422', '19422'].includes(fixtureUrl.port)) {
+  throw new Error('Broadcast recovery tests require an owned loopback PostgreSQL fixture');
 }
 
-/** Runs `query` as service_role in ONE session (matches PostgREST's per-request GUC). */
+function sql(query: string): string {
+  return execFileSync('psql', [DB_URL, '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-v', 'SHOW_ALL_RESULTS=off'],
+    { input: query, encoding: 'utf8', stdio: 'pipe' }).trim();
+}
 function sqlAsServiceRole(query: string): string {
-  return sql(`SELECT set_config('request.jwt.claim.role', 'service_role', false); ${query}`);
+  return sql(`SET ROLE service_role; SET request.jwt.claims = '{"role":"service_role"}'; ${query}`);
 }
 
 const USER_ID = randomUUID();
@@ -74,16 +76,20 @@ describe.skipIf(!GATED)('SCRUM-4521 — 0442 recover_stuck_broadcasts bounded ba
   }, 30000);
 
   afterAll(() => {
-    try {
-      sql(`
-        DELETE FROM public.anchors WHERE user_id = '${USER_ID}';
-        DELETE FROM public.profiles WHERE id = '${USER_ID}';
-        DELETE FROM auth.users WHERE id = '${USER_ID}';
-      `);
-    } catch {
-      // Best-effort cleanup — rows are uniquely keyed by a fresh user UUID.
-    }
+    sqlAsServiceRole(`DELETE FROM public.anchors WHERE user_id = '${USER_ID}';`);
+    sql(`DELETE FROM public.profiles WHERE id = '${USER_ID}'; DELETE FROM auth.users WHERE id = '${USER_ID}';`);
   }, 30000);
+
+  function replaceCohort(count: number): void {
+    // Insert old timestamps directly. The real UPDATE trigger refreshes updated_at,
+    // so restaling rows with UPDATE does not create the claimed fixture.
+    sqlAsServiceRole(`DELETE FROM public.anchors WHERE user_id = '${USER_ID}';
+      INSERT INTO public.anchors (id, user_id, fingerprint, filename, status, chain_tx_id, updated_at)
+      SELECT gen_random_uuid(), '${USER_ID}', lpad(to_hex(i), 64, '0'),
+        'bounded-' || lpad(i::text, 4, '0') || '.pdf', 'BROADCASTING', NULL,
+        now() - make_interval(hours => ${count} - i)
+      FROM generate_series(0, ${count - 1}) AS i;`);
+  }
 
   it('claims at most p_limit rows in a single call — the LIMIT the incident proved missing', () => {
     const claimed = Number(
@@ -108,40 +114,26 @@ describe.skipIf(!GATED)('SCRUM-4521 — 0442 recover_stuck_broadcasts bounded ba
   }, 60000);
 
   it('clamps an absurd p_limit instead of restoring the unbounded sweep', () => {
-    // Re-stale the cohort, then ask for far more than the server-side ceiling.
-    sql(`
-      UPDATE public.anchors
-      SET status = 'BROADCASTING', updated_at = now() - interval '1 hour'
-      WHERE user_id = '${USER_ID}';
-    `);
+    replaceCohort(2100);
     const claimed = Number(
       sqlAsServiceRole(`SELECT count(*) FROM public.recover_stuck_broadcasts(1, 2000000000)`),
     );
-    // The clamp caps the ceiling at 2000; this cohort is smaller, so the call
-    // succeeds — the assertion that matters is that it does not error and the
-    // ceiling is a fixed constant, not the caller's number.
-    expect(claimed).toBe(COHORT);
-    expect(
-      sql(`SELECT pg_get_functiondef('public.recover_stuck_broadcasts(integer,integer)'::regprocedure)`),
-    ).toMatch(/LEAST\s*\(\s*GREATEST\s*\(\s*COALESCE\s*\(\s*p_limit/i);
+    expect(claimed).toBe(2000);
+    expect(stuckCount()).toBe(100);
   }, 30000);
 
   it('a NULL p_limit falls back to the default rather than becoming unbounded', () => {
-    sql(`
-      UPDATE public.anchors
-      SET status = 'BROADCASTING', updated_at = now() - interval '1 hour'
-      WHERE user_id = '${USER_ID}';
-    `);
+    replaceCohort(600);
     const claimed = Number(
       sqlAsServiceRole(`SELECT count(*) FROM public.recover_stuck_broadcasts(1, NULL)`),
     );
-    expect(claimed).toBe(COHORT);
-    expect(stuckCount()).toBe(0);
+    expect(claimed).toBe(500);
+    expect(stuckCount()).toBe(100);
   }, 30000);
 
   it('the old one-argument signature is gone — no ambiguous overload survives', () => {
     const signatures = sql(`
-      SELECT string_agg(pg_get_function_identity_arguments(p.oid), ' | ' ORDER BY p.oid)
+      SELECT string_agg(oidvectortypes(p.proargtypes), ' | ' ORDER BY p.oid)
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public' AND p.proname = 'recover_stuck_broadcasts'
     `);

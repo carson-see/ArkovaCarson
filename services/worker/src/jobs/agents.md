@@ -1654,3 +1654,9 @@ there too.
 Full rationale, plus the separate and higher-severity `FETCH_TIME_SNAPSHOT` mis-classification these same
 anchors still emit on three public surfaces:
 `docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.
+
+## 2026-09-10 — PR #2693 independent recovery review
+
+The client-side manual fallback is retired. Five negative controls reproduced resets after a txid or journal was recorded, a zero-row CAS counted as recovered, short failed batches reported complete, and malformed RPC success reported as an empty queue. All recovery now requires the bounded 0442 SQL RPC; absence, permission failures and unknown replies defer with incomplete=true, and only validated unique RPC rows count as acknowledged progress. A process-local invocation guard prevents overlapping cron work; the 90-second budget begins before journal reconciliation and aborts subsequent RPC transport. The guard remains held if the existing journal interface is slow, so it does not claim that interface is cancellable. Migration 0442 was verified read-only in production with exact body, sole two-argument signature and service-only ACL; no migration rewrite is required. Real SQL fixtures retain metadata/txid/journal coverage for the removed fallback’s former responsibilities.
+
+- 2026-09-10 complete-schema follow-up: `broadcast-recovery.postgres.local.test.ts` runs the actual caller against real SQL behind a transport seam. It proves 10,000 stale rows drain in 21 requests, mixed SUBMITTED/BROADCASTING metadata survives, protected cohorts remain intact, and a committed reply loss leads to one later claim. Migration 0449 corrects old-claim JSON grouping and materializes the bounded cohort. These loopback-only tests require an exclusively owned complete Supabase fixture and must run with file parallelism disabled. No Bitcoin provider is contacted by this suite.

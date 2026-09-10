@@ -210,3 +210,7 @@ New invariants: **`supplementaryRequiresOriginalAttestation`** (supp ≠ NONE �
 Budgets raised for the added 3-valued variable: pr `2,304 × 3 = 6,912` per-anchor combos → `6,912² = 47,775,744` raw (budget 50M, was 6M); nightly `6,912³ = 330,225,942,528` (budget 350B, was 15B). `graphEquivalence` stays off on both (pre-existing — over the 100k cap).
 
 `check` results (`npm run verify:machines`, TLC2 2026.03.16.234659): **pr** proofPassed=true, **17 invariants** (was 14), **8,363 generated / 1,369 distinct** (was 3,221 / 529), deadlock checked, "No error has been found". **nightly** proofPassed=true, 464,092 / 50,653 distinct. `PASSED 4/4` across all machines.
+
+## 2026-09-10 — bounded broadcast recovery and unknown replies (SCRUM-4539)
+
+`broadcastRecovery.machine.ts` models the bounded SQL claim, reply loss, protected txid/journal rows, overlapping tick guard, old claim removal, and re-claim. The pr tier explicitly verifies graph equivalence: six safety invariants, 142 TypeScript/TLC states and 411 edges. Three altered DSL controls fail when protection, unknown-outcome reporting, or old-claim removal is removed. A ten-step interpreter trace was compared to actual committed 0442/0449 SQL, including a lost reply and exactly one subsequent worker claim. Production bounds are 500 rows/40 passes; the two-anchor/one-row/two-pass tier is a finite safety abstraction, not a throughput or unconditional liveness proof. This multi-row RPC/network boundary does not fit the generated single-table adapter; no generated SQL or adapter is deployed.
