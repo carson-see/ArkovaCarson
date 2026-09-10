@@ -10,7 +10,7 @@ Arkova has **two** block-height columns. They are not interchangeable.
 | Column | What it is | Trust |
 |---|---|---|
 | `anchors.chain_block_height` | The mined block's height, written at confirmation by `check-confirmations.ts` -> `drain_submitted_to_secured_for_tx` from the tx's real `status.block_height` | **Authoritative** |
-| `anchor_proofs.block_height` | The chain **tip at broadcast** (`broadcastSignedTx` -> `getBlockchainInfo().blocks`) | Wrong until migration `0442` backfilled it |
+| `anchor_proofs.block_height` | The chain **tip at broadcast** (`broadcastSignedTx` -> `getBlockchainInfo().blocks`) | Broadcast-time value until measured confirmation repair or migration `0443`; this PR does not establish production application |
 
 **Measured on prod `vzwyaatejekddvltxyye`, 2026-09-02, read-only:** 711,027 of 713,949
 `anchor_proofs` rows disagreed with `anchors.chain_block_height`, **100% of them low**, by exactly
@@ -38,6 +38,6 @@ package always read from `anchors` and were never affected.
 that came back from the chain at confirmation may be written to `anchor_proofs.block_height` —
 `undefined` means "leave the column alone", never "rewrite what is already there". CI enforces the
 publication order via `scripts/ci/feedback-rules/proof-block-height-source.ts` (override label
-`proof-block-height-reviewed`). If you meet a proof whose height and `block_hash` disagree, this is
-the cause; it is not a reorg. See [[project-bitcoin-signing-paths]] and
+`proof-block-height-reviewed`). This defect can make a proof's height and `block_hash` disagree.
+Check provenance and reorg state before attributing a particular mismatch to it. See [[project-bitcoin-signing-paths]] and
 [[feedback-verification-must-outrank-the-claim]].
