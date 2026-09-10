@@ -84,6 +84,7 @@ const ENV_FLAG_GETTERS = {
   ENABLE_ATS_WEBHOOK: () => config.enableAtsWebhook,
   ENABLE_VEREMARK_WEBHOOK: () => config.enableVeremarkWebhook,
   ENABLE_MICROSOFT_GRAPH_WEBHOOK: () => config.enableMicrosoftGraphWebhook,
+  ENABLE_COMPUTEID_INTEGRATION: () => config.enableComputeidIntegration,
 } as const;
 
 type EnvFlagName = keyof typeof ENV_FLAG_GETTERS;
@@ -131,7 +132,7 @@ function isDbFlag(name: string): name is DbFlagName {
 const FLAG_REFRESH_TTL_MS = 60_000; // 60 seconds
 
 class FeatureFlagRegistry {
-  private flags = new Map<string, FlagState>();
+  private readonly flags = new Map<string, FlagState>();
 
   /**
    * Last successfully-read DB value for a DB-backed flag (survives TTL

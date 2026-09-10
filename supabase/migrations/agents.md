@@ -99,6 +99,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0402` | `0402_retire_activate_user_rpc.sql` | branch `worktree-agent-a7c53c44dc75c06bc` (this PR) | **no — file only, pre-soak** | **Launch blocker: account activation was 100% broken.** Retires `public.activate_user(text, text)` — same shape and rationale as `0401` retiring `create_pending_recipient`. Two defects: (1) `ActivateAccountPage.tsx:44` called `activate_user({p_token, p_claim_key})`, but prod has ONLY the `(p_token, p_password)` overload and PostgREST binds by argument NAME, so every call returned PGRST202; the `p_claim_key` variant is in `docs/migrations-archive/0175` and was never deployed (no `activation_tokens` table, no `claim_key` column anywhere in the live schema). (2) The deployed body ACCEPTS `p_password` and never references it — it only flipped `status` to ACTIVE, so no password ever reached `auth.users` and the recipient could not sign in. SQL cannot fix (2): the password hash / `auth.identities` / confirmation state are GoTrue's and need the service_role admin API, which §1.4 bars from the browser — so the function raises `feature_not_supported` pointing at `POST /api/activation/complete` (`services/worker/src/api/activation.ts`, same PR). **Also a security fix:** the baseline granted this SECURITY DEFINER `profiles` writer to `anon` AND `authenticated` (baseline:13479-13481) — revoked here `FROM PUBLIC, anon, authenticated`, `service_role` retained (PUBLIC named explicitly per 0364's no-op-revoke catch). Cannot regress a working caller: 100% of calls already failed. Signature unchanged, so no `database.types.ts` delta. Prefix derived from `git fetch --prune` + full-ref scan (`git log --all --diff-filter=A`): main head `0400`, `0401` claimed by PR #2047 on `fix/create-pending-recipient-fk`, so `0402` is next free. Tier T3. **Next author claims `0403` — re-derive, do not trust this line.** |
 | `0436` | `0436_scrum4035_oauth_email_confirmation.sql` | SCRUM-4035 / UAT-03 | **no — candidate only** | New OAuth mailbox confirmation, restricted pending role and service-only challenge completion. Prefix verified against main/prod 0419 and all open-PR migrations through 0435 on 2026-09-05. Rollout remains disabled until hook and all consumers are verified. |
 | `0445` | `0445_connector_artifact_materialize_link_atomic.sql` | #2570 / SCRUM-3882 | **no — local candidate only** | Atomic service-only connector anchor creation/reuse and freshness-guarded artifact link. Prevents a broadcaster observing a stale unlinked PENDING anchor. Numeric inventory verified 2026-09-10: main 0440; open PRs 0441/0442; #2572 reserves 0443/0444. Historical unpublished 0437 is intentionally not reused. Local PostgreSQL concurrency/ACL/rollback proof required; full stack T3 staging and production apply remain release gates. |
+| `0448` | `0448_computeid_agent_key_transition_atomic.sql` | #2668 / SCRUM-4535 / SCRUM-4536 | **no — local candidate only** | Service-only agent-row lock and full-snapshot CAS commit ComputeID status/metadata and key enforcement together. Closes the lost restore retry and delayed restore after revoke. Prefix re-derived 2026-09-10 from main, all open PRs, and #2572's local 0446/0447 reservations; coordinated with both parallel agents. Flag remains off. No production apply or soak completion claimed. |
 | baseline | `00000000000000_baseline_at_main_HEAD.sql` | ? | yes | Path C baseline. Atomic with `docs/migrations-archive/`. |
 | `0290` | `0290_suborg_suspension_audit_and_service_role_fix.sql` | ? | presumed | |
 | `0292` | `0292_microsoft_graph_webhook_nonces.sql` | #695 | presumed | Graph notification replay protection (SCRUM-1135). |
@@ -1201,7 +1202,8 @@ The unpublished cap repair moved from 0443 to 0447 after new PR #2782 claimed 04
 
 | Prefix | File | Story | Applied to prod | Notes |
 |---|---|---|---|---|
-| `0440` | `0440_org_credits_cap_enforced.sql` | SCRUM-4474 | no | **Decouples the document cap from `is_test`.** `org_credits.is_test` carried two unrelated meanings: "never fire a Stripe meter event" (`meteredBilling.ts`) and "enforce `anchor_quota`" (`anchorQuotaGate.ts`), so a billable customer with a contractual cap was unrepresentable. HakiChain — invoiced, capped at 2,000 — had to be flagged a TEST org on 2026-09-02 to get its cap enforced at all, silently excluding it from metered billing. Adds `cap_enforced boolean NOT NULL DEFAULT false` as the sole enforcement switch and leaves `is_test` meaning billing only. **Behaviour-preserving by construction:** the backfill sets `cap_enforced` to what the gate computes today (`is_test AND anchor_quota IS NOT NULL`), so no org changes state. This matters concretely — Login Defense (`caa14834-1252-42b4-b34b-025798b45185`) holds `anchor_quota = 15` with `is_test = false`, an INERT quota; making `anchor_quota` enforce on its own would have started capping a live partner nobody decided to cap. Adds `admin_set_org_cap(uuid, integer, boolean, boolean, uuid)` (service_role only, with inline REVOKE from PUBLIC/anon/authenticated). Deliberately does NOT drop or re-signature `admin_set_org_anchor_quota` — worker deploys are paused, so the running worker keeps calling the 4-arg form for an unbounded window; the old function stays working and is marked deprecated. Tier T3. Rollback in the file header. **Next author claims `0441` — re-derive, do not trust this line.** |
+| `0440` | `0440_org_credits_cap_enforced.sql` | SCRUM-4474 | no | **Decouples the document cap from `is_test`.** `org_credits.is_test` carried two unrelated meanings: "never fire a Stripe meter event" (`meteredBilling.ts`) and "enforce `anchor_quota`" (`anchorQuotaGate.ts`), so a billable customer with a contractual cap was unrepresentable. HakiChain — invoiced, capped at 2,000 — had to be flagged a TEST org on 2026-09-02 to get its cap enforced at all, silently excluding it from metered billing. Adds `cap_enforced boolean NOT NULL DEFAULT false` as the sole enforcement switch and leaves `is_test` meaning billing only. **Behaviour-preserving by construction:** the backfill sets `cap_enforced` to what the gate computes today (`is_test AND anchor_quota IS NOT NULL`), so no org changes state. This matters concretely — Login Defense (`caa14834-1252-42b4-b34b-025798b45185`) holds `anchor_quota = 15` with `is_test = false`, an INERT quota; making `anchor_quota` enforce on its own would have started capping a live partner nobody decided to cap. Adds `admin_set_org_cap(uuid, integer, boolean, boolean, uuid)` (service_role only, with inline REVOKE from PUBLIC/anon/authenticated). Deliberately does NOT drop or re-signature `admin_set_org_anchor_quota` — worker deploys are paused, so the running worker keeps calling the 4-arg form for an unbounded window; the old function stays working and is marked deprecated. Tier T3. Rollback in the file header. **Next author claims `0443` — re-derive, do not trust this line.** |
+| `0442` | `0442_scrum4521_recover_stuck_broadcasts_bounded_batch.sql` | SCRUM-4521 | no | **Bounds `recover_stuck_broadcasts()` to a batch.** The function selected `FOR UPDATE SKIP LOCKED` but took no `LIMIT`, so one call tried to claim the entire stuck cohort in a single statement. On staging rig `txvvrxngyfnnqahujbld` (2026-09-07) a Cloud Run SIGTERM left **10,000** anchors `BROADCASTING` with a NULL `chain_tx_id`; every recovery pass died on the function's own `SET statement_timeout = '60s'` (SQLSTATE `57014`), the row count never moved across ~10 minutes, and the cohort had to be deleted by hand. Adds `p_limit integer DEFAULT 500`, clamped server-side to `LEAST(GREATEST(COALESCE(p_limit, 500), 1), 2000)`, plus `ORDER BY updated_at ASC` so head-of-line blockers clear first; the caller (`services/worker/src/jobs/broadcast-recovery.ts`) loops until a pass comes back short. **This is a `DROP FUNCTION` + `CREATE FUNCTION`, not `CREATE OR REPLACE`** — Postgres treats an added parameter as a new signature, so a replace would leave the 1-arg function in place and make every existing `recover_stuck_broadcasts(5)` call ambiguous (CLAUDE.md §6). The DROP discards grants, so the REVOKE/GRANT pair is re-issued on `(integer, integer)`. Every 0358/0379 guard is preserved byte-for-byte: BROADCASTING+SUBMITTED cohort, `chain_tx_id IS NULL` double-broadcast guard, `deleted_at IS NULL`, the SCRUM-2692 `anchor_txid_journal` PENDING/HELD protection, `FOR UPDATE SKIP LOCKED`, the recovery-metadata shape, and the deliberate absence of a `legal_hold` check. `SET LOCAL lock_timeout = '5s'` bounds the DROP. Tier T3. Rollback in the file header — note that rolling back re-introduces the stall, so it pairs with a worker revision that does not pass `p_limit`. **Originally authored as `0441` and renumbered to `0442`:** PR #2694 (`fix/0441-fingerprint-lookup-bpchar-cast`, the SCRUM-4516 `get_public_anchor_by_fingerprint` bpchar cast) claimed `0441` in the same hour. That PR keeps `0441`; this one moved, because it was a draft with no soak and nothing applied anywhere. `0441` is therefore NOT in this table yet — it belongs to #2694. **Next author claims `0443` — re-derive, do not trust this line.** |
 
 Amended after the 2026-09-05 review of PR #2658 (findings F1/F2/F3/F5), still under prefix `0440`:
 
@@ -1225,6 +1227,26 @@ Amended after the 2026-09-05 review of PR #2658 (findings F1/F2/F3/F5), still un
   so their `0327` bodies must be restored *before* the column is dropped — otherwise every signup INSERT and
   every 4-arg admin write fails on a missing column. Verified end-to-end on a disposable Postgres.
 
+## Recent migrations (SCRUM-3953)
+
+| Migration | Branch | Ticket | File | Status |
+|---|---|---|---|---|
+| `0443` | `fix/scrum-3953-proof-block-height` | SCRUM-3953 (BUG-2026-09-02-005) | `0443_backfill_anchor_proof_block_height.sql` | RESERVED — file-only, **NOT applied to prod or any rig**. T3 (data repair on the anchor-lifecycle surface). Number derived as `max(main head, prod ledger head, agents.md reservations, open-PR claims) + 1`: originally drafted as `0433` on 2026-09-02; **renumbered 2026-09-10** because `0433` was since claimed twice (`0433_org_credits_cap_enforced`, `0433_scrum3529_ferpa_directory_info_get_public_anchor_reconcile`) and on 2026-09-10 the **prod numeric ledger head is `0442`** (`0442_scrum4521_recover_stuck_broadcasts_bounded_batch`, PR #2693; also `0440_org_credits_cap_enforced` and `0441_fingerprint_lookup_bpchar_cast` applied) and the highest prefix on any ref or open PR is `0442` — so `0443` is the next free slot. **Next author claims `0444` — re-derive, do not trust this line.** Data-only: no schema change, so no `database.types.ts` delta and no `NOTIFY pgrst`. Rehearsed on an isolated throwaway Postgres 17 container (never prod, never a rig, never the shared local stack): forward corrects the three-heights-one-block fixture to the true height, leaves an already-correct row and a row whose block identity disagrees untouched, re-run reports 0, and the post-condition guard was negative-tested (it raises when a bad row is planted). No rollback by design — the prior values are broadcast-time tips with no source to restore from; see the file header. |
+
+## 2026-09-10 — 0449 broadcast recovery clears stale claim metadata (SCRUM-4539)
+
+0442 remains immutable. Actual complete-schema replay proved its JSON operator grouping preserved `_claimed_by`/`_claimed_at` on PENDING rows. 0449 groups the complete merged metadata before subtracting reserved claim keys, retains unrelated metadata and `_previous_claimed_by`, and materializes the locked bounded candidate cohort before UPDATE. A parentheses-only development candidate failed real bound tests; the materialized candidate passes the 10k drain, default/explicit/clamped limits, concurrent disjoint claims, durable journal lock race, and committed-response-loss retry. Existing claim_pending_anchors overwrites stale claim values, so the inherited metadata defect is not claimed to cause a demonstrated double anchor. Rollback restores exact 0442 function semantics and reproduces the metadata failure; reapply passes. Apply and verify 0449 before the repaired worker; local verification does not establish hosted staging soak or a production deployment.
+
+- 0449 carries its own BEGIN/COMMIT so its transaction-local five-second lock timeout is effective with raw psql runners too. This is a function-body replacement; the applied 0442 file is preserved.
+
+## 2026-09-10 — Local 0448 authority guards (SCRUM-4558 / SCRUM-4559)
+
+Before any publication/application, the reserved local `0448` was extended with `enforce_agent_key_active_authority`, `enforce_agent_revocation_terminal`, and service-only `cleanup_computeid_empty_admission`. Active-key writes take a parent share lock; provider transitions and cleanup take its update lock. Existing-key updates can encounter a lock inversion with older callers: PostgreSQL aborts one whole transaction and the receiver returns a retryable failure. The actual two-session fault test verifies abort plus successful revocation retry, never partial commit. No data backfill or existing migration was changed. Full-schema local proof retains the real foreign keys, row security and existing agent timestamp trigger. Hosted migration/staging qualification is still required; the feature flag stays off.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+Unapplied migration 0448 now includes service-only terminal passport authority and atomic admission, replacing the earlier cleanup RPC. The authority table has enabled and forced RLS; anon/authenticated have neither table access nor RPC execution. Preserve tombstones across rollback. Required admission and transition audits are transactional; key/audit failures roll back together. No hosted application or current-head soak is asserted by local SQL proofs.
 
 ## PR #2572 — SCRUM-4878 rollup authorization repair
 
@@ -1239,3 +1261,61 @@ repairs. Rollback must restore only 0432's two rollup definitions, not its whole
 file. Both canonical type entries now include the pre-existing explicit-caller
 overload, regenerated from the actual catalog. Hosted qualification is pending;
 local receipts are not a staging duration or production application claim.
+
+## PR #2782 — current migration qualification checkpoint (2026-09-10)
+
+The older reservation entry above is historical. Existing Owie staging
+received immutable0443 in the reviewed native release at20:02:28UTC; its
+current canonical ledger is150 after0448/0450. Actual production application
+and independent catalog receipts at21:38UTC show149 canonical rows, including
+0429–0432 and0444–0450, but excluding0443. Source prefixes must be re-derived
+from current main, production and open PRs;0444 is no longer available.
+
+0443 remains SHA256
+`b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`.
+Its20,000-row loop is one transaction, not separately committed batches. The
+large production repair requires protected fresh preimages, bounded guarded
+updates and an actual final migration outcome. An observed zero-mismatch
+postcondition at migration time does not establish durable convergence while
+old producers remain. Corrected deployment, old-work drain and fresh final
+reconciliation precede that release claim. No production0443 application or
+new completed soak is asserted by this checkpoint.
+
+[Production149 and hosted qualification record](https://arkova.atlassian.net/wiki/spaces/A/pages/141623441)
+and [proof-repair release record](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
+retain the separately dated evidence.
+
+
+## PR #2782 — runtime-first release; historical repair retained in PR #2825
+
+The CTO review has separated the measured confirmation metadata and
+certificate block-binding runtime from its historical data repair. Runtime
+uses existing proof and anchor columns, and its regressions explicitly
+cover stale historical proof values, matching identities and mismatches.
+No schema, function, type or feature flag introduced by 0443 is needed.
+
+The exact unmodified 0443 file and existing prefix reservation are retained
+in [PR #2825](https://github.com/carson-see/ArkovaCarson/pull/2825), branch
+`release/scrum-3953-proof-history-0443`, source commit
+`4bca854715594b35476a8a3651194841b3cf8829`. The migration SHA256 remains
+`b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`.
+Removing that unmerged file from this runtime PR does not undo its staging
+application, change any production ledger, release its prefix, or waive its
+remaining production requirement. The original migration header and earlier
+entries above retain their historical context.
+
+Owie remains at 150 ledger entries with 0443 applied; production remains at
+149 without 0443. This data-only divergence is declared, not called a clean
+pre-migration snapshot. The runtime code, models and build inputs retain the
+reviewed combined staging source. Current-head CI and Mergify still govern
+this runtime release; no fresh 48-hour soak or historical convergence is
+asserted. The existing founder soak exception is unchanged.
+
+Historical repair remains In Progress under
+[SCRUM-4879](https://arkova.atlassian.net/browse/SCRUM-4879), with verification
+SCRUM-4880 and documentation SCRUM-4881. Its
+[release record](https://arkova.atlassian.net/wiki/spaces/A/pages/143196161)
+requires protected fresh preimages, bounded source/full-row guarded updates,
+corrected producer deployment and old-work drainage, final reconciliation,
+actual unchanged 0443 outcome and canonical numeric ledger readback. Runtime
+delivery alone does not close the broader SCRUM-3953 historical defect.

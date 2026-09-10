@@ -336,45 +336,24 @@ describe('SCRUM-1296: attestationExpiry bulk operations', () => {
   });
 });
 
-describe('SCRUM-1296: broadcast-recovery chunked bulk update', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+describe('SCRUM-1296: broadcast recovery never falls back to an N+1 update sweep', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
 
-  it('should preserve per-anchor metadata during recovery', async () => {
+  it('leaves anchors untouched when the bounded SQL RPC is absent', async () => {
     const { recoverStuckBroadcasts } = await import('./broadcast-recovery.js');
-
-    // RPC fails → fallback to manual recovery
-    mockDbRpc.mockResolvedValueOnce({
-      data: null,
-      error: { code: '42883', message: 'function not found' },
-    });
-
-    // 5 stuck anchors with distinct metadata
-    const stuckAnchors = Array.from({ length: 5 }, (_, i) => ({
-      id: `anchor-${i}`,
-      fingerprint: `fp-${i}`,
-      metadata: { _claimed_by: `worker-${i}`, _claimed_at: new Date().toISOString(), business_field: `val-${i}` },
+    const refusal = { data: null, error: { code: '42883', message: 'function not found' } };
+    mockDbRpc.mockReturnValueOnce(Object.assign(Promise.resolve(refusal), {
+      abortSignal: () => Promise.resolve(refusal),
     }));
-
-    let fromCallCount = 0;
-    const selectChain = makeChainable({ data: stuckAnchors, error: null });
-    const updateChain = makeChainable({ data: null, error: null });
-    const emptyJournalChain = makeChainable({ data: [], error: null });
-
     mockDbFrom.mockImplementation((table: string) => {
-      fromCallCount++;
-      if (table === 'anchor_txid_journal') return emptyJournalChain;
-      if (table === 'anchors' && fromCallCount === 3) return selectChain; // SELECT stuck
-      return updateChain; // Per-anchor UPDATE preserving metadata
+      if (table === 'anchor_txid_journal') return makeChainable({ data: [], error: null });
+      throw new Error('Recovery must not query anchors outside the SQL transaction');
     });
-
     const result = await recoverStuckBroadcasts(5);
-
-    expect(result.recovered).toBe(5);
-    // 2 journal-protection reads + 1 SELECT + 5 per-anchor UPDATEs
-    // Chunked in batches of 100, so all 5 are in one chunk processed via Promise.allSettled
-    expect(fromCallCount).toBe(8);
+    expect(result).toMatchObject({ recovered: 0, incomplete: true });
+    expect(mockDbFrom).toHaveBeenCalledTimes(1);
+    expect(mockDbFrom).toHaveBeenCalledWith('anchor_txid_journal');
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({ error: expect.objectContaining({ code: '42883' }) }), expect.stringContaining('RPC failed'));
   });
 });
 

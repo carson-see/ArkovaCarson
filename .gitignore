@@ -234,3 +234,8 @@ test-results/
 
 # wrangler dev local state
 services/edge/.wrangler/
+
+# SCRUM-4494 — ComputeID's PUBLIC CA certificate is a committed test fixture
+# (it pins key_id derivation against the partner's live value). Only this one
+# path is exempt from the *.pem rule; private keys stay ignored everywhere.
+!services/worker/src/integrations/computeid/__fixtures__/computeid-ca.pem
