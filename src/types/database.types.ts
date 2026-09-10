@@ -7558,10 +7558,12 @@ export type Database = {
         Args: { p_max_depth?: number; p_root_id: string }
         Returns: Json
       }
-      get_parent_credit_rollup: {
-        Args: { p_parent_org_id: string }
-        Returns: Json
-      }
+      get_parent_credit_rollup:
+        | { Args: { p_parent_org_id: string }; Returns: Json }
+        | {
+            Args: { p_caller_user_id: string; p_parent_org_id: string }
+            Returns: Json
+          }
       get_payment_ledger: {
         Args: { p_limit?: number; p_offset?: number }
         Returns: {
@@ -8044,6 +8046,17 @@ export type Database = {
         Returns: Json
       }
       start_payment_grace: { Args: { p_org_id: string }; Returns: Json }
+      stop_suborg_docusign_inheritance: {
+        Args: {
+          p_caller_user_id: string
+          p_child_org_id: string
+          p_inherited_from_org_id: string
+          p_integration_id: string
+          p_parent_org_id: string
+          p_revoked_at?: string
+        }
+        Returns: Json
+      }
       submit_batch_anchors: {
         Args: {
           p_anchor_ids: string[]

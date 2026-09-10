@@ -43,6 +43,7 @@ import { orgKybRouter } from './api/v1/org-kyb.js';
 import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
 import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { docusignMemberOAuthRouter } from './api/v1/integrations/docusign-member-oauth.js';
+import { docusignInheritanceRouter } from './api/v1/integrations/docusign-inheritance.js';
 import { adobeSignOAuthRouter } from './api/v1/integrations/adobe-sign-oauth.js';
 // SCRUM-2082 CSI-04D — Issuer Partners admin API.
 import { createIssuerPartnershipsRouter } from './api/v1/integrations/issuer-partnerships.js';
@@ -559,6 +560,16 @@ app.use(
   pathScopedMiddleware('/docusign', rateLimiters.api),
   pathScopedMiddleware('/docusign', integrationsAuthGate),
   pathScopedMiddleware('/docusign', docusignMemberOAuthRouter),
+);
+// SCRUM-3867: sub-org DocuSign inheritance. Same kill switch, limiter and auth
+// gate as the two routers above — a marker is a connection, so it lives behind
+// exactly the same door.
+app.use(
+  '/api/v1/integrations',
+  pathScopedKillSwitch('/docusign', 'ENABLE_DOCUSIGN_OAUTH'),
+  pathScopedMiddleware('/docusign', rateLimiters.api),
+  pathScopedMiddleware('/docusign', integrationsAuthGate),
+  pathScopedMiddleware('/docusign', docusignInheritanceRouter),
 );
 // SCRUM-1148 follow-up: Adobe Sign OAuth connect flow. Same shape as DocuSign
 // (kill switch -> rate limit -> auth gate that lets the provider redirect
