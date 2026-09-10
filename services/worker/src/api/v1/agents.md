@@ -1091,6 +1091,25 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
 
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `anchor_timestamp` comes from the chain, not `created_at`
+
+`buildVerificationResult` published `anchor.created_at` under `anchor_timestamp`, and
+`cle-verify.ts` published it under `anchored_at` on an anonymous bar-compliance surface. Both now
+call `publicAnchorTimestamp` from `../anchorTimestamp.js` — see that folder's `agents.md` for why
+the RPC is not swapped in wholesale and why there is no `created_at` fallback.
+
+Two traps specific to this folder:
+
+- **The blast radius is wider than the route.** `oracle.ts` and `batch.ts` both call
+  `buildVerificationResult`, so anything asserted about this envelope is asserted about them too.
+- **`verify.test.ts` asserted the `created_at` value and so pinned the bug in place**, on a fixture
+  that already set `created_at` and `chain_timestamp` two days apart. When a test's expected value
+  happens to equal a second fixture field, check which one the code actually read.
+
+`ai-verify-search.ts` is still wrong and is NOT fixed here: its values come from the SQL function
+`search_public_credential_embeddings`, which selects `a.created_at AS anchor_timestamp`. Fixing it
+needs a migration (T3) and would also correct the edge. Tracked in SCRUM-4520.
+
 
 ## PR #2442 release review — 2026-09-05
 

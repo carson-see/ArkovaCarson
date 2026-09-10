@@ -697,6 +697,20 @@ Consequences that are now true of the running system, and were not before:
   comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
   own tier, not a cleanup.
 
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `verifyCache` KEY_PREFIX v7 → v8
+
+Bumped because `anchor_timestamp` changed VALUE (from `anchors.created_at` to the chain-observed
+time), not shape. The existing prefix comments all describe SHAPE changes, which makes it easy to
+conclude a value-only fix does not need a bump. It does: cached bodies carry the wrong timestamp
+and would keep serving it for the full 5-minute TTL after deploy — precisely the window in which a
+reviewer spot-checks the fix and sees it apparently not working.
+
+Originally written as v6 → v7. The BUG-2026-08-13-010 declared-hash fix took v7 on `main` first, so
+on merge this became v7 → v8: two independent response-shape/value changes get one version each,
+because sharing a prefix would let one change's pre-deploy bodies survive the other's deploy.
+
+Rule of thumb for this file: bump the prefix whenever a cached body's bytes change for the same
+anchor, whether the cause is a new field, a dropped field, or a corrected value.
 ## 2026-09-05 — shared rate-limit refund coverage (PR #2529)
 
 The distributed `skipFailedRequests` regression executes the response callback against an atomic shared counter: an HTTP 500 refunds one slot, a successful retry remains charged, and the next request receives 429. Keep the existing 80% function-coverage threshold; this path must be exercised, not excluded.

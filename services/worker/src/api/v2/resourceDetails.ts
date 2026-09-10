@@ -5,6 +5,7 @@ import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
 import { PUBLIC_ANCHOR_ID_RE, PUBLIC_ORG_ID_RE, SHA256_HEX_RE, visibleAnchorScope } from './resourceIdentifiers.js';
+import { publicAnchorTimestamp } from '../anchorTimestamp.js';
 
 export const resourceDetailsRouter = Router();
 
@@ -101,7 +102,14 @@ function mapAnchorDetail(row: Record<string, unknown>, type: 'record' | 'fingerp
     fingerprint: stringOrNull(row.fingerprint),
     issued_date: stringOrNull(row.issued_at),
     expiry_date: stringOrNull(row.expires_at),
-    anchor_timestamp: stringOrNull(row.chain_timestamp) ?? stringOrNull(row.created_at),
+    // BUG-2026-09-08-001 (SCRUM-4517): the `?? created_at` fallback that used
+    // to close this line is exactly the defect — it looked right in review and
+    // misreported only on the rows where `chain_timestamp` is NULL, silently
+    // and under a field name that promises chain time. Null means not measured.
+    anchor_timestamp: publicAnchorTimestamp(
+      typeof status === 'string' ? status : null,
+      stringOrNull(row.chain_timestamp),
+    ),
     network_receipt_id: stringOrNull(row.chain_tx_id),
     record_uri: recordUri,
     metadata: safeMetadata(row.metadata),
