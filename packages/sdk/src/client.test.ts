@@ -4,9 +4,9 @@
  * Tests SDK methods with mocked fetch. No real API calls.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest';
 import { Arkova, ArkovaError } from './client';
-import type { WebhookEventType } from './types';
+import type { VerificationResult, WebhookEventType } from './types';
 
 const mockFetch = vi.fn();
 
@@ -401,6 +401,50 @@ describe('anchorBulk', () => {
 });
 
 describe('verify', () => {
+  const timestampCases = [
+    { name: 'omitted', wire: {}, expected: null },
+    { name: 'explicit null', wire: { anchor_timestamp: null }, expected: null },
+    { name: 'observed', wire: { anchor_timestamp: '2026-09-02T02:58:11Z' }, expected: '2026-09-02T02:58:11Z' },
+  ];
+
+  it.each(timestampCases)('normalizes the $name timestamp without inventing an observation', async ({ wire, expected }) => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ verified: false, status: 'UNKNOWN', ...wire }) });
+    const result = await new Arkova().verify('ARK-TIMESTAMP');
+    expect(result.anchorTimestamp).toBe(expected);
+  });
+
+  it('applies the same nullable timestamp contract to batch verification', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ results: timestampCases.map(({ wire }) => ({ verified: false, status: 'UNKNOWN', ...wire })) }),
+    });
+    const results = await new Arkova().verifyBatch(['ARK-OMITTED', 'ARK-NULL', 'ARK-OBSERVED']);
+    expect(results.map((result) => result.anchorTimestamp)).toEqual([null, null, '2026-09-02T02:58:11Z']);
+  });
+
+  it('returns no timestamp or network request when local data does not match the receipt', async () => {
+    const result = await new Arkova().verify(new Uint8Array([1, 2, 3]).buffer, {
+      publicId: 'ARK-LOCAL', fingerprint: '0'.repeat(64), status: 'PENDING', createdAt: '2026-09-02T00:00:00Z',
+    });
+    expect(result.verified).toBe(false);
+    expect(result.status).toBe('UNKNOWN');
+    expect(result.anchorTimestamp).toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('declares an absent observed timestamp in the public result type', () => {
+    expectTypeOf<VerificationResult['anchorTimestamp']>().toEqualTypeOf<string | null>();
+  });
+
+  it.each(['verifyFingerprint', 'getAnchor', 'getRecord', 'getFingerprint', 'getDocument'] as const)(
+    'retains nullable timestamp handling in %s', async (method) => {
+      for (const { wire, expected } of timestampCases) {
+        mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ verified: false, status: 'UNKNOWN', ...wire }) });
+        const result = await new Arkova()[method]('a'.repeat(64));
+        expect(result.anchorTimestamp).toBe(expected);
+      }
+    },
+  );
+
   it('verifies by public ID', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
 
