@@ -93,3 +93,9 @@ refresh or evidence of staging/production application.
 The unpublished cap file in that first local replay was later renamed from 0443
 to 0447 after PR #2782 claimed 0443. No cap function body or generated RPC
 signature changed; integrated baseline validation must use the current filenames.
+
+After integration with remote PR head `72070341` and main `8fe0ac4e`, all140
+current SQL files and canonical seed replayed on a fresh isolated Supabase
+schema. Catalog regeneration confirmed the same RPC entry in both canonical
+files. This includes current0444/0446/0447 filenames and all merged migrations;
+it does not claim staging qualification or a full-file type resynchronization.
