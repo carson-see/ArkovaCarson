@@ -81,9 +81,24 @@ export const AnchorInsertPayload = z
     filename: z.string().min(1).max(255),
     credential_type: z.literal('CONTRACT_POSTSIGNING'),
     metadata: z.record(z.string(), z.unknown()),
-    // Both connector paths materialize here. Outbound fingerprints were
-    // measured upstream from fetched bytes; inbound fingerprints are declared.
-    // Require an explicit evidence class on every newly materialized row.
+    // Evidence class of the fingerprint on every row this drain materializes
+    // (migration 0376/0384; CHECK-constrained on `anchors.fingerprint_source`).
+    // BOTH connector paths materialize here: outbound fingerprints were measured
+    // upstream from fetched bytes, inbound fingerprints are declared — so an
+    // explicit evidence class is REQUIRED on every newly materialized row, never
+    // omitted. R2 (CTO Decision Record, docusign-bilateral-2026-08) settled that
+    // this drain must always classify what it persists rather than leaving NULL
+    // "unclassified".
+    //
+    // 'document_bytes' is the R2 default and covers every pre-existing
+    // connector path (DocuSign outbound, Google Drive): those fingerprints are
+    // server-side hashes of bytes fetched from a connected third party under
+    // the §1.6A carve-out (DS-03 `enqueueSignedDocument` and its twins).
+    //
+    // 'issuer_record_attestation' has exactly ONE producer — the inbound
+    // declared-hash branch of `defaultMaterializeAnchor` below, where the
+    // fingerprint was declared by the issuer and never measured from bytes
+    // Arkova fetched (§1.5). That is why this is an enum and not a literal.
     fingerprint_source: z.enum(['document_bytes', 'issuer_record_attestation']),
   })
   .strict()
@@ -446,9 +461,15 @@ export async function defaultMaterializeAnchor(
     },
     // The service-authored direction selects the evidence class; a declared
     // inbound fingerprint must never be represented as measured document bytes.
+    // R2 default is 'document_bytes': the fingerprint is a server-computed hash
+    // of fetched document bytes (DS-03 enqueueSignedDocument and its Drive /
+    // other connector twins). The inbound declared-hash branch is the ONLY
+    // producer of 'issuer_record_attestation' — there the fingerprint was
+    // declared by the issuer, never measured from bytes Arkova fetched (§1.5).
+    // Always set, never omitted. See the schema comment on AnchorInsertPayload.
     fingerprint_source: isInboundDeclaredHash
-      ? 'issuer_record_attestation' as const
-      : 'document_bytes' as const,
+      ? ('issuer_record_attestation' as const)
+      : ('document_bytes' as const),
   };
 
   // Validate the persisted row before insert (§1.2). Parse failures throw into
@@ -546,7 +567,12 @@ async function defaultReadAnchorStatus(
     .eq('id', args.anchorId)
     .eq('org_id', args.orgId)
     .maybeSingle();
-  if (error || !data) return null;
+  // SCRUM-3836: `null` meant both "query failed" and "anchor not found".
+  if (error) {
+    defaultLogger.error({ error, anchorId: args.anchorId }, 'Anchor status read failed — treating as not found');
+    return null;
+  }
+  if (!data) return null;
   return {
     id: data.id as string,
     status: data.status as string,

@@ -172,21 +172,59 @@ const TYPE_CONFIG: Record<string, {
   },
 };
 
+/**
+ * The `metadata` keys that MIRROR the canonical `anchors.sub_type` column, in
+ * precedence order. One list: membership (`isSubTypeKey`) and lookup order
+ * (`extractSubTypeLabel`) drifting apart is how a key ends up hidden from the
+ * label but rendered in the metadata list, or the reverse.
+ */
+const SUB_TYPE_METADATA_KEYS: readonly string[] = ['subType', 'subtype', 'sub_type'];
+
 function isSubTypeKey(key: string): boolean {
-  return ['subtype', 'sub_type', 'subType'].includes(key);
+  return SUB_TYPE_METADATA_KEYS.includes(key);
+}
+
+/**
+ * A sub-type is only usable as a label when it FORMATS to visible text.
+ *
+ * Two ways it does not, both reachable because `anchors.sub_type` is bare
+ * `text` with no CHECK and no enum:
+ *   - blank input — `formatCredentialSubType('')` returns the em-dash
+ *     placeholder, so an unguarded blank would REPLACE a real credential-type
+ *     label with '—', worse than the generic label it improves on;
+ *   - blank OUTPUT — separator-only input formats to whitespace
+ *     (`'_'` splits into two empty segments joined by a space), which is
+ *     truthy and would win the label with nothing to show.
+ * So the guard is on the formatted result, not just the raw value.
+ */
+function formatSubTypeOrNull(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return formatCredentialSubType(trimmed).trim() || null;
 }
 
 function extractSubTypeLabel(metadata: Record<string, unknown> | null | undefined): string | null {
   if (!metadata) return null;
-  for (const key of ['subType', 'subtype', 'sub_type']) {
-    const value = metadata[key];
-    if (typeof value === 'string') return formatCredentialSubType(value);
+  for (const key of SUB_TYPE_METADATA_KEYS) {
+    const label = formatSubTypeOrNull(metadata[key]);
+    if (label) return label;
   }
   return null;
 }
 
 export interface CredentialRendererProps {
   credentialType?: string | null;
+  /**
+   * SCRUM-3529: the canonical `anchors.sub_type` column (GRE-01 —
+   * `official_undergraduate`, `nursing_rn`), surfaced by `get_public_anchor` as
+   * a top-level key (migration 0421) and by `GET /api/v1/verify/:publicId`.
+   *
+   * Takes precedence over any `sub_type` duplicate inside `metadata`, which is
+   * only whatever a writer happened to mirror there. Callers that have no
+   * column value may omit this; the metadata fallback still applies.
+   */
+  subType?: string | null;
   metadata?: Record<string, unknown> | null;
   template?: TemplateDisplayData | null;
   issuerName?: string | null;
@@ -241,8 +279,29 @@ function isMetadataDisplayHiddenKey(key: string): boolean {
   return key.startsWith('_') || METADATA_DISPLAY_HIDDEN_KEYS.has(key.toLowerCase()) || isFraudMetadataKey(key);
 }
 
+/**
+ * SCRUM-3529: skip a metadata/template-field key from the rendered field
+ * list. One shared test for BOTH the templated and untemplated rendering
+ * branches below, so the two cannot drift the way `isSubTypeKey` and
+ * `extractSubTypeLabel` would have if membership and lookup order were two
+ * separate lists (the reason `SUB_TYPE_METADATA_KEYS` is a single array).
+ *
+ * The second condition is the sub-type collision: when the canonical
+ * `subType` prop already produced a label, a metadata OR template-field key
+ * matching `SUB_TYPE_METADATA_KEYS` is a MIRROR of it — rendering it as a
+ * second field would publish two Types for one credential, and the mirror is
+ * the one that can be stale. A template field collides here because
+ * `CredentialTemplatesManager` derives a field's key from its label
+ * (`f.name.toLowerCase().replace(/\s+/g, '_')`), so an org-defined field
+ * literally named "Sub Type" becomes key `sub_type`.
+ */
+function shouldSkipMetadataField(key: string, canonicalSubTypeLabel: string | null): boolean {
+  return isMetadataDisplayHiddenKey(key) || (!!canonicalSubTypeLabel && isSubTypeKey(key));
+}
+
 export function CredentialRenderer({
   credentialType,
+  subType,
   metadata,
   template,
   issuerName,
@@ -263,7 +322,9 @@ export function CredentialRenderer({
   const typeKey = credentialType ?? 'OTHER';
   const config = TYPE_CONFIG[typeKey] ?? TYPE_CONFIG.OTHER;
   const TypeIcon = config.icon;
-  const subTypeLabel = extractSubTypeLabel(metadata);
+  // The canonical column wins over the metadata duplicate (SCRUM-3529).
+  const canonicalSubTypeLabel = formatSubTypeOrNull(subType);
+  const subTypeLabel = canonicalSubTypeLabel ?? extractSubTypeLabel(metadata);
 
   const credentialLabel = subTypeLabel ?? (credentialType
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[credentialType] ?? credentialType
@@ -325,7 +386,7 @@ export function CredentialRenderer({
 
   if (hasTemplate && hasMetadata) {
     for (const field of template.fields) {
-      if (isMetadataDisplayHiddenKey(field.key)) continue;
+      if (shouldSkipMetadataField(field.key, canonicalSubTypeLabel)) continue;
       const raw = metadata[field.key];
       const formatted = formatFieldValue(raw, field.type);
       if (formatted) {
@@ -334,9 +395,9 @@ export function CredentialRenderer({
     }
   } else if (hasMetadata) {
     for (const [key, value] of Object.entries(metadata)) {
-      if (isMetadataDisplayHiddenKey(key)) continue;
+      if (shouldSkipMetadataField(key, canonicalSubTypeLabel)) continue;
       const formatted = isSubTypeKey(key) && typeof value === 'string'
-        ? formatCredentialSubType(value)
+        ? formatSubTypeOrNull(value)
         : formatFieldValue(value);
       if (formatted) {
         displayFields.push({ label: formatFieldLabel(key), value: formatted });

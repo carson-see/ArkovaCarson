@@ -222,6 +222,17 @@ describe('SCRUM-2486 AC-4: importer materializes PENDING only, never SECURED', (
 // document path (this drain) always fingerprints real bytes it fetched
 // server-side — never a declared/asserted hash — so it must always classify
 // as anchors.fingerprint_source='document_bytes' (migration 0376/0384).
+//
+// MERGE NOTE (origin/main bd72f65ff <- feat/docusign-inbound-recipient-connect):
+// this branch adds the INBOUND declared-hash branch, which is the one and only
+// producer of 'issuer_record_attestation'. R2's default is untouched — every
+// row without `metadata._direction === 'inbound'` still classifies as
+// 'document_bytes', and every case in this block exercises such a row. What
+// changed is the schema: `fingerprint_source` is a required
+// z.enum(['document_bytes','issuer_record_attestation']) rather than a
+// z.literal('document_bytes'), so the schema-level "REJECTS
+// issuer_record_attestation" case below became an ACCEPTS case (the inbound
+// producer now exists). The required-ness assertion is unchanged.
 describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', () => {
   it('defaultMaterializeAnchor stamps fingerprint_source=document_bytes on the proposed atomic RPC payload', async () => {
     const { db, inserts } = makeCapturingClient();
@@ -269,6 +280,20 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
       credential_type: 'CONTRACT_POSTSIGNING',
       metadata: {},
       fingerprint_source: 'issuer_record_attestation',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('AnchorInsertPayload Zod schema REJECTS any fingerprint_source outside the two-class enum', () => {
+    const parsed = AnchorInsertPayload.safeParse({
+      fingerprint: FP,
+      status: 'PENDING',
+      org_id: ORG,
+      user_id: ACTOR,
+      filename: 'contract.pdf',
+      credential_type: 'CONTRACT_POSTSIGNING',
+      metadata: {},
+      fingerprint_source: 'user_declared',
     });
     expect(parsed.success).toBe(false);
   });
