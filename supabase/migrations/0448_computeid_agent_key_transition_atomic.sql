@@ -3,12 +3,14 @@
 -- computes the existing transition; this RPC owns the lock, full-snapshot CAS,
 -- and transaction boundary. No raw provider body or free-text reason is stored.
 --
--- Rollback: keep ENABLE_COMPUTEID_INTEGRATION=false, roll back the worker caller,
--- then remove the two enforce_agent_* triggers from api_keys/agents and their
--- trigger functions; DROP cleanup_computeid_empty_admission(uuid,uuid,jsonb)
--- and apply_computeid_agent_transition(uuid,uuid,uuid,public.agent_status,
--- jsonb,jsonb,text,text,timestamptz). No rows are rewritten by this migration or
--- rollback. Removing the guards reopens the documented races; prefer roll-forward.
+-- Historical-review repairs: SCRUM-4567 / SCRUM-4568 / SCRUM-4569 / SCRUM-4570 / SCRUM-4571.
+--
+-- Rollback: keep ENABLE_COMPUTEID_INTEGRATION=false and roll back worker callers
+-- first. The two enforce_agent_* triggers/functions and transition/admission/
+-- record-revocation RPCs can be removed if necessary, but NEVER drop or clear
+-- computeid_passport_authority: terminal provider tombstones must survive a
+-- rollback. No data backfill is performed. Removing guards reopens recorded
+-- races; prefer a corrective forward migration after release.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
@@ -87,8 +89,16 @@ BEGIN
         AND revocation_reason = 'computeid:passport.suspended';
   END IF;
 
-  -- An error in either UPDATE aborts both. An uncertain response can be retried:
-  -- either neither write committed, or both did and the event clock deduplicates it.
+  IF v_next_status IS DISTINCT FROM v_agent.status THEN
+    INSERT INTO public.audit_events(actor_id,event_type,event_category,target_type,target_id,org_id,details)
+      VALUES (NULL,CASE p_event WHEN 'passport.revoked' THEN 'AGENT_PASSPORT_REVOKED'
+        WHEN 'passport.suspended' THEN 'AGENT_PASSPORT_SUSPENDED' ELSE 'AGENT_PASSPORT_REINSTATED' END,
+        'SECURITY','agent',p_agent_id::text,p_org_id,
+        'Authenticated ComputeID ' || p_event || ' applied atomically to agent ' || p_agent_id::text || '.');
+  END IF;
+
+  -- A key or audit error aborts the complete transition. An uncertain response
+  -- can retry: either nothing committed, or the clock deduplicates a complete write.
   RETURN true;
 END;
 $$;
@@ -150,33 +160,145 @@ CREATE OR REPLACE TRIGGER enforce_agent_revocation_terminal
 BEFORE UPDATE OF status ON public.agents
 FOR EACH ROW EXECUTE FUNCTION public.enforce_agent_revocation_terminal();
 
--- Failed admission may clean up only its unchanged empty agent. Never erase a
--- later revocation or detach a key whose INSERT committed but whose reply was
--- lost (api_keys.agent_id has ON DELETE SET NULL). The parent lock also waits
--- for an overlapping key INSERT's share lock before testing for keys.
-CREATE OR REPLACE FUNCTION public.cleanup_computeid_empty_admission(
-  p_org_id uuid, p_agent_id uuid, p_expected_metadata jsonb
+-- Authenticated provider authority is independent of tenant-writable metadata.
+-- A sentinel exists before every admission, even if no revocation was seen.
+-- A revoked passport is terminal; a newer receipt cannot erase this tombstone.
+CREATE TABLE IF NOT EXISTS public.computeid_passport_authority (
+  passport_id uuid PRIMARY KEY,
+  revoked_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.computeid_passport_authority ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.computeid_passport_authority FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.computeid_passport_authority FROM PUBLIC, anon, authenticated;
+GRANT ALL ON TABLE public.computeid_passport_authority TO service_role;
+
+CREATE OR REPLACE FUNCTION public.record_computeid_passport_revocation(
+  p_passport_id uuid, p_event_at timestamptz
 ) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = public, pg_temp
 SET lock_timeout = '5s'
 AS $$
-DECLARE v_agent public.agents%ROWTYPE;
 BEGIN
-  SELECT * INTO v_agent FROM public.agents
-    WHERE id = p_agent_id AND org_id = p_org_id FOR UPDATE;
-  IF NOT FOUND OR v_agent.status <> 'active'
-     OR v_agent.metadata IS DISTINCT FROM p_expected_metadata
-     OR v_agent.metadata #>> '{computeid,issuer}' IS DISTINCT FROM 'computeid'
-     OR EXISTS (SELECT 1 FROM public.api_keys WHERE agent_id = p_agent_id)
-  THEN RETURN false; END IF;
-  DELETE FROM public.agents WHERE id = p_agent_id AND org_id = p_org_id;
+  IF p_passport_id IS NULL OR p_event_at IS NULL OR NOT isfinite(p_event_at)
+     OR p_event_at > clock_timestamp() + interval '5 minutes' THEN
+    RAISE EXCEPTION 'invalid ComputeID revocation' USING ERRCODE = '22023';
+  END IF;
+  INSERT INTO public.computeid_passport_authority(passport_id) VALUES (p_passport_id)
+    ON CONFLICT (passport_id) DO NOTHING;
+  PERFORM 1 FROM public.computeid_passport_authority WHERE passport_id = p_passport_id FOR UPDATE;
+  UPDATE public.computeid_passport_authority
+    SET revoked_at = COALESCE(revoked_at, LEAST(p_event_at, clock_timestamp()))
+    WHERE passport_id = p_passport_id;
+  -- True on retries too. Caller must still enforce every affected agent; an
+  -- earlier delivery may have committed this tombstone before a tenant failed.
   RETURN true;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.cleanup_computeid_empty_admission(uuid,uuid,jsonb)
+REVOKE ALL ON FUNCTION public.record_computeid_passport_revocation(uuid,timestamptz)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.cleanup_computeid_empty_admission(uuid,uuid,jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.record_computeid_passport_revocation(uuid,timestamptz) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.admit_computeid_agent(
+  p_org_id uuid, p_principal_id uuid, p_passport_id uuid,
+  p_receipt_expires_at timestamptz, p_name text, p_scopes text[],
+  p_key_hash text, p_key_prefix text,
+  p_description text DEFAULT NULL, p_receipt_issued_at timestamptz DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+SET lock_timeout = '5s'
+AS $$
+DECLARE
+  v_revoked_at timestamptz;
+  v_existing uuid;
+  v_agent public.agents%ROWTYPE;
+  v_key public.api_keys%ROWTYPE;
+  v_binding jsonb;
+  v_now timestamptz := clock_timestamp();
+BEGIN
+  IF p_org_id IS NULL OR p_principal_id IS NULL OR p_passport_id IS NULL
+     OR p_name IS NULL OR char_length(p_name) NOT BETWEEN 1 AND 200
+     OR p_scopes IS NULL OR cardinality(p_scopes) = 0
+     OR NOT (p_scopes <@ ARRAY['verify','verify:batch','anchor:write','write:anchors','anchor:read','read:records','read:search']::text[])
+     OR p_key_hash IS NULL OR p_key_hash !~ '^[0-9a-f]{64}$'
+     OR p_key_prefix IS NULL OR p_key_prefix !~ '^ak_live_[0-9a-f]{4}$'
+     OR p_receipt_expires_at IS NULL OR NOT isfinite(p_receipt_expires_at)
+     OR p_receipt_expires_at <= v_now
+     OR p_receipt_expires_at > COALESCE(p_receipt_issued_at, v_now) + interval '24 hours'
+     OR (p_receipt_issued_at IS NOT NULL AND
+       (NOT isfinite(p_receipt_issued_at) OR p_receipt_issued_at > v_now + interval '5 minutes'
+        OR p_receipt_expires_at <= p_receipt_issued_at))
+  THEN RAISE EXCEPTION 'invalid ComputeID admission' USING ERRCODE = '22023'; END IF;
+
+  INSERT INTO public.computeid_passport_authority(passport_id) VALUES (p_passport_id)
+    ON CONFLICT (passport_id) DO NOTHING;
+  SELECT revoked_at INTO v_revoked_at FROM public.computeid_passport_authority
+    WHERE passport_id = p_passport_id FOR UPDATE;
+  IF v_revoked_at IS NOT NULL THEN RETURN jsonb_build_object('error','passport_revoked'); END IF;
+
+  -- The passport lock serializes simultaneous admissions, including before the
+  -- first binding exists. Tenant metadata does not create global tombstones.
+  SELECT id INTO v_existing FROM public.agents
+    WHERE org_id = p_org_id AND status <> 'revoked'
+      AND metadata @> jsonb_build_object('computeid',jsonb_build_object('passport_id',p_passport_id::text))
+    LIMIT 1;
+  IF FOUND THEN RETURN jsonb_build_object('error','passport_already_bound','agent_id',v_existing); END IF;
+
+  v_binding := jsonb_strip_nulls(jsonb_build_object('issuer','computeid','passport_id',p_passport_id,
+    'bound_at',v_now,'receipt_issued_at',p_receipt_issued_at,'receipt_expires_at',p_receipt_expires_at));
+  INSERT INTO public.agents(org_id,registered_by,name,description,agent_type,allowed_scopes,metadata)
+    VALUES (p_org_id,p_principal_id,p_name,p_description,'llm_agent',p_scopes,
+      jsonb_build_object('computeid',v_binding)) RETURNING * INTO v_agent;
+  INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by)
+    VALUES (p_org_id,v_agent.id,p_key_hash,p_key_prefix,p_name || ' — ComputeID passport',p_scopes,p_principal_id)
+    RETURNING * INTO v_key;
+  INSERT INTO public.audit_events(actor_id,event_type,event_category,target_type,target_id,org_id,details)
+    VALUES
+      (p_principal_id,'AGENT_PASSPORT_ADMITTED','SECURITY','agent',v_agent.id::text,p_org_id,
+        'ComputeID passport ' || p_passport_id::text || ' admitted; receipt and organization authority verified.'),
+      (p_principal_id,'AGENT_KEY_CREATED','SYSTEM','api_key',v_key.id::text,p_org_id,
+        'API key created for ComputeID agent ' || v_agent.id::text || '; raw credential never stored.');
+  RETURN jsonb_build_object(
+    'agent', jsonb_build_object('id',v_agent.id,'name',v_agent.name,'status',v_agent.status,
+      'agent_type',v_agent.agent_type,'allowed_scopes',v_agent.allowed_scopes,'created_at',v_agent.created_at),
+    'binding',v_binding,
+    'key',jsonb_build_object('id',v_key.id,'key_prefix',v_key.key_prefix,'scopes',v_key.scopes,'created_at',v_key.created_at));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.admit_computeid_agent(uuid,uuid,uuid,timestamptz,text,text[],text,text,text,timestamptz)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admit_computeid_agent(uuid,uuid,uuid,timestamptz,text,text[],text,text,text,timestamptz) TO service_role;
+
+-- Repeated authenticated failures retain one diagnostic per payload/reason.
+-- A non-unique index tolerates historical duplicates without deleting evidence.
+CREATE INDEX IF NOT EXISTS idx_computeid_webhook_dlq_payload_reason
+  ON public.webhook_dlq(payload_hash, reason) WHERE provider = 'computeid';
+CREATE OR REPLACE FUNCTION public.enqueue_computeid_failure(
+  p_reason text, p_payload_hash text, p_external_id text DEFAULT NULL
+) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+SET lock_timeout = '5s'
+AS $$
+BEGIN
+  IF p_reason IS NULL OR char_length(p_reason) NOT BETWEEN 1 AND 500
+     OR p_payload_hash IS NULL OR p_payload_hash !~ '^[0-9a-f]{64}$'
+     OR char_length(p_external_id) > 64 THEN
+    RAISE EXCEPTION 'invalid ComputeID failure record' USING ERRCODE = '22023';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('computeid-dlq:' || p_payload_hash || ':' || p_reason, 0));
+  IF NOT EXISTS (SELECT 1 FROM public.webhook_dlq
+      WHERE provider='computeid' AND payload_hash=p_payload_hash AND reason=p_reason) THEN
+    INSERT INTO public.webhook_dlq(provider,reason,external_id,payload_hash)
+      VALUES ('computeid',p_reason,p_external_id,p_payload_hash);
+  END IF;
+  RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.enqueue_computeid_failure(text,text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.enqueue_computeid_failure(text,text,text) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;

@@ -31,3 +31,8 @@ partner conversation, its durable spec belongs on a Confluence page.
   demonstrates end-to-end, and an explicit §1.5/R-7 measured-vs-asserted-vs-
   NOT-asserted section. Read before any CE/Jeanne Kitchens conversation
   references this POC.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+The ComputeID guide records terminal passport revocation, strict reinstatement ordering, bounded receipt policy and effective legacy scope aliases. The 24-hour receipt limit is Arkova admission policy, pending actual partner compatibility verification. The feature remains disabled.

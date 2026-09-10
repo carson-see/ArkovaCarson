@@ -235,3 +235,8 @@ The operation spans `agents` and `api_keys`, outside the single-table adapter su
 ## 2026-09-10 — Original passport lifecycle certificate correction
 
 The original `agentPassport.machine.ts` prose claimed graph equivalence but omitted the explicit check under the current CLI default. Both `pr` and `nightly` now request `graphEquivalence: true`; pinned CLI/TLC checks and actual certificate equivalence pass at both tiers (16 states/48 edges and 256 states/1536 edges respectively). This lifecycle abstraction does not prove temporal input validation, tenant-wide passport revocation ownership, or real handler transaction boundaries; the new atomic/authority models and SQL regressions cover their stated narrower boundaries.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+The current `agentKeyAuthority.machine.ts` removes the retired compensating-cleanup path: admission now commits agent, key and audits in one transaction. The remaining direct-mint/PATCH model passes at 20 states / 32 edges. New `passportAdmission.machine.ts` models absent-row serialization, two organizations, terminal provider authority, rollback, unknown responses and mandatory audits; its PR proof and graph equivalence pass at 525 states / 1681 edges. Five negative controls reproduce missing sentinel locks, global-revocation bypass, missing audits, late mint and stale PATCH. These are bounded design proofs with real SQL tests, not generated runtime adapters.

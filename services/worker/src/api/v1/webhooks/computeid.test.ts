@@ -17,6 +17,8 @@ import { createChainableBuilder as builder, routeDbTables } from '../../../test-
 
 const dbFromMock = vi.fn();
 const dbRpcMock = vi.fn();
+const authorityRpcMock = vi.fn();
+const dlqRpcMock = vi.fn();
 const logCalls = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 const auditMock = vi.fn();
 const mockConfig = vi.hoisted(() => ({
@@ -24,13 +26,14 @@ const mockConfig = vi.hoisted(() => ({
   computeidWebhookSecret: 'computeid-fixture-secret-aaaa' as string | undefined,
 }));
 vi.mock('../../../config.js', () => ({ config: mockConfig }));
-vi.mock('../../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: (...args: unknown[]) => dbRpcMock(...args) } }));
+vi.mock('../../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: (name: string, ...args: unknown[]) => name === 'record_computeid_passport_revocation' ? authorityRpcMock(name, ...args) : name === 'enqueue_computeid_failure' ? dlqRpcMock(name, ...args) : dbRpcMock(name, ...args) } }));
 vi.mock('../../../utils/logger.js', () => ({ logger: logCalls }));
 vi.mock('../../../utils/auditEvent.js', () => ({
   recordAuditEvent: (...args: unknown[]) => { auditMock(...args); return Promise.resolve(); },
 }));
 
-import { computeidWebhookRouter } from './computeid.js';
+import { computeidWebhookRouter, computeidWebhookBody } from './computeid.js';
+import { computeidGate } from '../../../middleware/computeidGate.js';
 
 const TEST_SECRET = 'computeid-fixture-secret-aaaa';
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
@@ -51,11 +54,8 @@ function createApp(withRawParser = true) {
   if (withRawParser) {
     app.use(
       '/webhooks/computeid',
-      express.raw({ type: () => true, limit: '2mb' }),
-      (req, _res, next) => {
-        (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
-        next();
-      },
+      computeidGate,
+      computeidWebhookBody,
       computeidWebhookRouter,
     );
   } else {
@@ -87,6 +87,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbFromMock.mockReset();
   dbRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
+  authorityRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
+  dlqRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
   mockConfig.enableComputeidIntegration = true;
   mockConfig.computeidWebhookSecret = TEST_SECRET;
 });
@@ -166,7 +168,7 @@ describe('POST /webhooks/computeid — body validation', () => {
     const res = await post('not json');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('invalid_body');
-    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ provider: 'computeid', reason: 'invalid_body:json_parse' }));
+    expect(dlqRpcMock).toHaveBeenCalledWith('enqueue_computeid_failure', expect.objectContaining({ p_reason: 'invalid_body:json_parse' }));
   });
 
   it('200 ignored for unknown / future event types (acked so the sender does not retry)', async () => {
@@ -182,7 +184,7 @@ describe('POST /webhooks/computeid — body validation', () => {
     routeTables({ webhook_dlq: dlq });
     const res = await post(JSON.stringify({ event: 'passport.revoked', timestamp: T2 }));
     expect(res.status).toBe(400);
-    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ provider: 'computeid', reason: expect.stringContaining('shape') }));
+    expect(dlqRpcMock).toHaveBeenCalledWith('enqueue_computeid_failure', expect.objectContaining({ p_reason: expect.stringContaining('shape') }));
   });
 
   it('tolerates a non-string / oversized reason and an offset-style timestamp — a surprising field never drops a revocation', async () => {
@@ -200,7 +202,7 @@ describe('POST /webhooks/computeid — body validation', () => {
 });
 
 describe('POST /webhooks/computeid — passport events', () => {
-  it('revocation delegates the complete snapshot and both writes to one atomic transaction, then audits SECURITY', async () => {
+  it('revocation delegates the complete snapshot and agent, key and security audit to one atomic transaction', async () => {
     const row = agentRow();
     const agents = boundAgents([row]);
     routeTables({ agents, webhook_dlq: builder({}) });
@@ -215,9 +217,7 @@ describe('POST /webhooks/computeid — passport events', () => {
     });
     expect(agents.update).not.toHaveBeenCalled();
     expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
-      event_type: 'AGENT_PASSPORT_REVOKED', event_category: 'SECURITY', target_id: AGENT_ID, org_id: ORG_ID,
-    }));
+    expect(auditMock).not.toHaveBeenCalled(); // Audit is part of the RPC transaction.
   });
 
   it('suspension atomically deactivates keys and marks the suspension as provider-owned', async () => {
@@ -229,7 +229,7 @@ describe('POST /webhooks/computeid — passport events', () => {
         computeid: expect.objectContaining({ suspended_by: 'computeid' }),
       }) }),
     }));
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ event_type: 'AGENT_PASSPORT_SUSPENDED' }));
+    expect(auditMock).not.toHaveBeenCalled();
   });
 
   it('provider-owned reinstatement passes the suspended snapshot and key restoration into the same transaction', async () => {
@@ -242,7 +242,7 @@ describe('POST /webhooks/computeid — passport events', () => {
       p_update: expect.objectContaining({ status: 'active', suspended_at: null }), p_key_enforcement: 'reactivate',
     }));
     expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ event_type: 'AGENT_PASSPORT_REINSTATED' }));
+    expect(auditMock).not.toHaveBeenCalled();
   });
 
   it('org-owned suspension stays suspended: only its event clock advances, with no key restoration', async () => {
@@ -264,14 +264,15 @@ describe('POST /webhooks/computeid — passport events', () => {
     expect(auditMock).not.toHaveBeenCalled();
   });
 
-  it('exact replays, older events, and pre-admission revocations do not write or reactivate keys', async () => {
+  it('exact and older relaxing events do not write, but terminal revocation overrides a newer receipt', async () => {
     const row = agentRow({ status: 'suspended', metadata: binding({ last_event: 'passport.suspended', last_event_at: T2 }) });
     routeTables({ agents: boundAgents([row]), webhook_dlq: builder({}) });
     expect((await post(evt('passport.suspended', { timestamp: T2 }))).body).toMatchObject({ applied: 0, skipped: 1 });
     expect((await post(evt('passport.reinstated', { timestamp: T1 }))).body).toMatchObject({ applied: 0, skipped: 1 });
-    routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: builder({}) });
-    expect((await post(evt('passport.revoked', { timestamp: T0 }))).body).toMatchObject({ applied: 0, skipped: 1 });
     expect(dbRpcMock).not.toHaveBeenCalled();
+    routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: builder({}) });
+    expect((await post(evt('passport.revoked', { timestamp: T0 }))).body).toMatchObject({ applied: 1, skipped: 0 });
+    expect(dbRpcMock).toHaveBeenCalledTimes(1);
     expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
   });
 
@@ -286,7 +287,7 @@ describe('POST /webhooks/computeid — passport events', () => {
     const dlq = builder({});
     routeTables({ agents: boundAgents([]), webhook_dlq: dlq });
     expect((await post(evt('passport.revoked'))).body).toMatchObject({ orphaned: true });
-    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'unbound_passport', external_id: PASSPORT }));
+    expect(dlqRpcMock).toHaveBeenCalledWith('enqueue_computeid_failure', expect.objectContaining({ p_reason: 'unbound_passport', p_external_id: PASSPORT }));
     expect(dbRpcMock).not.toHaveBeenCalled();
   });
 
@@ -297,7 +298,7 @@ describe('POST /webhooks/computeid — passport events', () => {
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('conflict_retry');
-    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'agent_update_conflict:passport.revoked' }));
+    expect(dlqRpcMock).toHaveBeenCalledWith('enqueue_computeid_failure', expect.objectContaining({ p_reason: 'agent_update_conflict:passport.revoked' }));
     expect(auditMock).not.toHaveBeenCalled();
   });
 
@@ -311,7 +312,7 @@ describe('POST /webhooks/computeid — passport events', () => {
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(500);
     expect(res.body.error.code).toBe('webhook_processing_failed');
-    expect(dlq.insert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'agent_transition_failed:passport.revoked' }));
+    expect(dlqRpcMock).toHaveBeenCalledWith('enqueue_computeid_failure', expect.objectContaining({ p_reason: 'agent_transition_failed:passport.revoked' }));
     expect(agents.update).not.toHaveBeenCalled();
     expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
     expect(auditMock).not.toHaveBeenCalled();
@@ -322,7 +323,7 @@ describe('POST /webhooks/computeid — passport events', () => {
     routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: dlq });
     await post(evt('passport.revoked'));
     const serialized = JSON.stringify([dbRpcMock.mock.calls, logCalls.info.mock.calls, logCalls.warn.mock.calls,
-      logCalls.error.mock.calls, logCalls.debug.mock.calls, auditMock.mock.calls, dlq.insert.mock.calls]);
+      logCalls.error.mock.calls, logCalls.debug.mock.calls, auditMock.mock.calls, dlqRpcMock.mock.calls]);
     expect(serialized).not.toContain('SENSITIVE-REASON');
     expect(serialized).not.toContain('john.doe@example.com');
   });
@@ -357,4 +358,59 @@ describe('ComputeID partial-write recovery regressions', () => {
     expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
     expect(auditMock).not.toHaveBeenCalled();
   });
+});
+
+
+describe('global provider authority and timestamp validation', () => {
+  it('records an orphan revocation and preserves enforcement on an identical retry', async () => {
+    const agents = boundAgents([]);
+    routeTables({ agents, webhook_dlq: builder({ data: null }) });
+    expect((await post(evt('passport.revoked'))).body.orphaned).toBe(true);
+    expect(authorityRpcMock).toHaveBeenCalledWith('record_computeid_passport_revocation', {
+      p_passport_id: PASSPORT, p_event_at: T2,
+    });
+    routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: builder({ data: null }) });
+    expect((await post(evt('passport.revoked'))).body.applied).toBe(1);
+    expect(authorityRpcMock).toHaveBeenCalledTimes(2);
+    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition', expect.any(Object));
+  });
+  it('returns retryable500 if authority persistence fails before looking up agents', async () => {
+    authorityRpcMock.mockResolvedValue({ data: null, error: { message: 'database unavailable' } });
+    routeTables({ webhook_dlq: builder({ data: null }) });
+    expect((await post(evt('passport.revoked'))).status).toBe(500);
+    expect(dbRpcMock).not.toHaveBeenCalled();
+    expect(dbFromMock).not.toHaveBeenCalledWith('agents');
+  });
+  it('rejects and dead-letters a signed far-future clock before any authority/agent writes', async () => {
+    const dlq = builder({ data: null });
+    routeTables({ webhook_dlq: dlq });
+    const response = await post(evt('passport.reinstated', { timestamp: '9999-01-01T00:00:00.000Z' }));
+    expect(response.status).toBe(400);
+    expect(dlqRpcMock).toHaveBeenCalledWith('enqueue_computeid_failure', expect.objectContaining({ p_reason: 'future_event_timestamp' }));
+    expect(authorityRpcMock).not.toHaveBeenCalled();
+    expect(dbRpcMock).not.toHaveBeenCalled();
+  });
+  it('normalizes parseable provider time to canonical SQL time before persistence', async () => {
+    routeTables({ agents: boundAgents([agentRow({ metadata: binding({ receipt_issued_at: '2025-01-01T00:00:00.000Z' }) })]), webhook_dlq: builder({ data: null }) });
+    expect((await post(evt('passport.revoked', { timestamp: '2026' }))).status).toBe(200);
+    expect(authorityRpcMock).toHaveBeenCalledWith('record_computeid_passport_revocation', {
+      p_passport_id: PASSPORT, p_event_at: '2026-01-01T00:00:00.000Z',
+    });
+    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition', expect.objectContaining({
+      p_event_at: '2026-01-01T00:00:00.000Z', p_update: expect.objectContaining({ revoked_at: '2026-01-01T00:00:00.000Z' }),
+    }));
+  });
+});
+
+
+it('rejects suffix paths before raw parsing and gates oversized bodies before parsing while disabled', async () => {
+  const huge = JSON.stringify({ pad: 'x'.repeat(70 * 1024) });
+  const suffix = await request(createApp()).post('/webhooks/computeid/unused').set('Content-Type', 'application/json').send(huge);
+  expect(suffix.status).toBe(404);
+  expect(suffix.body.error.code).toBe('not_found');
+  mockConfig.enableComputeidIntegration = false;
+  const disabled = await post(huge);
+  expect(disabled.status).toBe(503);
+  expect(disabled.body.error.code).toBe('vendor_gated');
+  expect(authorityRpcMock).not.toHaveBeenCalled();
 });

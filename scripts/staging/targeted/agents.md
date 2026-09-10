@@ -72,3 +72,8 @@ or misclassified response cases failed before this stricter judge.
 The ordinary verify body identifies a record via record_uri; the proof route uses
 public_id. The driver verifies the expected URI host/path without accepting an
 arbitrary suffix or an error response as a positive control.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+ComputeID terminal authority changes the earlier ordering probe: a valid older `passport.revoked` must deactivate the key even when it predates admission; subsequent revocation is a terminal replay. Historical staging evidence is not qualification for this changed migration and source.

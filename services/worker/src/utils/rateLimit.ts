@@ -440,14 +440,12 @@ export const rateLimiters = {
     keyGenerator: () => 'docusign', // Global limit, own bucket (SCRUM-3418)
   }),
 
-  // ComputeID revocation webhook: its own global bucket so a Stripe/Checkr
-  // burst can never 429 a passport.revoked (the sender's retry policy is
-  // undocumented; a limiter reject happens before any DLQ record).
+  // Keep unauthenticated callers in separate IP buckets so one caller cannot
+  // consume the provider's revocation budget before HMAC verification.
   computeidWebhook: rateLimit({
     windowMs: 60000,
     maxRequests: 100,
     scope: 'computeid-webhook',
-    keyGenerator: () => 'computeid', // Global limit
   }),
 
   // Checkout: 10 req/min per IP

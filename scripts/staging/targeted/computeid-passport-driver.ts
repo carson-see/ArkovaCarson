@@ -451,11 +451,11 @@ async function runOrderingFloor(io: CycleIo, plan: CyclePlan): Promise<void> {
   if (!admitted.key) return;
   const key = admitted.key;
   const old = await deliver(io, 'pre-admission-revoke-200', { event: 'passport.revoked', passport_id: pid, timestamp: plan.preAdmissionRevokeAt }, [200]);
-  const state = await keyState(io, 'key-authenticates-after-stale-revoke', key, 'on');
-  recordAssertion(io.stats, 'pre-admission-replay-skipped', appliedOf(old) === 0 && state === 'on', { applied: appliedOf(old), key: state });
+  const state = await keyState(io, 'key-refused-after-terminal-revoke', key, 'off');
+  recordAssertion(io.stats, 'terminal-revoke-overrides-receipt-floor', appliedOf(old) === 1 && state === 'off', { applied: appliedOf(old), key: state });
   const cur = await deliver(io, 'floor-current-revoke-200', { event: 'passport.revoked', passport_id: pid, timestamp: plan.floorRevokeAt }, [200]);
   const off = await keyState(io, 'floor-key-refused-after-current-revoke', key, 'off');
-  recordAssertion(io.stats, 'current-revoke-applied', appliedOf(cur) === 1 && off === 'off', { applied: appliedOf(cur), key: off });
+  recordAssertion(io.stats, 'terminal-revoke-remains-enforced', appliedOf(cur) === 0 && off === 'off', { applied: appliedOf(cur), key: off });
 }
 
 async function runNegatives(io: CycleIo, plan: CyclePlan): Promise<void> {

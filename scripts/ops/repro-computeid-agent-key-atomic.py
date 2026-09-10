@@ -103,10 +103,12 @@ def reproduce_old_handler():
     pieces = []
     for enum in ['agent_type', 'agent_status', 'api_key_rate_limit_tier']:
         pieces.append(re.search(r'CREATE TYPE "public"\."' + enum + r'" AS ENUM \(.*?\);', baseline, re.S).group())
-    for table in ['agents', 'api_keys']:
+    for table in ['agents', 'api_keys', 'webhook_dlq']:
         pieces.append(re.search(r'CREATE TABLE IF NOT EXISTS "public"\."' + table + r'" \(.*?\n\);', baseline, re.S).group())
+    pieces.append(re.search(r'CREATE TABLE IF NOT EXISTS "public"\."audit_events" \(.*?WITH \(.*?\);', baseline, re.S).group())
     ddl = '\n'.join(pieces)
     sql(ddl)
+    sql((SOURCE / 'supabase/migrations/0309_expand_audit_event_category_constraint.sql').read_text())
     result = {'server_version': sql('SHOW server_version;').stdout.strip(),
               'scope': 'Isolated PostgreSQL 17; exact baseline enums/table column definitions and checks. '
                        'This is a targeted concurrency fixture, not a full production catalog replay.',
@@ -310,6 +312,24 @@ def verify_atomic_rpc():
     assert value('SET ROLE service_role; ' + call(state(), 'passport.reinstated', T2, 'active', 'reactivate')) == 't'
     results['actual_service_role_rpc_execution_succeeds'] = True
 
+    reset()
+    before = state()
+    audit_count = value(f"SELECT count(*) FROM public.audit_events WHERE target_id='{AGENT}';")
+    sql(f"""CREATE FUNCTION fixture_fail_transition_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.target_id='{AGENT}' THEN RAISE EXCEPTION 'injected transition audit failure'; END IF; RETURN NEW; END $$;
+      CREATE TRIGGER fixture_fail_transition_audit BEFORE INSERT ON public.audit_events FOR EACH ROW
+      EXECUTE FUNCTION fixture_fail_transition_audit();""")
+    try:
+        failed = sql(call(before, 'passport.reinstated', T2, 'active', 'reactivate'), check=False)
+        assert failed.returncode and 'injected transition audit failure' in failed.stderr
+        assert state() == before
+        assert value(f"SELECT count(*) FROM public.audit_events WHERE target_id='{AGENT}';") == audit_count
+    finally:
+        sql('DROP TRIGGER fixture_fail_transition_audit ON public.audit_events; DROP FUNCTION fixture_fail_transition_audit();')
+    assert value(call(before, 'passport.reinstated', T2, 'active', 'reactivate')) == 't'
+    assert int(value(f"SELECT count(*) FROM public.audit_events WHERE target_id='{AGENT}';")) == int(audit_count) + 1
+    results['transition_audit_failure_rolls_back_agent_key_clock_and_retry_records_audit'] = True
+
     # The migration is additive: reapply and rollback/reapply alter no existing rows.
     before = state()
     migration = (SOURCE / 'supabase/migrations/0448_computeid_agent_key_transition_atomic.sql').read_text()
@@ -319,7 +339,8 @@ def verify_atomic_rpc():
       DROP TRIGGER enforce_agent_revocation_terminal ON public.agents;
       DROP FUNCTION public.enforce_agent_key_active_authority();
       DROP FUNCTION public.enforce_agent_revocation_terminal();
-      DROP FUNCTION public.cleanup_computeid_empty_admission(uuid,uuid,jsonb);
+      DROP FUNCTION public.record_computeid_passport_revocation(uuid,timestamptz);
+      DROP FUNCTION public.admit_computeid_agent(uuid,uuid,uuid,timestamptz,text,text[],text,text,text,timestamptz);
       DROP FUNCTION {signature};''')
     assert state() == before
     sql(migration)
@@ -339,8 +360,6 @@ def verify_agent_authority():
     def insert_key(active=True, org=ORG):
         return f"""INSERT INTO public.api_keys(id,org_id,agent_id,key_prefix,key_hash,name,created_by,is_active)
           VALUES ('{KEY}','{org}','{AGENT}','fixture1','not-a-real-key','authority fixture','{ORG}',{str(active).lower()});"""
-    def cleanup(expected):
-        return f"SELECT public.cleanup_computeid_empty_admission('{ORG}','{AGENT}','{json.dumps(expected['metadata'])}'::jsonb);"
     def close_sessions(*sessions):
         for session in sessions:
             try:
@@ -354,9 +373,8 @@ def verify_agent_authority():
     denied = sql(insert_key(), check=False)
     assert denied.returncode and 'agent_key_inactive_or_wrong_org' in denied.stderr
     assert value(f"SELECT count(*) FROM public.api_keys WHERE agent_id='{AGENT}';") == '0'
-    assert value(cleanup(expected)) == 'f'
     assert value(f"SELECT status FROM public.agents WHERE id='{AGENT}';") == 'revoked'
-    results['late_admission_key_rejected_and_cleanup_preserves_revocation'] = True
+    results['late_admission_key_rejected_after_revocation'] = True
 
     stale_patch = sql(f"UPDATE public.agents SET status='active' WHERE id='{AGENT}' AND org_id='{ORG}';", check=False)
     assert stale_patch.returncode and 'agent_revocation_is_terminal' in stale_patch.stderr
@@ -400,28 +418,6 @@ def verify_agent_authority():
         results['revoke_wins_lock_then_both_new_key_and_stale_patch_are_rejected'] = True
     finally: close_sessions(revoking, inserting, patching)
 
-    # Uncertain INSERT response: cleanup cannot detach a key committed by the
-    # original request, including while the INSERT is still in flight.
-    expected = active_without_key()
-    inserting, cleaning = process(), process()
-    try:
-        send(inserting, 'BEGIN; ' + insert_key() + " SELECT 'KEY_INSERTED';"); marker(inserting, 'KEY_INSERTED')
-        send(cleaning, "SET application_name='pr2668_cleanup_after_mint'; " + cleanup(expected))
-        wait_for("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='pr2668_cleanup_after_mint' AND wait_event_type='Lock');")
-        send(inserting, "COMMIT; SELECT 'KEY_COMMITTED';"); marker(inserting, 'KEY_COMMITTED')
-        assert cleaning.stdout.readline().strip() == 'f'
-        assert state()['agent_status'] == 'active' and state()['key_active'] is True
-        results['uncertain_committed_key_insert_cannot_be_detached_by_cleanup'] = True
-    finally: close_sessions(inserting, cleaning)
-
-    expected = active_without_key()
-    sql("UPDATE public.agents SET metadata=metadata || '{\"concurrent\":true}'::jsonb;")
-    assert value(cleanup(expected)) == 'f'
-    expected = active_without_key()
-    assert value(cleanup(expected)) == 't'
-    assert value(f"SELECT count(*) FROM public.agents WHERE id='{AGENT}';") == '0'
-    results['cleanup_deletes_only_unchanged_active_agent_without_keys'] = True
-
     active_without_key()
     wrong_org = '99999999-9999-4999-8999-999999999999'
     denied = sql(insert_key(org=wrong_org), check=False)
@@ -459,10 +455,182 @@ def verify_agent_authority():
         results['existing_key_parent_lock_inversion_aborts_atomically_and_revoke_retry_succeeds'] = True
     finally: close_sessions(updating, revoking)
 
-    cleanup_signature = 'public.cleanup_computeid_empty_admission(uuid,uuid,jsonb)'
-    acl = json.loads(value(f"SELECT json_build_object('anon',has_function_privilege('anon','{cleanup_signature}','EXECUTE'),'authenticated',has_function_privilege('authenticated','{cleanup_signature}','EXECUTE'),'service_role',has_function_privilege('service_role','{cleanup_signature}','EXECUTE'));"))
-    assert acl == {'anon': False, 'authenticated': False, 'service_role': True}
-    results['cleanup_is_service_only'] = acl
+    return results
+
+
+def verify_passport_admission():
+    results = {}
+    passport = 'c5b5e6ab-3e37-4371-8fcf-13eb268115e5'
+    other_org = '99999999-9999-4999-8999-999999999999'
+    signature = 'public.admit_computeid_agent(uuid,uuid,uuid,timestamptz,text,text[],text,text,text,timestamptz)'
+    authority_signature = 'public.record_computeid_passport_revocation(uuid,timestamptz)'
+    def reset_admission():
+        sql(f"""DELETE FROM public.api_keys WHERE agent_id IN (SELECT id FROM public.agents WHERE name LIKE 'atomic-admission-fixture%');
+          DELETE FROM public.agents WHERE name LIKE 'atomic-admission-fixture%';
+          DELETE FROM public.computeid_passport_authority WHERE passport_id='{passport}';""")
+    def admit(org=ORG, key_char='a'):
+        return f"""SELECT public.admit_computeid_agent(p_org_id=>'{org}',p_principal_id=>'{ORG}',
+          p_passport_id=>'{passport}',p_receipt_issued_at=>clock_timestamp()-interval '1 minute',
+          p_receipt_expires_at=>clock_timestamp()+interval '30 minutes',p_name=>'atomic-admission-fixture',
+          p_scopes=>ARRAY['verify'],p_key_hash=>repeat('{key_char}',64),p_key_prefix=>'ak_live_abcd');"""
+    def record():
+        return f"SELECT public.record_computeid_passport_revocation('{passport}',clock_timestamp());"
+    def counts():
+        return json.loads(value(f"""SELECT json_build_object(
+          'agents',(SELECT count(*) FROM public.agents WHERE name LIKE 'atomic-admission-fixture%'),
+          'keys',(SELECT count(*) FROM public.api_keys WHERE agent_id IN (SELECT id FROM public.agents WHERE name LIKE 'atomic-admission-fixture%')),
+          'authority',(SELECT count(*) FROM public.computeid_passport_authority WHERE passport_id='{passport}'));
+          """))
+    def enforce():
+        return f"""SELECT public.apply_computeid_agent_transition(a.org_id,a.id,'{passport}',a.status,a.metadata,
+          jsonb_build_object('status','revoked','revoked_at',clock_timestamp(),'metadata',
+            jsonb_set(jsonb_set(a.metadata,'{{computeid,last_event}}','\"passport.revoked\"'),
+              '{{computeid,last_event_at}}',to_jsonb(clock_timestamp()))),
+          'deactivate','passport.revoked',clock_timestamp())
+          FROM public.agents a WHERE name LIKE 'atomic-admission-fixture%';"""
+    def close(*sessions):
+        for session in sessions:
+            try:
+                if session.poll() is None: send(session, '\\q')
+                session.communicate(timeout=6)
+            except Exception:
+                session.kill(); session.communicate()
+
+    reset_admission()
+    first = json.loads(value(admit()))
+    assert first['agent']['status'] == 'active' and first['key']['id']
+    assert counts() == {'agents': 1, 'keys': 1, 'authority': 1}
+    audits = json.loads(value(f"SELECT json_agg(event_type ORDER BY event_type) FROM public.audit_events WHERE target_id IN ('{first['agent']['id']}','{first['key']['id']}');"))
+    assert audits == ['AGENT_KEY_CREATED', 'AGENT_PASSPORT_ADMITTED']
+    assert value(f"SELECT key_hash FROM public.api_keys WHERE id='{first['key']['id']}';") == 'a' * 64
+    results['agent_hash_only_key_and_both_audits_commit_together'] = True
+    assert json.loads(value(admit(key_char='b')))['error'] == 'passport_already_bound'
+    assert counts()['keys'] == 1
+    assert value(f"SELECT key_hash FROM public.api_keys WHERE id='{first['key']['id']}';") == 'a' * 64
+    results['uncertain_committed_reply_retry_does_not_duplicate_delete_or_detach_key'] = True
+
+    assert value(record()) == 't'
+    assert json.loads(value(admit(other_org))) == {'error': 'passport_revoked'}
+    fresh = admit(other_org).replace("clock_timestamp()-interval '1 minute'", "clock_timestamp()")
+    assert json.loads(value(fresh)) == {'error': 'passport_revoked'}
+    assert value(record()) == 't'  # Retry still succeeds so caller continues all agents.
+    sql(enforce())
+    assert value("SELECT bool_and(NOT is_active) FROM public.api_keys WHERE agent_id IN (SELECT id FROM public.agents WHERE name LIKE 'atomic-admission-fixture%');") == 't'
+    results['global_terminal_tombstone_blocks_other_org_and_newer_receipt_retries_still_enforce'] = True
+
+    # An orphan authenticated revoke must survive the absence of any agent.
+    reset_admission()
+    assert value(record()) == 't'
+    assert json.loads(value(admit(other_org)))['error'] == 'passport_revoked'
+    assert counts() == {'agents': 0, 'keys': 0, 'authority': 1}
+    results['orphan_revocation_is_durable_before_first_admission'] = True
+
+    # Only the service-owned ledger determines global terminal authority.
+    reset_admission()
+    sql(f"""INSERT INTO public.agents(org_id,registered_by,name,status,metadata)
+      VALUES ('{ORG}','{ORG}','atomic-admission-fixture-forged','revoked',
+      '{{"computeid":{{"issuer":"computeid","passport_id":"{passport}","last_event":"passport.revoked"}}}}');""")
+    assert 'agent' in json.loads(value(admit(other_org)))
+    results['tenant_binding_metadata_cannot_forge_global_provider_authority'] = True
+
+    # Faults anywhere in the transaction, including audit insertion, roll back
+    # the agent, key, audits AND the newly created sentinel together.
+    for target in ['api_keys', 'audit_events']:
+        reset_admission()
+        sql(f"""CREATE FUNCTION fixture_fail_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'injected atomic admission failure'; END $$;
+          CREATE TRIGGER fixture_fail_admission BEFORE INSERT ON public.{target}
+          FOR EACH ROW EXECUTE FUNCTION fixture_fail_admission();""")
+        try:
+            failed = sql(admit(), check=False)
+            assert failed.returncode and 'injected atomic admission failure' in failed.stderr
+            assert counts() == {'agents': 0, 'keys': 0, 'authority': 0}
+        finally:
+            sql(f'DROP TRIGGER fixture_fail_admission ON public.{target}; DROP FUNCTION fixture_fail_admission();')
+        assert 'agent' in json.loads(value(admit()))
+        results[f'{target}_failure_rolls_back_complete_admission_and_retry_succeeds'] = True
+
+    # Admission wins the sentinel lock: revoke waits, then discovers the committed
+    # agent and deactivates its key. This covers the previously empty-row gap.
+    reset_admission()
+    admitting, revoking = process(), process()
+    try:
+        send(admitting, 'BEGIN; ' + admit() + " SELECT 'ADMITTED_OPEN';"); marker(admitting, 'ADMITTED_OPEN')
+        send(revoking, "SET application_name='pr2668_authority_revoke'; " + record())
+        wait_for("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='pr2668_authority_revoke' AND wait_event_type='Lock');")
+        send(admitting, "COMMIT; SELECT 'ADMITTED';"); marker(admitting, 'ADMITTED')
+        assert revoking.stdout.readline().strip() == 't'
+        sql(enforce())
+        assert counts() == {'agents': 1, 'keys': 1, 'authority': 1}
+        assert value("SELECT bool_and(status='revoked') FROM public.agents WHERE name LIKE 'atomic-admission-fixture%';") == 't'
+        assert value("SELECT bool_and(NOT is_active) FROM public.api_keys WHERE agent_id IN (SELECT id FROM public.agents WHERE name LIKE 'atomic-admission-fixture%');") == 't'
+        results['admission_wins_sentinel_then_revoke_enforces_committed_key'] = True
+    finally: close(admitting, revoking)
+
+    # Reverse ordering, again beginning without any authority row.
+    reset_admission()
+    revoking, admitting = process(), process()
+    try:
+        send(revoking, 'BEGIN; ' + record() + " SELECT 'REVOKE_OPEN';"); marker(revoking, 'REVOKE_OPEN')
+        send(admitting, "SET application_name='pr2668_authority_admit'; " + admit(other_org))
+        wait_for("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='pr2668_authority_admit' AND wait_event_type='Lock');")
+        send(revoking, "COMMIT; SELECT 'REVOKED';"); marker(revoking, 'REVOKED')
+        assert json.loads(admitting.stdout.readline()) == {'error': 'passport_revoked'}
+        assert counts() == {'agents': 0, 'keys': 0, 'authority': 1}
+        results['revocation_wins_absent_row_gap_then_cross_org_admission_rejected'] = True
+    finally: close(revoking, admitting)
+
+    reset_admission()
+    first_session, second_session = process(), process()
+    try:
+        send(first_session, 'BEGIN; ' + admit() + " SELECT 'FIRST_OPEN';"); marker(first_session, 'FIRST_OPEN')
+        send(second_session, "SET application_name='pr2668_duplicate_admit'; " + admit(key_char='b'))
+        wait_for("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='pr2668_duplicate_admit' AND wait_event_type='Lock');")
+        send(first_session, "COMMIT; SELECT 'FIRST_COMMITTED';"); marker(first_session, 'FIRST_COMMITTED')
+        assert json.loads(second_session.stdout.readline())['error'] == 'passport_already_bound'
+        assert counts() == {'agents': 1, 'keys': 1, 'authority': 1}
+        results['parallel_same_org_admission_serializes_without_duplicate_keys'] = True
+    finally: close(first_session, second_session)
+
+    for role in ['anon', 'authenticated']:
+        for query in [admit(), record(), f"INSERT INTO public.computeid_passport_authority(passport_id) VALUES ('{passport}');", 'SELECT * FROM public.computeid_passport_authority;']:
+            denied = sql(f'SET ROLE {role}; ' + query, check=False)
+            assert denied.returncode and 'permission denied' in denied.stderr
+    reset_admission()
+    assert 'agent' in json.loads(value('SET ROLE service_role; ' + admit()))
+    assert value('SET ROLE service_role; ' + record()) == 't'
+    results['anon_authenticated_denied_authority_table_and_rpcs_service_succeeds'] = True
+    for invalid in [admit().replace("ARRAY['verify']", "ARRAY['keys:manage']"), admit().replace("interval '30 minutes'", "interval '100 years'")]:
+        rejected = sql(invalid, check=False)
+        assert rejected.returncode and 'invalid ComputeID admission' in rejected.stderr
+    results['sql_enforces_scope_and_receipt_validity_bounds'] = True
+
+    # Reapplying migration cannot erase terminal authority. Rollback must leave
+    # this private table intact; it is a durable security record, not scratch.
+    before = value(f"SELECT revoked_at FROM public.computeid_passport_authority WHERE passport_id='{passport}';")
+    sql((SOURCE / 'supabase/migrations/0448_computeid_agent_key_transition_atomic.sql').read_text())
+    assert value(f"SELECT revoked_at FROM public.computeid_passport_authority WHERE passport_id='{passport}';") == before
+    assert json.loads(value(admit()))['error'] == 'passport_revoked'
+    results['migration_reapply_preserves_durable_terminal_tombstone'] = True
+
+    failure_hash = 'c' * 64
+    sql(f"DELETE FROM public.webhook_dlq WHERE provider='computeid' AND payload_hash='{failure_hash}';")
+    enqueue = f"SELECT public.enqueue_computeid_failure('fixture repeated failure','{failure_hash}','{passport}');"
+    first_session, retry_session = process(), process()
+    try:
+        send(first_session, 'BEGIN; ' + enqueue + " SELECT 'FAILURE_OPEN';"); marker(first_session, 'FAILURE_OPEN')
+        send(retry_session, "SET application_name='pr2668_dlq_retry'; " + enqueue)
+        wait_for("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='pr2668_dlq_retry' AND wait_event_type='Lock');")
+        send(first_session, "COMMIT; SELECT 'FAILURE_COMMITTED';"); marker(first_session, 'FAILURE_COMMITTED')
+        assert retry_session.stdout.readline().strip() == 't'
+        assert value(f"SELECT count(*) FROM public.webhook_dlq WHERE provider='computeid' AND payload_hash='{failure_hash}';") == '1'
+    finally: close(first_session, retry_session)
+    assert value(enqueue.replace('fixture repeated failure', 'fixture distinct failure')) == 't'
+    assert value(f"SELECT count(*) FROM public.webhook_dlq WHERE provider='computeid' AND payload_hash='{failure_hash}';") == '2'
+    for role in ['anon', 'authenticated']:
+        denied = sql(f'SET ROLE {role}; ' + enqueue, check=False)
+        assert denied.returncode and 'permission denied' in denied.stderr
+    results['concurrent_dlq_retries_deduplicate_without_erasing_distinct_failure_reasons'] = True
     return results
 
 
@@ -494,7 +662,7 @@ def run():
         sql('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;')
         sql((SOURCE / 'supabase/migrations/0448_computeid_agent_key_transition_atomic.sql').read_text())
         after = verify_atomic_rpc()
-        receipt = {'negative_controls': before, 'atomic_rpc': after, 'agent_authority': verify_agent_authority()}
+        receipt = {'negative_controls': before, 'atomic_rpc': after, 'agent_authority': verify_agent_authority(), 'passport_admission': verify_passport_admission()}
         encoded = json.dumps(receipt, indent=2) + '\n'
         if args.output:
             args.output.write_text(encoded)

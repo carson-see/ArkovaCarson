@@ -112,7 +112,8 @@ curl -X POST https://api.arkova.ai/api/v1/agents/computeid/admit \
 ```
 
 - Caller: an organization API key with `agents:manage`. The key's creator is recorded as the authorizing principal.
-- `allowed_scopes` is clamped to `verify`, `verify:batch`, `anchor:write`, `anchor:read`, `read:records`, `read:search`; management scopes are never granted to a passport agent. Default is `["verify"]`.
+- `allowed_scopes` is clamped to `verify`, `verify:batch`, `anchor:write`, `write:anchors`, `anchor:read`, `read:records`, `read:search`; management scopes are never granted to a passport agent. Default is `["verify"]`. The legacy `verify` scope also satisfies `anchor:read`, `oracle:read` and `attestations:read`; these read capabilities are part of its effective grant.
+- Arkova admission policy limits a receipt to 24 hours of validity and requires expiry after issuance; partner compatibility must be confirmed before activation. A recorded provider revocation is terminal across organizations, even if a newer receipt is presented.
 - Pass the receipt object through **unchanged**. Arkova verifies the signature over the `receipt_payload` string byte-for-byte; re-serializing it will fail verification.
 
 ### 6c. Admission response (201)
@@ -142,7 +143,7 @@ The agent then uses `key` for Direction A calls.
 | 401 | `receipt_invalid` + `reason` | `invalid_signature`, `key_id_mismatch`, `expired`, `not_yet_valid`, `status_not_active`, `passport_id_mismatch`, `payload_field_mismatch`, `malformed_payload`, `malformed_signature`, `unsupported_algorithm` |
 | 400 | `no_permitted_scopes` | Every requested scope is outside the allowlist (`permitted` lists it) |
 | 409 | `passport_already_bound` | A live agent in this organization already holds the passport |
-| 409 | `passport_revoked` | The passport was revoked on Arkova after the presented receipt was issued; obtain a fresh receipt |
+| 409 | `passport_revoked` | ComputeID terminally revoked this passport; a fresh receipt cannot reissue it |
 
 The shared authentication guard on `/api/v1/agents/computeid/*` returns the flat legacy shape for 401/403: `{ "error": "authentication_required" | "insufficient_scope", "message": "…", "required": "agents:manage", "granted": [...] }` — key on `error` there, not `error.code`.
 
@@ -158,7 +159,7 @@ What Arkova does with each event, for every agent bound to that passport:
 | `passport.suspended` | Agent status → `suspended`; **every key issued to that agent is deactivated** (the API-key check is where access is enforced). |
 | `passport.reinstated` | A suspension **Arkova applied from your event** is lifted and its keys restored. A suspension applied by the organization itself is never lifted by a partner event. Ignored for a revoked agent. |
 
-Ordering: Arkova applies events by their signed `timestamp`. An event older than the last applied one — or, before any event, older than the receipt that admitted the passport — is a no-op, exact replays included, so a late `reinstated` cannot undo a later `revoked` and a pre-admission replay cannot revoke a fresh admission. `revoked` is terminal. A delivery for a passport Arkova has never admitted is acknowledged (`200 orphaned`) and recorded. Arkova answers `409 conflict_retry` when two deliveries for one passport raced and `5xx` when it could not apply the event; please redeliver both.
+Ordering: authenticated `passport.revoked` is terminal across organizations and overrides local receipt/event floors. Revocation is recorded even when no agent is bound yet. Suspension and reinstatement follow the signed timestamp, with reinstatement requiring a strictly newer timestamp; a same-time event cannot relax a suspension. Timestamps over five minutes ahead are rejected and recorded for investigation; accepted timestamps are canonicalized and the stored clock is capped at receipt time. Arkova answers `409 conflict_retry` when a bound agent changed concurrently and `5xx` if a transaction fails; please redeliver both. Repeated revocations still enforce every affected agent after partial delivery failures.
 
 What Arkova needs from ComputeID for this to be production-grade (tracked as SCRUM-4498): an API key for Arkova; the retry policy for non-2xx; authentication and a delete/rotate path on `/v1/webhooks/register`; one real `passport.revoked` delivery against Arkova's staging endpoint during the soak window.
 

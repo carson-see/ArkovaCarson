@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { loadPinnedCa, type PinnedCa } from './ca-cert.js';
+import { ComputeIdVerificationReceipt } from './schemas.js';
 import { verifyComputeIdReceipt, type ComputeIdReceiptInput } from './receipt-verifier.js';
 
 const NOW = new Date('2026-09-07T12:00:00Z');
@@ -24,7 +25,7 @@ function pin(pub: KeyObject): PinnedCa {
 function receiptFor(
   priv: KeyObject,
   ca: PinnedCa,
-  opts: { payloadOverride?: Record<string, unknown>; outerOverride?: Record<string, unknown>; rawPayload?: string } = {},
+  opts: { payloadOverride?: Record<string, unknown>; outerOverride?: Record<string, unknown>; rawPayload?: string; skipSchemaValidation?: boolean } = {},
 ): ComputeIdReceiptInput {
   const payloadObj = {
     passport_id: PASSPORT,
@@ -37,7 +38,7 @@ function receiptFor(
   };
   const receipt_payload = opts.rawPayload ?? JSON.stringify(payloadObj);
   const receipt_signature = sign('sha256', Buffer.from(receipt_payload, 'utf8'), priv).toString('base64');
-  return {
+  const receipt = {
     passport_id: String(payloadObj.passport_id),
     status: String(payloadObj.status),
     signature_valid: true,
@@ -49,6 +50,7 @@ function receiptFor(
     receipt_payload,
     ...(opts.outerOverride ?? {}),
   };
+  return opts.skipSchemaValidation ? receipt : ComputeIdVerificationReceipt.parse(receipt);
 }
 
 describe('verifyComputeIdReceipt', () => {
@@ -98,7 +100,7 @@ describe('verifyComputeIdReceipt', () => {
   it('rejects a malformed (non-base64 / empty) signature', () => {
     const r = receiptFor(privateKey, ca, { outerOverride: { receipt_signature: '!!!not-base64!!!' } });
     expect(verifyComputeIdReceipt({ receipt: r, ca, expectedPassportId: PASSPORT, now: NOW })).toEqual({ ok: false, reason: 'malformed_signature' });
-    const e = receiptFor(privateKey, ca, { outerOverride: { receipt_signature: '' } });
+    const e = receiptFor(privateKey, ca, { outerOverride: { receipt_signature: '' }, skipSchemaValidation: true });
     expect(verifyComputeIdReceipt({ receipt: e, ca, expectedPassportId: PASSPORT, now: NOW })).toEqual({ ok: false, reason: 'malformed_signature' });
   });
 
@@ -161,7 +163,7 @@ describe('verifyComputeIdReceipt', () => {
   });
 
   it('compares passport ids case-insensitively (RFC-4122 text is case-insensitive)', () => {
-    const v = verifyComputeIdReceipt({ receipt: receiptFor(privateKey, ca), ca, expectedPassportId: PASSPORT.toUpperCase(), now: NOW });
+    const v = verifyComputeIdReceipt({ receipt: receiptFor(privateKey, ca, { payloadOverride: { passport_id: PASSPORT.toUpperCase() } }), ca, expectedPassportId: PASSPORT.toUpperCase(), now: NOW });
     expect(v.ok).toBe(true);
   });
 
@@ -170,4 +172,30 @@ describe('verifyComputeIdReceipt', () => {
     const v = verifyComputeIdReceipt({ receipt: r, ca, expectedPassportId: PASSPORT, now: NOW });
     expect(v).toEqual({ ok: false, reason: 'malformed_payload' });
   });
+});
+
+describe('receipt validity policy regressions', () => {
+  const { publicKey, privateKey } = rsa();
+  const ca = pin(publicKey);
+  it('rejects a signed century-long receipt rather than treating it as a permanent mint credential', () => {
+    const receipt = receiptFor(privateKey, ca, { payloadOverride: {
+      issued_at: '2020-01-01T00:00:00.000Z', expires_at: '2126-01-01T00:00:00.000Z',
+    } });
+    expect(verifyComputeIdReceipt({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }).ok).toBe(false);
+  });
+  it('rejects expiry before issuance even when both are within clock-skew allowance', () => {
+    const receipt = receiptFor(privateKey, ca, { payloadOverride: {
+      issued_at: '2026-09-07T12:02:00.000Z', expires_at: '2026-09-07T12:01:00.000Z',
+    } });
+    expect(verifyComputeIdReceipt({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }).ok).toBe(false);
+  });
+});
+
+
+it('verifies a newline-wrapped base64 signature over unchanged signed payload bytes', () => {
+  const { publicKey, privateKey } = rsa();
+  const ca = pin(publicKey);
+  const receipt = receiptFor(privateKey, ca);
+  receipt.receipt_signature = receipt.receipt_signature.match(/.{1,64}/g)!.join('\n');
+  expect(verifyComputeIdReceipt({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }).ok).toBe(true);
 });

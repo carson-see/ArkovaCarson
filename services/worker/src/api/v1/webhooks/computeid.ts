@@ -14,8 +14,9 @@
  *     the auth path checks api_keys.is_active, never agents.status.
  *   - The RPC compares the complete status/metadata snapshot under the row lock;
  *     a lost race answers 409 so the sender redelivers against fresh state.
- *   - No nonce table (would need a migration — PR-B). Replay safety is the
- *     ordering guard on the SIGNED timestamp (`integrations/computeid/binding.ts`).
+ *   - Service-owned terminal passport authority blocks readmission across
+ *     organizations. Every retry still enforces agents after partial delivery.
+ *     Suspension/reinstatement obey signed timestamp ordering.
  *   - Secrets may be a comma-separated list so rotation is register-new →
  *     retire-old with no window where deliveries fail.
  *
@@ -26,13 +27,12 @@
  * `process.env` (SCRUM-1258 ratchet: a Cloud Run typo must fail loudly at boot).
  */
 import crypto from 'node:crypto';
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type Request, type Response, type RequestHandler } from 'express';
 import { config } from '../../../config.js';
 import { db } from '../../../utils/db.js';
 import type { Json } from '../../../types/database.types.js';
 import { truncateUtf16Safe } from '../../../utils/utf16-truncate.js';
 import { logger } from '../../../utils/logger.js';
-import { recordAuditEvent } from '../../../utils/auditEvent.js';
 import { verifyHmacSha256Hex } from '../../../integrations/oauth/hmac.js';
 import {
   COMPUTEID_PASSPORT_EVENTS,
@@ -41,7 +41,7 @@ import {
   ComputeIdWebhookEnvelope,
   type ComputeIdPassportEvent,
 } from '../../../integrations/computeid/schemas.js';
-import { applyPassportEvent, type AgentStatus, type KeyEnforcement } from '../../../integrations/computeid/binding.js';
+import { applyPassportEvent, MAX_PROVIDER_EVENT_CLOCK_SKEW_MS, type AgentStatus, type KeyEnforcement } from '../../../integrations/computeid/binding.js';
 import { parseSecretList } from '../../../integrations/computeid/secrets.js';
 
 export const computeidWebhookRouter = Router();
@@ -51,11 +51,23 @@ const SIGNATURE_HEADER = 'x-computeid-signature';
 const SIGNATURE_PREFIX = 'sha256=';
 const PROVIDER = 'computeid';
 
-const AUDIT_EVENT_BY_ACTION = {
-  revoke: 'AGENT_PASSPORT_REVOKED',
-  suspend: 'AGENT_PASSPORT_SUSPENDED',
-  reinstate: 'AGENT_PASSPORT_REINSTATED',
-} as const;
+const rawParser = express.raw({ type: () => true, limit: COMPUTEID_WEBHOOK_MAX_BODY_BYTES + 1024 });
+/** Shared production/test mount: reject suffix paths before allocating raw body. */
+export const computeidWebhookBody: RequestHandler = (req, res, next) => {
+  if (req.path !== '/') {
+    res.status(404).json({ error: { code: 'not_found' } });
+    return;
+  }
+  rawParser(req, res, (err?: unknown) => {
+    if (err && typeof err === 'object' && (err as { type?: string }).type === 'entity.too.large') {
+      res.status(413).json({ error: { code: 'payload_too_large' } });
+      return;
+    }
+    if (err) { next(err); return; }
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    next();
+  });
+};
 
 interface BoundAgentRow {
   id: string;
@@ -89,12 +101,10 @@ function isPassportEvent(event: string): event is ComputeIdPassportEvent {
 
 async function dlqInsert(args: { reason: string; externalId: string | null; payloadHash: string }): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (db as any).from('webhook_dlq').insert({
-      provider: PROVIDER,
-      reason: truncateUtf16Safe(args.reason, 500),
-      external_id: args.externalId,
-      payload_hash: args.payloadHash,
+    const { error } = await db.rpc('enqueue_computeid_failure', {
+      p_reason: truncateUtf16Safe(args.reason, 500),
+      p_payload_hash: args.payloadHash,
+      ...(args.externalId !== null ? { p_external_id: args.externalId } : {}),
     });
     if (error) logger.warn({ error }, 'ComputeID webhook: DLQ insert failed (non-fatal)');
   } catch (err) {
@@ -164,19 +174,11 @@ function authenticateDelivery(req: Request): { ok: true; rawBody: Buffer } | { o
   return { ok: true, rawBody };
 }
 
-/** Partner free text is never persisted or logged; only its size is recorded. */
-function withheldChars(reason: unknown): number {
-  if (typeof reason === 'string') return reason.length;
-  if (reason == null) return 0;
-  return JSON.stringify(reason).length;
-}
-
 interface PassportDelivery {
   event: ComputeIdPassportEvent;
   passportId: string;
   timestamp: string;
   payloadHash: string;
-  withheldReasonChars: number;
 }
 
 type ParsedDelivery = { kind: 'reply'; reply: Reply } | { kind: 'passport'; delivery: PassportDelivery };
@@ -212,10 +214,17 @@ async function parseDelivery(rawBody: Buffer, payloadHash: string): Promise<Pars
     });
     return { kind: 'reply', reply: reply(400, INVALID_BODY) };
   }
-  const { passport_id: passportId, timestamp, reason } = passportEvent.data;
+  const { passport_id: passportId, timestamp: rawTimestamp } = passportEvent.data;
+  const now = Date.now();
+  const eventTime = Date.parse(rawTimestamp);
+  if (eventTime > now + MAX_PROVIDER_EVENT_CLOCK_SKEW_MS) {
+    await dlqInsert({ reason: 'future_event_timestamp', externalId: passportId, payloadHash });
+    return { kind: 'reply', reply: reply(400, { error: { code: 'future_event_timestamp' } }) };
+  }
+  const timestamp = new Date(Math.min(eventTime, now)).toISOString();
   return {
     kind: 'passport',
-    delivery: { event, passportId, timestamp, payloadHash, withheldReasonChars: withheldChars(reason) },
+    delivery: { event, passportId, timestamp, payloadHash },
   };
 }
 
@@ -265,19 +274,6 @@ async function processBoundAgent(agent: BoundAgentRow, d: PassportDelivery): Pro
   if (failed) return { outcome: 'failed', reply: failed };
   if (decision.action === 'noop') return { outcome: 'skipped' };
 
-  const nextStatus = typeof update.status === 'string' ? update.status : agent.status;
-  void recordAuditEvent({
-    actor_id: null,
-    event_type: AUDIT_EVENT_BY_ACTION[decision.action],
-    event_category: 'SECURITY',
-    target_type: 'agent',
-    target_id: agent.id,
-    org_id: agent.org_id,
-    details:
-      `ComputeID passport ${d.passportId} ${d.event.replace('passport.', '')} at ${d.timestamp}; ` +
-      `agent "${agent.name}" → ${nextStatus}. ` +
-      `Partner-supplied reason withheld (${d.withheldReasonChars} chars).`,
-  });
   return { outcome: 'applied' };
 }
 
@@ -294,6 +290,22 @@ computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
   const d = parsed.delivery;
+
+  if (d.event === 'passport.revoked') {
+    try {
+      const { data, error } = await db.rpc('record_computeid_passport_revocation', {
+        p_passport_id: d.passportId, p_event_at: d.timestamp,
+      });
+      if (error || data !== true) throw error ?? new Error('invalid_revocation_authority_result');
+      // Never skip per-agent enforcement on an existing tombstone: a prior
+      // request may have failed part-way through the cross-organization loop.
+    } catch (error) {
+      logger.error({ error, passportId: d.passportId }, 'ComputeID webhook: revocation authority write failed');
+      await dlqInsert({ reason: 'revocation_authority_failed', externalId: d.passportId, payloadHash });
+      send(res, reply(500, PROCESSING_FAILED));
+      return;
+    }
+  }
 
   let agents: BoundAgentRow[];
   try {

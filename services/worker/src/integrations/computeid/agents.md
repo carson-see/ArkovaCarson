@@ -52,3 +52,8 @@ Partner integration with ComputeID (Praveen Gajjala, CEO; `https://api.aicompute
 ## 2026-09-10 — Atomic enforcement correction (SCRUM-4535 / SCRUM-4536)
 
 The old separate-write retry claim above was disproved by signed HTTP and concurrent PostgreSQL tests: a committed event clock could hide a failed key restore; a delayed restore could undo a later revoke. The pure `applyPassportEvent` decisions remain unchanged. The receiver now passes their agent update and key-enforcement output to migration `0448` in one locked transaction, with a full metadata/status snapshot comparison. Exact replay is safe after both writes commit. See `machines/agentPassportAtomic.machine.ts` and `scripts/ops/repro-computeid-agent-key-atomic.py`; these checks do not resolve the partner receipt/delivery gaps or authorize enabling the flag.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+The historical review repair normalizes UUID comparison after real Zod parsing (SCRUM-4568), accepts CR/LF-wrapped signature encoding without changing signed bytes, and enforces an explicit Arkova admission policy of at most 24 hours plus five-minute issue-time skew. This is not an asserted ComputeID contract; actual partner compatibility remains an activation gate. Revocation is terminal across organizations; a fresh receipt cannot reverse it. Equal-time reinstatement cannot relax suspension.

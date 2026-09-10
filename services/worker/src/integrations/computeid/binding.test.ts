@@ -87,8 +87,8 @@ describe('decidePassportEvent — ordering floor', () => {
     expect(decidePassportEvent({ status: 'suspended', metadata: m }, ev('passport.suspended', T2))).toEqual({ action: 'noop', reason: 'stale_event' });
     expect(decidePassportEvent({ status: 'suspended', metadata: m }, ev('passport.revoked', T2))).toEqual({ action: 'revoke', reason: 'applied' });
   });
-  it('before any event, a delivery older than the admitting receipt is stale (pre-admission replay cannot revoke a fresh agent)', () => {
-    expect(decidePassportEvent({ status: 'active', metadata: bound() }, ev('passport.revoked', T0))).toEqual({ action: 'noop', reason: 'stale_event' });
+  it('terminal provider revocation overrides a newer receipt or local ordering floor', () => {
+    expect(decidePassportEvent({ status: 'active', metadata: bound() }, ev('passport.revoked', T0))).toEqual({ action: 'revoke', reason: 'applied' });
     expect(decidePassportEvent({ status: 'active', metadata: bound() }, ev('passport.revoked', T2))).toEqual({ action: 'revoke', reason: 'applied' });
   });
   it('an unparseable event timestamp is treated as stale, never applied', () => {
@@ -122,7 +122,7 @@ describe('applyPassportEvent', () => {
   });
   it('stale / unbound → no write at all', () => {
     expect(applyPassportEvent({ status: 'active', metadata: {} }, ev('passport.revoked'))).toMatchObject({ update: null, keyEnforcement: 'none' });
-    expect(applyPassportEvent({ status: 'active', metadata: bound() }, ev('passport.revoked', T0))).toMatchObject({ update: null, keyEnforcement: 'none' });
+    expect(applyPassportEvent({ status: 'active', metadata: bound() }, ev('passport.reinstated', T0))).toMatchObject({ update: null, keyEnforcement: 'none' });
   });
   it('already_revoked → metadata-only clock advance + keys re-deactivated (self-heals a failed earlier deactivation)', () => {
     const r = applyPassportEvent({ status: 'revoked', metadata: bound() }, ev('passport.reinstated', T3));
@@ -142,5 +142,18 @@ describe('applyPassportEvent', () => {
     expect(o.decision.reason).toBe('suspended_by_org');
     expect(o.update).toEqual({ metadata: expect.any(Object) });
     expect(o.keyEnforcement).toBe('none');
+  });
+});
+
+
+describe('historical review ordering regressions', () => {
+  it('does not let a far-future reinstatement make the next real revocation stale', () => {
+    const future = applyPassportEvent({ status: 'active', metadata: bound() }, ev('passport.reinstated', '9999-01-01T00:00:00.000Z'));
+    const after = { status: 'active' as const, metadata: future.update?.metadata ?? bound() };
+    expect(applyPassportEvent(after, ev('passport.revoked', T3)).decision.action).toBe('revoke');
+  });
+  it('does not relax a suspension with a distinct reinstatement at its same timestamp', () => {
+    const metadata = bound({ suspended_by: 'computeid', last_event: 'passport.suspended', last_event_at: T2 });
+    expect(applyPassportEvent({ status: 'suspended', metadata }, ev('passport.reinstated', T2)).keyEnforcement).toBe('none');
   });
 });

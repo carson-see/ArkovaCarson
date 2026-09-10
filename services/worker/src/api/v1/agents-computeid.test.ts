@@ -12,7 +12,6 @@ import { generateKeyPairSync, sign as rsaSign, type KeyObject } from 'node:crypt
 import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createChainableBuilder as builder, routeDbTables } from '../../test-utils/chainable-builder.js';
 
 const dbFromMock = vi.fn();
 const dbRpcMock = vi.fn();
@@ -33,6 +32,7 @@ import { agentsComputeIdRouter, PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agents-
 import { requireScopeAnyAuth } from '../../middleware/requireScopeAnyAuth.js';
 import { hashApiKey, type ApiKeyMeta } from '../../middleware/apiKeyAuth.js';
 import { loadPinnedCa } from '../../integrations/computeid/ca-cert.js';
+import { API_KEY_SCOPES, scopeSatisfies } from '../apiScopes.js';
 
 const HMAC = 'test-api-key-hmac-secret';
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
@@ -46,7 +46,6 @@ const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 20
 const CA_PEM = publicKey.export({ type: 'spki', format: 'pem' }) as string;
 const CA = loadPinnedCa(CA_PEM);
 
-const routeTables = (map: Record<string, unknown>) => routeDbTables(dbFromMock, map);
 
 function receipt(priv: KeyObject = privateKey, payloadOverride: Record<string, unknown> = {}, issuedAgoMs = 60_000) {
   // The handler verifies against the REAL clock, so a valid fixture is issued
@@ -81,11 +80,9 @@ const insertedAgent = (over: Record<string, unknown> = {}) => ({
   id: AGENT_ID, org_id: ORG_ID, registered_by: USER_ID, name: 'cortex-agent', status: 'active', agent_type: 'llm_agent',
   allowed_scopes: ['verify', 'anchor:write'], created_at: NOW_ISO, ...over,
 });
-function happyTables(existingRows: unknown[] = []) {
-  const agents = builder([{ data: existingRows }, { data: insertedAgent() }]);
-  const keys = builder({ data: { id: KEY_ID, key_prefix: 'ak_live_abcd', scopes: ['verify', 'anchor:write'], created_at: NOW_ISO } });
-  routeTables({ agents, api_keys: keys });
-  return { agents, keys };
+function admissionResult() {
+  return { agent: insertedAgent(), binding: { issuer: 'computeid', passport_id: PASSPORT },
+    key: { id: KEY_ID, key_prefix: 'ak_live_abcd', scopes: ['verify', 'anchor:write'], created_at: NOW_ISO } };
 }
 function createApp(opts: { apiKey?: ApiKeyMeta | null; guard?: boolean } = {}) {
   const app = express();
@@ -108,7 +105,7 @@ const validBody = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   dbFromMock.mockReset();
-  dbRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
+  dbRpcMock.mockReset().mockResolvedValue({ data: admissionResult(), error: null });
   mockConfig.enableComputeidIntegration = true;
   mockConfig.computeidCaCertPem = CA_PEM;
   mockConfig.apiKeyHmacSecret = HMAC;
@@ -162,133 +159,86 @@ describe('POST /api/v1/agents/computeid/admit — validation + receipt', () => {
     expect(res.body.error.code).toBe('no_permitted_scopes');
     expect(res.body.error.permitted).toEqual(PASSPORT_AGENT_SCOPE_ALLOWLIST);
   });
-  it('409 passport_already_bound when a live agent in this org already holds the passport', async () => {
-    routeTables({ agents: builder({ data: [{ id: AGENT_ID, status: 'active', revoked_at: null }] }) });
+  it.each(['passport_already_bound', 'passport_revoked'])('409 for the database authority decision %s', async (error) => {
+    dbRpcMock.mockResolvedValue({ data: { error }, error: null });
     const res = await admit(validBody());
     expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('passport_already_bound');
+    expect(res.body.error.code).toBe(error);
+    expect(res.body.key).toBeUndefined();
   });
-  it('409 passport_revoked when the passport was revoked here AFTER the receipt was issued (a captured receipt cannot resurrect it)', async () => {
-    const revokedAfter = new Date(Date.now() - 30_000).toISOString(); // receipt issued 60s ago, revoked 30s ago
-    routeTables({ agents: builder({ data: [{ id: AGENT_ID, status: 'revoked', revoked_at: revokedAfter }] }) });
-    const res = await admit(validBody());
-    expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('passport_revoked');
-  });
-  it('409 passport_revoked when a revoked binding exists and the SIGNED payload carries no issued_at (cannot prove it post-dates)', async () => {
-    // Outer issued_at is schema-required; only the signed payload omits it.
-    const base = receipt();
-    const signedNoIssued = JSON.stringify({ passport_id: PASSPORT, status: 'active', signature_valid: true, expires_at: base.expires_at, key_id: CA.keyId });
-    const noIssued = {
-      ...base,
-      receipt_payload: signedNoIssued,
-      receipt_signature: rsaSign('sha256', Buffer.from(signedNoIssued, 'utf8'), privateKey).toString('base64'),
-    };
-    routeTables({ agents: builder({ data: [{ id: AGENT_ID, status: 'revoked', revoked_at: '2020-01-01T00:00:00Z' }] }) });
-    const res = await admit(validBody({ verification_receipt: noIssued }));
-    expect(res.body.error.code).toBe('passport_revoked');
-  });
-  it('admits again when the receipt was issued AFTER the old revocation (fresh receipt post-dates it)', async () => {
-    const revokedBefore = new Date(Date.now() - 120_000).toISOString(); // receipt issued 60s ago
-    happyTables([{ id: 'old', status: 'revoked', revoked_at: revokedBefore }]);
-    expect((await admit(validBody())).status).toBe(201);
+  it('rejects a revoked passport even with a newly issued receipt (terminal provider authority)', async () => {
+    dbRpcMock.mockResolvedValue({ data: { error: 'passport_revoked' }, error: null });
+    expect((await admit(validBody())).status).toBe(409);
+    expect(dbFromMock).not.toHaveBeenCalled();
   });
 });
 
-describe('POST /api/v1/agents/computeid/admit — success path', () => {
-  it('201: creates the agent (org + principal from the caller key), binds the passport, mints a scoped key once, audits both events', async () => {
-    const { agents, keys } = happyTables();
+describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
+  it('201: binds the authenticated principal/org and persists only the key hash in one RPC', async () => {
     const r = receipt();
     const res = await admit(validBody({ verification_receipt: r, allowed_scopes: ['verify', 'anchor:write', 'keys:manage', 'admin:rules'] }));
     expect(res.status).toBe(201);
-
-    // Binding lookup covers live AND revoked rows in this org.
-    expect(agents.eq).toHaveBeenCalledWith('org_id', ORG_ID);
-    expect(agents.contains).toHaveBeenCalledWith('metadata', { computeid: { passport_id: PASSPORT } });
-    expect(agents.neq).not.toHaveBeenCalled();
-
-    expect(agents.insert).toHaveBeenCalledWith(expect.objectContaining({
-      org_id: ORG_ID, registered_by: USER_ID, agent_type: 'llm_agent', name: 'cortex-agent', allowed_scopes: ['verify', 'anchor:write'],
-      metadata: expect.objectContaining({
-        computeid: expect.objectContaining({ issuer: 'computeid', passport_id: PASSPORT, receipt_expires_at: r.expires_at, receipt_issued_at: r.issued_at }),
-      }),
-    }));
-
     const raw: string = res.body.key;
     expect(raw.startsWith('ak_live_')).toBe(true);
-    expect(keys.insert).toHaveBeenCalledWith(expect.objectContaining({
-      org_id: ORG_ID, agent_id: AGENT_ID, created_by: USER_ID, scopes: ['verify', 'anchor:write'], key_hash: hashApiKey(raw, HMAC),
+    expect(dbRpcMock).toHaveBeenCalledExactlyOnceWith('admit_computeid_agent', expect.objectContaining({
+      p_org_id: ORG_ID, p_principal_id: USER_ID, p_passport_id: PASSPORT,
+      p_receipt_issued_at: r.issued_at, p_receipt_expires_at: r.expires_at,
+      p_name: 'cortex-agent', p_scopes: ['verify', 'anchor:write'],
+      p_key_hash: hashApiKey(raw, HMAC), p_key_prefix: raw.slice(0, 12),
     }));
-    expect(JSON.stringify(keys.insert.mock.calls[0][0])).not.toContain(raw);
-
-    expect(res.body.agent).toMatchObject({ id: AGENT_ID, name: 'cortex-agent', status: 'active', allowed_scopes: ['verify', 'anchor:write'] });
+    expect(JSON.stringify(dbRpcMock.mock.calls)).not.toContain(raw);
+    expect(dbFromMock).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled(); // Both audits belong to the SQL transaction.
+    expect(res.body.agent).toMatchObject({ id: AGENT_ID, status: 'active' });
     expect(res.body.agent.org_id).toBeUndefined();
     expect(res.body.agent.registered_by).toBeUndefined();
     expect(res.body.binding).toMatchObject({ issuer: 'computeid', passport_id: PASSPORT });
     expect(res.body.key_id).toBe(KEY_ID);
-
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
-      event_type: 'AGENT_PASSPORT_ADMITTED', event_category: 'SECURITY', target_type: 'agent', target_id: AGENT_ID, org_id: ORG_ID, actor_id: USER_ID,
-    }));
-    // Passport-minted keys are counted like every other agent key.
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ event_type: 'AGENT_KEY_CREATED', target_type: 'api_key', target_id: KEY_ID }));
   });
-  it('normalizes an uppercase passport id to lowercase for storage and lookup; accepts the V2 write:anchors spelling', async () => {
-    const { agents } = happyTables();
-    const res = await admit(validBody({ passport_id: PASSPORT.toUpperCase(), allowed_scopes: ['write:anchors'] }));
+  it('admits an uppercase UUID inside the actually signed payload and normalizes storage', async () => {
+    const res = await admit(validBody({ passport_id: PASSPORT.toUpperCase(),
+      verification_receipt: receipt(privateKey, { passport_id: PASSPORT.toUpperCase() }), allowed_scopes: ['write:anchors'] }));
     expect(res.status).toBe(201);
-    expect(agents.contains).toHaveBeenCalledWith('metadata', { computeid: { passport_id: PASSPORT } });
-    expect(agents.insert).toHaveBeenCalledWith(expect.objectContaining({ allowed_scopes: ['write:anchors'] }));
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent', expect.objectContaining({ p_passport_id: PASSPORT, p_scopes: ['write:anchors'] }));
   });
-  it('defaults to the verify scope and a passport-derived name when none are supplied', async () => {
-    const { agents } = happyTables();
-    const res = await admit({ passport_id: PASSPORT, verification_receipt: receipt() });
-    expect(res.status).toBe(201);
-    expect(agents.insert).toHaveBeenCalledWith(expect.objectContaining({ allowed_scopes: ['verify'], name: expect.stringContaining(PASSPORT.slice(0, 8)) }));
+  it('defaults to verify and a passport-derived name', async () => {
+    expect((await admit({ passport_id: PASSPORT, verification_receipt: receipt() })).status).toBe(201);
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent', expect.objectContaining({ p_scopes: ['verify'], p_name: expect.stringContaining(PASSPORT.slice(0, 8)) }));
   });
-  it('requests locked empty-admission cleanup after a failed key insert and returns no raw key', async () => {
-    const agents = builder([{ data: [] }, { data: insertedAgent() }]);
-    routeTables({ agents, api_keys: builder({ error: { code: 'XX000', message: 'boom' } }) });
+  it('returns no key on transaction/audit failure, without issuing any compensating delete', async () => {
+    dbRpcMock.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'audit insert failed' } });
     const res = await admit(validBody());
     expect(res.status).toBe(500);
-    expect(dbRpcMock).toHaveBeenCalledWith('cleanup_computeid_empty_admission', {
-      p_org_id: ORG_ID, p_agent_id: AGENT_ID,
-      p_expected_metadata: agents.insert.mock.calls[0][0].metadata,
-    });
-    expect(agents.delete).not.toHaveBeenCalled();
-    expect(auditMock).not.toHaveBeenCalled();
     expect(res.body.key).toBeUndefined();
+    expect(dbFromMock).not.toHaveBeenCalled();
+    expect(dbRpcMock).toHaveBeenCalledTimes(1);
+  });
+  it('preserves a possibly committed key when the RPC reply is lost', async () => {
+    dbRpcMock.mockRejectedValue(new Error('transport response lost'));
+    const res = await admit(validBody());
+    expect(res.status).toBe(500);
+    expect(res.body.key).toBeUndefined();
+    expect(dbFromMock).not.toHaveBeenCalled();
+    expect(dbRpcMock).toHaveBeenCalledTimes(1);
+  });
+  it('returns no raw credential for an invalid RPC success shape', async () => {
+    dbRpcMock.mockResolvedValue({ data: true, error: null });
+    const res = await admit(validBody());
+    expect(res.status).toBe(500);
+    expect(res.body.key).toBeUndefined();
+  });
+  it('honors global provider revocation independently of the caller organization', async () => {
+    dbRpcMock.mockResolvedValue({ data: { error: 'passport_revoked' }, error: null });
+    const otherOrg = { ...apiKeyMeta(), orgId: '99999999-9999-4999-8999-999999999999' };
+    const res = await admit(validBody(), createApp({ apiKey: otherOrg }));
+    expect(res.status).toBe(409);
+    expect(res.body.key).toBeUndefined();
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent', expect.objectContaining({ p_org_id: otherOrg.orgId, p_passport_id: PASSPORT }));
   });
 });
 
 
-describe('admission overlapping a passport revocation', () => {
-  it('returns no key when the database authority guard rejects a late insert after revocation', async () => {
-    // Real PostgreSQL concurrency tests verify the trigger/parent lock. This
-    // signed-receipt HTTP test verifies the handler's response to that boundary.
-    const agents = builder([{ data: [] }, { data: insertedAgent() }]);
-    const keys = builder({ error: { code: '23514', message: 'agent_key_inactive_or_wrong_org' } });
-    routeTables({ agents, api_keys: keys });
-    dbRpcMock.mockResolvedValue({ data: false, error: null }); // later revocation is preserved
-    const response = await admit(validBody());
-    expect(response.status).toBe(500);
-    expect(response.body.error.code).toBe('key_issue_failed');
-    expect(response.body.key).toBeUndefined();
-    expect(agents.delete).not.toHaveBeenCalled();
-    expect(dbRpcMock).toHaveBeenCalledWith('cleanup_computeid_empty_admission', expect.objectContaining({
-      p_org_id: ORG_ID, p_agent_id: AGENT_ID,
-    }));
-    expect(auditMock).not.toHaveBeenCalled();
-  });
-
-  it('does not fall back to an unsafe delete if cleanup fails', async () => {
-    const agents = builder([{ data: [] }, { data: insertedAgent() }]);
-    routeTables({ agents, api_keys: builder({ error: { code: '08006', message: 'response lost' } }) });
-    dbRpcMock.mockResolvedValue({ data: null, error: { code: '55P03', message: 'lock timeout' } });
-    const response = await admit(validBody());
-    expect(response.status).toBe(500);
-    expect(response.body.key).toBeUndefined();
-    expect(agents.delete).not.toHaveBeenCalled();
-    expect(auditMock).not.toHaveBeenCalled();
-  });
+it('documents the effective legacy read aliases without granting any management capability', () => {
+  const effective = API_KEY_SCOPES.filter((scope) => scopeSatisfies([...PASSPORT_AGENT_SCOPE_ALLOWLIST], scope));
+  expect([...effective].sort()).toEqual(['anchor:read', 'anchor:write', 'attestations:read', 'oracle:read', 'read:records', 'read:search', 'verify', 'verify:batch', 'write:anchors']);
 });

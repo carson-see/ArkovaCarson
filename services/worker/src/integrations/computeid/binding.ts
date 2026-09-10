@@ -1,21 +1,15 @@
 /**
  * Passport ↔ agent binding and the pure event-transition decision.
  *
- * v1 stores the binding in `agents.metadata.computeid` (no migration; PR-B
- * SCRUM-4497 promotes it to columns + a unique index + a nonce table).
+ * Bindings remain in tenant metadata pending SCRUM-4497. Migration 0448 keeps
+ * terminal provider authority in a separate service-owned passport table.
  *
- * Replay / ordering safety without a nonce table:
- *  - A floor: an event is stale if it is OLDER than the last applied event, or
- *    — before any event was applied — older than the receipt that admitted the
- *    passport (`receipt_issued_at`, falling back to `bound_at`). A pre-admission
- *    `passport.revoked` replay therefore cannot revoke a freshly admitted agent.
- *  - Exact replays (same timestamp AND same event as the last applied one) are
- *    stale; a DIFFERENT event carrying the same timestamp is not.
- *  - `revoked` is terminal (forward-only). Every non-stale event for a bound
- *    agent advances the clock, even when it changes nothing, so a late replay
- *    can never slip in behind it.
- *  - Ownership: only a suspension WE applied (`suspended_by = 'computeid'`) can
- *    be lifted by `passport.reinstated`; an org admin's own suspension stays.
+ * Suspension/reinstatement obey the last-event/receipt/binding timestamp floor.
+ * Reinstatement must be strictly newer than the floor; equal-time delivery
+ * cannot relax a suspension. Authenticated revocation is terminal regardless
+ * of that floor. Future timestamps beyond five minutes are rejected; accepted
+ * clock skew is clamped to receipt time before it can become an ordering floor.
+ * Only a suspension applied by ComputeID can be lifted by reinstatement.
  *
  * Key enforcement is a separate output because the auth path reads only
  * `api_keys.is_active` (never `agents.status`): revoke/suspend → deactivate,
@@ -29,6 +23,7 @@ import { DB_UUID_RE } from '../../utils/db-row-validation.js';
 import { COMPUTEID_ISSUER, isRecord, type ComputeIdPassportEvent } from './schemas.js';
 
 export const BINDING_METADATA_KEY = 'computeid';
+export const MAX_PROVIDER_EVENT_CLOCK_SKEW_MS = 300_000;
 
 export interface ComputeIdBinding {
   issuer: typeof COMPUTEID_ISSUER;
@@ -57,6 +52,7 @@ export type PassportDecisionReason =
   | 'applied'
   | 'unbound'
   | 'stale_event'
+  | 'future_event'
   | 'already_revoked'
   | 'already_in_state'
   | 'suspended_by_org';
@@ -110,15 +106,19 @@ const noop = (reason: PassportDecisionReason): PassportEventDecision => ({ actio
 function isStaleEvent(binding: ComputeIdBinding, event: PassportEventInput, ts: number): boolean {
   const floor = orderingFloor(binding);
   if (floor === undefined) return false;
-  return ts < floor || (ts === floor && binding.last_event === event.event);
+  return ts < floor || (ts === floor && (binding.last_event === event.event || event.event === 'passport.reinstated'));
 }
 
 
-export function decidePassportEvent(agent: AgentState, event: PassportEventInput): PassportEventDecision {
+export function decidePassportEvent(agent: AgentState, event: PassportEventInput, now = Date.now()): PassportEventDecision {
   const binding = readBinding(agent.metadata);
   if (!binding) return noop('unbound');
   const ts = Date.parse(event.timestamp);
   if (!Number.isFinite(ts)) return noop('stale_event');
+  if (ts > now + MAX_PROVIDER_EVENT_CLOCK_SKEW_MS) return noop('future_event');
+  // Revocation is terminal provider authority, including a delayed delivery.
+  // Receipt age or tenant metadata cannot authorize reissuing this passport.
+  if (event.event === 'passport.revoked' && agent.status !== 'revoked') return { action: 'revoke', reason: 'applied' };
   if (isStaleEvent(binding, event, ts)) return noop('stale_event');
   if (agent.status === 'revoked') return noop('already_revoked');
   switch (event.event) {
@@ -145,24 +145,28 @@ export interface PassportEventOutcome {
  * write even when the status does not change); `update` is null only for
  * unbound or stale events.
  */
-export function applyPassportEvent(agent: AgentState, event: PassportEventInput): PassportEventOutcome {
-  const decision = decidePassportEvent(agent, event);
-  if (decision.reason === 'unbound' || decision.reason === 'stale_event') {
+export function applyPassportEvent(agent: AgentState, event: PassportEventInput, now = Date.now()): PassportEventOutcome {
+  const decision = decidePassportEvent(agent, event, now);
+  if (decision.reason === 'unbound' || decision.reason === 'stale_event' || decision.reason === 'future_event') {
     return { decision, update: null, keyEnforcement: 'none' };
   }
+  // Canonical SQL timestamps; an accepted small partner skew cannot advance
+  // the stored floor beyond our receipt time. Signature verification used the
+  // original bytes before this normalization.
+  const timestamp = new Date(Math.min(Date.parse(event.timestamp), now)).toISOString();
   const binding = readBinding(agent.metadata) as ComputeIdBinding;
-  const next: ComputeIdBinding = { ...binding, last_event: event.event, last_event_at: event.timestamp };
+  const next: ComputeIdBinding = { ...binding, last_event: event.event, last_event_at: timestamp };
 
   switch (decision.action) {
     case 'revoke': {
       delete next.suspended_by;
       const metadata = writeBinding(agent.metadata, next);
-      return { decision, update: { status: 'revoked', revoked_at: event.timestamp, metadata }, keyEnforcement: 'deactivate' };
+      return { decision, update: { status: 'revoked', revoked_at: timestamp, metadata }, keyEnforcement: 'deactivate' };
     }
     case 'suspend': {
       next.suspended_by = 'computeid';
       const metadata = writeBinding(agent.metadata, next);
-      return { decision, update: { status: 'suspended', suspended_at: event.timestamp, metadata }, keyEnforcement: 'deactivate' };
+      return { decision, update: { status: 'suspended', suspended_at: timestamp, metadata }, keyEnforcement: 'deactivate' };
     }
     case 'reinstate': {
       delete next.suspended_by;

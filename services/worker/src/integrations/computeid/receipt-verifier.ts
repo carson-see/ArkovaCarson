@@ -17,6 +17,8 @@ import { isRecord, type ComputeIdVerificationReceiptT } from './schemas.js';
 
 export const SUPPORTED_RECEIPT_ALGORITHM = 'RSA-SHA256';
 export const DEFAULT_MAX_CLOCK_SKEW_SECONDS = 300;
+// Arkova admission policy, not a claim about the partner contract.
+export const MAX_RECEIPT_VALIDITY_MS = 24 * 60 * 60 * 1000;
 
 /** The Zod-parsed receipt (passthrough keeps unknown extras). One wire type, defined once in schemas.ts. */
 export type ComputeIdReceiptInput = ComputeIdVerificationReceiptT;
@@ -32,6 +34,7 @@ export type ReceiptFailure =
   | 'status_not_active'
   | 'expired'
   | 'not_yet_valid'
+  | 'invalid_validity_window'
   | 'ca_not_valid'
   | 'passport_signature_invalid';
 
@@ -42,8 +45,9 @@ export type ReceiptVerdict =
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 function decodeBase64Strict(value: string): Buffer | null {
-  if (!value || value.length % 4 !== 0 || !BASE64_RE.test(value)) return null;
-  const buf = Buffer.from(value, 'base64');
+  const encoded = value.replace(/[\r\n]/g, '');
+  if (!encoded || encoded.length % 4 !== 0 || !BASE64_RE.test(encoded)) return null;
+  const buf = Buffer.from(encoded, 'base64');
   return buf.length > 0 ? buf : null;
 }
 
@@ -112,7 +116,7 @@ function parseSignedPayload(receipt: ComputeIdReceiptInput): SignedFields | 'mal
 
 /** Unsigned outer copies must agree with the signed truth; disagreement is rejected, never resolved. */
 function checkFieldAgreement(receipt: ComputeIdReceiptInput, signed: SignedFields): ReceiptFailure | null {
-  if (receipt.passport_id !== signed.passportId || receipt.status !== signed.status || receipt.expires_at !== signed.expiresAt) {
+  if (receipt.passport_id.toLowerCase() !== signed.passportId.toLowerCase() || receipt.status !== signed.status || receipt.expires_at !== signed.expiresAt) {
     return 'payload_field_mismatch';
   }
   if (signed.issuedAt !== undefined && receipt.issued_at !== signed.issuedAt) return 'payload_field_mismatch';
@@ -148,10 +152,15 @@ function checkTimes(
   const expiresAt = new Date(signed.expiresAt);
   if (Number.isNaN(expiresAt.getTime())) return 'malformed_payload';
   if (now.getTime() >= expiresAt.getTime()) return 'expired';
-  if (signed.issuedAt === undefined) return { expiresAt, issuedAt: null };
+  if (signed.issuedAt === undefined) {
+    return expiresAt.getTime() - now.getTime() > MAX_RECEIPT_VALIDITY_MS
+      ? 'invalid_validity_window' : { expiresAt, issuedAt: null };
+  }
   const issuedAt = new Date(signed.issuedAt);
   if (Number.isNaN(issuedAt.getTime())) return 'malformed_payload';
   if (issuedAt.getTime() > now.getTime() + skewMs) return 'not_yet_valid';
+  const validityMs = expiresAt.getTime() - issuedAt.getTime();
+  if (validityMs <= 0 || validityMs > MAX_RECEIPT_VALIDITY_MS) return 'invalid_validity_window';
   return { expiresAt, issuedAt };
 }
 

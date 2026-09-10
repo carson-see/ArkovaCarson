@@ -16,16 +16,13 @@
 import { Router, type Request, type Response } from 'express';
 import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
-import type { Json } from '../../types/database.types.js';
 import { logger } from '../../utils/logger.js';
-import { recordAuditEvent } from '../../utils/auditEvent.js';
-import { mintAgentKey } from './agent-keys.js';
+import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { toPublicAgent } from './agents.js';
 import type { ApiKeyScope } from '../apiScopes.js';
 import { loadPinnedCa, type PinnedCa } from '../../integrations/computeid/ca-cert.js';
 import { verifyComputeIdReceipt } from '../../integrations/computeid/receipt-verifier.js';
-import { COMPUTEID_ISSUER, ComputeIdAdmissionRequest } from '../../integrations/computeid/schemas.js';
-import { writeBinding, type ComputeIdBinding } from '../../integrations/computeid/binding.js';
+import { ComputeIdAdmissionRequest, isRecord } from '../../integrations/computeid/schemas.js';
 
 export const agentsComputeIdRouter = Router();
 
@@ -60,34 +57,6 @@ function clampScopes(requested: readonly ApiKeyScope[] | undefined): ApiKeyScope
   const allow = new Set<string>(PASSPORT_AGENT_SCOPE_ALLOWLIST);
   const wanted = requested && requested.length > 0 ? requested : DEFAULT_PASSPORT_AGENT_SCOPES;
   return [...new Set(wanted.filter((s) => allow.has(s)))];
-}
-
-interface BindingRow {
-  id: string;
-  status: string;
-  revoked_at: string | null;
-}
-
-/**
- * The 409 body when this org already binds the passport, else null. A live
- * binding is a duplicate. A REVOKED one blocks re-admission unless the receipt
- * was provably issued after the revocation: a captured, still-unexpired receipt
- * must not resurrect a passport ComputeID has already revoked.
- */
-function bindingConflict(rows: readonly BindingRow[], receiptIssuedAt: Date | null): Record<string, unknown> | null {
-  const live = rows.find((r) => r.status !== 'revoked');
-  if (live) return { code: 'passport_already_bound', agent_id: live.id };
-  const revokedAfterReceipt = rows.some((r) => {
-    if (r.status !== 'revoked') return false;
-    if (!receiptIssuedAt) return true; // no issue time → cannot prove it post-dates the revocation
-    const revokedAt = r.revoked_at ? Date.parse(r.revoked_at) : Number.NaN;
-    return !Number.isFinite(revokedAt) || revokedAt >= receiptIssuedAt.getTime();
-  });
-  if (!revokedAfterReceipt) return null;
-  return {
-    code: 'passport_revoked',
-    message: 'This passport was revoked on Arkova after the presented receipt was issued; obtain a fresh receipt.',
-  };
 }
 
 agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
@@ -139,101 +108,41 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
   const principalUserId = apiKey.userId;
   const shortId = passportId.slice(0, 8);
   const name = parsed.data.name ?? `computeid-${shortId}`;
-  const now = new Date();
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dbAny = db as any;
-
-    // Every binding of this passport in this org, live or revoked (see bindingConflict).
-    const { data: existing, error: dupErr } = await dbAny
-      .from('agents')
-      .select('id, status, revoked_at')
-      .eq('org_id', orgId)
-      .contains('metadata', { computeid: { passport_id: passportId } });
-    if (dupErr) {
-      logger.error({ error: dupErr }, 'ComputeID admission: duplicate-binding lookup failed');
-      res.status(500).json({ error: { code: 'admission_failed' } });
-      return;
-    }
-    const rows = (Array.isArray(existing) ? existing : []) as BindingRow[];
-    const conflict = bindingConflict(rows, verdict.issuedAt);
-    if (conflict) {
-      res.status(409).json({ error: conflict });
-      return;
-    }
-
-    const binding: ComputeIdBinding = {
-      issuer: COMPUTEID_ISSUER,
-      passport_id: passportId,
-      bound_at: now.toISOString(),
-      receipt_expires_at: verdict.expiresAt.toISOString(),
-      ...(verdict.issuedAt ? { receipt_issued_at: verdict.issuedAt.toISOString() } : {}),
-    };
-
-    const { data: agent, error: agentErr } = await dbAny
-      .from('agents')
-      .insert({
-        org_id: orgId,
-        registered_by: principalUserId,
-        name,
-        description: parsed.data.description,
-        agent_type: 'llm_agent',
-        allowed_scopes: scopes,
-        metadata: writeBinding({}, binding),
-      })
-      .select('id, name, status, agent_type, allowed_scopes, created_at')
-      .single();
-    if (agentErr || !agent) {
-      logger.error({ error: agentErr }, 'ComputeID admission: agent insert failed');
-      res.status(500).json({ error: { code: 'admission_failed' } });
-      return;
-    }
-
-    const minted = await mintAgentKey({
-      hmacSecret,
-      orgId,
-      agentId: agent.id,
-      agentName: name,
-      scopes,
-      keyName: `${name} — ComputeID passport ${shortId}`,
-      createdBy: principalUserId,
-      auditContext: `Minted at ComputeID passport admission (passport ${passportId})`,
+    const key = generateApiKey(hmacSecret);
+    const { data, error } = await db.rpc('admit_computeid_agent', {
+      p_org_id: orgId,
+      p_principal_id: principalUserId,
+      p_passport_id: passportId,
+      ...(verdict.issuedAt ? { p_receipt_issued_at: verdict.issuedAt.toISOString() } : {}),
+      p_receipt_expires_at: verdict.expiresAt.toISOString(),
+      p_name: name,
+      ...(parsed.data.description !== undefined ? { p_description: parsed.data.description } : {}),
+      p_scopes: scopes,
+      p_key_hash: key.hash,
+      p_key_prefix: key.prefix,
     });
-    if ('error' in minted) {
-      logger.error({ error: minted.error, agentId: agent.id }, 'ComputeID admission: key insert failed');
-      // The locked cleanup preserves a concurrent revocation and any key whose
-      // INSERT committed despite an uncertain response. Never detach that key.
-      const { error: cleanupError } = await db.rpc('cleanup_computeid_empty_admission', {
-        p_org_id: orgId,
-        p_agent_id: agent.id,
-        p_expected_metadata: writeBinding({}, binding) as Json,
-      });
-      if (cleanupError) logger.error({ error: cleanupError, agentId: agent.id }, 'ComputeID admission: empty agent cleanup failed');
-      res.status(500).json({ error: { code: 'key_issue_failed' } });
+    if (error) throw error;
+    if (!isRecord(data)) throw new Error('invalid_admission_result');
+    if (data.error === 'passport_revoked' || data.error === 'passport_already_bound') {
+      res.status(409).json({ error: { code: data.error, ...(typeof data.agent_id === 'string' ? { agent_id: data.agent_id } : {}) } });
       return;
     }
-
-    void recordAuditEvent({
-      actor_id: principalUserId,
-      event_type: 'AGENT_PASSPORT_ADMITTED',
-      event_category: 'SECURITY',
-      target_type: 'agent',
-      target_id: agent.id,
-      org_id: orgId,
-      details:
-        `ComputeID passport ${passportId} admitted as agent "${name}" with scopes ${scopes.join(', ')}; ` +
-        `receipt key_id ${receipt.key_id}, receipt expires ${binding.receipt_expires_at}; authorized by API key ${apiKey.keyPrefix}.`,
-    });
-
-    const { key } = minted;
+    if (!isRecord(data.agent) || !isRecord(data.key) || !isRecord(data.binding)
+        || typeof data.agent.id !== 'string' || typeof data.key.id !== 'string'
+        || typeof data.key.key_prefix !== 'string' || !Array.isArray(data.key.scopes)) {
+      throw new Error('invalid_admission_result');
+    }
+    // The same transaction wrote both security audit rows. No compensation:
+    // an uncertain reply must preserve any committed agent/key and its audit.
     res.status(201).json({
-      agent: toPublicAgent(agent),
-      binding,
+      agent: toPublicAgent(data.agent),
+      binding: data.binding,
       key: key.raw,
-      key_id: key.id,
-      key_prefix: key.key_prefix,
-      scopes: key.scopes,
+      key_id: data.key.id,
+      key_prefix: data.key.key_prefix,
+      scopes: data.key.scopes,
       warning: 'This is the only time the raw API key will be shown. Store it securely.',
     });
   } catch (err) {

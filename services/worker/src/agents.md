@@ -190,3 +190,8 @@ When mocking Supabase rows in this suite, use columns the table actually has.
 - `generateFingerprint` is client-side only — never import it here.
 - All secrets from env vars; treasury keys never logged.
 - `anchor.status = 'SECURED'` is worker-only via service_role.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+The current ComputeID mount is gate → per-IP limiter → shared `computeidWebhookBody` → receiver. The shared parser rejects suffix paths before buffering and maps oversize payloads to 413. Tests use this production middleware; disabled requests still return 503 before parsing. This supersedes the original global-bucket note above.

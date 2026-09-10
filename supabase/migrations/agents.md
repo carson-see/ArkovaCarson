@@ -1209,3 +1209,8 @@ Amended after the 2026-09-05 review of PR #2658 (findings F1/F2/F3/F5), still un
 ## 2026-09-10 — Local 0448 authority guards (SCRUM-4558 / SCRUM-4559)
 
 Before any publication/application, the reserved local `0448` was extended with `enforce_agent_key_active_authority`, `enforce_agent_revocation_terminal`, and service-only `cleanup_computeid_empty_admission`. Active-key writes take a parent share lock; provider transitions and cleanup take its update lock. Existing-key updates can encounter a lock inversion with older callers: PostgreSQL aborts one whole transaction and the receiver returns a retryable failure. The actual two-session fault test verifies abort plus successful revocation retry, never partial commit. No data backfill or existing migration was changed. Full-schema local proof retains the real foreign keys, row security and existing agent timestamp trigger. Hosted migration/staging qualification is still required; the feature flag stays off.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+Unapplied migration 0448 now includes service-only terminal passport authority and atomic admission, replacing the earlier cleanup RPC. The authority table has enabled and forced RLS; anon/authenticated have neither table access nor RPC execution. Preserve tombstones across rollback. Required admission and transition audits are transactional; key/audit failures roll back together. No hosted application or current-head soak is asserted by local SQL proofs.

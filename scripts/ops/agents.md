@@ -25,3 +25,8 @@ Operational scripts for database maintenance and production infrastructure.
 ## 2026-09-10 — ComputeID atomic transition regression harness
 
 `repro-computeid-agent-key-atomic.py` reproduces SCRUM-4535/4536's old split-write failures and tests migration `0448` with concurrent real PostgreSQL sessions, injected key-write failure, exact retry, snapshot/binding checks, key ownership, terminal revocation, service-only ACL and rollback/reapply. Run with Python 3 and an already-present Docker `postgres:17` image; `--output` optionally writes a JSON receipt. It creates and removes only its own unique container (`--network none`, no published port, temporary data), accepts no external database target, and never touches a shared local stack or hosted project. It uses exact baseline table/enum definitions and CHECKs, not a full catalog/RLS replay.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+`repro-computeid-agent-key-atomic.py` now verifies terminal service-owned passport authority, first-row lock races in both directions, atomic admission/audits, unknown-response retries, transition audit rollback, role isolation and concurrent DLQ deduplication alongside the original agent/key races. It uses a private temporary PostgreSQL fixture and removes it; complete committed Supabase schema replay remains a separate release requirement.

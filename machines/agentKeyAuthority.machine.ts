@@ -10,7 +10,6 @@ const wasRevoked = variable("wasRevoked");
 const lock = variable("lock");
 const mintPhase = variable("mintPhase");
 const revokePhase = variable("revokePhase");
-const cleanupPhase = variable("cleanupPhase");
 const patchPending = variable("patchPending");
 const a = param("a");
 const at = (value: ReturnType<typeof variable>) => index(value, a);
@@ -19,8 +18,9 @@ const unlocked = is(lock, "NONE");
 
 /**
  * SCRUM-4558 / SCRUM-4559: one visible admission, one key, a provider revoke,
- * a stale administrator PATCH and compensation for an uncertain mint response.
- * The parent SHARE/UPDATE locks serialize mint, revoke and cleanup. PATCH's
+ * and a stale administrator PATCH. Atomic admission is modeled separately in
+ * passportAdmission.machine.ts; the previous compensating delete was removed.
+ * The parent SHARE/UPDATE locks serialize mint and revoke. PATCH's
  * terminal-state trigger reads the version actually updated, not its old read.
  *
  * This bounded model covers committed rows and transaction interleavings. It
@@ -34,14 +34,13 @@ export const agentKeyAuthorityMachine = defineMachine({
   version: 2,
   moduleName: "AgentKeyAuthority",
   variables: {
-    status: mapVar("Agents", enumType("ACTIVE", "REVOKED", "DELETED"), lit("ACTIVE")),
+    status: mapVar("Agents", enumType("ACTIVE", "REVOKED"), lit("ACTIVE")),
     keyExists: mapVar("Agents", boolType(), lit(false)),
     keyActive: mapVar("Agents", boolType(), lit(false)),
     wasRevoked: mapVar("Agents", boolType(), lit(false)),
-    lock: mapVar("Agents", enumType("NONE", "MINT", "REVOKE", "CLEANUP"), lit("NONE")),
+    lock: mapVar("Agents", enumType("NONE", "MINT", "REVOKE"), lit("NONE")),
     mintPhase: mapVar("Agents", enumType("READ", "LOCKED", "DONE"), lit("READ")),
     revokePhase: mapVar("Agents", enumType("READ", "LOCKED", "DONE"), lit("READ")),
-    cleanupPhase: mapVar("Agents", enumType("READ", "LOCKED", "DONE"), lit("READ")),
     // The PATCH has already observed ACTIVE before any concurrent write.
     patchPending: mapVar("Agents", boolType(), lit(true)),
   },
@@ -76,20 +75,6 @@ export const agentKeyAuthorityMachine = defineMachine({
       params: { a: "Agents" }, guard: and(is(lock, "REVOKE"), is(revokePhase, "LOCKED")),
       updates: [setMap("lock", a, lit("NONE")), setMap("revokePhase", a, lit("READ"))],
     },
-    lockCleanup: {
-      params: { a: "Agents" }, guard: and(unlocked, is(cleanupPhase, "READ")),
-      updates: [setMap("lock", a, lit("CLEANUP")), setMap("cleanupPhase", a, lit("LOCKED"))],
-    },
-    deleteEmptyAdmission: {
-      params: { a: "Agents" }, guard: and(is(lock, "CLEANUP"), is(cleanupPhase, "LOCKED"),
-        is(status, "ACTIVE"), not(at(keyExists))),
-      updates: [setMap("status", a, lit("DELETED")), setMap("lock", a, lit("NONE")), setMap("cleanupPhase", a, lit("DONE"))],
-    },
-    preserveAdmission: {
-      params: { a: "Agents" }, guard: and(is(lock, "CLEANUP"), is(cleanupPhase, "LOCKED"),
-        or(not(is(status, "ACTIVE")), at(keyExists))),
-      updates: [setMap("lock", a, lit("NONE")), setMap("cleanupPhase", a, lit("DONE"))],
-    },
     applyStalePatch: {
       params: { a: "Agents" }, guard: and(unlocked, at(patchPending), is(status, "ACTIVE")),
       updates: [setMap("status", a, lit("ACTIVE")), setMap("patchPending", a, lit(false))],
@@ -101,17 +86,14 @@ export const agentKeyAuthorityMachine = defineMachine({
   },
   invariants: {
     activeKeyRequiresActiveAgent: {
-      description: "A late mint cannot install an active key under a revoked or deleted agent",
+      description: "A late mint cannot install an active key under a revoked agent",
       formula: forall("Agents", "a", or(not(at(keyActive)), and(at(keyExists), is(status, "ACTIVE")))),
     },
     revocationRemainsTerminal: {
-      description: "Neither a stale PATCH nor compensation can undo an observed revocation",
+      description: "A stale PATCH cannot undo an observed revocation",
       formula: forall("Agents", "a", or(not(at(wasRevoked)), is(status, "REVOKED"))),
     },
-    cleanupNeverDetachesCommittedKey: {
-      description: "An uncertain INSERT response cannot turn its key into an organization key via ON DELETE SET NULL",
-      formula: forall("Agents", "a", or(not(at(keyExists)), not(is(status, "DELETED")))),
-    },
+
   },
   proof: {
     defaultTier: "pr",

@@ -231,3 +231,8 @@ Schema application and isolated verification remain required before deployment.
 ## 2026-09-05 — Adobe registration challenge reads validated configuration
 
 The GET challenge uses config.adobeSignClientId, populated by the existing Zod configuration loader. Request-time process.env reads can diverge from the validated startup configuration. Regressions prove the configured ID remains authoritative after raw environment mutation and an absent configured ID still returns 503 without echo. Constant-time comparison and notification HMAC behavior are unchanged.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+Historical review repairs reject provider timestamps beyond five minutes, canonicalize accepted timestamps, preserve terminal revocation regardless of ordering floors, and prevent equal-time reinstatement (SCRUM-4567 / SCRUM-4571). Revocation records service-owned passport authority before enumerating agents, including orphans; retries still enforce agents after partially completed tenant updates. Transition audits commit inside the RPC. `enqueue_computeid_failure` serializes duplicate payload/reason diagnostics without deleting historical evidence. Production and handler tests share `computeidWebhookBody`, including 413, suffix 404 and disabled-gate 503 behavior. Free-text reasons and their lengths are not persisted.
