@@ -13,11 +13,20 @@
 
 import type { Env } from './env';
 
-const TOOL_LIMITS_RPM: Record<string, number> = {
+/**
+ * Per-minute cap by tool name, plus the `default` fallback.
+ *
+ * EXPORTED so a test can pin every key to a real `TOOL_DEFINITIONS` name.
+ * A key miss is silent — the lookup falls through to `default: 1000`, the
+ * intended per-tool cap simply never applies, and nothing errors. The
+ * 2026-09-02 `arkova_`-prefix rename is precisely the kind of edit that can
+ * strand a key here.
+ */
+export const TOOL_LIMITS_RPM: Record<string, number> = {
   default: 1000,
   nessie_query: 100,        // Gemini budget protection
-  oracle_batch_verify: 10,  // 25× verify multiplier per call
-  anchor_document: 60,      // write path
+  arkova_oracle_batch_verify: 10,  // 25× verify multiplier per call
+  arkova_anchor_document: 60,      // write path
 };
 
 export type RateLimitDecision =

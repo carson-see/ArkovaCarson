@@ -4,9 +4,17 @@ Zapier action definitions for Arkova (INT-05).
 
 ## Files
 - **`anchorDocument.ts`** — submits a SHA-256 fingerprint for Bitcoin anchoring via `POST /api/v1/anchor`.
-- **`verifyCredential.ts`** — verifies a credential by public ID via `GET /api/v1/verify/:publicId`.
+- **`verifyAnchor.ts`** — verifies an anchor by public ID via `GET /api/v1/verify/:publicId`.
 - **`batchVerify.ts`** — verifies up to 20 credentials in one request via `POST /api/v1/verify/batch`.
 
 ## Conventions
 - Zapier users compute the hash externally or in a prior Zap step; actions receive the pre-computed fingerprint.
 - Error responses are mapped to `z.errors.Error` for Zapier's error UX.
+
+## 2026-09-10 — historical action name preserved
+
+The following entry records the name before the 2026-09-02 rename. It is
+superseded by `verifyAnchor.ts` in the current file list above; do not recreate
+the old action or filename.
+
+- **`verifyCredential.ts`** — verifies a credential by public ID via `GET /api/v1/verify/:publicId`.

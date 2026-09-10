@@ -76,15 +76,21 @@ const DEFAULT_RETRY_CONFIG: Required<Omit<RetryConfig, 'sleep'>> = {
 
 export class Arkova {
   private readonly baseUrl: string;
-  private readonly apiKey?: string;
-  private readonly x402Config?: ArkovaConfig['x402'];
+  // ECMAScript private fields (not TS `private`): a `private` class member is
+  // still an own, enumerable property at runtime, so `JSON.stringify(client)`
+  // and `Object.keys(client)` would otherwise leak the raw API key and the
+  // x402 payer address. `#`-fields are truly inaccessible outside the class
+  // body and are never enumerated by either. Requires target >= ES2022
+  // (packages/sdk/tsconfig.json already sets `"target": "ES2022"`).
+  #apiKey?: string;
+  #x402Config?: ArkovaConfig['x402'];
   private readonly retry: Required<Omit<RetryConfig, 'sleep'>>;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(config: ArkovaConfig = {}) {
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
-    this.apiKey = config.apiKey;
-    this.x402Config = config.x402;
+    this.#apiKey = config.apiKey;
+    this.#x402Config = config.x402;
     this.retry = {
       retries: config.retry?.retries ?? DEFAULT_RETRY_CONFIG.retries,
       baseDelayMs: config.retry?.baseDelayMs ?? DEFAULT_RETRY_CONFIG.baseDelayMs,
@@ -112,10 +118,12 @@ export class Arkova {
   async anchor(data: string | ArrayBuffer): Promise<AnchorReceipt> {
     const fp = await this.fingerprint(data);
 
+    // Idempotent server-side: the same fingerprint returns the same publicId
+    // (README "Idempotency"), so a transient 429/5xx is safe to retry.
     const response = await this.fetch('/api/v1/anchor', {
       method: 'POST',
       body: JSON.stringify({ fingerprint: fp }),
-    });
+    }, { idempotent: true });
 
     const result = await jsonOrThrow<{
       public_id: string;
@@ -197,6 +205,8 @@ export class Arkova {
 
     const rows = await Promise.all(inputs.map((input, i) => this.buildBulkAnchorRow(input, i)));
 
+    // Idempotent server-side on fingerprint (same rule as `anchor`), so a
+    // transient 429/5xx is safe to retry.
     const response = await this.fetch('/api/v1/anchor/bulk', {
       method: 'POST',
       body: JSON.stringify({
@@ -205,7 +215,7 @@ export class Arkova {
         duplicate_strategy: options.duplicateStrategy,
         batch_id: options.batchId,
       }),
-    });
+    }, { idempotent: true });
 
     const result = await jsonOrThrow<{
       batch_id: string | null;
@@ -269,7 +279,7 @@ export class Arkova {
           credentialType: 'UNKNOWN',
           issuedDate: null,
           expiryDate: null,
-          anchorTimestamp: '',
+          anchorTimestamp: null,
           networkReceiptId: null,
           recordUri: '',
         };
@@ -305,10 +315,12 @@ export class Arkova {
       );
     }
 
+    // A read expressed as POST (the body carries the ID list) and served on
+    // the 10 req/min batch tier — retrying a 429/5xx creates nothing.
     const response = await this.fetch('/api/v1/verify/batch', {
       method: 'POST',
       body: JSON.stringify({ public_ids: publicIds }),
-    });
+    }, { idempotent: true });
 
     // Server returns 202 with { job_id, total, expires_at } for async jobs.
     // This should not happen given the client-side cap above, but guard
@@ -681,31 +693,49 @@ export class Arkova {
 
   // ── Internal fetch wrapper ──────────────────────────────────────────
 
-  private async fetch(path: string, init?: RequestInit): Promise<Response> {
+  /**
+   * Internal fetch wrapper with retry handling.
+   *
+   * Retry rule: a request is retried on a transient response (429/500/502/
+   * 503/504) or a network error when its method is safe (GET/HEAD/OPTIONS)
+   * **or** the call site opts in with `{ idempotent: true }`. The opt-in
+   * exists for reads and writes that are expressed as POST but are
+   * idempotent server-side (`verifyBatch`, `anchor`, `anchorBulk`).
+   * Non-idempotent writes (webhook create/update/delete/test) never retry.
+   */
+  private async fetch(
+    path: string,
+    init?: RequestInit,
+    options?: { idempotent?: boolean },
+  ): Promise<Response> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(init?.headers as Record<string, string> ?? {}),
     };
 
-    if (this.apiKey) {
-      headers['X-API-Key'] = this.apiKey;
+    if (this.#apiKey) {
+      headers['X-API-Key'] = this.#apiKey;
     }
 
     const requestInit = { ...init, headers };
     const method = (requestInit.method ?? 'GET').toUpperCase();
+    const retryable = isSafeRetryMethod(method) || options?.idempotent === true;
     let attempt = 0;
 
     while (true) {
       try {
         const response = await globalThis.fetch(url, requestInit);
-        if (!shouldRetryResponse(response) || attempt >= this.retry.retries) {
+        if (!retryable || !shouldRetryResponse(response) || attempt >= this.retry.retries) {
           return response;
         }
+        // The retried response is discarded — release its body so the
+        // connection is not held open until GC.
+        await response.body?.cancel().catch(() => {});
         await this.sleep(retryDelayMs(response, attempt, this.retry));
         attempt += 1;
       } catch (err) {
-        if (!isSafeRetryMethod(method) || attempt >= this.retry.retries) {
+        if (!retryable || attempt >= this.retry.retries) {
           throw err;
         }
         await this.sleep(backoffDelayMs(attempt, this.retry));
@@ -845,6 +875,21 @@ function mapRichVerificationFields(row: Record<string, unknown>): RichVerificati
     fileSize: nullableNumber(row.file_size),
     confidenceScores: nullableRecord(row.confidence_scores),
     subType: nullableString(row.sub_type),
+    bitcoinBlock: nullableNumber(row.bitcoin_block),
+    merkleProofHash: nullableString(row.merkle_proof_hash),
+    fingerprintSource: row.fingerprint_source as RichVerificationFields['fingerprintSource'] ?? null,
+    // proof_availability / fingerprint_rederivability (+ their notes) and the
+    // FERPA fields are OMITTED by the worker rather than sent as `null` when
+    // not applicable (see verify.ts field docs) — pass through as `undefined`
+    // when absent instead of coercing to `null`, or the SDK would claim a
+    // meaning ("unclassified") the server never asserted.
+    proofAvailability: row.proof_availability as RichVerificationFields['proofAvailability'] | undefined,
+    proofAvailabilityNote: row.proof_availability_note as string | undefined,
+    fingerprintRederivability:
+      row.fingerprint_rederivability as RichVerificationFields['fingerprintRederivability'] | undefined,
+    fingerprintRederivabilityNote: row.fingerprint_rederivability_note as string | undefined,
+    ferpaNotice: row.ferpa_notice as string | undefined,
+    directoryInfoSuppressed: row.directory_info_suppressed as boolean | undefined,
   };
 }
 
@@ -858,7 +903,7 @@ function mapVerificationResult(row: Record<string, unknown>): VerificationResult
     credentialType: row.credential_type as string,
     issuedDate: (row.issued_date as string | null) ?? null,
     expiryDate: (row.expiry_date as string | null) ?? null,
-    anchorTimestamp: row.anchor_timestamp as string,
+    anchorTimestamp: nullableString(row.anchor_timestamp),
     networkReceiptId: (row.network_receipt_id as string | null) ?? null,
     recordUri: row.record_uri as string,
   };
@@ -982,15 +1027,15 @@ function mapMerkleProofEntries(value: unknown): MerkleProofEntry[] | null {
   return out;
 }
 
-/** A 32-byte hash in display hex — the only shape a bitcoin-tree sibling takes. */
+/** A 32-byte hash in display hex — the only shape a network-tree sibling takes. */
 const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
 
 /**
- * B3 (migration 0427): map the layer-2 BITCOIN-tree inclusion evidence as ONE
+ * B3 (migration 0427): map the layer-2 network-tree inclusion evidence as ONE
  * fact.
  *
  * `tx_inclusion_branch` + `tx_block_index` are what let a holder close the
- * transaction→block half of the proof LOCALLY instead of asking a Bitcoin node
+ * receipt→block half of the proof LOCALLY instead of asking a network node
  * — the exact third-party dependency the self-contained bundle exists to
  * remove. `mapProofBundle` builds from a hard key allow-list, so until they
  * were named here the API emitted them and every SDK consumer silently
@@ -1007,10 +1052,10 @@ const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
  * Anything else ⇒ BOTH null. Unlike the bundle's required members this does
  * NOT fail the whole bundle closed: the fields are additive and nullable
  * (§1.8), so a record confirmed before 0427 must keep getting a bundle. An
- * EMPTY branch with index 0 is COMPLETE evidence (a single-transaction block
+ * EMPTY branch with index 0 is COMPLETE evidence (a single-receipt block
  * has no siblings), never missing.
  *
- * ORIENTATION: byte-reversed (display) hex under Bitcoin's double-SHA256
+ * ORIENTATION: byte-reversed (display) hex under the network’s double-SHA256
  * positional rule — a DIFFERENT convention from `merkleProof`, the layer-1 app
  * tree. Not interchangeable, hence the distinct name.
  */

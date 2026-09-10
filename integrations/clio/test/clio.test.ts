@@ -21,7 +21,32 @@ const TEST_CONFIG: ClioConfig = {
   arkovaApiKey: 'ak_test_clio',
   arkovaBaseUrl: 'https://test.arkova.ai',
   clioBaseUrl: 'https://test.clio.com/api/v4',
+  webhookSecret: 'clio-unit-test-webhook-secret',
 };
+
+/**
+ * Compute the signature Clio would present for `rawBody` — the same
+ * HMAC-SHA256 hex digest ClioWebhookHandler.validateSignature recomputes.
+ * Tests sign their own fixtures rather than hardcoding a digest, so a change
+ * to the algorithm fails loudly instead of silently accepting a stale value.
+ */
+async function signBody(rawBody: string, secret = TEST_CONFIG.webhookSecret!): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(rawBody));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Serialize an event the way Clio would POST it. */
+function body(event: ClioWebhookEvent): string {
+  return JSON.stringify(event);
+}
 
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);
@@ -257,7 +282,8 @@ describe('ClioWebhookHandler', () => {
       data: { id: 1001, type: 'Document', url: '' },
       created_at: new Date().toISOString(),
     };
-    const result = await handler.handleEvent(event);
+    const raw = body(event);
+    const result = await handler.handleWebhook(raw, await signBody(raw));
     expect(result.processed).toBe(true);
     expect(result.action).toBe('ignored_deletion');
   });
@@ -295,7 +321,8 @@ describe('ClioWebhookHandler', () => {
       data: { id: 2001, type: 'Document', url: '' },
       created_at: new Date().toISOString(),
     };
-    const result = await handler.handleEvent(event);
+    const raw = body(event);
+    const result = await handler.handleWebhook(raw, await signBody(raw));
     expect(result.action).toBe('auto_anchored');
     expect(onAnchor).toHaveBeenCalledWith(
       expect.objectContaining({ arkova_public_id: 'ARK-AUTO-001' }),
@@ -309,7 +336,8 @@ describe('ClioWebhookHandler', () => {
       data: { id: 2001, type: 'Document', url: '' },
       created_at: new Date().toISOString(),
     };
-    const result = await handler.handleEvent(event);
+    const raw = body(event);
+    const result = await handler.handleWebhook(raw, await signBody(raw));
     expect(result.action).toBe('no_action');
     expect(mockFetch).not.toHaveBeenCalled();
   });
@@ -327,8 +355,164 @@ describe('ClioWebhookHandler', () => {
       data: { id: 3001, type: 'Document', url: '' },
       created_at: new Date().toISOString(),
     };
-    const result = await handler.handleEvent(event);
+    const raw = body(event);
+    const result = await handler.handleWebhook(raw, await signBody(raw));
     expect(result.action).toBe('anchor_failed');
     expect(onError).toHaveBeenCalled();
+  });
+});
+
+// ── Inbound webhook authentication (SCRUM-3901) ──────────────────────
+//
+// Until 2026-09-05 `validateSignature` existed but had ZERO callers and
+// compared with `===`. The signature check is now on the only entry point,
+// fails closed, and compares constant-time.
+
+describe('ClioWebhookHandler — inbound signature auth', () => {
+  const event: ClioWebhookEvent = {
+    type: 'document.deleted',
+    data: { id: 4001, type: 'Document', url: '' },
+    created_at: '2026-09-05T00:00:00.000Z',
+  };
+
+  it('processes an event presenting a valid signature', async () => {
+    const handler = new ClioWebhookHandler(TEST_CONFIG);
+    const raw = body(event);
+
+    const result = await handler.handleWebhook(raw, await signBody(raw));
+
+    expect(result.processed).toBe(true);
+    expect(result.action).toBe('ignored_deletion');
+  });
+
+  it('rejects a missing signature', async () => {
+    const handler = new ClioWebhookHandler(TEST_CONFIG);
+
+    const result = await handler.handleWebhook(body(event), undefined);
+
+    expect(result.processed).toBe(false);
+    expect(result.action).toBe('rejected_unauthenticated');
+  });
+
+  it('rejects an empty-string signature', async () => {
+    const handler = new ClioWebhookHandler(TEST_CONFIG);
+
+    const result = await handler.handleWebhook(body(event), '');
+
+    expect(result.processed).toBe(false);
+    expect(result.action).toBe('rejected_unauthenticated');
+  });
+
+  it('rejects a tampered signature', async () => {
+    const handler = new ClioWebhookHandler(TEST_CONFIG);
+    const raw = body(event);
+    const valid = await signBody(raw);
+    const tampered = (valid[0] === '0' ? '1' : '0') + valid.slice(1);
+
+    const result = await handler.handleWebhook(raw, tampered);
+
+    expect(result.processed).toBe(false);
+    expect(result.action).toBe('rejected_unauthenticated');
+  });
+
+  it('rejects a tampered BODY carrying the signature of the original', async () => {
+    const handler = new ClioWebhookHandler(TEST_CONFIG);
+    const raw = body(event);
+    const signature = await signBody(raw);
+    const swapped = body({ ...event, data: { ...event.data, id: 9999 } });
+
+    const result = await handler.handleWebhook(swapped, signature);
+
+    expect(result.processed).toBe(false);
+    expect(result.action).toBe('rejected_unauthenticated');
+  });
+
+  it('rejects a signature computed with the wrong secret', async () => {
+    const handler = new ClioWebhookHandler(TEST_CONFIG);
+    const raw = body(event);
+
+    const result = await handler.handleWebhook(raw, await signBody(raw, 'not-the-secret'));
+
+    expect(result.processed).toBe(false);
+    expect(result.action).toBe('rejected_unauthenticated');
+  });
+
+  it('fails closed when no webhookSecret is configured, even for a well-formed signature', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const handler = new ClioWebhookHandler({ ...TEST_CONFIG, webhookSecret: undefined });
+      const raw = body(event);
+
+      const result = await handler.handleWebhook(raw, await signBody(raw));
+
+      expect(result.processed).toBe(false);
+      expect(result.action).toBe('rejected_unauthenticated');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('never anchors on an unauthenticated document.created', async () => {
+    const onAnchor = vi.fn();
+    const handler = new ClioWebhookHandler({ ...TEST_CONFIG, autoAnchor: true }, { onAnchor });
+    const created: ClioWebhookEvent = {
+      type: 'document.created',
+      data: { id: 5001, type: 'Document', url: '' },
+      created_at: '2026-09-05T00:00:00.000Z',
+    };
+
+    const result = await handler.handleWebhook(body(created), 'deadbeef');
+
+    expect(result.action).toBe('rejected_unauthenticated');
+    expect(onAnchor).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a body that is not valid JSON, without processing anything', async () => {
+    const handler = new ClioWebhookHandler(TEST_CONFIG);
+    const raw = 'not json at all';
+
+    const result = await handler.handleWebhook(raw, await signBody(raw));
+
+    expect(result.processed).toBe(false);
+    expect(result.action).toBe('rejected_malformed_payload');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('validateSignature accepts a correct digest and rejects a wrong one', async () => {
+    const raw = body(event);
+    const secret = 'a-secret';
+
+    expect(await ClioWebhookHandler.validateSignature(raw, await signBody(raw, secret), secret)).toBe(true);
+    expect(await ClioWebhookHandler.validateSignature(raw, 'ff'.repeat(32), secret)).toBe(false);
+    // Length mismatch must not throw.
+    expect(await ClioWebhookHandler.validateSignature(raw, 'short', secret)).toBe(false);
+  });
+
+  it('warns once at construction when no webhookSecret is configured, never printing config', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      new ClioWebhookHandler({ ...TEST_CONFIG, webhookSecret: undefined });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const printed = warn.mock.calls.flat().map(String).join(' ');
+      expect(printed).toContain('webhookSecret');
+      expect(printed).toContain('rejected_unauthenticated');
+      expect(printed).not.toContain(TEST_CONFIG.webhookSecret as string);
+      expect(printed).not.toContain('clio-test-secret');
+      expect(printed).not.toContain('ak_test_clio');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not warn when a webhookSecret IS configured', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      new ClioWebhookHandler(TEST_CONFIG);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

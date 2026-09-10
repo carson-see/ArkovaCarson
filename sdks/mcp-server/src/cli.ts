@@ -30,7 +30,7 @@ import { TOOL_DEFINITIONS, handleToolCall } from './index.js';
 
 // Keep in sync with package.json "version" — no runtime JSON import here to
 // avoid ESM import-assertion version skew across Node LTS releases.
-const SERVER_VERSION = '2.2.0';
+const SERVER_VERSION = '3.0.0';
 
 /**
  * Builds a Server wired to TOOL_DEFINITIONS / handleToolCall. Exported

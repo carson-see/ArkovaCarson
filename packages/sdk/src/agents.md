@@ -80,3 +80,13 @@ worker map and compares this union against it from inside the required root `Tes
 
 When you add a member here, add it in the worker's declaration order — the drift check compares the
 code mirrors as ordered arrays.
+
+## PR #2695 — observed timestamp contract
+
+`VerificationResult.anchorTimestamp` is `string | null`, matching the other SDK timestamp models. `verify()` and `verifyBatch()` normalize omitted/null wire values to null; a local fingerprint mismatch also returns null, never an empty substitute. Tests cover both verification entry points, the local rejection path, and the five existing detail/fingerprint readers. SDK source/build repair is distinct from publishing a new npm version; this PR does not publish a package.
+
+The 2026-09-10 SDK suite also exposed stale terminology expectations from migration 0427. Corrected its proof JSDoc to use network/receipt wording and reviewed the additional technical `hash`/`block` references in sibling validation and inclusion-position documentation. The forbidden-term scanner is unchanged.
+
+## PR #2589 — integrate the observed timestamp contract
+
+The current-main merge preserves the nullable observed timestamp from #2695 alongside the rich verification fields. Reviewed terminology counts combine migration0427 technical proof references with the additional documented `merkleProofHash` field; the scanner and strict banned list remain unchanged. The combined SDK suite and build qualify the merged mapping.

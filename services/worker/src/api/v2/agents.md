@@ -2,6 +2,26 @@
 
 v2 agent-tool API surface. Designed for AI agents + future MCP parity. Per-scope rate limits (see `rateLimit.ts`). Banned-field guard enforces no internal UUIDs leak to response shapes.
 
+## 2026-09-05 — `openapi.ts`: `tool_name` took the `arkova_` prefix, `operationId` did NOT
+
+`x-agent-usage.tool_name` on every agent operation is now `arkova_<operationId>`; the
+`operationId` values (`search`, `verify`, `get_anchor`, `list_orgs`, `get_organization`,
+`get_record`, `get_fingerprint`, `get_document`) and the v2 REST paths are unchanged and
+must stay unchanged — generated clients key off them, and §1.8 freezes the published
+schema. The extension is `x-` vendor metadata with no runtime or SDK reader (only the CI
+drift guard and two test files), which is why moving it is not a §1.8 break; the full
+ruling is in `docs/api/agents.md` (2026-09-05).
+
+`scripts/ci/check-api-contract-drift.ts` now DERIVES the expected tool name as
+`arkova_${operationId}` instead of comparing the two for equality, so the two identifiers
+stay pinned to each other across a fixed prefix rather than being allowed to drift apart.
+
+`agentWorkflows.test.ts` gained a check that reads the `MCP:` fenced blocks of
+`docs/api/agent-workflows.md` and rejects any call whose name is not a registered tool.
+The pre-existing surface-matrix test read the doc's TABLE; the fenced blocks are what an
+agent copies, and they still carried bare names. REST paths and SDK method calls in the
+adjacent blocks are deliberately out of scope — those are correct bare.
+
 ## Files
 - `router.ts` — mounts v2 endpoints. **All paths are at the root of `/api/v2/`** (e.g. `/api/v2/orgs`, `/api/v2/anchors/<public_id>`), NOT under `/api/v2/agent/`. Returns problem+json 404 with `type=https://arkova.ai/problems/not-found` on path mismatch.
 - **`rateLimit.ts` (SCRUM-1731 contract-locked)** — `DEFAULT_V2_SCOPE_RATE_LIMITS`: read:search 1000, read:records 500, read:orgs 500, write:anchors 100, admin:rules 50. `setHeaders()` emits `X-RateLimit-{Limit,Remaining,Reset}` on every response. 429 includes `Retry-After` via `ProblemError.rateLimited`. Stores: `MemoryV2RateLimitStore` + `UpstashV2RateLimitStore` (bounded eviction).
@@ -36,3 +56,18 @@ revision `arkova-worker-01322-tol` at 100% traffic (`gcloud run services describ
 So the older framing — "v2 already ships the correct design, v1 does not" — is now stale. **The two
 stores are at parity and must be changed together.** A fix applied to one and not the other
 re-opens the divergence this PR closed; `utils/agents.md` carries the v1-side note.
+
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `anchor_timestamp` comes from the chain, not `created_at`
+
+`agentTools.ts` (fingerprint verify) published `data.created_at` and did not even select
+`chain_timestamp`; `resourceDetails.ts` had a silent `stringOrNull(row.chain_timestamp) ??
+stringOrNull(row.created_at)` fallback. Both now call `publicAnchorTimestamp` from
+`../anchorTimestamp.js`.
+
+The v2 contracts declare this field **nullable**, so unmeasured is `null` here — not omitted as on
+the frozen v1 envelope. `mapPublicAnchor` was already correct because it reads the
+`get_public_anchor()` RPC row; that is the difference between the two paths in this folder and it is
+worth noticing before "harmonising" them.
+
+The `?? created_at` shape is the one to reject in review: it reads as correct and misreports only on
+the subset of rows where `chain_timestamp` is NULL, so a spot check will not catch it.
