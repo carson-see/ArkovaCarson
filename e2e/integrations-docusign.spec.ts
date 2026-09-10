@@ -23,7 +23,23 @@ type DocusignConnectionFixture = {
 async function routeDocusignConnection(page: Page, orgId: string, connection: DocusignConnectionFixture) {
   await page.route('**/rest/v1/org_integrations*', async (route) => {
     const url = new URL(route.request().url());
-    const isDocusignQuery = url.searchParams.get('provider') === 'eq.docusign'
+    const provider = url.searchParams.get('provider');
+
+    // A SIBLING signature connector now renders on this same settings page
+    // (`AdobeSignConnectorCard`, added with the Adobe Sign OAuth connect flow)
+    // and issues an identically shaped `org_integrations` query through the
+    // shared `useSignatureConnection` hook — same `select`, same
+    // `revoked_at=is.null`, only `provider=eq.adobe_sign` differs. The
+    // `select` fallback below therefore claimed the Adobe query as a DocuSign
+    // one and then threw on its own `provider` assertion. Hand any explicitly
+    // non-DocuSign provider straight back before the fallback runs; the
+    // fallback still covers a DocuSign query that carries no provider filter.
+    if (provider !== null && provider !== 'eq.docusign') {
+      await route.continue();
+      return;
+    }
+
+    const isDocusignQuery = provider === 'eq.docusign'
       || url.searchParams.get('select')?.includes('account_id');
 
     if (!isDocusignQuery) {

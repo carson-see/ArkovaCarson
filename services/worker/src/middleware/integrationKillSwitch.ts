@@ -15,6 +15,9 @@ type FlagName =
   | 'ENABLE_DRIVE_WEBHOOK'            // same stack
   | 'ENABLE_DOCUSIGN_OAUTH'           // pre-emptive while we audit token-storage path
   | 'ENABLE_DOCUSIGN_WEBHOOK'         // cross-org lookup with no org_id filter
+  | 'ENABLE_ADOBE_SIGN_OAUTH'         // SCRUM-1148 follow-up: new connect flow, default off until
+                                      // an Adobe application is registered and its account tier is
+                                      // confirmed to grant webhook_read/write/retention
   | 'ENABLE_ATS_WEBHOOK'              // multi-secret iteration = tenant isolation bypass
   | 'ENABLE_GRC_INTEGRATIONS'         // OAuth tokens stored cleartext
   | 'ENABLE_MICROSOFT_GRAPH_WEBHOOK'; // SCRUM-1138 R2 closeout — clientState shared secret + handshake
