@@ -12,6 +12,7 @@
  * Stripe, or Bitcoin (CLAUDE.md §1.7).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { callRpc } from '../utils/rpc.js';
 
 // The drain module imports db/logger/batch-anchor/sentry at module load; those
 // transitively load worker config (which needs prod env). Every dep is injected
@@ -61,6 +62,7 @@ interface Row {
   metadata: Record<string, unknown>;
   anchor_id: string | null;
   credit_deduction_id: string | null;
+  updated_at: string;
 }
 
 function makeRow(over: Partial<Row> & Pick<Row, 'id' | 'org_id'>): Row {
@@ -73,8 +75,17 @@ function makeRow(over: Partial<Row> & Pick<Row, 'id' | 'org_id'>): Row {
     metadata: {},
     anchor_id: null,
     credit_deduction_id: null,
+    updated_at: '2026-09-02T00:00:00.000Z',
     ...over,
   };
+}
+
+function publishLinked(rows: Row[], captured: Pick<Row, 'id' | 'anchor_id'>) {
+  const target = rows.find((row) => row.id === captured.id)!;
+  const anchorId = target.anchor_id ?? (target.id === ART_2 ? ANCHOR_2 : ANCHOR_1);
+  const created = target.anchor_id === null;
+  Object.assign(target, { status: 'materialized', anchor_id: anchorId });
+  return { outcome: 'linked' as const, anchorId, anchorPublicId: 'pub-1', created };
 }
 
 interface Harness {
@@ -164,7 +175,7 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
 
   const materialize =
     (overrides.materializeAnchor as ReturnType<typeof vi.fn>) ??
-    vi.fn(async (row: Row) => ({ anchorId: row.id === ART_2 ? ANCHOR_2 : ANCHOR_1, anchorPublicId: 'pub-1' }));
+    vi.fn(async (row: Row) => publishLinked(rows, row));
 
   const debit =
     (overrides.debitAndEnqueueAnchor as ReturnType<typeof vi.fn>) ??
@@ -212,6 +223,39 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
 beforeEach(() => vi.clearAllMocks());
 
 describe('drainConnectorArtifactsForOrg', () => {
+  it('lost debit response after commit preserves the linked artifact for idempotent recovery', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    const injected: Partial<ConnectorArtifactDrainDeps> = { ...h.deps };
+    delete injected.debitAndEnqueueAnchor; // exercise the real default RPC adapter
+    let committedDebits = 0;
+    vi.mocked(callRpc).mockImplementationOnce(async (_db, name) => {
+      expect(name).toBe('debit_and_enqueue_anchor');
+      committedDebits += 1; // server commit occurs before the connection drops
+      return { data: null, error: { message: 'fetch failed after committed debit' } };
+    });
+    const result = await drainConnectorArtifactsForOrg(ORG_A, injected);
+    expect(committedDebits).toBe(1);
+    expect(h.rows[0].status).toBe('materialized');
+    expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
+    expect(result.failed).toBe(0);
+    expect(h.batchAnchor).not.toHaveBeenCalled();
+  });
+  it.each([null, {}, { success: 'true' }, { success: false, error: 'unknown_future_reply' }])(
+    'an unrecognized debit reply %j preserves the linked artifact', async (data) => {
+      const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+      const injected: Partial<ConnectorArtifactDrainDeps> = { ...h.deps };
+      delete injected.debitAndEnqueueAnchor;
+      vi.mocked(callRpc).mockResolvedValueOnce({ data, error: null });
+      const result = await drainConnectorArtifactsForOrg(ORG_A, injected);
+      expect(h.rows[0].status).toBe('materialized');
+      expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
+      expect(result.failed).toBe(0);
+      expect(h.batchAnchor).not.toHaveBeenCalled();
+      expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'debit_outcome_uncertain' }));
+    },
+  );
+
+
   it('drains a pending row: claim → materialize → charge at securing → anchored', async () => {
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'pending' })]);
 
@@ -299,9 +343,155 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.rows[0].status).toBe('processing');
   });
 
+  // SECURITY (code-review finding, 2026-09-01): cross-file TOCTOU regression.
+  // Simulates the real attack/failure sequence: a forged inbound row wins the
+  // ON CONFLICT DO NOTHING race and is picked up by the candidate SELECT, but
+  // `docusign-envelope-completed.ts`'s F1-heal (its OWN `WHERE anchor_id IS
+  // NULL` UPDATE, which can land on an unclaimed row at any time) overwrites
+  // the fingerprint + strips the declared-inbound markers BEFORE this row's
+  // claim CAS runs. The materialized anchor must carry the HEALED (verified)
+  // fingerprint and metadata — never the forged batch-read snapshot. This test
+  // would have FAILED against the pre-fix code, which passed the id-only
+  // candidate list's era of `row` — i.e. content read once, at batch-SELECT
+  // time — straight into materialization, bypassing whatever `claimRow`'s own
+  // CAS UPDATE actually saw.
+  it('TOCTOU regression: materializes from the row content AS OF THE CLAIM, not the batch-read snapshot, when a provenance heal lands in between', async () => {
+    const FORGED_FP = 'f'.repeat(64);
+    const VERIFIED_FP = 'e'.repeat(64);
+    const row = makeRow({
+      id: ART_1,
+      org_id: ORG_A,
+      status: 'queued',
+      fingerprint_sha256: FORGED_FP,
+      metadata: { _direction: 'inbound', _sending_account_id: 'acct-FOREIGN' },
+    });
+    const h = makeHarness([row]);
+
+    // Intercept the candidate SELECT's terminal `limit()`. The instant it
+    // resolves — i.e. the instant the batch-read snapshot has been taken —
+    // apply the SAME mutation `docusign-envelope-completed.ts`'s auto-heal
+    // makes to the row: overwrite `fingerprint_sha256` with the verified
+    // value and strip the declared-inbound markers. This models real async
+    // time elapsing between the batch-read and THIS row's claim
+    // (`resolveOrgActorUserId`, `findExistingEnvelopeAnchor`, and — in a
+    // multi-row batch — every earlier row's own awaits), during which the
+    // heal can land.
+    let healApplied = false;
+    const realFrom = h.deps.db.from.bind(h.deps.db);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (h.deps.db as any).from = (table: string) => {
+      const builder = realFrom(table);
+      const origLimit = builder.limit.bind(builder);
+      builder.limit = async (n: number) => {
+        const result = await origLimit(n);
+        if (!healApplied) {
+          healApplied = true;
+          h.rows[0].fingerprint_sha256 = VERIFIED_FP;
+          delete (h.rows[0].metadata as Record<string, unknown>)._direction;
+          delete (h.rows[0].metadata as Record<string, unknown>)._sending_account_id;
+        }
+        return result;
+      };
+      return builder;
+    };
+
+    const materialize = vi.fn(async (r: Row) => publishLinked(h.rows, r));
+    h.deps.materializeAnchor = materialize as unknown as ConnectorArtifactDrainDeps['materializeAnchor'];
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(healApplied).toBe(true);
+    expect(result.claimed).toBe(1);
+    expect(materialize).toHaveBeenCalledTimes(1);
+
+    // The materializer — and therefore the minted anchor's fingerprint — saw
+    // the VERIFIED value, never the forged one the batch SELECT observed.
+    const materializedRow = materialize.mock.calls[0][0] as Row;
+    expect(materializedRow.fingerprint_sha256).toBe(VERIFIED_FP);
+    expect(materializedRow.fingerprint_sha256).not.toBe(FORGED_FP);
+
+    // The heal already stripped `_direction`, so `defaultMaterializeAnchor`'s
+    // `isInboundDeclaredHash` check (which reads `_direction` fresh from
+    // whatever row it is GIVEN) would see no declared-inbound marker here —
+    // the anchor is never stamped 'issuer_record_attestation' for a row this
+    // pass has ALREADY reconciled to a measured value. (`defaultMaterializeAnchor`
+    // itself never asserts the literal 'document_bytes' — §1.5/R19: it did not
+    // do the fetch, so it must not assert a class it did not measure — but the
+    // property under test is the one that matters here: a healed row must
+    // never be mis-classified as a declared/attested source.)
+    expect(materializedRow.metadata._direction).toBeUndefined();
+
+    // Full pipeline completed on the VERIFIED value — the row reached the
+    // terminal `anchored` state via the real anchor, not a forged one.
+    expect(h.rows[0].status).toBe('anchored');
+    expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
+  });
+
+  // SQL validation runs under a row lock before any anchor publication. These
+  // caller tests assert that a rejection cannot trigger debit or a stale write;
+  // the actual transaction interleavings have separate PostgreSQL coverage.
+  it.each(['fingerprint', 'metadata', 'version'] as const)(
+    'atomic rejection after a %s heal leaves the newer row untouched', async (changed) => {
+      const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+      let healed: Row | undefined;
+      h.deps.materializeAnchor = async () => {
+        if (changed === 'fingerprint') h.rows[0].fingerprint_sha256 = FP_2;
+        if (changed === 'metadata') h.rows[0].metadata = { verified: true };
+        if (changed === 'version') h.rows[0].updated_at = '2026-09-05T10:00:00Z';
+        healed = structuredClone(h.rows[0]);
+        return { outcome: 'superseded' };
+      };
+      const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+      expect(h.rows[0]).toEqual(healed);
+      expect(h.rows[0].anchor_id).toBeNull();
+      expect(h.debit).not.toHaveBeenCalled();
+      expect(h.batchAnchor).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ anchored: 0, failed: 0, supersededRequeued: 0 });
+      expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'artifact_snapshot_rejected' }));
+    },
+  );
+
+  it('stale processing lease cannot requeue or fail a newly acquired processing lease', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    let newer: Row | undefined;
+    h.deps.materializeAnchor = async () => {
+      // Reaper + another claim is an ABA status transition: the status is again
+      // processing, but the old caller must not change this newer generation.
+      h.rows[0].updated_at = '2026-09-05T11:00:00Z';
+      h.rows[0].metadata = { owner: 'new-lease' };
+      newer = structuredClone(h.rows[0]);
+      return { outcome: 'superseded' };
+    };
+    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(h.rows[0]).toEqual(newer);
+    expect(h.debit).not.toHaveBeenCalled();
+  });
+
+  it('lost lease leaves a reaper-requeued row untouched and raises a bounded diagnostic', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    h.deps.materializeAnchor = async () => {
+      h.rows[0].status = 'queued';
+      return { outcome: 'lost_lease' };
+    };
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(h.rows[0].status).toBe('queued');
+    expect(result).toMatchObject({ anchored: 0, failed: 0 });
+    expect(h.debit).not.toHaveBeenCalled();
+    expect(h.batchAnchor).not.toHaveBeenCalled();
+    expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'artifact_materialization_uncertain' }));
+  });
+
+  it('an unchanged snapshot publishes, links, debits and anchors', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(result).toMatchObject({ claimed: 1, anchored: 1, supersededRequeued: 0 });
+    expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
+    expect(h.debit).toHaveBeenCalledTimes(1);
+  });
+
   it('charge-happens-once-at-securing: never debits at enqueue/claim, only after materialize', async () => {
     const order: string[] = [];
-    const materialize = vi.fn(async () => { order.push('materialize'); return { anchorId: ANCHOR_1, anchorPublicId: 'p' }; });
+    const materialize = vi.fn(async (row: import('./connector-artifact-drain.js').ConnectorArtifactRow) => { order.push('materialize'); return publishLinked(h.rows, row); });
     const debit = vi.fn(async () => { order.push('debit'); return { success: true }; });
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { materializeAnchor: materialize, debitAndEnqueueAnchor: debit });
 
@@ -333,6 +523,21 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(JSON.stringify(alertArg)).not.toContain(FP_1);
   });
 
+  it('a post-publication error cannot fail a newer processing lease', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    let newer: Row | undefined;
+    h.deps.debitAndEnqueueAnchor = async () => {
+      h.rows[0].status = 'processing';
+      h.rows[0].updated_at = '2026-09-05T12:00:00Z';
+      h.rows[0].metadata = { owner: 'new-lease' };
+      newer = structuredClone(h.rows[0]);
+      throw new Error('late old-client response');
+    };
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(h.rows[0]).toEqual(newer);
+    expect(result.failed).toBe(0);
+  });
+
   it('hard debit failure (non-insufficient_credits): row marked failed (terminal), bounded alert', async () => {
     // A hard/unexpected debit error is NOT retryable — it stays terminal 'failed'
     // for review, distinct from the insufficient_credits requeue path.
@@ -356,7 +561,7 @@ describe('drainConnectorArtifactsForOrg', () => {
   // a `reason` and never persisted it. The only surviving copy of the cause was
   // a Sentry alert. A terminal `failed` artifact must carry its own reason —
   // that is the row an operator triages.
-  it('persists a bounded failure reason on the row and logs it (not an empty object)', async () => {
+  it('a thrown debit request preserves recovery and logs the bounded cause with its stack', async () => {
     const debit = vi.fn(async () => {
       throw new Error('envelope anchor lookup failed: canceling statement due to statement timeout');
     });
@@ -364,12 +569,9 @@ describe('drainConnectorArtifactsForOrg', () => {
 
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
 
-    expect(result.failed).toBe(1);
-    expect(h.rows[0].status).toBe('failed');
-
-    // 1. The row itself carries the cause — queryable without Sentry.
-    const meta = h.rows[0].metadata as Record<string, unknown>;
-    expect(meta.drain_error).toContain('statement timeout');
+    expect(result.failed).toBe(0);
+    expect(h.rows[0].status).toBe('materialized');
+    expect(h.rows[0].metadata.drain_error).toBeUndefined();
 
     // 2. The log line carries BOTH the bounded reason AND the error object, so
     //    the stack survives. utils/logger.ts registers redactErrorSerializer for
@@ -377,7 +579,7 @@ describe('drainConnectorArtifactsForOrg', () => {
     //    lose the only thing that localises a TypeError deeper in the drain.
     const loggerErr = h.deps.logger.error as unknown as { mock: { calls: unknown[][] } };
     const errorCall = loggerErr.mock.calls.find(
-      (c: unknown[]) => String(c[1]).includes('row drain failed'),
+      (c: unknown[]) => String(c[1]).includes('debit outcome uncertain'),
     );
     expect(errorCall).toBeDefined();
     const logged = errorCall![0] as Record<string, unknown>;
@@ -417,11 +619,10 @@ describe('drainConnectorArtifactsForOrg', () => {
 
     await drainConnectorArtifactsForOrg(ORG_A, h.deps);
 
-    const meta = h.rows[0].metadata as Record<string, unknown>;
-    expect(typeof meta.drain_error).toBe('string');
-    // Bounded by construction (§1.6A) — a connector failure must never write an
-    // unbounded blob into a column that is read back and logged.
-    expect((meta.drain_error as string).length).toBeLessThanOrEqual(600);
+    expect(h.rows[0].status).toBe('materialized');
+    expect(h.rows[0].metadata.drain_error).toBeUndefined();
+    const logged = vi.mocked(h.deps.logger.error).mock.calls[0][0] as { reason: string };
+    expect(logged.reason.length).toBeLessThanOrEqual(200);
   });
 
   it('anchor_not_in_expected_status + anchor ALREADY ADVANCED: promote to anchored, NEVER failed (idempotent, no re-charge)', async () => {
@@ -465,27 +666,23 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.rows[0].status).not.toBe('failed');
   });
 
-  it('partial-failure isolation: one row fails, the next still drains', async () => {
-    const materialize = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('materialize boom'))
-      .mockResolvedValueOnce({ anchorId: ANCHOR_2, anchorPublicId: 'p2' });
-    const h = makeHarness(
-      [
-        makeRow({ id: ART_1, org_id: ORG_A, fingerprint_sha256: FP_1 }),
-        makeRow({ id: ART_2, org_id: ORG_A, external_ref: 'file-2', fingerprint_sha256: FP_2 }),
-      ],
-      { materializeAnchor: materialize },
-    );
-
+  it('partial-failure isolation: uncertain publication stays recoverable and the next row drains', async () => {
+    const h = makeHarness([
+      makeRow({ id: ART_1, org_id: ORG_A }),
+      makeRow({ id: ART_2, org_id: ORG_A, external_ref: 'file-2', fingerprint_sha256: FP_2 }),
+    ]);
+    h.deps.materializeAnchor = async (row) => {
+      if (row.id === ART_1) throw new Error('publication response lost');
+      return publishLinked(h.rows, row);
+    };
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(result.claimed).toBe(2);
-    expect(result.failed).toBe(1);
-    expect(result.anchored).toBe(1);
-    expect(h.rows.find((r) => r.id === ART_1)?.status).toBe('failed');
-    expect(h.rows.find((r) => r.id === ART_2)?.status).toBe('anchored');
-    expect(h.alert).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ claimed: 2, failed: 0, anchored: 1 });
+    expect(h.rows[0].status).toBe('processing');
+    expect(h.rows[0].anchor_id).toBeNull();
+    expect(h.rows[1].status).toBe('anchored');
+    expect(h.debit).toHaveBeenCalledTimes(1);
+    expect(h.debit).toHaveBeenCalledWith({ orgId: ORG_A, anchorId: ANCHOR_2 });
+    expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ artifactId: ART_1, reason: 'artifact_materialization_uncertain' }));
   });
 
   it('cross-org isolation: draining ORG_A never claims ORG_B rows', async () => {
@@ -534,32 +731,6 @@ describe('drainConnectorArtifactsForOrg', () => {
   });
 
   // ── FIX 1: lost-lease guarded transitions STOP the row ──────────────────────
-
-  it('lost lease at materialized transition: STOPS the row — no debit/batch, no terminal count', async () => {
-    // The row is claimed (queued→processing), but before the processing→
-    // materialized transition persists, the reaper re-queues it (or another
-    // worker reclaims it). The status-guarded markStatus then matches zero rows
-    // → the loop must STOP this row: no debit, no batch, no count, no alert.
-    const materialize = vi.fn(async () => {
-      // simulate the reaper yanking the lease right after the claim: flip the
-      // row off 'processing' so the guarded `.eq('status','processing')` misses.
-      h.rows[0].status = 'queued';
-      return { anchorId: ANCHOR_1, anchorPublicId: 'p' };
-    });
-    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued' })], { materializeAnchor: materialize });
-
-    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
-
-    expect(result.claimed).toBe(1); // the claim itself succeeded
-    expect(result.anchored).toBe(0);
-    expect(result.failed).toBe(0); // NOT counted as failed — the lease was lost
-    expect(h.debit).not.toHaveBeenCalled();
-    expect(h.batchAnchor).not.toHaveBeenCalled();
-    // no terminal alert for a transition that didn't persist
-    expect(h.alert).not.toHaveBeenCalled();
-    // the reaper's re-queue is left intact
-    expect(h.rows[0].status).toBe('queued');
-  });
 
   it('lost lease at mark-anchored transition: STOPS the row — anchored NOT counted', async () => {
     // Debit + batch + anchor-advance all succeed, but the materialized→anchored
@@ -740,8 +911,8 @@ describe('drainConnectorArtifactsForOrg', () => {
 });
 
 // Build a full ConnectorArtifactDrainResult (defaults the confirmation fields).
-function drainResult(over: Partial<{ claimed: number; anchored: number; failed: number; confirmed: number; reconfirmRequeued: number }>) {
-  return { claimed: 0, anchored: 0, failed: 0, confirmed: 0, reconfirmRequeued: 0, ...over };
+function drainResult(over: Partial<{ claimed: number; anchored: number; failed: number; confirmed: number; reconfirmRequeued: number; supersededRequeued: number }>) {
+  return { claimed: 0, anchored: 0, failed: 0, confirmed: 0, reconfirmRequeued: 0, supersededRequeued: 0, ...over };
 }
 
 describe('runConnectorArtifactDrain (cron entrypoint)', () => {
@@ -1165,7 +1336,7 @@ describe('scrubReason (SCRUM-2625 / QUEUE-10 F-4 reason-scrub)', () => {
 // cycle): defaultMaterializeAnchor's inbound declared-hash branch. A dedicated
 // generic chainable+thenable stub (distinct from the connector_artifact-table
 // harness above) because this function's own dependencies are org_members
-// (actor resolution) and anchors (envelope-guard lookups + the insert itself)
+// (actor resolution), anchors (envelope-guard lookups), and atomic publication
 // — a different table shape than the rest of this file exercises.
 // MERGE NOTE (origin/main bd72f65ff <- this branch): main's CTO ruling R2 made
 // `fingerprint_source` REQUIRED on every row this drain materializes, defaulting
@@ -1189,26 +1360,18 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376;
   }
 
   function makeDb(args: {
-    insertResult: { data: unknown; error: unknown };
+    insertResult: { data: { id: string; public_id: string }; error: unknown };
     insertSpy: (payload: unknown) => void;
   }) {
+    vi.mocked(callRpc).mockImplementation(async (_db, name, rpcArgs) => {
+      expect(name).toBe('materialize_connector_artifact_anchor');
+      args.insertSpy(rpcArgs!.p_anchor_payload);
+      return { data: { outcome: 'linked', anchor_id: ANCHOR_1,
+        public_id: args.insertResult.data.public_id, created: true }, error: null };
+    });
     const from = vi.fn((table: string) => {
-      if (table === 'org_members') {
-        return chainable({ data: { user_id: MATERIALIZE_USER_ID, role: 'owner' }, error: null });
-      }
-      if (table === 'anchors') {
-        // First 3 calls per invocation are the envelope-guard lookups
-        // (ENVELOPE_ID_METADATA_KEYS = source_envelope_id/envelope_id/external_ref),
-        // each finding no existing anchor. The insert call is distinguished
-        // by actually invoking `.insert(...)`, captured by insertSpy so the
-        // test can assert on the exact payload.
-        const c = chainable({ data: [], error: null });
-        c.insert = vi.fn((payload: unknown) => {
-          args.insertSpy(payload);
-          return chainable(args.insertResult);
-        });
-        return c;
-      }
+      if (table === 'org_members') return chainable({ data: { user_id: MATERIALIZE_USER_ID, role: 'owner' }, error: null });
+      if (table === 'anchors') return chainable({ data: [], error: null });
       throw new Error(`unexpected table ${table}`);
     });
     return { from };
@@ -1225,6 +1388,7 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376;
     external_ref: 'env-inbound-1',
     anchor_id: null,
     credit_deduction_id: null,
+    updated_at: '2026-09-02T00:00:00.000Z',
   };
 
   it('sets fingerprint_source=issuer_record_attestation when metadata._direction is inbound', async () => {
@@ -1242,7 +1406,8 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376;
       { db },
     );
 
-    expect(result).toEqual({ anchorId: 'anchor-inbound-1', anchorPublicId: 'ARK-INBOUND-1' });
+    // A successful reply confirms that publication AND linking committed.
+    expect(result).toEqual({ outcome: 'linked', anchorId: ANCHOR_1, anchorPublicId: 'ARK-INBOUND-1', created: true });
     expect(insertSpy).toHaveBeenCalledWith(expect.objectContaining({
       fingerprint_source: 'issuer_record_attestation',
       metadata: expect.objectContaining({ _direction: 'inbound', _sending_account_id: 'acct-FOREIGN' }),
@@ -1280,5 +1445,46 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376;
 
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.fingerprint_source).toBe('document_bytes');
+  });
+});
+
+describe('atomic publication response loss and paid retry recovery', () => {
+  it.each(['return', 'throw'] as const)('committed publication with %s response failure retains the link for recovery', async (failure) => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    let committed: Row | undefined;
+    h.deps.materializeAnchor = async (row) => {
+      publishLinked(h.rows, row);
+      committed = structuredClone(h.rows[0]);
+      if (failure === 'throw') throw new Error('response lost after commit');
+      return { outcome: 'lost_lease' };
+    };
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(h.rows[0]).toEqual(committed);
+    expect(h.rows[0]).toMatchObject({ status: 'materialized', anchor_id: ANCHOR_1 });
+    expect(h.debit).not.toHaveBeenCalled();
+    expect(h.batchAnchor).not.toHaveBeenCalled();
+    expect(result.failed).toBe(0);
+    expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'artifact_materialization_uncertain' }));
+  });
+
+  it('a reset paid anchor is re-driven by the SAME id and confirmation never charges it twice', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A,
+      status: 'materialized', anchor_id: ANCHOR_2, credit_deduction_id: 'existing-debit' })]);
+    const paidAnchors = new Set([ANCHOR_2]);
+    let newCharges = 0;
+    h.deps.debitAndEnqueueAnchor = async ({ anchorId }) => {
+      if (!paidAnchors.has(anchorId)) { paidAnchors.add(anchorId); newCharges += 1; }
+      return { success: true };
+    };
+    h.listMaterializedArtifacts.mockResolvedValueOnce([{ id: ART_1, anchor_id: ANCHOR_2 }]);
+    h.readAnchorStatus.mockResolvedValueOnce({ id: ANCHOR_2, status: 'PENDING', chain_tx_id: null });
+    const first = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(first).toMatchObject({ reconfirmRequeued: 1, anchored: 1 });
+    expect(h.rows[0].anchor_id).toBe(ANCHOR_2);
+    expect(h.rows[0].credit_deduction_id).toBe('existing-debit');
+    expect(newCharges).toBe(0);
+    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+    expect(newCharges).toBe(0);
+    expect(h.materialize).toHaveBeenCalledTimes(1);
   });
 });
