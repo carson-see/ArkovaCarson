@@ -8,11 +8,11 @@ The API v2 OpenAPI document remains the machine-readable contract. This page sho
 
 ## Canonical Sequence
 
-1. Establish context with `list_orgs` when the user asks for org-scoped or tenant-specific work.
-2. Discover candidate resources with `search`.
+1. Establish context with `arkova_list_orgs` when the user asks for org-scoped or tenant-specific work.
+2. Discover candidate resources with `arkova_search`.
 3. Inspect the top candidate with the type-specific detail operation.
-4. Verify by SHA-256 fingerprint with `verify` when a fingerprint is present.
-5. Fetch public proof/lifecycle fields with `get_anchor` when the user needs receipt status, record URI, network receipt, revocation, expiry, or lifecycle context.
+4. Verify by SHA-256 fingerprint with `arkova_verify` when a fingerprint is present.
+5. Fetch public proof/lifecycle fields with `arkova_get_anchor` when the user needs receipt status, record URI, network receipt, revocation, expiry, or lifecycle context.
 
 Agents should not request or invent internal `id`, `org_id`, `user_id`, or raw document content. Detail responses expose public IDs, metadata, hashes, and receipt fields only. All API v2 failures use RFC 7807 `application/problem+json`; retry `429` only after `Retry-After`.
 
@@ -20,14 +20,14 @@ Agents should not request or invent internal `id`, `org_id`, `user_id`, or raw d
 
 | Intent | REST v2 | OpenAPI operationId | MCP tool | TypeScript SDK | Python SDK |
 |---|---|---|---|---|---|
-| Search resources | `GET /api/v2/search` | `search` | `search` | `arkova.search()` | `arkova.search()` |
-| List caller orgs | `GET /api/v2/orgs` | `list_orgs` | `list_orgs` | `arkova.listOrgs()` | `arkova.list_orgs()` |
-| Inspect organization | `GET /api/v2/organizations/{public_id}` | `get_organization` | `get_organization` | `arkova.getOrganization()` | `arkova.get_organization()` |
-| Inspect record | `GET /api/v2/records/{public_id}` | `get_record` | `get_record` | `arkova.getRecord()` | `arkova.get_record()` |
-| Inspect fingerprint | `GET /api/v2/fingerprints/{fingerprint}` | `get_fingerprint` | `get_fingerprint` | `arkova.getFingerprint()` | `arkova.get_fingerprint()` |
-| Inspect document | `GET /api/v2/documents/{public_id}` | `get_document` | `get_document` | `arkova.getDocument()` | `arkova.get_document()` |
-| Verify fingerprint | `GET /api/v2/verify/{fingerprint}` | `verify` | `verify` | `arkova.verifyFingerprint()` | `arkova.verify_fingerprint()` |
-| Fetch public proof | `GET /api/v2/anchors/{public_id}` | `get_anchor` | `get_anchor` | `arkova.getAnchor()` | `arkova.get_anchor()` |
+| Search resources | `GET /api/v2/search` | `arkova_search` | `arkova_search` | `arkova.search()` | `arkova.search()` |
+| List caller orgs | `GET /api/v2/orgs` | `arkova_list_orgs` | `arkova_list_orgs` | `arkova.listOrgs()` | `arkova.list_orgs()` |
+| Inspect organization | `GET /api/v2/organizations/{public_id}` | `arkova_get_organization` | `arkova_get_organization` | `arkova.getOrganization()` | `arkova.get_organization()` |
+| Inspect record | `GET /api/v2/records/{public_id}` | `arkova_get_record` | `arkova_get_record` | `arkova.getRecord()` | `arkova.get_record()` |
+| Inspect fingerprint | `GET /api/v2/fingerprints/{fingerprint}` | `arkova_get_fingerprint` | `arkova_get_fingerprint` | `arkova.getFingerprint()` | `arkova.get_fingerprint()` |
+| Inspect document | `GET /api/v2/documents/{public_id}` | `arkova_get_document` | `arkova_get_document` | `arkova.getDocument()` | `arkova.get_document()` |
+| Verify fingerprint | `GET /api/v2/verify/{fingerprint}` | `arkova_verify` | `arkova_verify` | `arkova.verifyFingerprint()` | `arkova.verify_fingerprint()` |
+| Fetch public proof | `GET /api/v2/anchors/{public_id}` | `arkova_get_anchor` | `arkova_get_anchor` | `arkova.getAnchor()` | `arkova.get_anchor()` |
 
 ## Workflow 1: Find A Document, Inspect It, Verify It
 
@@ -45,10 +45,10 @@ GET /api/v2/anchors/{public_id}
 MCP:
 
 ```text
-search({ "q": "Acme compliance certificate", "type": "document", "max_results": 5 })
-get_document({ "public_id": "<result.public_id>" })
-verify({ "fingerprint": "<detail.fingerprint>" })
-get_anchor({ "public_id": "<detail.public_id>" })
+arkova_search({ "q": "Acme compliance certificate", "type": "document", "max_results": 5 })
+arkova_get_document({ "public_id": "<result.public_id>" })
+arkova_verify({ "fingerprint": "<detail.fingerprint>" })
+arkova_get_anchor({ "public_id": "<detail.public_id>" })
 ```
 
 TypeScript:
@@ -107,8 +107,8 @@ GET /api/v2/fingerprints/{fingerprint}
 MCP:
 
 ```text
-verify({ "fingerprint": "<64-character-sha256>" })
-get_fingerprint({ "fingerprint": "<64-character-sha256>" })
+arkova_verify({ "fingerprint": "<64-character-sha256>" })
+arkova_get_fingerprint({ "fingerprint": "<64-character-sha256>" })
 ```
 
 TypeScript:
@@ -144,11 +144,11 @@ GET /api/v2/anchors/{public_id}
 MCP:
 
 ```text
-list_orgs({})
-get_organization({ "public_id": "<organization.public_id>" })
-search({ "q": "licensed nurse", "type": "record", "max_results": 10 })
-get_record({ "public_id": "<result.public_id>" })
-get_anchor({ "public_id": "<detail.public_id>" })
+arkova_list_orgs({})
+arkova_get_organization({ "public_id": "<organization.public_id>" })
+arkova_search({ "q": "licensed nurse", "type": "record", "max_results": 10 })
+arkova_get_record({ "public_id": "<result.public_id>" })
+arkova_get_anchor({ "public_id": "<detail.public_id>" })
 ```
 
 TypeScript:

@@ -116,15 +116,20 @@ describe('app.arkova.ai agent discovery', () => {
   it('publishes OAuth protected-resource metadata for the app API', () => {
     const metadata = readJson<{
       resource: string;
-      authorization_servers: string[];
+      authorization_servers?: string[];
       scopes_supported: string[];
       bearer_methods_supported: string[];
     }>('public/.well-known/oauth-protected-resource');
 
     expect(metadata.resource).toBe('https://app.arkova.ai');
-    expect(metadata.authorization_servers).toEqual([
-      'https://vzwyaatejekddvltxyye.supabase.co/auth/v1',
-    ]);
+    // SCRUM-3894 / D3: `authorization_servers` is deliberately ABSENT. It named
+    // a Supabase authorization-server endpoint that does not exist — Arkova has
+    // no OAuth authorization-code flow, only API keys and Supabase session JWTs
+    // — so advertising it was a claim we do not hold (CLAUDE.md §1.13 R-7).
+    // `handleProtectedResourceMetadata` on the edge dropped it in the same
+    // change; this pins the app-host static metadata to the same contract, so
+    // the field cannot be reintroduced without a deliberate edit here.
+    expect(metadata.authorization_servers).toBeUndefined();
     expect(metadata.scopes_supported).toEqual(expect.arrayContaining([
       'read:records', 'read:orgs', 'read:search', 'write:anchors', 'admin:rules',
     ]));

@@ -2,6 +2,24 @@
 
 Infrastructure integration tests. Verify operational scripts, edge workers, and security configurations.
 
+## 2026-09-05 — `agent-skills-digests.test.ts` (new): a published digest that trails its file takes the skill OFFLINE
+
+`public/.well-known/agent-skills/index.json` publishes a `sha256:` digest per SKILL.md.
+Nothing recomputed them. That failure mode is not "stale guidance": a client honouring the
+discovery spec hashes what it fetched and REFUSES a mismatch, so the skill stops working
+for anyone checking, while the repo looks healthy. The MCP tool-name corrections in this
+change would have shipped exactly that way.
+
+The test hashes the files on disk — deliberately NOT a snapshot of expected hex, which
+would have to be updated by the same hand that edited the file, i.e. the step that gets
+skipped. It also pins each entry's `url` to the file it hashed and fails when a skill
+directory exists but is unindexed (undiscoverable), and fails closed on an empty index.
+
+Also in this folder on the same change: `mcp-manifest-parity.test.ts`, `mcp-server.test.ts`
+and `llms-txt.test.ts` re-pinned to the `arkova_*` names, and (edge lane)
+`edge-wrangler-vars-parity.test.ts` added, which compares `wrangler.soak.toml`'s `[vars]`
+against `wrangler.toml` so a var missing on the rig cannot produce a green hollow soak.
+
 ## Files
 - **`healthcheck.test.ts`** — tests for the healthcheck runner (SCRUM-1056): result ordering, timing, error capture.
 - **`batch-queue.test.ts`** — tests for batch queue processing infrastructure.
@@ -10,6 +28,7 @@ Infrastructure integration tests. Verify operational scripts, edge workers, and 
 - **`dlp-verification.test.ts`** — tests for DLP (Data Loss Prevention) policy enforcement.
 - **`signout-scope-guard.test.ts`** — unit tests for `e2e/helpers/signout-scope-guard.ts` plus a ratchet scan of every `e2e/**/*.ts` file: bare `auth.signOut()` (supabase-js default `scope: 'global'`) revokes a shared seed user's storageState session and cascades /login bounces through every later spec in a single-invocation run (2026-08-15 side-rig cascade, introduced by PR #2213's cross-tenant `afterAll`). E2e code must pass an explicit scope.
 - **`llms-txt.test.ts`** — tests for `llms.txt` AI crawler discovery file.
+- **`agent-skills-digests.test.ts`** — recomputes the sha256 of every `public/.well-known/agent-skills/*/SKILL.md` and compares it to the `digest` published in `index.json`. A spec-honouring client refuses a mismatch, so a stale digest takes the skill offline rather than serving old text. Also pins each entry's `url` to the file it hashed, fails on a skill directory that exists but is not indexed, and fails closed on an empty index.
 - **`mcp-claim-parity.test.ts`** — BUG-026 guard, run against the LIVE surfaces. Runs `scripts/ci/check-mcp-claim-parity.ts` over the five published MCP claim surfaces and asserts zero unbaselined violations, plus baseline hygiene (no duplicate keys, every entry owned, no `reference-coverage` exceptions). The rule logic is unit-tested on synthetic fixtures next to the script; this file is the live assertion so `npm test` catches drift without waiting for CI. Complements `mcp-manifest-parity.test.ts`, which pins names/schemas and explicitly does NOT compare description text.
 - **`mcp-server.test.ts`** — tests for the MCP server edge deployment. Also carries the BUG-028 `anchor_document` receipt contract: `public_id` must be an explicit `null` (never a dropped key), the receipt must name `verify_document` + the `content_hash` it actually accepts, and the internal `public_records` UUID must never be substituted as an identifier. One test reads the baseline migration to assert `public_records` still has no `public_id` column — if a migration adds one, that test fails so whoever adds it revisits the receipt instead of leaving a permanently-null agent-facing field.
 - **`r2-report.test.ts`** — tests for Cloudflare R2 report storage.

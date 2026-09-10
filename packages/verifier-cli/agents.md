@@ -22,6 +22,13 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
 - **Never contact Arkova.** `src/lib/independent-endpoint.ts::assertIndependentEndpoint`
   refuses any `arkova.*` host before any on-chain call. The on-chain fact is
   confirmed only against an independent Esplora node. Keep it that way.
+  **2026-09-02:** also refuses any `*.run.app` host — the raw Cloud Run host
+  (e.g. the SDK's `DEFAULT_BASE_URL`, `arkova-worker-270018525501.us-central1.
+  run.app`) is an Arkova-operated endpoint with no `arkova.*` vanity domain in
+  it, so the pre-existing regex missed it. Blocks the whole `*.run.app`
+  suffix rather than pattern-matching Arkova's own service name, since Cloud
+  Run hostnames carry no ownership signal a narrower match could trust. See
+  `test/independent-endpoint.test.ts`.
 - **Signature ≠ recompute — but a requested check that FAILS fails closed
   (S3-B).** The optional Ed25519 check (`src/lib/signature.ts`) proves only
   that Arkova issued the package; a PASSING signature must never substitute
@@ -168,6 +175,8 @@ rules, not steps:
 - npm name is the **unscoped `arkova-verifier-cli`**; the bin is `arkova-verify`.
   The `@arkova` scope does not exist and is not being created. Unscoped public
   is npm's default, so **no `--access public` and no `publishConfig`**.
+- **Not published yet** (2026-09-02): `npm view arkova-verifier-cli` returns 404, same as the
+  sibling `arkova-verifier`. README's Install section says so and points at "Build from source".
 - **`arkova-verifier` publishes FIRST.** This package depends on it, and the
   dependency is committed as `file:../verifier` **on purpose**: that sibling is
   not on the registry, so a `^0.1.0` range would break `npm install` in a fresh
@@ -195,6 +204,14 @@ rules, not steps:
 - `fixtures/` ships (auditors can re-run the corpus) but nothing in `src/` reads
   it at runtime, so it is corpus value only, not a runtime dependency.
 
+## 2026-09-05 — normalize DNS root dots before the independent-host guard
+
+`URL.hostname` retains a final DNS root dot: `app.arkova.ai.` denotes the same
+host as `app.arkova.ai`. Apply the Arkova and Cloud Run host policy after removing
+that root dot; otherwise a trailing dot bypasses both suffix guards. The returned
+URL and report label stay unchanged. A regression exercises both the raw worker
+host and vanity host with a root dot. Review evidence and release status are on
+Confluence page `137101729`, with the finding in master bug log `88768514`.
 ## 2026-09-05 — live proof envelope parity
 
 The actual signed API payload nests the 0427 pair under proof_bundle. A live downloaded package verified but reported packetTxInclusion=null because the CLI read flat fields only. Read a complete pair from either shape; explicit top-level fields take precedence and never borrow a missing counterpart from the nested object. The nested-wire regression failed before the fix. This only restores structural reporting; no independent-network or local branch-fold verdict is added.
