@@ -230,3 +230,8 @@ The operation spans `agents` and `api_keys`, outside the single-table adapter su
 ## 2026-09-10 — Agent-key authority (SCRUM-4558 / SCRUM-4559)
 
 `agentKeyAuthority.machine.ts` models one visible admission/key overlapping provider revoke, stale administrator PATCH and uncertain-mint cleanup. Parent locks cover the insertion/cleanup window; revocation is terminal and cleanup cannot detach a committed key. The finite `pr` tier explicitly enables graph equivalence and disables deadlock checking because completed operations are terminal states. Transaction errors release locks without changing committed state. Multiple mints, metadata/org snapshots and SQL deadlock/retry behavior remain real PostgreSQL test contracts. This two-table operation is outside the generated adapter subset. Run `scripts/verify-machines.sh agentKeyAuthority` using the pinned vendored TLC jar.
+
+
+## 2026-09-10 — Original passport lifecycle certificate correction
+
+The original `agentPassport.machine.ts` prose claimed graph equivalence but omitted the explicit check under the current CLI default. Both `pr` and `nightly` now request `graphEquivalence: true`; pinned CLI/TLC checks and actual certificate equivalence pass at both tiers (16 states/48 edges and 256 states/1536 edges respectively). This lifecycle abstraction does not prove temporal input validation, tenant-wide passport revocation ownership, or real handler transaction boundaries; the new atomic/authority models and SQL regressions cover their stated narrower boundaries.

@@ -182,14 +182,14 @@ export const agentPassportMachine = defineMachine({
         // REVOKED is terminal BY DESIGN — an all-revoked world is a valid end
         // state, not a liveness bug — so TLC's deadlock check is off (same
         // resolution as partnerProvisioning / drainRunAccounting).
-        checks: { deadlock: false },
+        checks: { deadlock: false, graphEquivalence: true },
       },
       nightly: {
         domains: {
           Agents: ids({ prefix: "a", size: 4 }),
         },
         budgets: { maxEstimatedStates: 100_000 },
-        checks: { deadlock: false },
+        checks: { deadlock: false, graphEquivalence: true },
       },
     },
   },
