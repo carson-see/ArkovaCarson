@@ -54,6 +54,19 @@ describe('FingerprintSourceDisplay', () => {
     expect(notAsserted.toLowerCase()).toContain('document');
   });
 
+  // SCRUM-3818 (docusign-bilateral-2026-08): issuer_record_attestation is now
+  // ALSO set for the DocuSign inbound declared-hash path, where a real
+  // document DID exist and WAS fingerprinted (by DocuSign, not Arkova). The
+  // triad must not claim the record was "never in document form" — that's
+  // false for that origin — nor attribute the assertion exclusively to "the
+  // issuing organization" when a connected third-party service may be the
+  // actual source (R-7 misattribution fix).
+  it('does not overclaim a document never existed, for either possible origin of this tier', () => {
+    render(<FingerprintSourceDisplay value="issuer_record_attestation" />);
+    const notAsserted = screen.getByTestId('fingerprint-source-triad-not-asserted').textContent ?? '';
+    expect(notAsserted.toLowerCase()).not.toContain('never in document form');
+  });
+
   it('sets a data-fingerprint-source attribute matching the tier', () => {
     render(<FingerprintSourceDisplay value="issuer_record_attestation" />);
     expect(screen.getByTestId('fingerprint-source-badge')).toHaveAttribute(

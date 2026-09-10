@@ -2,6 +2,36 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-09-09",
+      "author": "CTO session — batch 2 prod applies",
+      "note": "ADDED 0421, 0422, 0433 (PR #2440) and 0439 (PR #2571) immediately ahead of applying each to prod vzwyaatejekddvltxyye. The exemption must precede the apply because .claude/hooks/check-prod-migration-apply.sh blocks otherwise, and must remain after it because the SCRUM-2500 orphan audit blocks every migration-touching PR on a prod ledger row with no matching .sql. §1.2 verified per file: 0421 and 0433 contain no DDL at all (public-projection function replacements only, lock_timeout present); 0422 and 0439 carry hot-table DDL guarded by SET LOCAL lock_timeout='5s' — 0422's non-CONCURRENT unique index on organizations is preceded by it, and 0422 wraps in an explicit transaction because a bare SET LOCAL outside one raises WARNING 25P01 and silently no-ops while still passing the CI grep. Applied one at a time with prod /health checked between each, ledger reconciled to the numeric prefix, and list_migrations confirmed before moving on. If any apply fails, its prefix is removed again in the same session rather than left as a false exemption. REMOVE each when its owning PR merges and lands the .sql on main."
+    },
+    {
+      "date": "2026-09-09",
+      "author": "CTO session — batch 1 applied, exemptions now TRUE",
+      "note": "ADDED 0420, 0423, 0424, 0426, 0434, 0435, 0438 — all seven are now APPLIED TO PROD vzwyaatejekddvltxyye and their .sql files are not yet on main, so each satisfies this file's INVARIANT exactly. Applied 2026-09-09 ~14:00Z via MCP apply_migration, ledger reconciled to the numeric prefix, verified present via list_migrations, prod /health checked healthy before, between and after. Sequencing note for whoever reads this next, because I got the order wrong once today: I reverted these exemptions BEFORE applying, on the correct reasoning that an exemption for an unapplied migration is false. But the applies then made them necessary — the 'Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)' step blocks every migration-touching PR on a prod ledger row with no matching .sql in that PR's tree, and the exemption is precisely the suppressor for the migrate-before-merge window. So the exemption is false BEFORE the apply and required AFTER it. 'Same motion' in §0 rule 10 means apply-then-exempt without a gap, not exempt-then-apply. 0423 does not appear in #2472's own orphan list because that PR carries 0423's .sql; it appears for every OTHER migration-touching PR, which is why all seven are listed rather than only the ones I noticed. Confirmed by the same run: 'PR numeric ledger drift: 0' — the numeric check passes post-apply. One apply behaved exactly as designed and is worth recording: 0423 first failed with 55P03 lock timeout on CREATE TRIGGER against the hot anchors table, rolled back completely (no trigger, no function, no ledger row), and succeeded on retry once the lock cleared. That is the §1.2 guard doing its job instead of camping at the head of the FIFO lock queue. REMOVE each prefix when its owning PR merges and lands the .sql on main."
+    },
+    {
+      "date": "2026-09-09",
+      "author": "CTO session — founder directive, batch 1 prod applies",
+      "note": "ADDED 0420, 0423, 0424, 0426, 0434, 0435, 0438 immediately ahead of applying each to prod vzwyaatejekddvltxyye via MCP apply_migration, per CLAUDE.md §0 rule 10 (the hook blocks the apply unless the prefix is on main or listed here). Applied one at a time, ledger reconciled to the numeric prefix and list_migrations confirmed before moving to the next; prod /health checked between each. These seven are the standalone additive set. Deliberately EXCLUDED from this batch: 0429-0432 (an interdependent sub-org chain whose 0431/0432 are fix-ups to 0429/0430 within the same PR, and which broke twice in development), 0422/0439 (org-provisioning, hot-table DDL — separate batch, applied with a live lock watch), and 0425 (CREATE INDEX CONCURRENTLY cannot run inside a transaction block, SQLSTATE 25001, so apply_migration cannot reach it at all — it needs a non-transactional session and a separate decision). §1.2 verified individually before landing: 0423 and 0438 wrap BEGIN -> SET LOCAL lock_timeout='5s' -> hot DDL -> COMMIT; 0420, 0424, 0426, 0434, 0435 do no hot-table DDL. Cross-PR duplicates are byte-identical (0423 across #2472/#2519, 0424 and 0435 across #2476/#2519). Soak status stated plainly: these are NOT covered by soak evidence at their PRs' current heads. Eight windows were invalidated on 2026-09-09. The founder directed the drain on the basis that these changes have soaked repeatedly already. Every earlier pre-merge apply in this file cites a completed soak; these do not, and that difference is deliberate and recorded rather than glossed. REMOVE each prefix when its owning PR merges and the .sql lands on main."
+    },
+    {
+      "date": "2026-09-09",
+      "author": "CTO session — self-correction",
+      "note": "REVERTED the 17 prefixes added earlier today (0420-0424, 0426, 0429-0435, 0438, 0439, 0441, 0442). They were added ahead of their prod applies so the apply hook would permit them. The applies did not happen, so every one of those entries violated this file's INVARIANT — a prefix belongs here only if it is present in the prod ledger AND absent from main; these were absent from BOTH. Leaving them would not be inert: auditLedgerVsRepo returns early on an exempt prefix BEFORE the localPrefixes check, so 17 false entries would suppress the orphan audit across most of the migration backlog. They also bought nothing: the drift check has two failure modes and the numeric-ledger exemption only covers one, so PRs whose .sql is absent from prod stayed correctly blocked throughout. Verified on #2472 and #2565, both still failing the check with the exemptions in place. Each prefix will be re-added individually at the moment its migration is actually applied, which is what CLAUDE.md §0 rule 10's 'same motion' means. SEPARATELY, a pre-existing error to correct: the 2026-08-30 entry asserts 0425 'is present in the PROD ledger on vzwyaatejekddvltxyye'. It is not — list_migrations shows prod head 0440 with 0425 absent, and idx_anchors_reorg_scan does not exist on prod. 0425 also cannot be applied through MCP apply_migration at all: CREATE INDEX CONCURRENTLY cannot run inside a transaction block (SQLSTATE 25001), and the file says so in capitals. 0425 stays listed because removing it is a separate decision from correcting the record."
+    },
+    {
+      "date": "2026-09-09",
+      "author": "CTO session — founder directive 2026-09-09 backlog drain",
+      "note": "ADDED 0420,0421,0422,0423,0424,0426,0429,0430,0431,0432,0433,0434,0435,0438,0439,0441,0442 (0425 was already listed). These are the migrations owned by the open PR backlog that the founder directed to merge on 2026-09-09: #2440 (0421,0433), #2442 (0420,0434), #2472 (0423), #2476 (0424,0435), #2495 (0425), #2519/#2529 (0426), #2565 (0438), #2571 (0422,0439), #2572 (0429-0432), #2693 (0442), #2694 (0441). Migrate-before-merge is the required order (CLAUDE.md §0 rule 10): the drift gate needs each NNNN present in prod before its PR can merge, and the apply is hook-blocked unless the prefix is on main or listed here. Each is applied to prod vzwyaatejekddvltxyye via MCP apply_migration with the ledger row reconciled to its numeric prefix in the same motion. HOT-TABLE REVIEW (CLAUDE.md §1.2), performed before landing this: every migration touching organizations/anchors/profiles carries SET LOCAL lock_timeout, including 0422, whose non-CONCURRENT unique index on organizations is preceded by SET LOCAL lock_timeout='5s'. 0425 uses CREATE INDEX CONCURRENTLY. 0430 reads organizations only inside function bodies and performs no DDL on it. HONEST LIMITATION: these are NOT covered by soak evidence at their PRs' current heads — eight windows were invalidated on 2026-09-09 when main was merged into soaking PRs, and the founder's directive is that these changes have already soaked repeatedly and must ship. The soak-gate bypass window was reopened to 2026-09-12 in commit 1517cb15f for the same reason. REMOVE each prefix when its owning PR merges and the .sql lands on main (the file's INVARIANT)."
+    },
+    {
+      "date": "2026-09-08",
+      "author": "CTO session — RTE prod-apply",
+      "note": "ADDED 0427 (0427_proof_tx_inclusion_branch, owned jointly by PR #2524 and #2527). Applied to prod vzwyaatejekddvltxyye via MCP apply_migration ahead of either PR merging, per CLAUDE.md §0 rule 10 (migrate-before-merge, apply and exemption in the same motion). Evidence: the proof window on isolated rig bajuefkqhizsyycaeqff completed 2026-09-07T16:14:21Z with 577 cycles and 0 failures on candidate cda99aaf5; the 0427 file is byte-identical (sha256 32fdc65808cddb7e5c1b4c00d28780c8e9684831b57666547e282aff4c6ae0b3) across that candidate and the current heads of both #2524 and #2527. Additive nullable columns on public.anchor_proofs, metadata-only, SET LOCAL lock_timeout='5s'. REMOVE when the first of #2524/#2527 merges and lands the file."
+    },
+    {
       "date": "2026-09-08",
       "author": "CTO session — RTE prod-apply",
       "note": "REMOVED 0436: PR #2655 merged 2026-09-08T04:21:52Z, so 0436_scrum4035_oauth_email_confirmation.sql is on main AND the prefix is in the prod ledger — present in both places, which is the file's own definition of a stale exemption. A stale entry is not inert: auditLedgerVsRepo returns early on an exempt prefix BEFORE the localPrefixes check, so leaving it would suppress the orphan audit for 0436."
@@ -169,6 +199,18 @@
   ],
   "exemptPrefixes": [
     "0415",
-    "0425"
+    "0420",
+    "0421",
+    "0422",
+    "0423",
+    "0424",
+    "0425",
+    "0426",
+    "0427",
+    "0433",
+    "0434",
+    "0435",
+    "0438",
+    "0439"
   ]
 }

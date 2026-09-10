@@ -222,6 +222,9 @@ vi.mock('./utils/rateLimit.js', () => {
       // a single test (SCRUM-3012: caught when `auth` was added for the new
       // /invitations routes but not mirrored here).
       stripeWebhook: passthrough,
+      // docusign-bilateral-2026-08 (SCRUM-3418): own bucket, was sharing
+      // stripeWebhook — see rateLimiters.docusignWebhook's doc comment.
+      docusignWebhook: passthrough,
       checkout: passthrough,
       api: passthrough,
       auth: passthrough,

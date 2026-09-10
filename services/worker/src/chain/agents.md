@@ -1,10 +1,42 @@
 # agents.md — services/worker/src/chain/
 
-_Last updated: 2026-08-17_
+_Last updated: 2026-08-23_
 
 ## What This Folder Contains
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
+
+## 2026-08-23 SCRUM-3439 — the construction log leaked the GetBlock access token (§1.4)
+
+`createUtxoProvider` logged `rpcUrl` verbatim on both the `rpc` and `getblock` branches.
+GetBlock carries its credential in the URL **PATH** — prod `BITCOIN_RPC_URL` is
+`https://go.getblock.io/<ACCESS_TOKEN>` — so every worker cold start wrote a live
+credential into Cloud Logging. PR #1320 memoized the provider, which reduced this to once
+per process; once is still a leak, and #1320 said so explicitly in its own follow-up note.
+
+Nothing downstream caught it. `sanitizeRpcUrlForError` (this file, :542) existed and was
+already applied to every ERROR label inside `rpcCall`, but never to the construction log.
+The pino `redact` list covered only the SCRUM-2492 byte fields, and its `formatters.log`
+hook is **type**-based (binary values only) — a URL is an ordinary string and sails through.
+The pii-scrub `URL_TOKEN_REGEX` only matches `token=`-style QUERY params, so a **path**
+token is invisible to it as well.
+
+Fix is two-layer, because the call-site fix alone would not survive the next call site:
+
+1. Both branches now log `rpcOrigin: sanitizeRpcUrlForError(...)` — origin only. The origin
+   is the whole correlation value of the line (which endpoint did this process dial?) and
+   `new URL().origin` provably drops path, query and userinfo.
+2. `utils/logger.ts` gained `CREDENTIAL_URL_REDACT_PATHS` (`rpcUrl` / `bitcoinRpcUrl` /
+   `baseRpcUrl` + `*.` variants), so a field literally named `rpcUrl` is now **removed**
+   from any log line anywhere in the worker. That is why the key was renamed rather than
+   sanitized in place: `rpcUrl` now means "always a mistake", with no ambiguous middle case.
+
+`mempoolBaseUrl` is deliberately **not** redacted and still logs in full — public endpoint,
+no credential, and there the path IS the correlation value (same reasoning the
+`sanitizeRpcUrlForError` docstring already gave for the mempool/blockstream call sites).
+
+Rule: **a URL is a credential until you have checked where the credential lives.** Query-param
+scrubbing is not URL scrubbing; this endpoint puts the secret in the path.
 
 ## 2026-08-17 FD-CHAIN-1 round 2 — `listUnspent` is a UNION; no single leg is authoritative
 
