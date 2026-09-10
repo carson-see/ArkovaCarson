@@ -74,7 +74,7 @@ STABLE
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $function$
-  SELECT public.get_parent_credit_rollup(p_parent_org_id, auth.uid());
+  SELECT public.get_parent_credit_rollup(p_parent_org_id, (SELECT auth.uid()));
 $function$;
 
 REVOKE ALL ON FUNCTION public.get_parent_credit_rollup(uuid) FROM PUBLIC, anon, authenticated;
