@@ -38,7 +38,23 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? 'list' : 'html',
+  // CI keeps the streaming `list` output AND writes the HTML report.
+  //
+  // `list` alone never creates `playwright-report/`, so ci.yml's E2E job
+  // ("Upload Playwright report", `if: failure()`, `path: playwright-report/`)
+  // has been uploading NOTHING since it was added — the step runs, finds no
+  // files, and the run ends with no artifact. Verified 2026-09-08 on run
+  // 34176908799 attempt 1 (PR #2496): the E2E job failed, its log names
+  // `trace.zip`, `test-failed-1.png` and `error-context.md`, and the run's
+  // artifact list holds only `e2e-worker-log`. Every failed E2E job has been
+  // discarding its own evidence, which is why the MFA enrollment flake
+  // (PR #2691) had to be diagnosed from the raw job log instead of the trace.
+  //
+  // The HTML reporter embeds the `test-results/` attachments — trace, failure
+  // screenshot, error-context — into `playwright-report/`, so the existing
+  // upload step starts carrying them with no workflow change. `open: 'never'`
+  // stops the reporter trying to launch a browser on the runner.
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'html',
   timeout: 30_000,
   // Deterministic visual-diff config for any opt-in `toHaveScreenshot` /
   // `toMatchSnapshot` spec. The route screenshot baseline harness

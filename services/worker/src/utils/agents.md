@@ -2,6 +2,34 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-23 — `logger.ts`: `redact` now also drops credential-bearing URL fields (SCRUM-3439, §1.4)
+
+`CREDENTIAL_URL_REDACT_PATHS` (`rpcUrl` / `bitcoinRpcUrl` / `baseRpcUrl` + `*.` variants)
+joins `BYTE_FIELD_REDACT_PATHS` in the single pino `redact.paths` list. Driven by
+`chain/utxo-provider.ts`, whose `createUtxoProvider` construction log wrote the prod
+GetBlock access token to Cloud Logging on every cold start.
+
+Why neither existing guard could catch it — both reasons are worth keeping:
+
+* `formatters.log` → `redactBinaryValues` is **type**-based (Buffer / TypedArray / …). That
+  key-agnostic property is what makes it strong for bytes and useless here — a URL is an
+  ordinary string, indistinguishable by type from every other logged string.
+* The pii-scrub `URL_TOKEN_REGEX` matches `token=`-style **query** params. GetBlock puts the
+  credential in the URL **path** (`https://go.getblock.io/<ACCESS_TOKEN>`), so it never matched.
+
+These paths use `remove` (inherited from the shared `redact` config) rather than a censor
+token, and that is deliberate: call sites that genuinely want the endpoint log a sanitized
+origin under a **different** key, `rpcOrigin` (via `sanitizeRpcUrlForError` in
+`chain/utxo-provider.ts`). So `rpcUrl` carries no legitimate meaning any more — a log object
+with that key is always a mistake and is dropped whole.
+
+Public, credential-free endpoints are intentionally **excluded** from the list
+(`mempoolBaseUrl`, `baseUrl`): there the full path is the correlation value, and
+over-redacting would cost observability for no security gain.
+
+Pinned by `logger.error-serializer.test.ts`, which builds a REAL pino over an in-memory
+destination and asserts the emitted JSON line — `logger.test.ts` mocks pino wholesale and is
+structurally blind to redaction defects.
 ## 2026-08-23 — `rateLimit.ts`: every limiter owns its own bucket (SCRUM-3418)
 
 **Do not reintroduce:** two limiters keying into the same `rateLimitStore` entry.
@@ -669,13 +697,17 @@ Consequences that are now true of the running system, and were not before:
   comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
   own tier, not a cleanup.
 
-## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `verifyCache` KEY_PREFIX v6 → v7
+## 2026-09-08 BUG-2026-09-08-001 / SCRUM-4517 — `verifyCache` KEY_PREFIX v7 → v8
 
 Bumped because `anchor_timestamp` changed VALUE (from `anchors.created_at` to the chain-observed
 time), not shape. The existing prefix comments all describe SHAPE changes, which makes it easy to
-conclude a value-only fix does not need a bump. It does: cached v6 bodies carry the wrong timestamp
+conclude a value-only fix does not need a bump. It does: cached bodies carry the wrong timestamp
 and would keep serving it for the full 5-minute TTL after deploy — precisely the window in which a
 reviewer spot-checks the fix and sees it apparently not working.
+
+Originally written as v6 → v7. The BUG-2026-08-13-010 declared-hash fix took v7 on `main` first, so
+on merge this became v7 → v8: two independent response-shape/value changes get one version each,
+because sharing a prefix would let one change's pre-deploy bodies survive the other's deploy.
 
 Rule of thumb for this file: bump the prefix whenever a cached body's bytes change for the same
 anchor, whether the cause is a new field, a dropped field, or a corrected value.

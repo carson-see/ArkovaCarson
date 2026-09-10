@@ -36,16 +36,28 @@ const CACHE_TTL_SECONDS = 300; // 5 minutes
 // connector anchor cached before the deploy keeps serving a response with NO
 // re-derivability statement for the whole TTL — the exact honesty gap this
 // change closes.
-// v7 (BUG-2026-09-08-001 / SCRUM-4517): `anchor_timestamp` changed from
-// `created_at` to the chain-observed time. Cached v6 bodies carry the wrong
-// value; without this bump they would keep serving it for the full TTL after
-// deploy, so the fix would look half-landed in exactly the spot-check a
-// reviewer runs first.
-const KEY_PREFIX = 'verify:v7:';
+//
+// Bumped v6 → v7 for the BUG-2026-08-13-010 declared-hash fix: the pair is now
+// emitted ONLY on positive server-fetch evidence, so a DECLARED-hash connector
+// anchor (rules path — same connector_source marker, no fetch) stops carrying
+// it. Without the bump, every such anchor cached before the deploy keeps
+// serving "Measured: Arkova computed its fingerprint…" for the whole TTL —
+// the exact §1.5 / R-7 over-claim this change removes. `invalidateVerification-
+// Cache` cannot help: nothing re-fires for an anchor whose row did not change.
+//
+// Bumped v7 → v8 (BUG-2026-09-08-001 / SCRUM-4517): `anchor_timestamp` changed
+// from `created_at` to the chain-observed time, and is now OMITTED when that
+// moment is unmeasured. Cached v7 bodies carry the wrong value; without this
+// bump they would keep serving it for the full TTL after deploy, so the fix
+// would look half-landed in exactly the spot-check a reviewer runs first.
+// This branch originally bumped v6 → v7 for the same reason; the declared-hash
+// fix took v7 on main first, so the two response-shape changes get one version
+// each rather than silently sharing a namespace.
+const KEY_PREFIX = 'verify:v8:';
 
 /**
  * BUG-018 / D-8 (follow-up to #2231) — every key carries an environment
- * segment: `verify:v6:<env>:<publicId>`.
+ * segment: `verify:v8:<env>:<publicId>`.
  *
  * Production, shared staging and the connector side-rig are all bound to ONE
  * Upstash database through the same un-suffixed UPSTASH_REDIS_REST_URL/_TOKEN
@@ -65,7 +77,7 @@ const KEY_PREFIX = 'verify:v7:';
  * one service must land on one key or the shared cache stops being shared,
  * which is PERF-12's entire purpose.
  *
- * The version segment stays ahead of the namespace so a `v5` → `v6` bump still
+ * The version segment stays ahead of the namespace so a `v7` → `v8` bump still
  * rotates every environment at once, exactly as it did before.
  */
 let _namespace: string | undefined;

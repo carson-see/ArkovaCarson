@@ -308,7 +308,7 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
     expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
   });
 
-  it('AnchorInsertPayload Zod schema REJECTS issuer_record_attestation (that class is inbound-only, not this path)', () => {
+  it('AnchorInsertPayload accepts the inbound evidence class on the shared materializer', () => {
     const parsed = AnchorInsertPayload.safeParse({
       fingerprint: FP,
       status: 'PENDING',
@@ -319,7 +319,7 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
       metadata: {},
       fingerprint_source: 'issuer_record_attestation',
     });
-    expect(parsed.success).toBe(false);
+    expect(parsed.success).toBe(true);
   });
 
   it('AnchorInsertPayload Zod schema REJECTS a missing fingerprint_source', () => {
