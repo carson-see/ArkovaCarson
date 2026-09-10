@@ -80,9 +80,12 @@ export const AnchorInsertPayload = z
     metadata: z.record(z.string(), z.unknown()),
     // Evidence class of the fingerprint on every row this drain materializes
     // (migration 0376/0384; CHECK-constrained on `anchors.fingerprint_source`).
-    // REQUIRED, never omitted — R2 (CTO Decision Record,
-    // docusign-bilateral-2026-08) settled that this drain must always classify
-    // what it persists rather than leaving NULL "unclassified".
+    // BOTH connector paths materialize here: outbound fingerprints were measured
+    // upstream from fetched bytes, inbound fingerprints are declared — so an
+    // explicit evidence class is REQUIRED on every newly materialized row, never
+    // omitted. R2 (CTO Decision Record, docusign-bilateral-2026-08) settled that
+    // this drain must always classify what it persists rather than leaving NULL
+    // "unclassified".
     //
     // 'document_bytes' is the R2 default and covers every pre-existing
     // connector path (DocuSign outbound, Google Drive): those fingerprints are
@@ -439,6 +442,8 @@ export async function defaultMaterializeAnchor(
       connector_artifact_id: row.id,
       external_ref: row.external_ref,
     },
+    // The service-authored direction selects the evidence class; a declared
+    // inbound fingerprint must never be represented as measured document bytes.
     // R2 default is 'document_bytes': the fingerprint is a server-computed hash
     // of fetched document bytes (DS-03 enqueueSignedDocument and its Drive /
     // other connector twins). The inbound declared-hash branch is the ONLY

@@ -1,5 +1,9 @@
 # services/worker/src/jobs/agents.md
 
+## 2026-09-05 — oldest DocuSign release candidate integration
+
+PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
+
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
 ## 2026-08-31 — F1-heal (SCRUM-3818 go-live gate, follow-up to PR #2476): `docusign-envelope-completed.ts` auto-heals a declared/forged provenance conflict instead of only detecting it
@@ -944,7 +948,7 @@ _Restored 2026-07-28 — same union-merge-driver incident as above._
 
 The batch pipeline (PENDING → claim → BROADCASTING → ONE OP_RETURN tx committing the batch Merkle ROOT → SUBMITTED) now closes the documented crash window where a worker dying between broadcast and `submit_batch_anchors` caused the RACE-1 sweep to revert rows to PENDING and re-broadcast a SECOND, DIFFERENT tx (broadcast-recovery.ts "scenario 2").
 
-- **Flag gate (AC7):** `processBatchAnchors` is HARD-gated on `flagRegistry.getFlag('ENABLE_BATCH_ANCHORING')` (DB switchboard row, env fallback, fail-closed) — even `?force=true` no-ops when off. ⚠️ DEPLOY PREREQUISITE: prod's nightly 3am drain runs through this function; verify the prod `switchboard_flags` row (or env) is ON before this ships or the drain halts.
+- **Flag gate (AC7):** `processBatchAnchors` is HARD-gated on `ENABLE_BATCH_ANCHORING` (DB switchboard row, env fallback, fail-closed) — even `?force=true` no-ops when off. ⚠️ DEPLOY PREREQUISITE: prod's nightly 3am drain runs through this function; verify the prod `switchboard_flags` row (or env) is ON before this ships or the drain halts. **DI-736 / SCRUM-3475 (2026-08-23): the gate now `await`s `flagRegistry.getFlagLive(...)`, not the boot-time `getFlag()` snapshot.** Previously the value was read once at worker startup and `refreshDbFlag()` had zero callers, so flipping this row to stop or start the drain did nothing until the worker restarted — a kill switch on the money path that did not switch. `getFlagLive` re-reads `switchboard_flags` on a 60s TTL; on a failed read it holds the last-known-good DB value (a Supabase blip must not halt or resume a drain), then the boot snapshot, then false. Do NOT gate this job on `getFlag()` again.
 - **Deterministic leaf ordering (AC1):** claimed leaves sorted by (fingerprint asc, id asc) before `buildMerkleTree` — root is a pure function of the leaf SET. Per-leaf branches come from the new `tree.proofsByIndex` (position-correct even for cross-user duplicate fingerprints; the legacy fingerprint-keyed map interleaved duplicates).
 - **Intent pipeline (AC3, prepare-capable clients — Bitcoin + Mock):** Phase 3a `prepareFingerprintTx` (build+SIGN, no network) → Phase 3b persist DURABLY: `anchor_proofs` rows keyed by the precomputed txid (branch + `merkle_index` + `op_return_payload` per leaf; SIGNED TX HEX in `raw_response.broadcast_intent` on the index-0 row) + `anchors.chain_tx_id` on every claimed BROADCASTING row (shields them from `recover_stuck_broadcasts`'s `chain_tx_id IS NULL` filter) → Phase 3c `broadcastSignedTx`. Proof rows are therefore durable BEFORE broadcast (throws ⇒ safe full unwind — nothing was sent); the old post-broadcast FIX-1 write only runs on the legacy (non-prepare) path.
 - **Failure semantics (#1417-HIGH — unwind ONLY on a definitive typed reject):** the unwind (refund + delete proof rows + revert-to-PENDING) fires ⟺ `isBroadcastRejectedError(err)` (shared, typed — `chain/utxo-provider.ts`: `BroadcastRejectedError` / `RpcApplicationError` / explicit reject-text). EVERY other broadcast failure — transient 5xx/timeout, **and** auth 401 / quota 402 (GetBlock at the 3am drain) / 404 / unknown — → LEAVE rows BROADCASTING+intent (never revert; the tx may be live). Previously keyed off `!isRetryableError`, which mis-classified 401/402/unknown as "definitive reject" → a post-broadcast quota error unwound a LIVE tx → a second, different mainnet tx next tick. DEFINITIVE reject → refund queue-run credits FIRST (throw ⇒ rows stay for metadata-driven refund retry), delete this txid's proof rows, revert PENDING + chain_tx_id NULL.
@@ -1393,3 +1397,37 @@ Three changes, each with tests that fail without it:
 **Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
+
+## `rule-action-dispatcher.ts` — `fingerprint_source` is deliberately NULL (R19 §1.5)
+
+The anchor-creating actions (`AUTO_ANCHOR` / `FAST_TRACK_ANCHOR` / `INSTANT_SECURE`) set the top-level
+`anchors.fingerprint_source` column (migration `0376`) to **`NULL`**, enforced by a required `z.null()`
+in the module's local `AnchorInsertSchema` and pinned by the `fingerprint_source evidence class
+(R19 §1.5)` tests. It is a decision, not an oversight — **do not "fix the gap."**
+
+**Why neither enum value works.** This path anchors a DocuSign-**declared** hash: asserted, never
+fetched or hashed by Arkova (`docusign-anchor-reconciliation.ts` path A; `rules-engine.ts` passes the
+payload hash through verbatim). So `document_bytes` (a measurement claim we cannot make) and
+`issuer_record_attestation` ("no source document exists" — one demonstrably does) are BOTH false, in
+opposite directions. `NULL` renders as nothing and asserts nothing.
+
+**The trap.** The instinct is to reach for `document_bytes` because the sibling
+`connector-artifact-drain.ts` genuinely does fetch and hash real bytes (§1.6A). Two problems: that class
+does not describe *this* path, and that sibling sets no `fingerprint_source` at all today — grep it,
+zero occurrences. `document_bytes` there is **PR-2**'s write, not an existing value to copy.
+
+**Nothing else stops a wrong value.** `0384` freezes `fingerprint_source` post-insert for
+**non-`service_role`** callers only; this module writes as `service_role`, so the DB waves it through.
+The schema + tests ARE the guard. (That same carve-out is what keeps a future backfill possible.)
+
+**Two unrelated things share the name.** The typed top-level column vs. the free-text
+`metadata.fingerprint_source` debug label (which payload field the hash was read from). Never conflate.
+
+**If you need to find these anchors later** — e.g. the backfill to `issuer_record_attestation` +
+`DECLARED_UNVERIFIED` once PR-4 lands — the discriminator is `metadata->>'rule_action_type'`, written on
+every anchor this module has ever created. Not `connector_source`: the drain path writes `'docusign'`
+there too.
+
+Full rationale, plus the separate and higher-severity `FETCH_TIME_SNAPSHOT` mis-classification these same
+anchors still emit on three public surfaces:
+`docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.
