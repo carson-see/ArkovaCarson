@@ -9,6 +9,12 @@ export const API_V1_PREFIX = '/api/v1' as const;
 export const WEBHOOK_PATHS = {
   /** Google Drive `changes.watch` push notifications. */
   GOOGLE_DRIVE: `${API_V1_PREFIX}/webhooks/drive`,
+  /**
+   * ComputeID AgentPassport revocation deliveries. Root-level like the other
+   * connector receivers (checkr/middesk). This exact path is what gets
+   * registered with `POST https://api.aicomputeid.com/v1/webhooks/register`.
+   */
+  COMPUTEID: '/webhooks/computeid',
 } as const;
 
 export type WebhookPath = (typeof WEBHOOK_PATHS)[keyof typeof WEBHOOK_PATHS];

@@ -52,6 +52,9 @@ import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
 import { checkrWebhookRouter } from './api/v1/webhooks/checkr.js';
 import { veremarkWebhookRouter } from './api/v1/webhooks/veremark.js';
+import { computeidWebhookRouter, computeidWebhookBody } from './api/v1/webhooks/computeid.js';
+import { WEBHOOK_PATHS } from './constants/webhook-paths.js';
+import { computeidGate } from './middleware/computeidGate.js';
 import { microsoftGraphWebhookRouter } from './api/v1/webhooks/microsoft-graph.js';
 import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
 import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
@@ -357,6 +360,20 @@ app.use(
     next();
   },
   checkrWebhookRouter,
+);
+
+// ─── ComputeID AgentPassport revocation webhook — raw body required for HMAC ───
+// Gated by ENABLE_COMPUTEID_INTEGRATION (default off → 503 vendor_gated).
+// Mounted at WEBHOOK_PATHS.COMPUTEID so the registered URL and the mount cannot
+// drift. Raw parsing accepts ANY content type: the handler JSON.parses the
+// bytes itself and the HMAC is the authentication, so a partner default of
+// text/plain must not become a 500. Its own limiter bucket (not Stripe's).
+app.use(
+  WEBHOOK_PATHS.COMPUTEID,
+  computeidGate,
+  rateLimiters.computeidWebhook,
+  computeidWebhookBody,
+  computeidWebhookRouter,
 );
 
 // ─── Veremark webhook (SCRUM-1030 / 1151) — gated, defaults to 503 ───

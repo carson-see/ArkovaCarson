@@ -1,5 +1,12 @@
 # services/worker/src/
-_Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-stop/run-lease/manifest/PII-scrub/parser-convergence + ART Lane 1 bug-bounty SCRUM-3016/3017/3021)_
+_Last updated: 2026-09-07 (SCRUM-4492: ComputeID AgentPassport integration — `config.ts` gains the ComputeID flag/secret/CA-pin trio with a boot guard; `index.ts` gains the `/webhooks/computeid` mount)_
+
+## 2026-09-07 — ComputeID AgentPassport integration (SCRUM-4492 / SCRUM-4493 / SCRUM-4494)
+
+`config.ts` gains `enableComputeidIntegration` (`boolFlag(false)`), `computeidWebhookSecret` (comma-separated list allowed) and `computeidCaCertPem`. The superRefine refuses to boot when the flag is on without ≥1 non-empty secret (parsed by the SAME `integrations/computeid/secrets.ts::parseSecretList` the handler uses — a `","` value must fail at boot, not 503 every delivery) or without a parseable CA pin, and in production refuses a bare SPKI public-key pin. **New import edge:** `config.ts` → `integrations/computeid/{ca-cert,secrets}.ts`; that folder must stay logger- and config-free or the boot import cycles. `middleware/flagRegistry.ts` registers the getter; both drift snapshots + `flag-inventory.json` pin it `false`.
+
+`index.ts` gains the `WEBHOOK_PATHS.COMPUTEID` mount: `computeidGate` (503 while dark, before any work) → `rateLimiters.computeidWebhook` (its own global bucket, not Stripe's) → `express.raw({ type: () => true, limit })` with body-parser's `entity.too.large` mapped to a JSON 413 (it is not an `AppError`; the global handler would 500) → `rawBody` → `computeidWebhookRouter`. The admission router is mounted in `api/v1/router.ts` BEFORE the JWT-only `/agents` (see `api/v1/agents.md`).
+
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
@@ -221,3 +228,8 @@ When mocking Supabase rows in this suite, use columns the table actually has.
 - `generateFingerprint` is client-side only — never import it here.
 - All secrets from env vars; treasury keys never logged.
 - `anchor.status = 'SECURED'` is worker-only via service_role.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+The current ComputeID mount is gate → per-IP limiter → shared `computeidWebhookBody` → receiver. The shared parser rejects suffix paths before buffering and maps oversize payloads to 413. Tests use this production middleware; disabled requests still return 503 before parsing. This supersedes the original global-bucket note above.
