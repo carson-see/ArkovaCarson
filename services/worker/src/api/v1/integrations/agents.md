@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
-_Last updated: 2026-08-03 (GH #1836: Drive channel token is now high-entropy random, not the org UUID)_
+_Last updated: 2026-08-30 (`adobe-sign-oauth.ts`: the Adobe Sign connect flow that finally populates `org_integrations.webhook_id`)_
 
 ## 2026-08-03 — GH #1836 (SECURITY, pen-test scope): Drive `changes.watch` channel token is no longer the org UUID
 
@@ -14,6 +14,90 @@ Fix: a new `generateChannelToken()` helper (`randomBytes(32).toString('base64url
 
 Tests: `drive-oauth.test.ts`'s callback-flow test now asserts `label.channel_token` is NOT the org id, is >= 32 chars, and — critically — is the EXACT value sent as `token` in the real `changes.watch` HTTP body (catches a silent store/verify mismatch, not just "is it random"). `drive-oauth.ts`'s disconnect-flow `account_label` parse also now routes through the canonical `parseDriveAccountLabel()` (`integrations/connectors/drive-account-label.ts`), replacing an inline `JSON.parse` copy.
 
+## 2026-08-30 — `adobe-sign-oauth.ts`: the connect flow Adobe Sign never had
+
+Adobe Sign has been non-functional in **every** environment, production included, since the
+handler was written. Two causes, fixed in two changes:
+
+1. **PR #2519** — `org_integrations.webhook_id` did not exist (migration `0426`), and
+   `/webhooks/adobe-sign` had no `GET` route to answer Adobe's registration challenge, so no
+   webhook id could be minted by any route.
+2. **This change** — nothing *obtained* one. There was no `adobe-sign-oauth.ts` at all, so
+   `webhook_id` was NULL on every row and 100% of deliveries fell through
+   `findIntegration()`'s orphan branch.
+
+### The one structural difference from `docusign-oauth.ts` — do not "simplify" it away
+
+DocuSign provisions its Connect listener **fire-and-forget, after the upsert**, and throws the
+returned `connectId` into an `integration_events` row, because `webhooks/docusign.ts` resolves
+deliveries by `account_id`.
+
+Adobe cannot. `webhooks/adobe-sign.ts::findIntegration()` resolves by
+`org_integrations.webhook_id` **and by nothing else**. So here the webhook registration is:
+
+* **blocking and fatal**, not fire-and-forget — a row without a `webhook_id` can never receive a
+  delivery, and shipping one recreates the exact "UI says Connected, nothing works" state this
+  change exists to end;
+* **before the upsert** — the id is an input to the row, not an afterthought;
+* **compensated** — if the upsert then fails, the just-created webhook is deleted Adobe-side, so
+  Adobe is never left pushing at an id no row will ever hold.
+
+If you ever find yourself copying DocuSign's `settleConnectProvisioning` shape onto this router,
+that is the regression. `adobe-sign-oauth.test.ts` pins it with
+`'PERSISTS THE ADOBE webhook_id ON THE INTEGRATION ROW IN THE SAME UPSERT'`; that test fails if
+the field is dropped from the upsert (verified by mutation, not assumed).
+
+### Sharding: `api_access_point` is not optional
+
+Adobe accounts live on regional shards (`na1`, `na2`, `eu1`, `jp1`, …). The token response carries
+`api_access_point`; **every** post-token REST call must target it, and it is persisted as
+`org_integrations.base_uri` so disconnect can reach the same account later. A callback whose token
+response omits it is REFUSED (`missing_access_point`) rather than persisted — a row we cannot
+address is a row we cannot tear down. Only the *authorize/token* host is env-shaped
+(`ADOBE_SIGN_OAUTH_BASE_URL`, default `https://secure.na1.adobesign.com`); Adobe's own docs are not
+fully consistent about `secure.` vs `api.` for the v2 OAuth paths, so confirm it against the real
+application when one is registered.
+
+### Scopes are consent-time-only
+
+`webhook_write` (POST), `webhook_read` (GET) and `webhook_retention` (DELETE) are separate Adobe
+scopes and are granted **only** if requested at authorization. Dropping `webhook_retention` from
+`ADOBE_SIGN_DEFAULT_SCOPES` would not fail loudly — it would silently make **disconnect** unable to
+remove the Adobe-side webhook, leaving a live registration delivering to us forever. A 403 on the
+create is almost always the account tier lacking `webhook_write`; that is why the
+`webhook_registration_failed` event carries `adobe_status` + a bounded `adobe_detail` instead of a
+bare message (the `{"error":"DocuSign Connect create failed"}` lesson from SCRUM-3014).
+
+### Disconnect is best-effort Adobe-side, and says so
+
+Order is **refresh → delete webhook → revoke**: the stored access token is at most an hour old and
+very likely expired, and revoking first would destroy the credential the delete needs. The whole
+Adobe-side block is best-effort — if Adobe is unreachable the LOCAL teardown still completes,
+because leaving an org permanently "connected" because a third party is down is worse than a
+stranded webhook, and the security-relevant half (tokens revoked, secret deleted, row revoked) is
+entirely ours. The stranded webhook is **reported**, never swallowed: the response carries
+`adobe_webhook_removed: false`, a `webhook_teardown_failed` warning event names the remediation,
+and the card tells the admin to remove it in Adobe's console. Accepting that honestly is the trade;
+pretending the teardown succeeded is not.
+
+### `webhook_already_claimed` is a security signal, not a save error
+
+Migration `0426`'s partial unique index on `(provider, webhook_id) WHERE revoked_at IS NULL` is a
+tenant-isolation invariant: at most one ACTIVE integration may claim a given Adobe webhook id, so a
+stray or malicious duplicate registration cannot shadow another org's events. A `23505` on the
+upsert therefore gets its own error code and its own copy — collapsing it into `save_failed` would
+hide a cross-tenant collision behind "please try again".
+
+### Status: built, not proven
+
+`ENABLE_ADOBE_SIGN_OAUTH` defaults **off** and production carries **no Adobe credential at all**
+(verified 2026-08-30: `gcloud secrets list --project arkova1 | grep -i adobe` returns only
+`adobe-sign-client-secret-wwr`, a soak-rig secret; the prod `arkova-worker` revision's 68 env vars
+contain zero `ADOBE_*`; `deploy-worker.yml` has no Adobe reference). Someone must register an Adobe
+Acrobat Sign application and confirm its account tier grants the three webhook scopes before this
+can be exercised end-to-end against real Adobe. Until then `connector-health.ts` keeps reporting
+`adobe_sign` as `gated` — see `api/agents.md`.
+
 ## What This Folder Contains
 
 User-facing OAuth flow endpoints for third-party integrations. Each integration provides start, callback, and disconnect routes.
@@ -22,6 +106,8 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 |------|---------|
 | `docusign-oauth.ts` | DocuSign OAuth start/callback/disconnect routes plus org-admin Connect listener reprovisioning (SCRUM-1101/SCRUM-2069). SCRUM-2361 (DS-01): `start` + `callback` gate on `organizations.verification_status = 'VERIFIED'` via `requireVerifiedOrg` — unverified/pending orgs are denied (403 `org_unverified` on start, `docusign_error=org_unverified` redirect on callback); disconnect is never gated. `// TODO(PAY-01)` marks the not-yet-shipped paid-individual (Stripe Identity) entitlement. **SCRUM-3027**: on a successful org connect (after the integration upsert), the callback fires `seedDocusignCompletionRule()` (`integrations/connectors/docusign-rule-seed.ts`) — idempotent, non-stomping, failure-isolated auto-seed of the DocuSign Completion rule (default-on so contracts flow with zero further clicks). Fire-and-forget like `settleConnectProvisioning`; surfaces `docusign_completion_rule_seeded` / `_seed_failed` events |
 | `docusign-oauth.test.ts` | Tests for DocuSign OAuth flows |
+| `adobe-sign-oauth.ts` | Adobe Sign OAuth start/callback/disconnect (SCRUM-1148 follow-up). `requireOrgAdmin` + `requireVerifiedOrg` on start AND callback; the callback registers the Adobe webhook (`POST /api/rest/v6/webhooks`) BEFORE the upsert and persists the returned id to `org_integrations.webhook_id` — the only key `webhooks/adobe-sign.ts` can resolve a delivery by. Mounted behind `ENABLE_ADOBE_SIGN_OAUTH` (default off) |
+| `adobe-sign-oauth.test.ts` | Tests for the Adobe Sign flows: gates, state TTL/forgery, the webhook_id persistence guard, webhook-create failure refusing to persist, upsert-failure compensation (Adobe webhook deleted), `23505` -> `webhook_already_claimed`, disconnect teardown ordering + stranded-webhook reporting |
 | `drive-oauth.ts` | Google Drive OAuth start/callback/disconnect routes (SCRUM-1168). DRIVE-01 (SCRUM-2366): `start` + `callback` gate on `assertDriveConnectAllowed` (`integrations/connectors/drive-connect-eligibility.ts`) via the `makeEligibilityDb` adapter — org path = owner-inclusive admin of a VERIFIED, non-suspended org; personal path (no `org_id`) = paid + identity-verified individual. Denials → 403 `code` on start / `drive_error=<code>` redirect on callback; `lookup_failed` → 500/retry. Gate is RE-EVALUATED on callback so a stale-but-valid `state` token can't bypass a lapsed entitlement. Personal-Drive persistence is not yet representable (`org_integrations.org_id` is NOT NULL) → callback denies with `personal_connect_unavailable`. Disconnect keeps `requireOrgAdmin` (never gated on entitlement) |
 | `drive-oauth.test.ts` | Tests for Drive OAuth flows + DRIVE-01 gate (org-admin allowed, unverified-org denied, paid-verified-individual allowed, free denied, callback token-reuse re-check) |
 | `drive-oauth-webhook-url.test.ts` | Tests for Drive webhook URL construction |
@@ -48,6 +134,11 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 - **DO** settle the fire-and-forget `provisionConnectListener()` promise with the shared `settleConnectProvisioning()` helper (SCRUM-3014) instead of an inline `.then(...).catch(...)` per router — the org and member callbacks differ only in event-type names and `flow`, and the duplicated chain both drifted and failed the Sonar new-code duplication gate.
 - **DO** report DocuSign Connect listener provisioning failures through `reportConnectProvisionFailure()` (SCRUM-3014, `integrations/connectors/docusign-connect-health.ts`) and persist `docusign_status` / `docusign_detail` on the `connect_listener_failed` / `member_connect_listener_failed` event. Keep it non-fatal — the OAuth callback has already redirected — but never swallow it to a bare `error.message`: prod ran for weeks on `{"error":"DocuSign Connect create failed"}` with no status and an org UI that still said "Connected".
 - **DO** remember there are TWO DocuSign redirect URIs (`/api/v1/integrations/docusign/oauth/callback` and `/api/v1/integrations/docusign/member/oauth/callback`), both request-host derived. Any new host fronting the worker needs both registered on the DocuSign app (SCRUM-3015, `docs/runbooks/integrations/docusign.md`).
+- **DO** register the Adobe webhook BEFORE the `org_integrations` upsert and persist the returned id to `webhook_id` in that same upsert, and DO delete the Adobe-side webhook if the upsert then fails. `webhooks/adobe-sign.ts` resolves by `webhook_id` alone — a row without one is a connection that can never receive a delivery, which is precisely the state Adobe Sign was stuck in from the day the handler shipped until 2026-08-30.
+- **DO NOT** copy DocuSign's fire-and-forget `settleConnectProvisioning` shape onto the Adobe router. DocuSign can afford a non-fatal listener failure because it resolves by `account_id`; Adobe cannot.
+- **DO** request `webhook_retention` at consent time even though nothing calls DELETE until disconnect. Adobe grants only what was asked for at authorization, so omitting it silently breaks disconnect months later, with no error at connect time to point at.
+- **DO** target the `api_access_point` from the token response for every Adobe REST call and persist it as `base_uri`. A hardcoded shard host works for exactly one account.
+- **DO NOT** ask Adobe for `includeSignedDocuments` / `includeDocumentsInfo` on the webhook config. §1.6A permits a server-side fingerprint on a deliberate fetch path; it does not permit document bytes riding in on a notification body, where every error/log/DLQ surface that touches that body would carry them.
 - **DO** keep the Drive consent URL scope-minimal: the route's `/oauth/start` must request exactly `DRIVE_DEFAULT_SCOPES` (`drive.file`, `drive.activity.readonly`, `userinfo.email`) and never `include_granted_scopes` (FULLSOAK 2026-08 33-scope grant finding, shared-resource register #9). `fetchGoogleIdentity` depends on `userinfo.email` for a stable `account_id` (`sub`) — dropping it silently degrades the upsert key to a constant. End-to-end pinned in `drive-oauth.test.ts`.
 
 ## docusign-inheritance.ts (SCRUM-3867)
@@ -62,3 +153,14 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 ## PR #2572 — inheritance owner parity, multiple accounts and atomic revocation
 
 Parent authorization delegates to `isCallerOrgAdminResult` with the injected client. Owned-account existence uses a bounded query separate from the unique inherited marker; valid multiple accounts and owned-plus-marker combinations are supported. Stop calls `stop_suborg_docusign_inheritance` (0446), which locks the current child-parent relationship, rechecks canonical administration, revokes only the inspected marker and inserts its audit row in one transaction. Changed affiliation or marker returns 409, lost administration 403, and unavailable/unknown RPC results 503. Never restore a multi-row `maybeSingle()` lookup or a separate direct UPDATE after authorization. Credit/suspension RPC locks remain in 0444.
+## 2026-09-05 — Adobe disconnect token order
+
+Review found the code revoked the refresh credential before deleting the webhook despite the documented refresh → delete → revoke sequence. The regression models a revoked grant rejecting the subsequent DELETE and failed before the fix. Keep the refresh credential until after webhook teardown, then attempt revocation even if refresh/deletion failed; local teardown and its existing warnings remain independent of vendor availability.
+
+A second reconnect regression used a stateful secret store: failed webhook registration overwrote and then deleted the deterministic secret still used by the working connection. Each callback now allocates a UUID-suffixed secret, captures previous resources before external writes, and retires those resources only after the replacement row commits. Failed attempts remove only their own secret. Legacy stored names remain readable for disconnect.
+
+The OAuth test double derives its put/get/delete mock signatures from the router's refresh-token-store dependency. The retirement-order regression must accept the real named-secret argument; an inferred zero-argument mock hid that contract from test setup and failed worker typechecking.
+
+## 2026-09-05 — Shared OAuth contracts
+
+The Adobe addition copied wire-format, org lookup and request parsing code from the existing connectors. Those contracts now live in `oauth-primitives.ts`, `oauth-db.ts`, `oauth-org.ts` and `oauth-request.ts` and are used by the existing providers. Provider routers still decide where authorization applies: Drive retains its eligibility resolver, member DocuSign retains owner-inclusive membership and the member state scope, and org verification is rechecked on callback but never on disconnect. Token storage, webhook registration, compensation and retirement order remain provider-specific. Preserve the exact signed-state wire format and invalid-state-before-vendor-error callback precedence; the shared primitive tests verify the independent HMAC contract, malformed/tampered input and provider-specific validation.

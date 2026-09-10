@@ -1,5 +1,29 @@
 # agents.md — services/worker/src/api/
 
+## 2026-08-30 — `connector-health.ts`: the `adobe_sign` kind is DERIVED, never asserted
+
+PR #2519 corrected `adobe_sign` from a hardcoded `kind: 'live'` to `'gated'`: the connector had no
+connect flow at all and 100% of prod traffic to `/webhooks/adobe-sign` returned 503, so listing it
+beside DocuSign/Drive as `live` asserted a capability we did not hold (CLAUDE.md §1.13 R-7).
+
+The connect flow now exists (`api/v1/integrations/adobe-sign-oauth.ts`). **Existing is not the same
+as working**, and a static flip back to `'live'` would re-assert exactly the claim #2519 removed:
+production still carries no Adobe credential and the flow sits behind a default-off
+`ENABLE_ADOBE_SIGN_OAUTH`.
+
+So the kind is computed per request by `resolveConnectorKind()`: `'live'` **iff**
+`ENABLE_ADOBE_SIGN_OAUTH === 'true'` AND both `ADOBE_SIGN_CLIENT_ID` and
+`ADOBE_SIGN_CLIENT_SECRET` are non-blank; `'gated'` otherwise. Every other catalog entry passes
+through untouched. Deriving it means the dashboard cannot drift in either direction — it stops
+claiming `live` the moment credentials are removed, and starts the moment they are provisioned,
+with no code change and no stale assertion sitting in the catalog waiting to be believed.
+
+**What this does NOT measure**, stated so nobody reads more into it: configuration presence, not a
+live handshake. A wrong secret, or an account tier that does not grant `webhook_write`, still reads
+`live` here. That failure surfaces at connect time as `webhook_registration_failed` (with Adobe's
+real status attached), not on this dashboard. Tests:
+`describe('resolveConnectorKind — adobe_sign')` in `connector-health.test.ts` pins both directions
+plus the whitespace-only-credential case.
 ## 2026-08-23 — `queue-resolution.ts`: `GET /api/queue/pending` had NO role gate (SCRUM-3569, SEC)
 
 Any authenticated member of an org could list every PENDING_RESOLUTION anchor in that org — `public_id`, **`filename`** and **`fingerprint`** for each. Not cross-tenant (the query was org-scoped), but a rank-and-file member enumerating what their coworkers uploaded is exactly the disclosure this surface was documented not to allow.

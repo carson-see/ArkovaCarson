@@ -703,6 +703,9 @@ Consequences that are now true of the running system, and were not before:
 - The old docstring claiming the tenant carve-out happens "at the route layer (the route reads the per-tenant Confluence allowlist)" is gone. No route ever did that, and a Confluence page is not an authorization source.
 - The per-org lookup **fails open**: a read error or missing row means "not enforced". This preserves the contract `orgCreditEnforcementFlag.test.ts` already pins — a missing/false flag must never hard-block the anchor path for non-credit orgs. Failing closed would turn a transient read error into a 503 for every org on the platform to protect a budget that applies to one partner. Residual risk (an unbilled anchor for an enrolled org during a DB incident) is logged as `org_credit_enforcement_lookup_failed` at error level for reconciliation.
 - Global-flag-on short-circuits before any query, so the enforced-everywhere case costs no extra round trip.
+## 2026-09-05 — shared rate-limit refund coverage (PR #2529)
+
+The distributed `skipFailedRequests` regression executes the response callback against an atomic shared counter: an HTTP 500 refunds one slot, a successful retry remains charged, and the next request receives 429. Keep the existing 80% function-coverage threshold; this path must be exercised, not excluded.
 ## 2026-08-30 — R1: `updateAnchorConfirmationProofs` carries the bitcoin-tree branch
 
 `AnchorConfirmationUpdateRow` gained `txInclusionBranch` + `txBlockIndex`
