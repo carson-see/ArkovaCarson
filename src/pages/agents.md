@@ -637,6 +637,7 @@ finding still fires, so deleting them turns that test red.
 ## 2026-08-30 SCRUM-3818 — `RecordDetailPage.tsx` threads `fingerprintSource` to `AssetDetailView`
 
 One-line addition to the `<AssetDetailView anchor={{...}}>` object literal: `fingerprintSource: anchor.fingerprint_source ?? undefined`. No new query — `useAnchor`'s `select('*')` already selects the column (migration 0376). Enables `AssetDetailView.tsx`'s DECLARED_UNVERIFIED re-verify caveat — see `src/components/anchor/agents.md` for the full writeup.
+
 ## 2026-09-05 — PR #2525 attestation actions on narrow screens
 
 Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Attestation outside the viewport. Document scrollWidth did not detect it because the shell clips overflow. Stack the heading and action group below lg and allow the actions to wrap. The staging browser regression checks every action bounding box at 375px and 1280px; it failed before this fix. Preserve this geometry check alongside actual database loading/error/retry and tenant-isolation checks.
