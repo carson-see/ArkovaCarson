@@ -73,3 +73,11 @@ schema does not replace a full Supabase replay or hosted HTTP verification.
 The output directory must resolve beneath the current working directory. Run
 from the intended evidence parent; traversal or symlink escapes are rejected
 before a cluster starts or any evidence file is written.
+
+
+The CLI output contract is now a single directory name: 1–64 ASCII letters,
+digits, underscores or hyphens, starting with a letter or digit. Run from the
+evidence parent and pass `--output rollup-proof`; absolute paths, separators,
+dot segments and existing paths/symlinks are rejected before cluster creation.
+This keeps arbitrary path fragments out of filesystem writes and needs no
+security-rule suppression.

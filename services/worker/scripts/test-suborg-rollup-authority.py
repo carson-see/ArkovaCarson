@@ -18,14 +18,17 @@ from lib.local_postgres import LocalPostgres, quote
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--pg-bin', required=True)
-    parser.add_argument('--output', required=True, type=Path,
-                        help='New directory inside the current working directory')
+    parser.add_argument('--output', required=True,
+                        help='New directory name in cwd: ASCII letters, digits, underscores or hyphens')
     parser.add_argument('--baseline', action='store_true')
     args = parser.parse_args()
     output_root = Path.cwd().resolve()
-    output = args.output.resolve()
-    if output == output_root or not output.is_relative_to(output_root):
-        parser.error('--output must stay inside the current working directory')
+    output_name = args.output
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', output_name):
+        raise SystemExit('--output must be a directory name: 1-64 ASCII letters, digits, underscores or hyphens')
+    output = output_root / output_name
+    if output.exists() or output.is_symlink():
+        raise SystemExit('--output must name a new directory, not an existing path or symlink')
     repo = Path(__file__).resolve().parents[3]
     baseline = repo/'supabase/migrations/0432_suborg_rpc_role_enum_coercion_fix.sql'
     repair = repo/'supabase/migrations/0450_scrum4878_suborg_rollup_canonical_admin.sql'
