@@ -2512,4 +2512,4 @@ _Last refreshed: 2026-09-08 by Claude-Opus-5-CTO-session — claims verified aga
 
 _Last refreshed: 2026-09-09 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
 
-_Last refreshed: 2026-09-10 by Codex PR #2572 repair session — local-only claims verified against disposable PostgreSQL and test output; no new production claims._
+_Last refreshed: 2026-09-10 by Codex PR #2572 repair session — claims verified against gcloud/MCP/CI output (local test and SQL receipts; hosted CI remains incomplete and no new production application is claimed)._
