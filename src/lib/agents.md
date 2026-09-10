@@ -1,5 +1,42 @@
 # agents.md — lib
 
+_Last updated: 2026-09-03_
+
+## PR #2637 MFA assurance identity (2026-09-05)
+
+`mfaSessionKey.ts` derives a UI cache key from a current user's GoTrue session_id
+and AAL; JWT rotation does not destroy enrollment state. New sign-ins and assurance
+downgrades change the key. Unsupported/malformed/cross-user tokens retain their
+whole-token identity. This decoder is not signature verification or authorization.
+
+## 2026-09-03 SCRUM-3167 — `mfaPolicy.ts` (new): MFA enforcement date policy
+
+New module, the single source of truth `AuthGuard`/`useMfaEnrollmentRequirement`/`MfaGraceNudge` all read for "is MFA required, and from when." Phase 1 is role-based only — see `src/components/auth/agents.md` and `src/hooks/agents.md`'s dated SCRUM-3167 entries for the full gate design; this entry covers the policy module itself.
+
+- `MFA_ADMIN_ENFORCE_FROM_DEFAULT = '2026-09-21T00:00:00Z'` — baked so the deadline is real with zero environment configuration.
+- `resolveMfaEnforceFrom()` precedence, each tier validated (CTO ruling A4-9) before use — an invalid candidate at any tier falls through to the next, never treated as "never enforce":
+  1. `localStorage[MFA_ENFORCE_FROM_OVERRIDE_KEY]` (the key is exported — R14, PR #2637 review round 2, so `e2e/helpers/mfa.ts` imports it instead of duplicating the string literal), read ONLY when `import.meta.env.DEV === true` OR `import.meta.env.VITE_MFA_ALLOW_DATE_OVERRIDE === 'true'` (CTO ruling A4-1 — this must survive a PRODUCTION build, e.g. a soak/E2E preview, not just `npm run dev`). **Never set `VITE_MFA_ALLOW_DATE_OVERRIDE` on Vercel prod** — see `docs/reference/ENV.md`.
+  2. `import.meta.env.VITE_MFA_ENFORCE_FROM` — Carson can move the rollout date via a Vercel env change + redeploy, no code change.
+  3. `MFA_ADMIN_ENFORCE_FROM_DEFAULT`.
+- **Validation (R10, round 2): `z.string().datetime()` (Zod's default `offset: false`, so Z-only UTC, fractional seconds allowed), replacing the old hand-rolled `STRICT_UTC_DATE_RE` regex** — same rejection behavior (an offset like `+00:00`, a non-`Z` string, or an invalid calendar date all fall through) with one less bespoke regex to maintain.
+- `isMfaEnforcementActive(now = Date.now())` — inclusive boundary (`now >= enforceFrom`).
+- `getMfaGraceDaysRemaining(now)` — ceil days, floored at 0.
+- `isMfaRequiredRole(profile)` — pure predicate, `role === 'ORG_ADMIN' || is_platform_admin === true`. Fails closed to `false` on a null/undefined profile.
+- **Reads `import.meta.env.*` and `localStorage` live, inside the functions, never cached at module scope** — the same pattern `getAppBaseUrl` in `routes.ts` uses — so `vi.stubEnv` works in tests without `vi.resetModules()`. `localStorage` access goes through the shared `safeStorage.ts` helper (R8, round 2 — see that module's entry below) rather than a local try/catch: this repo's own vitest+jsdom environment has a non-functional global `localStorage` (Node's own inert built-in shadows jsdom's), so the try/catch isn't just defensive for real private-browsing — it is exercised by every local test run. `mfaPolicy.test.ts` documents the working localStorage-mock pattern (`Object.defineProperty(window, 'localStorage', {...})`, mirroring `GettingStartedChecklist.test.tsx`) for any future test that needs to touch it.
+- **Organization-level enforcement is deliberately NOT here** (CTO ruling A4-3): no `organizations` query, no `hipaa_mfa_required` read. That column is writable by any org owner/admin via PostgREST with no audit trail — phase 2 needs an audited service-role RPC + a column `REVOKE` migration (T3) first.
+
+## 2026-09-03 SCRUM-3167 — `mfaErrors.ts`, `mfaCapabilityCooldown.ts`, `safeStorage.ts` (PR #2637 review round 2)
+
+`mfaErrors.ts`'s `classifyMfaError` is the single source of truth `MfaChallenge.tsx`, `MfaEnrollmentRequired.tsx`, and `TwoFactorSetup.tsx` all use to sort a GoTrue MFA error into one of three buckets — **the exact classification a given code lands in now has real security weight, not just UX**, per the R17-R21 CTO ruling (see `src/components/auth/agents.md`'s dated entry):
+- `'wrong_code'` — `mfa_verification_failed`, `mfa_verification_rejected`, `mfa_challenge_expired`. The user's own mistake; always shows an inline retryable error, never fails open or closed.
+- `'rejected'` — any OTHER explicit error code (`over_request_rate_limit`, `mfa_ip_address_mismatch`, `validation_failed`, etc., R18). A real rejection reached GoTrue and came back — also an inline retryable error, distinct from `'wrong_code'` only in not implying the code itself was mistyped.
+- `'platform'` — the explicit MFA-disabled capability codes (`mfa_totp_enroll_not_enabled`, `mfa_totp_verify_not_enabled` — NOT `mfa_factor_name_conflict`, which is an enrollment-management code handled separately by `TwoFactorSetup.tsx`'s own `authErrorCode()`), OR an unrecognized/absent error code. **On the CHALLENGE path (`MfaChallenge.tsx`) this now fails CLOSED** (a retry screen, never access) — it used to fail open; see that component's doc comment for why the CTO ruling reversed this. On the ENROLLMENT path (`MfaEnrollmentRequired.tsx`) it still fails open, per CTO ruling A4-2.
+
+`mfaCapabilityCooldown.ts` — **re-keyed per-userId (R17, round 2; was a single global `sessionStorage` flag before).** `armMfaCapabilityCooldown(userId)`/`isMfaCapabilityCooldownActive(userId)`/`clearMfaCapabilityCooldown(userId)` all require a userId now (an empty/falsy one is a safe no-op, never a shared/global key). This closes a CONFIRMED shared-browser bypass: the old global flag survived `useAuth.signOut()`'s hard redirect, so the NEXT user to sign in on the same browser — a DIFFERENT person, with their OWN verified factor — inherited the PREVIOUS user's active cooldown and could skip `MfaChallenge` entirely. `useAuth.ts`'s `signOut()` also clears the CURRENT user's cooldown explicitly before the redirect (belt-and-suspenders on top of the per-user keying).
+
+`safeStorage.ts` (new) — `readItem`/`writeItem`/`removeItem(storage, key)`, each a one-line try/catch around the native `Storage` method (R8, round 2: a tiny shared helper replacing three near-identical bespoke try/catches in `mfaPolicy.ts`'s `readDateOverride` and `mfaCapabilityCooldown.ts`'s read/write, one throw-safety test in `safeStorage.test.ts`).
+
+The old `randomSuffixHex()` helper module under `src/lib/` is **DELETED** (R9, round 2) — both call sites (`TwoFactorSetup.tsx`, `MfaEnrollmentRequired.tsx`) now use `crypto.randomUUID().slice(0, 8)` directly (equally CSPRNG-backed, no extra module to maintain; SonarCloud typescript:S2245 still holds).
 _Last updated: 2026-09-02_
 
 ## 2026-09-02 — certificate field values overprinted their labels; `addField` now measures the face it paints
@@ -522,6 +559,14 @@ student-ID stripper does not cover them: `STUDENT_ID_KEYWORD` joins its words wi
 `student_id: 88213` does not. That gap is in `piiStripper.ts`, predates this PR,
 and is not fixed here.
 
+## 2026-08-30 SCRUM-3818 — `copy.ts` `FINGERPRINT_SOURCE_*` / `CONNECTOR_FINGERPRINT_LABELS` disclosure fixes (go-live blocker for `ENABLE_DOCUSIGN_INBOUND`)
+
+Two related honesty-copy fixes, both keyed on the DocuSign Recipient-Connect INBOUND declared-hash path reusing `fingerprint_source: 'issuer_record_attestation'` (an evidence class that previously meant ONLY CSV bulk-import issuer attestation):
+
+- `FINGERPRINT_SOURCE_DESCRIPTIONS.issuer_record_attestation` / `FINGERPRINT_SOURCE_TRIAD.issuer_record_attestation` — the prior text asserted "This record was never in document form" and attributed the assertion exclusively to "the issuing organization". Both are false for a DocuSign-inbound record. Rewritten scoped to what Arkova measured (nothing, for this tier), true for both origins without naming either — see `src/components/verification/agents.md` for the full writeup (consumed only by `FingerprintSourceDisplay.tsx` → `PublicVerification.tsx`).
+- `CONNECTOR_FINGERPRINT_LABELS` gained `DECLARED_UNVERIFIED_REVERIFY_NOTE` / `DECLARED_UNVERIFIED_REVERIFY_MISMATCH_HINT` — shown by `AssetDetailView.tsx` instead of `REVERIFY_NOTE`/`REVERIFY_MISMATCH_HINT` when a connector-sourced anchor's `fingerprintSource` is `'issuer_record_attestation'`, since the original notes falsely claim Arkova retrieved and hashed the document. See `src/components/anchor/agents.md`.
+
+Both new/edited strings pass `lint:copy` — note the first draft of `DECLARED_UNVERIFIED_REVERIFY_NOTE` used the banned term "hash" ("did not retrieve or hash this document") and had to be reworded to "did not retrieve this document or fingerprint it" — a live example of why `npm run lint:copy` must be re-run after editing prose in this file, not just after adding a new key.
 ## DI-775 / SCRUM-3538 — `WEBHOOK_EVENT_DESCRIPTIONS` is a registration surface
 
 `WEBHOOK_EVENT_DESCRIPTIONS` in `copy.ts` is keyed by webhook event id and must carry an entry for

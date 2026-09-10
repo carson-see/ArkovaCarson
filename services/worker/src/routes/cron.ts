@@ -142,15 +142,118 @@ const DriveFileChangedLimitSchema = z.coerce.number().int().min(1).max(100);
 
 cronRouter.use(corsMiddleware);
 
-// Dedicated rate limiter for cron endpoints
-const cronJobsLimiter = rateLimit({
+/**
+ * SCRUM-4475 — cron rate limiting is TWO limiters, not one global bucket.
+ *
+ * HISTORY. This was a single `rateLimit({ maxRequests: 30, keyGenerator: () =>
+ * 'global' })` mounted on every `/jobs/*` route: ONE 30/min bucket shared by
+ * all 111 routes on this router. Prod runs 66 Cloud Scheduler jobs and the
+ * two-, five-, ten-, fifteen- and thirty-minute cadences all coincide with the
+ * hourly ones at :00, so the 31st job of that burst onwards was refused with
+ * 429. Cloud Scheduler records a 429 as status 8 RESOURCE_EXHAUSTED and does
+ * NOT retry inside the window, so those runs were skipped outright, silently.
+ * Cloud Logging for 2026-09-03T18Z..09-05T18Z shows 46 refusals of
+ * org-queue-scheduler, 43 of lock-wait, 43 of embed-public-records and so on
+ * down; the nightly `daily-anchor-flush` (`POST /jobs/batch-anchors?force=true`)
+ * was refused at 2026-09-04T07:00:51Z and 2026-09-05T07:00:41Z.
+ *
+ * The two limiters below have different jobs and must not be collapsed back
+ * into one:
+ *
+ *   `cronBurstGuard` runs BEFORE `cronAuth`. It is the flood guard that still
+ *   applies to an unauthenticated caller, and it is what bounds how often
+ *   anyone can drive the JWKS fetch / JWT verification inside `verifyCronAuth`.
+ *   It is keyed per source IP (`trust proxy` is set in index.ts, so that is the
+ *   real client), NOT globally: a global bucket is the very shape that caused
+ *   this outage, and per-IP means an abusive caller exhausts its own budget
+ *   instead of starving Cloud Scheduler.
+ *
+ *   `cronJobsLimiter` runs AFTER `cronAuth`, one bucket per registered job
+ *   path. It catches a runaway trigger on ONE job without taking the other 65
+ *   down with it. Sitting behind auth is deliberate and is what makes the
+ *   per-path key safe: an unauthenticated caller is refused at auth and can
+ *   never mint a bucket per route by enumerating URLs.
+ */
+
+/**
+ * 120/min per source IP. The worst case this has to admit is every one of the
+ * 66 Cloud Scheduler jobs landing in the same minute at :00, so 120 is ~1.8x
+ * the whole fleet; the in-process `scheduled.ts` backups and admin-console
+ * triggers fit inside that headroom. Raise it if the job count grows past ~80.
+ */
+export const CRON_BURST_GUARD_MAX_REQUESTS = 120;
+
+const cronBurstGuard = rateLimit({
   windowMs: 60000,
-  maxRequests: 30,
-  scope: 'cron-jobs',
-  keyGenerator: () => 'global', // one bucket for all cron callers
+  maxRequests: CRON_BURST_GUARD_MAX_REQUESTS,
+  scope: 'cron-burst',
+  // Default keyGenerator is req.ip; named explicitly because the whole point of
+  // this limiter is that it is NOT the old constant-key global bucket.
+  keyGenerator: (req) => req.ip || 'unknown',
 });
 
-cronRouter.use(cronJobsLimiter);
+cronRouter.use(cronBurstGuard);
+
+/**
+ * 10/min per job. No cron job on this router legitimately fires more than once
+ * a minute — `lock-wait` at every-minute is the fastest — so this is ~10x
+ * headroom over the real cadence while still bounding a single misconfigured
+ * trigger.
+ */
+export const CRON_JOB_MAX_REQUESTS_PER_MINUTE = 10;
+
+/** Shared bucket for any path this router does not actually serve. */
+const UNROUTED_JOB_BUCKET = '__unrouted__';
+
+/**
+ * Registered route paths, read once off the router's own stack. Computed lazily
+ * because the routes below are registered after this module-level statement
+ * runs; by the time a request arrives the module body has finished, so the set
+ * is complete. Nothing else needs to be kept in sync with the route list.
+ */
+let registeredJobPaths: Set<string> | null = null;
+
+function getRegisteredJobPaths(): Set<string> {
+  if (!registeredJobPaths) {
+    const stack = (cronRouter as unknown as { stack: Array<{ route?: { path?: unknown } }> }).stack;
+    registeredJobPaths = new Set<string>();
+    for (const layer of stack) {
+      const routePath = layer.route?.path;
+      if (typeof routePath === 'string') {
+        registeredJobPaths.add(normalizeJobPath(routePath));
+      }
+    }
+  }
+  return registeredJobPaths;
+}
+
+/**
+ * Express default routing is case-insensitive and non-strict, so `/Lock-Wait/`
+ * and `/lock-wait` reach the same handler and must therefore share one bucket.
+ */
+function normalizeJobPath(path: string): string {
+  const trimmed = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  return trimmed.toLowerCase();
+}
+
+/**
+ * Bucket key for the per-job limiter: the job path when it is a route this
+ * router serves, otherwise one shared bucket. The allowlist is what keeps
+ * bucket cardinality bounded by the route table (111 + 1) instead of by
+ * whatever an authenticated caller puts in the URL — the store is a process-wide
+ * Map with a 50k cap, and unbounded keys would be a memory-pressure lever.
+ */
+function cronJobBucketKey(req: Request): string {
+  const path = normalizeJobPath(req.path || '/');
+  return getRegisteredJobPaths().has(path) ? path : UNROUTED_JOB_BUCKET;
+}
+
+const cronJobsLimiter = rateLimit({
+  windowMs: 60000,
+  maxRequests: CRON_JOB_MAX_REQUESTS_PER_MINUTE,
+  scope: 'cron-jobs',
+  keyGenerator: cronJobBucketKey,
+});
 
 // Log heap status after every cron job completes (response finish event)
 cronRouter.use((_req, res, next) => {
@@ -265,6 +368,11 @@ async function cronAuth(req: Request, res: any, next: any): Promise<void> {
 
 // Apply cron auth to all routes in this router
 cronRouter.use(cronAuth);
+
+// SCRUM-4475: per-job limiter sits BEHIND auth — see the block at the top of
+// this file. Unauthenticated callers are bounded by `cronBurstGuard` instead and
+// never reach a per-path bucket.
+cronRouter.use(cronJobsLimiter);
 
 // ─── Core Anchoring Jobs ───
 
@@ -1434,7 +1542,10 @@ cronRouter.post('/check-attestation-expiry', async (_req, res) => {
 cronRouter.post('/check-credential-expiry', async (_req, res) => {
   try {
     const { flagRegistry } = await import('../middleware/flagRegistry.js');
-    if (!flagRegistry.getFlag('ENABLE_EXPIRY_ALERTS')) {
+    // DI-736 / SCRUM-3475: getFlagLive re-reads switchboard_flags on a 60s TTL.
+    // getFlag is the boot snapshot — flipping this row would otherwise have no
+    // effect until the worker restarted.
+    if (!(await flagRegistry.getFlagLive('ENABLE_EXPIRY_ALERTS'))) {
       res.json({ skipped: true, reason: 'ENABLE_EXPIRY_ALERTS flag is disabled' });
       return;
     }

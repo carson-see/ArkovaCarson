@@ -3957,9 +3957,26 @@ export const FINGERPRINT_SOURCE_LABELS = {
   issuer_record_attestation: 'Issuer-Attested Record',
 } as const satisfies Record<FingerprintSource, string>;
 
+// SCRUM-3818 (docusign-bilateral-2026-08): `issuer_record_attestation` has a
+// SECOND real origin as of this cycle — the DocuSign Recipient-Connect
+// INBOUND declared-hash path sets the same `fingerprint_source` value
+// server-side (connector-artifact-drain's inbound branch) for an envelope
+// Arkova never fetched. Unlike CSV bulk-import (no document ever existed —
+// row content was fingerprinted directly), a real document DOES exist for
+// that path and WAS fingerprinted — by DocuSign, not Arkova, who only relays
+// the declared value. The copy below is written to be true for BOTH origins
+// without naming either: it scopes every claim to what ARKOVA measured
+// (nothing, for this tier) rather than asserting a document never existed —
+// the previous "This record was never in document form" line was accurate
+// for CSV but false for a DocuSign-inbound record, and "the issuing
+// organization asserted this" misattributed a third-party-declared value to
+// the securing org (R-7). This page cannot distinguish the two origins today
+// — `get_public_anchor` does not project `metadata->>'connector_source'`
+// (deliberately service_role-write-guarded) — so the copy stays honest and
+// general rather than naming a vendor it cannot verify from available data.
 export const FINGERPRINT_SOURCE_DESCRIPTIONS = {
   document_bytes: "A source document's fingerprint was generated on your device and secured. Arkova never received the document itself.",
-  issuer_record_attestation: 'No source document was supplied. The issuing organization asserted this record’s content directly, and that content — not a document — was fingerprinted and secured.',
+  issuer_record_attestation: 'No source document was supplied. The asserted content — issuer-submitted record data, or a value declared by a connected third-party service — was fingerprinted and secured, not a document Arkova retrieved or reviewed.',
 } as const satisfies Record<FingerprintSource, string>;
 
 /** Measured / asserted / NOT-asserted triad per §1.5, for the public verify page. */
@@ -3970,9 +3987,9 @@ export const FINGERPRINT_SOURCE_TRIAD = {
     notAsserted: 'Who authored the document or whether its contents are accurate.',
   },
   issuer_record_attestation: {
-    measured: 'The fingerprint of the record content the issuing organization submitted.',
-    asserted: 'That the issuing organization submitted this exact record content — no source document was provided to Arkova.',
-    notAsserted: 'That a source document exists, was reviewed, or was fingerprinted. This record was never in document form.',
+    measured: 'The fingerprint value asserted for this record — either issuer-submitted record content, or a value declared by a connected third-party service.',
+    asserted: 'That the issuing organization or a connected third-party service asserted this fingerprint — no source document was provided to Arkova.',
+    notAsserted: 'That Arkova retrieved, reviewed, or independently fingerprinted a source document for this record.',
   },
 } as const satisfies Record<FingerprintSource, { measured: string; asserted: string; notAsserted: string }>;
 
@@ -4000,6 +4017,28 @@ export const CONNECTOR_FINGERPRINT_LABELS = {
   /** Appended to the re-verify mismatch alert for connector-sourced records. */
   REVERIFY_MISMATCH_HINT:
     'This document came from a connected source. Some services regenerate the file on every download, so a freshly downloaded copy can carry a different fingerprint even when nothing changed. A mismatch here is not, on its own, evidence the document was altered. To match this record, use the exact file as originally retrieved.',
+  /**
+   * SCRUM-3818 (docusign-bilateral-2026-08): shown INSTEAD OF REVERIFY_NOTE
+   * for the DECLARED_UNVERIFIED class — a connector-sourced record whose
+   * `fingerprintSource` is 'issuer_record_attestation' (set only by the
+   * inbound declared-hash path, e.g. DocuSign Recipient Connect). Materially
+   * different from REVERIFY_NOTE's premise: Arkova never retrieved or hashed
+   * this document at all, so there is no "originally retrieved copy" to
+   * verify against. R-7: must never say the fingerprint "matches the exact
+   * file as retrieved" — nothing was retrieved.
+   */
+  DECLARED_UNVERIFIED_REVERIFY_NOTE:
+    'Arkova did not retrieve this document or fingerprint it. This fingerprint was declared by the connected source and relayed by Arkova, not measured from document bytes Arkova received. Dropping your file below compares it only against that declared value — a match or mismatch here does not confirm Arkova ever verified a document.',
+  /**
+   * SCRUM-3818: appended to the mismatch alert instead of
+   * REVERIFY_MISMATCH_HINT for the DECLARED_UNVERIFIED class. Unlike
+   * REVERIFY_MISMATCH_HINT (which frames a mismatch as an expected side
+   * effect of a source that re-renders files), this class has no Arkova-
+   * measured fingerprint to re-render FROM — a mismatch says only that your
+   * file doesn't match the declared value, not that this record is suspect.
+   */
+  DECLARED_UNVERIFIED_REVERIFY_MISMATCH_HINT:
+    'This record’s fingerprint was never measured by Arkova from a document — it is a value declared by the connected source. A mismatch here does not, on its own, indicate this record is invalid; it means your file does not match the declared value, which Arkova has not independently verified either way.',
 } as const;
 
 /** Measured / asserted / NOT-asserted triad per §1.5 for connector-sourced records. */
@@ -4483,3 +4522,155 @@ export const PLATFORM_METRICS = {
  * implying the whole block was re-measured.
  */
 export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';
+
+/** Separate mailbox confirmation after OAuth (SCRUM-4035). */
+export const OAUTH_EMAIL_CONFIRMATION_LABELS = {
+  TITLE: 'Check your email',
+  DESCRIPTION: 'Confirm your email address to finish setting up your Arkova account.',
+  SENT: 'We sent a confirmation link to your email. It expires in 15 minutes. Check your spam folder if you do not see it.',
+  PREPARING: 'Preparing your confirmation email…',
+  UNSENT: 'Your email still needs confirmation before you can continue.',
+  RESEND: 'Resend confirmation email',
+  RESEND_WAIT: 'Resend in',
+  CHECK: "I've confirmed my email",
+  CONFIRM: 'Confirm email and continue',
+  LINK_DESCRIPTION: 'Continuing confirms your email and signs you in to the account associated with this link.',
+  SWITCH_NOTE: 'If another account is open in this browser, continuing switches to the account associated with the link.',
+  SIGN_OUT: 'Use a different account',
+  SIGN_IN: 'Sign in to continue',
+  COMPLETE_SIGN_IN: 'Your email is confirmed. Sign in to continue setting up your account.',
+  RETRY: 'We could not complete this step. Please try again.',
+  REFRESH_FAILED: 'Your email confirmation is still being applied. Try again or sign in to continue.',
+  WORKING: 'Please wait…',
+} as const;
+
+// ── MFA enforcement (SCRUM-3167) ──
+//
+// Phase 1, role-based only (CTO ruling A4-3 — org-level enforcement is
+// dropped for now, see src/hooks/useMfaEnrollmentRequirement.ts). Four
+// blocks, one per surface AuthGuard can render in place of protected
+// children: the every-login challenge for anyone with a verified factor,
+// the non-skippable forced-enrollment screen for ORG_ADMIN/platform-admin
+// once enforcement is active, the fail-open capability-unavailable notice
+// (a platform misconfiguration must never wall anyone out — see
+// AuthGuard.tsx), and the dismissible grace-period nudge shown before the
+// enforcement date. §1.3-clean: no Wallet/Gas/Hash/Block/Transaction/
+// Crypto/Blockchain/Bitcoin/Testnet/Mainnet/UTXO/Broadcast/token.
+
+// R5 (PR #2637 review round 2): MFA_CHALLENGE_LABELS.GENERIC_ERROR and
+// MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR were byte-identical strings
+// maintained in two places. One shared constant, referenced by both.
+const MFA_GENERIC_VERIFY_ERROR = 'Verification failed. Please check the code and try again.';
+
+export const MFA_CHALLENGE_LABELS = {
+  TITLE: 'Enter your verification code',
+  DESCRIPTION: 'Your account has two-factor authentication enabled. Enter the 6-digit code from your authenticator app to continue.',
+  CODE_LABEL: 'Verification code',
+  CODE_PLACEHOLDER: '000000',
+  SUBMIT: 'Verify',
+  VERIFYING: 'Verifying...',
+  SIGN_OUT: 'Sign out',
+  GENERIC_ERROR: MFA_GENERIC_VERIFY_ERROR,
+  // R19 (PR #2637 review round 2, CTO ruling): the challenge path now FAILS
+  // CLOSED on any error that is not the user's own wrong code — this is the
+  // retry screen shown instead, never a bypass to protected content.
+  RETRY_TITLE: "We couldn't verify your code",
+  RETRY_EXPLANATION: 'Something went wrong on our end. Your two-factor requirement has not been cleared — please try again, or sign out and back in.',
+  RETRY_BUTTON: 'Try again',
+} as const;
+
+export const MFA_ENROLLMENT_REQUIRED_LABELS = {
+  TITLE: 'Two-factor authentication required',
+  DESCRIPTION: 'Your role has elevated access to organization data, so two-factor authentication is required before you can continue. Scan the QR code below with an authenticator app, then enter the 6-digit code it generates.',
+  SCAN_INSTRUCTION: 'Scan this QR code with your authenticator app',
+  QR_ALT: 'QR code for authenticator app',
+  MANUAL_ENTRY_LABEL: 'Manual entry code',
+  CODE_LABEL: 'Verification code',
+  CODE_PLACEHOLDER: '000000',
+  SUBMIT: 'Verify & continue',
+  VERIFYING: 'Verifying...',
+  SIGN_OUT: 'Sign out',
+  GENERIC_ERROR: MFA_GENERIC_VERIFY_ERROR,
+} as const;
+
+// Shown when AuthGuard has to fail OPEN because the two-factor authentication
+// platform capability itself is unavailable — ONLY the ENROLLMENT path (a
+// user with no verified factor, who cannot enroll because the platform
+// cannot issue one) may fail open; the every-login CHALLENGE path never
+// does (R17-R21, PR #2637 review round 2 CTO ruling — see AuthGuard.tsx's
+// module doc comment). Never a wall, always children + this one-shot notice.
+export const MFA_CAPABILITY_LABELS = {
+  UNAVAILABLE_NOTICE: "Two-factor authentication setup isn't available right now. Your account isn't affected — we've been notified and are looking into it.",
+} as const;
+
+export const MFA_GRACE_NUDGE_LABELS = {
+  TITLE: 'Two-factor authentication will be required soon',
+  DAYS_REMAINING: (days: number) =>
+    days <= 1
+      ? "You'll need to set up two-factor authentication by tomorrow."
+      : `You'll need to set up two-factor authentication within ${days} days.`,
+  BODY: 'Your role has elevated access to organization data. Set it up now in Settings so you are not interrupted later.',
+  CTA: 'Set up now',
+  DISMISS: 'Dismiss',
+} as const;
+
+// ── Two-factor settings (SCRUM-3167 / SCRUM-3584) ──
+//
+// TwoFactorSetup.tsx rewrite. Lists ALL TOTP factors from listFactors()
+// (verified AND unverified — Amendment A2: a stale unverified factor from
+// 2026-03-23 must render as "Setup incomplete" with a Remove action, not be
+// hidden). Supports a second "backup" authenticator (up to the GoTrue cap of
+// 10). GoTrue v2.196.0 requires an AAL2 session to enroll a new factor once a
+// verified factor already exists, and to unenroll a verified factor
+// (Amendment A3) — both cases show an inline step-up code prompt
+// (challengeAndVerify against an existing verified factor) rather than a dead
+// end. §1.3-clean: no Wallet / Gas / Hash / Block / Transaction / Crypto /
+// Blockchain / Bitcoin / Testnet / Mainnet / UTXO / Broadcast / Token —
+// "code" is used throughout instead of the banned "token".
+export const TWO_FACTOR_SETUP_LABELS = {
+  CARD_TITLE: 'Two-Factor Authentication',
+  CARD_DESCRIPTION: 'Add an extra layer of security to your account.',
+
+  LIST_EMPTY: 'No authenticator apps added yet.',
+  UNNAMED_FACTOR: 'Unnamed authenticator',
+  STATUS_ENABLED: 'Enabled',
+  STATUS_INCOMPLETE: 'Setup incomplete',
+  ADDED_ON: (date: string) => `Added ${date}`,
+  REMOVE_ACTION: 'Remove',
+  REMOVE_ARIA: (name: string) => `Remove ${name}`,
+
+  ENABLE_BUTTON: 'Enable two-factor authentication',
+  ADD_BACKUP_BUTTON: 'Add backup authenticator',
+
+  /** Client-computed default; made unique against existing friendly names before enroll() is called. */
+  DEFAULT_FACTOR_NAME: (date: string) => `Authenticator ${date}`,
+  FRIENDLY_NAME_LABEL: 'Authenticator name',
+
+  QR_INSTRUCTIONS: 'Scan this QR code with your authenticator app.',
+  QR_ALT: 'QR code for authenticator app setup',
+  SECRET_LABEL: 'Manual entry code',
+
+  VERIFY_CODE_LABEL: 'Verification code',
+  VERIFY_CODE_PLACEHOLDER: '000000',
+  VERIFY_SUBMIT: 'Verify & enable',
+
+  STEP_UP_TITLE: 'Confirm it’s you',
+  STEP_UP_DESCRIPTION: 'Enter a code from an authenticator app you already have set up to continue.',
+  STEP_UP_CODE_LABEL: 'Authentication code',
+  STEP_UP_SUBMIT: 'Confirm',
+  STEP_UP_CANCEL: 'Cancel',
+
+  /** `mfa_totp_enroll_not_enabled` — a platform misconfiguration, not a user error. */
+  UNAVAILABLE: 'Two-factor setup is not available right now. Please try again later.',
+
+  ERROR_GENERIC: 'Something went wrong. Please try again.',
+  ERROR_NAME_CONFLICT: 'That authenticator name is already in use. Please try again.',
+  ERROR_STEP_UP_FAILED: 'That code did not match. Please try again.',
+
+  // R1 (PR #2637 review round 2, real bug): listFactors() could reject or
+  // hang with no try/catch and no timeout, leaving the card stuck on its
+  // loading spinner forever. This is the error view + retry control shown
+  // instead once that call fails or times out.
+  LOAD_ERROR_TITLE: "Couldn't load your two-factor authentication settings",
+  LOAD_ERROR_RETRY: 'Retry',
+} as const;

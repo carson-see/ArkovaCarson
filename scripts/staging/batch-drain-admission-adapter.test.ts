@@ -539,8 +539,9 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## `fullsoak-daily-probes.sh` — daily BEHAVIOURAL probes for the 2026-08 7-day soak (2026-08-12)',
       '## Orphan tag cleanup covers EVERY tag, not just `pr-<N>` (BUG-2026-08-22-001, 2026-08-22)',
       '## Provisioner repairs found by standing up a real rig (consolidated-mm-2026-08, 2026-08-30)',
+      '## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner',
     ]);
-    expect(new Set(headings).size).toBe(17);
+    expect(new Set(headings).size).toBe(18);
   });
 
   it('preserves each authoritative Team2 section body exactly once', () => {

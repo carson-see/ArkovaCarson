@@ -42,3 +42,14 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 - Never import these scripts from the worker runtime (`services/worker/src/`).
 - Tests must mock LLM and Stripe calls — no real API calls in test runs.
 - Budget guardrails (`--limit N`, `--dry-run`) are mandatory on scripts that spend provider budget.
+
+## PR #2476 rollout replay regression
+
+`check-docusign-nonce-rollout.py` uses a disposable network-isolated PostgreSQL container. It verifies legacy-row replay denial, both orders of concurrent old/new writers across different session timezones, same-account deduplication, and acceptance for distinct known accounts. `--baseline` reproduces the replay gap in 0424 alone. No application database is touched.
+## PR #2564 lock and flag evidence (2026-09-05)
+
+`admin-rpc-0428-lock-probe.ts` uses independent persistent psql sessions for a synthetic holder row, RPC row and third innocent row. It confirms the held RowExclusive lock and observes the RPC's locks before starting the unrelated write; fixed sleeps never establish readiness. The RPC transaction stays open so the lock observation cannot miss a completed statement. A temporary, transaction-scoped PL/pgSQL function measures the UPDATE inside PostgreSQL before its relation-lock acquisition; `pg_locks.waitstart` and `pg_blocking_pids()` record the actual barrier chain. Every asynchronous result is checked and sessions are rolled back/closed. The 3-second database-execution ceiling remains; Management API latency is not used as lock-wait evidence.
+
+The driver now invokes C1–C3 through actual PostgREST, holds C10's transaction until the concurrent rejection is observed, requires the independent C11 fixture row, and stops on any failed cycle or cleanup. `MAX_CYCLES=1` supports a supervisor supplying a fresh worker identity token each cycle; C11 runs on the first cycle. Direct connection settings are supplied through `RIG_DB_HOST`, `RIG_DB_PORT=5432`, `RIG_DB_USER`, `RIG_DB_PASSWORD`, and optional `RIG_DB_SSLROOTCERT` (default `system`); SSL verification is required. The named project must match the direct host or session-pooler user, and production/transaction-pooler/connection redirects are denied. `RIG_SERVICE_ROLE_KEY` is needed for the actual PostgREST calls. No production credentials belong in command arguments or evidence.
+
+Before admission, seed only the dedicated `0428a11d-*` fixture identities, run the exact migration rollback/reapply rehearsal and inspect all asynchronous failure results. A local PostgreSQL reproduction is supporting evidence, not a 48-hour Supabase staging window. No stage, source, driver or dependencies may change after the shared release candidate's clock begins.

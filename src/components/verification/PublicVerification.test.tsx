@@ -327,6 +327,9 @@ describe('PublicVerification', () => {
 
       const badge = await screen.findByTestId('fingerprint-source-badge');
       expect(badge).toHaveAttribute('data-fingerprint-source', 'issuer_record_attestation');
+      const disclaimer = screen.getByTestId('does-not-assert-disclaimer');
+      expect(disclaimer).toHaveTextContent('no source document was provided to Arkova');
+      expect(disclaimer).not.toHaveTextContent('The document Fingerprint (a cryptographic digest of the file) at a specific point in time');
       expect(screen.getByText('Issuer-Attested Record')).toBeInTheDocument();
 
       // R-7 claims gate: must state no source document was supplied.

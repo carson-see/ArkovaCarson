@@ -524,7 +524,14 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     // NOTE 2026-04-20 MCP security audit: description previously claimed
     // "HMAC-signed results for tamper detection" — implementation did no
     // such signing. Claim removed; real HMAC signing tracked as MCP-SEC-02.
-    'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
+    // SCRUM-3818 (2026-08-30): this was a hardcoded string literal, so the
+    // fingerprint_source evidence-strength caveat added to
+    // TOOL_DEFINITIONS['oracle_batch_verify'].description in mcp-tools.ts
+    // never reached the live registration — every other evidence-carrying
+    // tool below sources its description from TOOL_DESC (built from
+    // TOOL_DEFINITIONS), this one alone did not. See
+    // mcp-server.registrations.test.ts for the regression guard.
+    TOOL_DESC['oracle_batch_verify'],
     {
       public_ids: z.array(publicIdSchema).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),
     },
@@ -845,21 +852,20 @@ let supabaseJwtSecretWarned = false;
 function warnSupabaseJwtSecretMissingOnce(): void {
   if (supabaseJwtSecretWarned) return;
   supabaseJwtSecretWarned = true;
-  console.error('[mcp-server] SUPABASE_JWT_SECRET unset — bearer auth disabled (MCP-SEC-07). Provision via `wrangler secret put SUPABASE_JWT_SECRET --name arkova-edge`.');
+  console.warn('[mcp-server] SUPABASE_JWT_SECRET unset — HS256 (legacy-key) bearer tokens will be rejected; ES256 tokens verify via JWKS (MCP-SEC-07 / BUG-2026-09-02-002).');
 }
 
 export async function validateBearer(
   token: string,
   env: Env,
 ): Promise<AuthResult | null> {
-  // SCRUM-926 / MCP-SEC-07 — verify HS256 signature + exp/iat/aud/iss
-  // locally first. Fail-closed if SUPABASE_JWT_SECRET is unset; that
-  // forces operators to provision the secret rather than silently
-  // falling back to the round-trip-only model the ticket flagged.
-  if (!env.SUPABASE_JWT_SECRET) {
-    warnSupabaseJwtSecretMissingOnce();
-    return null;
-  }
+  // SCRUM-926 / MCP-SEC-07 — verify signature + exp/iat/aud/iss locally
+  // first. BUG-2026-09-02-002: Supabase signs current tokens with ES256, which
+  // verifies against the project JWKS and needs no shared secret, so an
+  // absent SUPABASE_JWT_SECRET no longer disables Bearer auth outright — it
+  // only disables the HS256 fallback (verifySupabaseJwt returns
+  // `missing_secret` for an HS256 token in that case, still fail-closed).
+  if (!env.SUPABASE_JWT_SECRET) warnSupabaseJwtSecretMissingOnce();
   const local = await verifySupabaseJwt(token, {
     secret: env.SUPABASE_JWT_SECRET,
     supabaseUrl: env.SUPABASE_URL,

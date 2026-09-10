@@ -352,7 +352,10 @@ vi.mock('../config.js', () => ({
 // drain's behavior with the feature ON; the gate-off no-op path is pinned in
 // batch-anchor.intent.test.ts.
 vi.mock('../middleware/flagRegistry.js', () => ({
-  flagRegistry: { getFlag: (name: string) => name === 'ENABLE_BATCH_ANCHORING' },
+  flagRegistry: {
+    getFlag: (name: string) => name === 'ENABLE_BATCH_ANCHORING',
+    getFlagLive: async (name: string) => name === 'ENABLE_BATCH_ANCHORING',
+  },
 }));
 
 vi.mock('../chain/client.js', () => ({

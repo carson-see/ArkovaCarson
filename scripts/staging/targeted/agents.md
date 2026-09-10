@@ -44,3 +44,31 @@ Each driver runs directly via `tsx scripts/staging/targeted/<driver>.ts` (delibe
 ## classify-backcatalog driver (PR #1493, L2-S8, 2026-07-10)
 
 Rescued the untracked `classify-backcatalog-driver.ts` (targeted driver for #1410's `POST /jobs/classify-proof-backcatalog`) onto a fresh branch off main and closed its folder-contract gap: it shipped without the mandatory `*-driver.test.ts`. The new red-first test covers plan purity (deterministic POST plan, capture on, `execute` never in any query), the two 400 guards as expected-evidence statuses (batch floor 50; org_id uuid), `classifyPath` query building, and the census interpreter (per-class counts extracted, unknown keys dropped, null on guard/non-object bodies). API-verified against main's `driver-core.ts` / `runtime.ts` / `load-harness-env.ts` exports — no shared-module changes needed.
+
+## 2026-09-02 — `declared-hash-rederivability-driver.ts` (PR #2499)
+
+Targeted driver for the §1.5 / R-7 honesty gate on `fingerprint_rederivability`.
+
+Drives a **controlled pair** seeded by `fixtures/pr2499-declared-vs-measured.sql`: both anchors carry `metadata.connector_source='docusign'`, only `ARK-P2499-MEASURED` carries `connector_artifact_id`. The declared row must NOT carry `fingerprint_rederivability`; the measured row MUST. The pair differs by exactly the changed predicate, so if the two ever classify identically the driver reports `DISCRIMINATOR FAILED`.
+
+Why the `measured` control is mandatory: every assertion about the declared row is that a field is **absent**, and absence passes trivially against a 404, an error body, or an unseeded rig. `judgeRederivability` therefore also asserts both rows resolved (`POSITIVE CONTROL FAILED` otherwise) and that the measured row kept its claim, so a build that suppressed the field for everything cannot pass.
+
+The `cached-declared` label re-reads the SAME declared id inside the 300s verify-cache TTL. That covers the defect found in review of this PR: without the `verify:v6:` → `verify:v7:` prefix bump, a body cached by the pre-deploy build is re-served verbatim, still carrying the claim. A stale cache shows up as a DIFFERENCE between two labels rather than a flaky sample.
+
+Unit tests pin that the judge FAILS against pre-#2499 bodies, against a stale-cache body, against over-suppression, and against a missing fixture — the driver has been made to fail for each reason it exists to catch.
+
+## 2026-09-04 — #2499 soak verdict must reach the process exit
+
+The declared-hash driver previously logged semantic failures without failing the run, and ignored the proof endpoint's 404. All 52 historical cycle artifacts had `allExpected:false` despite a successful supervisor exit. The driver now requires matching record IDs on every requested surface, checks the proof response for forbidden measurement claims, retains semantic and thrown-pass failures across the shared loop, writes failed evidence, then rejects so the CLI exits 1. Dry-run does not emit passing evidence. Runtime tests exercise the real loop with HTTP stubs for a clean result, missing proof, false measurement claim, and authentication failure. Historical evidence remains invalid; this repair does not create a valid proof fixture or certify packet-export coverage.
+
+## 2026-09-05 — PR 2499 positive control
+
+The measured control requires fetch_time_snapshot AND a nonempty accompanying
+note. Presence of either field alone cannot qualify the driver. Four malformed
+or misclassified response cases failed before this stricter judge.
+
+## 2026-09-05 — PR 2499 real verify identity
+
+The ordinary verify body identifies a record via record_uri; the proof route uses
+public_id. The driver verifies the expected URI host/path without accepting an
+arbitrary suffix or an error response as a positive control.
