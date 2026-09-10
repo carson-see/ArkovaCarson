@@ -587,8 +587,16 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     // NOTE 2026-04-20 MCP security audit: description previously claimed
     // "HMAC-signed results for tamper detection" — implementation did no
     // such signing. Claim removed; real HMAC signing tracked as MCP-SEC-02.
-    // The text lives in TOOL_DEFINITIONS (mcp-tools.ts), the CI-guarded
-    // source of truth; an inline literal here is an unguarded sixth copy.
+    // SCRUM-3818 (2026-08-30): this was a hardcoded string literal, so the
+    // fingerprint_source evidence-strength caveat added to the tool's
+    // TOOL_DEFINITIONS description in mcp-tools.ts never reached the live
+    // registration — every other evidence-carrying tool below sources its
+    // description from TOOL_DESC (built from TOOL_DEFINITIONS), this one
+    // alone did not. See mcp-server.registrations.test.ts for the guard.
+    // SCRUM-3894: the definition is keyed `arkova_oracle_batch_verify` after
+    // the *_anchor / arkova_* rename, so the lookup key moves with it — the
+    // text still lives in TOOL_DEFINITIONS, the CI-guarded source of truth;
+    // an inline literal here would be an unguarded sixth copy.
     TOOL_DESC['arkova_oracle_batch_verify'],
     {
       public_ids: z.array(publicIdSchema).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),

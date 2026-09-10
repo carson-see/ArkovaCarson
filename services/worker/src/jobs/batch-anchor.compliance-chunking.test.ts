@@ -71,7 +71,7 @@ vi.mock('../utils/orgCredits.js', () => ({
 }));
 vi.mock('../utils/anchorProofs.js', () => ({ upsertAnchorProofs: vi.fn(async () => undefined) }));
 vi.mock('../middleware/flagRegistry.js', () => ({
-  flagRegistry: { getFlag: vi.fn(() => true) },
+  flagRegistry: { getFlag: vi.fn(() => true), getFlagLive: vi.fn(async () => true) },
 }));
 
 vi.mock('../utils/db.js', () => {
