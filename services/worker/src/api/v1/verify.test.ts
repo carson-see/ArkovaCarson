@@ -111,10 +111,62 @@ describe('buildVerificationResult', () => {
     expect(result.credential_type).toBe('DIPLOMA');
     expect(result.issued_date).toBe('2026-01-15T00:00:00Z');
     expect(result.expiry_date).toBeNull();
-    expect(result.anchor_timestamp).toBe('2026-03-10T08:00:00Z');
+    // BUG-2026-09-08-001 (SCRUM-4517): this asserted `created_at`
+    // ('2026-03-10T08:00:00Z') and so pinned the bug in place. The fixture
+    // above deliberately sets the two fields two days apart, which is what
+    // makes this assertion load-bearing rather than decorative.
+    expect(result.anchor_timestamp).toBe('2026-03-12T10:30:00Z');
+    expect(result.anchor_timestamp).not.toBe(anchor.created_at);
     expect(result.bitcoin_block).toBe(204567);
     expect(result.network_receipt_id).toBe('b8e381df09ca404eaae2e5e9d9b3d27567fe97ece39ead718f6d2c77ca60eb57');
     expect(result.record_uri).toBe('https://app.arkova.ai/verify/ARK-2026-TEST-001');
+  });
+
+  // ── BUG-2026-09-08-001 (SCRUM-4517) ──────────────────────────────────────
+  // The envelope-level ratchet. `publicAnchorTimestamp` has its own unit tests;
+  // these assert that THIS builder actually calls it, because the bug was never
+  // in the rule — it was in a surface that never consulted one.
+  describe('anchor_timestamp is the chain-observed moment (BUG-2026-09-08-001)', () => {
+    it('publishes chain_timestamp, not created_at', () => {
+      const anchor = createAnchor({
+        created_at: '2026-04-09T18:01:01.848397+00:00',
+        chain_timestamp: '2026-04-09T18:11:26+00:00',
+      });
+      const result = buildVerificationResult(anchor);
+
+      // The exact 10m24s understatement that shipped on prod ARK-SEC-RUJ2V7.
+      expect(result.anchor_timestamp).toBe('2026-04-09T18:11:26+00:00');
+      expect(result.anchor_timestamp).not.toBe('2026-04-09T18:01:01.848397+00:00');
+    });
+
+    it('OMITS the field when the chain time was never measured', () => {
+      // Frozen schema (§1.8) types this `string | undefined`; §6 says omit
+      // rather than emit null. The field must not reappear as created_at.
+      const anchor = createAnchor({ status: 'SECURED', chain_timestamp: null });
+      const result = buildVerificationResult(anchor);
+
+      expect(result.anchor_timestamp).toBeUndefined();
+      expect('anchor_timestamp' in result).toBe(false);
+      expect(JSON.stringify(result)).not.toContain(anchor.created_at);
+    });
+
+    it('OMITS the field for a PENDING anchor', () => {
+      // A PENDING row has no anchoring moment. Publishing the server clock
+      // there was the §1.5 violation, not merely an inaccuracy.
+      const anchor = createAnchor({ status: 'PENDING', chain_timestamp: null });
+      const result = buildVerificationResult(anchor);
+
+      expect(result.anchor_timestamp).toBeUndefined();
+    });
+
+    it('still publishes the anchoring moment for a REVOKED anchor', () => {
+      // Revocation does not un-anchor the document; withholding the moment
+      // would delete evidence rather than correct it.
+      const anchor = createAnchor({ status: 'REVOKED' });
+      const result = buildVerificationResult(anchor);
+
+      expect(result.anchor_timestamp).toBe('2026-03-12T10:30:00Z');
+    });
   });
 
   it('returns verified=false for REVOKED anchor', () => {

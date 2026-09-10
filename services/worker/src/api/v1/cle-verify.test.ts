@@ -134,6 +134,10 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
         },
         status: 'SECURED',
         created_at: '2026-04-02T00:00:00Z',
+        // BUG-2026-09-08-001: deliberately distinct from created_at, so the
+        // `anchored_at` assertions below fail if the created_at fallback
+        // ever returns.
+        chain_timestamp: '2026-04-02T00:11:26Z',
         chain_tx_id: 'tx-secret-1',
         chain_block_height: 123,
       },
@@ -170,6 +174,7 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
         },
         status: 'SECURED',
         created_at: '2026-04-03T00:00:00Z',
+        chain_timestamp: '2026-04-03T00:09:14Z',
         chain_tx_id: 'tx-other',
       },
       {
@@ -235,7 +240,7 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
       completion_date: '2026-04-01',
       jurisdiction: 'Michigan',
       anchor_status: 'SECURED',
-      anchored_at: '2026-04-02T00:00:00Z',
+      anchored_at: '2026-04-02T00:11:26Z',
     });
     expect(res.body.attestations).toEqual([
       {
@@ -279,7 +284,7 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
       completion_date: '2026-04-01',
       jurisdiction: 'Michigan',
       anchor_status: 'SECURED',
-      anchored_at: '2026-04-02T00:00:00Z',
+      anchored_at: '2026-04-02T00:11:26Z',
     });
 
     const payload = stringify(res.body);
