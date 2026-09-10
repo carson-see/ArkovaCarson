@@ -35,7 +35,14 @@ function emptyScanQuery() {
   q.select = vi.fn(() => q);
   q.not = vi.fn(() => q);
   q.is = vi.fn(() => q);
+  // K3: the scan's bitcoin-tree watermark is an `.or(...)` across block_header
+  // and tx_inclusion_branch — mirror it or the chain breaks mid-query.
+  q.or = vi.fn(() => q);
   q.eq = vi.fn(() => q);
+  // H1: the scan sweeps a UNIQUE indexed column with a cursor, so `.gt()` and
+  // `.order()` are part of the chain too.
+  q.gt = vi.fn(() => q);
+  q.order = vi.fn(() => q);
   q.limit = vi.fn(() => ({ data: [], error: null }));
   return q;
 }
