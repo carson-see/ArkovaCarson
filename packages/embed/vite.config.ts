@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
  * Output:
  *   dist/embed.umd.js  — UMD bundle, attaches window.ArkovaEmbed
  *   dist/embed.es.js   — ESM bundle for modern bundlers
- *   dist/embed.iife.js — IIFE for plain <script> usage on cdn.arkova.ai
+ *   dist/embed.iife.js — IIFE for plain <script> usage (served from app.arkova.ai/embed.js; no CDN host exists)
  *
  * No React. No Tailwind. No external runtime dependencies.
  * Target bundle size: <15 KB gzipped.

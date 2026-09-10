@@ -38,6 +38,55 @@
 - **`package.json` `repository`/`author`** (2026-08-18, npm-publish clean-room verification): were missing entirely — added, matching the sibling `sdks/mcp-server/package.json` pattern (`repository.directory: "packages/sdk"`). `keywords` also had `"bitcoin"` (§1.3-banned, indexed on npmjs.com) — replaced with `"credentials"`. Guarded going forward by `src/package-metadata.test.ts`.
 - **README/type-doc terminology + accuracy pass** (2026-08-18, npm-publish clean-room verification, same change as the `sdks/mcp-server` P0 fix): fixed "Bitcoin anchor status"-style prose (→ "network"), x402 "wallet" references (→ "signer" — this SDK's x402 config takes a real third-party on-chain signer, a different concept from the §1.3 "Wallet → Fee Account" UI-copy mapping, which is about *Arkova's own* product surface), and added two accuracy disclosures the README previously lacked: (1) the "Nessie semantic search" section (`query()`/`ask()`) now states up front that `GET /api/v1/nessie/query` is gated off in production today (`ENABLE_PUBLIC_RECORD_EMBEDDINGS` switchboard flag, confirmed off) and returns 503 until launch; (2) the x402 section now states payments currently settle on Base Sepolia (confirmed via `services/worker/src/config.ts`'s `x402Network` default `eip155:84532` and `deploy-worker.yml`'s prod env-var, which sets the same value), not Base's production network. See `src/terminology.test.ts` for the standing guard.
 
+## 3.0.0 — breaking release (2026-09-02, packages/integrations truth pass)
+CTO-decided fixes landed on top of the unmerged PR #2274 (`feat/npm-publish-prep`) packaging
+base described above. This is a **major** bump — two of the fixes below change observable
+client behavior:
+
+- **Retry-safety fix (critical).** `private fetch()`'s HTTP-status retry branch (429/500/502/
+  503/504) checked `attempt >= this.retry.retries` but never `isSafeRetryMethod(method)` — only
+  the network-error `catch` branch checked it. A non-idempotent `POST` (e.g. `webhooks.create`)
+  that got back a transient 503 was retried anyway and could create duplicates server-side. Now
+  gated identically to the network-error branch: `!isSafeRetryMethod(method) ||
+  !shouldRetryResponse(response) || attempt >= this.retry.retries`. `GET`/`HEAD`/`OPTIONS` still
+  retry on 429/5xx as before. See `client.test.ts` `describe('retry safety ...')`.
+- **Key hygiene (breaking for anyone inspecting the instance).** `apiKey` and `x402Config` were
+  TS `private` fields — still own, enumerable properties at runtime, so `JSON.stringify(client)`
+  and `Object.keys(client)` leaked the raw API key (and the x402 payer address). Moved to real
+  ECMAScript `#apiKey` / `#x402Config` private fields (`tsconfig.json` already targets ES2022,
+  which supports them natively — no target bump needed). `JSON.stringify(new Arkova({apiKey:
+  '...'}))` and `Object.keys(client)` no longer contain the key. See `client.test.ts`
+  `describe('Arkova', ...)` "never leaks..." tests.
+- **Type drift closed.** The worker's `VerificationResult` (`services/worker/src/api/v1/
+  verify.ts` L134-247) emits `proof_availability`, `proof_availability_note`,
+  `fingerprint_source`, `fingerprint_rederivability`, `fingerprint_rederivability_note`,
+  `ferpa_notice`, `directory_info_suppressed`, `merkle_proof_hash`, and `bitcoin_block` — none of
+  these were typed or mapped on the SDK side. Added to `RichVerificationFields` (camelCase per
+  SDK convention) and wired through `mapRichVerificationFields`. `bitcoinBlock` is a literal
+  camelCase mirror of the frozen v1 field name (§1.8 frozen schema — not renamed to "network" the
+  way user-facing §1.3 copy would be, because this is a typed contract mirror, not UI copy).
+  Fields the worker OMITS rather than nulls (`proof_availability(_note)`,
+  `fingerprint_rederivability(_note)`, `ferpa_notice`, `directory_info_suppressed`) are mapped as
+  `undefined` when absent, not coerced to `null`. See `client.test.ts` `describe('verify', ...)`
+  the two new tests immediately after the compliance-controls tests.
+- **Missing exports.** `OrganizationDetails`, `RecordDetails`, `FingerprintDetails`, and
+  `DocumentDetails` existed in `types.ts` and were the real return types of `getOrganization` /
+  `getRecord` / `getFingerprint` / `getDocument` (`client.ts`), but were never re-exported from
+  `index.ts` — a consumer could call the methods but not name the return types without reaching
+  into `arkova/dist/types` directly. Added to the barrel. See `src/index.test.ts`.
+
+Version bumped `2.2.0` → `3.0.0` (`package.json`, `package-lock.json`) for the two behavior
+changes above; `src/package-metadata.test.ts` pins `3.0.0` and no longer claims parity with the
+published `arkova-mcp-server`/PyPI `arkova` versions (those packages are unaffected).
+`.github/workflows/publish-sdk.yml`'s job name updated to reference `arkova (packages/sdk)`
+instead of the retired `@carsonarkova/sdk` name; its tag pattern (`sdk-v*`) and publish steps
+are otherwise unchanged. `scripts/publish-packages.sh` already pointed at `arkova` /
+`packages/sdk` from the PR #2274 base — no further repointing needed there.
+
+README install-section bash fence had `# or` comments between the npm/pnpm/yarn commands —
+replaced with a single `npm install arkova` fence plus prose for the pnpm/yarn alternatives, per
+the no-inline-comments-in-bash-fences convention for this pass.
+
 ## Disabled surfaces
 - 2026-08-15, CTO ruling R-1: `arkova.query()` and `arkova.ask()` hit `/api/v1/nessie/query`, which now
   fails closed with `503 {"code":"nessie_disabled","enabled":false}` — so both **throw `ArkovaError` on
@@ -47,3 +96,41 @@
   longer advertise a capability we do not serve. Do not remove the methods or types: existing installs
   need to recognise and handle the disabled response. **Republishing to npm is founder-reserved** — this
   edit updates the in-repo docs only.
+
+## 2026-09-05 — retry rule: safe method OR idempotent call (PR #2589 review)
+
+The 3.0.0 "retry-safety fix" above was correct about non-idempotent writes and **over-corrected**
+everything else. Gating the HTTP-status branch on `isSafeRetryMethod(method)` alone silently
+dropped 429/5xx retry for *every* `POST` — including three calls that are idempotent server-side
+and were retrying before the fix. Against `origin/main` that is a behaviour regression on the
+rate-limited paths, not a hardening.
+
+**The rule, in both branches (status and network-error):** retry when the method is safe
+(`GET`/`HEAD`/`OPTIONS`) **OR** the call site opts in with `{ idempotent: true }`, the private
+`fetch()` wrapper's new third argument. `private fetch(path, init?, options?)`; `options.idempotent`
+never reaches `globalThis.fetch`.
+
+Opted in:
+- **`verifyBatch`** — a read expressed as `POST` (the body carries the ID list) served on the
+  10 req/min batch tier, i.e. the call most likely to see a `429`. Retrying creates nothing.
+- **`anchor`** / **`anchorBulk`** — idempotent on the fingerprint server-side (`README.md`
+  "Idempotency: the same fingerprint returns the same `publicId`"). A retried anchor cannot
+  double-create.
+
+Left non-retrying (unchanged, and the whole point of the 3.0.0 fix): `webhooks.create`,
+`webhooks.update`, `webhooks.delete`, `webhooks.test`.
+
+Stated in three places so the contract cannot drift: `README.md` config comment + the "Retries are
+built in" paragraph, and the `RetryConfig` JSDoc in `src/types.ts`. Tests:
+`client.test.ts` `describe('idempotent-call retry opt-in ...')` — verifyBatch retries a 429 and
+honours `Retry-After` (asserts `sleep(3000)`), anchor and anchorBulk retry a 503, `webhooks.create`
+does not. The pre-existing `describe('retry safety ...')` block still passes untouched.
+
+**Discarded retry bodies are released.** The status branch now does
+`await response.body?.cancel().catch(() => {})` before sleeping. A retried response was previously
+dropped on the floor with its body unread, holding the connection until GC — in Node's undici that
+is a real socket leak under repeated 429s, which is exactly the regime retries put you in. The
+`catch` swallows an already-locked/errored stream; optional chaining keeps mocked responses (no
+`body`) working. Tests: `describe('discarded retry responses release their body')` — cancel fires
+once per retried attempt and never on the returned response, and a rejected `cancel()` still
+retries.

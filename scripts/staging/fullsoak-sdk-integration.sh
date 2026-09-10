@@ -19,7 +19,9 @@
 #      exercises each SDK's PUBLIC SURFACE against the rig directly.
 #
 #   2. Whether the packages are on a registry at all. Phase A answers that
-#      live every run rather than trusting the claim.
+#      live every run rather than trusting the claim. NOTE: the published
+#      names are UNSCOPED — npm `arkova` and `arkova-mcp-server`, PyPI
+#      `arkova`. `@arkova/langchain` is unpublished and marked N/A, not FAIL.
 #
 # ── CONSTITUTIONAL LIMITS (CLAUDE.md §1.11A) ─────────────────────────────────
 # * Read-only product surface only. No SDK write method is called with a key
@@ -64,12 +66,19 @@ ORG_A_USER="${ORG_A_USER:-sarah@arkova.ai}"
 EVID_ROOT_REL="${EVID_ROOT_REL:-docs/staging/evidence/fullsoak-2026-08}"
 PROXY_PORT="${PROXY_PORT:-8931}"
 
-# name|kind|registry-probe-url|source-dir
+# The PUBLISHED package names are UNSCOPED. The scoped names this script used
+# to probe (`@carsonarkova/sdk`, `@arkova/mcp-server`) were never published and
+# 404 on the registry, so every run recorded two false "NOT PUBLISHED" FAILs.
+# `@arkova/langchain` genuinely is unpublished and is marked N/A rather than
+# FAIL — but a 200 on it is still a FAIL, because that means this inventory is
+# stale, not that the leg passed.
+#
+# name|kind|registry-probe-url|source-dir|published|unpublished
 read -r -d '' SDK_INVENTORY <<'INV_EOF'
-@carsonarkova/sdk|npm|https://registry.npmjs.org/@carsonarkova%2fsdk|packages/sdk
-@arkova/mcp-server|npm|https://registry.npmjs.org/@arkova%2fmcp-server|sdks/mcp-server
-@arkova/langchain|npm|https://registry.npmjs.org/@arkova%2flangchain|sdks/langchain-ts
-arkova|pypi|https://pypi.org/pypi/arkova/json|packages/arkova-py
+arkova|npm|https://registry.npmjs.org/arkova|packages/sdk|published
+arkova-mcp-server|npm|https://registry.npmjs.org/arkova-mcp-server|sdks/mcp-server|published
+@arkova/langchain|npm|https://registry.npmjs.org/@arkova%2flangchain|sdks/langchain-ts|unpublished
+arkova|pypi|https://pypi.org/pypi/arkova/json|packages/arkova-py|published
 INV_EOF
 
 MINT=0; SKIP_PY=0
@@ -77,7 +86,7 @@ for arg in "$@"; do
   case "$arg" in
     --mint) MINT=1 ;;
     --skip-python) SKIP_PY=1 ;;
-    -h|--help) sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -134,8 +143,11 @@ echo "fullsoak-sdk-integration — $RUN_TS"
 # PHASE A — registry availability. Answered live, never asserted from a doc.
 # ═════════════════════════════════════════════════════════════════════════════
 REG_ROWS=""
-while IFS='|' read -r NAME KIND URL DIR; do
+while IFS='|' read -r NAME KIND URL DIR EXPECT; do
   [ -n "$NAME" ] || continue
+  # `arkova` is published on BOTH npm and PyPI, so the row id must carry the
+  # kind or the two legs collide in the report table and the JSON artifact.
+  RID="A-$KIND-$NAME"
   CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "$URL")"
   LOCAL_V="$(python3 - "$REPO_ROOT/$DIR" <<'PY'
 import json,os,re,sys
@@ -150,7 +162,17 @@ if os.path.exists(p):
 print('?')
 PY
 )"
-  if [ "$CODE" = "200" ]; then
+  if [ "$EXPECT" = "unpublished" ]; then
+    if [ "$CODE" = "200" ]; then
+      record "$RID" "\`$NAME\` ($KIND) is marked N/A — unpublished by design" "HTTP 404" "HTTP 200 — IT IS PUBLISHED; this inventory is stale" FAIL
+      REG_ROWS="$REG_ROWS| \`$NAME\` | $KIND | **PUBLISHED — INVENTORY STALE** | ? | $LOCAL_V | \`$DIR\` |
+"
+    else
+      record "$RID" "\`$NAME\` ($KIND) — unpublished, N/A for registry evidence" "N/A" "HTTP $CODE, worktree v$LOCAL_V (no registry artifact exists to install)" SKIP
+      REG_ROWS="$REG_ROWS| \`$NAME\` | $KIND | **N/A — UNPUBLISHED** | — | $LOCAL_V | \`$DIR\` |
+"
+    fi
+  elif [ "$CODE" = "200" ]; then
     REG_V="$(curl -s --max-time 25 "$URL" | python3 -c "
 import json,sys
 try:
@@ -158,11 +180,11 @@ try:
     print(d.get('info',{}).get('version') or (d.get('dist-tags',{}) or {}).get('latest','?'))
 except Exception: print('?')
 ")"
-    record "A-$NAME" "\`$NAME\` ($KIND) is on the registry" "HTTP 200" "HTTP 200, registry v$REG_V, worktree v$LOCAL_V" PASS
+    record "$RID" "\`$NAME\` ($KIND) is on the registry" "HTTP 200" "HTTP 200, registry v$REG_V, worktree v$LOCAL_V" PASS
     REG_ROWS="$REG_ROWS| \`$NAME\` | $KIND | **PUBLISHED** | $REG_V | $LOCAL_V | \`$DIR\` |
 "
   else
-    record "A-$NAME" "\`$NAME\` ($KIND) is on the registry" "HTTP 200" "HTTP $CODE — NOT PUBLISHED" FAIL
+    record "$RID" "\`$NAME\` ($KIND) is on the registry" "HTTP 200" "HTTP $CODE — NOT PUBLISHED" FAIL
     REG_ROWS="$REG_ROWS| \`$NAME\` | $KIND | **HTTP $CODE — NOT PUBLISHED** | — | $LOCAL_V | \`$DIR\` |
 "
   fi
@@ -244,7 +266,7 @@ case "$PUBLIC_ID" in ARK-*) : ;; *) PUBLIC_ID="" ;; esac
 # the §5.1 S12/S13 false-pass trap the checklist names — the honest handling is
 # to run it and label it, not to skip it and leave the surface unexercised.
 # ═════════════════════════════════════════════════════════════════════════════
-TS_SRC_LABEL="worktree $(git rev-parse --short HEAD 2>/dev/null) — the npm packages are unpublished (Phase A)"
+TS_SRC_LABEL="worktree $(git rev-parse --short HEAD 2>/dev/null) — built from source, so the smoke exercises THIS head rather than the published tag (Phase A reports the registry state separately)"
 mkdir -p "$TMPD/ts"
 cat > "$TMPD/ts/package.json" <<'PKG'
 { "name": "fullsoak-sdk-smoke", "private": true, "type": "module" }
@@ -259,7 +281,7 @@ const out = [];
 const rec = (id, desc, expected, observed, result) => out.push({ id, desc, expected, observed, result });
 const short = (v) => { const s = typeof v === 'string' ? v : JSON.stringify(v); return s && s.length > 160 ? s.slice(0,160)+'…' : (s ?? ''); };
 
-// ── 1. @carsonarkova/sdk — the Arkova client ────────────────────────────────
+// ── 1. `arkova` (npm, packages/sdk) — the Arkova client ─────────────────────
 try {
   const { Arkova, ArkovaError } = await import(process.env.SDK_ENTRY);
   const a = new Arkova({ apiKey: KEY, baseUrl: BASE });
@@ -324,31 +346,44 @@ try {
         'error / explicitly disabled', short(String(e)), 'PASS');
   }
 } catch (e) {
-  rec('C1', '@carsonarkova/sdk loads and exercises against the rig', 'module loads', short(String(e)), 'FAIL');
+  rec('C1', '`arkova` (npm) loads and exercises against the rig', 'module loads', short(String(e)), 'FAIL');
 }
 
-// ── 2. @arkova/mcp-server — handleToolCall over the tool surface ────────────
+// ── 2. `arkova-mcp-server` (npm, sdks/mcp-server) — handleToolCall ──────────
 try {
   const mcp = await import(process.env.MCP_ENTRY);
+  // D5 (2026-09): the four nessie_* capability tools were REMOVED from this
+  // package, leaving an exact, closed 6-tool set. `public_id` / `query` are
+  // the live argument names — see TOOL_DEFINITIONS in sdks/mcp-server/src/index.ts.
   const defs = mcp.TOOL_DEFINITIONS ?? [];
-  rec('C2a', '`TOOL_DEFINITIONS` exposes the MCP tool surface', '>= 1 tool', `${defs.length} tools`, defs.length > 0 ? 'PASS' : 'FAIL');
+  const names = defs.map((d) => d.name);
+  rec('C2a', '`TOOL_DEFINITIONS` advertises the closed 6-tool arkova_* set', '6 tools, all arkova_-prefixed',
+      `${defs.length}: ${names.join(', ')}`,
+      defs.length === 6 && names.every((n) => n.startsWith('arkova_')) ? 'PASS' : 'FAIL');
   if (PID) {
-    const r = await mcp.handleToolCall('arkova_verify_credential', { credential_id: PID, publicId: PID, public_id: PID });
-    rec('C2b', '`handleToolCall(arkova_verify_credential)` reaches the live rig', 'a tool result', short(r), r ? 'PASS' : 'FAIL');
-    const st = await mcp.handleToolCall('arkova_credential_status', { credential_id: PID, publicId: PID, public_id: PID });
-    rec('C2c', '`handleToolCall(arkova_credential_status)` reaches the live rig', 'a tool result', short(st), st ? 'PASS' : 'FAIL');
+    const r = await mcp.handleToolCall('arkova_verify_anchor', { public_id: PID });
+    rec('C2b', '`handleToolCall(arkova_verify_anchor)` reaches the live rig', 'a tool result', short(r), r ? 'PASS' : 'FAIL');
+    const st = await mcp.handleToolCall('arkova_anchor_status', { public_id: PID });
+    rec('C2c', '`handleToolCall(arkova_anchor_status)` reaches the live rig', 'a tool result', short(st), st ? 'PASS' : 'FAIL');
   }
-  const se = await mcp.handleToolCall('arkova_search_credentials', { query: 'license', limit: 3 });
-  rec('C2d', '`handleToolCall(arkova_search_credentials)` reaches the live rig', 'a tool result', short(se), se ? 'PASS' : 'FAIL');
-  const ne = await mcp.handleToolCall('nessie_ask', { question: 'status?' });
-  rec('C2e', '`nessie_ask` MCP tool fails CLOSED, not a synthesized empty answer',
-      'error / explicitly disabled', short(ne),
-      /disabl|unavail|not.?found|404|410/i.test(JSON.stringify(ne)) ? 'PASS' : 'FAIL');
+  const se = await mcp.handleToolCall('arkova_search_anchors', { query: 'license', limit: '3' });
+  rec('C2d', '`handleToolCall(arkova_search_anchors)` reaches the live rig', 'a tool result', short(se), se ? 'PASS' : 'FAIL');
+
+  // The removed names must be GONE, not silently answered by a fallback.
+  // `nessie_ask` was the standing-503 compliance tool; `verify_credential` and
+  // `search_credentials` were the pre-rename names.
+  for (const [id, gone] of [['C2e', 'nessie_ask'], ['C2f', 'verify_credential'], ['C2g', 'search_credentials']]) {
+    const advertised = names.includes(gone);
+    const res = await mcp.handleToolCall(gone, {});
+    const rejected = !advertised && /unknown tool/i.test(JSON.stringify(res));
+    rec(id, `the removed \`${gone}\` tool is unadvertised AND rejected`, 'not in TOOL_DEFINITIONS + "Unknown tool"',
+        short(advertised ? `STILL ADVERTISED: ${gone}` : res), rejected ? 'PASS' : 'FAIL');
+  }
 } catch (e) {
-  rec('C2', '@arkova/mcp-server loads and exercises against the rig', 'module loads', short(String(e)), 'FAIL');
+  rec('C2', '`arkova-mcp-server` loads and exercises against the rig', 'module loads', short(String(e)), 'FAIL');
 }
 
-// ── 3. @arkova/langchain — tool wrappers ────────────────────────────────────
+// ── 3. @arkova/langchain (UNPUBLISHED, sdks/langchain-ts) — tool wrappers ───
 try {
   const lc = await import(process.env.LC_ENTRY);
   const cfg = { apiKey: KEY, baseUrl: BASE };
@@ -368,7 +403,7 @@ try {
     rec('C3c', '`ArkovaBatchVerifyTool` batch-verifies against the live rig', 'a tool string/object', short(r), r ? 'PASS' : 'FAIL');
   }
 } catch (e) {
-  rec('C3', '@arkova/langchain loads and exercises against the rig', 'module loads', short(String(e)), 'FAIL');
+  rec('C3', '@arkova/langchain (unpublished) loads and exercises against the rig', 'module loads', short(String(e)), 'FAIL');
 }
 
 console.log(JSON.stringify(out));
@@ -529,9 +564,11 @@ $REG_ROWS
 $ROWS
 
 **TypeScript legs are worktree builds** ($TS_SRC_LABEL). That is the §5.1 S12/S13 false-pass
-trap named in the checklist, and it is unavoidable here for the reason the census shows: there is
-no registry artifact to install. The Python leg (D-series) is installed from PyPI and is the only
-registry-grade SDK evidence in this run.
+trap named in the checklist. \`arkova\` and \`arkova-mcp-server\` ARE published (see the census
+above) — building from source is a deliberate choice so the smoke asserts the head under soak, not
+whatever tag is currently on npm; it is NOT evidence that the published artifact works.
+\`@arkova/langchain\` has no registry artifact at all and is marked N/A. The Python leg (D-series)
+is installed from PyPI and is the only registry-grade SDK evidence in this run.
 
 **No SDK write method was exercised for effect.** \`anchor()\` appears exactly once per SDK, as a
 scope-negative assertion that a verify-scoped key is refused. The BL-2 cohort is untouched.
