@@ -47,6 +47,7 @@ import { isProofDownloadable } from './statusDisplay';
 // builder in `generateAuditReport.ts` — two copies of this rule is how the
 // downloaded packet ends up contradicting the DB read about one record.
 import { readTxInclusionEvidence } from './txInclusionEvidence';
+import { resolveProofBlockMetadata } from './proofBlockMetadata';
 
 /** The app's RLS-scoped browser Supabase client. */
 export type ProofSourceClient = SupabaseClient<Database>;
@@ -59,6 +60,7 @@ export interface ProofSourceAnchor {
   status: string;
   chain_tx_id: string | null;
   chain_block_height: number | null;
+  chain_block_hash?: string | null;
   chain_timestamp: string | null;
 }
 
@@ -129,6 +131,12 @@ export async function sourceProofInput(
     return { proof: undefined, complete: false };
   }
 
+  const block = resolveProofBlockMetadata(
+    { hash: anchor.chain_block_hash, height: anchor.chain_block_height, timestamp: anchor.chain_timestamp },
+    { hash: proofRow.block_hash, height: proofRow.block_height, timestamp: proofRow.block_timestamp },
+  );
+  if (!block) return { proof: undefined, complete: false };
+
   // `proof_path` is the SAME branch shape the verify-proof API and PROOF-07 CLI
   // consume. Validate + PRESERVE the structured `{ hash, position }` entries;
   // never flatten to strings (that drops the side the offline verifier needs to
@@ -192,14 +200,15 @@ export async function sourceProofInput(
     merkle_index: proofRow.merkle_index,
     leaf_count: leafCount,
     tx_id: anchor.chain_tx_id ?? proofRow.receipt_id ?? null,
-    block_height: proofRow.block_height ?? anchor.chain_block_height ?? null,
+    // Repair from confirmed anchor metadata only when its block identity matches.
+    block_height: block.height,
     block_hash: proofRow.block_hash,
     block_header: proofRow.block_header,
     op_return_payload: proofRow.op_return_payload,
     proof_schema_version: proofRow.proof_schema_version,
     // Machine field is `block_timestamp` (the human-readable PDF label still
     // reads "Network Observed Time").
-    block_timestamp: proofRow.block_timestamp ?? anchor.chain_timestamp ?? null,
+    block_timestamp: block.timestamp,
     // Migration 0427: layer-2 bitcoin-tree inclusion evidence, validated as one
     // fact. Additive + nullable — a back-catalogue row that predates the
     // columns still yields a complete packet (§1.8).

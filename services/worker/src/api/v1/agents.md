@@ -2,6 +2,13 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
+
+`router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.
+
+Scopes a passport-admitted agent may hold are typed against `ApiKeyScope` and clamped to `PASSPORT_AGENT_SCOPE_ALLOWLIST` (`verify`, `verify:batch`, `anchor:write`/`write:anchors`, `anchor:read`, `read:records`, `read:search`) — never a management scope; unknown scope names are a 400 (`z.enum(API_KEY_SCOPES)`). Keys are minted through `agent-keys.ts::mintAgentKey` so passport-minted keys emit `AGENT_KEY_CREATED` like every other agent key. The raw key is returned once; if the key insert fails the freshly inserted agent row is deleted so no unkeyed binding is left behind. The API-key HMAC secret comes from `config.apiKeyHmacSecret`, NOT `req.hmacSecret` — that field is attached only by the JWT `requireAuth` this mount omits (a review-found bug that would have 500'd every real admission). Admission also refuses (`409 passport_revoked`) when a REVOKED binding for the passport exists in the org and the receipt was not provably issued after the revocation, so a captured receipt cannot resurrect a revoked passport.
+
+`PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. Known, NOT fixed here: `PATCH {status:'suspended'}` records a suspension without deactivating keys (the auth path reads only `api_keys.is_active`), so org-side suspension is decorative today.
 ## 2026-08-30 R3 — `/verify/:publicId/proof` reports a tri-state `verdict` beside `verified`
 
 - `verify-proof.ts` emits additive `verdict` (`valid` | `invalid` | `unverifiable`) + `verdict_note` on the 200 body. **`verified` is byte-unchanged and NOT deprecated** — §1.8 additive only. Vocabulary, note text and the mapping live in ONE place: `services/worker/src/constants/proofVerdict.ts` (read its `agents.md` entry before touching any of this).
@@ -1227,6 +1234,16 @@ only other records with a recognized connector marker and artifact stamp may emi
 fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
 and authenticated packet exports load the typed source; the signable proof bundle
 is unchanged. Regression reproduced before the fix; local validation is not soak evidence.
+
+
+## 2026-09-10 — ComputeID admission authority and terminal PATCH (SCRUM-4558 / SCRUM-4559)
+
+Migration `0448` checks every active agent-key INSERT/reactivation against the agent row under a parent share lock, including the existing administrator mint path. A concurrent provider revoke either waits and deactivates the committed key, or wins and causes the late key write to fail. The terminal-state trigger checks the actual UPDATE row, so a stale PATCH receives 409 after revocation. Failed ComputeID admission calls service-only `cleanup_computeid_empty_admission`; it deletes only the unchanged active agent with no keys while holding the same parent lock. It preserves a later revocation and a key whose INSERT committed despite a lost reply, avoiding `ON DELETE SET NULL` detachment. SQL errors return no raw key. Signed receipt HTTP tests cover those boundary responses; the owned PostgreSQL harness proves the lock interleavings and rollback behavior.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+ComputeID admission now uses service-only `admit_computeid_agent`: one passport sentinel lock, global terminal-revocation check, agent, hashed key and both audit events in a single transaction. The prior `agent-keys.ts` helper and compensation deletion are removed. An unknown reply returns an error while preserving any committed agent/key; retries report the existing binding. Raw keys never reach the RPC. The OpenAPI surface documents org-key authority and admission errors. SCRUM-4570 covers cross-organization replay; durable tenant binding ownership remains SCRUM-4497.
 
 ## PR #2572 — cap faults and affiliation write races (SCRUM-4467 / SCRUM-4468)
 
