@@ -623,6 +623,22 @@ Keep the entries in the worker's declaration order and keep the copy §1.3-clean
 Hash / Blockchain — "replaced by a newer version", not "superseded transaction").
 `scripts/ci/check-webhook-event-registration-drift.ts` compares this map's key list against the
 worker map on every PR, in the required root `Tests` job.
+## 2026-08-23 SCRUM-3529 — `formatCredentialSubType` reads OWN properties only
+
+`SUBTYPE_ACRONYMS[seg]` was a plain-object lookup on a segment of caller-supplied
+text, so a segment naming an `Object.prototype` member resolved to the INHERITED
+value and the `??` fallback never fired: `formatCredentialSubType('constructor')`
+returned `"function Object() { [native code] }"`, and `'toString'`, `'valueOf'`,
+`'hasOwnProperty'` behaved the same. The lookup is now guarded with
+`Object.hasOwn`. Not an injection — React escapes the output — but it rendered a
+nonsense string where a credential **Type** goes, which on a verification surface
+is its own defect (§1.5).
+
+Why it mattered enough to fix here: SCRUM-3529 puts `anchors.sub_type` on the
+ANONYMOUS verify page, and that column is bare `text` with no CHECK and no enum,
+so the argument is writer-controlled. Pinned by the inherited-key table in
+`src/lib/__tests__/credentialSubTypes.test.ts`. Any future `Record<string, …>`
+lookup keyed by external text in this file needs the same guard.
 
 ## 2026-09-05 — Certificate wrapped field spacing
 

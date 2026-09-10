@@ -113,6 +113,19 @@ Comment lines are stripped before asserting on SQL (`code()` helper) — every
 `-- ROLLBACK:` header quotes the old body, so a naive substring match on the raw
 file finds the defect in its own rollback note.
 
+## 2026-08-23 SCRUM-3529 — the projection contract test now pins `sub_type`
+
+Two assertions added to `public-anchor-pii-projection.contract.test.ts`:
+
+- **`projects sub_type from the CANONICAL COLUMN, value-gated`** — asserts the latest redefiner emits a `sub_type` key, reads it from `a.sub_type` (and explicitly NOT from `metadata->>'sub_type'`), routes it through `public_free_text_or_null`, and keeps it out of `structural_keys`.
+- **`keeps sub_type out of the academic suppression set, matching verify.ts`** — pins the SQL and TS sides of that decision together, so neither surface can be changed alone.
+
+The lesson worth keeping: this regression (migration `0355` dropping `sub_type` from the projection's metadata allow-list, silently disabling the SCRUM-952 "Other" fallback) survived for months **because every existing test asserted the `formatCredentialSubType` helper or the component props, never the RENDERED label**. Helper-level coverage cannot see a value that never reaches the browser. The end-to-end pin is `src/components/verification/PublicVerification.subtype.test.tsx`, which mounts the real `CredentialRenderer` and asserts visible text — prefer that shape for anything user-visible on the public verify page.
 ## 2026-09-05 — FERPA verification suppression contract
 
 The verify API description is emitted only when both `!isAcademicRecord` and `!suppressDirectory` hold. The public-projection contract now requires that conjunction; its previous exact single-predicate pattern rejected the stricter implementation. Removing either predicate fails the contract (mutation-checked). The real verify response suite separately covers opted-out CLE and missing credential types. This is a test repair, not a change to public response behavior.
+
+
+## 2026-09-05 — PR #2440 subtype opt-out release review
+
+Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
