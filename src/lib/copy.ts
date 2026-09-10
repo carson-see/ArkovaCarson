@@ -3030,6 +3030,42 @@ export const SUB_ORG_LABELS = {
   SEARCH_PLACEHOLDER: 'Search verified organizations...',
   AFFILIATED_WITH: 'Affiliated with',
   PARENT_ORGANIZATION: 'parent organization',
+  // SCRUM-3865 — sub-org credit provisioning. Credits are the unit an
+  // organization spends to secure a document; there is no second "anchor"
+  // budget (pre-mortem D5), so this is the only allowance shown here.
+  CREDITS_AVAILABLE: 'credits available',
+  CREDITS_BALANCE_SUFFIX: 'credits',
+  CREDITS_AMOUNT_LABEL: 'Credits to move',
+  CREDITS_ADD: 'Add Credits',
+  CREDITS_RECLAIM: 'Reclaim',
+  CREDITS_ADDED: 'Credits added to the affiliated organization.',
+  CREDITS_RECLAIMED: 'Credits returned to your organization.',
+  CREDITS_FAILED: 'Could not move those credits.',
+  CREDITS_INSUFFICIENT_PARENT: 'Your organization does not have that many credits to give.',
+  CREDITS_INSUFFICIENT_CHILD: 'That affiliated organization does not have that many credits left to return.',
+  CREDITS_INVALID_AMOUNT: 'Enter a whole number of credits greater than zero.',
+  // SCRUM-3867 — a sub-org may run on the parent's signing connection when it
+  // cannot hold one of its own.
+  DOCUSIGN_SHARE: 'Share Our DocuSign',
+  DOCUSIGN_STOP_SHARING: 'Stop Sharing',
+  DOCUSIGN_SHARED_BADGE: 'Uses our DocuSign',
+  DOCUSIGN_SHARED: 'That organization now uses your DocuSign connection.',
+  DOCUSIGN_SHARING_STOPPED: 'That organization no longer uses your DocuSign connection.',
+  DOCUSIGN_PARENT_NOT_CONNECTED: 'Connect your own DocuSign account first, then you can share it.',
+  DOCUSIGN_ALREADY_CONNECTED: 'That organization already has its own DocuSign connection.',
+  DOCUSIGN_SHARE_FAILED: 'Could not change the DocuSign connection.',
+  // SCRUM-3868 — ending a client relationship. Records are deliberately NOT
+  // mentioned as being removed, because they are not: they stay verifiable.
+  OFFBOARD: 'Offboard',
+  OFFBOARD_TITLE: 'Offboard this organization?',
+  OFFBOARD_BODY:
+    'Unspent credits return to your organization and the affiliated organization is suspended, so it can no longer secure new documents. Documents it has already secured stay verifiable and are not removed.',
+  OFFBOARD_CONFIRM: 'Offboard Organization',
+  OFFBOARD_CANCEL: 'Keep Active',
+  OFFBOARD_DONE: 'That organization has been offboarded.',
+  OFFBOARD_PARTIAL:
+    'Credits were returned, but the organization could not be suspended. Try again.',
+  OFFBOARD_FAILED: 'Could not offboard that organization.',
   PENDING_APPROVAL: 'Pending approval from',
   REVOKED_BY: 'Affiliation revoked by',
   APPROVE_SUCCESS: 'Organization approved as affiliate.',
