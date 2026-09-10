@@ -1284,3 +1284,38 @@ new completed soak is asserted by this checkpoint.
 [Production149 and hosted qualification record](https://arkova.atlassian.net/wiki/spaces/A/pages/141623441)
 and [proof-repair release record](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retain the separately dated evidence.
+
+
+## PR #2782 — runtime-first release; historical repair retained in PR #2825
+
+The CTO review has separated the measured confirmation metadata and
+certificate block-binding runtime from its historical data repair. Runtime
+uses existing proof and anchor columns, and its regressions explicitly
+cover stale historical proof values, matching identities and mismatches.
+No schema, function, type or feature flag introduced by 0443 is needed.
+
+The exact unmodified 0443 file and existing prefix reservation are retained
+in [PR #2825](https://github.com/carson-see/ArkovaCarson/pull/2825), branch
+`release/scrum-3953-proof-history-0443`, source commit
+`4bca854715594b35476a8a3651194841b3cf8829`. The migration SHA256 remains
+`b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`.
+Removing that unmerged file from this runtime PR does not undo its staging
+application, change any production ledger, release its prefix, or waive its
+remaining production requirement. The original migration header and earlier
+entries above retain their historical context.
+
+Owie remains at 150 ledger entries with 0443 applied; production remains at
+149 without 0443. This data-only divergence is declared, not called a clean
+pre-migration snapshot. The runtime code, models and build inputs retain the
+reviewed combined staging source. Current-head CI and Mergify still govern
+this runtime release; no fresh 48-hour soak or historical convergence is
+asserted. The existing founder soak exception is unchanged.
+
+Historical repair remains In Progress under
+[SCRUM-4879](https://arkova.atlassian.net/browse/SCRUM-4879), with verification
+SCRUM-4880 and documentation SCRUM-4881. Its
+[release record](https://arkova.atlassian.net/wiki/spaces/A/pages/143196161)
+requires protected fresh preimages, bounded source/full-row guarded updates,
+corrected producer deployment and old-work drainage, final reconciliation,
+actual unchanged 0443 outcome and canonical numeric ledger readback. Runtime
+delivery alone does not close the broader SCRUM-3953 historical defect.
