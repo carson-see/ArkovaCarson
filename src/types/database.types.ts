@@ -7,33 +7,59 @@ export type Json =
   | Json[]
 
 export type Database = {
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
+      admin_org_provisioning_requests: {
+        Row: {
+          actor_id: string
+          created_at: string
+          idempotency_key: string
+          org_id: string
+          request: Json
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          idempotency_key: string
+          org_id: string
+          request: Json
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          idempotency_key?: string
+          org_id?: string
+          request?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "admin_org_provisioning_requests_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "admin_org_provisioning_requests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "admin_org_provisioning_requests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       adobe_sign_webhook_nonces: {
         Row: {
           agreement_id: string
@@ -361,6 +387,13 @@ export type Database = {
             referencedRelation: "anchors"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "anchor_chain_index_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
         ]
       }
       anchor_proofs: {
@@ -373,17 +406,17 @@ export type Database = {
           block_timestamp: string | null
           created_at: string
           id: string
+          is_supplementary: boolean
           materialize_run_id: string | null
           merkle_index: number | null
           merkle_root: string | null
           op_return_payload: string | null
-          is_supplementary: boolean
-          supplements_chain_tx_id: string | null
           proof_completeness_class: string | null
           proof_path: Json | null
           proof_schema_version: number
           raw_response: Json | null
           receipt_id: string
+          supplements_chain_tx_id: string | null
           tx_block_index: number | null
           tx_inclusion_branch: Json | null
         }
@@ -396,17 +429,17 @@ export type Database = {
           block_timestamp?: string | null
           created_at?: string
           id?: string
+          is_supplementary?: boolean
           materialize_run_id?: string | null
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
-          is_supplementary?: boolean
-          supplements_chain_tx_id?: string | null
           proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
           raw_response?: Json | null
           receipt_id: string
+          supplements_chain_tx_id?: string | null
           tx_block_index?: number | null
           tx_inclusion_branch?: Json | null
         }
@@ -419,17 +452,17 @@ export type Database = {
           block_timestamp?: string | null
           created_at?: string
           id?: string
+          is_supplementary?: boolean
           materialize_run_id?: string | null
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
-          is_supplementary?: boolean
-          supplements_chain_tx_id?: string | null
           proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
           raw_response?: Json | null
           receipt_id?: string
+          supplements_chain_tx_id?: string | null
           tx_block_index?: number | null
           tx_inclusion_branch?: Json | null
         }
@@ -439,6 +472,13 @@ export type Database = {
             columns: ["anchor_id"]
             isOneToOne: true
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_proofs_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: true
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
         ]
@@ -499,6 +539,13 @@ export type Database = {
             referencedRelation: "anchors"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "anchor_queue_resolutions_selected_anchor_id_fkey"
+            columns: ["selected_anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
         ]
       }
       anchor_recipients: {
@@ -532,6 +579,13 @@ export type Database = {
             columns: ["anchor_id"]
             isOneToOne: false
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_recipients_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
           {
@@ -761,6 +815,13 @@ export type Database = {
             columns: ["parent_anchor_id"]
             isOneToOne: false
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchors_parent_anchor_id_fkey"
+            columns: ["parent_anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
           {
@@ -1128,6 +1189,13 @@ export type Database = {
             columns: ["anchor_id"]
             isOneToOne: false
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attestations_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
           {
@@ -1721,6 +1789,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "connector_artifact_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "connector_artifact_credit_deduction_id_fkey"
             columns: ["credit_deduction_id"]
             isOneToOne: false
@@ -1880,6 +1955,13 @@ export type Database = {
             columns: ["anchor_id"]
             isOneToOne: true
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credential_embeddings_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: true
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
           {
@@ -2606,6 +2688,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "external_document_versions_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "external_document_versions_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
@@ -2673,6 +2762,13 @@ export type Database = {
             columns: ["anchor_id"]
             isOneToOne: false
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "extraction_feedback_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
           {
@@ -2767,6 +2863,13 @@ export type Database = {
             columns: ["anchor_id"]
             isOneToOne: false
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "extraction_manifests_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
           {
@@ -3119,6 +3222,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "grc_sync_logs_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "grc_sync_logs_connection_id_fkey"
             columns: ["connection_id"]
             isOneToOne: false
@@ -3270,6 +3380,13 @@ export type Database = {
             columns: ["anchor_id"]
             isOneToOne: true
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "integrity_scores_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: true
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
           {
@@ -3581,6 +3698,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "legally_binding_attestations_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "legally_binding_attestations_attesting_org_id_fkey"
             columns: ["attesting_org_id"]
             isOneToOne: false
@@ -3599,6 +3723,13 @@ export type Database = {
             columns: ["subject_credential_id"]
             isOneToOne: false
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legally_binding_attestations_subject_credential_id_fkey"
+            columns: ["subject_credential_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
         ]
@@ -4271,6 +4402,51 @@ export type Database = {
         }
         Relationships: []
       }
+      organization_field_policies: {
+        Row: {
+          contract_reference: string | null
+          created_at: string
+          disallowed_fields: string[]
+          enabled: boolean
+          org_id: string
+          policy_reason: string | null
+          updated_at: string
+        }
+        Insert: {
+          contract_reference?: string | null
+          created_at?: string
+          disallowed_fields?: string[]
+          enabled?: boolean
+          org_id: string
+          policy_reason?: string | null
+          updated_at?: string
+        }
+        Update: {
+          contract_reference?: string | null
+          created_at?: string
+          disallowed_fields?: string[]
+          enabled?: boolean
+          org_id?: string
+          policy_reason?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_field_policies_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_field_policies_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_queue_run_state: {
         Row: {
           created_at: string
@@ -4318,51 +4494,6 @@ export type Database = {
           },
           {
             foreignKeyName: "organization_queue_run_state_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: true
-            referencedRelation: "public_org_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      organization_field_policies: {
-        Row: {
-          contract_reference: string | null
-          created_at: string
-          disallowed_fields: string[]
-          enabled: boolean
-          org_id: string
-          policy_reason: string | null
-          updated_at: string
-        }
-        Insert: {
-          contract_reference?: string | null
-          created_at?: string
-          disallowed_fields?: string[]
-          enabled?: boolean
-          org_id: string
-          policy_reason?: string | null
-          updated_at?: string
-        }
-        Update: {
-          contract_reference?: string | null
-          created_at?: string
-          disallowed_fields?: string[]
-          enabled?: boolean
-          org_id?: string
-          policy_reason?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "organization_field_policies_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: true
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "organization_field_policies_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: true
             referencedRelation: "public_org_profiles"
@@ -4666,6 +4797,7 @@ export type Database = {
           affiliation_grace_expires_at: string | null
           banner_url: string | null
           created_at: string
+          creation_idempotency_key: string | null
           description: string | null
           directory_info_fields: string[]
           display_name: string
@@ -4715,6 +4847,7 @@ export type Database = {
           affiliation_grace_expires_at?: string | null
           banner_url?: string | null
           created_at?: string
+          creation_idempotency_key?: string | null
           description?: string | null
           directory_info_fields?: string[]
           display_name: string
@@ -4764,6 +4897,7 @@ export type Database = {
           affiliation_grace_expires_at?: string | null
           banner_url?: string | null
           created_at?: string
+          creation_idempotency_key?: string | null
           description?: string | null
           directory_info_fields?: string[]
           display_name?: string
@@ -4881,6 +5015,95 @@ export type Database = {
           {
             foreignKeyName: "parent_split_tokens_sub_org_id_fkey"
             columns: ["sub_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_accounts: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string
+          id: string
+          partner_contact_email: string
+          partner_name: string
+          partner_org_id: string | null
+          provisioned_at: string | null
+          provisioned_by: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          rejection_reason: string | null
+          requested_at: string
+          requested_by: string
+          sponsor_org_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          id: string
+          partner_contact_email: string
+          partner_name: string
+          partner_org_id?: string | null
+          provisioned_at?: string | null
+          provisioned_by?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejection_reason?: string | null
+          requested_at: string
+          requested_by: string
+          sponsor_org_id: string
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          id?: string
+          partner_contact_email?: string
+          partner_name?: string
+          partner_org_id?: string | null
+          provisioned_at?: string | null
+          provisioned_by?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejection_reason?: string | null
+          requested_at?: string
+          requested_by?: string
+          sponsor_org_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_accounts_partner_org_id_fkey"
+            columns: ["partner_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_accounts_partner_org_id_fkey"
+            columns: ["partner_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_accounts_sponsor_org_id_fkey"
+            columns: ["sponsor_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_accounts_sponsor_org_id_fkey"
+            columns: ["sponsor_org_id"]
             isOneToOne: false
             referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
@@ -5197,6 +5420,13 @@ export type Database = {
             referencedRelation: "anchors"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "public_records_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
         ]
       }
       reconciliation_reports: {
@@ -5401,6 +5631,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "review_queue_items_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "review_queue_items_integrity_score_id_fkey"
             columns: ["integrity_score_id"]
             isOneToOne: false
@@ -5564,6 +5801,13 @@ export type Database = {
             columns: ["anchor_id"]
             isOneToOne: false
             referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
             referencedColumns: ["id"]
           },
           {
@@ -5780,6 +6024,107 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      supplementary_anchor_journal: {
+        Row: {
+          anchor_ids: string[]
+          batch_id: string
+          created_at: string
+          fingerprint_root: string
+          hold_reason: string | null
+          id: string
+          leaf_order: Json
+          recovery_status: string
+          resolved_at: string | null
+          run_id: string | null
+          signed_at: string
+          txid: string
+          updated_at: string
+        }
+        Insert: {
+          anchor_ids: string[]
+          batch_id: string
+          created_at?: string
+          fingerprint_root: string
+          hold_reason?: string | null
+          id?: string
+          leaf_order: Json
+          recovery_status?: string
+          resolved_at?: string | null
+          run_id?: string | null
+          signed_at?: string
+          txid: string
+          updated_at?: string
+        }
+        Update: {
+          anchor_ids?: string[]
+          batch_id?: string
+          created_at?: string
+          fingerprint_root?: string
+          hold_reason?: string | null
+          id?: string
+          leaf_order?: Json
+          recovery_status?: string
+          resolved_at?: string | null
+          run_id?: string | null
+          signed_at?: string
+          txid?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supplementary_anchor_journal_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "supplementary_anchor_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      supplementary_anchor_runs: {
+        Row: {
+          anchors_proven: number
+          batch_size: number
+          batches_completed: number
+          dry_run: boolean
+          fee_rate_sat_vb: number | null
+          finished_at: string | null
+          id: string
+          last_error: string | null
+          sats_spent: number
+          started_at: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          anchors_proven?: number
+          batch_size: number
+          batches_completed?: number
+          dry_run?: boolean
+          fee_rate_sat_vb?: number | null
+          finished_at?: string | null
+          id?: string
+          last_error?: string | null
+          sats_spent?: number
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          anchors_proven?: number
+          batch_size?: number
+          batches_completed?: number
+          dry_run?: boolean
+          fee_rate_sat_vb?: number | null
+          finished_at?: string | null
+          id?: string
+          last_error?: string | null
+          sats_spent?: number
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       switchboard_flag_history: {
         Row: {
@@ -6158,6 +6503,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "verification_events_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "verification_events_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
@@ -6504,6 +6856,16 @@ export type Database = {
       }
     }
     Views: {
+      calibration_features: {
+        Row: {
+          confidence: number | null
+          created_at: string | null
+          credential_type: Database["public"]["Enums"]["credential_type"] | null
+          extraction_accuracy: number | null
+          id: string | null
+        }
+        Relationships: []
+      }
       hypopg_hidden_indexes: {
         Row: {
           am_name: unknown
@@ -6637,6 +6999,19 @@ export type Database = {
       admin_change_user_role: {
         Args: { p_new_role: string; p_user_id: string }
         Returns: undefined
+      }
+      admin_provision_organization: {
+        Args: {
+          p_actor: string
+          p_allow_duplicate_name: boolean
+          p_anchor_quota: number
+          p_credits: number
+          p_display_name: string
+          p_idempotency_key: string
+          p_is_test: boolean
+          p_legal_name: string
+        }
+        Returns: Json
       }
       admin_set_org_anchor_quota: {
         Args: {
@@ -6791,6 +7166,19 @@ export type Database = {
           subject: string
           trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
           vendor: string
+        }[]
+      }
+      claim_supplementary_proof_cohort: {
+        Args: {
+          p_deprioritized_credential_types?: string[]
+          p_limit?: number
+          p_priority_org_ids?: string[]
+        }
+        Returns: {
+          anchor_id: string
+          chain_tx_id: string
+          fingerprint: string
+          org_id: string
         }[]
       }
       cleanup_expired_data: { Args: never; Returns: Json }
@@ -6980,6 +7368,16 @@ export type Database = {
       get_flag: {
         Args: { p_default?: boolean; p_flag_key: string }
         Returns: boolean
+      }
+      get_lock_waits: {
+        Args: { p_min_wait_seconds?: number }
+        Returns: {
+          blocked_pid: number
+          blocking_pids: number[]
+          lock_mode: string
+          relation: string
+          wait_seconds: number
+        }[]
       }
       get_my_credentials: {
         Args: never
@@ -7181,6 +7579,7 @@ export type Database = {
           total_cost_before: Json
         }[]
       }
+      insert_supplementary_proofs: { Args: { p_rows: Json }; Returns: number }
       invite_member: {
         Args: {
           invitee_email: string
@@ -7253,6 +7652,17 @@ export type Database = {
           p_batch_id: string
           p_fingerprint_root: string
           p_leaf_order: Json
+          p_txid: string
+        }
+        Returns: Json
+      }
+      persist_supplementary_journal: {
+        Args: {
+          p_anchor_ids: string[]
+          p_batch_id: string
+          p_fingerprint_root: string
+          p_leaf_order: Json
+          p_run_id?: string
           p_txid: string
         }
         Returns: Json
@@ -7359,6 +7769,10 @@ export type Database = {
           p_reason?: string
         }
         Returns: number
+      }
+      resolve_supplementary_journal: {
+        Args: { p_action: string; p_journal_id: string; p_reason?: string }
+        Returns: boolean
       }
       revoke_anchor: {
         Args: { anchor_id: string; reason?: string }
@@ -7480,6 +7894,10 @@ export type Database = {
             }
             Returns: string
           }
+      supplementary_proof_backlog_count: {
+        Args: { p_max?: number }
+        Returns: Json
+      }
       suspend_suborg: {
         Args: {
           p_parent_org_id: string
@@ -7650,11 +8068,11 @@ export type Database = {
       org_rule_action_type:
         | "AUTO_ANCHOR"
         | "FAST_TRACK_ANCHOR"
-        | "INSTANT_SECURE"
         | "QUEUE_FOR_REVIEW"
         | "FLAG_COLLISION"
         | "NOTIFY"
         | "FORWARD_TO_URL"
+        | "INSTANT_SECURE"
       org_rule_event_status: "PENDING" | "CLAIMED" | "PROCESSED" | "FAILED"
       org_rule_execution_status:
         | "PENDING"
@@ -7707,12 +8125,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -7736,11 +8154,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -7761,11 +8179,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -7786,11 +8204,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -7803,11 +8221,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -7817,9 +8235,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       agent_status: ["active", "suspended", "revoked"],
@@ -7945,11 +8360,11 @@ export const Constants = {
       org_rule_action_type: [
         "AUTO_ANCHOR",
         "FAST_TRACK_ANCHOR",
-        "INSTANT_SECURE",
         "QUEUE_FOR_REVIEW",
         "FLAG_COLLISION",
         "NOTIFY",
         "FORWARD_TO_URL",
+        "INSTANT_SECURE",
       ],
       org_rule_event_status: ["PENDING", "CLAIMED", "PROCESSED", "FAILED"],
       org_rule_execution_status: [
@@ -7996,4 +8411,3 @@ export const Constants = {
     },
   },
 } as const
-
