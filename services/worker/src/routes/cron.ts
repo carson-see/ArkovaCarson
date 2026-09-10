@@ -1399,6 +1399,15 @@ cronRouter.post('/recover-broadcasts', async (_req, res) => {
 cronRouter.post('/detect-reorgs', async (_req, res) => {
   try {
     const result = await detectReorgs();
+    // SCRUM-3836: a run that could not inspect anything must not answer 200.
+    // It did, for 1,108 consecutive runs, while the candidate query was being
+    // killed by statement_timeout — so Cloud Scheduler, CI and every dashboard
+    // read "reorg detection healthy". 503 is deliberate: the job is NO_RETRY,
+    // so this surfaces as a Scheduler failure instead of being re-driven.
+    if (!result.completed) {
+      res.status(503).json({ error: 'Reorg detection could not run', ...result });
+      return;
+    }
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Reorg detection failed');
@@ -1409,6 +1418,11 @@ cronRouter.post('/detect-reorgs', async (_req, res) => {
 cronRouter.post('/monitor-stuck-txs', async (_req, res) => {
   try {
     const result = await monitorStuckTransactions();
+    // SCRUM-3836: a run that could not query its candidates must not answer 200.
+    if (!result.completed) {
+      res.status(503).json({ error: 'Stuck TX monitor could not run', ...result });
+      return;
+    }
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Stuck TX monitor failed');
@@ -1419,6 +1433,11 @@ cronRouter.post('/monitor-stuck-txs', async (_req, res) => {
 cronRouter.post('/rebroadcast-txs', async (_req, res) => {
   try {
     const result = await rebroadcastDroppedTransactions();
+    // SCRUM-3836: a run that could not query its candidates must not answer 200.
+    if (!result.completed) {
+      res.status(503).json({ error: 'TX rebroadcast could not run', ...result });
+      return;
+    }
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'TX rebroadcast failed');
