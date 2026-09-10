@@ -12,6 +12,12 @@
  * additionally covers the known byte-bearing field names. The `err`/`error`
  * serializer runs the same sanitizer over the serialized error so a
  * byte-bearing field on an Error can never be emitted.
+ *
+ * SCRUM-3439 (§1.4): the same `redact` path list also drops credential-bearing
+ * URL fields (`rpcUrl` and friends). Those cannot be caught by the type-based
+ * hook — a URL is an ordinary string — and the prod RPC credential lives in the
+ * URL PATH, which the `token=`-oriented pii-scrub regex does not match. See
+ * `CREDENTIAL_URL_REDACT_PATHS`.
  */
 
 import pino, { type Logger as PinoLogger } from 'pino';
@@ -155,6 +161,32 @@ const BYTE_FIELD_REDACT_PATHS = [
 ];
 
 /**
+ * SCRUM-3439 (§1.4): credential-bearing URL config fields. The RPC endpoint
+ * carries its credential in the URL PATH — prod `BITCOIN_RPC_URL` is
+ * `https://go.getblock.io/<ACCESS_TOKEN>` — and the pii-scrub `URL_TOKEN_REGEX`
+ * only matches `token=`-style QUERY params, so a path token passes every other
+ * guard untouched. The type-based `redactBinaryValues` hook cannot help either:
+ * a URL is an ordinary string.
+ *
+ * There is no legitimate reason to log any of these keys, because a call site
+ * that genuinely wants the endpoint logs the SANITIZED origin under a different
+ * key (`rpcOrigin`, via `sanitizeRpcUrlForError` in chain/utxo-provider.ts).
+ * That makes the rule unambiguous — a field literally named `rpcUrl` is always
+ * a mistake — so these are `remove`d wholesale rather than censored, the same
+ * belt-and-braces shape as the byte fields above. Public endpoints that carry
+ * no credential (`mempoolBaseUrl`, `baseUrl`) are deliberately NOT listed:
+ * there the full path is the correlation value.
+ */
+const CREDENTIAL_URL_REDACT_PATHS = [
+  'rpcUrl',
+  'bitcoinRpcUrl',
+  'baseRpcUrl',
+  '*.rpcUrl',
+  '*.bitcoinRpcUrl',
+  '*.baseRpcUrl',
+];
+
+/**
  * Build the worker's pino options. Exported so tests can construct a REAL pino
  * instance over an in-memory destination and assert the emitted JSON line —
  * `logger.test.ts` mocks pino wholesale and is therefore structurally blind to
@@ -182,10 +214,11 @@ export function buildLoggerOptions(
         return redactBinaryValues(object);
       },
     },
-    // Belt-and-braces redaction of the known byte-bearing field names. `remove`
-    // drops the key entirely rather than printing `[Redacted]`.
+    // Belt-and-braces redaction of the known byte-bearing (SCRUM-2492) and
+    // credential-bearing-URL (SCRUM-3439) field names. `remove` drops the key
+    // entirely rather than printing `[Redacted]`.
     redact: {
-      paths: BYTE_FIELD_REDACT_PATHS,
+      paths: [...BYTE_FIELD_REDACT_PATHS, ...CREDENTIAL_URL_REDACT_PATHS],
       remove: true,
     },
     transport: pretty
