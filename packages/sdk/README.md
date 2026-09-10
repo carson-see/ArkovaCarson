@@ -30,11 +30,9 @@
 
 ```bash
 npm install arkova
-# or
-pnpm add arkova
-# or
-yarn add arkova
 ```
+
+Or with pnpm: `pnpm add arkova`. Or with yarn: `yarn add arkova`.
 
 **Requirements:** Node.js ≥18 (uses native `fetch` and `crypto.subtle`). Works in browsers, Cloudflare Workers, Deno, and Bun without polyfills.
 
@@ -88,7 +86,9 @@ const arkova = new Arkova({
   /** Override the API base URL (default: production worker) */
   baseUrl: 'https://arkova-worker-270018525501.us-central1.run.app',
 
-  /** Optional retry tuning. 429 responses honor Retry-After automatically. */
+  /** Optional retry tuning. Retries apply when the method is safe (GET/HEAD/OPTIONS)
+   *  or the call is idempotent (verifyBatch, anchor, anchorBulk). 429 responses
+   *  honor Retry-After automatically. */
   retry: { retries: 2, baseDelayMs: 250, maxDelayMs: 5000 },
 
   /** Optional x402 micropayment config (machine-to-machine billing) */
@@ -273,7 +273,7 @@ const anchor = await arkova.getAnchor(results[0].publicId);
 const orgs = await arkova.listOrgs();
 ```
 
-Retries are built in for `429`, `500`, `502`, `503`, and `504`. For rate limits, the SDK reads `Retry-After` and waits before retrying. API v2 errors are exposed as `ArkovaError.problem` with the full RFC 7807 `{ type, title, status, detail, instance }` payload.
+Retries are built in for `429`, `500`, `502`, `503`, and `504`. **A request is retried only when its HTTP method is safe (`GET`/`HEAD`/`OPTIONS`) OR the call is idempotent.** The idempotent calls are `verifyBatch` (a read expressed as `POST`, served on the 10 req/min batch tier), `anchor`, and `anchorBulk` (both idempotent on the fingerprint server-side — see **Idempotency** above). Non-idempotent writes never retry: `webhooks.create`, `webhooks.update`, `webhooks.delete`, and `webhooks.test` surface a transient `429`/`5xx` to the caller rather than risk a duplicate. For rate limits, the SDK reads `Retry-After` and waits before retrying. API v2 errors are exposed as `ArkovaError.problem` with the full RFC 7807 `{ type, title, status, detail, instance }` payload.
 
 ---
 

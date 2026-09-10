@@ -10,6 +10,20 @@ _Last updated: 2026-09-07 (SCRUM-4492: ComputeID AgentPassport integration — `
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-09-05 — worker-side MCP test fixtures re-pinned to the registered tool names
+
+`mcp-tools.test.ts`, `mcp-tool-schemas.test.ts` and `mcp-anomaly-detection.test.ts` carried
+the pre-v3.0 names (`verify_credential`, `search_credentials`, bare `search` / `verify`) in
+their fixtures and expectations. The worker does not serve MCP — the edge worker does — but
+these suites encode the tool NAME SET, and a fixture that names a tool the registry no
+longer has is a test asserting against a world that does not exist: it stays green while
+proving nothing about the live surface. Re-pinned to `arkova_*` (with `nessie_query`
+keeping its own namespace).
+
+`mcp-tool-schemas.test.ts` reads `x-agent-usage.tool_name` out of the v2 OpenAPI spec, so
+it is one of only three readers of that extension in the repo — see
+`docs/api/agents.md` (2026-09-05) for why changing that field is not a §1.8 break.
+
 ## 2026-08-31 — `config.ts` gains `enableDocusignSignerBackfill` (`feat/docusign-signer-backfill-v2`, draft, T2, stacked on `feat/docusign-signer-capture-outbound` / PR #2474)
 
 Gates `POST /jobs/docusign-signer-backfill` (`jobs/docusign-signer-backfill.ts` +

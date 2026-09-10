@@ -1,5 +1,27 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-05 — `publish-sdk.yml` job name, and the two things this folder does NOT do
+
+The job was named "Build, test, and publish arkova (npm)". There are two npm packages in
+this repo whose npm name starts with `arkova` — `arkova` (packages/sdk) and
+`arkova-mcp-server` (sdks/mcp-server) — so the name did not identify the package it
+publishes. Now "Build, test, and publish arkova (packages/sdk)". Cosmetic in isolation;
+it matters because of the two facts below, which a reader was inferring from that name.
+
+**This folder holds exactly two publish workflows: `publish-sdk.yml` (packages/sdk, npm)
+and `publish-python-sdk.yml` (packages/arkova-py, PyPI).** `sdks/mcp-server` has NO CI
+publish path. Tagging does not ship it; only `scripts/release/publish-npm.sh
+--only=mcp-server`, run by hand on an authenticated machine, does. Do not assume a release
+tag covered it.
+
+**`secrets.NPM_TOKEN` is not known to work for the package `publish-sdk.yml` now
+publishes.** It was provisioned for `@carsonarkova/sdk` and scoped to the `carsonarkova`
+org; the package became the UNSCOPED name `arkova` on 2026-08-18, which is a separate
+ownership record an org-scoped token has no rights on. Confirm publish rights on `arkova`
+BEFORE pushing an `sdk-v3.0.0` tag — the tag is burned by the failed run, and re-tagging
+the same version is the worst recovery available. Recorded in the header of
+`scripts/release/publish-npm.sh` as well.
+
 ## 2026-09-02 — `cache-zk-artifacts` gained `restore-keys`; a lockfile bump must not re-download the ptau
 
 `ci.yml`'s Tests job keys the zk circuit artifact cache on `extraction-proof.circom` +
@@ -726,6 +748,18 @@ Note the gate is **not** in `.mergify.yml merge_conditions` and `main` carries n
 The E2E job now runs `playwright.uat03.config.ts` after Chromium installation and before Supabase setup. Seven real-app routing/recovery cases use owned mocked external Auth/worker boundaries on loopback, fail the existing E2E job on error, and upload 1280/375 screenshots. The default Playwright config excludes this separately executed file; no skip or hosted seed mutation is needed. Hosted Auth/mailbox proof remains a separate release requirement.
 
 The SQL confirmation regressions receive the masked local DB URL from `supabase status`, including the actual CI port selected by the startup helper. Their role-corruption setup uses the local bootstrap administrator; a connection/administrator check precedes assertions, and failures match PostgreSQL stderr rather than SQL text embedded in a failed command.
+
+## 2026-09-10 — PR #2694: forward the selected SQL port to RLS tests
+
+The CI Supabase wrapper selects a free port block, normally database port 15422.
+The fingerprint plan suite reads `RLS_DATABASE_URL`; exporting only the OAuth
+suite's `UAT03_DATABASE_URL` left it connecting to the unused default 54322.
+The shared extraction step now masks and outputs the actual `DB_URL`, and the
+RLS step receives it as `RLS_DATABASE_URL`. OAuth retains its bootstrap-admin
+username on that same database. The loopback guard, SQL cases, fixture ownership,
+and migration 0441 are unchanged. Real workflow extraction on an isolated full
+schema passed all eight cases, failed three under 0386, and passed all eight
+after reapplying immutable 0441 with seeded identities preserved.
 
 ## 2026-09-10 — SCRUM-4565: isolate Mergify status edits from required checks
 
