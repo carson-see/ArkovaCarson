@@ -122,7 +122,7 @@ export const openApiSpec: Record<string, any> = {
                   credential_type: 'DIPLOMA',
                   issued_date: '2026-01-15T00:00:00Z',
                   expiry_date: null,
-                  anchor_timestamp: '2026-03-10T08:00:00Z',
+                  anchor_timestamp: '2026-03-12T10:30:00Z',
                   bitcoin_block: 204567,
                   network_receipt_id: 'b8e381df09ca404eaae2e5e9d9b3d27567fe97ece39ead718f6d2c77ca60eb57',
                   record_uri: 'https://app.arkova.ai/verify/ARK-2026-TEST-001',
@@ -1759,7 +1759,17 @@ export const openApiSpec: Record<string, any> = {
           credential_type: { type: 'string' },
           issued_date: { type: 'string', format: 'date-time', nullable: true },
           expiry_date: { type: 'string', format: 'date-time', nullable: true },
-          anchor_timestamp: { type: 'string', format: 'date-time' },
+          anchor_timestamp: {
+            type: 'string',
+            format: 'date-time',
+            description:
+              'Network Observed Time: the moment the Bitcoin network observed this ' +
+              'anchor. Measured from the confirmed block, NOT the time the record was ' +
+              'created in Arkova (the two differ by the confirmation interval). ' +
+              'Omitted, never null, when no observed time has been measured yet — ' +
+              'for example while the anchor is PENDING. Not asserted: anything about ' +
+              'the content, authenticity, or legal effect of the underlying document.',
+          },
           bitcoin_block: { type: 'integer', nullable: true },
           network_receipt_id: { type: 'string', nullable: true },
           merkle_proof_hash: { type: 'string', nullable: true },
