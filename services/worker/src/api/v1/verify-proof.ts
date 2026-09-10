@@ -21,8 +21,7 @@ import {
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
 import {
-  connectorFingerprintRederivabilityFields,
-  resolveConnectorFetchSource,
+  connectorFingerprintRederivabilityFieldsFor,
   type FingerprintRederivability,
 } from '../../constants/connectorFingerprint.js';
 import { fromByteaHex } from '../../utils/anchorProofs.js';
@@ -313,6 +312,7 @@ export interface ProofAnchorData {
   chain_block_height: number | null;
   chain_timestamp: string | null;
   metadata: Record<string, unknown> | null;
+  fingerprint_source?: string | null;
 }
 
 export interface ProofRecordData {
@@ -607,13 +607,10 @@ export function buildProofResponse(
     verified: inclusion.valid,
     // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
     proof_bundle: buildProofBundle(anchor, proofSource, leafCount),
-    // BUG-2026-08-13-010 (§1.5/§1.6A): connector-sourced fingerprints attest
-    // fetch-time bytes, not source re-derivability. Response-level only —
-    // never inside the (signable) proof_bundle. Spread emits the indivisible
-    // pair for a measured connector marker and NOTHING otherwise.
-    ...(resolveConnectorFetchSource(anchor.metadata)
-      ? connectorFingerprintRederivabilityFields()
-      : {}),
+    // Evidence-gated class/note pair, response-level only. Explicit issuer
+    // attestations remain declared; unclassified rules markers stay silent.
+    // Never add these fields inside the signable proof_bundle.
+    ...connectorFingerprintRederivabilityFieldsFor(anchor.metadata, anchor.fingerprint_source),
   };
 }
 
@@ -639,7 +636,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       const { db } = await import('../../utils/db.js');
       const { data, error } = await db
         .from('anchors')
-        .select('id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, metadata')
+        .select('id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, fingerprint_source, metadata')
         .eq('public_id', publicId)
         .is('deleted_at', null)
         .single();
@@ -663,6 +660,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
           chain_tx_id: data.chain_tx_id,
           chain_block_height: data.chain_block_height,
           chain_timestamp: data.chain_timestamp,
+          fingerprint_source: data.fingerprint_source,
           metadata: typeof data.metadata === 'object' && data.metadata !== null
             ? data.metadata as Record<string, unknown>
             : null,

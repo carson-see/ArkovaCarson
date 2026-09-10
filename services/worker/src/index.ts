@@ -31,6 +31,7 @@ import { didWebRouter } from './api/did-web.js';
 import { proofKeysRouter } from './api/proof-keys.js';
 
 // Extracted routers (ARCH-1)
+import { emailConfirmationRouter } from './routes/email-confirmation-runtime.js';
 import { billingRouter } from './routes/billing.js';
 import { anchorRouter } from './routes/anchor.js';
 import { adminRouter } from './routes/admin.js';
@@ -305,7 +306,12 @@ import { ruleEventBackpressure } from './middleware/ruleEventBackpressure.js';
 app.use(
   '/webhooks/docusign',
   killSwitch('ENABLE_DOCUSIGN_WEBHOOK'),
-  rateLimiters.stripeWebhook,
+  // docusign-bilateral-2026-08 (SCRUM-3418): own bucket, was sharing
+  // `stripeWebhook`'s global 100/min key with the Stripe webhook route — see
+  // rateLimiters.docusignWebhook's doc comment. PR #2441 (open,
+  // fix/ratelimit-per-limiter-bucket-scope) reworks limiter buckets
+  // generally but does not touch this route.
+  rateLimiters.docusignWebhook,
   ruleEventBackpressure, // SCRUM-1024: 503 + Retry-After if rule_events queue overloaded
   express.raw({ type: 'application/json', limit: '1mb' }),
   (req, _res, next) => {
@@ -433,6 +439,7 @@ app.use('/api/v1/verify', publicVerifyAnonLimiter);
 // (SCRUM-2603, §1.10's 100/min). Both the cap and those carve-outs live in
 // `middleware/apiIpShadowGuard.ts` with the full writeup.
 app.use('/api', apiIpShadowGuard, badgeRouter); // /api/badge/:publicId
+app.use('/api/auth/email-confirmation', rateLimiters.api, emailConfirmationRouter);
 app.use('/api', billingRouter);    // /api/checkout/session, /api/billing/portal
 app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/account
 app.use('/api', adminRouter);      // /api/treasury/*, /api/admin/*
