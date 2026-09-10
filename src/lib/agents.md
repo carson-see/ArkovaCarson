@@ -188,6 +188,29 @@ The signup copy now describes securing and verifying records. `BETA_GATE_LABELS`
 
 _Last updated: 2026-08-29_
 
+
+## 2026-09-02 — the certificate packet's `block_height` comes from the ANCHOR, not the proof row (SCRUM-3953)
+
+`sourceProofInput.ts` read `proofRow.block_height ?? anchor.chain_block_height` and
+`buildProofPacket` preferred `p.block_height` over `data.blockHeight`. Both orderings were backwards:
+`anchor_proofs.block_height` is the chain **tip at broadcast**, not the mined block's height, and it
+is non-null on 713,949 of 713,950 prod rows — so the correct value never got a turn. It disagreed
+with `anchors.chain_block_height` on **711,027** of them, always low.
+
+This was not cosmetic. The packet is serialised into the certificate as `embeddedProofJson` and
+published so the certificate "can be re-verified offline", and it ships that height beside a
+`block_hash`/`block_header` read from the confirmed chain. Every Arkova verifier binds the height to
+the chain and hard-rejects a mismatch (`arkova-py` `_height_binding_failure`,
+`packages/verifier/src/independent-node.ts`, `packages/verifier-cli`), so a **genuine** anchor came
+back `ok: false, reason_code: HEIGHT_MISMATCH` — the exact shape of the repo's own forgery fixture
+in `packages/verifier-cli/fixtures/author-adversarial.py`.
+
+Both sites now put the anchor value first, with the proof row as fallback for the rare row that has
+no anchor height. **Do not "tidy" the coalesce order back** — CI pins it
+(`scripts/ci/feedback-rules/proof-block-height-source.ts`, override `proof-block-height-reviewed`).
+The JSON "download proof package" path (`proofPackage.ts`) was always correct: it is handed
+`anchor.chain_block_height` directly and never reads `anchor_proofs`.
+
 ## 2026-08-29 — `docusignLinks.ts` (DocuSign record deep links, bilateral rollout, frontend-targeted T2)
 
 New module `docusignLinks.ts`: turns DocuSign account/envelope/recipient identifiers already present on an anchor's metadata into deep links back into DocuSign's own console (`https://apps.docusign.com` prod / `https://apps-d.docusign.com` demo, selected by `resolveDocusignEnv(metadata._docusign_env)`, default `'prod'`). The security property is validate-before-build: `accountUrl`/`envelopeUrl`/`signerUrl` each call `isStrictUuid` (exact `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}` match, case-insensitive, no RFC 4122 version/variant constraint — see the module's own header for why) FIRST and return `null` on anything that does not match, so no metadata value ever reaches a template-literal href — immune to `javascript:`/open-redirect injection by construction, not by downstream sanitization. `signerUrl` is a thin alias of `envelopeUrl` (DocuSign has no per-recipient profile URL; the envelope-details page is the only signer-verification surface), called with the recipient GUID at the actual call site in `AssetDetailView.tsx`. 52 unit tests in `docusignLinks.test.ts` cover valid/invalid/empty/injection-shaped inputs plus both env bases — see that folder's own `agents.md` for the consumer side (`MetadataRow`/`DocusignSignerRows` in `src/components/anchor/AssetDetailView.tsx`).

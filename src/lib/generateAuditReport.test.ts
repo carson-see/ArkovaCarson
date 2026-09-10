@@ -750,3 +750,37 @@ describe('audit certificate — field label / value spacing as painted', () => {
     expect(paintedWidthMm(doc, label, 'bold', 9) - paintedWidthMm(doc, label, 'normal', 9)).toBeGreaterThan(2);
   });
 });
+
+// ─── SCRUM-3953 ────────────────────────────────────────────────────
+
+describe('buildProofPacket — block_height provenance', () => {
+  it('prefers the anchor height over a stale proof-row height', () => {
+    const packet = buildProofPacket(
+      securedData({
+        blockHeight: 965116,
+        proof: { ...securedData().proof!, block_height: 965112 },
+      }),
+    );
+    expect(packet?.block_height).toBe(965116);
+  });
+
+  it('uses the proof-row height when the anchor carries none', () => {
+    const packet = buildProofPacket(
+      securedData({
+        blockHeight: undefined,
+        proof: { ...securedData().proof!, block_height: 850123 },
+      }),
+    );
+    expect(packet?.block_height).toBe(850123);
+  });
+
+  it('prefers the anchor time over a stale proof-row broadcast time', () => {
+    const packet = buildProofPacket(
+      securedData({
+        securedAt: '2026-09-02T02:58:11Z',
+        proof: { ...securedData().proof!, block_timestamp: '2026-09-02T02:01:28Z' },
+      }),
+    );
+    expect(packet?.block_timestamp).toBe('2026-09-02T02:58:11Z');
+  });
+});

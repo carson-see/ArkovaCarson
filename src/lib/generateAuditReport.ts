@@ -262,11 +262,15 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
     merkle_index: typeof p.merkle_index === 'number' ? p.merkle_index : null,
     leaf_count: typeof p.leaf_count === 'number' ? p.leaf_count : null,
     tx_id: p.tx_id ?? data.networkReceipt ?? null,
+    // SCRUM-3953: `data.blockHeight` (= `anchors.chain_block_height`)
+    // FIRST. `p.block_height` can still carry the stale broadcast-time tip on
+    // rows written before the backfill, and this packet is what the offline
+    // verifier binds against the chain.
     block_height:
-      typeof p.block_height === 'number'
-        ? p.block_height
-        : typeof data.blockHeight === 'number'
-          ? data.blockHeight
+      typeof data.blockHeight === 'number'
+        ? data.blockHeight
+        : typeof p.block_height === 'number'
+          ? p.block_height
           : null,
     block_hash: p.block_hash ?? null,
     block_header: p.block_header ?? null,
@@ -274,7 +278,10 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
     // proof_schema_version is non-null; default to 1 (plain double-SHA256).
     proof_schema_version:
       typeof p.proof_schema_version === 'number' ? p.proof_schema_version : 1,
-    block_timestamp: p.block_timestamp ?? data.securedAt ?? null,
+    // SCRUM-3953: `data.securedAt` (= `anchors.chain_timestamp`, the header
+    // time) FIRST; `p.block_timestamp` can still be the broadcast wall clock on
+    // rows written before migration 0443.
+    block_timestamp: data.securedAt ?? p.block_timestamp ?? null,
     // Migration 0427: the bitcoin-tree half, read as ONE fact through the
     // SHARED validator (`txInclusionEvidence.ts`).
     //

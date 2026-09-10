@@ -509,6 +509,15 @@ export interface ConfirmationProofProvider {
   getRawTransaction(txid: string): Promise<RawTransaction>;
   getBlockHeaderHex?(blockhash: string): Promise<string>;
   getTxOutProof?(txids: string[], blockhash?: string): Promise<string>;
+  /**
+   * SCRUM-3953: the verbose header, whose `height` is the ONLY
+   * authoritative answer to "what height is this block hash". A raw 80-byte
+   * header does not carry its own height (it lives in the coinbase, BIP34), so
+   * without this call a confirmation pass has no measured height to write and
+   * must leave the column alone rather than echo the broadcast-time tip.
+   * Optional: a provider without it degrades to "no height", never to a guess.
+   */
+  getBlockHeader?(blockhash: string): Promise<BlockHeader>;
 }
 
 // ─── Bitcoin Core RPC Implementation ────────────────────────────────────

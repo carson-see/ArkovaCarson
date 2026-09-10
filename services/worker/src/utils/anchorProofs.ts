@@ -130,8 +130,24 @@ export interface AnchorConfirmationUpdateRow {
   anchorId: string;
   blockHeader: string;
   blockHash: string;
-  /** Block height observed at confirmation (kept in sync if it was unset). */
+  /**
+   * The height MEASURED for `blockHash` at confirmation, or `undefined`/`null`
+   * when the chain could not be asked. Absent means "leave `block_height`
+   * alone" — never "write what is already there".
+   *
+   * SCRUM-3953: the caller used to pass the anchor's OWN recorded
+   * height here, so this UPDATE rewrote the broadcast-time chain tip onto
+   * itself and `anchor_proofs.block_height` was never corrected, diverging from
+   * `anchors.chain_block_height` on 711,027 of 713,949 prod rows (always low,
+   * by the number of blocks mined between broadcast and confirmation). Only a
+   * value that came back from the chain belongs here.
+   */
   blockHeight?: number | null;
+  /**
+   * SCRUM-3953: the block time MEASURED from the verified header, or absent.
+   * Same contract as `blockHeight`: absent ⇒ leave `block_timestamp` alone.
+   */
+  blockTimestamp?: string | null;
   /**
    * R1: the BITCOIN-tree inclusion branch proving this tx is committed by the
    * merkleroot inside `blockHeader` (migration 0427 `tx_inclusion_branch`).
@@ -199,7 +215,12 @@ function buildConfirmationValues(row: AnchorConfirmationUpdateRow): Record<strin
     block_header: toByteaHex(row.blockHeader),
     block_hash: row.blockHash,
   };
+  // SCRUM-3953: only a value MEASURED from the chain at confirmation belongs
+  // here. Omit the key when unmeasured so a pass that could not read the chain
+  // leaves the existing value alone, instead of nulling it or re-freezing the
+  // broadcast-time tip the caller used to echo back.
   if (row.blockHeight != null) values.block_height = row.blockHeight;
+  if (row.blockTimestamp != null) values.block_timestamp = row.blockTimestamp;
 
   // R1 + H4: the branch and the index are ONE fact and move together.
   //
