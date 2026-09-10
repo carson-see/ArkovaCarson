@@ -746,6 +746,6 @@ in Mergify's body, breaking the feedback loop rather than spawning full checks.
 Opened/synchronized/reopened source checks and base changes keep their original
 names and enforcement steps. Ordinary PR body edits still cancel older runs and
 resolve evidence live. Existing per-step queue identity checks are unchanged.
-The routing contract is in `scripts/ci/merge-queue-edit-workflow-contract.test.ts`;
-the staging live-input and step-identity contracts remain in
+SCRUM-4565 records the reproducible GitHub expression-engine event matrix and
+negative controls. The staging live-input and step-identity contracts remain in
 `scripts/ci/staging-evidence-workflow-contract.test.ts`.
