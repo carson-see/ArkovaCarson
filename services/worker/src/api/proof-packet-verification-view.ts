@@ -25,6 +25,16 @@ interface ProofPacketAnchorReceipt {
   bitcoin_tx_id: string | null;
   block_height: number | null;
   verification_uri: string | null;
+  /**
+   * SCRUM-3818 (docusign-bilateral-2026-08): proof-packet.ts's `anchor_receipt`
+   * carries the additive-nullable `fingerprint_rederivability` pair (§1.5/
+   * §1.6A/§1.8) for connector-materialized anchors. Optional here (not the
+   * frozen-schema `| null` — CLAUDE.md §6, omit rather than null) purely so
+   * this mapping layer stops DROPPING the pair; toVerificationView below only
+   * copies it through when present.
+   */
+  fingerprint_rederivability?: string;
+  fingerprint_rederivability_note?: string;
 }
 
 interface ProofPacketTimestamps {
@@ -113,6 +123,14 @@ export interface VerificationView {
   network_receipt_id: string | null;
   record_uri: string | null;
   fingerprint: string | null;
+  /**
+   * SCRUM-3818: additive-nullable pass-through of the anchor receipt's
+   * re-derivability pair (§1.5/§1.8) — present exactly when the source packet
+   * carries it, so the class never travels without its meaning (same rule as
+   * every other emitter of this pair).
+   */
+  fingerprint_rederivability?: string;
+  fingerprint_rederivability_note?: string;
   ciba?: {
     execution_id: string;
     rule_id: string | null;
@@ -137,6 +155,16 @@ export function toVerificationView(packet: ProofPacketShape): VerificationView {
     network_receipt_id: packet.anchor_receipt.bitcoin_tx_id,
     record_uri: packet.anchor_receipt.verification_uri,
     fingerprint: packet.anchor_receipt.fingerprint,
+    // SCRUM-3818: pass the pair through UNCHANGED when the source packet has
+    // it (proof-packet.ts already resolved the correct class — this mapping
+    // layer must not re-derive or drop it). Omitted, never undefined-as-null,
+    // when absent — the class must never travel without its meaning.
+    ...(packet.anchor_receipt.fingerprint_rederivability !== undefined
+      ? {
+          fingerprint_rederivability: packet.anchor_receipt.fingerprint_rederivability,
+          fingerprint_rederivability_note: packet.anchor_receipt.fingerprint_rederivability_note,
+        }
+      : {}),
     ciba: {
       execution_id: packet.execution.id,
       rule_id: packet.rule?.id ?? null,
