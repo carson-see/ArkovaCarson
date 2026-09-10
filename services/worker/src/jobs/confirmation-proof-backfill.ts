@@ -43,6 +43,7 @@ const EMPTY_RUN = {
   txStale: 0,
   anchorsUpdated: 0,
   anchorsMissing: 0,
+  anchorsBlockMismatch: 0,
 } as const;
 
 /**

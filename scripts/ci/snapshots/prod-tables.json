@@ -506,6 +506,14 @@
       {
         "name": "stats_cache",
         "reason": "created in prod out-of-band; needs a backfill migration to capture in source — tracked separately"
+      },
+      {
+        "name": "admin_org_provisioning_requests",
+        "reason": "2026-09-10T14:06:25Z: migrate-before-merge window for migration 0439 (PR #2571), absent from main. Read-only verification on prod vzwyaatejekddvltxyye confirmed this table with RLS and FORCE RLS enabled and numeric ledger row 0439. Remove this entry when PR #2571 lands its migration; this records table/ledger presence, not complete apply validation."
+      },
+      {
+        "name": "docusign_signer_backfill_attempts",
+        "reason": "2026-09-10T14:06:25Z: migrate-before-merge window for migration 0438 (PR #2565), absent from main. Read-only verification on prod vzwyaatejekddvltxyye confirmed this table with RLS and FORCE RLS enabled and numeric ledger row 0438. Remove this entry when PR #2565 lands its migration; this records table/ledger presence, not complete apply validation."
       }
     ]
   }

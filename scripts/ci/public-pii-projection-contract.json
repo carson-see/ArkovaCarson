@@ -5,18 +5,18 @@
     "Arkova has FOUR independent public, unauthenticated projections of the",
     "same anchor rows, written in two languages:",
     "",
-    "  1. SQL   — public.get_public_anchor(text) and its delegating sibling",
+    "  1. SQL   \u2014 public.get_public_anchor(text) and its delegating sibling",
     "             public.get_public_anchor_by_fingerprint(text), both GRANTed to",
     "             `anon` and called straight from the browser over PostgREST by",
     "             the verify page, the embeddable widget, and the edge MCP tools.",
-    "  2. TS    — services/worker/src/ctdl/ctdl-pii-guard.ts, behind",
+    "  2. TS    \u2014 services/worker/src/ctdl/ctdl-pii-guard.ts, behind",
     "             GET /api/v1/credentials/:publicId/ctdl.",
-    "  3. TS    — services/worker/src/api/v1/verify.ts `buildVerificationResult`,",
+    "  3. TS    \u2014 services/worker/src/api/v1/verify.ts `buildVerificationResult`,",
     "             behind GET /api/v1/verify/:publicId, which router.ts allows",
     "             anonymously (`if (!req.apiKey && req.method === 'GET') next()`).",
     "             Also reached via oracle.ts and batch.ts, which reuse the same",
     "             builder.",
-    "  4. TS    — services/worker/src/api/v1/provenance.ts, behind",
+    "  4. TS    \u2014 services/worker/src/api/v1/provenance.ts, behind",
     "             GET /api/v1/verify/:publicId/provenance, mounted with NO",
     "             requireScope and NO auth middleware at all.",
     "",
@@ -27,13 +27,13 @@
     "THREE were hardened while provenance kept shipping `revocation_reason` and",
     "an X.509 Subject CN. A fifth (anchor-evidence.ts) is recorded as open under",
     "known_ungated_projections. This file is the one place the rule is written",
-    "down, so no implementation can be changed alone — and, more to the point,",
+    "down, so no implementation can be changed alone \u2014 and, more to the point,",
     "so the NEXT projection cannot be written without discovering the rule",
     "already exists.",
     "",
     "The TS value layer is ONE function, services/worker/src/api/v1/",
     "public-projection-text.ts `publicFreeTextOrNull`, imported by every TS",
-    "projection. Do not copy it — a second copy is the drift in miniature.",
+    "projection. Do not copy it \u2014 a second copy is the drift in miniature.",
     "",
     "Enforced by src/tests/public-anchor-pii-projection.contract.test.ts (static,",
     "always runs), tests/rls/public-anchor-pii-projection.test.ts (live DB, runs",
@@ -43,9 +43,8 @@
     "services/worker/src/api/v1/provenance-pii-projection.test.ts.",
     "",
     "TO CHANGE THE RULE: edit this file, then ALL FOUR implementations, in ONE",
-    "PR. The tests fail otherwise — which is the entire point."
+    "PR. The tests fail otherwise \u2014 which is the entire point."
   ],
-
   "sql_owner_migration": "supabase/migrations/0385_public_anchor_academic_record_pii_projection.sql",
   "ts_owner_module": "services/worker/src/ctdl/ctdl-pii-guard.ts",
   "ts_owner_pending_pr": 1815,
@@ -53,7 +52,7 @@
   "verify_owner_module": "services/worker/src/api/v1/verify.ts",
   "ferpa_module": "services/worker/src/constants/ferpa.ts",
   "$ts_owner_note": [
-    "ts_owner_module does not exist on main yet — it lands with PR #1815 (open,",
+    "ts_owner_module does not exist on main yet \u2014 it lands with PR #1815 (open,",
     "out of draft). The contract test asserts its absence today and asserts full",
     "parity the moment the file appears, so this arms itself with no follow-up",
     "ticket. When #1815 merges, ts_owner_pending_pr becomes historical; leave it",
@@ -76,16 +75,15 @@
     "against ts_pre_1815_module. Parity with main becomes true when #1815 lands,",
     "and the self-arming test starts enforcing it the same moment."
   ],
-
   "unknown_credential_type_fails_closed": true,
   "$unknown_type_note": [
     "SCRUM-3102 / migration 0390. An anchor with an ABSENT credential_type",
     "(NULL, empty, or whitespace-only) is SUPPRESSED, exactly as an academic",
-    "record is — it is not treated as non-academic.",
+    "record is \u2014 it is not treated as non-academic.",
     "",
     "0385 keyed on `upper(COALESCE(p_credential_type,'')) IN (...)`, so an",
     "untyped row evaluated to FALSE and took the PERMISSIVE branch, publishing",
-    "`filename` — the record's public display title and its schema.org `name`.",
+    "`filename` \u2014 the record's public display title and its schema.org `name`.",
     "The seven detector families are all format- or keyword-anchored, so a bare",
     "personal name passed. Measured in prod 2026-08-02: 24 of the 59 NULL-type",
     "anchors (41%) carried a name-shaped filename, the densest such pocket in a",
@@ -104,8 +102,11 @@
     "SEPARATE function from `isEducationCredentialType`, which stays honest",
     "about taxonomy and still returns false for null."
   ],
-
-  "academic_record_credential_types": ["CERTIFICATE", "DEGREE", "TRANSCRIPT"],
+  "academic_record_credential_types": [
+    "CERTIFICATE",
+    "DEGREE",
+    "TRANSCRIPT"
+  ],
   "$academic_record_note": [
     "Records ABOUT AN IDENTIFIED LEARNER. These emit NO issuer- or",
     "extraction-authored free text on either public projection.",
@@ -114,7 +115,6 @@
     "EVERY addition to this set silently replaces real credential titles with",
     "generic ones."
   ],
-
   "sql_academic_controlled_labels": {
     "TRANSCRIPT": "Academic Transcript",
     "DEGREE": "Academic Degree",
@@ -125,40 +125,43 @@
     "CTDL @type map ('Master Degree'). That map does not exist in the database,",
     "so the SQL projection flattens DEGREE to 'Academic Degree'. TRANSCRIPT ->",
     "'Academic Transcript' and CERTIFICATE -> 'Certificate' match the TS side",
-    "exactly. This divergence is DOCUMENTED, not silent — both labels are still",
+    "exactly. This divergence is DOCUMENTED, not silent \u2014 both labels are still",
     "controlled vocabulary derived only from an enum, so neither can carry PII.",
     "",
     "COPY SURFACE: these strings are USER-VISIBLE (the verify page renders",
     "`filename` as the display title and embeds it in schema.org JSON-LD) but",
     "they live in SQL, so `npm run lint:copy` cannot see them. If you widen this",
-    "map, check the new label against the CLAUDE.md §1.3 banned-terminology list",
-    "BY HAND — no linter covers this surface."
+    "map, check the new label against the CLAUDE.md \u00a71.3 banned-terminology list",
+    "BY HAND \u2014 no linter covers this surface."
   ],
-
-  "ferpa_education_types": ["CERTIFICATE", "CLE", "DEGREE", "TRANSCRIPT"],
+  "ferpa_education_types": [
+    "CERTIFICATE",
+    "CLE",
+    "DEGREE",
+    "TRANSCRIPT"
+  ],
   "$ferpa_note": [
     "A THIRD education-type list lives in ferpa_module and deliberately DIFFERS:",
-    "it includes CLE. It drives the FERPA §99.33 re-disclosure NOTICE on the",
+    "it includes CLE. It drives the FERPA \u00a799.33 re-disclosure NOTICE on the",
     "verification API, not free-text suppression, and a continuing-legal-education",
     "record is a practitioner record whose descriptive title is the partner-facing",
     "value. Two lists with two purposes is fine. Two lists where nobody knows the",
-    "second exists is how this class of bug happens — so the contract test pins it,",
+    "second exists is how this class of bug happens \u2014 so the contract test pins it,",
     "and changing it is a decision rather than an accident.",
     "",
     "CONFIRMED AS A DECISION, NOT AN ACCIDENT (verify-surface work): the same",
-    "list ALSO drives the §99.37 directory-information opt-out in verify.ts.",
+    "list ALSO drives the \u00a799.37 directory-information opt-out in verify.ts.",
     "Both jobs are notice/consent mechanics over the wider practitioner+academic",
     "set. Free-text suppression uses academic_record_credential_types instead.",
     "ferpa.ts was deliberately NOT edited to reconcile the two."
   ],
-
   "known_ungated_projections": [
     {
       "route": "GET /api/v1/anchor/:publicId/evidence",
       "module": "services/worker/src/api/v1/anchor-evidence.ts",
       "anon_reachable": true,
       "leaks": "description and issuer_name, emitted raw at lines 254/256",
-      "status": "OPEN — not fixed by the verify or provenance work"
+      "status": "OPEN \u2014 not fixed by the verify or provenance work"
     }
   ],
   "$known_ungated_note": [
@@ -172,7 +175,7 @@
     "method is GET/HEAD and there is NO api key, so an anonymous caller passes",
     "straight through. `GET /:publicId/evidence` (line 326) then emits",
     "`issuer_name: anchor.org_name` (254) and `description: anchor.description`",
-    "(256) verbatim — the same `description` field the verify projection gates.",
+    "(256) verbatim \u2014 the same `description` field the verify projection gates.",
     "",
     "Deliberately NOT fixed alongside provenance: it is its own public-API",
     "surface with its own response contract, tests, and soak, and it is a",
@@ -180,34 +183,41 @@
     "decision about whether omission invalidates the package's own hash.",
     "Delete this entry when it is gated.",
     "",
-    "The two sibling routers on that same `anchorAnonAllow` mount —",
-    "anchor-lifecycle.ts and anchor-extraction-manifest.ts — were checked and",
+    "The two sibling routers on that same `anchorAnonAllow` mount \u2014",
+    "anchor-lifecycle.ts and anchor-extraction-manifest.ts \u2014 were checked and",
     "emit no description/filename/issuer/revocation free text.",
     "",
     "CHECKED AND NOT AFFECTED (do not re-audit from scratch):",
-    "  - services/worker/src/api/v1/verify/attestation.ts — anon by design, but",
+    "  - services/worker/src/api/v1/verify/attestation.ts \u2014 anon by design, but",
     "    emits no description/filename/revocation free text.",
-    "  - services/worker/src/api/v1/attestations.ts — emits description and",
+    "  - services/worker/src/api/v1/attestations.ts \u2014 emits description and",
     "    filename, but every route self-guards with requireAuth/requireScope, so",
     "    it is not an anonymous projection.",
-    "  - services/worker/src/api/v1/verify-proof.ts — merkle proof only, no free",
+    "  - services/worker/src/api/v1/verify-proof.ts \u2014 merkle proof only, no free",
     "    text.",
     "  - services/worker/src/api/v1/anchor-lifecycle.ts,",
-    "    services/worker/src/api/v1/anchor-extraction-manifest.ts — anon-reachable",
+    "    services/worker/src/api/v1/anchor-extraction-manifest.ts \u2014 anon-reachable",
     "    via anchorAnonAllow, no free-text emission.",
     "",
     "An earlier revision of this note listed only the /verify mounts as checked",
-    "while implying a complete sweep. It was not complete — the three /anchor",
+    "while implying a complete sweep. It was not complete \u2014 the three /anchor",
     "mounts had not been audited, which is how anchor-evidence.ts stayed",
     "invisible. If you extend this list, say what you actually checked."
   ],
-
   "provenance_owner_module": "services/worker/src/api/v1/provenance.ts",
-  "provenance_academic_suppressed_fields": ["revocation_reason"],
-  "provenance_value_gated_fields": ["revocation_reason"],
-  "provenance_never_emitted_fields": ["signatures.signer_name"],
+  "provenance_academic_suppressed_fields": [
+    "revocation_reason"
+  ],
+  "provenance_value_gated_fields": [
+    "revocation_reason"
+  ],
+  "provenance_never_emitted_fields": [
+    "signatures.signer_name"
+  ],
   "provenance_structural_fields": [
-    "signatures.format", "signatures.level", "signatures.public_id",
+    "signatures.format",
+    "signatures.level",
+    "signatures.public_id",
     "signatures.timestamp_token_id"
   ],
   "provenance_implements_learner_name_heuristics": false,
@@ -215,7 +225,7 @@
   "$provenance_note": [
     "GET /api/v1/verify/:publicId/provenance, mounted `router.use('/verify',",
     "provenanceRouter)` with NO requireScope and NO auth middleware, and with no",
-    "auth check inside the module. Two leaks, needing two DIFFERENT treatments —",
+    "auth check inside the module. Two leaks, needing two DIFFERENT treatments \u2014",
     "and the difference is the point.",
     "",
     "1. `revocation_reason` is issuer-authored FREE TEXT that MIGHT carry",
@@ -224,7 +234,7 @@
     "   types), every other type passes the value gate. Unconditional, not",
     "   gated on directory_info_opt_out, for the reason in $verify_note.",
     "",
-    "2. `signatures.signer_name` is a person's name BY CONSTRUCTION — it is set",
+    "2. `signatures.signer_name` is a person's name BY CONSTRUCTION \u2014 it is set",
     "   from `cert.subject_cn` (signatures.ts:248), the X.509 Subject CN, beside",
     "   signer_org/location/contact_info. A value detector is USELESS here: the",
     "   measured finding behind this whole contract is that no regex separates a",
@@ -237,7 +247,7 @@
     "   WHAT SURVIVES: that a signature exists, when, its format and level, and",
     "   an `evidence_ref` (signatures.public_id) resolving the signer through an",
     "   AUTHENTICATED surface. If a verifier is entitled to the signer identity,",
-    "   that entitlement is what should carry it — not an anonymous GET.",
+    "   that entitlement is what should carry it \u2014 not an anonymous GET.",
     "",
     "   provenance_structural_fields are emitted unguarded and that is checked,",
     "   not assumed: `format` and `level` are DB CHECK-constrained closed",
@@ -247,26 +257,33 @@
     "   opaque identifiers.",
     "",
     "THREE FACTS, THREE STRINGS. 'no reason provided' is a CLAIM. Asserting it",
-    "over a reason that exists but was suppressed would be false (§1.5, §1.13",
+    "over a reason that exists but was suppressed would be false (\u00a71.5, \u00a71.13",
     "R-7), so a suppressed reason degrades to a bare 'Revoked', which asserts",
     "nothing about why. A genuinely absent reason keeps the original wording,",
     "which is true. The contract test and the live suite pin all three."
   ],
-
-  "verify_academic_suppressed_fields": ["description"],
+  "verify_academic_suppressed_fields": [
+    "description"
+  ],
   "verify_value_gated_fields": [
-    "description", "file_mime", "issuer_name", "jurisdiction", "sub_type"
+    "description",
+    "file_mime",
+    "issuer_name",
+    "jurisdiction",
+    "sub_type"
   ],
   "verify_structural_api_rich_keys": [
-    "fingerprint_source", "parent_public_id", "revocation_tx_id"
+    "fingerprint_source",
+    "parent_public_id",
+    "revocation_tx_id"
   ],
   "verify_implements_learner_name_heuristics": false,
   "verify_fails_closed": false,
   "$verify_note": [
     "GET /api/v1/verify/:publicId is the third projection and was the last to be",
     "gated. `buildVerificationResult` emitted `anchor.description` RAW for every",
-    "credential type — including the three the other two projections suppress",
-    "outright — to an anonymous caller.",
+    "credential type \u2014 including the three the other two projections suppress",
+    "outright \u2014 to an anonymous caller.",
     "",
     "THE POLICY DECISION, stated rather than inherited. Suppression here is",
     "UNCONDITIONAL, matching the other two, NOT conditional on",
@@ -274,7 +291,7 @@
     "",
     "  1. Opt-out means the DEFAULT IS PUBLISH, and default-publish is the defect",
     "     class. `anchors.directory_info_opt_out` defaults to false.",
-    "  2. `description` was not covered by the opt-out anyway — REG-02 gates",
+    "  2. `description` was not covered by the opt-out anyway \u2014 REG-02 gates",
     "     issuer_name/recipient/dates and `description` was emitted underneath it,",
     "     so even an explicitly opted-out learner was exposed on this route.",
     "  3. One row, three anonymous projections, three answers is not a privacy",
@@ -294,16 +311,16 @@
     "  - verify_academic_suppressed_fields is ONE field, not five, because this",
     "    projection emits far less free text than the SQL one: there is no",
     "    `filename`, no metadata container, no revocation_reason on this schema.",
-    "    `issuer_name` is value-gated but NOT structurally suppressed — the",
-    "    issuer is an INSTITUTION, not the learner — which matches 0385 exactly.",
+    "    `issuer_name` is value-gated but NOT structurally suppressed \u2014 the",
+    "    issuer is an INSTITUTION, not the learner \u2014 which matches 0385 exactly.",
     "  - `jurisdiction` is value-gated, not suppressed: an informational",
-    "    jurisdiction tag (§1.5) says nothing about the learner. Matches 0385.",
+    "    jurisdiction tag (\u00a71.5) says nothing about the learner. Matches 0385.",
     "  - A DROPPED `issuer_name` is OMITTED here, where 0385 degrades it to the",
     "    literal 'Unknown Issuer'. Not an oversight. 0385 needs a non-NULL value",
     "    because its own fallback chain would otherwise fall through to",
-    "    `o.display_name` — the ANCHORING org, frequently a different named",
-    "    entity from the issuer — turning a redaction into a WRONG CLAIM about",
-    "    who issued the credential (§1.5, §1.13 R-7). This projection has no",
+    "    `o.display_name` \u2014 the ANCHORING org, frequently a different named",
+    "    entity from the issuer \u2014 turning a redaction into a WRONG CLAIM about",
+    "    who issued the credential (\u00a71.5, \u00a71.13 R-7). This projection has no",
     "    second source: `issuer_name` comes only from `organizations.display_name`",
     "    via `mapAnchorRow`, so omission cannot mis-attribute anything, and",
     "    `issuer_name` is already an optional key the response omits when the org",
@@ -313,13 +330,12 @@
     "",
     "verify_structural_api_rich_keys is an ALLOW-list and the gate FAILS CLOSED",
     "against it: any STRING-valued API-RICH key not named there routes through",
-    "the value gate, so a future additive §1.8 field is gated by default rather",
+    "the value gate, so a future additive \u00a71.8 field is gated by default rather",
     "than shipping raw because nobody remembered. Same inversion as",
     "$structural_keys_note. `sub_type` is bare `text` in the schema (no CHECK, no",
     "enum) and `file_mime` is client-supplied, so both are gated; the numeric and",
     "jsonb members carry no free text and pass through."
   ],
-
   "sql_academic_suppressed_fields": [
     "metadata.title",
     "metadata.credential_title",
@@ -327,58 +343,104 @@
     "metadata.category",
     "revocation_reason"
   ],
-  "sql_academic_controlled_fields": ["filename"],
+  "sql_academic_controlled_fields": [
+    "filename"
+  ],
   "sql_non_academic_fallback_label": "Secured Document",
   "$fallback_label_note": [
     "The label a NON-academic record falls back to when its filename is dropped",
     "by the value gate. Pinned here because it is a USER-VISIBLE string that",
     "lives in SQL, so `npm run lint:copy` cannot see it and nothing else asserts",
-    "it. Check any replacement against the CLAUDE.md §1.3 banned-terminology list",
+    "it. Check any replacement against the CLAUDE.md \u00a71.3 banned-terminology list",
     "by hand."
   ],
   "$suppressed_vs_controlled": [
     "`filename` is the record's DISPLAY TITLE on the verify page and is embedded",
     "in its schema.org JSON-LD, so it cannot be NULLed without breaking consumers",
-    "that assume a non-empty string — it takes a controlled label instead. It is",
+    "that assume a non-empty string \u2014 it takes a controlled label instead. It is",
     "the ONLY controlled field.",
     "",
     "metadata.title and metadata.credential_title are OMITTED rather than given",
     "the label. Emitting it there would leave the `metadata` object non-empty",
     "after jsonb_strip_nulls, which flips the verify card out of its 'no metadata'",
-    "render mode into the key-value list — where neither key is hidden — and the",
+    "render mode into the key-value list \u2014 where neither key is hidden \u2014 and the",
     "card would read 'Title: Academic Degree' and 'Credential Title: Academic",
     "Degree' beneath a type banner that already says 'Academic Degree'. Omitting",
     "preserves the existing render shape and states the label exactly once."
   ],
-
   "ungated_keys": [],
   "$ungated_keys_note": [
     "Keys the projection emits WITHOUT a value gate and WITHOUT being structural.",
     "Empty is the goal. The contract test DERIVES the actual set from the latest",
     "migration that redefines get_public_anchor and fails if it differs from this",
-    "list — so per-field wrapping, which is opt-in and therefore ungated by",
+    "list \u2014 so per-field wrapping, which is opt-in and therefore ungated by",
     "default, becomes a reviewed decision instead of an accident. Adding a key",
     "here requires stating why it is safe."
   ],
-
   "projection_keys": [
-    "anchor_timestamp", "approved_provider_name", "bitcoin_block", "category",
-    "ce_envelope_sha256", "cle_metadata", "course_title", "cpe_metadata",
-    "created_at", "credential_id_hash", "credential_title", "credential_type",
-    "credit_hours", "delivery_format", "delivery_method", "description",
+    "anchor_timestamp",
+    "approved_provider_name",
+    "bitcoin_block",
+    "category",
+    "ce_envelope_sha256",
+    "cle_metadata",
+    "course_title",
+    "cpe_metadata",
+    "created_at",
+    "credential_id_hash",
+    "credential_title",
+    "credential_type",
+    "credit_hours",
+    "delivery_format",
+    "delivery_method",
+    "description",
+    "ethics_hours",
+    "evidence_package_hash",
+    "evidence_schema_version",
     "directory_info_suppressed",
-    "ethics_hours", "evidence_package_hash", "evidence_schema_version",
-    "expires_at", "expiry_date", "extraction_confidence",
-    "extraction_manifest_hash", "extraction_method", "fetched_at",
-    "field_of_study", "file_size", "filename", "fingerprint",
-    "fingerprint_source", "issued_at", "issued_date", "issuer", "issuer_name",
-    "issuer_public_id", "jurisdiction", "merkle_proof_hash", "metadata",
-    "nasba_lookup_date", "nasba_status", "network_receipt_id", "proof_url",
-    "provider_approval_status", "provider_lookup_date", "public_id",
-    "record_uri", "registry_url", "requires_manual_review", "revocation_reason",
-    "revoked_at", "secured_at", "source_id", "source_payload_byte_length",
-    "source_payload_content_type", "source_payload_hash", "source_provider",
-    "source_url", "status", "superseded_at", "title", "verification_level",
+    "expires_at",
+    "expiry_date",
+    "extraction_confidence",
+    "extraction_manifest_hash",
+    "extraction_method",
+    "fetched_at",
+    "field_of_study",
+    "file_size",
+    "filename",
+    "fingerprint",
+    "fingerprint_source",
+    "issued_at",
+    "issued_date",
+    "issuer",
+    "issuer_name",
+    "issuer_public_id",
+    "jurisdiction",
+    "merkle_proof_hash",
+    "metadata",
+    "nasba_lookup_date",
+    "nasba_status",
+    "network_receipt_id",
+    "proof_url",
+    "provider_approval_status",
+    "provider_lookup_date",
+    "public_id",
+    "record_uri",
+    "registry_url",
+    "requires_manual_review",
+    "revocation_reason",
+    "revoked_at",
+    "secured_at",
+    "source_id",
+    "source_payload_byte_length",
+    "source_payload_content_type",
+    "source_payload_hash",
+    "source_provider",
+    "source_url",
+    "status",
+    "sub_type",
+    "superseded_at",
+    "title",
+    "verification_level",
     "verified"
   ],
   "$projection_keys_note": [
@@ -389,7 +451,7 @@
     "indistinguishable. Set equality here makes a parse that silently stops",
     "seeing keys fail LOUDLY instead of reporting a clean bill of health.",
     "",
-    "Adding a key to the projection therefore requires adding it here — which is",
+    "Adding a key to the projection therefore requires adding it here \u2014 which is",
     "the point: a new public key is a reviewed decision. Classify it as",
     "structural_keys (no cleaner needed) or leave it out of that list, in which",
     "case it MUST route through a cleaner.",
@@ -399,19 +461,39 @@
     "keyed HMAC, the second is that HMAC's output. Both are asserted by the",
     "dedicated 'keeps the recipient identifier a KEYED HMAC' test."
   ],
-
+  "$sub_type_note": [
+    "Canonical anchors.sub_type is arbitrary text, not a structural field. SQL and REST both apply their public free-text cleaner and withhold the field when directory suppression applies. SQL returns null; REST omits the optional key. Published records retain the canonical subtype so the public renderer can prefer it over stale metadata."
+  ],
   "structural_keys": [
-    "anchor_timestamp", "bitcoin_block", "cle_metadata", "cpe_metadata",
-    "created_at", "credential_type", "directory_info_suppressed", "expires_at",
-    "expiry_date", "file_size",
-    "fingerprint", "fingerprint_source", "issued_at", "issued_date",
-    "issuer_public_id", "merkle_proof_hash", "metadata", "network_receipt_id",
-    "public_id", "record_uri", "revoked_at", "secured_at", "status",
-    "superseded_at", "verified"
+    "anchor_timestamp",
+    "bitcoin_block",
+    "cle_metadata",
+    "cpe_metadata",
+    "created_at",
+    "credential_type",
+    "directory_info_suppressed",
+    "expires_at",
+    "expiry_date",
+    "file_size",
+    "fingerprint",
+    "fingerprint_source",
+    "issued_at",
+    "issued_date",
+    "issuer_public_id",
+    "merkle_proof_hash",
+    "metadata",
+    "network_receipt_id",
+    "public_id",
+    "record_uri",
+    "revoked_at",
+    "secured_at",
+    "status",
+    "superseded_at",
+    "verified"
   ],
   "$structural_keys_note": [
     "The ONLY keys exempt from the cleaner requirement: verification-bearing or",
-    "structural values that carry no issuer- or extraction-authored free text —",
+    "structural values that carry no issuer- or extraction-authored free text \u2014",
     "enums (status, credential_type, fingerprint_source), timestamps, chain",
     "facts (bitcoin_block, network_receipt_id), sizes, the derived record_uri,",
     "opaque identifiers (public_id, issuer_public_id, fingerprint), the literal",
@@ -419,16 +501,212 @@
     "each gated in their own right (metadata, cpe_metadata, cle_metadata).",
     "",
     "This list is an ALLOW-list and the gate FAILS CLOSED against it: any key",
-    "not named here must call a cleaner. The earlier design was the inverse — it",
+    "not named here must call a cleaner. The earlier design was the inverse \u2014 it",
     "tried to RECOGNISE anchor-controlled expressions and skipped everything it",
     "did not recognise, so it was blind to the `g.safe_metadata ->> '...'` alias",
     "that 0385 itself introduced, and to every source expression a future",
     "migration might invent. Recognising danger fails open; recognising safety",
     "fails closed."
   ],
-
   "directory_opt_out_predicate": "is_directory_info_suppressed",
   "directory_opt_out_owner_migration": "supabase/migrations/0415_ferpa_directory_info_opt_out_public_projections.sql",
+  "directory_opt_out_residual_published_fields": [
+    "credential_type"
+  ],
+  "$directory_opt_out_residual_note": [
+    "The existing credential_type enum remains published on both anonymous surfaces. The newly projected sub_type is arbitrary text and is suppressed on opt-out in SQL and REST; it is not an accepted residual."
+  ],
+  "max_public_url_chars": 2048,
+  "$url_note": [
+    "Emitted URLs (proof_url, source_url, registry_url) go through a URL-specific",
+    "cleaner that DROPS on overflow instead of truncating. Truncating a URL",
+    "produces a valid-looking WRONG link that the frontend renders as a live",
+    "anchor \u2014 strictly worse than omitting the field. Query string and fragment",
+    "are stripped BEFORE the PII scan: structural, not heuristic, since a query",
+    "parameter is the carrier an identifier rides in on."
+  ],
+  "high_confidence_detector_families": [
+    "email",
+    "ssn_separated",
+    "ssn_keyword",
+    "us_phone",
+    "international_phone",
+    "date_of_birth_keyword",
+    "student_id_keyword"
+  ],
+  "sql_implements_learner_name_heuristics": false,
+  "$learner_name_divergence": [
+    "The CTDL serializer carries two capitalised-pair name patterns for",
+    "field-level suppression. The SQL projection deliberately does NOT implement",
+    "them. Measured, not assumed:",
+    "",
+    "  TRUE POSITIVES: zero. Run against this file's own leak_vectors, both",
+    "  patterns return false for every single one \u2014 bare, all-caps, non-ASCII,",
+    "  record-noun-first, apostrophe, hyphenated. `[A-Z][a-z]{1,}` cannot express",
+    "  those shapes. Both implementations agree on this; it is the empirical",
+    "  confirmation of PR #1815's own finding.",
+    "",
+    "  FALSE POSITIVES: abundant, because `for` is a bare preposition. 'Center",
+    "  for Professional Development', 'Society for Human Resource Management',",
+    "  'Institute for Supply Management', 'Ethics for Trial Lawyers', 'Credit for",
+    "  Prior Learning', 'Revoked for Non Payment' \u2014 all dropped. The second",
+    "  pattern takes ordinary titles the same way: 'Data Science degree',",
+    "  'Project Management certificate'.",
+    "",
+    "A detector with zero measured true positives and abundant measured false",
+    "positives has negative value, and the cost is higher here than on the CTDL",
+    "path: these fields are the verify page's PRIMARY DISPLAY (`filename` is the",
+    "record title and its schema.org `name`), not optional JSON-LD properties.",
+    "Learner names ARE covered on this path, structurally \u2014 an academic record",
+    "emits no issuer- or extraction-authored free text at all, which is",
+    "precision-independent and catches every shape above.",
+    "",
+    "The false-positive strings are pinned in must_publish_vectors, so",
+    "reintroducing the patterns fails the suite rather than silently blanking",
+    "real credentials."
+  ],
+  "$detector_note": [
+    "High-confidence detectors are FORMAT- or KEYWORD-anchored, run on every",
+    "credential type, and are the only ones precise enough to act on alone."
+  ],
+  "max_scan_chars": 4000,
+  "high_confidence_vectors": [
+    {
+      "text": "Revoked \u2014 contact registrar jane.doe@example.edu for details",
+      "family": "email"
+    },
+    {
+      "text": "Issued to holder; SSN 123-45-6789 on file",
+      "family": "ssn_separated"
+    },
+    {
+      "text": "Record ssn: 123456789 archived",
+      "family": "ssn_keyword"
+    },
+    {
+      "text": "Questions? Call (415) 555-0142 during office hours",
+      "family": "us_phone"
+    },
+    {
+      "text": "Registrar line +44 20 7946 0958 for verification",
+      "family": "international_phone"
+    },
+    {
+      "text": "Candidate DOB 1994-02-11 verified against photo ID",
+      "family": "date_of_birth_keyword"
+    },
+    {
+      "text": "Awarded under student ID 88123456 in the spring cohort",
+      "family": "student_id_keyword"
+    }
+  ],
+  "must_publish_vectors": [
+    {
+      "text": "Issued by Johns Hopkins University",
+      "why": "real institution name \u2014 a name heuristic wrongly blocked 28 of 32 of these"
+    },
+    {
+      "text": "Issued by Red Hat",
+      "why": "real institution name, two capitalised tokens"
+    },
+    {
+      "text": "Issued by Carnegie Mellon",
+      "why": "real institution name, two capitalised tokens"
+    },
+    {
+      "text": "Introduction to Machine Learning",
+      "why": "ordinary credential title"
+    },
+    {
+      "text": "Advanced Cardiac Life Support",
+      "why": "ordinary credential title"
+    },
+    {
+      "text": "https://issuer.example.org/proof/123456789/record",
+      "why": "numeric path segment must not read as an unseparated SSN"
+    },
+    {
+      "text": "PHIL 2020 Introduction to Ethics",
+      "why": "course code must not read as a student ID"
+    },
+    {
+      "text": "Academic year 2024-2025",
+      "why": "a bare date is not PII without its keyword"
+    },
+    {
+      "text": "Completed 12 contact hours of continuing education",
+      "why": "ordinary CE description"
+    },
+    {
+      "text": "Center for Professional Development",
+      "why": "real issuer name \u2014 the `for` preposition made the name heuristic drop this"
+    },
+    {
+      "text": "Society for Human Resource Management",
+      "why": "real issuer name killed by the `for` trigger"
+    },
+    {
+      "text": "Institute for Supply Management",
+      "why": "real issuer name killed by the `for` trigger"
+    },
+    {
+      "text": "Alliance for Continuing Education",
+      "why": "real issuer name killed by the `for` trigger"
+    },
+    {
+      "text": "Ethics for Trial Lawyers",
+      "why": "real CLE course title killed by the `for` trigger"
+    },
+    {
+      "text": "Credit for Prior Learning",
+      "why": "real credential title killed by the `for` trigger"
+    },
+    {
+      "text": "Revoked for Non Payment",
+      "why": "ordinary revocation reason killed by the `for` trigger"
+    },
+    {
+      "text": "Data Science degree",
+      "why": "ordinary title killed by the name-first credential-noun pattern"
+    },
+    {
+      "text": "Project Management certificate",
+      "why": "ordinary title killed by the name-first credential-noun pattern"
+    }
+  ],
+  "$leak_vectors_note": [
+    "These are the shapes the LIVE defect published to anonymous callers. They",
+    "are proved closed end-to-end by the live suite, which seeds them into a",
+    "real anchor row and reads the projection back as an ANON client.",
+    "The bare-name cases are covered STRUCTURALLY (academic record => no free",
+    "text at all), never by a name detector."
+  ],
+  "leak_vectors": [
+    {
+      "text": "Jane Doe",
+      "shape": "bare name as the entire field"
+    },
+    {
+      "text": "MARIA GONZALEZ",
+      "shape": "all-caps name"
+    },
+    {
+      "text": "Jos\u00e9 Garc\u00eda",
+      "shape": "non-ASCII name"
+    },
+    {
+      "text": "Transcript: Jane Doe",
+      "shape": "record-noun-first order"
+    },
+    {
+      "text": "Official transcript for Michael O'Brien",
+      "shape": "apostrophe name behind a relational trigger"
+    },
+    {
+      "text": "Bachelor of Science awarded to Ana-Lucia Fernandez",
+      "shape": "hyphenated name mid-string"
+    }
+  ],
   "directory_opt_out_fails_closed_on_absent_type": true,
   "$directory_opt_out_note": [
     "FD-FERPA-1. `anchors.directory_info_opt_out` shipped in archive migration",
@@ -442,7 +720,7 @@
     "as `type IN (education types)` evaluates FALSE for every one of them, so a",
     "'fix' shaped that way would have gone green and changed nothing in",
     "production. An absent type cannot be shown to be outside FERPA's reach, so",
-    "it suppresses — the same inversion 0390 applied to the academic free-text",
+    "it suppresses \u2014 the same inversion 0390 applied to the academic free-text",
     "gate.",
     "",
     "The predicate deliberately covers `ferpa_education_types` (which includes",
@@ -451,15 +729,29 @@
     "re-disclosure notice, and this one reuses the FERPA set rather than adding",
     "a fourth."
   ],
-
   "directory_opt_out_suppressed_fields": [
-    "issuer_public_id", "issued_date", "expiry_date", "issued_at", "expires_at",
-    "cpe_metadata", "cle_metadata", "revocation_reason",
-    "metadata.title", "metadata.credential_title", "metadata.description",
-    "metadata.category", "metadata.issuer"
+    "issuer_public_id",
+    "issued_date",
+    "expiry_date",
+    "issued_at",
+    "expires_at",
+    "cpe_metadata",
+    "cle_metadata",
+    "revocation_reason",
+    "metadata.title",
+    "metadata.credential_title",
+    "metadata.description",
+    "metadata.category",
+    "metadata.issuer",
+    "sub_type"
   ],
-  "directory_opt_out_controlled_fields": ["filename", "issuer_name"],
-  "directory_opt_out_omitted_fields": ["recipient_identifier"],
+  "directory_opt_out_controlled_fields": [
+    "filename",
+    "issuer_name"
+  ],
+  "directory_opt_out_omitted_fields": [
+    "recipient_identifier"
+  ],
   "$suppressed_vs_controlled_directory": [
     "SUPPRESSED -> NULL. Keys inside the metadata sub-object are dropped by",
     "jsonb_strip_nulls; top-level ones are already nullable on this projection",
@@ -477,26 +769,20 @@
     "path (`not.toHaveProperty('recipient_identifier')`) and leaves a suppressed",
     "record indistinguishable from one that simply has no recipient."
   ],
-
-  "directory_opt_out_residual_published_fields": ["credential_type"],
-  "$directory_opt_out_residual_note": [
-    "STATED, NOT HIDDEN (CLAUDE.md 1.5 / 1.13 R-7). The 0197 column comment",
-    "names 'degree type' as directory information, and 34 CFR 99.3 agrees",
-    "('degrees, honors and awards received'). It is published anyway, on BOTH",
-    "anonymous surfaces, because verify.test.ts pins the REST path emitting it",
-    "on a suppressed record and one row answering two ways across two public",
-    "projections is the asymmetry FD-FERPA-1 exists to remove.",
-    "",
-    "No live exposure today: all three opted-out records have a NULL type, which",
-    "projects as the 'OTHER' fallback. This is a decision on the record awaiting",
-    "a counsel/CTO call, not an oversight. Changing it means changing the SQL",
-    "projection AND verify.ts AND that test in ONE PR."
-  ],
-
   "directory_opt_out_verification_fields": [
-    "verified", "status", "public_id", "fingerprint", "fingerprint_source",
-    "record_uri", "anchor_timestamp", "bitcoin_block", "network_receipt_id",
-    "merkle_proof_hash", "created_at", "secured_at", "revoked_at",
+    "verified",
+    "status",
+    "public_id",
+    "fingerprint",
+    "fingerprint_source",
+    "record_uri",
+    "anchor_timestamp",
+    "bitcoin_block",
+    "network_receipt_id",
+    "merkle_proof_hash",
+    "created_at",
+    "secured_at",
+    "revoked_at",
     "superseded_at"
   ],
   "$directory_opt_out_verification_note": [
@@ -504,14 +790,20 @@
     "record still verifies. None of these keys may be gated on the opt-out, and",
     "the predicate may not appear in the row filter: answering",
     "{\"error\":\"Record not found\"} for an opted-out anchor would tell an",
-    "anonymous verifier that a genuinely anchored document does not exist —",
+    "anonymous verifier that a genuinely anchored document does not exist \u2014",
     "protecting nobody and breaking the one answer the learner is relying on the",
     "record to give."
   ],
-
   "directory_level_columns": [
-    "credential_type", "issued_at", "expires_at", "filename", "cpe_metadata",
-    "cle_metadata", "'issuer'", "'recipient'", "display_name"
+    "credential_type",
+    "issued_at",
+    "expires_at",
+    "filename",
+    "cpe_metadata",
+    "cle_metadata",
+    "'issuer'",
+    "'recipient'",
+    "display_name"
   ],
   "directory_opt_out_classifications": {
     "get_public_anchor": {
@@ -520,7 +812,7 @@
     },
     "search_public_credentials": {
       "disposition": "consults_flag",
-      "reason": "Anon-executable public search. Excludes opted-out records from MATCHING, not just from the projected title — a non-empty result set is itself the disclosure (0387's hit-count-oracle rule, extended by 0415)."
+      "reason": "Anon-executable public search. Excludes opted-out records from MATCHING, not just from the projected title \u2014 a non-empty result set is itself the disclosure (0387's hit-count-oracle rule, extended by 0415)."
     },
     "bulk_create_anchors": {
       "disposition": "identity_guarded",
@@ -533,10 +825,10 @@
   },
   "$directory_opt_out_classifications_note": [
     "THE RATCHET. Derived from the migrations by",
-    "src/tests/ferpa-directory-info-opt-out.contract.test.ts — every public.*",
+    "src/tests/ferpa-directory-info-opt-out.contract.test.ts \u2014 every public.*",
     "function whose newest definition reads `anchors` and touches one of",
     "directory_level_columns, minus any a migration explicitly REVOKEs from",
-    "anon — and compared for SET EQUALITY against this map.",
+    "anon \u2014 and compared for SET EQUALITY against this map.",
     "",
     "The revoke subtraction is the only AUTOMATIC exemption, because it is the",
     "only machine-checkable one: `REVOKE ... FROM ... anon` is a fact in a file.",
@@ -554,109 +846,5 @@
     "to be classified. That is the difference between a one-time patch and a",
     "class fix: the 0197 column was read by nothing for over a year because",
     "nothing ever asked the question."
-  ],
-
-  "max_public_url_chars": 2048,
-  "$url_note": [
-    "Emitted URLs (proof_url, source_url, registry_url) go through a URL-specific",
-    "cleaner that DROPS on overflow instead of truncating. Truncating a URL",
-    "produces a valid-looking WRONG link that the frontend renders as a live",
-    "anchor — strictly worse than omitting the field. Query string and fragment",
-    "are stripped BEFORE the PII scan: structural, not heuristic, since a query",
-    "parameter is the carrier an identifier rides in on."
-  ],
-
-  "high_confidence_detector_families": [
-    "email",
-    "ssn_separated",
-    "ssn_keyword",
-    "us_phone",
-    "international_phone",
-    "date_of_birth_keyword",
-    "student_id_keyword"
-  ],
-  "sql_implements_learner_name_heuristics": false,
-  "$learner_name_divergence": [
-    "The CTDL serializer carries two capitalised-pair name patterns for",
-    "field-level suppression. The SQL projection deliberately does NOT implement",
-    "them. Measured, not assumed:",
-    "",
-    "  TRUE POSITIVES: zero. Run against this file's own leak_vectors, both",
-    "  patterns return false for every single one — bare, all-caps, non-ASCII,",
-    "  record-noun-first, apostrophe, hyphenated. `[A-Z][a-z]{1,}` cannot express",
-    "  those shapes. Both implementations agree on this; it is the empirical",
-    "  confirmation of PR #1815's own finding.",
-    "",
-    "  FALSE POSITIVES: abundant, because `for` is a bare preposition. 'Center",
-    "  for Professional Development', 'Society for Human Resource Management',",
-    "  'Institute for Supply Management', 'Ethics for Trial Lawyers', 'Credit for",
-    "  Prior Learning', 'Revoked for Non Payment' — all dropped. The second",
-    "  pattern takes ordinary titles the same way: 'Data Science degree',",
-    "  'Project Management certificate'.",
-    "",
-    "A detector with zero measured true positives and abundant measured false",
-    "positives has negative value, and the cost is higher here than on the CTDL",
-    "path: these fields are the verify page's PRIMARY DISPLAY (`filename` is the",
-    "record title and its schema.org `name`), not optional JSON-LD properties.",
-    "Learner names ARE covered on this path, structurally — an academic record",
-    "emits no issuer- or extraction-authored free text at all, which is",
-    "precision-independent and catches every shape above.",
-    "",
-    "The false-positive strings are pinned in must_publish_vectors, so",
-    "reintroducing the patterns fails the suite rather than silently blanking",
-    "real credentials."
-  ],
-  "$detector_note": [
-    "High-confidence detectors are FORMAT- or KEYWORD-anchored, run on every",
-    "credential type, and are the only ones precise enough to act on alone."
-  ],
-
-  "max_scan_chars": 4000,
-
-  "high_confidence_vectors": [
-    { "text": "Revoked — contact registrar jane.doe@example.edu for details", "family": "email" },
-    { "text": "Issued to holder; SSN 123-45-6789 on file", "family": "ssn_separated" },
-    { "text": "Record ssn: 123456789 archived", "family": "ssn_keyword" },
-    { "text": "Questions? Call (415) 555-0142 during office hours", "family": "us_phone" },
-    { "text": "Registrar line +44 20 7946 0958 for verification", "family": "international_phone" },
-    { "text": "Candidate DOB 1994-02-11 verified against photo ID", "family": "date_of_birth_keyword" },
-    { "text": "Awarded under student ID 88123456 in the spring cohort", "family": "student_id_keyword" }
-  ],
-
-  "must_publish_vectors": [
-    { "text": "Issued by Johns Hopkins University", "why": "real institution name — a name heuristic wrongly blocked 28 of 32 of these" },
-    { "text": "Issued by Red Hat", "why": "real institution name, two capitalised tokens" },
-    { "text": "Issued by Carnegie Mellon", "why": "real institution name, two capitalised tokens" },
-    { "text": "Introduction to Machine Learning", "why": "ordinary credential title" },
-    { "text": "Advanced Cardiac Life Support", "why": "ordinary credential title" },
-    { "text": "https://issuer.example.org/proof/123456789/record", "why": "numeric path segment must not read as an unseparated SSN" },
-    { "text": "PHIL 2020 Introduction to Ethics", "why": "course code must not read as a student ID" },
-    { "text": "Academic year 2024-2025", "why": "a bare date is not PII without its keyword" },
-    { "text": "Completed 12 contact hours of continuing education", "why": "ordinary CE description" },
-    { "text": "Center for Professional Development", "why": "real issuer name — the `for` preposition made the name heuristic drop this" },
-    { "text": "Society for Human Resource Management", "why": "real issuer name killed by the `for` trigger" },
-    { "text": "Institute for Supply Management", "why": "real issuer name killed by the `for` trigger" },
-    { "text": "Alliance for Continuing Education", "why": "real issuer name killed by the `for` trigger" },
-    { "text": "Ethics for Trial Lawyers", "why": "real CLE course title killed by the `for` trigger" },
-    { "text": "Credit for Prior Learning", "why": "real credential title killed by the `for` trigger" },
-    { "text": "Revoked for Non Payment", "why": "ordinary revocation reason killed by the `for` trigger" },
-    { "text": "Data Science degree", "why": "ordinary title killed by the name-first credential-noun pattern" },
-    { "text": "Project Management certificate", "why": "ordinary title killed by the name-first credential-noun pattern" }
-  ],
-
-  "$leak_vectors_note": [
-    "These are the shapes the LIVE defect published to anonymous callers. They",
-    "are proved closed end-to-end by the live suite, which seeds them into a",
-    "real anchor row and reads the projection back as an ANON client.",
-    "The bare-name cases are covered STRUCTURALLY (academic record => no free",
-    "text at all), never by a name detector."
-  ],
-  "leak_vectors": [
-    { "text": "Jane Doe", "shape": "bare name as the entire field" },
-    { "text": "MARIA GONZALEZ", "shape": "all-caps name" },
-    { "text": "José García", "shape": "non-ASCII name" },
-    { "text": "Transcript: Jane Doe", "shape": "record-noun-first order" },
-    { "text": "Official transcript for Michael O'Brien", "shape": "apostrophe name behind a relational trigger" },
-    { "text": "Bachelor of Science awarded to Ana-Lucia Fernandez", "shape": "hyphenated name mid-string" }
   ]
 }

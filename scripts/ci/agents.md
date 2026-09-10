@@ -788,6 +788,12 @@ Reuses the generator's own `buildNotices()` (extracted in this change; `main()` 
 Verification, not assertion: the platform-stability claim was tested by running `--emit-baseline` on darwin-arm64 and again under `docker --platform linux/amd64`, and the ratchet was proven end-to-end by deleting an in-sync entry from the committed file and confirming the gate named it and exited 1.
 
 Tests: `check-third-party-notices-fresh.test.ts` (20) and `mergify-notices-freshness-gate.test.ts` (7, which also pins that the ci.yml job carries no job-level `if:`, no path filter and no `continue-on-error` — a `skipped` check never satisfies `check-success` and would deadlock the queue).
+## 2026-08-23 SCRUM-3529 — `public-pii-projection-contract.json` gains `sub_type`
+
+`sub_type` is now in `projection_keys` and deliberately **NOT** in `structural_keys`, so the existing fail-closed gate ("gates EVERY key that is not structural") forces it through a cleaner. Rationale lives in the new `$sub_type_note`: it is the canonical `anchors.sub_type` column (bare `text`, no CHECK, no enum), so it takes `private.public_free_text_or_null` — the same call `verify.ts` already made via `verify_value_gated_fields`.
+
+- It is **not** added to `sql_academic_suppressed_fields`, and that is a parity decision, not an oversight: `GET /api/v1/verify/:publicId` already publishes a gated `sub_type` for DEGREE/CERTIFICATE/TRANSCRIPT anonymously, so suppressing it in SQL alone would remove nothing from public reach while re-opening the SQL-vs-TS drift this contract exists to close. `src/tests/public-anchor-pii-projection.contract.test.ts` now pins BOTH sides of that so neither can move alone.
+- **`sql_owner_migration` deliberately still points at `0385`, not the new `0420`.** That field addresses the migration that DEFINES the `private.*` detector/label helpers, which `0420` does not touch; the tests that read it assert those helper bodies. The "which definition does production run" tests use `latestRedefiner()`, which is derived, so they pick up `0420` on their own. Same split `0390` already used.
 
 ---
 
@@ -802,3 +808,8 @@ Historical change log: [./agents-changelog.md](./agents-changelog.md)
 - **Out of scope on purpose:** `HANDOFF.md` (`## History` is an append-only dated log) and `docs/**` narrative — release runbooks, soak premortems and RC manifests carry ~120 pointers that are dead by design because the run they describe is over. Their folder-local `agents.md` files ARE scanned.
 - **Deliberately-absent paths** (negative examples, generated artifacts, a file a command writes, named planned work) go in `scripts/ci/snapshots/doc-pointer-exemptions.json` with a `reason`. `check-doc-pointers.test.ts` fails on a stale exemption (the path now resolves), a missing reason, or an exemption naming a doc outside the scan set — so the list cannot quietly grow into a bypass.
 - Tests: `check-doc-pointers.test.ts` (20 tests) — scan-set contract, the multi-base resolution rules, workflow comment-vs-config split, exemption scoping, and a live-repo ratchet asserting zero dead pointers across the whole set. That ratchet is the assertion that would have caught `memory/project_deploy_typecheck_blackout.md`, which was cited by two gate sources and three `agents.md` files while never existing in the repo.
+
+
+## 2026-09-05 — PR #2440 subtype opt-out release review
+
+Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.

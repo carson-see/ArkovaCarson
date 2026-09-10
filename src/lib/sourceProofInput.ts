@@ -43,6 +43,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database.types';
 import type { MerkleProofEntry, ProofInput } from './generateAuditReport';
 import { isProofDownloadable } from './statusDisplay';
+// ONE reader for the layer-2 bitcoin-tree pair, shared with the packet
+// builder in `generateAuditReport.ts` — two copies of this rule is how the
+// downloaded packet ends up contradicting the DB read about one record.
+import { readTxInclusionEvidence } from './txInclusionEvidence';
 
 /** The app's RLS-scoped browser Supabase client. */
 export type ProofSourceClient = SupabaseClient<Database>;
@@ -74,7 +78,7 @@ export interface ProofSourceResult {
 /** Columns selected from `anchor_proofs` for the embedded packet (+ `batch_id`
  *  so we can derive `leaf_count`). Strict allow-list: no document bytes / PII. */
 const PROOF_COLUMNS =
-  'merkle_root, proof_path, merkle_index, batch_id, block_hash, block_header, block_height, op_return_payload, proof_schema_version, block_timestamp, receipt_id';
+  'merkle_root, proof_path, merkle_index, batch_id, block_hash, block_header, block_height, op_return_payload, proof_schema_version, block_timestamp, receipt_id, tx_inclusion_branch, tx_block_index';
 
 interface AnchorProofRow {
   merkle_root: string | null;
@@ -88,6 +92,9 @@ interface AnchorProofRow {
   proof_schema_version: number | null;
   block_timestamp: string | null;
   receipt_id: string | null;
+  /** Migration 0427 — layer-2 BITCOIN-tree inclusion evidence (jsonb). */
+  tx_inclusion_branch: unknown;
+  tx_block_index: number | null;
 }
 
 /** Type guard: a value is a well-formed `{ hash, position }` Merkle entry. */
@@ -173,6 +180,11 @@ export async function sourceProofInput(
     complete = false;
   }
 
+  const txInclusion = readTxInclusionEvidence(
+    proofRow.tx_inclusion_branch,
+    proofRow.tx_block_index,
+  );
+
   const proof: ProofInput = {
     fingerprint: anchor.fingerprint,
     merkle_root: proofRow.merkle_root,
@@ -188,6 +200,11 @@ export async function sourceProofInput(
     // Machine field is `block_timestamp` (the human-readable PDF label still
     // reads "Network Observed Time").
     block_timestamp: proofRow.block_timestamp ?? anchor.chain_timestamp ?? null,
+    // Migration 0427: layer-2 bitcoin-tree inclusion evidence, validated as one
+    // fact. Additive + nullable — a back-catalogue row that predates the
+    // columns still yields a complete packet (§1.8).
+    tx_inclusion_branch: txInclusion?.branch ?? null,
+    tx_block_index: txInclusion?.index ?? null,
   };
 
   return { proof, complete };

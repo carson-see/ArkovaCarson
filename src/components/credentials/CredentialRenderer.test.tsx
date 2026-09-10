@@ -250,6 +250,117 @@ describe('CredentialRenderer', () => {
     });
   });
 
+  // SCRUM-3529: the canonical value is the anchors.sub_type COLUMN, surfaced by
+  // get_public_anchor as a top-level key (0421). Before that, the only route in
+  // was a metadata duplicate a caller happened to write — and once 0355 turned
+  // the public projection's metadata into an allow-list, that route was closed
+  // and the public verify page silently regressed to the generic 'Other'.
+  describe('subType prop (canonical anchors.sub_type column)', () => {
+    it('renders the Type label from the subType prop with no metadata at all', () => {
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          subType="professional_certification"
+          status="SECURED"
+        />
+      );
+
+      expect(screen.getByText('Professional Certification')).toBeInTheDocument();
+      expect(screen.queryByText('Other')).not.toBeInTheDocument();
+      expect(screen.queryByText('professional_certification')).not.toBeInTheDocument();
+    });
+
+    it('prefers the canonical prop over a stale metadata duplicate', () => {
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          subType="nursing_rn"
+          metadata={{ sub_type: 'professional_certification' }}
+          status="SECURED"
+        />
+      );
+
+      // The column wins for the headline Type label — and the loser is not
+      // rendered anywhere, which is what pins the PRECEDENCE rather than just
+      // "the column value appears somewhere on the card".
+      expect(screen.getByText('Nursing RN')).toBeInTheDocument();
+      expect(screen.queryByText('Professional Certification')).not.toBeInTheDocument();
+    });
+
+    it('suppresses a template field that collides with sub_type too, not just the untemplated metadata loop', () => {
+      // Same regression as the test above, but with a template present.
+      // CredentialTemplatesManager derives a field's key from its label
+      // (`f.name.toLowerCase().replace(/\s+/g, '_')`), so an org-defined field
+      // literally named "Sub Type" becomes key `sub_type` — colliding with
+      // SUB_TYPE_METADATA_KEYS. The templated render branch reads
+      // `template.fields` independently of the untemplated metadata loop, so
+      // the dedup guard has to be applied there too or a record carrying both
+      // the canonical subType prop and a template field at that key renders
+      // two Type-ish rows for one credential.
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          subType="nursing_rn"
+          template={{
+            name: 'Custom Template',
+            fields: [
+              { key: 'sub_type', label: 'Sub Type', type: 'text' },
+              { key: 'institution', label: 'Institution', type: 'text' },
+            ],
+          }}
+          metadata={{ sub_type: 'professional_certification', institution: 'Test U' }}
+          status="SECURED"
+        />
+      );
+
+      expect(screen.getByText('Nursing RN')).toBeInTheDocument();
+      expect(screen.queryByText('Professional Certification')).not.toBeInTheDocument();
+      expect(screen.queryByText('Sub Type')).not.toBeInTheDocument();
+      // The rest of the template still renders — the guard is scoped to the
+      // colliding field only, not a reason to drop the whole template.
+      expect(screen.getByText('Institution')).toBeInTheDocument();
+      expect(screen.getByText('Test U')).toBeInTheDocument();
+    });
+
+    it('falls back to the credential type label when subType is blank', () => {
+      // formatCredentialSubType('') returns the em-dash placeholder, so an
+      // unguarded prop would replace a real label with '—' on every record whose
+      // sub_type column is empty — strictly worse than the bug being fixed.
+      render(
+        <CredentialRenderer credentialType="LICENSE" subType="   " status="SECURED" />
+      );
+
+      expect(screen.getByText('License')).toBeInTheDocument();
+      expect(screen.queryByText('—')).not.toBeInTheDocument();
+    });
+
+    it('falls back when the FORMATTED sub-type is blank, not just the raw value', () => {
+      // A raw value can be non-blank and still format to whitespace:
+      // formatCredentialSubType('_') splits on '_' into two empty segments and
+      // joins them with a space, yielding ' '. That is truthy, so guarding only
+      // the INPUT lets it win over a real credential-type label and render an
+      // empty Type banner. `anchors.sub_type` is bare `text` with no CHECK, so
+      // separator-only values are reachable from the public projection (0421).
+      render(<CredentialRenderer credentialType="LICENSE" subType="_" status="SECURED" />);
+
+      expect(screen.getByText('License')).toBeInTheDocument();
+    });
+
+    it('falls back to the metadata subtype when the column is absent', () => {
+      // Owner-side callers still pass only metadata; that path must not regress.
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          metadata={{ subType: 'nursing_rn' }}
+          status="SECURED"
+        />
+      );
+
+      expect(screen.getAllByText('Nursing RN').length).toBeGreaterThanOrEqual(1);
+      expect(screen.queryByText('Other')).not.toBeInTheDocument();
+    });
+  });
+
   describe('Mode 3: No Metadata', () => {
     it('renders filename and no-metadata message', () => {
       render(
