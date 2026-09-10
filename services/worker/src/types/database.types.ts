@@ -7796,6 +7796,18 @@ export type Database = {
         }
         Returns: Json
       }
+      materialize_connector_artifact_anchor: {
+        Args: {
+          p_anchor_payload: Json
+          p_artifact_id: string
+          p_existing_anchor_id?: string
+          p_expected_fingerprint: string
+          p_expected_metadata: Json
+          p_expected_updated_at: string
+          p_org_id: string
+        }
+        Returns: Json
+      }
       next_webhook_sequence: { Args: never; Returns: number }
       org_credit_ledger_divergence: {
         Args: { p_org_id?: string }
