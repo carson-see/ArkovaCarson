@@ -39,6 +39,52 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_org_provisioning_requests: {
+        Row: {
+          actor_id: string
+          created_at: string
+          idempotency_key: string
+          org_id: string
+          request: Json
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          idempotency_key: string
+          org_id: string
+          request: Json
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          idempotency_key?: string
+          org_id?: string
+          request?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "admin_org_provisioning_requests_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "admin_org_provisioning_requests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "admin_org_provisioning_requests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       adobe_sign_webhook_nonces: {
         Row: {
           agreement_id: string
@@ -4832,6 +4878,7 @@ export type Database = {
           affiliation_grace_expires_at: string | null
           banner_url: string | null
           created_at: string
+          creation_idempotency_key: string | null
           description: string | null
           directory_info_fields: string[]
           display_name: string
@@ -4881,6 +4928,7 @@ export type Database = {
           affiliation_grace_expires_at?: string | null
           banner_url?: string | null
           created_at?: string
+          creation_idempotency_key?: string | null
           description?: string | null
           directory_info_fields?: string[]
           display_name: string
@@ -4930,6 +4978,7 @@ export type Database = {
           affiliation_grace_expires_at?: string | null
           banner_url?: string | null
           created_at?: string
+          creation_idempotency_key?: string | null
           description?: string | null
           directory_info_fields?: string[]
           display_name?: string
@@ -7032,6 +7081,19 @@ export type Database = {
         Args: { p_new_role: string; p_user_id: string }
         Returns: undefined
       }
+      admin_provision_organization: {
+        Args: {
+          p_actor: string
+          p_allow_duplicate_name: boolean
+          p_anchor_quota: number
+          p_credits: number
+          p_display_name: string
+          p_idempotency_key: string
+          p_is_test: boolean
+          p_legal_name: string
+        }
+        Returns: Json
+      }
       admin_set_org_anchor_quota: {
         Args: {
           p_actor: string
@@ -7163,16 +7225,6 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
-      }
-      manage_oauth_email_confirmation: {
-        Args: {
-          p_action: string
-          p_attempt_id?: string
-          p_challenge_digest?: string
-          p_email?: string
-          p_user_id?: string
-        }
-        Returns: Json
       }
       claim_pending_anchors: {
         Args: {
@@ -7679,6 +7731,16 @@ export type Database = {
         Returns: undefined
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
+      manage_oauth_email_confirmation: {
+        Args: {
+          p_action: string
+          p_attempt_id?: string
+          p_challenge_digest?: string
+          p_email?: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
       next_webhook_sequence: { Args: never; Returns: number }
       org_credit_ledger_divergence: {
         Args: { p_org_id?: string }
@@ -8281,9 +8343,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       agent_status: ["active", "suspended", "revoked"],
