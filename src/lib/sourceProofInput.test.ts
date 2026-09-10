@@ -81,6 +81,9 @@ function makeSupabase(opts: {
 }) {
   const headFlags: boolean[] = [];
   const eqFilters: Record<string, unknown>[] = [];
+  // B3: the column allow-list itself is under test — an omission there is what
+  // made the 0427 evidence unreachable through every shipped client.
+  const selectedColumns: string[] = [];
 
   const client = {
     from: vi.fn((_table: string) => {
@@ -89,7 +92,8 @@ function makeSupabase(opts: {
       const builder: Record<string, unknown> = {};
       let isCountQuery = false;
 
-      builder.select = vi.fn((_cols: string, selOpts?: { count?: string; head?: boolean }) => {
+      builder.select = vi.fn((cols: string, selOpts?: { count?: string; head?: boolean }) => {
+        if (!selOpts?.head) selectedColumns.push(cols);
         if (selOpts?.head) {
           isCountQuery = true;
           headFlags.push(selOpts.head === true);
@@ -114,7 +118,7 @@ function makeSupabase(opts: {
     }),
   };
 
-  return { client, headFlags, eqFilters };
+  return { client, headFlags, eqFilters, selectedColumns };
 }
 
 describe('PROOF-04 sourceProofInput — leaf_count sourcing (P1)', () => {
@@ -179,5 +183,82 @@ describe('PROOF-04 sourceProofInput — leaf_count sourcing (P1)', () => {
     const serialized = JSON.stringify(result.proof);
     expect(serialized).not.toMatch(/file_?name|file_?size|issuer|user_id|org_id/i);
     expect(serialized).not.toMatch(/document_bytes|raw_bytes|content/i);
+  });
+});
+
+// =============================================================================
+// B3 — the exported packet must actually CARRY the bitcoin-tree evidence
+// =============================================================================
+//
+// Migration 0427 persists `tx_inclusion_branch` / `tx_block_index` so a holder
+// can close the tx→block half of the proof LOCALLY instead of asking a Bitcoin
+// node. That goal is only reached if the evidence reaches a holder. This
+// exported audit packet is the shipped path a holder actually receives, and its
+// `PROOF_COLUMNS` allow-list did not select either column — so the data existed
+// in the database and was unreachable through every client we ship.
+
+describe('B3 — the audit packet carries the bitcoin-tree inclusion evidence', () => {
+  // Coherent pair: [right, left] ⇒ index bit0=0, bit1=1 ⇒ index 2.
+  const TX_BRANCH = [
+    { hash: '1'.repeat(64), position: 'right' as const },
+    { hash: '2'.repeat(64), position: 'left' as const },
+  ];
+
+  it('selects both 0427 columns — an allow-list that omits them makes the data unreachable', async () => {
+    const { client, selectedColumns } = makeSupabase({ proofRow: BATCHED_ROW, count: 8 });
+    await sourceProofInput(client as never, securedAnchor());
+    const rowSelect = selectedColumns[0] ?? '';
+    expect(rowSelect).toContain('tx_inclusion_branch');
+    expect(rowSelect).toContain('tx_block_index');
+  });
+
+  it('threads the branch + index through to the packet', async () => {
+    const { client } = makeSupabase({
+      proofRow: { ...BATCHED_ROW, tx_inclusion_branch: TX_BRANCH, tx_block_index: 2 },
+      count: 8,
+    });
+    const result = await sourceProofInput(client as never, securedAnchor());
+    expect(result.proof!.tx_inclusion_branch).toEqual(TX_BRANCH);
+    expect(result.proof!.tx_block_index).toBe(2);
+  });
+
+  it('emits null for both on a back-catalogue row that predates the columns', async () => {
+    const { client } = makeSupabase({ proofRow: BATCHED_ROW, count: 8 });
+    const result = await sourceProofInput(client as never, securedAnchor());
+    expect(result.proof!.tx_inclusion_branch).toBeNull();
+    expect(result.proof!.tx_block_index).toBeNull();
+    // …and their absence must NOT withdraw completeness from a record that
+    // already earned it (§1.8: an addition, not a breaking change).
+    expect(result.complete).toBe(true);
+  });
+
+  it('drops a malformed or incoherent pair rather than exporting it (§1.5)', async () => {
+    const cases: Array<{ label: string; branch: unknown; index: unknown }> = [
+      { label: 'non-array branch', branch: 'nope', index: 2 },
+      { label: 'empty sibling hash', branch: [{ hash: '', position: 'right' }, TX_BRANCH[1]], index: 2 },
+      { label: 'non-hex sibling', branch: [{ hash: 'z'.repeat(64), position: 'right' }, TX_BRANCH[1]], index: 2 },
+      { label: 'index out of range', branch: TX_BRANCH, index: 9 },
+      { label: 'index contradicts sides', branch: TX_BRANCH, index: 1 },
+      { label: 'branch without index', branch: TX_BRANCH, index: null },
+      { label: 'index without branch', branch: null, index: 2 },
+    ];
+    for (const { label, branch, index } of cases) {
+      const { client } = makeSupabase({
+        proofRow: { ...BATCHED_ROW, tx_inclusion_branch: branch, tx_block_index: index },
+        count: 8,
+      });
+      const result = await sourceProofInput(client as never, securedAnchor());
+      expect(result.proof!.tx_inclusion_branch, label).toBeNull();
+      expect(result.proof!.tx_block_index, label).toBeNull();
+    }
+  });
+
+  it('an EMPTY branch with index 0 is complete evidence for a single-tx block', async () => {
+    const { client } = makeSupabase({
+      proofRow: { ...SINGLE_LEAF_ROW, tx_inclusion_branch: [], tx_block_index: 0 },
+    });
+    const result = await sourceProofInput(client as never, securedAnchor());
+    expect(result.proof!.tx_inclusion_branch).toEqual([]);
+    expect(result.proof!.tx_block_index).toBe(0);
   });
 });
