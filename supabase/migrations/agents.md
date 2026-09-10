@@ -862,6 +862,179 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+## Recent migrations (SCRUM-3529 — public verify sub-type)
+
+Branch `fix/public-verify-subtype-projection`. FILE-ONLY: applied nowhere — not
+prod, not the shared staging rig, not any isolated rig. T3 (redefines the
+anon-callable `public.get_public_anchor` projection).
+
+**Prefix derivation.** `max(main head, agents.md reservations, open-PR claims,
+sibling-worktree files) + 1`. `origin/main` head file is `0409`. The reservation
+rows in this file claim `0410`–`0414`. `gh pr list --state open --json files`
+across all open PRs additionally claims `0415`
+(`0415_ferpa_directory_info_opt_out_public_projections.sql`), `0417`, `0418` and
+`0419`. `0416` is an unclaimed GAP rather than a free slot — it is
+skipped deliberately, because taking a hole below other sessions' claims is how
+two files end up sharing a prefix.
+
+**RENUMBERED `0420` -> `0421` (2026-08-27).** This file originally claimed `0420`
+and COLLIDED with `0420_scrum2538_check_unified_credits_fail_closed.sql` (PR
+#2442, `fix/credits-fail-closed`). Both claims were made the same evening; that
+PR's commit `c835c32a6` (2026-08-23 20:43:24 -0400) precedes this branch's
+`a4509d220` by 47 seconds and reached `origin` first, so under the RTE
+first-claim-wins protocol (the `0407`/`0408` precedent) `0420` stays with
+SCRUM-2538 and SCRUM-3529 moves here to `0421`. Neither migration is applied
+anywhere, so this was a rename on this branch, not a compensating migration.
+Note the earlier derivation line in this section is superseded: it read "nothing
+at `0420`", which was true of the pushed refs it scanned but missed that
+sibling's claim. **Next author claims `0422` — re-derive, do not trust this
+line.** Separately, `0415` is claimed TWICE across all refs
+(`0415_false_secured_offchain_anchor_quarantine.sql` and
+`0415_ferpa_directory_info_opt_out_public_projections.sql`); that collision is
+unresolved and is NOT addressed here.
+
+| `0421` | `fix/public-verify-subtype-projection` (this PR) | SCRUM-3529 | `0421_scrum3529_public_anchor_sub_type_projection.sql` | FILE-ONLY, applied nowhere. T3. |
+
+- **0421_scrum3529_public_anchor_sub_type_projection.sql** — adds ONE key,
+  `'sub_type', private.public_free_text_or_null(a.sub_type)`, to
+  `public.get_public_anchor`. `CredentialRenderer` falls back to the credential
+  sub-type whenever `CREDENTIAL_TYPE_LABELS` resolves to the generic `Other`
+  (SCRUM-952 / SCRUM-1482), but `0355` replaced this projection's `metadata`
+  pass-through with an allow-list that omitted `sub_type`, so from `0355` onward
+  every `OTHER`-typed record on `/verify/:publicId` rendered "Other". The
+  canonical value was never the metadata duplicate anyway: it is the
+  `anchors.sub_type` COLUMN (GRE-01), which is what this projects.
+  **VALUE-GATED, not structural** — `anchors.sub_type` is bare `text` with no
+  CHECK and no enum, exactly why `verify.ts` already routes it through
+  `publicFreeTextOrNull` (`verify_value_gated_fields`). **NOT
+  academic-suppressed**, also for parity: `GET /api/v1/verify/:publicId` already
+  publishes a gated `sub_type` for DEGREE/CERTIFICATE/TRANSCRIPT to anonymous
+  callers, so suppressing it only in SQL would remove nothing from public reach
+  while re-opening the SQL-vs-TS drift this contract exists to close. Emitted as
+  an explicit `null` rather than omitted, following `fingerprint_source` (0376),
+  the other additive nullable column key, and matching
+  `sub_type: row.sub_type ?? null` in `verify.ts`. Top-level rather than a
+  `metadata` member so the academic "no metadata" render mode is not flipped.
+  **The body is `0385`'s verbatim** (that file, lines 554–783, is the LATEST
+  redefinition — `0386` redefines only the `_by_fingerprint` sibling, which
+  DELEGATES here, and `0390` only the `is_academic_record_credential_type`
+  predicate) **plus that one key and its comment, and nothing else** — verified
+  by diffing the two function blocks. No GRANT/REVOKE: `CREATE OR REPLACE`
+  preserves the ACL, same as `0385`. No `database.types.ts` delta — the RPC
+  returns bare `jsonb`. Contract updated in the same commit
+  (`scripts/ci/public-pii-projection-contract.json`: `sub_type` added to
+  `projection_keys`, deliberately NOT to `structural_keys`, with the full
+  rationale in `$sub_type_note`). Rollback in the file header.
+- **MERGE-ORDER DEPENDENCY with PR #2314 / `0415`.**
+  `0415_ferpa_directory_info_opt_out_public_projections.sql` (PR #2314, draft)
+  ALSO redefines `public.get_public_anchor`, adding the FERPA §99.37
+  directory-info suppression. Neither PR is merged, so `0421`'s body is built on
+  the current `main` head (`0385`) and does NOT contain `0415`'s changes —
+  despite carrying the higher number. **Whichever lands SECOND must rebuild its
+  body on the other's before merging**, or it reverts the first: the
+  0376-branched-from-0355 clobber, exactly. This cannot happen silently — both
+  PRs' contract suites resolve the LATEST redefiner rather than a pinned
+  filename, so the second lander is red in CI until reconciled. Reconcile by
+  rebuilding the body; never by pinning a filename or renumbering. Any future
+  PR that redefines this function inherits the same obligation.
+
+## Recent migrations (0433 reconciliation, PR #2440)
+
+**This block resolves the `0421`/`0415` MERGE-ORDER DEPENDENCY flagged in the
+block immediately above. Uniquely titled so it cannot collide at EOF (CLAUDE.md
+§6).**
+
+The soak referenced as a live risk in the `0421` note above ran
+(`docs/staging/mig-public-projection/STANDUP.md`, isolated rig
+`arkova-soak-mig-public-projection` / `uayovlvdhmuovuyfxrog`, 2026-08-30) and
+measured the clobber directly: applying `0415` then `0421` in numeric order
+silently reverts the entire FERPA §99.37 directory-information suppression
+layer from `get_public_anchor`, bidirectionally, with no application order of
+the two files alone producing a head carrying both changes. Separately, `0415`
+was applied directly to **production** by RTE ahead of PR #2314's merge
+(ledger-reconciled to numeric `0415`), so this is not a hypothetical merge-order
+risk — as of that apply, production is already running the FERPA-suppressing
+body, and merging `0421` unmodified would be a live regression the moment it is
+applied.
+
+`0421` itself is **immutable** — it was applied to the isolated soak rig above,
+so `.claude/hooks/check-constitution-on-edit.sh` correctly refuses any edit to
+it (CLAUDE.md §1.2/§4). The reconciliation is therefore a NEW compensating
+migration, the same shape as `0360` compensating `0340` or `0383` restoring
+`0362`/`0356` after the `0376` clobber.
+
+| `0433` | `fix/public-verify-subtype-projection` (this PR) | SCRUM-3529 / FD-FERPA-1 | `0433_scrum3529_ferpa_directory_info_get_public_anchor_reconcile.sql` | FILE-ONLY, applied nowhere. T3. |
+
+**Prefix derivation.** `git log --all --diff-filter=A --name-only` over every
+ref (not per-PR bodies, not this file's prior claims, which are stale the
+moment a sibling branch commits) shows numeric prefixes already claimed through
+`0432` (`0422`–`0432` inclusive, across a dozen unrelated open branches —
+suborg tenancy, DocuSign webhook work, proof-tx-inclusion, the false-SECURED
+quarantine renumber, and others). Nothing claims `0433` anywhere in the
+repository's full ref history at authorship time. **Next author claims `0434`
+— re-derive with `git log --all --diff-filter=A`, do not trust this line or
+any single-digit gap in the sequence above it.**
+
+- **0433_scrum3529_ferpa_directory_info_get_public_anchor_reconcile.sql** —
+  redefines `public.get_public_anchor` a second time on top of `0421`: the body
+  is `0415`'s verbatim (`private.is_directory_info_suppressed`, the
+  `g.suppress_directory` hoist, every suppression branch, the additive
+  `directory_info_suppressed` key, the omitted-not-blanked
+  `recipient_identifier`) with `0421`'s single `sub_type` key layered on top,
+  unchanged in placement or gating. `sub_type` is **NOT** suppressed by
+  `g.suppress_directory` — filed as a second entry in
+  `directory_opt_out_residual_published_fields` (contract.json) alongside the
+  pre-existing `credential_type` residual, because `verify.ts`'s `API_RICH_KEYS`
+  loop already publishes `sub_type` unconditionally with no `suppressDirectory`
+  check (read directly from `services/worker/src/api/v1/verify.ts`, not
+  inferred), so gating it here alone would remove nothing from public reach
+  while reopening the SQL-vs-REST divergence FD-FERPA-1 exists to close.
+  `public.search_public_credentials` is untouched — `0421` never redefined it
+  and `0415`'s own change to it is unaffected by anything here.
+  **PRECONDITION, not just for applying but for MERGING**: this body calls
+  `private.is_directory_info_suppressed`, CREATEd only by `0415`. A `CREATE OR
+  REPLACE FUNCTION ... plpgsql` body is not validated against the catalog at
+  creation time, so replaying `supabase/migrations/` on a fresh environment
+  that has this file but not `0415`'s will succeed at CREATE and then fail
+  every single call to the public verify page at runtime. Production already
+  satisfies the precondition; a fresh isolated rig or `supabase db reset` does
+  not until `0415`'s own file also lands on `main` at its lower numeric prefix.
+  Contract updated in the same commit
+  (`scripts/ci/public-pii-projection-contract.json`: `sub_type` retained in
+  `projection_keys`/`$sub_type_note`; `directory_info_suppressed` added to both
+  `projection_keys` and `structural_keys`; a `directory_opt_out_predicate` /
+  `directory_opt_out_owner_migration` pointer plus
+  `directory_opt_out_residual_published_fields` — now `["credential_type",
+  "sub_type"]`, THIS PR's own decision — and its note. The rest of 0415's
+  eventual `directory_opt_out_*` design (suppressed/controlled/omitted field
+  lists, the fail-closed rationale, the verification-fields allow-list) is
+  deliberately NOT duplicated here — a second hand-maintained copy would drift
+  from PR #2314's own the moment either changes, and #2314 is the PR that adds
+  the consuming RATCHET test. Simplified from an earlier, fuller carry-forward
+  after `/simplify` flagged ~100 lines of contract data with no consumer
+  anywhere in this PR's tree.
+  `sql_owner_migration` was tried at `0433` and reverted BACK to `0385`: that
+  field is consumed by the tests that locate where
+  `is_academic_record_credential_type` / `academic_record_public_label` / the
+  detector vocabulary / the REVOKE statements are actually DEFINED (not where
+  `get_public_anchor` is latest redefined), and `0433` redefines only
+  `get_public_anchor` itself — none of those helpers. Repointing it broke 7 of
+  the 8 "detectors and vocabulary (migration 0385)" tests
+  (`src/tests/public-anchor-pii-projection.contract.test.ts`); it stays `0385`.
+  This PR deliberately does **not**
+  import PR #2314's `src/tests/ferpa-directory-info-opt-out.contract.test.ts` or
+  `tests/rls/ferpa-directory-info-opt-out.test.ts` — that regression suite is
+  #2314's own deliverable to land with `0415`'s file; this reconciliation is
+  scoped to making `0421`'s existing contract suite
+  (`src/tests/public-anchor-pii-projection.contract.test.ts`) pass against a
+  body that no longer clobbers FERPA suppression. Rollback in the file header:
+  restores `0415`'s body verbatim, explicitly NOT `0385` or `0421`'s original
+  form, either of which would also revert FERPA suppression.
+
+
+## 2026-09-05 — PR #2440 subtype opt-out release review
+
+Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
 
 ## 2026-08-31 — `0427` comment corrections (review; comments only, no DDL change)
 
