@@ -151,6 +151,8 @@ export type MaterializationOutcome = MaterializedAnchor | { outcome: 'superseded
 export interface DebitResult {
   success: boolean;
   error?: string;
+  /** Transport or malformed replies do not establish whether a debit committed. */
+  outcome?: 'uncertain';
 }
 
 /** Bounded, PII-scrubbed alert payload (§1.6A — never raw bytes/fingerprint). */
@@ -522,9 +524,19 @@ async function defaultDebitAndEnqueueAnchor(
       p_expected_status: 'PENDING',
     },
   );
-  if (error) return { success: false, error: error.message ?? 'debit rpc error' };
-  const result = data as { success?: boolean; error?: string } | null;
-  if (!result?.success) return { success: false, error: result?.error ?? 'debit failed' };
+  // A transport error may arrive after COMMIT. Only an explicit, validated
+  // business rejection establishes that no debit landed; unknown replies must
+  // leave the linked artifact available to confirmation/idempotent recovery.
+  if (error) return { success: false, outcome: 'uncertain', error: boundedReason(error.message) };
+  const parsed = z.discriminatedUnion('success', [
+    z.object({ success: z.literal(true) }),
+    z.object({ success: z.literal(false), error: z.enum([
+      'invalid_amount', 'reference_id_required', 'org_not_initialized',
+      'insufficient_credits', 'anchor_not_in_expected_status',
+    ]) }),
+  ]).safeParse(data);
+  if (!parsed.success) return { success: false, outcome: 'uncertain', error: 'debit_reply_unrecognized' };
+  if (!parsed.data.success) return { success: false, error: parsed.data.error };
   return { success: true };
 }
 
@@ -874,6 +886,10 @@ async function drainOneClaimedRow(
 
     // 2) Charge AT SECURING — and ONLY here. Never at enqueue/claim.
     const debit = await deps.debitAndEnqueueAnchor({ orgId, anchorId });
+    if (debit.outcome === 'uncertain') {
+      reportUncertainDebit(deps, orgId, row.id, debit.error ?? 'debit_reply_unrecognized');
+      return;
+    }
     if (!debit.success) {
       await handleDebitFailure(deps, orgId, row, anchorId, debit.error, result);
       return;
@@ -888,8 +904,27 @@ async function drainOneClaimedRow(
         'connector artifact publication did not return a confirmed link; leaving recovery to the existing lease reaper');
       return;
     }
+    if (!debitSucceeded) {
+      reportUncertainDebit(deps, orgId, row.id,
+        err instanceof Error ? err.message : 'debit_request_threw', err);
+      return;
+    }
     await handleRowDrainError(deps, orgId, row, err, debitSucceeded, result);
   }
+}
+
+/** Unknown debit outcomes must never strand a possibly charged artifact. */
+function reportUncertainDebit(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  artifactId: string,
+  rawReason: string,
+  err?: unknown,
+): void {
+  const reason = boundedReason(rawReason);
+  deps.emitAlert({ scope: 'row', orgId, artifactId, reason: 'debit_outcome_uncertain' });
+  deps.logger.error({ err, reason, orgId, artifactId },
+    'connector-artifact debit outcome uncertain; left materialized for recovery');
 }
 
 /**

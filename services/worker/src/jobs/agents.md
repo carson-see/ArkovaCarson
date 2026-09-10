@@ -1,3 +1,13 @@
+## 2026-09-10 — PR #2570 unknown debit response recovery
+
+A lost/malformed debit RPC response can follow a committed charge. The default
+adapter now returns an explicit uncertain outcome; thrown debit calls follow the
+same recovery path. Leave the linked artifact materialized, emit a bounded alert,
+and let confirmation/requeue retain its original anchor for idempotent debit retry.
+Only validated business rejections may take the existing failure/requeue paths.
+The previous terminal-failure behavior was reproduced through the default adapter
+before this change. Full-schema lost-response/retry evidence must accompany release.
+
 # services/worker/src/jobs/agents.md
 
 ## 2026-09-10 — PR #2570 atomic connector publication (SCRUM-3882)

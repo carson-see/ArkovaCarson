@@ -223,6 +223,39 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
 beforeEach(() => vi.clearAllMocks());
 
 describe('drainConnectorArtifactsForOrg', () => {
+  it('lost debit response after commit preserves the linked artifact for idempotent recovery', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+    const injected: Partial<ConnectorArtifactDrainDeps> = { ...h.deps };
+    delete injected.debitAndEnqueueAnchor; // exercise the real default RPC adapter
+    let committedDebits = 0;
+    vi.mocked(callRpc).mockImplementationOnce(async (_db, name) => {
+      expect(name).toBe('debit_and_enqueue_anchor');
+      committedDebits += 1; // server commit occurs before the connection drops
+      return { data: null, error: { message: 'fetch failed after committed debit' } };
+    });
+    const result = await drainConnectorArtifactsForOrg(ORG_A, injected);
+    expect(committedDebits).toBe(1);
+    expect(h.rows[0].status).toBe('materialized');
+    expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
+    expect(result.failed).toBe(0);
+    expect(h.batchAnchor).not.toHaveBeenCalled();
+  });
+  it.each([null, {}, { success: 'true' }, { success: false, error: 'unknown_future_reply' }])(
+    'an unrecognized debit reply %j preserves the linked artifact', async (data) => {
+      const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);
+      const injected: Partial<ConnectorArtifactDrainDeps> = { ...h.deps };
+      delete injected.debitAndEnqueueAnchor;
+      vi.mocked(callRpc).mockResolvedValueOnce({ data, error: null });
+      const result = await drainConnectorArtifactsForOrg(ORG_A, injected);
+      expect(h.rows[0].status).toBe('materialized');
+      expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
+      expect(result.failed).toBe(0);
+      expect(h.batchAnchor).not.toHaveBeenCalled();
+      expect(h.alert).toHaveBeenCalledWith(expect.objectContaining({ reason: 'debit_outcome_uncertain' }));
+    },
+  );
+
+
   it('drains a pending row: claim → materialize → charge at securing → anchored', async () => {
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'pending' })]);
 
@@ -528,7 +561,7 @@ describe('drainConnectorArtifactsForOrg', () => {
   // a `reason` and never persisted it. The only surviving copy of the cause was
   // a Sentry alert. A terminal `failed` artifact must carry its own reason —
   // that is the row an operator triages.
-  it('persists a bounded failure reason on the row and logs it (not an empty object)', async () => {
+  it('a thrown debit request preserves recovery and logs the bounded cause with its stack', async () => {
     const debit = vi.fn(async () => {
       throw new Error('envelope anchor lookup failed: canceling statement due to statement timeout');
     });
@@ -536,12 +569,9 @@ describe('drainConnectorArtifactsForOrg', () => {
 
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
 
-    expect(result.failed).toBe(1);
-    expect(h.rows[0].status).toBe('failed');
-
-    // 1. The row itself carries the cause — queryable without Sentry.
-    const meta = h.rows[0].metadata as Record<string, unknown>;
-    expect(meta.drain_error).toContain('statement timeout');
+    expect(result.failed).toBe(0);
+    expect(h.rows[0].status).toBe('materialized');
+    expect(h.rows[0].metadata.drain_error).toBeUndefined();
 
     // 2. The log line carries BOTH the bounded reason AND the error object, so
     //    the stack survives. utils/logger.ts registers redactErrorSerializer for
@@ -549,7 +579,7 @@ describe('drainConnectorArtifactsForOrg', () => {
     //    lose the only thing that localises a TypeError deeper in the drain.
     const loggerErr = h.deps.logger.error as unknown as { mock: { calls: unknown[][] } };
     const errorCall = loggerErr.mock.calls.find(
-      (c: unknown[]) => String(c[1]).includes('row drain failed'),
+      (c: unknown[]) => String(c[1]).includes('debit outcome uncertain'),
     );
     expect(errorCall).toBeDefined();
     const logged = errorCall![0] as Record<string, unknown>;
@@ -589,11 +619,10 @@ describe('drainConnectorArtifactsForOrg', () => {
 
     await drainConnectorArtifactsForOrg(ORG_A, h.deps);
 
-    const meta = h.rows[0].metadata as Record<string, unknown>;
-    expect(typeof meta.drain_error).toBe('string');
-    // Bounded by construction (§1.6A) — a connector failure must never write an
-    // unbounded blob into a column that is read back and logged.
-    expect((meta.drain_error as string).length).toBeLessThanOrEqual(600);
+    expect(h.rows[0].status).toBe('materialized');
+    expect(h.rows[0].metadata.drain_error).toBeUndefined();
+    const logged = vi.mocked(h.deps.logger.error).mock.calls[0][0] as { reason: string };
+    expect(logged.reason.length).toBeLessThanOrEqual(200);
   });
 
   it('anchor_not_in_expected_status + anchor ALREADY ADVANCED: promote to anchored, NEVER failed (idempotent, no re-charge)', async () => {
