@@ -31,3 +31,11 @@ a13572d8a18bf9c3075578bdc5e6bf3cd19ee292:HANDOFF.md:generic-api-key:214
 # exclusion SEC-015 deliberately removed. Keep scoped to the exact
 # commit/path/rule/line fingerprint.
 65b60f7a6fddbc6bdd2666a3d3b46639e6a03511:services/worker/src/middleware/upstashIdempotency.namespace.test.ts:generic-api-key:43
+
+# SCRUM-4493 — ComputeID golden webhook fixture. The `secret` is a throwaway
+# generated for a scratch Cloudflare quick-tunnel receiver on 2026-09-07 that
+# was torn down the same hour; it authenticates nothing anywhere. It is kept
+# verbatim because the fixture's purpose is to prove byte-compatibility of our
+# verifier with ComputeID's real signer (body + header captured from a live
+# delivery). Scoped to the exact commit/path/rule/line per SEC-015.
+c3b00d31cf73a804c877fe4de532d250f49c4e3d:services/worker/src/integrations/computeid/__fixtures__/golden-test-delivery.json:generic-api-key:6

@@ -33,7 +33,7 @@ const dbAny = db as any;
  * `public_id` is being staged in v2 under SCRUM-1271-B. Adding the column
  * itself is also tracked there so the migration ships once.
  */
-function toPublicAgent<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
+export function toPublicAgent<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
   if (!row) return {};
   const sanitized = { ...row };
   delete (sanitized as Record<string, unknown>).org_id;
@@ -232,6 +232,14 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
     const existing = await verifyAgentOwnership(agentId, orgId, res);
     if (!existing) return;
 
+    // Revoked is terminal (partner revocations, DELETE /:agentId). Re-activating
+    // a revoked row would let POST /:agentId/key mint keys for a passport
+    // ComputeID has revoked. Non-status edits (name, description) stay allowed.
+    if (existing.status === 'revoked' && parsed.data.status !== undefined) {
+      res.status(409).json({ error: 'Agent is revoked — revocation is terminal; register a new agent instead' });
+      return;
+    }
+
     const updates: Record<string, unknown> = { ...parsed.data };
     if (parsed.data.status === 'suspended') {
       updates.suspended_at = new Date().toISOString();
@@ -245,6 +253,10 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
       .select()
       .single();
 
+    if (error?.code === '23514' && error.message === 'agent_revocation_is_terminal') {
+      res.status(409).json({ error: 'Agent is revoked — revocation is terminal; register a new agent instead' });
+      return;
+    }
     if (error || !agent) {
       res.status(404).json({ error: 'Agent not found or update failed' });
       return;
