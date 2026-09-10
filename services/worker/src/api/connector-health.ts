@@ -48,11 +48,18 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     description: 'Receive completed envelopes via DocuSign Connect.',
   },
   {
+    // NOT 'live' (corrected 2026-08-30). Adobe Sign has no connect flow —
+    // there is no adobe-sign-oauth.ts, nothing writes
+    // org_integrations.webhook_id, and prod has no ADOBE_SIGN_CLIENT_SECRET,
+    // so 100% of prod traffic to /webhooks/adobe-sign returns 503. Listing it
+    // beside DocuSign/Drive as 'live' asserted a capability we do not hold
+    // (CLAUDE.md §1.13 R-7). 'gated' is the honest tier: it renders the
+    // request-access CTA instead of implying a working connection.
     id: 'adobe_sign',
     label: 'Adobe Sign',
-    kind: 'live',
+    kind: 'gated',
     vendor_event_sources: ['adobe_sign'],
-    description: 'Receive completed agreements via Adobe Sign webhooks.',
+    description: 'Receive completed agreements via Adobe Sign webhooks — connector not yet available.',
   },
   {
     id: 'google_drive',

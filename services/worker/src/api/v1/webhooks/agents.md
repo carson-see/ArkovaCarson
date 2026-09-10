@@ -1,5 +1,55 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
+_Last updated: 2026-08-30 (`adobe-sign.ts`: registration challenge + DLQ the orphaned-webhook_id path)_
+
+## 2026-08-30 — `adobe-sign.ts` now answers Adobe's webhook REGISTRATION challenge (`GET /`)
+
+**This is why `org_integrations.webhook_id` was never populated anywhere — the column being
+missing (migration `0426`) was the second problem, not the first.** Adobe will not create a
+webhook until the target URL answers a registration challenge: an HTTPS GET carrying
+`X-AdobeSign-ClientId`, which must return 2XX **and** echo the same client id back in a response
+header of that name ([Adobe docs](https://helpx.adobe.com/sign/developer/webhook/create.html)).
+This router had **only** `.post('/')` — verified by test: all four new challenge cases returned
+`404` before the fix. So `POST /api/rest/v6/webhooks` would have failed Adobe-side, and manual
+registration through Adobe's admin console would have failed too. No webhook id could be minted
+by any route, which is the upstream cause of the always-null `webhook_id`.
+
+**Security shape — do not "simplify" this into a blind echo.** Adobe's guidance is explicit that
+an endpoint which does not recognize the presented client id "MUST NOT respond with the success
+response." Blindly echoing whatever arrives would let any third party register *our* endpoint
+against *their* Adobe application and start delivering us their agreements. So: `503` when
+`ADOBE_SIGN_CLIENT_ID` is unset (never echo an unconfigured value), `403` on absent/mismatched id,
+`200` + echo only on a constant-time match. The presented value is never logged — it identifies a
+third party's Adobe app. Tests: `describe('GET /webhooks/adobe-sign — Adobe registration
+challenge')` pins all four cases.
+
+**Still not sufficient for a working connector.** This makes a webhook id *obtainable*; nothing
+yet *obtains* one. See the entry below — there is still no `adobe-sign-oauth.ts` connect flow, and
+prod has no Adobe credential at all.
+
+**Related pre-existing oddity, deliberately left alone:** `signatureHeader()` falls back to
+`X-AdobeSign-ClientId` as a *signature* when the SHA256 header is absent. On a notification that
+header carries the client id, not an HMAC, so the fallback always fails the HMAC compare and 401s
+— fail-closed, not exploitable. Do not "fix" it by comparing the client id instead: that would
+turn a public identifier into the auth check and is a straight auth bypass.
+
+## 2026-08-30 — `adobe-sign.ts` orphaned-webhook_id path now DLQs (companion to migration `0426`)
+
+Migration `0426` (PR #2519) adds `org_integrations.webhook_id`, fixing the `42703` SQL error
+`findIntegration()` has always hit. **That alone does not restore Adobe Sign functionality**: no
+`adobe-sign-oauth.ts` connect flow exists anywhere in this repo (unlike `docusign-oauth.ts` /
+`drive-oauth.ts` in `api/v1/integrations/`), so nothing writes `org_integrations.webhook_id` for a
+real integration. Every real delivery therefore still hits the `if (!integration)` branch — same
+as before the migration, just without the SQL error. Before `0426`, that branch's SQL error was
+caught and DLQ'd (a record existed); after `0426`, the same branch resolves cleanly to `null` and
+was responding `200 {orphaned:true}` with **no DLQ insert at all** — a silent regression from "loud
+failure, recorded" to "quiet failure, unrecorded." Per the "webhook_dlq row is not a mitigation"
+note two sections below: this is explicitly not a fix for the underlying gap (Adobe Sign is still
+non-functional until a connect flow lands), it only restores the pre-existing record-of-loss this
+folder already treats as the baseline expectation for every handler. Test:
+`describe('POST /webhooks/adobe-sign')` → `'orphaned webhook_id is recorded to the DLQ, not
+silently dropped'` in `adobe-sign.test.ts`. **A real fix still needs its own ticket**: an Adobe
+Sign OAuth/connect flow that populates `webhook_id` at integration-connect time.
 ## 2026-09-05 — oldest DocuSign release candidate integration
 
 PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
@@ -146,3 +196,18 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 - Ambiguous account-to-org mappings fail closed.
 - Sanitized rule-event payloads may include provider IDs needed for idempotency, but not raw documents or raw webhook bodies.
 - Connector payloads that carry PII must hash values before storing long-lived operational metadata. PII scrubbing is mandatory; do not persist emails, document fingerprints, or API keys.
+
+## 2026-09-05 — PR 2519 orphan durability and schema integration
+
+An orphan response may acknowledge 200 only after webhook_dlq persistence succeeds.
+Returned DB errors and thrown transport errors both reproduced false 200 before
+the fix; they now produce 500 for provider retry. Other failure branches already
+return 500 and keep DLQ recording best effort. This candidate uses the dedicated
+webhook_id introduced by its 0426 migration, matching the dependent OAuth writer
+in PR 2529; PR 2496's earlier subscription_id repair is interim. Production was
+queried read-only: subscription_id exists, webhook_id and migration 0426 do not.
+Schema application and isolated verification remain required before deployment.
+
+## 2026-09-05 — Adobe registration challenge reads validated configuration
+
+The GET challenge uses config.adobeSignClientId, populated by the existing Zod configuration loader. Request-time process.env reads can diverge from the validated startup configuration. Regressions prove the configured ID remains authoritative after raw environment mutation and an absent configured ID still returns 503 without echo. Constant-time comparison and notification HMAC behavior are unchanged.
