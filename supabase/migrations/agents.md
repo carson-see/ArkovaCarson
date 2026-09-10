@@ -1223,3 +1223,17 @@ Amended after the 2026-09-05 review of PR #2658 (findings F1/F2/F3/F5), still un
   so their `0327` bodies must be restored *before* the column is dropped — otherwise every signup INSERT and
   every 4-arg admin write fails on a missing column. Verified end-to-end on a disposable Postgres.
 
+
+## PR #2572 — SCRUM-4878 rollup authorization repair
+
+`0450_scrum4878_suborg_rollup_canonical_admin.sql` restores canonical parent
+administrator reads for own-org ORG_ADMIN profiles and platform administrators.
+The one-argument overload delegates to the two-argument implementation. Both
+remain service-role-only, with unchanged signatures and response fields. The
+new regression driver covers membership/profile/platform authority, tenant
+denial, ACLs and literal rollback/reapplication. Full local Supabase replay
+verifies only these two function bodies change and retains the six 0444 write
+repairs. Rollback must restore only 0432's two rollup definitions, not its whole
+file. Both canonical type entries now include the pre-existing explicit-caller
+overload, regenerated from the actual catalog. Hosted qualification is pending;
+local receipts are not a staging duration or production application claim.

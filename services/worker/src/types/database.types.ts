@@ -7503,10 +7503,12 @@ export type Database = {
         Args: { p_max_depth?: number; p_root_id: string }
         Returns: Json
       }
-      get_parent_credit_rollup: {
-        Args: { p_parent_org_id: string }
-        Returns: Json
-      }
+      get_parent_credit_rollup:
+        | { Args: { p_parent_org_id: string }; Returns: Json }
+        | {
+            Args: { p_caller_user_id: string; p_parent_org_id: string }
+            Returns: Json
+          }
       get_payment_ledger: {
         Args: { p_limit?: number; p_offset?: number }
         Returns: {
