@@ -412,3 +412,7 @@ Live authenticated export exposed legacy DB column names in loadAnchor. Select
 chain_tx_id and chain_block_height using aliases for the existing public receipt
 keys; keep that response contract unchanged. A failed anchor query returns 500,
 never the not_anchored sentinel reserved for a successful empty lookup.
+
+## PR #2695 — timestamp helper simplification (2026-09-10)
+
+The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.

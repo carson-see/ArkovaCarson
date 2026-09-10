@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { publicAnchorTimestamp, PRE_ANCHOR_STATUSES_FOR_TEST } from './anchorTimestamp.js';
+import { publicAnchorTimestamp } from './anchorTimestamp.js';
 
 /** Real prod values from `ARK-SEC-RUJ2V7` (project vzwyaatejekddvltxyye). */
 const CREATED_AT = '2026-04-09T18:01:01.848397+00:00';
@@ -51,17 +51,10 @@ describe('publicAnchorTimestamp', () => {
     }
   });
 
-  it('returns null for an absent or unrecognised status rather than guessing', () => {
+  it('returns null for an absent status rather than guessing', () => {
     expect(publicAnchorTimestamp(null, CHAIN_TIMESTAMP)).toBeNull();
     expect(publicAnchorTimestamp(undefined, CHAIN_TIMESTAMP)).toBeNull();
     expect(publicAnchorTimestamp('', CHAIN_TIMESTAMP)).toBeNull();
   });
 
-  it('gates on exactly the statuses the SQL RPC gates on', () => {
-    // Pins the gate to the RPC's `NOT IN ('PENDING')`. If a migration widens
-    // that list, this fails and forces the TypeScript copy to be widened with
-    // it — the drift that let the worker and the edge bundle disagree for
-    // months cannot recur silently.
-    expect([...PRE_ANCHOR_STATUSES_FOR_TEST].sort()).toEqual(['PENDING']);
-  });
 });
