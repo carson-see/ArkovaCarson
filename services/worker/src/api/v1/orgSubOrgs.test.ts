@@ -38,6 +38,28 @@ import { buildInvitationEmail } from '../../email/templates.js';
 import { buildApp as buildAppFromRouter, makeBuilder } from './__testHelpers.js';
 
 /**
+ * Seed for the sub-org cap's child lookup.
+ *
+ * The cap no longer asks PostgREST for an exact count (R0-8 / SCRUM-1254): it
+ * does `.select('id').eq(...).eq(...)` and awaits that chain directly. With no
+ * `{ count }` option, `makeBuilder`'s countChain never engages and awaiting the
+ * plain builder yields the builder itself — which reads as "unavailable" and
+ * fails the cap CLOSED. This gives the chain a terminal that resolves to N
+ * approved children. Deliberately local rather than making every builder's
+ * `.eq()` awaitable, which the note in makeBuilder records as having broken
+ * unrelated create/approve chains.
+ */
+function capChildrenBuilder(approved: number) {
+  const rows = Array.from({ length: approved }, (_unused, i) => ({ id: `child-${i}` }));
+  const chain: Record<string, unknown> = {};
+  chain.eq = () => chain;
+  chain.then = (resolve: (v: unknown) => unknown) =>
+    Promise.resolve({ data: rows, error: null }).then(resolve);
+  return { select: () => chain };
+}
+
+
+/**
  * orgSubOrgs.ts reads `req.userId` (untyped cast at line 27), not the typed
  * `req.authUserId` convention used by most v1 routers. Inject the cast field
  * here rather than widening the global Request type for one router.
@@ -56,7 +78,13 @@ const actionChildOrgId = '44444444-4444-4444-8444-444444444444';
 
 function setupActionRouteDb(options: {
   role: 'owner' | 'admin' | 'member';
-  childStatus: 'PENDING' | 'APPROVED' | 'REVOKED';
+  childStatus: 'PENDING' | 'APPROVED' | 'REVOKED' | null;
+  interleavedParent?: string;
+  interleavedStatus?: 'PENDING' | 'APPROVED' | 'REVOKED';
+  /** D3 sub-org cap inputs, used only on the APPROVE path. */
+  maxSubOrgs?: number | null;
+  approvedCount?: number;
+  writeError?: { code: string; message: string };
 }) {
   const membership = makeBuilder({
     maybeSingleData: { org_id: actionParentOrgId, role: options.role },
@@ -70,8 +98,34 @@ function setupActionRouteDb(options: {
     },
   });
   const statusUpdate = makeBuilder();
+  const writeState = {
+    row: { id: actionChildOrgId, parent_org_id: options.interleavedParent ?? actionParentOrgId,
+      parent_approval_status: options.interleavedStatus ?? options.childStatus },
+    writes: 0,
+  };
+  const filters: Record<string, unknown> = {};
+  const filter = (key: string, value: unknown) => { filters[key] = value; return statusUpdate; };
+  statusUpdate.eq.mockImplementation(filter);
+  statusUpdate.is.mockImplementation(filter);
+  const apply = () => {
+    if (options.writeError) return { data: null, error: options.writeError };
+    if (!Object.entries(filters).every(([key, value]) =>
+      writeState.row[key as keyof typeof writeState.row] === value)) return { data: null, error: null };
+    writeState.writes += 1;
+    writeState.row.parent_approval_status = statusUpdate.update.mock.calls[0][0].parent_approval_status;
+    return { data: { id: actionChildOrgId }, error: null };
+  };
+  statusUpdate.maybeSingle.mockImplementation(async () => apply());
+  Object.assign(statusUpdate, { then: (resolve: (value: unknown) => unknown) => Promise.resolve(apply()).then(resolve) });
   const auditInsert = makeBuilder();
-  const orgBuilders = [childFetch, statusUpdate];
+  // D3: APPROVE now checks the sub-org cap before flipping the status — two
+  // more `from('organizations')` calls, and this list is a queue. REVOKE never
+  // adds a sub-org, so it does not consult the cap and needs no extra builders.
+  const capBuilders = options.childStatus === 'PENDING' || options.childStatus === null
+    ? [makeBuilder({ maybeSingleData: { max_sub_orgs: options.maxSubOrgs ?? null } }),
+       capChildrenBuilder(options.approvedCount ?? 0) as unknown as ReturnType<typeof makeBuilder>]
+    : [];
+  const orgBuilders = [childFetch, ...capBuilders, statusUpdate];
 
   vi.mocked(db.from).mockImplementation((table: string): never => {
     if (table === 'org_members') return membership as unknown as never;
@@ -80,12 +134,12 @@ function setupActionRouteDb(options: {
     return makeBuilder() as unknown as never;
   });
 
-  return { membership, orgBuilders, statusUpdate };
+  return { membership, orgBuilders, statusUpdate, auditInsert, writeState };
 }
 
 const affiliateStatusCases = [
   {
-    label: 'approves a pending affiliate without enforcing historical max_sub_orgs caps',
+    label: 'approves a pending affiliate when the sub-org cap has room',
     path: '/api/v1/org/sub-orgs/approve',
     role: 'owner',
     childStatus: 'PENDING',
@@ -221,6 +275,71 @@ describe('parent-scoped affiliate status actions (HAKI-REQ-01)', () => {
     }));
     expect(orgBuilders).toHaveLength(0);
   });
+
+  it('refuses to approve once the sub-org cap is reached', async () => {
+    // The cap must bind on BOTH paths that add a sub-org. Enforcing only on
+    // create would leave a limit you can walk around by asking to be
+    // affiliated instead of being created.
+    setupActionRouteDb({ role: 'owner', childStatus: 'PENDING', maxSubOrgs: 20, approvedCount: 20 });
+
+    const app = buildApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/org/sub-orgs/approve')
+      .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId })
+      .expect(409);
+
+    expect(res.body.error).toMatch(/limit reached/i);
+  });
+
+  it.each([
+    [{ code: '23514', message: 'sub_org_limit_reached' }, 409, 'sub_org_limit_reached'],
+    [{ code: '55P03', message: 'lock timeout' }, 503, 'cap_check_unavailable'],
+    [{ code: '40001', message: 'serialization failure' }, 503, 'cap_check_unavailable'],
+    [{ code: '40P01', message: 'deadlock detected' }, 503, 'cap_check_unavailable'],
+    [{ code: '23514', message: 'unrelated_check' }, 500, 'Failed to approve organization'],
+  ] as const)('maps a post-preflight approval write failure %j to %i', async (writeError, status, error) => {
+    const { auditInsert } = setupActionRouteDb({ role: 'owner', childStatus: 'PENDING', approvedCount: 0, writeError });
+    const res = await request(buildApp('user-1'))
+      .post('/api/v1/org/sub-orgs/approve')
+      .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId })
+      .expect(status);
+    expect(res.body.error).toBe(error);
+    expect(auditInsert.insert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { path: 'approve', childStatus: 'PENDING', interleavedParent: '55555555-5555-4555-8555-555555555555' },
+    { path: 'approve', childStatus: 'PENDING', interleavedStatus: 'REVOKED' },
+    { path: 'revoke', childStatus: 'APPROVED', interleavedParent: '55555555-5555-4555-8555-555555555555' },
+    { path: 'revoke', childStatus: 'APPROVED', interleavedStatus: 'PENDING' },
+  ] as const)('refuses a relationship changed between lookup and $path: $interleavedParent $interleavedStatus', async ({ path, ...options }) => {
+    const { writeState, auditInsert } = setupActionRouteDb({ role: 'owner', ...options });
+    const before = { ...writeState.row };
+    const res = await request(buildApp('user-1'))
+      .post(`/api/v1/org/sub-orgs/${path}`)
+      .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId }).expect(409);
+    expect(res.body.error).toBe('Affiliation changed. Refresh and try again.');
+    expect(writeState.row).toEqual(before);
+    expect(writeState.writes).toBe(0);
+    expect(auditInsert.insert).not.toHaveBeenCalled();
+  });
+
+  it('approves a legacy null status with a null-aware write predicate', async () => {
+    const { statusUpdate, writeState } = setupActionRouteDb({ role: 'owner', childStatus: null });
+    await request(buildApp('user-1')).post('/api/v1/org/sub-orgs/approve')
+      .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId }).expect(200);
+    expect(statusUpdate.is).toHaveBeenCalledWith('parent_approval_status', null);
+    expect(writeState.row.parent_approval_status).toBe('APPROVED');
+  });
+
+  it('still approves when an explicit override leaves room above the default', async () => {
+    setupActionRouteDb({ role: 'owner', childStatus: 'PENDING', maxSubOrgs: 50, approvedCount: 30 });
+    const app = buildApp('user-1');
+    await request(app)
+      .post('/api/v1/org/sub-orgs/approve')
+      .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId })
+      .expect(200);
+  });
 });
 
 describe('POST /api/v1/org/sub-orgs/create (HAKI-REQ-01)', () => {
@@ -255,6 +374,7 @@ describe('POST /api/v1/org/sub-orgs/create (HAKI-REQ-01)', () => {
     parentStatus?: string;
     adminProfile?: typeof existingAdminProfile | null;
     auditInsert?: ReturnType<typeof makeBuilder>;
+    writeError?: { code: string; message: string };
   } = {}) {
     const membership = makeBuilder({
       maybeSingleData: { org_id: parentOrgId, role: options.role ?? 'owner' },
@@ -272,13 +392,19 @@ describe('POST /api/v1/org/sub-orgs/create (HAKI-REQ-01)', () => {
         ? existingAdminProfile
         : options.adminProfile,
     });
-    const childCreate = makeBuilder({ singleData: childOrgRow });
+    const childCreate = makeBuilder({ singleData: options.writeError ? null : childOrgRow, singleError: options.writeError });
     const memberInsert = makeBuilder();
     const creditInsert = makeBuilder();
     const inviteInsert = makeBuilder({ singleData: { id: 'invite-1' } });
     const auditInsert = options.auditInsert ?? makeBuilder();
     const cleanupDelete = makeBuilder();
-    const orgBuilders = [parentOrg, childCreate, cleanupDelete];
+    // D3: the create route now consults the sub-org cap between resolving the
+    // parent context and creating the child — two more `from('organizations')`
+    // calls. This list is a QUEUE, so they must be seeded in call order or the
+    // child-create shifts the wrong builder and returns no row.
+    const capLimit = makeBuilder({ maybeSingleData: { max_sub_orgs: null } });
+    const capCount = capChildrenBuilder(0) as unknown as ReturnType<typeof makeBuilder>;
+    const orgBuilders = [parentOrg, capLimit, capCount, childCreate, cleanupDelete];
     const orgMemberBuilders = [membership, memberInsert];
 
     vi.mocked(db.from).mockImplementation((table: string): never => {
@@ -300,6 +426,21 @@ describe('POST /api/v1/org/sub-orgs/create (HAKI-REQ-01)', () => {
       cleanupDelete,
     };
   }
+
+  it.each([
+    [{ code: '23514', message: 'sub_org_limit_reached' }, 409, 'sub_org_limit_reached'],
+    [{ code: '55P03', message: 'lock timeout' }, 503, 'cap_check_unavailable'],
+    [{ code: '40001', message: 'serialization failure' }, 503, 'cap_check_unavailable'],
+    [{ code: '40P01', message: 'deadlock detected' }, 503, 'cap_check_unavailable'],
+    [{ code: '23514', message: 'unrelated_check' }, 500, 'Failed to create affiliate organization'],
+  ] as const)('maps a post-preflight create write failure %j to %i', async (writeError, status, error) => {
+    const calls = setupCreateRouteDb({ writeError });
+    const res = await request(buildApp(userId)).post('/api/v1/org/sub-orgs/create').send(validBody).expect(status);
+    expect(res.body.error).toBe(error);
+    expect(calls.memberInsert.insert).not.toHaveBeenCalled();
+    expect(calls.creditInsert.insert).not.toHaveBeenCalled();
+    expect(calls.auditInsert.insert).not.toHaveBeenCalled();
+  });
 
   beforeEach(() => { vi.clearAllMocks(); });
 

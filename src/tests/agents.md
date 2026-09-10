@@ -156,6 +156,10 @@ The lesson worth keeping: this regression (migration `0355` dropping `sub_type` 
 
 The verify API description is emitted only when both `!isAcademicRecord` and `!suppressDirectory` hold. The public-projection contract now requires that conjunction; its previous exact single-predicate pattern rejected the stricter implementation. Removing either predicate fails the contract (mutation-checked). The real verify response suite separately covers opted-out CLE and missing credential types. This is a test repair, not a change to public response behavior.
 
+## PR #2572 — public organization aggregate classification
+
+The FERPA contract explicitly classifies `get_public_org_profile` as counts grouped by the already-published `credential_type` residual. It does not claim opt-out suppression or anonymity of small aggregates. The reviewed comment-stripped function definition is pinned; added fields, predicates, joins or calls require renewed behavior review. Function extraction honors named dollar delimiters and stops before later RPCs; wildcard anchor reads remain classified. The real anon-role SQL proof is `docs/staging/hakichain-suborgs-2026-09/verify-0429-aggregate-residual.sql`; a planted filename leak must fail it.
+
 
 ## 2026-09-05 — PR #2440 subtype opt-out release review
 
