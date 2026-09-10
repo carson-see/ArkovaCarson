@@ -12,6 +12,7 @@ import { logger } from '../utils/logger.js';
 import { rateLimiters } from '../utils/rateLimit.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 import { isAdminRouterPath } from './admin-paths.js';
+import { isPlatformAdmin } from '../utils/platformAdmin.js';
 // DEBT-3: Static imports — circular dependency resolved by router extraction
 import { handleTreasuryHealth, handleTreasuryStatus, handleTreasuryX402Stats } from '../api/treasury.js';
 import { handlePlatformStats } from '../api/admin-stats.js';
@@ -20,7 +21,7 @@ import { handleSystemHealth } from '../api/admin-health.js';
 import { handleOpsSloStats } from '../api/admin-ops-slo.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
-import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota, handleAdjustOrgCredit } from '../api/admin-actions.js';
+import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota, handleAdjustOrgCredit, handleCreateOrganization, handleCreateUserAccount } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleConnectorHealth } from '../api/connector-health.js';
@@ -221,7 +222,58 @@ adminRouter.get('/admin/subscriptions', async (req, res) => {
   }
 });
 
+// ─── Structural platform-admin gate for every /admin/* route ───────────────
+// Each handler ALSO calls isPlatformAdmin itself, and those calls stay: this
+// is defence in depth, not a replacement. The point is that the property is no
+// longer a convention a new handler can forget — before this, adding a route
+// under /admin and omitting the check produced a reachable, unauthenticated
+// endpoint with no compile-time, route-level, or test-level signal. That risk
+// is not hypothetical for a surface whose newest members CREATE accounts and
+// GRANT roles.
+//
+// Scoped to '/admin' on purpose: this router also serves /treasury, /rules,
+// /queue and /anchor, which have their own (non-platform-admin) authorization.
+adminRouter.use('/admin', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = await extractAuthUserId(req);
+    if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+    if (!(await isPlatformAdmin(userId))) {
+      res.status(403).json({ error: 'Forbidden — platform admin access required' });
+      return;
+    }
+    next();
+  } catch (error) {
+    logger.error({ error }, 'Platform admin gate failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── Admin Actions (POST) ───
+
+// ─── SCRUM-3873: provision a net-new org / account (platform admin only) ───
+// NOTE: these are collection-level POSTs; they do not collide with the
+// '/admin/users/:id/...' item-level actions below.
+adminRouter.post('/admin/organizations', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleCreateOrganization(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Create organization request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/admin/users', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleCreateUserAccount(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Create user account request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 adminRouter.post('/admin/users/:id/promote-admin', async (req, res) => {
   const userId = await extractAuthUserId(req);
