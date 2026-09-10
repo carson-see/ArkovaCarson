@@ -22,6 +22,19 @@ import { describe, it, expect, vi } from 'vitest';
 // utils/db.ts → config.ts (env-validated at module load). We only exercise the
 // PURE parse/verify/notary surface here, so stub those side-effecting modules —
 // the same db/jobQueue/logger mock trio the receiver's own test suite uses.
+//
+// config.js is stubbed DIRECTLY as well, not just through utils/db.js: the
+// Adobe Sign work added `import { config } from '../../../config.js'` to
+// webhooks/docusign.ts for the `enableDocusignInbound` check, so config.ts's
+// module-scope `export const config = loadConfig()` now runs on a path the
+// db mock no longer intercepts, and loadConfig() throws
+// "Invalid worker configuration" without the full worker env. Mirrors the
+// `vi.mock('.../config.js')` pattern used across the worker suite.
+vi.mock('../../../src/config.js', () => ({
+  // Matches the real default (`enableDocusignInbound: boolFlag(false)`,
+  // src/config.ts). Nothing in this file exercises the inbound branch.
+  config: { enableDocusignInbound: false },
+}));
 vi.mock('../../../src/utils/db.js', () => ({
   db: { from: vi.fn(), rpc: vi.fn() },
 }));
