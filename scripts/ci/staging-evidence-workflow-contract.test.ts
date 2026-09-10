@@ -425,9 +425,11 @@ const MERGE_QUEUE_SKIP_EXPRESSION =
   "startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]'";
 
 function assertMergeQueueSkipActorContract(workflow: string): void {
+  // Step-level evidence skips; the metadata-only job predicate is separately
+  // guarded by merge-queue-edit-workflow-contract.test.ts.
   const values = workflow
     .split("\n")
-    .filter((line) => /^\s*if:/u.test(line))
+    .filter((line) => /^ {8}if:/u.test(line))
     .filter(
       (line) =>
         line.includes("github.head_ref") ||

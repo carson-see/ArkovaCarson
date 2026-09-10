@@ -31,21 +31,22 @@ on:
     # go stale relative to the PR body/evidence and `gh pr checks` still
     # reports the old run as current. The job is a read-only script + one
     # Supabase Management API call (<1 min), so re-running it on every body
-    # edit is cheap; the PR-ref concurrency group below still coalesces
-    # rapid-fire edits to the latest one.
+    # edit is cheap; ordinary PR edits still coalesce to the latest run.
     types: [opened, synchronize, reopened, edited]
 
-# Cancel stale runs on the same PR/branch — no reason to keep a drift-check
-# running when a newer commit (or, per SCRUM-3029, a newer body edit) has
-# replaced it. `github.ref` for pull_request events is already PR-scoped
-# (refs/pull/<n>/merge), so this also coalesces back-to-back `edited` runs.
+# SCRUM-4565: Mergify edits its speculative PR body as required checks change.
+# Those body-only updates are metadata, not new source/evidence. Give them a
+# separate cancellation group AND a different skipped job name below: they
+# must neither cancel a source check nor replace its success/failure status.
+# Real source/base changes and all ordinary PR evidence edits still run.
 concurrency:
-  group: migration-drift-${{ github.ref }}
+  group: migration-drift-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && 'status-edit' || 'gate' }}
   cancel-in-progress: true
 
 jobs:
   check:
-    name: Check supabase/migrations vs prod
+    if: ${{ !(github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]') }}
+    name: ${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && 'Migration drift status edit' || 'Check supabase/migrations vs prod' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

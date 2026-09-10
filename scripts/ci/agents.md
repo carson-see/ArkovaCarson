@@ -813,3 +813,13 @@ Historical change log: [./agents-changelog.md](./agents-changelog.md)
 ## 2026-09-05 — PR #2440 subtype opt-out release review
 
 Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
+
+## 2026-09-10 — SCRUM-4565: required-check cancellation and name isolation
+
+`merge-queue-edit-workflow-contract.test.ts` guards the staging/drift routing for
+Mergify speculative body updates. Its negative controls reject spoofable branch
+identity, ignoring base changes or ordinary edits, sharing the source cancellation
+group, and replacing a required check with a skipped metadata result. Existing
+staging workflow checks continue to guard live body/head/base reads and the
+canonical per-step Mergify identity predicates; the new job-level routing has its
+own contract. No evidence requirement, migration audit, or gate bypass changes.
