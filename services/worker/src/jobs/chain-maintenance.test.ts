@@ -140,7 +140,8 @@ describe('Chain Maintenance Jobs', () => {
     it('skips in mock/test mode', async () => {
       mockConfig.useMocks = true;
       const result = await detectReorgs();
-      expect(result).toEqual({ checked: 0, reorgsDetected: 0, reverted: 0 });
+      // completed: true — mock mode has nothing to do, which is not a failure.
+      expect(result).toEqual({ checked: 0, reorgsDetected: 0, reverted: 0, completed: true });
     });
 
     it('skips when advisory lock not acquired', async () => {
@@ -149,13 +150,121 @@ describe('Chain Maintenance Jobs', () => {
       // Mock fetch to simulate chain tip failure.
       global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 } as Response);
       const result = await detectReorgs();
-      expect(result).toEqual({ checked: 0, reorgsDetected: 0, reverted: 0 });
+      // SCRUM-3836: a failed tip fetch is an incomplete run, not a clean one.
+      expect(result).toEqual({
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'tip_unavailable',
+      });
     });
 
     it('returns zero when chain tip fetch fails', async () => {
       global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 } as Response);
       const result = await detectReorgs();
       expect(result.checked).toBe(0);
+    });
+
+    // SCRUM-3836 — the regression that let reorg detection report healthy in
+    // prod for 1,108 consecutive runs while inspecting zero anchors. The
+    // candidate query was killed by statement_timeout, the error was folded
+    // into the "no anchors" case, and the route returned 200. These tests pin
+    // the three outcomes apart so that can never collapse again.
+    it('reports NOT completed when the candidate query fails (never "no reorgs")', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true, text: async () => '100',
+      } as Response);
+
+      const chain = mockDbChain(null, { code: '57014', message: 'canceling statement due to statement timeout' });
+      mockDb.from.mockReturnValue(chain);
+
+      const result = await detectReorgs();
+      expect(result.completed).toBe(false);
+      expect(result.reason).toBe('candidate_query_failed');
+      expect(result.checked).toBe(0);
+      // A failed scan must be loud. Silence here is the whole defect.
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it.each(['', '100oops', '-1', '1.5', '9007199254740992'])('rejects malformed chain tip %j before querying anchors', async (tip) => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => tip } as Response);
+      mockDb.from.mockReturnValue(mockDbChain([], null));
+      const result = await detectReorgs();
+      expect(result).toMatchObject({ completed: false, reason: 'tip_unavailable' });
+      expect(mockDb.from).not.toHaveBeenCalled();
+    });
+
+    it.each(['http503', 'timeout', 'missing-confirmed', 'missing-height', 'missing-block-hash'])('reports incomplete transaction evidence for %s without reverting', async (fault) => {
+      const chain = mockDbChain([{ id: 'a1', org_id: 'o1', chain_tx_id: 'tx1', chain_block_height: 99, chain_block_hash: 'stored' }], null);
+      mockDb.from.mockReturnValue(chain);
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, text: async () => '100' });
+      if (fault === 'timeout') fetchMock.mockRejectedValueOnce(new Error('network timeout'));
+      else if (fault === 'http503') fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+      else fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ status: fault === 'missing-confirmed' ? {} : fault === 'missing-height' ? { confirmed: true } : { confirmed: true, block_height: 99 } }) });
+      global.fetch = fetchMock;
+      const result = await detectReorgs();
+      expect(result).toMatchObject({ completed: false, reason: 'transaction_check_failed', reverted: 0 });
+      expect(chain.update).not.toHaveBeenCalled();
+      expect(mockLogger.info).not.toHaveBeenCalledWith(expect.anything(), 'Reorg detection complete — no reorgs');
+    });
+
+    it.each(['tip', 'transaction'])('bounds a stalled %s response body and reports incomplete', async (stage) => {
+      vi.useFakeTimers();
+      try {
+        const stalled = () => new Promise<never>(() => {});
+        const chain = mockDbChain([{ id: 'a1', org_id: 'o1', chain_tx_id: 'tx1', chain_block_height: 99, chain_block_hash: 'stored' }], null);
+        mockDb.from.mockReturnValue(chain);
+        global.fetch = stage === 'tip'
+          ? vi.fn().mockResolvedValue({ ok: true, text: stalled })
+          : vi.fn().mockResolvedValueOnce({ ok: true, text: async () => '100' }).mockResolvedValueOnce({ ok: true, json: stalled });
+        let settled = false;
+        const result = detectReorgs().then((value) => { settled = true; return value; });
+        await vi.advanceTimersByTimeAsync(10001);
+        expect(settled).toBe(true);
+        expect(await result).toMatchObject({ completed: false, reason: stage === 'tip' ? 'tip_unavailable' : 'transaction_check_failed' });
+        expect(chain.update).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('reports completed when the window is genuinely empty', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true, text: async () => '100',
+      } as Response);
+
+      const chain = mockDbChain([], null);
+      mockDb.from.mockReturnValue(chain);
+
+      const result = await detectReorgs();
+      expect(result.completed).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('reports NOT completed when the chain tip is unavailable', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 } as Response);
+
+      const result = await detectReorgs();
+      expect(result.completed).toBe(false);
+      expect(result.reason).toBe('tip_unavailable');
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    // Soak finding (cron-chain-batch, 2026-08-30): the tip fetch's own
+    // AbortSignal.timeout(10000) REJECTS rather than resolving with a
+    // non-ok Response, and detectReorgs is a bare try/finally with no catch
+    // — so this used to propagate out of the function instead of hitting the
+    // `!tipResp.ok` branch above, bypassing the completed/reason contract
+    // entirely. Observed 3 times in a 30-minute window on the soak rig.
+    it('reports NOT completed (tip_unavailable) when the tip fetch throws (timeout/network error)', async () => {
+      global.fetch = vi.fn().mockRejectedValue(
+        new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      );
+
+      const result = await detectReorgs();
+      expect(result).toEqual({
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'tip_unavailable',
+      });
+      expect(mockLogger.error).toHaveBeenCalled();
     });
 
     it('returns zero when no recently SECURED anchors', async () => {
@@ -224,6 +333,7 @@ describe('Chain Maintenance Jobs', () => {
       tipHeight: number;
       txStatus: { confirmed: boolean; block_height?: number; block_hash?: string };
       credentialTypeRows?: Array<{ public_id: string; credential_type: string }>;
+      updateError?: { code: string; message: string };
     }) {
       const updateChains: Array<ReturnType<typeof mockDbChain>> = [];
       const auditInsert = vi.fn(() => Promise.resolve({ data: null, error: null }));
@@ -262,7 +372,7 @@ describe('Chain Maintenance Jobs', () => {
         return {
           select: vi.fn(() => makeSelectBuilder()),
           update: vi.fn((...args: unknown[]) => {
-            const updateChain = mockDbChain({ id: 'updated' }, null);
+            const updateChain = mockDbChain(opts.updateError ? null : { id: 'updated' }, opts.updateError ?? null);
             const updateFn = updateChain.update as (...a: unknown[]) => unknown;
             updateFn(...args);
             updateChains.push(updateChain);
@@ -284,6 +394,16 @@ describe('Chain Maintenance Jobs', () => {
 
       return { updateChains, auditInsert };
     }
+
+    it('reports incomplete when a required reorg status revert fails', async () => {
+      mockReorgRun({
+        anchors: [{ id: 'a1', org_id: 'o1', chain_tx_id: 'tx1', chain_block_height: 99, chain_block_hash: 'old' }],
+        tipHeight: 100,
+        txStatus: { confirmed: true, block_height: 99, block_hash: 'new' },
+        updateError: { code: '57014', message: 'statement timeout' },
+      });
+      expect(await detectReorgs()).toMatchObject({ completed: false, reason: 'transaction_check_failed', reorgsDetected: 1, reverted: 0 });
+    });
 
     it('reverts SECURED → SUBMITTED on a same-height reorg (different block_hash) (BUG-A)', async () => {
       const anchor = {
@@ -316,6 +436,7 @@ describe('Chain Maintenance Jobs', () => {
         ),
       );
       expect(revertUpdate).toBeDefined();
+      expect(revertUpdate!.eq).toHaveBeenCalledWith('legal_hold', false);
       expect(revertUpdate!.update).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'SUBMITTED' }),
       );
@@ -402,11 +523,47 @@ describe('Chain Maintenance Jobs', () => {
 
   // ─── NET-1: Stuck TX Monitor ──────────────────────────────────────
 
+  // SCRUM-3836: the sibling jobs carried the identical `if (error || empty)`
+  // collapse that hid the reorg detector's statement_timeout. Pinned here so a
+  // failed candidate query can never again read as "nothing to do".
+  describe('SCRUM-3836 — sibling jobs must not swallow a failed candidate query', () => {
+    const dbError = { code: '57014', message: 'canceling statement due to statement timeout' };
+
+    it('monitorStuckTransactions reports NOT completed on query failure', async () => {
+      mockDb.from.mockReturnValue(mockDbChain(null, dbError));
+      const result = await monitorStuckTransactions();
+      expect(result.completed).toBe(false);
+      expect(result.reason).toBe('candidate_query_failed');
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it('monitorStuckTransactions reports completed on a genuinely empty queue', async () => {
+      mockDb.from.mockReturnValue(mockDbChain([], null));
+      const result = await monitorStuckTransactions();
+      expect(result.completed).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('rebroadcastDroppedTransactions reports NOT completed on query failure', async () => {
+      mockDb.from.mockReturnValue(mockDbChain(null, dbError));
+      const result = await rebroadcastDroppedTransactions();
+      expect(result.completed).toBe(false);
+      expect(result.reason).toBe('candidate_query_failed');
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it('rebroadcastDroppedTransactions reports completed when nothing is dropped', async () => {
+      mockDb.from.mockReturnValue(mockDbChain([], null));
+      const result = await rebroadcastDroppedTransactions();
+      expect(result.completed).toBe(true);
+    });
+  });
+
   describe('monitorStuckTransactions (NET-1)', () => {
     it('skips in mock/test mode', async () => {
       mockConfig.useMocks = true;
       const result = await monitorStuckTransactions();
-      expect(result).toEqual({ checked: 0, stuck: 0, recovered: 0 });
+      expect(result).toEqual({ checked: 0, stuck: 0, recovered: 0, completed: true });
     });
 
     it('returns zero when no stuck anchors', async () => {
@@ -557,7 +714,7 @@ describe('Chain Maintenance Jobs', () => {
 
       const result = await monitorStuckTransactions();
 
-      expect(result).toEqual({ checked: 1, stuck: 1, recovered: 0 });
+      expect(result).toEqual({ checked: 1, stuck: 1, recovered: 0, completed: true });
       expect(mockGetChainClientAsync).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
@@ -756,7 +913,7 @@ describe('Chain Maintenance Jobs', () => {
     it('skips in mock/test mode', async () => {
       mockConfig.useMocks = true;
       const result = await rebroadcastDroppedTransactions();
-      expect(result).toEqual({ checked: 0, rebroadcast: 0, failed: 0 });
+      expect(result).toEqual({ checked: 0, rebroadcast: 0, failed: 0, completed: true });
     });
 
     it('returns zero when no old anchors', async () => {
