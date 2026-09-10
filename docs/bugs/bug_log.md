@@ -1,6 +1,16 @@
 # Arkova Bug Log
 _Last updated: 2026-05-15 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 64 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dep-bump sprint + 8 from 2026-04-21 top-10 UAT sprint batch 1 + 5 from 2026-04-21 batch 2 + 1 from 2026-04-21 10-story sprint + 1 SCRUM-952 trust-surface closure)_
 
+## 2026-09-05 — PR #2571 independent release review
+
+| Issue | Severity | Reproduction | Remediation and qualification |
+|---|---|---|---|
+| [SCRUM-4455](https://arkova.atlassian.net/browse/SCRUM-4455) | P1 | Original isolated runtime: initial7 + separate11 = balance18/ledger18; same-key replay gives balance7/ledger25. Four concurrent grants5 all return201, balance15/ledger20. | 0439 atomic organization/quota/grant/receipt; current persisted balance on replay, payload/actor conflict rejection, service-only authority and rollback tests. Fresh48h qualification required. |
+| [SCRUM-4456](https://arkova.atlassian.net/browse/SCRUM-4456) | P1 | Account provisioned intoA receives membershipB through email-domain auto-association. INDIVIDUAL/null silently getsB too. Both authenticated users can readB through real RLS. | Service-written Auth app_metadata marker +0439 domain guard preserving0436 pending-email restriction. VerifyA-only/no-org, ordinary verified membership and forged-user-metadata negative controls. Fresh48h qualification required. |
+| [SCRUM-4460](https://arkova.atlassian.net/browse/SCRUM-4460) | P1 | Recovery links redirect into PublicOnly login; the app had no password-setting route, leaving provisioned users without durable password access. | Dedicated /set-password page and Auth hook, server-verified user, real password write; red/green tests and real recovery-to-password-login verification required before clock. |
+
+Original704-cycle run3 evidence is retained unchanged. Its zero-credit concurrency and response-only tenant assertions do not qualify these invariants. Production remains unchanged.
+
 ## 2026-05-15 — SCRUM-952 Public Verification Trust-Surface Closure
 
 SCRUM-952 closed the UAT trust-surface bug where public `/verify/:publicId` could mix final-verification language with an awaiting-confirmation badge. The historical Jira/Confluence reference is BUG-2026-05-15-001.
@@ -1258,3 +1268,7 @@ Brand assets were never created/integrated. `index.html` has minimal `<head>` wi
 | 2026-03-11 ~12:30 AM EST | E2E testing + stress testing sprint complete (116 new tests). No new bugs found. Documentation audit: updated stale CRIT-1/4/5/6 references across 9 story docs + 3 confluence docs. |
 | 2026-03-12 | Full audit: 3 new bugs (BUG-AUDIT-01 toast system, BUG-AUDIT-02 dead footer links, BUG-AUDIT-03 missing brand assets). Active: 5, Resolved: 15. Linked to MVP-02, MVP-03, MVP-04 stories. |
 | 2026-03-11 | SonarQube remediation sprint complete (8 batches). Fixed: S2068 hard-coded credentials, S6437 ReDoS, S8215 Express disclosure, S2004 nested functions, 24 security hotspots, HIGH/MEDIUM/LOW severity issues across ~30 files. 66 MAJOR/MINOR issues verified as already fixed (stale). 2 false positives marked (S3776 csvParser + check-copy-terms). All worker type errors resolved. Branch: `fix/sonarqube-security-hotspots`. |
+
+### 2026-09-05 — SCRUM-4460: confirmation invalidated returned activation link
+
+The real worker-created recipient probe returned immediate `otp_expired`: `auth.users.recovery_token` still matched the link, but confirmation after link generation had removed its `auth.one_time_tokens` row. Manual and failed-email delivery now confirm after placement, then mint the returned recovery link. Successful email delivery remains unconfirmed until the recipient acts. Both fallback paths have stateful regression tests; failed browser/DB receipts are preserved. The direct-GoTrue password-page test alone did not establish this full workflow.

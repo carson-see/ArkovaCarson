@@ -2,6 +2,15 @@
 
 Shared TypeScript type definitions for the worker service.
 
+## 2026-08-30 — org_integrations.webhook_id (manual patch, not a live regen)
+
+Migration `0426` (file-only, unapplied) adds `public.org_integrations.webhook_id text`; hand-patched
+into `database.types.ts` here and in `src/types/` so `services/worker/src/api/v1/webhooks/adobe-sign.ts`
+`findIntegration()` — which has queried this column since it was written, against a column that
+never existed anywhere (prod included) — can drop its `(db as any)` cast once this lands. Same
+manual-patch caveat as the `0405` note below: regenerate with `npm run gen:types` once `0426` reaches
+a project this can generate against.
+
 ## 2026-08-10 — organization_field_policies (manual patch, not a live regen)
 
 Migration `0405` (file-only, unapplied) adds `public.organization_field_policies`; hand-patched into
@@ -49,6 +58,21 @@ After a clean local `supabase db reset --local`, the canonical generator added t
   payments-disabled bypass, or a verified opaque `payerKey`. Never add a raw
   wallet address to this request type.
 
+## 2026-08-30 — R1 / migration 0427 (HAND-EDITED, needs a real regen)
+
+`anchor_proofs` gained `tx_inclusion_branch` (jsonb) + `tx_block_index`
+(integer). Both were added to `database.types.ts` **by hand**, not by
+`gen:types` — the migration is file-only and has been applied to no database, so
+there was nothing to generate from. Treat these two entries as a stand-in:
+**regenerate properly once `0427` is applied**, and expect the regen to also
+pick up whatever else this copy has drifted on.
+
+Note this file is a SEPARATE copy from `src/types/database.types.ts` and the two
+have already drifted (the frontend copy carries `materialize_run_id`, this one
+does not). This is the copy `TypeSafeDatabase` — and therefore every worker
+Supabase call — actually compiles against, so a column added to only the
+frontend copy will still fail the worker typecheck with a
+`SelectQueryError<"column ... does not exist">`. Update both.
 ## 2026-09-05 — SCRUM-4035 OAuth confirmation RPC
 
 `manage_oauth_email_confirmation` was generated using Supabase postgres-meta against the

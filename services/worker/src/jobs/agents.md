@@ -1,5 +1,8 @@
 # services/worker/src/jobs/agents.md
 
+## 2026-09-05 — PR #2495 release review: incomplete reorg scans remain failures
+
+`detectReorgs` now rejects malformed or unreadable tip heights, non-404 transaction lookup failures, missing confirmation status/block identity, and failed status reverts with `completed: false`. Successful sibling checks retain their counts, but any failed required check prevents the existing cron route from returning a healthy 200. The SECURED-to-SUBMITTED compare-and-set also repeats `legal_hold = false`, so a hold added after selection wins at write time. This enforces the existing legal-hold invariant without adding an anchor transition. Regression probes were observed failing before the changes; production is unchanged and fresh T3 staging remains required.
 ## 2026-09-05 — oldest DocuSign release candidate integration
 
 PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
@@ -1398,6 +1401,143 @@ Three changes, each with tests that fail without it:
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
 
+## 2026-08-30 — R1: the confirmation-proof watermark is a SET of columns
+
+`confirmation-proof-populate.ts` now persists the bitcoin-tree inclusion branch
+and the tx's block index (migration `0427`: `tx_inclusion_branch`,
+`tx_block_index`) alongside `block_header` / `block_hash`.
+`fetchConfirmationProof` had been computing and validating both on every pass
+and the job dropped them on the floor — a prod census of
+`anchor_proofs.raw_response` found 0 rows carrying either.
+
+Three things to know before touching this job:
+
+- **The scan watermark is `.or('block_header.is.null,tx_inclusion_branch.is.null')`,
+  not `.is('block_header', null)`.** The single-column form was correct only
+  while `block_header` was the only bitcoin-tree column. The moment a second one
+  existed it became a trap: every row a previous pass had already given a header
+  was permanently invisible, so the new columns could only ever be filled for
+  anchors confirmed *after* the deploy and the entire back catalogue would never
+  backfill. **If you add a third bitcoin-tree column, add it to the OR** —
+  otherwise you have re-created the same bug one column over. `tx_block_index`
+  is deliberately absent from the OR: it is written in the same UPDATE as the
+  branch, so it is never independently null.
+- **The scan selects and threads `block_hash` as `expectedBlockHash`.** It used
+  to pass `null` with a comment explaining that nothing was recorded yet — true
+  when the scan could only ever see virgin rows. Now that already-populated rows
+  are back in scope, `block_hash` is the ONLY thing that distinguishes a
+  legitimate branch backfill from overwriting evidence recorded under a block
+  the tx has since left. Do not "simplify" it back to null.
+- **There are TWO reorg gates, on purpose.** `fetchConfirmationProof` refuses to
+  return `confirmed` when the tx moved blocks, but it is handed ONE
+  `expectedBlockHash` for a whole tx group. If anchors in a group disagree about
+  the recorded block, the group gate can only arm for one of them — so the
+  write-set build re-checks per anchor and counts the skips in
+  `anchorsBlockMismatch`. A non-zero value there is a reorg or a corrupted row,
+  and it is a counted result field precisely so it is not inferred from a gap
+  between `txConfirmed` and `anchorsUpdated`.
+
+**Operational note on the widened watermark.** Fixing K3 deliberately re-opens a
+backfill: every `anchor_proofs` row that already has a header now matches the
+scan again until its branch is written. Two things follow.
+
+- There is **no index on `block_header` and none on `tx_inclusion_branch`** —
+  `git grep 'INDEX.*anchor_proofs'` shows only `anchor_id`, `batch_id`,
+  `receipt_id`, `materialize_run_id` and the supplementary partial. So this is
+  not an index regression (the old single-column form was equally unindexed),
+  but the usual backfill tail applies: while most rows still match, `LIMIT 2000`
+  is satisfied almost immediately; once nearly all are populated, the scan has
+  to look further for each remaining row. If that tail ever bites, the fix is a
+  partial index on the incomplete set — which needs `CREATE INDEX CONCURRENTLY`
+  in its OWN migration file outside the transaction wrapper (see
+  `supabase/migrations/agents.md`), not a change to this predicate.
+- RPC load stays bounded regardless: the job fans in by unique `chain_tx_id`
+  before fetching, so a 2000-row page of a merkle batch is a handful of
+  `gettxoutproof` calls, not 2000.
+
+## 2026-08-31 — review fixes on `confirmation-proof-populate.ts` (B1 / H1 / H2 / H4 / M6)
+
+- **B1 — one stale row could starve its entire tx group, forever.** The group-level
+  reorg guard took `group.find((g) => g.expectedBlockHash)` — the FIRST non-null
+  recorded hash, decided by heap order. If that row was stale,
+  `fetchConfirmationProof` returned `stale`, the `confirmed` branch never ran, and
+  NOTHING was written for any anchor sharing that tx (up to 10,000 in a merkle
+  batch) — on every tick, with `anchorsBlockMismatch` stuck at 0 because the
+  per-anchor gate below was never reached. The guard now arms only on UNANIMOUS
+  agreement (`unanimousBlockHash`): any disagreement, or any anchor with nothing
+  recorded, disarms it and hands the decision to the per-anchor K1 gate, which is
+  strictly stronger. The old test passed only because it happened to list the good
+  anchor first; it now runs BOTH orderings and demands the same result.
+- **H1 — an unordered `LIMIT` let unpopulatable rows wedge the backfill.** No
+  `ORDER BY` over ~667k candidates means stable heap order, so rows that can never
+  complete came back first every run; once `maxRows` accumulated, the backfill
+  stopped advancing AND newly-SECURED anchors stopped receiving even
+  `block_header`. Now `.order('anchor_id', {ascending:true})` with a keyset
+  cursor — `anchor_id` is UNIQUE and btree-indexed, so it is a cheap total order
+  (unlike `created_at`, which is neither here). Honest limit: the cursor is
+  in-process, so a restart or a second Cloud Run instance sweeps from its own
+  start — still bounded forward progress, NOT a durable checkpoint. Callers
+  needing determinism pass `startAfterAnchorId`.
+
+  **Two ways this was got WRONG first; both are load-bearing, do not undo them.**
+
+  1. **The cursor filter is CONDITIONAL.** `anchor_id` is a Postgres `uuid`, so
+     there is no "start of keyspace" sentinel value: `.gt('anchor_id', '')` makes
+     PostgREST emit `anchor_id=gt.` and Postgres answers **400 `22P02 invalid
+     input syntax for type uuid: ""`**. The scan's error branch returns all-zero
+     counters and returns BEFORE assigning the cursor, so an empty-string seed is
+     not a bad first run — it is a permanent one, for the life of the process, in
+     every environment, with counters that read exactly like "no candidates".
+     A 48-hour T3 soak on that build would have produced a hollow pass. Omit the
+     filter when there is no cursor, exactly as `proofJobScan.ts:109` and
+     `proof-branch-backfill.ts:109` already do.
+  2. **The wrap condition is "the page came back EMPTY", never "shorter than
+     `maxRows`".** PostgREST truncates at the server's `db-max-rows` (the repo's
+     own `POSTGREST_ROW_LIMIT` is 1000) while `maxRows` defaults to 2000, so
+     `rows.length === maxRows` can be false on EVERY run — the cursor resets each
+     time and the rotation becomes a silent no-op, restoring the exact starvation
+     H1 exists to fix. This job does not control the row cap and must not assume
+     it does. (`api/v1/agents.md` records this class as a defect already paid for
+     once.)
+
+  The tests type-check `anchor_id` the way the column does, so a non-uuid
+  comparison fails the suite instead of passing it — a mock that only records
+  arguments cannot catch either bug.
+- **H2 — a header-present / hash-NULL row disarmed BOTH reorg gates.** That state
+  is schema-permitted and genuinely producible (`upsertAnchorProofs` and
+  `backfillProofCompleteness` write the two columns independently). Both gates
+  tested `expectedBlockHash` for truthiness, so such a row let the job fetch the
+  tx's CURRENT block and overwrite the stored 80-byte header with a DIFFERENT
+  block's — publishing a header for a block that never contained the commitment,
+  counted as success. A header identifies its own block, so the scan now selects
+  `block_header` and the guard falls back to `blockHashFromHeaderHex(...)`.
+
+  **An UNREADABLE header is a THIRD case and must NOT be treated as a mismatch.**
+  A first pass skipped those rows and counted them as `anchorsBlockMismatch`,
+  which converted a self-healing row into a permanent wedge: the row still
+  matches the scan predicate, so it is re-fetched from the RPC node every sweep,
+  never completes, and inflates a REORG metric each time. `block_header` has no
+  CHECK bounding its length and a pre-BUG-4 row holds the header as 160 ASCII
+  bytes rather than the raw 80, so the class is real. A value that cannot be
+  parsed as a header names no block and therefore cannot contradict the block the
+  tx is in — it is not weak evidence, it is no evidence. Such a row falls through
+  and is OVERWRITTEN (baseline behaviour, which repaired it), logged distinctly,
+  and the reorg counter stays a reorg counter. A READABLE header for a different
+  block is still refused.
+- **H4 — the write precondition did not name the values the write exists to
+  persist.** `proof.status === 'confirmed' && blockHeader && blockHash` said
+  nothing about `merkleBranch` / `txIndex`, both independently optional on
+  `ConfirmationProof`. A conforming producer could write a header-only row the
+  scan then re-selects forever. Now checked; a `confirmed` proof without inclusion
+  evidence counts as pending (so it retries) and logs a warn. The scan watermark
+  also gained `tx_block_index.is.null`, so a legacy half-pair row is repairable
+  instead of invisible.
+- **M6 — `tx_inclusion_branch` was selected and never read.** Dropped from the
+  select (filtering on a column does not require selecting it). The one thing the
+  stored branch could save is an RPC on a branch-without-index row, and the only
+  zero-RPC repair is to DERIVE the index from the branch's own positions — which
+  manufactures a pair the reader's index/side cross-check can never reject.
+  Re-deriving both halves from the chain is strictly better evidence.
 ## `rule-action-dispatcher.ts` — `fingerprint_source` is deliberately NULL (R19 §1.5)
 
 The anchor-creating actions (`AUTO_ANCHOR` / `FAST_TRACK_ANCHOR` / `INSTANT_SECURE`) set the top-level

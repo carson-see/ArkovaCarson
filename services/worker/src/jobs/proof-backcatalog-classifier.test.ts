@@ -32,6 +32,7 @@ import {
   createDbLocker,
   computeClassifierLockId,
   CLASSIFIER_READ_ONLY_COLUMNS,
+  CLASSIFIER_WRITABLE_COLUMNS,
   CHECKPOINT_JOB_TYPE,
   EXECUTE_CONFIRM_TOKEN,
   DEFAULT_MAX_BATCHES_PER_INVOCATION,
@@ -44,6 +45,7 @@ import {
   type ScanAnchorRow,
   type ClassifierProofRow,
 } from './proof-backcatalog-classifier.js';
+import { readAnchorProofsColumns } from './__tests__/anchorProofsColumns.js';
 
 // The job reads the confirm token default from typed config (SCRUM-1258
 // pattern). Mock it so the unit test loads without prod env; every test
@@ -564,7 +566,23 @@ describe('buildClassWriteSet: read-only proof columns are structurally unreachab
     }
   });
 
-  it('read-only set covers every existing proof column (incl. the 0340 chain-data columns)', () => {
+  // M4: derived from the schema, not from a hand-kept twin of the guard.
+  it('every anchor_proofs column is either writable by the classifier or read-only', () => {
+    const columns = readAnchorProofsColumns();
+    expect(columns.length).toBeGreaterThan(10); // the parser actually found the table
+
+    const classified = new Set<string>([
+      ...CLASSIFIER_WRITABLE_COLUMNS,
+      ...CLASSIFIER_READ_ONLY_COLUMNS,
+    ]);
+    const unclassified = columns.filter((c) => !classified.has(c));
+    expect(
+      unclassified,
+      `unclassified anchor_proofs column(s) — add each to CLASSIFIER_WRITABLE_COLUMNS or CLASSIFIER_READ_ONLY_COLUMNS: ${unclassified.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('read-only set still names every existing proof column (incl. 0340 chain-data and 0427 inclusion columns)', () => {
     for (const col of [
       'merkle_root',
       'proof_path',
@@ -574,6 +592,8 @@ describe('buildClassWriteSet: read-only proof columns are structurally unreachab
       'op_return_payload',
       'batch_id',
       'receipt_id',
+      'tx_inclusion_branch',
+      'tx_block_index',
     ]) {
       expect(CLASSIFIER_READ_ONLY_COLUMNS).toContain(col);
     }

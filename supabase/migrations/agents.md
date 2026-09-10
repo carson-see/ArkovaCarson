@@ -217,10 +217,12 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0401` | `0401_fix_create_pending_recipient_rpc_fk_and_role.sql` | (this PR — recipient issuance FK hotfix) | **yes** | **Retires the SQL twin of a launch-blocking recipient-provisioning bug.** `create_pending_recipient(p_email, p_org_id, p_full_name)` (baseline:1764, never redefined) does `new_id := gen_random_uuid()` then `INSERT INTO profiles (id, ..., role, ...) VALUES (new_id, ..., 'MEMBER', ...)` — broken **twice, unconditionally**: (1) `'MEMBER'` is not a member of the `public.user_role` enum, whose only values are `INDIVIDUAL`/`ORG_ADMIN`/`ORG_MEMBER` (baseline:488-492), so every call raises 22P02 *before* it ever reaches the FK; (2) `profiles.id` is FK -> `auth.users(id)` (`profiles_id_fkey`, baseline:12085, convalidated, never dropped 0290-0400), so a standalone `gen_random_uuid()` raises 23503. Prod confirms it has never once succeeded: zero `PENDING_ACTIVATION` profiles, zero `activation_token` rows, `auth.users` count == `profiles` count. **Deliberately NOT "corrected" in SQL:** the function is called precisely when no auth user exists, and minting `auth.users` rows is GoTrue's job (password hashing, `auth.identities`, confirmation state) — a SECURITY DEFINER function writing straight into `auth.users` would mint unauthenticatable half-accounts, the same defect class. Dropping the FK is also wrong: `activate_user` never creates an auth user either, so those recipients could never log in. So the body is replaced with a loud `RAISE EXCEPTION` (`feature_not_supported`) naming the working path (`POST /api/recipients`), which **cannot regress any caller because 100% of calls already fail today** — a cryptic enum error simply becomes a self-documenting one, and a future author can no longer resurrect the broken write path by fixing the enum literal alone. Also `REVOKE ALL ... FROM PUBLIC, anon, authenticated` (baseline granted this SECURITY DEFINER `profiles` writer to both browser roles, baseline:13677-13679; `PUBLIC` named explicitly per the 0364 no-op catch), `service_role` retained. Zero runtime callers in either source tree — grep for `create_pending_recipient` across `src/`+`services/` returns only the two generated `database.types.ts` files. Signature unchanged ⇒ no `database.types.ts` delta. The real fix is worker-side in the same PR (`services/worker/src/api/recipients.ts` now creates the auth user first and rolls back with `deleteUser`, porting the `invitations.ts` pattern). Prefix derived per the next-free rule: `git fetch origin --prune` + `git log --all --diff-filter=A` over every ref shows **no** `04xx` prefix claimed anywhere; `origin/main` head is `0400`. Tier T3 (touches `supabase/migrations/`). Rollback (full original body + grants) in the file header. **APPLIED TO PROD 2026-08-10 (CTO, founder-authorized) and ledger-reconciled to numeric `0401` per CLAUDE.md §0 rule 10** — verified live via `list_migrations` on `vzwyaatejekddvltxyye` (row `version="0401"` present) when this branch was brought current with main on 2026-08-11, not assumed. This line previously read "NOT applied to prod or any rig — file-only, pre-soak", which was true when written and is now superseded; corrected in place rather than left to mislead the next prefix derivation. Because the orphan-row audit keys off the CHECKED-OUT tree, this PR carries its own `0401_*.sql` and so reconciles itself; the standalone exemption for every OTHER open PR during the in-flight window lives in PR #2136 (`exemptPrefixes: ["0401","0405"]`). **Next author claims `0406` — re-derive, do not trust this line** (`0402`-`0405` were claimed after this row was first written; prod head is `0405`). |
 | `0404` | `0404_dpa_redact_raw_querying_ip_and_correct_ip_hash_comment.sql` | DPA data-protection fix (this PR) | no | **DPA remediation — prod held RAW caller IPs while Schedules 1 + 2 warrant hashed ones.** Two `audit_events` writers (`api/v1/verify.ts` → `VERIFICATION_QUERIED`, `api/v1/credentials-ctdl.ts` → `ctdl.requested`) serialised `req.ip` verbatim into `details.querying_ip`; 16 prod rows carried literal IPv4/IPv6. Code is fixed in the same PR (keyed HMAC `querying_ip_hash`, `services/worker/src/lib/ip-hash.ts`). **Part 1** redacts `querying_ip` from historical rows, leaving a `querying_ip_redacted: true` marker so a redacted row stays distinguishable from one that never held an address (§1.5). NOT re-hashed — that would require the HMAC pepper inside a migration file, i.e. a prod secret in git and in the ledger. **Part 2** rewrites the `verification_events.ip_hash` COMMENT, which claimed 'SHA-256 hash of requester IP' for a column that is 0/164 populated in prod and *cannot* be populated (only writer is the browser via `log_verification_event()`, whose signature has no IP param). The column DROP is deliberately deferred: `bq-export-incremental.ts` selects `verifier_ip_hash:ip_hash` and `bq-export-schemas.ts` declares the mirror column, so a DROP must land with those changes or it breaks a live export. **Gotcha this file exists to record:** `audit_events` carries `FORCE ROW LEVEL SECURITY` and every policy on it is `TO authenticated, anon`, so FORCE RLS hides the rows from the migration's own **SELECT**, not just its UPDATE — verified on an isolated Postgres 17 cluster with a non-superuser owner (owner sees 0 rows with FORCE on, 5 with it off). An earlier draft scanned before suspending RLS and would have reported "nothing to redact" — a silent no-op that looks like success on any deployment whose migration role lacks BYPASSRLS. The suspension therefore wraps the read as well as the write, and the block is self-verifying (candidate count vs `ROW_COUNT`, raises on mismatch), idempotent, and records its own `PII_REDACTION` audit row. Rehearsed end to end on that isolated cluster: correct rows redacted, malformed non-JSON row left untouched without aborting, controls restored (`relforcerowsecurity=t`, both triggers `O`, UPDATE rejected again), re-run is a clean no-op, and an injected mid-block failure rolled back with the raw IP intact and controls restored. Tier T3. Rollback in the file header — Part 2 reversible, Part 1 deliberately not. **Prefix derivation:** `git fetch --prune` + `git log --all --diff-filter=A` showed `0401` (`fix/create-pending-recipient-fk`, PR #2047) and `0402` (`0402_retire_activate_user_rpc.sql`) claimed; `0403` was flagged as in-flight by concurrent unpushed work, so this claims `0404` rather than race it. **Next author claims `0405` — re-derive, do not trust this line.** |
 | `0409` | `0409_lock_wait_observability_rpc.sql` | branch `ops/lock-barrier-detection` (this PR) | **no — needs RTE prod-apply** | Read-only `public.get_lock_waits(p_min_wait_seconds integer DEFAULT 60)` so the worker can see Postgres lock waits at all. Motivated by the 2026-08-11 P0: the FIFO barrier on `public.organizations` formed at ~16:35Z and user impact began at 16:40:11Z, and nothing in this system could observe that 5-minute gap because `pg_locks`/`pg_stat_activity` are not reachable through PostgREST. `STABLE SECURITY DEFINER SET search_path = public` — definer is required because `pg_stat_activity` redacts other sessions' rows for non-privileged roles, so `service_role` alone cannot tell how long another backend has been waiting. **Returns NO query text by design**: blocked/blocking statements can carry user data and this function's output ships to Cloud Logging and Sentry, so it exposes only relation, lock mode, wait seconds and pids (CLAUDE.md §1.4/§1.6). `REVOKE ALL FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE TO service_role`. Purely additive and inert until the `/jobs/lock-wait` cron in the same PR is deployed and its Cloud Scheduler job created. Cannot itself contribute to the barrier it detects — catalog reads only, no lock on any user table. **Prefix derivation:** `git fetch origin --prune` + `git log --all --diff-filter=A` on 2026-08-11 showed `0405`, `0406`, `0407` (claimed TWICE — `0407_supplementary_proof_anchor.sql` and `0407_widen_org_verification_status_for_kyb_rejection.sql`, an unresolved live collision worth someone's attention) and `0408` all claimed; `0409` was the first free prefix. **Next author claims `0410` — re-derive, do not trust this line.** |
+| `0434` | `0434_unified_credits_rollover_row_lock.sql` | PR #2442 | Not applied to staging or production | Locks the selected credit row before rollover so a concurrent committed debit cannot be erased. PostgreSQL concurrency reproduction fails against 0420 and passes with 0434. Prefix derived from main, reservations and all 34 open PR file lists on 2026-09-05 (maximum 0433). Signature unchanged; no type/seed shape change. |
 | `0415` | `0415_ferpa_directory_info_opt_out_public_projections.sql` | branch `fix/fd-ferpa-1-directory-opt-out-public-projections` (this PR) | **no — needs RTE prod-apply** | **FD-FERPA-1** — `anchors.directory_info_opt_out` shipped in archive migration `0197` with a column comment naming the FERPA §99.37 obligation, and **no SQL projection ever read it**. Adds `private.is_directory_info_suppressed(boolean, text)` and wires it into `public.get_public_anchor` and `public.search_public_credentials`; `get_public_anchor_by_fingerprint` is deliberately NOT redefined because it delegates its whole projection to `get_public_anchor` (0386) and inherits the change — redefining it would be pure 0376 risk for zero behavioural gain. **The predicate FAILS CLOSED on an absent credential type, and that is the entire fix:** measured on prod `vzwyaatejekddvltxyye` 2026-08-21, all three anchors carrying the flag have `credential_type IS NULL`, so a predicate keyed on the education set alone would have gone green and suppressed nothing for any of them. The live leak on those three records is `issuer_name` + `cpe_metadata.field_of_study` ("major field of study" is verbatim 34 CFR §99.3 directory information), **not** the "name, degree type, dates" the finding names — the name/title fields were already covered, but only accidentally, by 0390's unrelated NULL-type free-text rule. Suppression drops FIELDS only: the row filter is untouched and `verified` / `fingerprint` / chain receipt / block are never gated, so an opted-out record still verifies. Recorded residual: `credential_type` stays published on both anon surfaces because `verify.test.ts` pins the REST path emitting it, and one row answering two ways is the asymmetry this fix removes. Same PR fixes the REST twin (`suppressesDirectoryInfo` in `constants/ferpa.ts`): `buildVerificationResult` computed `anchor.credential_type && FERPA_EDUCATION_TYPES.includes(...)`, falsy for a NULL type, so that surface published directory fields for 100% of the affected records too. Bodies diffed against LIVE PROD `pg_get_functiondef` (`get_public_anchor` md5 `83770caee7e7fe9c1fa3963dadb387c2`, `search_public_credentials` md5 `6c2d77e1af8aeb2a56d316443ad090a1`, both identical to the 0385/0387 files, confirmed by replaying the whole migration set into a scratch database). Grants unchanged — `CREATE OR REPLACE`, no signature change, ACL verified byte-identical after apply (`anon=t, authenticated=t, service_role=t`, matching prod); the new `private` helper is `anon=f, authenticated=f, service_role=t`. **Prefix derivation:** `git log --all --diff-filter=A -- 'supabase/migrations/04*.sql'` on 2026-08-21 showed `0409` (main head) plus `0410`–`0414` claimed on unmerged branches; `0415` was the first free prefix. **Next author claims `0416` — re-derive, do not trust this line.** |
 | `0418` | `0418_sec_replay_dashboard_cache_refresher_revokes.sql` | (this PR — FD-17 second instance) | **no — file only, pre-soak** | **Grant-only replay-parity fix. Same class as `0414`, different root cause.** The four dashboard-cache refreshers — `refresh_cache_anchor_type_counts`, `refresh_cache_by_source`, `refresh_cache_pipeline_stats`, `refresh_cache_record_types` — are SECURITY DEFINER and were `anon` AND `authenticated` EXECUTE-able in every environment built from this directory, while prod revokes both. Unlike `0414`'s sixteen, their revokes are **not** in `docs/migrations-archive/` at all (`grep -rn 'REVOKE.*refresh_cache_' docs/migrations-archive/` is empty): the only in-repo source is the OPERATOR script `scripts/ops/ensure-pipeline-dashboard-cache-cron.ts` (`buildInstallFastPipelineStatsFunctionSql()`), which an operator ran against prod and which `supabase db push` never runs. Measured 2026-08-22 (read-only Management API, both projects): rig `fizyjojbebyalirtjjht` 266 anon-EXECUTE public functions / 75 SECDEF-and-anon vs prod `vzwyaatejekddvltxyye` 262 / 71 — the residual four are exactly these, prod ACL `{postgres=X,service_role=X}` on all four, rig ACL `{=X,postgres=X,anon=X,authenticated=X,service_role=X}`. **Parity, not a new security decision**: both roles are revoked because prod revokes both, and there is no authenticated-axis carve-out here (unlike `0414`'s `get_pipeline_stats` / `get_user_monthly_anchor_count`) because prod grants `authenticated` on none of the four and there is no browser caller — `grep -rn "rpc(['\"\`]refresh_cache"` across the repo returns zero hits. Only callers are service_role: `DASHBOARD_CACHE_REFRESHERS` in `services/worker/src/routes/cron.ts:1852-1858`, the ops script, and the SECURITY DEFINER wrapper `refresh_pipeline_dashboard_cache()` (inner privilege checks run as its postgres definer, not the caller). Siblings deliberately absent: `refresh_cache_anchor_tx_stats` is covered by `0378`, `refresh_cache_anchor_status_counts` by `0412` (PR #2235). **Ordering:** last definitions are `0335` (three of them) and the squashed baseline (`refresh_cache_pipeline_stats`); `0418 > 0335` so the revoke is terminal, and neither defining file may be edited — hence a compensating migration rather than an inline revoke. **CI:** because this file defines no function the per-file ratchet cannot see it, so the same PR adds `REPLAY_PARITY_REVOKES` + `hasTerminalReplayRevoke` to `scripts/ci/feedback-rules/secdef-function-grants.ts` and burns the four squashed-baseline keys out of `secdef-grants-baseline.json` (188 → 184) — deleting this migration turns them back into fresh violations and fails `Tests`. Verified by deleting it and watching CI go red. **Rehearsed** on an isolated throwaway Postgres 17 container (never prod, never a rig, never the shared local stack): fixture reproduces the rig ACL byte-for-byte, apply lands on prod's ACL byte-for-byte, re-apply is a clean no-op, rollback restores both role grants, forward-again is clean, and `anon` gets `permission denied` while `service_role` still executes directly and through the wrapper. Grant-only — no `database.types.ts` delta, no `NOTIFY pgrst`. Tier **T3** (touches `supabase/migrations/`). Rollback in the file header. **Prefix derivation:** `git fetch --prune` + full-ref `git ls-tree` + `gh pr list --json files` + on-disk scan of every sibling worktree + the live prod ledger (head `0409`); `0410`-`0415` claimed by open PRs #2219/#2235/#2248/#2314, `0415` is an unresolved two-way collision, `0416` claimed by `fix/secured-count-overstatement`. First claimed `0417`, **renumbered to `0418`** on finding `0417_cleanup_expired_data_singleton_advisory_lock.sql` written a minute earlier in worktree `keen-haslett-8f4379` — first claim wins. **Next author claims `0419` — re-derive, do not trust this line.** |
 | `0414` | `0414_sec_replay_missing_anon_revokes.sql` | (this PR — FD-17 / BUG-2026-08-12-005) | **no — file-only, applied NOWHERE (2026-08 freeze hold)** | **Replays the EXECUTE revokes that exist only in `docs/migrations-archive/` — anon on all 16, authenticated only where prod also revokes it (14 of 16).** The squashed baseline emits 48 `REVOKE ... FROM PUBLIC` and **zero** `FROM anon` / `FROM authenticated`, while its own `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON FUNCTIONS TO "anon"` (baseline:15095-15096) grants both roles EXECUTE **directly** at CREATE time — and a PUBLIC revoke never removes a direct role grant. The real revokes live in the archive (0061/0062/0160/0170/0173/0179/0187/0220/0221/0269/0283/0284/0286), which is off the replay path. Measured on the 2026-08 full-soak rig: **282 anon-executable functions vs prod's 262**, 20 SECURITY DEFINER functions anon-callable on the rig and correctly revoked in prod, including `admin_set_platform_admin` and `anonymize_user_data`. **Prod is NOT affected** (the archive migrations ran there historically); every environment built from the repo since the squash IS — including every future soak rig, which would otherwise produce evidence against a weaker posture than the prod it stands in for. Grant-only: 16 functions, no body/table/RLS/index change, no `database.types.ts` delta, no `NOTIFY pgrst` needed, idempotent (a no-op on prod by construction). FOURTEEN get `REVOKE ALL ... FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE ... TO service_role`; TWO — `get_user_monthly_anchor_count(uuid)` and `get_pipeline_stats()` — get `REVOKE ... FROM PUBLIC, anon` only with `GRANT EXECUTE ... TO authenticated, service_role` re-asserted, because **prod deliberately grants `authenticated` on those two** (ACL `{postgres=X,authenticated=X,service_role=X}`) and live browser code calls them as the signed-in user (`src/hooks/useEntitlements.ts` usage widget — falls back to 0 on error, so an over-revoke fails silently; `src/pages/PipelineAdminPage.tsx` client-RPC fallback). **Both axes verified against live prod `vzwyaatejekddvltxyye`: every signature from `pg_get_function_identity_arguments`, all sixteen `has_function_privilege('anon', …) = false` (2026-08-15 sweep), and `has_function_privilege('authenticated', …)` false on 14 / true on the 2 kept (2026-08-18 sweep — the first cut of this file skipped the authenticated axis and over-revoked those two, which would have regressed both UI paths on prod-apply)** — this replays decisions prod already made, including the decision to KEEP authenticated on that pair; it makes no new ones. **The `http*` family from archive 0112 is deliberately EXCLUDED:** the same prod sweep shows every `http*` function is anon-executable in prod (schema `extensions`), so replaying 0112 would make a rebuilt environment DIVERGE from prod rather than match it; they are also not SECURITY DEFINER and sit outside the PostgREST-exposed `public` schema. Sorts after 0392/0403, which `CREATE OR REPLACE` two of these functions and thereby re-trigger default privileges. Paired with an extension to `scripts/ci/feedback-rules/secdef-function-grants.ts` (baseline-only replay-path credit + two `statementTargets` matcher fixes + a `DELIBERATELY_AUTHENTICATED` set pinning the two kept functions so the anon axis stays ratcheted for them without ever ratcheting in an authenticated revoke prod never made) that burns 74 entries off `secdef-grants-baseline.json` (188 → 114). Tier T3 (touches `supabase/migrations/`). Rollback in the file header. **Prefix derivation:** `git log --all --diff-filter=A` over every ref plus `gh pr list` shows `0410` (`0410_partner_accounts.sql`), `0411`, `0412`, `0413` claimed by PRs #2235/#2219; `origin/main` head and the **prod numeric ledger head are both `0409`**. `0414` is the first free prefix. **Next author claims `0415` — re-derive, do not trust this line.** |
 | `0419` | `0419_sec_replay_v_slow_queries_relation_revoke.sql` | (this PR — FD-17 third instance) | **no — file-only, pre-soak, NOT applied to prod/rig** | **Replays the RELATION revoke for `public.v_slow_queries` — the third FD-17 instance and the first on the TABLE axis rather than the FUNCTION axis.** 0414 replayed sixteen archive-only EXECUTE revokes; 0418 (PR #2336) replayed four whose only in-repo source is the operator script `scripts/ops/ensure-pipeline-dashboard-cache-cron.ts`. Both are function revokes, and every ratchet guarding them (`scripts/ci/feedback-rules/secdef-function-grants.ts` + `secdef-grants-baseline.json`) parses `CREATE FUNCTION` and reasons about `has_function_privilege` — so a VIEW could never appear in it. That blind spot is why this instance outlived both. The baseline creates the view (baseline:9502), sets its owner (9517) and grants `service_role` (15050) but never revokes, while `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES TO anon/authenticated` (baseline:15105-15106 — the TABLES sibling of the FUNCTIONS block at 15095-15096 that produced 0414/0418) grants both roles every relation privilege DIRECTLY at CREATE; the real revoke is archive-only (`docs/migrations-archive/0192_enable_pg_stat_statements.sql:33`). Note baseline:15050 is ADDITIVE — a lone `GRANT ALL ... TO service_role` next to a definition removes nothing (relation-axis twin of the 0364 no-op-revoke catch). **Measured 2026-08-22:** prod `vzwyaatejekddvltxyye` = `postgres=arwdDxtm/postgres service_role=arwdDxtm/postgres`, anon+authenticated SELECT both false; a container replay of the baseline shape = anon AND authenticated holding all eight relation privileges. The view is definer-rights (`reloptions = <none>`, grandfathered in `scripts/ci/snapshots/views-security-invoker-baseline.json`), so on a rebuilt environment an unauthenticated PostgREST caller reads `extensions.pg_stat_statements` through it — 200 chars of query text × 50 statements. Invoker semantics deliberately NOT changed here (own soak); grant-only. **Prod unaffected** — archive 0192 ran there historically; every environment rebuilt from the repo since the squash IS affected, including every soak rig. Found by a full prod-vs-replay ACL parity sweep (all 366 `public` functions, all 124 tables/views/matviews, both sequences): 15 relations diverge, 12 are correctly revoked on the replay path, `calibration_features`/`partner_accounts` are absent from the replay path entirely (claimed by PR #2235 `0413` / PR #2219 `0410`), and the 5 dashboard-cache refreshers are claimed by PR #2336 `0418` / PR #2235 `0412` — **deliberately not duplicated here**. The operator-script axis itself yielded no new uncovered object. Paired with a NEW relation-level ratchet `scripts/ci/feedback-rules/relation-anon-grants.ts` (+19 tests) pinning `public.v_slow_queries` in `REPLAY_PARITY_REVOKES`; verified that deleting 0419 turns both `Policy Lints` and the gated `Tests` job red. No `secdef-grants-baseline.json` key to burn — that list only ever held SECURITY DEFINER functions. Grant-only: no view/body/table/RLS/index change, no `database.types.ts` delta, no `NOTIFY pgrst` needed, idempotent (no-op on prod by construction). Not a hot table, so no `SET LOCAL lock_timeout` required. Rehearsed 2026-08-22 on an isolated throwaway Postgres 17 container (never prod, never a rig, never the shared local stack): forward → rollback → forward, terminal ACL byte-identical to live prod, `service_role` still reads, `anon` gets `permission denied for view v_slow_queries`. Tier T3. Rollback in the file header. **Next author claims `0420` — re-derive, do not trust this line.** |
+| `0427` | `0427_proof_tx_inclusion_branch.sql` | branch `feat/proof-tx-inclusion-branch` (this PR) | **no — file only, NOT applied to prod, shared staging, or any rig** | **R1 — persists the bitcoin-tree inclusion branch the worker already computed and threw away.** `services/worker/src/chain/confirmation-proof.ts` fetches, parses and validates the tx→block Merkle branch (`merkleBranch`) and the tx's index in its block (`txIndex`) on every confirmation pass; `jobs/confirmation-proof-populate.ts` then persisted only `block_header` + `block_hash` and discarded both. A prod census of `anchor_proofs.raw_response` found 0 rows carrying either and there was no column for them. Adds two ADDITIVE NULLABLE columns to `public.anchor_proofs`: `tx_inclusion_branch` (jsonb, same `{hash,position}[]` shape as `proof_path`) and `tx_block_index` (integer). **Naming is deliberate:** these are the layer-2 BITCOIN tree — byte-reversed (display) hex, Bitcoin double-SHA256 positional rule, odd-row last-node duplication — a DIFFERENT convention from the layer-1 app tree's `proof_path`/`merkle_index`. Calling this `merkle_proof` would invite a verifier to fold one tree with the other's rule; the byte orientation and fold rule are spelled out in both `COMMENT ON COLUMN` bodies and in the `ProofBundle` docstring. **No CHECK constraint by design** — a validating CHECK on `tx_block_index` would take ACCESS EXCLUSIVE and scan every row to prove a vacuously-true property (all existing values are NULL); the writer (`utils/anchorProofs.ts`) and reader (`api/v1/verify-proof.ts`) validate shape instead. `SET LOCAL lock_timeout = '5s'` applied (§1.2): `anchor_proofs` is not one of the three tables the CI linter treats as hot, but every anchoring batch writes it and every `/proof` call reads it, so it gets the guard rather than an argument about the list. ADD COLUMN of a nullable column with no default is metadata-only on PG 11+ — no table rewrite. Grant/RLS surface untouched (0 policy/grant/revoke statements); the columns inherit the table's existing RLS. `NOTIFY pgrst, 'reload schema'` included. `database.types.ts` regenerated by hand in BOTH copies (`src/types/` and `services/worker/src/types/`) — the two are separate files and the worker's is the one `TypeSafeDatabase` compiles against. Verify API stays additive (§1.8): two nullable `proof_bundle` fields, **no `proof_schema_version` bump**, and they are deliberately NOT part of the bundle completeness gate — requiring them would retroactively withdraw the bundle from every record confirmed before this migration. Tier **T3** (touches `supabase/migrations/`). Rollback in the file header. **Prefix derivation:** `git log --all --diff-filter=A` over every ref plus `gh pr list --json files` across all open PRs — highest claimed anywhere is `0426`; `0427` is the first free prefix. **Next author claims `0428` — re-derive, do not trust this line.** |
 | `0428` | `0428_admin_profile_rpcs_remove_hot_table_trigger_ddl.sql` | (this PR — Jira story NOT yet filed, see PR body) | **no — file-only, pre-soak, NOT applied to prod/rig** | **Removes runtime DDL on the hot `profiles` table from three SECURITY DEFINER admin RPCs.** `admin_change_user_role`, `admin_set_platform_admin` and `admin_set_user_org` each wrapped their UPDATE in `ALTER TABLE profiles DISABLE/ENABLE TRIGGER` with no bounded `lock_timeout`. All three are reachable from the admin console (`services/worker/src/api/admin-actions.ts` → `POST /api/admin/users/:id/{change-role,promote-admin,set-org}`), so every platform-admin role change ran DDL against a table on the auth hot path. **Severity, measured — NOT the 2026-08-11 P0 mechanism.** `ALTER TABLE ... DISABLE/ENABLE TRIGGER` takes **ShareRowExclusiveLock**, not AccessExclusiveLock (measured on PG 17, `pg_locks`). Readers are therefore never blocked and `/api/v1/verify` was never exposed by this. WRITES are blocked, and the FIFO barrier is real on that axis: with one slow in-flight write held on `profiles`, an innocent write **to an unrelated row** waited **4.95 s** before this migration and **0.04 s** after. Unbounded, since there is no `lock_timeout`. **Why the DDL is deleted rather than guarded with a `lock_timeout`:** two of the three trigger-disables were never load-bearing. Measured with the triggers left ENABLED, called exactly as PostgREST calls them (`SET LOCAL ROLE service_role` + service_role JWT claims): `protect_privileged_fields` already bypasses (its function opens with `IF get_caller_role() = 'service_role' THEN RETURN NEW`) so the org_id write succeeded; `trg_protect_platform_admin` already permits (it gates on `current_setting('role')`) so the is_platform_admin write stuck; only `enforce_role_immutability` genuinely blocked, because `check_role_immutability()` had no bypass of any kind. Re-measured here rather than inherited from 0395: inside a SECURITY DEFINER function owned by `postgres`, `current_user` becomes `postgres` but BOTH `current_setting('role')` AND `get_caller_role()` still report the caller's role. **The fix:** (1) `check_role_immutability()` gains an exemption scoped to the RAISE only (so `role_set_at` stamping stays on the same path for every caller), keyed on a TRANSACTION-LOCAL FLAG `arkova.allow_role_change` that `admin_change_user_role` sets around its own UPDATE, AND a service_role caller — both must hold; unset reads NULL and fails CLOSED. **A review pass caught that the first cut, keying on `get_caller_role() = 'service_role'` alone, was far too broad.** The worker makes DIRECT service_role writes to `profiles.role` (`services/worker/src/api/invitations.ts`, `admin-org-members.ts` backfill `{ org_id, role }` guarded only by `.is('org_id', null)`), and `org_id IS NULL` does NOT imply `role IS NULL` — **prod holds 16 such profiles**. Those writes RAISE today and their callers log a non-fatal warning; the role-wide exemption would have silently started rewriting those users' roles on invite acceptance. `current_user = 'postgres'` is no narrower — `auto_associate_profile_to_org_by_email_domain`, `join_org_by_domain`, `set_onboarding_plan`, `update_profile_onboarding` are all postgres-owned SECDEF functions that update `profiles`. `set_config(..., is_local => true)` rolls back at end of transaction and PostgREST gives each request its own transaction, so the flag cannot outlive the call; `GET DIAGNOSTICS ... ROW_COUNT` replaces `FOUND`, which the trailing `set_config` PERFORM would clobber. (2) `protect_platform_admin_flag()` additionally accepts `get_caller_role()`, removing the RPC's dependence on the `role` GUC specifically; its silent-revert semantics for every other caller are deliberately unchanged (it fires on every `profiles` UPDATE). (3) `admin_set_platform_admin` captures the stored value via `UPDATE ... RETURNING` (one statement, no second index scan on a hot table; RETURNING reflects the row AFTER BEFORE-triggers) and RAISEs if the flag did not take — that trigger reverts SILENTLY, so this is what stops a rejected write returning HTTP 200 `{"success":true}` having changed nothing. (4) Authorization guards, validation, ordering and `User not found` behaviour are byte-identical (`FOUND` was verified to survive the removed `ALTER TABLE` statements, so those checks behaved correctly before and behave identically now). **Grant hygiene:** adds the `secdef-function-grants` REVOKE/GRANT next to each redefined routine. For the three admin RPCs this restates live prod (measured 2026-09-01: anon=f, authenticated=f, service_role=t) and is a no-op. `protect_platform_admin_flag` is a real tightening — the baseline grants it to anon/authenticated (baseline:14217-14219) and prod still does (0388/0414/0418 class); it is trigger-returning so it was never usefully callable over PostgREST, and Postgres does not check EXECUTE when firing a trigger — verified that after the REVOKE an `authenticated` UPDATE still fires the trigger, still gets its escalation reverted, and ordinary profile updates are unaffected. **Burns one `secdef-grants-baseline.json` entry (109 → 108).** **No `SET LOCAL lock_timeout` needed** — this migration alters no table, only function bodies. No `database.types.ts` delta (signatures unchanged; REVOKE is not ACL-filtered by `gen types`). `NOTIFY pgrst` included. Paired ratchet `src/tests/sec-0428-admin-profile-rpcs-no-hot-table-ddl.test.ts` (24 tests) pins a LATEST-DEFINITION invariant, because `check-hot-table-ddl-lock-timeout.ts` already detects all twelve of these statements and is silent only because the whole squashed baseline file is grandfathered per-FILE — it reads migration text, not live definitions, so it can never notice this fix and would not stop a future author copying the old body into a NEW migration. Verified that reintroducing the DDL turns BOTH that test and the hot-table gate red. Rehearsed 2026-09-01 on an isolated throwaway Postgres 17 cluster (never prod, never a rig, never the shared local stack): forward → rollback → forward, 14-case behavioural matrix green (service_role writes land; authenticated/anon/no-claims direct writes still blocked; is_platform_admin escalation still reverted; `role_set_at` still stamped; all three RPCs still reject non-service_role; `User not found` and validation errors preserved; read-back assertion fires against a deliberately hostile trigger; **regression guard**: a worker-shaped direct backfill of an INDIVIDUAL with no org is STILL blocked exactly as today, the `role IS NULL` case still succeeds and still stamps, the flag does not leak within a transaction, and an `authenticated` caller setting the flag itself is still rejected). TLA PreCheck re-run on all four machines — all green; no machine models `profiles`/`role`, so this change is N/A to them. Tier T3. Rollback in the file header. **Next author claims `0429` — re-derive, do not trust this line.** |
 | `0405` | `0405_org_field_policies_dpa_clause_4_6.sql` | (this PR — DPA clause 4.6 / HakiChain pilot) | **yes — applied to prod 2026-08-10, ledger row reconciled to numeric `0405`** (corrected 2026-08-11 during this PR's merge-of-main; the original "file-only, pre-soak" cell was true when written and went stale when the CTO applied it ahead of merge under migrate-before-merge, verified this session via `list_migrations` on `vzwyaatejekddvltxyye`, head `0407`). The table is inert on apply — 0 rows — so behavior is unchanged for every org until an operator inserts a policy row. | **First per-org request-field configuration in this schema.** Creates `public.organization_field_policies` (PK `org_id` FK→`organizations` ON DELETE CASCADE, `disallowed_fields text[]`, `enabled`, `policy_reason`, `contract_reference`), read by the worker's `enforceOrgFieldPolicy` on `POST /api/v1/anchor`, `POST /api/v1/anchor/bulk` and (by fall-through) the dashboard self-service bulk route. A DPA can oblige Arkova to reject a prohibited field INDEPENDENTLY of the counterparty agreeing to stop sending it; before this, `description` was accepted identically for every org and the only per-org write gate was whole-org suspension. **Deliberately NOT a jsonb column on `organizations`:** that table carries baseline policy `organizations_update_admin` (`FOR UPDATE TO authenticated USING is_org_admin_of(id)`) over `GRANT ALL ... TO authenticated`, and RLS is row-level not column-level, so an ORG_ADMIN can already PATCH any column of their own row — storing the policy there would let the regulated party switch off its own compliance control. **Two independent locks:** explicit `REVOKE ALL FROM PUBLIC, anon, authenticated` (the baseline's `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES TO anon, authenticated` at baseline:15104-15107 auto-grants every new public table — the 0388 trap), then `GRANT SELECT` to authenticated + `GRANT ALL` to service_role; RLS gives org members SELECT on their own row and platform admins SELECT, with **no** INSERT/UPDATE/DELETE policy for `authenticated` at all. Administration is service_role only. **Inert on apply:** enforcement keys off the presence of a row and this file inserts none, so applying it changes behaviour for zero organisations (the ~24.9k existing LEGAL anchors, 24.7k carrying a description, are untouched); the operator INSERT that arms it is documented in the file header. Element-shape CHECK is expressed via `array_to_string(...) ~ '...'` because a CHECK constraint cannot contain a subquery. `database.types.ts` updated **by hand in both copies** (`src/types/` + `services/worker/src/types/`) rather than via `supabase db reset --local` + `gen:types` — the shared local Supabase stack is concurrently mutated by other worktree sessions (same reasoning as the `0400` row); whoever applies this should run `npm run gen:types` once as a canonical-regeneration check. Tier **T3** (touches `supabase/migrations/`). Rollback in the file header (dropping the table is self-healing — the worker treats an absent table as "not deployed" and is permissive — but it also deletes the contractual control). **Prefix derivation (renumbered mid-session, 0403 → 0405):** claimed `0403` after `git fetch --prune` + `git log --all --diff-filter=A` + a scan of every sibling worktree's `supabase/migrations/`; on re-verification immediately before commit, `0403_fix_anonymize_user_data_verification_events_columns.sql` had appeared on a remote ref and `0404_dpa_redact_raw_querying_ip_and_correct_ip_hash_comment.sql` was present on disk in worktree `agent-a1ec59de36c7694e5` — both first-claim-wins, so this renumbered to `0405`. `0401` (`fix_create_pending_recipient_rpc_fk_and_role`) and `0402` (`retire_activate_user_rpc`) are also claimed. **Next author claims `0406` — re-derive, do not trust this line.** |
 | `0394` | `0394_sec_ce_provenance_key_authority.sql` | (this PR) | no | **CE provenance key forgery guard** — pre-existing gap confirmed 2026-08-03 during the #1938 adversarial review. `anchors.metadata.registry_url` projects RAW to anon via `get_public_anchor`'s allow-list (0362/0383, value-gated by 0385's `public_url_or_null` which has NO domain allow-list) and renders as the public verify page's "Registry reference" link — but nothing at the DB layer restricted who may WRITE it: `anchors_insert_own` says nothing about `metadata`, and 0384 guards only `verification_level`/`fingerprint_source`. Any authenticated user could insert `metadata.registry_url='https://attacker.example/phish'` and have the public verify page link it once SECURED. New sibling function `enforce_ce_provenance_key_authority()` + trigger `trg_strip_unattested_ce_provenance_keys` (BEFORE INSERT OR UPDATE OF metadata; name sorts after both existing anchors BEFORE-triggers, so no existing error path changes): for non-`service_role` callers the four service-stamped CE keys (`registry_url`, `ce_envelope_sha256`, `ce_registry_url`, `ce_registry_ctid`) are STRIPPED on INSERT and REVERTED to OLD on UPDATE (introduction stripped, tamper AND deletion undone — a stamped pair can never be split by a client write). Only legitimate writers are service_role (`credentials-ctdl-registry-anchor.ts`, `credential-source-import.ts`); the browser CTDL dialog calls those routes over `workerFetch`, so there is no producer to break. Deliberately a SEPARATE function, not a `CREATE OR REPLACE` of 0384's — wholesale redefinition is this schema's dominant failure mode (0376 clobber) and the sibling keeps each guard's rollback independent. `src/tests/sec-ce-provenance-key-authority.test.ts` pins the invariants against the HIGHEST-numbered redefining migration (0376-clobber protection) and drift-binds the guarded key set to the worker routes' stamped keys. Verified on an isolated throwaway Postgres 15 container (never prod, never shared staging): 12-case matrix red→green (9 forgery/tamper cases fail pre-0394, 12/12 pass post), ROLLBACK block extracted + executed (rc=0, red returns), re-apply idempotent ×2, trigger order confirmed via `pg_trigger`. Residual: rows forged BEFORE the trigger — audit query in the file header for RTE at prod-apply. `0393` is claimed by PR #1940 (`0393_scrum2940_anchors_folder_update_org_admin.sql`, already applied to prod per the exemption list). Prefix re-derived before claiming: max(main head `0392`, this table, open-PR claims incl. #1940's `0393`, full remote-branch scan showing `0394`+ free) + 1. Tier T3. **Next author claims `0395` — re-derive, do not trust this line.** |
@@ -229,6 +231,8 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0387` | `0387_public_search_learner_name_leak.sql` | (this PR) | **yes — applied out of band 2026-08-02, ahead of this PR** | **Confirmed LIVE leak, since fixed in prod.** `search_public_credentials` is anon-executable (`anon_execute=true`) and projected `'title', a.filename` RAW — the same learner-name PII 0385 removed from `get_public_anchor`, still exposed through the public search surface (search.arkova.ai). Verified in prod: `search_public_credentials('ava-williams',3)` returned `title = 'diploma-ava-williams.pdf'`, `credential_type = DEGREE`. Fixes BOTH sides: projection uses 0385's `private.*` label/cleaner, academic-record types are excluded from MATCHING (projection-only suppression would leave a hit-count oracle), non-academic rows match only on text the projection would print, and status narrows to `SECURED` (SUBMITTED was pre-publication filename disclosure). Based on the live prod body via `pg_get_functiondef` (md5 `411787e41120fda83c3aef4511b00da9` pre-fix). CTO applied this exact body directly on 2026-08-02 (pen-test window did not allow waiting for the normal PR/soak cycle); post-fix verification found zero academic hits on every learner-name probe, with legitimate ACRA/FINRA/USPTO public records still searchable. This PR's `0387_public_search_learner_name_leak.sql` was re-diffed against the live `pg_get_functiondef` output in-session (2026-08-02) and matches byte-for-byte — the repo file is the source of truth for what is running. It is a prod-orphan row, exempted in `scripts/ci/snapshots/ledger-numeric-exemptions.json` (`"0387"`) until this PR merges, at which point that exemption should be removed. Depends on 0385's helpers. Tier T3. Rollback in the file header. **Do NOT assume `0388`/`0389`/`0391` are free** — per `scripts/ci/snapshots/ledger-numeric-exemptions.json`'s own notes, `0388` is claimed/applied out of band (branch `claude/optimistic-perlman-9ff2fe`, PR #1863), `0389` is claimed file-only (branch `perf/anchors-ce-registry-ctid-index-0388`), and `0391` is claimed (PR #1871). `0390` is already merged to `main`. Next author: re-derive the true next-free prefix per the next-free rule at the top of this file (`max(main numeric head, this table, open-PR migrations) + 1`) rather than trusting any number asserted here. |
 | `0417` | `0417_cleanup_expired_data_singleton_advisory_lock.sql` | branch `claude/keen-haslett-8f4379` (this PR) | **no — file only, applied nowhere** | **BUG-2026-08-22-001 (P1) — `cleanup_expired_data()` deadlocks in PRODUCTION nightly.** `arkova-worker` runs `autoscaling.knative.dev/minScale = 2` (`gcloud run services describe`, 2026-08-22) and `routes/scheduled.ts` registers `cleanup-expired-data` on `0 2 * * *` in every instance, so two callers enter the `DROP TRIGGER` / `DELETE` / `CREATE TRIGGER` section on `audit_events` together and take the relation lock and the `pg_trigger` catalog-object lock (class 2620) in opposite orders. Cloud Logging shows SQLSTATE **40P01** on 2026-08-17/18/19/21 and duplicate `DATA_RETENTION_CLEANUP` audit rows on the nights both survived. Adds `pg_try_advisory_xact_lock(8675309, 2)` at the top of the body — the two-int Arkova namespace already used by `refresh_pipeline_dashboard_cache()` at `(8675309, 1)`; `2` is claimed here. **TRANSACTION-scoped is load-bearing**: `services/worker/src/jobs/run-lease.ts` rejected the SESSION-scoped `try_advisory_lock` RPC for singleton cron work because its release can land on a different PostgREST pool backend and no-op, wedging the lock — an xact lock has no release call to misroute. The guard lives in the FUNCTION, not the worker, so it also covers the Cloud Scheduler `POST /cron/cleanup-retention` path and operator smoke calls. Skip path writes **no** audit row and returns `skipped_concurrent_run: true` with `-1` not-measured sentinels (never `0`, which would falsely assert an empty purge); `success` stays `true` because a skip is the guard working. **STACKS ON `0411`** (PR #2235, `fix/data-integrity-soak-cluster`): everything below the guard is 0411's body verbatim, so this file yields the correct end state in either merge order, but it must NOT be applied BEFORE 0411 — that would silently fast-forward another PR's unlanded work. `0411` is necessary and NOT sufficient: it catches `lock_not_available` (55P03), and a deadlock raises 40P01, which that handler does not match. **Verified on real Postgres 15.18** in a throwaway container (private port, never the shared local stack), 6 concurrent callers x 5 rounds: 0411 alone = **24 deadlocks** and a round that wrote **2** cleanup rows; 0411+0417 = **0 deadlocks**, 25 skips, exactly **1** row per round. Re-runnable via `scripts/ops/repro-cleanup-expired-data-concurrency.sh`. Shape pinned in CI by `src/tests/0417-cleanup-expired-data-singleton.test.ts` (11 tests, asserted to FAIL against 0411 so it is a ratchet, not a tautology). No `database.types.ts` delta (signature unchanged; the return is `jsonb`). Tier T3. Rollback in the file header. **Prefix derivation:** `git log --all --diff-filter=A` on 2026-08-22 showed `0410`-`0414` claimed by the migration-T3 RC, `0415` claimed **TWICE** (`fix/false-secured-signet-anchors` and `fix/fd-ferpa-1-directory-opt-out-public-projections` — an unresolved live collision someone should resolve, same shape as the `0407` one noted above) and `0416` by `fix/secured-count-overstatement`. `0417` was the first free prefix. **Next author claims `0418` — re-derive, do not trust this line.** |
 | `0435` | `0435_docusign_nonce_legacy_rollout_guard.sql` | PR #2476 | Not applied to staging or production | Preserves replay protection across legacy NULL-account rows and tenant-scoped rows, including concurrent mixed-version writers. Keep this additive schema during worker rollback. Prefix re-derived from every open PR on 2026-09-05: maximum 0434. |
+
+| `0439` | `0439_scrum3873_atomic_org_provisioning.sql` | #2571 / SCRUM-3873 | no | Atomic organization + quota + initial ledger grant + idempotency receipt; replay preserves existing balances and rejects changed payloads. Reserved with CTO after 0436 (#2655), 0437 (#2570), 0438 (#2565). T3; new qualification required. |
 
 ### Prefixes with no file and no reservation
 
@@ -686,6 +690,90 @@ another ref. `0411`–`0413` were the first three free slots. **Next author clai
   compiles either way. Whoever applies this runs `npm run gen:types` once
   afterwards (0400 / 0405 precedent).
 
+## Recent migrations (SCRUM-2538 / DI-380 — credit fail-closed)
+
+| `0420` | `fix/credits-fail-closed` (this PR) | SCRUM-2538 | `0420_scrum2538_check_unified_credits_fail_closed.sql` | FILE-ONLY, applied nowhere. T3. |
+
+- **0420_scrum2538_check_unified_credits_fail_closed.sql** — `check_unified_credits`
+  fails **OPEN**: a missing `unified_credits` row short-circuits to
+  `RETURN QUERY SELECT 50, 0, 50, true` (baseline:1425-1428), inventing
+  entitlement from the ABSENCE of a record on a money path. Confirmed live on
+  prod `vzwyaatejekddvltxyye` via `pg_get_functiondef`, not merely unfixed in the
+  repo; no later migration redefines it (only `0378`, and only to REVOKE/GRANT at
+  :265-266). **It is not a 50-call trial.** The sibling `deduct_unified_credits`
+  fails CLOSED on the SAME missing row (`IF NOT FOUND THEN RETURN false`), so the
+  pair disagrees, the balance never moves, and the phantom 50 regenerates on
+  every call. The worker's Tier-1 path compounded it by destructuring only
+  `error` from that RPC and ignoring the boolean entirely — fixed in
+  `services/worker/src/middleware/paymentTierRouter.ts` in the same PR.
+  **The backfill is part of the fix, not a nicety:** flipping the default to
+  0/false alone converts a revenue leak into an outage, so STEP 1 first
+  materializes real rows at the same 50 credits (org rows for every org; user
+  rows for org-less profiles ONLY, so the backfill never creates two matching
+  rows for one caller). **The backfill runs under a FORCE-RLS suspension, and
+  that is load-bearing:** `unified_credits` carries `FORCE ROW LEVEL SECURITY`
+  (baseline:9480), so the migration's own role is subject to its policies, and
+  both exclude it — `auth.role()`/`auth.uid()` are NULL inside a migration, so
+  `service_role_manage_unified_credits` (FOR ALL, `USING` only, which Postgres
+  reuses as the `WITH CHECK`) REJECTS the INSERTs outright, and the `NOT EXISTS`
+  idempotency guards read ZERO rows and report every owner as uncovered. That is
+  the **0404 failure mode**, and the read half is SILENT: a backfill that scans
+  before suspending reports "nothing to do" and commits a no-op that looks like
+  success. Suspension opens BEFORE the scan, is restored on the success path and
+  in an `EXCEPTION WHEN others` handler, and the block re-checks its own work and
+  RAISEs rather than committing a partial backfill (a fail-closed check over an
+  incomplete backfill zeroes real customers). No triggers to disable — unlike
+  0404, RLS is the only control suspended. Both functions also get identical deterministic row
+  selection — `unified_credits` has a PK on `id` and **no** unique constraint on
+  `org_id`/`user_id` (baseline:9477/10276), so the baseline's bare `LIMIT 1` and
+  unordered `SELECT ... FOR UPDATE` could READ the balance off one row and DEBIT
+  another. `DESC NULLS LAST`, not a bare `DESC`: the org-match comparison is NULL
+  (not false) when `uc.org_id` is NULL, and NULLs sort FIRST under a bare DESC.
+  Third fix in the same body: the monthly-rollover `carry_over` was recomputed
+  AFTER `v_record.used_this_month := 0`, so the row was written
+  `LEAST(alloc - used, 50)` while the caller was returned `LEAST(alloc, 50)` —
+  `remaining` overstated by exactly last month's usage. Now computed once into a
+  local and used for both. Grants re-asserted **unquoted** AFTER both
+  `CREATE OR REPLACE` statements (they re-trigger `ALTER DEFAULT PRIVILEGES`;
+  quoted `"public"."f"()` matches neither branch of `statementTargets` — the 0411
+  trap), verified by running the real `secdef-function-grants` linter, which
+  reports the file clean. `NOTIFY pgrst, 'reload schema'` — both bodies changed.
+  **Deliberately NOT done, with reasons in the file header:** the
+  `unified_credits.monthly_allocation` column default of 50 is left alone (a
+  column default applies to a row somebody deliberately INSERTed, and 50 is the
+  real free-tier grant — zeroing it trades this fail-open for a fail-closed of
+  the same shape); and the missing UNIQUE index on `(org_id)`/`(user_id)` is NOT
+  added, because it would ABORT the migration if prod already holds a duplicate
+  and that cannot be established from the repo. **Follow-up owed:** that unique
+  index, and row provisioning on org creation — nothing in the schema or worker
+  creates a `unified_credits` row on signup, so owners created after this applies
+  read 0/false. That is now honest rather than fabricated, and it is inert today
+  because the only enforcement consumer (`paymentTierRouter`) is not mounted in
+  `services/worker/src/index.ts`; it MUST land before that middleware is mounted.
+  `database.types.ts` NOT regenerated — signatures and return shapes are
+  unchanged (bodies only), and the shared local stack is concurrently mutated by
+  other worktree sessions (0400 / 0405 / 0413 precedent). Tier T3. Rollback in
+  the file header; the backfilled rows are deliberately NOT deleted on rollback.
+  **Prefix derivation:** `git log --all --diff-filter=A` over every ref shows
+  `0415` claimed TWICE (`0415_false_secured_offchain_anchor_quarantine.sql` and
+  `0415_ferpa_directory_info_opt_out_public_projections.sql` — an unresolved live
+  collision worth someone's attention; the FERPA one is also recorded in
+  `docs/staging/rig-reservations.json` as applied to an isolated rig), plus
+  `0416`, `0417`, `0418`, `0419`. `origin/main`'s head migration file is `0414`
+  and the highest prefix claimed by any OPEN PR is `0419` (#2355), so `0420` was
+  the first free prefix when this file was written.
+  **`0420` COLLIDES — first-claim-wins resolved in this PR's favour, and the
+  loser still has to move.** Re-deriving at review time turned up a SECOND
+  local claim on the same prefix:
+  `0420_scrum3529_public_anchor_sub_type_projection.sql`, on the unpushed
+  branches `fix/public-verify-subtype-projection` / `review/public-verify-subtype-projection`
+  (commit `a4509d220`). Both claims were made the same evening; this PR's commit
+  (`c835c32a6`, 2026-08-23 20:43:24 -0400) precedes it by 47 seconds and is the
+  one that reached `origin` first, so under the RTE first-claim-wins protocol
+  (the `0407`/`0408` precedent above) `0420` stays here and SCRUM-3529 renumbers
+  to `0421`. Neither migration is applied anywhere, so this is a rename on that
+  branch, not a compensating migration. **Next author claims `0422` — assume
+  SCRUM-3529 has taken `0421`, and re-derive rather than trusting this line.**
 ## Recent migrations (prod-apply record 2026-08-27 — `0418` / `0419`, and the open `0415` collision)
 
 **This block is an RTE prod-apply + prefix-reservation record, not a per-PR migration note.** It is
@@ -777,7 +865,251 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+## Recent migrations (SCRUM-3529 — public verify sub-type)
 
+## Recent migrations (PR #2571)
+
+| `0422` | `feat/platform-admin-provisioning` (PR #2571) | SCRUM-3873 | `0422_scrum3873_org_creation_idempotency_key.sql` | Applied to isolated rig `owieixqcnigfpiowptop` only (via `supabase db push --linked`, numeric ledger row `0422`); **NOT applied to prod or shared staging**. T3 (touches `supabase/migrations/`; confirmed by running the real detector against the changeset). **Prefix derivation:** `origin/main` head file is `0419`; `gh pr list --json files` across every open PR shows `0420`→#2442, `0421`→#2440, `0422`→#2571 (this), `0423`→#2472, `0424`→#2476 **and** #2518 (a pre-existing double-claim, not this PR's), `0425`→#2495, `0426`→#2519, `0427`→#2524, `0428`→#2564, `0429`–`0432`→#2572. **Next author re-derives from that scan — do not trust this line.** |
+
+- **0422_scrum3873_org_creation_idempotency_key.sql** (RIG-ONLY / NOT ON PROD): adds nullable `organizations.creation_idempotency_key uuid` with a **partial** unique index (`WHERE creation_idempotency_key IS NOT NULL`). Makes `POST /api/admin/organizations` atomic against a double-submit: the client sends one key per submission, a repeat collides on the index, and the handler returns the organization the first request created.
+
+  **Why it exists:** the SCRUM-3873 soak reproduced the race on **110 of 172 cycles (~64%)** — two simultaneous identical submits, two 201s, two distinct organizations with one name. The display_name pre-check in the handler is SELECT-then-INSERT and cannot be atomic. Re-verified fixed on the rig: same key twice → same `org_id`, one row.
+
+  **Why NOT a unique index on `display_name`:** two unrelated legal entities can legitimately share a name. The hazard is a repeated *submission*, not a shared name, so the key is scoped to the submission — the same mechanism `admin_adjust_org_credit` (0375) already uses. Nullable column + partial index means every other org-creation path (self-signup, sub-org, seed flows) keeps writing NULL and is untouched. Rollback block in the file header.
+
+  **Gotcha worth recording — and it is why SCRUM-3884 exists:** this file originally used a bare `SET LOCAL lock_timeout = '5s'`. `supabase db push` executes migration files **outside a transaction**, so Postgres raised `WARNING 25P01: SET LOCAL can only be used in transaction blocks` and **silently discarded it** — the hot-table DDL ran with no timeout at all. `scripts/ci/check-hot-table-ddl-lock-timeout.ts` matches the clause by regex and passed the no-op. Now wrapped in `BEGIN … COMMIT`, which makes the timeout real and the two DDL statements atomic. Any other migration carrying a bare `SET LOCAL lock_timeout` is very likely a no-op too.
+Branch `fix/public-verify-subtype-projection`. FILE-ONLY: applied nowhere — not
+prod, not the shared staging rig, not any isolated rig. T3 (redefines the
+anon-callable `public.get_public_anchor` projection).
+
+**Prefix derivation.** `max(main head, agents.md reservations, open-PR claims,
+sibling-worktree files) + 1`. `origin/main` head file is `0409`. The reservation
+rows in this file claim `0410`–`0414`. `gh pr list --state open --json files`
+across all open PRs additionally claims `0415`
+(`0415_ferpa_directory_info_opt_out_public_projections.sql`), `0417`, `0418` and
+`0419`. `0416` is an unclaimed GAP rather than a free slot — it is
+skipped deliberately, because taking a hole below other sessions' claims is how
+two files end up sharing a prefix.
+
+**RENUMBERED `0420` -> `0421` (2026-08-27).** This file originally claimed `0420`
+and COLLIDED with `0420_scrum2538_check_unified_credits_fail_closed.sql` (PR
+#2442, `fix/credits-fail-closed`). Both claims were made the same evening; that
+PR's commit `c835c32a6` (2026-08-23 20:43:24 -0400) precedes this branch's
+`a4509d220` by 47 seconds and reached `origin` first, so under the RTE
+first-claim-wins protocol (the `0407`/`0408` precedent) `0420` stays with
+SCRUM-2538 and SCRUM-3529 moves here to `0421`. Neither migration is applied
+anywhere, so this was a rename on this branch, not a compensating migration.
+Note the earlier derivation line in this section is superseded: it read "nothing
+at `0420`", which was true of the pushed refs it scanned but missed that
+sibling's claim. **Next author claims `0422` — re-derive, do not trust this
+line.** Separately, `0415` is claimed TWICE across all refs
+(`0415_false_secured_offchain_anchor_quarantine.sql` and
+`0415_ferpa_directory_info_opt_out_public_projections.sql`); that collision is
+unresolved and is NOT addressed here.
+
+| `0421` | `fix/public-verify-subtype-projection` (this PR) | SCRUM-3529 | `0421_scrum3529_public_anchor_sub_type_projection.sql` | FILE-ONLY, applied nowhere. T3. |
+
+- **0421_scrum3529_public_anchor_sub_type_projection.sql** — adds ONE key,
+  `'sub_type', private.public_free_text_or_null(a.sub_type)`, to
+  `public.get_public_anchor`. `CredentialRenderer` falls back to the credential
+  sub-type whenever `CREDENTIAL_TYPE_LABELS` resolves to the generic `Other`
+  (SCRUM-952 / SCRUM-1482), but `0355` replaced this projection's `metadata`
+  pass-through with an allow-list that omitted `sub_type`, so from `0355` onward
+  every `OTHER`-typed record on `/verify/:publicId` rendered "Other". The
+  canonical value was never the metadata duplicate anyway: it is the
+  `anchors.sub_type` COLUMN (GRE-01), which is what this projects.
+  **VALUE-GATED, not structural** — `anchors.sub_type` is bare `text` with no
+  CHECK and no enum, exactly why `verify.ts` already routes it through
+  `publicFreeTextOrNull` (`verify_value_gated_fields`). **NOT
+  academic-suppressed**, also for parity: `GET /api/v1/verify/:publicId` already
+  publishes a gated `sub_type` for DEGREE/CERTIFICATE/TRANSCRIPT to anonymous
+  callers, so suppressing it only in SQL would remove nothing from public reach
+  while re-opening the SQL-vs-TS drift this contract exists to close. Emitted as
+  an explicit `null` rather than omitted, following `fingerprint_source` (0376),
+  the other additive nullable column key, and matching
+  `sub_type: row.sub_type ?? null` in `verify.ts`. Top-level rather than a
+  `metadata` member so the academic "no metadata" render mode is not flipped.
+  **The body is `0385`'s verbatim** (that file, lines 554–783, is the LATEST
+  redefinition — `0386` redefines only the `_by_fingerprint` sibling, which
+  DELEGATES here, and `0390` only the `is_academic_record_credential_type`
+  predicate) **plus that one key and its comment, and nothing else** — verified
+  by diffing the two function blocks. No GRANT/REVOKE: `CREATE OR REPLACE`
+  preserves the ACL, same as `0385`. No `database.types.ts` delta — the RPC
+  returns bare `jsonb`. Contract updated in the same commit
+  (`scripts/ci/public-pii-projection-contract.json`: `sub_type` added to
+  `projection_keys`, deliberately NOT to `structural_keys`, with the full
+  rationale in `$sub_type_note`). Rollback in the file header.
+- **MERGE-ORDER DEPENDENCY with PR #2314 / `0415`.**
+  `0415_ferpa_directory_info_opt_out_public_projections.sql` (PR #2314, draft)
+  ALSO redefines `public.get_public_anchor`, adding the FERPA §99.37
+  directory-info suppression. Neither PR is merged, so `0421`'s body is built on
+  the current `main` head (`0385`) and does NOT contain `0415`'s changes —
+  despite carrying the higher number. **Whichever lands SECOND must rebuild its
+  body on the other's before merging**, or it reverts the first: the
+  0376-branched-from-0355 clobber, exactly. This cannot happen silently — both
+  PRs' contract suites resolve the LATEST redefiner rather than a pinned
+  filename, so the second lander is red in CI until reconciled. Reconcile by
+  rebuilding the body; never by pinning a filename or renumbering. Any future
+  PR that redefines this function inherits the same obligation.
+
+## Recent migrations (0433 reconciliation, PR #2440)
+
+**This block resolves the `0421`/`0415` MERGE-ORDER DEPENDENCY flagged in the
+block immediately above. Uniquely titled so it cannot collide at EOF (CLAUDE.md
+§6).**
+
+The soak referenced as a live risk in the `0421` note above ran
+(`docs/staging/mig-public-projection/STANDUP.md`, isolated rig
+`arkova-soak-mig-public-projection` / `uayovlvdhmuovuyfxrog`, 2026-08-30) and
+measured the clobber directly: applying `0415` then `0421` in numeric order
+silently reverts the entire FERPA §99.37 directory-information suppression
+layer from `get_public_anchor`, bidirectionally, with no application order of
+the two files alone producing a head carrying both changes. Separately, `0415`
+was applied directly to **production** by RTE ahead of PR #2314's merge
+(ledger-reconciled to numeric `0415`), so this is not a hypothetical merge-order
+risk — as of that apply, production is already running the FERPA-suppressing
+body, and merging `0421` unmodified would be a live regression the moment it is
+applied.
+
+`0421` itself is **immutable** — it was applied to the isolated soak rig above,
+so `.claude/hooks/check-constitution-on-edit.sh` correctly refuses any edit to
+it (CLAUDE.md §1.2/§4). The reconciliation is therefore a NEW compensating
+migration, the same shape as `0360` compensating `0340` or `0383` restoring
+`0362`/`0356` after the `0376` clobber.
+
+| `0433` | `fix/public-verify-subtype-projection` (this PR) | SCRUM-3529 / FD-FERPA-1 | `0433_scrum3529_ferpa_directory_info_get_public_anchor_reconcile.sql` | FILE-ONLY, applied nowhere. T3. |
+
+**Prefix derivation.** `git log --all --diff-filter=A --name-only` over every
+ref (not per-PR bodies, not this file's prior claims, which are stale the
+moment a sibling branch commits) shows numeric prefixes already claimed through
+`0432` (`0422`–`0432` inclusive, across a dozen unrelated open branches —
+suborg tenancy, DocuSign webhook work, proof-tx-inclusion, the false-SECURED
+quarantine renumber, and others). Nothing claims `0433` anywhere in the
+repository's full ref history at authorship time. **Next author claims `0434`
+— re-derive with `git log --all --diff-filter=A`, do not trust this line or
+any single-digit gap in the sequence above it.**
+
+- **0433_scrum3529_ferpa_directory_info_get_public_anchor_reconcile.sql** —
+  redefines `public.get_public_anchor` a second time on top of `0421`: the body
+  is `0415`'s verbatim (`private.is_directory_info_suppressed`, the
+  `g.suppress_directory` hoist, every suppression branch, the additive
+  `directory_info_suppressed` key, the omitted-not-blanked
+  `recipient_identifier`) with `0421`'s single `sub_type` key layered on top,
+  unchanged in placement or gating. `sub_type` is **NOT** suppressed by
+  `g.suppress_directory` — filed as a second entry in
+  `directory_opt_out_residual_published_fields` (contract.json) alongside the
+  pre-existing `credential_type` residual, because `verify.ts`'s `API_RICH_KEYS`
+  loop already publishes `sub_type` unconditionally with no `suppressDirectory`
+  check (read directly from `services/worker/src/api/v1/verify.ts`, not
+  inferred), so gating it here alone would remove nothing from public reach
+  while reopening the SQL-vs-REST divergence FD-FERPA-1 exists to close.
+  `public.search_public_credentials` is untouched — `0421` never redefined it
+  and `0415`'s own change to it is unaffected by anything here.
+  **PRECONDITION, not just for applying but for MERGING**: this body calls
+  `private.is_directory_info_suppressed`, CREATEd only by `0415`. A `CREATE OR
+  REPLACE FUNCTION ... plpgsql` body is not validated against the catalog at
+  creation time, so replaying `supabase/migrations/` on a fresh environment
+  that has this file but not `0415`'s will succeed at CREATE and then fail
+  every single call to the public verify page at runtime. Production already
+  satisfies the precondition; a fresh isolated rig or `supabase db reset` does
+  not until `0415`'s own file also lands on `main` at its lower numeric prefix.
+  Contract updated in the same commit
+  (`scripts/ci/public-pii-projection-contract.json`: `sub_type` retained in
+  `projection_keys`/`$sub_type_note`; `directory_info_suppressed` added to both
+  `projection_keys` and `structural_keys`; a `directory_opt_out_predicate` /
+  `directory_opt_out_owner_migration` pointer plus
+  `directory_opt_out_residual_published_fields` — now `["credential_type",
+  "sub_type"]`, THIS PR's own decision — and its note. The rest of 0415's
+  eventual `directory_opt_out_*` design (suppressed/controlled/omitted field
+  lists, the fail-closed rationale, the verification-fields allow-list) is
+  deliberately NOT duplicated here — a second hand-maintained copy would drift
+  from PR #2314's own the moment either changes, and #2314 is the PR that adds
+  the consuming RATCHET test. Simplified from an earlier, fuller carry-forward
+  after `/simplify` flagged ~100 lines of contract data with no consumer
+  anywhere in this PR's tree.
+  `sql_owner_migration` was tried at `0433` and reverted BACK to `0385`: that
+  field is consumed by the tests that locate where
+  `is_academic_record_credential_type` / `academic_record_public_label` / the
+  detector vocabulary / the REVOKE statements are actually DEFINED (not where
+  `get_public_anchor` is latest redefined), and `0433` redefines only
+  `get_public_anchor` itself — none of those helpers. Repointing it broke 7 of
+  the 8 "detectors and vocabulary (migration 0385)" tests
+  (`src/tests/public-anchor-pii-projection.contract.test.ts`); it stays `0385`.
+  This PR deliberately does **not**
+  import PR #2314's `src/tests/ferpa-directory-info-opt-out.contract.test.ts` or
+  `tests/rls/ferpa-directory-info-opt-out.test.ts` — that regression suite is
+  #2314's own deliverable to land with `0415`'s file; this reconciliation is
+  scoped to making `0421`'s existing contract suite
+  (`src/tests/public-anchor-pii-projection.contract.test.ts`) pass against a
+  body that no longer clobbers FERPA suppression. Rollback in the file header:
+  restores `0415`'s body verbatim, explicitly NOT `0385` or `0421`'s original
+  form, either of which would also revert FERPA suppression.
+
+
+## 2026-09-05 — PR #2440 subtype opt-out release review
+
+Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
+
+## Recent migrations (0426 org_integrations.webhook_id)
+
+`0426` — `0426_org_integrations_adobe_sign_webhook_id.sql`, branch
+`claude/intelligent-sinoussi-807743`, PR #2519 (**DRAFT — not soaked, migrations are always T3
+per CLAUDE.md §1.12**). **FILE-ONLY, applied nowhere.** T3 (touches `supabase/migrations/`).
+
+**Bug fix, not a feature add.** `services/worker/src/api/v1/webhooks/adobe-sign.ts`
+`findIntegration()` has always queried `org_integrations.webhook_id`, a column that has never
+existed — absent from the baseline and every numbered migration. Every correctly-signed Adobe
+Sign webhook 500s on `42703` and DLQs; nothing drains `webhook_dlq`. Found live during the
+`worker-webhook-runtime` T3 soak on isolated rig `sawvgrwhgsmxjlwhpsyx` (2026-08-30), reproduced
+with a real HMAC-signed `AGREEMENT_WORKFLOW_COMPLETED` delivery. **Confirmed absent on prod too**
+— read-only `information_schema.columns` query against `vzwyaatejekddvltxyye` via the Supabase
+Management API the same day returned no `webhook_id` row for `org_integrations` (23 columns,
+last one `inherited_from_org_id` from `0328`). Adobe Sign has never worked in any environment
+built from this schema, prod included — this is not a stale-baseline-only gap.
+
+Adds `webhook_id text` (nullable — only `adobe_sign` rows populate it; DocuSign resolves by
+`account_id` per `0306` and never needed this) plus a partial unique index
+`(provider, webhook_id) WHERE revoked_at IS NULL AND webhook_id IS NOT NULL`, both enforcing the
+one-active-integration-per-webhook invariant the lookup already assumes and backing the exact
+query shape in `findIntegration()`. Not a hot table (CLAUDE.md §1.2), no `SET LOCAL lock_timeout`.
+
+**Prefix derivation:** `gh pr list --state open --json files` across every open PR shows the
+highest claimed `04xx` migration prefix is `0425` (`0425_anchors_reorg_scan_index.sql`, PR
+#2495); `origin/main` file head is `0419`; this worktree's local `agents.md` ledger table stops
+at `0419` with everything above `0420` recorded only in narrative blocks. `0420`-`0425` are all
+claimed (PRs #2442, #2440, #2472, #2476/#2518, #2495). **Next author claims `0427` — re-derive,
+do not trust this line.**
+
+**Blocks PR #2496** (`fix/adobe-sign-rule-event-payload-16kb`, the Adobe Sign 16KB payload-cap
+fix) from ever being soaked — its `buildAdobeSignRuleEventPayload()` sits downstream of
+`findIntegration()`, so no webhook delivery reaches it until `0426` is applied to whatever rig
+soaks that PR.
+## 2026-08-31 — `0427` comment corrections (review; comments only, no DDL change)
+
+`0427_proof_tx_inclusion_branch.sql` is still FILE ONLY — applied to no
+database, no rig, no prod — so this is an edit to an unapplied draft in an open
+PR, not a modification of an applied migration. **No DDL changed:** the two
+`ALTER TABLE ... ADD COLUMN` statements, the `SET LOCAL lock_timeout`, the
+`NOTIFY pgrst`, and the ROLLBACK header are byte-identical. Only two
+`COMMENT ON COLUMN` bodies and one header paragraph changed, because both were
+asserting things that were not true:
+
+- **The CVE-2012-2459 claim on `tx_block_index` is withdrawn (§1.5).** It said
+  the index "arms the CVE-2012-2459 duplicate-node guard". It cannot: deciding
+  whether a self-pairing sibling sits at a legitimate rightmost-odd position
+  needs the block's TOTAL TRANSACTION COUNT (row width =
+  `ceil(totalTx / 2^height)`), which `parseMerkleBlockFields` parses at fetch
+  time but which is neither returned from `parseTxOutProof` nor persisted — so
+  no read-side consumer can run that guard from this column. The comment now
+  says where the guard IS enforced (write side, at parse time) and what the
+  column actually buys (the index/side cross-check, which the API now runs).
+- **The header's "the writer and the reader both validate" sentence is now
+  true.** It was offered as the reason no CHECK constraint is needed, but the
+  writer validated nothing at all. `utils/anchorProofs.ts::isCoherentInclusionPair`
+  and `api/v1/verify-proof.ts::readTxInclusionEvidence` now apply the identical
+  rules, and the header names both functions so the claim is checkable.
+
+Prefix unchanged. **Next author claims `0428` — re-derive, do not trust this line.**
 ## Recent migrations (PR #PENDING-docusign-key-authority)
 
 **Branch `fix/docusign-metadata-key-write-authority`. PR not yet opened. CTO Decision Record

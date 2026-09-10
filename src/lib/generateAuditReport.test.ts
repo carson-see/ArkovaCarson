@@ -138,10 +138,103 @@ describe('PROOF-04 buildProofPacket — canonical proof_bundle shape', () => {
         'proof_schema_version',
         'signature',
         'tx_id',
+        // B3 / migration 0427: the layer-2 bitcoin-tree half. Without these the
+        // packet can prove the app-tree half offline but still has to ask a
+        // Bitcoin node to close the transaction→block half — the exact
+        // third-party dependency this packet exists to remove.
+        'tx_inclusion_branch',
+        'tx_block_index',
       ].sort(),
     );
     // No legacy observed_time field on the machine packet.
     expect(keys).not.toContain('observed_time');
+  });
+
+  it('B3: carries the bitcoin-tree branch + index through to the packet', () => {
+    // [right, left] ⇒ index bit0=0, bit1=1 ⇒ index 2.
+    const txBranch = [
+      { hash: '1'.repeat(64), position: 'right' as const },
+      { hash: '2'.repeat(64), position: 'left' as const },
+    ];
+    const data = securedData();
+    const packet = buildProofPacket({
+      ...data,
+      proof: { ...data.proof!, tx_inclusion_branch: txBranch, tx_block_index: 2 },
+    });
+    expect(packet!.tx_inclusion_branch).toEqual(txBranch);
+    expect(packet!.tx_block_index).toBe(2);
+    // Structured entries, never flattened — the fold needs the side.
+    for (const entry of packet!.tx_inclusion_branch!) {
+      expect(typeof entry.hash).toBe('string');
+      expect(['left', 'right']).toContain(entry.position);
+    }
+  });
+
+  it('B3: emits null for both when the record predates migration 0427', () => {
+    const packet = buildProofPacket(securedData());
+    expect(packet!.tx_inclusion_branch).toBeNull();
+    expect(packet!.tx_block_index).toBeNull();
+  });
+
+  // This is the packet a HOLDER downloads and hands to an auditor — the one
+  // surface where the pair invariants have to hold most, because there is no
+  // server between it and the reader. It was also the only surface where they
+  // did NOT hold: the two fields were mapped independently and the entry guard
+  // asked only `typeof hash === 'string'`, so an EMPTY hash shipped in the PDF
+  // as genuine inclusion evidence — verbatim the H3 defect, and migration
+  // 0427's header now asserts the rules are identical on both sides.
+  //
+  // An earlier version of this test used `position: 'sideways'` — the ONE
+  // malformation the weak code already rejected — so it constructed the bug and
+  // passed. Every case below is covered by the sibling suites
+  // (`verify-proof.test.ts`, `sourceProofInput.test.ts`, the SDK client and the
+  // verifier CLI); this surface owes the same answers.
+  it.each([
+    ['empty sibling hash', [{ hash: '', position: 'right' }, { hash: '2'.repeat(64), position: 'left' }], 2],
+    ['short sibling hash', [{ hash: 'ab', position: 'right' }, { hash: '2'.repeat(64), position: 'left' }], 2],
+    ['non-hex sibling hash', [{ hash: 'z'.repeat(64), position: 'right' }, { hash: '2'.repeat(64), position: 'left' }], 2],
+    ['invalid position', [{ hash: '1'.repeat(64), position: 'sideways' }], 0],
+    ['non-array branch', 'nope', 2],
+    ['index out of range for the branch height', [{ hash: '1'.repeat(64), position: 'right' }, { hash: '2'.repeat(64), position: 'left' }], 9],
+    ['index contradicting the stored sides', [{ hash: '1'.repeat(64), position: 'right' }, { hash: '2'.repeat(64), position: 'left' }], 1],
+    ['branch with no index', [{ hash: '1'.repeat(64), position: 'right' }, { hash: '2'.repeat(64), position: 'left' }], null],
+    ['empty branch with a non-zero index', [], 3],
+  ])(
+    'B3/H3: never ships an unusable bitcoin-tree pair as evidence (%s)',
+    (_label, branch, index) => {
+      const data = securedData();
+      const packet = buildProofPacket({
+        ...data,
+        proof: {
+          ...data.proof!,
+          tx_inclusion_branch: branch as never,
+          tx_block_index: index as never,
+        },
+      });
+      // BOTH halves go, not just the one that happened to be malformed.
+      expect(packet!.tx_inclusion_branch).toBeNull();
+      expect(packet!.tx_block_index).toBeNull();
+    },
+  );
+
+  it('B3: an index with no branch is dropped too', () => {
+    const data = securedData();
+    const packet = buildProofPacket({
+      ...data,
+      proof: { ...data.proof!, tx_inclusion_branch: null, tx_block_index: 2 },
+    });
+    expect(packet!.tx_inclusion_branch).toBeNull();
+    expect(packet!.tx_block_index).toBeNull();
+  });
+
+  it('B3: an EMPTY branch with index 0 is complete evidence for a single-transaction block', () => {
+    const data = securedData();
+    const packet = buildProofPacket({
+      ...data,
+      proof: { ...data.proof!, tx_inclusion_branch: [], tx_block_index: 0 },
+    });
+    expect(packet!.tx_inclusion_branch).toEqual([]);
+    expect(packet!.tx_block_index).toBe(0);
   });
 
   it('preserves the structured { hash, position } Merkle branch (never flattens to strings)', () => {
