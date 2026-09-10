@@ -1205,3 +1205,37 @@ Amended after the 2026-09-05 review of PR #2658 (findings F1/F2/F3/F5), still un
   so their `0327` bodies must be restored *before* the column is dropped — otherwise every signup INSERT and
   every 4-arg admin write fails on a missing column. Verified end-to-end on a disposable Postgres.
 
+
+
+## 2026-09-10 — preserve reserved 0443 as the historical-proof repair follow-up
+
+| Prefix | Owner branch | Source file | Release state |
+|---|---|---|---|
+| `0443` | `release/scrum-3953-proof-history-0443` | `0443_backfill_anchor_proof_block_height.sql` | Existing reservation moved intact from the unmerged PR #2782; no new prefix, renumbering or SQL edit. |
+
+The CTO release review separates PR #2782's measured confirmation metadata
+and certificate block-binding code from its large historical data repair.
+The runtime reads and writes existing columns and supports unrepaired rows;
+0443 introduces no schema, function, type or feature-flag dependency. Its exact
+source SHA256 remains
+`b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`.
+The immutable header's same-PR description records its original authoring
+context; the current release scope is this explicitly tracked follow-up.
+
+Owie staging has actually applied 0443 and has 150 canonical ledger rows.
+Production has 149 rows and excludes 0443; it is not applied or reconciled by
+this source commit. The successful protected production pilot corrected 1,487
+rows with separate current-state readbacks, while historical cohort repair
+and durable convergence remain incomplete. Runtime merge/deployment can
+precede this migration without changing the migration drift or soak gates.
+
+The migration's 20,000-row loop iterations share one transaction. The remaining
+release requires fresh protected preimages, bounded full-row/source guarded
+updates, corrected producer deployment and old-work drainage, final tail
+verification, actual unchanged 0443 outcome and numeric ledger readback.
+A successful bounded pilot or observational backup is not a snapshot, full
+backfill, migration application, or completed 48-hour soak. This follow-up
+remains held until its own production and CI requirements are satisfied.
+
+[Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
+retains the staged recovery and separately dated production pilot receipts.
