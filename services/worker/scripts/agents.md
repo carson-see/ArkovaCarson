@@ -81,3 +81,19 @@ evidence parent and pass `--output rollup-proof`; absolute paths, separators,
 dot segments and existing paths/symlinks are rejected before cluster creation.
 This keeps arbitrary path fragments out of filesystem writes and needs no
 security-rule suppression.
+
+## PR #2572 — qualification artifact links (2026-09-10)
+
+The reviewed offline driver at source713a1f8d passed its10 CLI path controls
+and27 PostgreSQL cases. Hosted CI separately passed
+[TLA+ Verification](https://github.com/carson-see/ArkovaCarson/actions/runs/34533538903/job/103061153204)
+and [Worker Build](https://github.com/carson-see/ArkovaCarson/actions/runs/34533538903/job/103061153030).
+The [release record](https://arkova.atlassian.net/wiki/spaces/A/pages/137396545)
+retains the local full-schema, authorization, concurrency and HTTP receipts.
+Those scoped results do not claim that the still-running overall CI matrix
+has passed. This documentation addition changes no runtime, SQL or Docker
+input; the earlier713a qualification remains identified by its actual source.
+
+Keep verification links in the release commit message as well as the PR body:
+Mergify's initial speculative body may omit the source PR's artifact links,
+while the HANDOFF claim gate also inspects the inherited commit messages.
