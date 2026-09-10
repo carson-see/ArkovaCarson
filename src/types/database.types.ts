@@ -396,6 +396,8 @@ export type Database = {
           raw_response: Json | null
           receipt_id: string
           supplements_chain_tx_id: string | null
+          tx_block_index: number | null
+          tx_inclusion_branch: Json | null
         }
         Insert: {
           anchor_id: string
@@ -417,6 +419,8 @@ export type Database = {
           raw_response?: Json | null
           receipt_id: string
           supplements_chain_tx_id?: string | null
+          tx_block_index?: number | null
+          tx_inclusion_branch?: Json | null
         }
         Update: {
           anchor_id?: string
@@ -438,6 +442,8 @@ export type Database = {
           raw_response?: Json | null
           receipt_id?: string
           supplements_chain_tx_id?: string | null
+          tx_block_index?: number | null
+          tx_inclusion_branch?: Json | null
         }
         Relationships: [
           {
