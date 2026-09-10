@@ -70,6 +70,11 @@ export function buildLoginUrl(): string {
   return `${BASE}/login`;
 }
 
+/** Recovery session landing page where the recipient chooses their password. */
+export function buildSetPasswordUrl(): string {
+  return `${BASE}/set-password`;
+}
+
 /** Stripe Checkout success redirect — `{CHECKOUT_SESSION_ID}` is a literal Stripe placeholder. */
 export const BILLING_SUCCESS_URL = `${BASE}/billing/success?session_id={CHECKOUT_SESSION_ID}`;
 
