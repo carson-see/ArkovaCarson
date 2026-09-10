@@ -1,5 +1,47 @@
 # agents.md — services/worker/src/integrations/oauth/
 
+_Last updated: 2026-08-31 (signer-backfill follow-on to PR #2474: `fetchDocusignEnvelopeRecipients` + `extractCapturedSigners`, now delegating to the shared `captureDocusignSigners` mapper)._
+_Last updated: 2026-08-30 (`adobe-sign.ts` gained the OAuth + webhook-provisioning client)._
+
+## 2026-08-30 — `adobe-sign.ts` is now provider client + webhook helpers, like `docusign.ts`
+
+The file used to hold only HMAC verification and payload parsing for inbound notifications. It now
+also carries the OAuth v2 + REST v6 webhook client the connect flow needs
+(`buildAdobeSignAuthorizationUrl`, `exchangeAdobeSignCode`, `refreshAdobeSignAccessToken`,
+`revokeAdobeSignToken`, `fetchAdobeSignUserInfo`, `createAdobeSignWebhook`,
+`deleteAdobeSignWebhook`), matching how `docusign.ts` holds OAuth + Connect provisioning together.
+
+Contract points that are easy to get wrong and are pinned by `adobe-sign.test.ts`:
+
+* **The webhook create id can arrive two ways.** Adobe documents both a body carrying the
+  identifier and a `Location` header pointing at the created resource. Reading only the body is how
+  a create that actually succeeded still yields a NULL `webhook_id` — the precise failure this
+  connector was stuck in — so `extractWebhookId()` checks body then header and **throws** rather
+  than returning an empty id. A loud failure beats a silently-null id whose only symptom is every
+  future delivery orphaning with no explanation.
+* **Credentials are FORM FIELDS, not Basic auth.** This is where Adobe differs from DocuSign; a
+  copy-pasted `Authorization: Basic` header fails the token exchange.
+* **`api_access_point` from the token response is the shard.** Every REST helper takes it as a
+  required argument rather than reading a host from env — a hardcoded shard works for exactly one
+  account and 404s/401s for every other.
+* **`revokeAdobeSignToken` swallows 400/401/404 by design.** Disconnect calls it, and a token Adobe
+  already considers dead must not strand an org in a connected state. 5xx still throws.
+* **`deleteAdobeSignWebhook` treats 404 as success** — "Adobe is no longer delivering to us" is the
+  desired end state and an already-deleted webhook satisfies it. Any other status throws so
+  disconnect can report a webhook it failed to remove.
+* **`AdobeSignApiError` follows the SCRUM-2492 shape**: no `body` field at all, and `detail` is
+  bounded/PII-scrubbed by construction via `boundedErrorDetail`. Every path here is a non-document
+  path (OAuth + webhook metadata), which is what makes attaching a detail safe — and it is what
+  makes "the account tier lacks `webhook_write`" legible instead of a mystery 403.
+* **`includeSignedDocuments` / `includeDocumentsInfo` are FALSE** on the webhook config, pinned by
+  test. §1.6A permits a server-side fingerprint on a deliberate fetch path; it does not permit
+  document bytes riding in on a notification body.
+
+**Pre-existing oddity, still deliberately left alone:** `signatureHeader()` in
+`api/v1/webhooks/adobe-sign.ts` falls back to `X-AdobeSign-ClientId` as a *signature*. On a
+notification that header carries the client id, not an HMAC, so the fallback always fails the
+compare and 401s — fail-closed, not exploitable. Do not "fix" it by comparing the client id
+instead: that turns a public identifier into the auth check and is a straight auth bypass.
 _Last updated: 2026-08-29 (docusign-bilateral PR-2: `resolveDocusignEnvironment` env-tag resolver)._
 _Last updated: 2026-09-02 (Adobe Sign parse-layer bounds in code/constraint parity with `organization_rule_events`)._
 
@@ -12,7 +54,7 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 | `crypto.ts` | GCP KMS-based OAuth token encryption/decryption — cleartext never lands in Postgres |
 | `hmac.ts` | Shared HMAC-SHA256 webhook verifier (timing-safe, supports base64 and hex encoding) |
 | `drive.ts` | Google Drive OAuth client — token exchange, refresh, changes.watch, files.get, channels.stop. **DRIVE-02 (S2)**: `createChangesWatch` now returns the `startPageToken` (additive) and accepts an optional `driveId` to scope startPageToken + changes.watch to a shared-drive corpus. |
-| `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC. **2026-08-29 (R7):** `resolveDocusignEnvironment(baseUri, env?)` — `'prod'\|'demo'` from the connection's `base_uri` (`demo.docusign.net` vs any other `*.docusign.net`), falling back to the existing `DOCUSIGN_DEMO` convention only when `base_uri` doesn't identify an environment |
+| `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC. **2026-08-29 (R7):** `resolveDocusignEnvironment(baseUri, env?)` — `'prod'\|'demo'` from the connection's `base_uri` (`demo.docusign.net` vs any other `*.docusign.net`), falling back to the existing `DOCUSIGN_DEMO` convention only when `base_uri` doesn't identify an environment. **2026-08-31 (signer backfill):** `fetchDocusignEnvelopeRecipients(args)` — GET `.../envelopes/{id}/recipients`, mapped through `extractCapturedSigners(signers)`, now a thin wrapper around the SHARED `captureDocusignSigners` mapper (`integrations/connectors/schemas.ts`) — the SAME algorithm PR #2474's webhook-side `extractSigners` (`api/v1/webhooks/docusign.ts`) calls, factored out once (2026-08-31 review) so the two could not drift: GUID-shape-pinned, deduped by `recipient_id_guid`, capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS`, fail-soft skip on invalid/partial entries, never name/email. `extractCapturedSigners` itself is used only by `jobs/docusign-signer-backfill-deps.ts`. |
 | `docusign-rate-limit.ts` | DocuSign outbound API guard — per-account 3,000/hour local slot budget plus Retry-After-aware 429 retry wrapper |
 | `adobe-sign.ts` | Adobe Sign webhook HMAC verification + `RawAdobeWebhookPayload` parse. `agreement.id` / `agreement.name` / `senderInfo.email` are `.max()`-bounded to the `organization_rule_events` column CHECKs (500 / 500 / 320) the webhook handler writes them into |
 | `docusign-hmac.ts` | SCRUM-2043: multi-key HMAC verifier + signature header extractor for dual-key rotation |
@@ -38,3 +80,7 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 ## PR #2474 release review — 2026-09-05
 
 Environment classification parses the base URI hostname. A vendor string in a path, query, or attacker-controlled domain suffix cannot determine demo/prod. Invalid and non-vendor URIs retain the documented environment fallback.
+
+## 2026-09-05 — Adobe OAuth response body deadlines
+
+The request AbortController was cleared when headers arrived, leaving parseAdobeJson awaiting an unbounded text read. A stalled-token-response regression failed before the fix. All Adobe JSON response paths now use the existing readTextBounded helper with a fixed safe label and ten-second body deadline, translated to AdobeSignApiError 408 without secret-bearing URLs or body content.

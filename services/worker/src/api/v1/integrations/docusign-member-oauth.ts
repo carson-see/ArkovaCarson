@@ -14,9 +14,18 @@
  *   POST /docusign/member/disconnect
  */
 
-import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import type { DbFilterQuery } from './oauth-db.js';
+import { randomUUID } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import {
+  appendOAuthResult as appendResult,
+  readSignedOAuthState,
+  requestOrigin as getRequestBaseUrl,
+  sameOriginReturnTo,
+  signOAuthState as signState,
+  toPostgresBytea,
+} from './oauth-primitives.js';
 import { config } from '../../../config.js';
 import { logger } from '../../../utils/logger.js';
 import { db as defaultDb } from '../../../utils/db.js';
@@ -55,19 +64,6 @@ const StartSchema = z.object({
 /* ------------------------------------------------------------------ */
 /*  Minimal DB abstractions (same pattern as org-level router)        */
 /* ------------------------------------------------------------------ */
-
-interface DbQueryResult<T> {
-  data: T | null;
-  error: unknown;
-}
-
-interface DbFilterQuery<T> extends PromiseLike<DbQueryResult<T>> {
-  select(columns?: string): DbFilterQuery<T>;
-  eq(field: string, value: unknown): DbFilterQuery<T>;
-  is(field: string, value: unknown): DbFilterQuery<T>;
-  single(): Promise<DbQueryResult<T extends Array<infer Row> ? Row : T>>;
-  maybeSingle(): Promise<DbQueryResult<T extends Array<infer Row> ? Row : T>>;
-}
 
 interface MemberIntegrationIdRow { id: string }
 interface MemberIntegrationLookupRow { id: string; token_secret_name: string | null }
@@ -153,49 +149,12 @@ function getUserId(req: Request): string | undefined {
   return (req as unknown as { userId?: string }).userId;
 }
 
-function base64Url(input: string): string {
-  return Buffer.from(input, 'utf8').toString('base64url');
-}
-
-function hmacSign(input: string, secret: string): string {
-  return createHmac('sha256', secret).update(input).digest('base64url');
-}
-
-function signState(payload: MemberStatePayload, secret: string): string {
-  const encoded = base64Url(JSON.stringify(payload));
-  return `${encoded}.${hmacSign(encoded, secret)}`;
-}
-
 function verifyState(state: string, secret: string, deps: DocusignMemberOAuthDeps): MemberStatePayload | null {
-  const [encoded, signature] = state.split('.');
-  if (!encoded || !signature) return null;
-
-  const expected = hmacSign(encoded, secret);
-  const sigBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (
-    sigBuffer.length !== expectedBuffer.length ||
-    !timingSafeEqual(sigBuffer, expectedBuffer)
-  ) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as MemberStatePayload;
+  const parsed = readSignedOAuthState<MemberStatePayload>(state, secret, (parsed) => {
     const nowMs = (deps.now?.() ?? new Date()).getTime();
-    if (!parsed.orgId || !parsed.userId || !parsed.iat || parsed.scope !== 'member' || nowMs - parsed.iat > StateTtlMs) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function getRequestBaseUrl(req: Request): string {
-  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0] ?? req.protocol;
-  const host = req.headers['x-forwarded-host'] ?? req.headers.host;
-  return `${proto}://${host}`;
+    return !(!parsed.orgId || !parsed.userId || !parsed.iat || parsed.scope !== 'member' || nowMs - parsed.iat > StateTtlMs);
+  });
+  return parsed;
 }
 
 function buildRedirectUri(req: Request): string {
@@ -204,26 +163,7 @@ function buildRedirectUri(req: Request): string {
 
 function sanitizeReturnTo(returnTo: string | undefined, orgId: string, deps: DocusignMemberOAuthDeps): string {
   const fallback = `${deps.frontendUrl ?? config.frontendUrl}/organizations/${orgId}?tab=settings`;
-  if (!returnTo) return fallback;
-  try {
-    const parsed = new URL(returnTo);
-    const frontendOrigin = new URL(deps.frontendUrl ?? config.frontendUrl).origin;
-    if (parsed.origin !== frontendOrigin) return fallback;
-    return parsed.toString();
-  } catch {
-    return fallback;
-  }
-}
-
-function appendResult(url: string, key: 'docusign' | 'docusign_error', value: string): string {
-  const parsed = new URL(url);
-  parsed.searchParams.set('tab', 'settings');
-  parsed.searchParams.set(key, value);
-  return parsed.toString();
-}
-
-function toPostgresBytea(buffer: Buffer): string {
-  return `\\x${buffer.toString('hex')}`;
+  return sameOriginReturnTo(returnTo, deps.frontendUrl ?? config.frontendUrl, fallback);
 }
 
 async function requireOrgMember(db: DbClient, userId: string, orgId: string): Promise<boolean> {

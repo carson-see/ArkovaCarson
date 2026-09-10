@@ -1,5 +1,25 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+_Last updated: 2026-08-30 (`adobe-sign-token-store.ts` added for the Adobe Sign connect flow)._
+
+## 2026-08-30 — `adobe-sign-token-store.ts` reuses the DocuSign Secret Manager client on purpose
+
+Adobe Sign uses the same token split as DocuSign: short-lived ACCESS token KMS-encrypted into
+`org_integrations.encrypted_tokens`, long-lived REFRESH token in GCP Secret Manager with only the
+resource name in `token_secret_name`.
+
+The Secret Manager CLIENT is provider-agnostic — it takes a resource name and does
+GET/addVersion/DELETE — so `adobe-sign-token-store.ts` **imports it from `docusign-token-store.ts`**
+rather than forking ~150 lines of plumbing. Only the NAME derivation is provider-specific. A
+DocuSign-flavoured filename on the shared half is worth more than two implementations drifting
+apart, and a fork would also fail the Sonar new-code duplication gate. If that shared client ever
+needs to move to a neutral module, move it — do not copy it.
+
+**Why the provider segment in the name matters:** both builders hash the account id, so without
+`arkova-adobe-sign-` vs `arkova-docusign-` an org that connected the same-numbered account on both
+providers would collide onto ONE secret and each connect would clobber the other's refresh token.
+`adobe-sign-token-store.test.ts` asserts the two names differ for identical `(org, account)` inputs
+rather than merely asserting the Adobe name matches a regex.
 _Last updated: 2026-08-03 (PR #1944 review rounds 2-3: create-then-stop CRITICAL fix, PII scrub, concurrency bound, account_label parser convergence)._
 _Last updated: 2026-09-07 (`docusign-token-store.ts` version retention — BUG 2026-09-05 Secret Manager version churn)._
 
@@ -58,7 +78,7 @@ Vendor connector services and canonical event adapters. Each connector owns OAut
 
 | File | Purpose |
 |------|---------|
-| `schemas.ts` | Zod schemas for all vendor webhook payloads (Drive, DocuSign, Adobe, Checkr, Veremark). **2026-08-29 (R6):** `DocusignCapturedSigner` — pseudonymous-only signer shape (`recipient_id_guid`, `user_id?`, `status`, `signed_at?`); non-`.passthrough()` object mode strips name/email by construction. `MAX_CAPTURED_DOCUSIGN_SIGNERS = 20` |
+| `schemas.ts` | Zod schemas for all vendor webhook payloads (Drive, DocuSign, Adobe, Checkr, Veremark). **2026-08-29 (R6):** `DocusignCapturedSigner` — pseudonymous-only signer shape (`recipient_id_guid`, `user_id?`, `status`, `signed_at?`); non-`.passthrough()` object mode strips name/email by construction. `MAX_CAPTURED_DOCUSIGN_SIGNERS = 20`. **2026-08-31 (signer-backfill review, dedup):** `captureDocusignSigners(signers)` — the ONE shared per-recipient mapping algorithm (cap/dedupe-by-`recipient_id_guid`/GUID-shape-validate/trim) behind BOTH `extractSigners` (`api/v1/webhooks/docusign.ts`, the live Connect webhook) and `extractCapturedSigners` (`integrations/oauth/docusign.ts`, the signer backfill's `/recipients` REST fetch) — previously two independently-maintained copies of the same algorithm that differed only in helper names and where they found the raw array; factored here so the two call sites cannot drift. |
 | `adapters.ts` | Pure-function adapters: vendor payload -> canonical `TriggerEvent` for rules engine |
 | `googleDrive.ts` | Google Drive connector — OAuth, Secret Manager tokens, 7-day watch channels, event shaping |
 | `docusign.ts` | DocuSign connector — retryable signed-document fetch, account token resolution. DS-04: `DocusignResolvedConnection` + the `enqueueSignedDocument` sink now carry `scope` (`'org'`/`'member'`) + `ownerUserId` for personal-queue routing. **2026-08-29 (R6/R7):** `DocusignEnvelopeCompletedJobPayload` gained optional `_signers`; `processDocusignEnvelopeCompletedJob` derives `docusignEnv` (`resolveDocusignEnvironment(connection.baseUri)`) and threads both into `enqueueSignedDocument`'s input — see `jobs/agents.md` for the metadata-write side |

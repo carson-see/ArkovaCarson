@@ -5,34 +5,26 @@
  * returns only a DocuSign authorization URL after generating signed state.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { CheckCircle, FileSignature, Loader2, PlugZap, ShieldAlert, Unplug } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS } from '@/lib/copy';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
+import { useSignatureConnection } from './useSignatureConnection';
+import { followSignatureOAuthStart } from './signatureOAuthResponse';
 
 interface DocusignConnectorCardProps {
   orgId: string;
 }
 
-interface DocusignConnection {
-  id: string;
-  account_label: string | null;
-  account_id: string | null;
-  connected_at: string | null;
-  scope: string | null;
-}
-
-export function DocusignConnectorCard({ orgId }: DocusignConnectorCardProps) {
-  const [connection, setConnection] = useState<DocusignConnection | null>(null);
-  const [statusLoading, setStatusLoading] = useState(true);
+export function DocusignConnectorCard({ orgId }: Readonly<DocusignConnectorCardProps>) {
+  const { connection, setConnection, statusLoading, error, setError } =
+    useSignatureConnection(orgId, 'docusign', 'Unable to load DocuSign connection status.');
   const [actionLoading, setActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // SCRUM-2361 (DS-01): gate the *connect* action on the shipped verified-org
   // entitlement signal (SCRUM-1755). This is UX defense-in-depth; the worker
@@ -44,42 +36,6 @@ export function DocusignConnectorCard({ orgId }: DocusignConnectorCardProps) {
   const issueGate = useCanIssueCredential({ orgId });
   const gateLoading = issueGate.loading;
   const gateBlocked = !issueGate.loading && !issueGate.allowed;
-
-  const refreshConnection = useCallback(async () => {
-    setStatusLoading(true);
-    setError(null);
-    try {
-      // org_integrations is newer than generated frontend DB types.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: queryError } = await (supabase as any)
-        .from('org_integrations')
-        .select('id, account_label, account_id, connected_at, scope')
-        .eq('org_id', orgId)
-        .eq('provider', 'docusign')
-        .is('revoked_at', null)
-        .order('connected_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (queryError) {
-        setError('Unable to load DocuSign connection status.');
-        setConnection(null);
-        return;
-      }
-
-      setConnection(data ?? null);
-    } catch {
-      setError('Unable to load DocuSign connection status.');
-      setConnection(null);
-    } finally {
-      setStatusLoading(false);
-    }
-  }, [orgId]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async Supabase refresh settles after the effect returns
-    void refreshConnection();
-  }, [refreshConnection]);
 
   const handleConnect = useCallback(async () => {
     // Defense in depth: never call the worker when the gate denies. The button
@@ -97,30 +53,15 @@ export function DocusignConnectorCard({ orgId }: DocusignConnectorCardProps) {
           return_to: window.location.href,
         }),
       });
-      const body = await response.json().catch(() => ({})) as {
-        authorizationUrl?: string;
-        url?: string;
-        error?: string;
-      };
-
-      if (!response.ok) {
-        setError(body.error ?? CONNECTIONS_LABELS.CONNECT_FAILED);
-        return;
-      }
-
-      const nextUrl = body.authorizationUrl ?? body.url;
-      if (!nextUrl) {
-        setError(CONNECTIONS_LABELS.CONNECT_FAILED);
-        return;
-      }
-
-      window.location.assign(nextUrl);
+      setError(await followSignatureOAuthStart(response, (body) =>
+        body.error ?? CONNECTIONS_LABELS.CONNECT_FAILED,
+      ));
     } catch (err) {
       setError(err instanceof Error ? err.message : CONNECTIONS_LABELS.CONNECT_FAILED);
     } finally {
       setActionLoading(false);
     }
-  }, [orgId, gateBlocked, gateLoading]);
+  }, [orgId, gateBlocked, gateLoading, setError]);
 
   const handleDisconnect = useCallback(async () => {
     setActionLoading(true);
@@ -144,7 +85,7 @@ export function DocusignConnectorCard({ orgId }: DocusignConnectorCardProps) {
     } finally {
       setActionLoading(false);
     }
-  }, [orgId]);
+  }, [orgId, setConnection, setError]);
 
   const connected = !!connection;
   const accountLabel = connection?.account_label || connection?.account_id;
