@@ -10,9 +10,18 @@
  * The cleartext access/refresh token payload never reaches Postgres or logs.
  */
 
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { requireOAuthOrgAdmin } from './oauth-org.js';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import {
+  appendOAuthResult as appendResult,
+  readSignedOAuthState,
+  requestOrigin as getRequestBaseUrl,
+  sameOriginReturnTo,
+  signOAuthState as signState,
+  toPostgresBytea,
+} from './oauth-primitives.js';
 import { config } from '../../../config.js';
 import { logger } from '../../../utils/logger.js';
 import { db as defaultDb } from '../../../utils/db.js';
@@ -78,14 +87,6 @@ function getUserId(req: Request): string | undefined {
   return (req as unknown as { userId?: string }).userId;
 }
 
-function base64Url(input: string): string {
-  return Buffer.from(input, 'utf8').toString('base64url');
-}
-
-function hmac(input: string, secret: string): string {
-  return createHmac('sha256', secret).update(input).digest('base64url');
-}
-
 /**
  * GH #1836 (SECURITY, pen-test scope): mint a cryptographically random Drive
  * `changes.watch` channel token. Previously this reused `callbackOrgId` — the
@@ -120,44 +121,13 @@ function resolveStateSecret(deps: DriveOAuthDeps): string {
   );
 }
 
-function signState(payload: StatePayload, secret: string): string {
-  const encoded = base64Url(JSON.stringify(payload));
-  return `${encoded}.${hmac(encoded, secret)}`;
-}
-
 function verifyState(state: string, secret: string, deps: DriveOAuthDeps): StatePayload | null {
-  const [encoded, signature] = state.split('.');
-  if (!encoded || !signature) return null;
-
-  const expected = hmac(encoded, secret);
-  const sigBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (
-    sigBuffer.length !== expectedBuffer.length ||
-    !timingSafeEqual(sigBuffer, expectedBuffer)
-  ) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as StatePayload;
+  // Personal Drive state permits absent orgId; retain the explicit null normalization.
+  const parsed = readSignedOAuthState<StatePayload>(state, secret, (parsed) => {
     const nowMs = (deps.now?.() ?? new Date()).getTime();
-    // orgId may legitimately be null (personal-Drive individual path); userId +
-    // iat are always required and the token must be within TTL.
-    if (!parsed.userId || !parsed.iat || nowMs - parsed.iat > StateTtlMs) {
-      return null;
-    }
-    // Normalize a missing/absent orgId to null so downstream checks are explicit.
-    return { ...parsed, orgId: parsed.orgId ?? null };
-  } catch {
-    return null;
-  }
-}
-
-function getRequestBaseUrl(req: Request): string {
-  const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0] ?? req.protocol;
-  const host = req.headers['x-forwarded-host'] ?? req.headers.host;
-  return `${proto}://${host}`;
+    return !(!parsed.userId || !parsed.iat || nowMs - parsed.iat > StateTtlMs);
+  });
+  return parsed ? { ...parsed, orgId: parsed.orgId ?? null } : null;
 }
 
 function buildRedirectUri(req: Request): string {
@@ -176,42 +146,11 @@ function sanitizeReturnTo(returnTo: string | undefined, orgId: string | null, de
   const fallback = orgId
     ? `${base}/organizations/${orgId}?tab=settings`
     : `${base}/account?tab=settings`;
-  if (!returnTo) return fallback;
-  try {
-    const parsed = new URL(returnTo);
-    const frontendOrigin = new URL(deps.frontendUrl ?? config.frontendUrl).origin;
-    if (parsed.origin !== frontendOrigin) return fallback;
-    return parsed.toString();
-  } catch {
-    return fallback;
-  }
+  return sameOriginReturnTo(returnTo, deps.frontendUrl ?? config.frontendUrl, fallback);
 }
 
-function appendResult(url: string, key: 'drive' | 'drive_error', value: string): string {
-  const parsed = new URL(url);
-  parsed.searchParams.set('tab', 'settings');
-  parsed.searchParams.set(key, value);
-  return parsed.toString();
-}
-
-function toPostgresBytea(buffer: Buffer): string {
-  return `\\x${buffer.toString('hex')}`;
-}
-
-async function requireOrgAdmin(db: DbClient, userId: string, orgId: string): Promise<boolean> {
-  const { data, error } = await db
-    .from('org_members')
-    .select('role')
-    .eq('user_id', userId)
-    .eq('org_id', orgId)
-    .maybeSingle();
-
-  if (error) {
-    logger.error({ error, orgId }, 'Drive OAuth admin lookup failed');
-    return false;
-  }
-  return data?.role === 'admin' || data?.role === 'owner';
-}
+const requireOrgAdmin = (db: DbClient, userId: string, orgId: string) =>
+  requireOAuthOrgAdmin(db, userId, orgId, 'Drive');
 
 /**
  * DRIVE-01 (SCRUM-2366) — build the `DriveEligibilityDb` adapter over the route
