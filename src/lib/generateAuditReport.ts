@@ -37,6 +37,7 @@ import { buildQrMatrix, type QrMatrix } from './certificateQr';
 import { CERTIFICATE_COPY } from './copy';
 import { canonicalVerifyUrl } from './routes';
 import { getStatusDisplay, isProofDownloadable } from './statusDisplay';
+import { readTxInclusionEvidence } from './txInclusionEvidence';
 
 /**
  * Gap between a field label's painted right edge and the start of its value,
@@ -104,6 +105,30 @@ export interface ProofPacket {
   proof_schema_version: number;
   /** ISO-8601 network-observed block time (the machine field name). */
   block_timestamp: string | null;
+  /**
+   * Layer-2 BITCOIN-tree inclusion branch (migration 0427): the sibling path
+   * proving the anchor transaction is committed by the merkleroot inside
+   * `block_header`. This is what lets a holder close the transaction→block half
+   * of the proof LOCALLY instead of asking a Bitcoin node.
+   *
+   * NOT interchangeable with `merkle_proof`. Same `{hash, position}` shape, but
+   * these hashes are BYTE-REVERSED (display) hex folded with Bitcoin's
+   * double-SHA256 positional rule, whereas `merkle_proof` is the layer-1 APP
+   * tree in its stored orientation. Folding one with the other's rule
+   * typechecks and proves nothing — hence the distinct name.
+   *
+   * `null` when the record predates the columns; an EMPTY array is a COMPLETE
+   * branch (a block whose only transaction is this one has no siblings).
+   */
+  tx_inclusion_branch: MerkleProofEntry[] | null;
+  /**
+   * 0-based index of the anchor transaction within its block (migration 0427).
+   * Pairs indivisibly with `tx_inclusion_branch`: its bit at each level fixes
+   * that level's sibling side, so a verifier can re-derive the fold order and
+   * reject a branch that disagrees. `0` is a real position (the coinbase), not
+   * a blank.
+   */
+  tx_block_index: number | null;
   /** Inline signature envelope metadata; `null` on the default unsigned path. */
   signature: ProofSignature | null;
 }
@@ -122,6 +147,10 @@ export interface ProofInput {
   op_return_payload?: string | null;
   proof_schema_version?: number | null;
   block_timestamp?: string | null;
+  /** Layer-2 BITCOIN-tree inclusion branch (migration 0427). See ProofPacket. */
+  tx_inclusion_branch?: MerkleProofEntry[] | null;
+  /** 0-based transaction index within its block (migration 0427). */
+  tx_block_index?: number | null;
   signature?: ProofSignature | null;
 }
 
@@ -222,6 +251,10 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
       ? p.merkle_proof
       : null;
 
+  // Layer-2 bitcoin-tree pair — validated by the shared reader, not here, so
+  // this surface cannot drift from the DB read in `sourceProofInput.ts`.
+  const txInclusion = readTxInclusionEvidence(p.tx_inclusion_branch, p.tx_block_index);
+
   return {
     fingerprint: p.fingerprint ?? data.fingerprint,
     merkle_root: p.merkle_root ?? null,
@@ -242,6 +275,19 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
     proof_schema_version:
       typeof p.proof_schema_version === 'number' ? p.proof_schema_version : 1,
     block_timestamp: p.block_timestamp ?? data.securedAt ?? null,
+    // Migration 0427: the bitcoin-tree half, read as ONE fact through the
+    // SHARED validator (`txInclusionEvidence.ts`).
+    //
+    // This used to map the two fields INDEPENDENTLY, with an entry guard that
+    // asked only `typeof hash === 'string'` — so it skipped both-or-neither,
+    // 64-hex, range and index/side agreement, all four of which the API reader,
+    // `sourceProofInput`, the SDK and the verifier CLI enforce. An empty sibling
+    // hash shipped inside the holder's PDF packet as genuine inclusion evidence:
+    // the same defect, on the one surface with no server between it and the
+    // auditor. Structured entries are still preserved verbatim — never flattened
+    // to strings, which would drop the side the offline fold needs.
+    tx_inclusion_branch: txInclusion?.branch ?? null,
+    tx_block_index: txInclusion?.index ?? null,
     signature: p.signature ?? null,
   };
 }
