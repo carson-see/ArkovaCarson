@@ -67,7 +67,7 @@ const TEAM1_ADMISSION_PROVENANCE_RULE =
 // .test.ts's prefix/per-section hashes and ordered heading list. Any edit here
 // must recompute BOTH, exactly the way each test computes them.
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  'b61b50334e036a42b5f36ef7c44f3890e39ecd8d4f6b5529d3dfbda4802b5ede';
+  'bd3df8b0b247110bf6ec0bd19a0ac6fd86092457cd6e4991a383447a84225a39';
 
 // A wedged synchronous child must be killed with a diagnosable ETIMEDOUT
 // instead of hanging the suite — but this deadline is a HANG detector, not a
@@ -94,8 +94,8 @@ vi.setConfig({ testTimeout: 3 * PROVISION_CHILD_TIMEOUT_MS + 30_000 });
 describe('scripts/staging/agents.md — exact cross-lane semantic union', () => {
   it('retains the cross-lane sections, the documented OAuth confirmation driver and the Adobe webhook seed guidance', () => {
     const headings = stagingAgents.match(/^## .+$/gm) ?? [];
-    expect(headings).toHaveLength(19);
-    expect(new Set(headings).size).toBe(19);
+    expect(headings).toHaveLength(20);
+    expect(new Set(headings).size).toBe(20);
     expect(createHash('sha256').update(stagingAgents).digest('hex')).toBe(
       CANONICAL_CROSS_LANE_AGENTS_SHA256,
     );

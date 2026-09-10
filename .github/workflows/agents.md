@@ -1,5 +1,27 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-05 — `publish-sdk.yml` job name, and the two things this folder does NOT do
+
+The job was named "Build, test, and publish arkova (npm)". There are two npm packages in
+this repo whose npm name starts with `arkova` — `arkova` (packages/sdk) and
+`arkova-mcp-server` (sdks/mcp-server) — so the name did not identify the package it
+publishes. Now "Build, test, and publish arkova (packages/sdk)". Cosmetic in isolation;
+it matters because of the two facts below, which a reader was inferring from that name.
+
+**This folder holds exactly two publish workflows: `publish-sdk.yml` (packages/sdk, npm)
+and `publish-python-sdk.yml` (packages/arkova-py, PyPI).** `sdks/mcp-server` has NO CI
+publish path. Tagging does not ship it; only `scripts/release/publish-npm.sh
+--only=mcp-server`, run by hand on an authenticated machine, does. Do not assume a release
+tag covered it.
+
+**`secrets.NPM_TOKEN` is not known to work for the package `publish-sdk.yml` now
+publishes.** It was provisioned for `@carsonarkova/sdk` and scoped to the `carsonarkova`
+org; the package became the UNSCOPED name `arkova` on 2026-08-18, which is a separate
+ownership record an org-scoped token has no rights on. Confirm publish rights on `arkova`
+BEFORE pushing an `sdk-v3.0.0` tag — the tag is burned by the failed run, and re-tagging
+the same version is the worst recovery available. Recorded in the header of
+`scripts/release/publish-npm.sh` as well.
+
 ## 2026-09-02 — `cache-zk-artifacts` gained `restore-keys`; a lockfile bump must not re-download the ptau
 
 `ci.yml`'s Tests job keys the zk circuit artifact cache on `extraction-proof.circom` +

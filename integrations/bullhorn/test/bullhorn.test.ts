@@ -8,12 +8,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BullhornConnector } from '../src/connector';
 import { CandidateVerificationTab } from '../src/candidate-tab';
-import { BullhornWebhookHandler } from '../src/webhook-handler';
+import { BullhornWebhookHandler, constantTimeEqual } from '../src/webhook-handler';
 import type { BullhornConfig, BullhornSubscriptionEvent } from '../src/types';
 
 const mockFetch = vi.fn();
 
 const TEST_CONFIG: BullhornConfig = {
+  webhookSecret: 'unit-test-webhook-secret',
   bullhornRestUrl: 'https://rest-test.bullhornstaffing.com/rest-services/e999',
   bullhornRestToken: 'bh-test-token',
   arkovaApiKey: 'ak_test_bullhorn',
@@ -266,7 +267,7 @@ describe('BullhornWebhookHandler', () => {
       requestId: 1,
       lastRequestId: 0,
     };
-    const results = await handler.handleEvents(event);
+    const results = await handler.handleEvents(event, 'unit-test-webhook-secret');
     expect(results[0].action).toBe('skipped_non_candidate');
   });
 
@@ -279,7 +280,7 @@ describe('BullhornWebhookHandler', () => {
       requestId: 2,
       lastRequestId: 1,
     };
-    const results = await handler.handleEvents(event);
+    const results = await handler.handleEvents(event, 'unit-test-webhook-secret');
     expect(results[0].action).toBe('entity_update_noted');
   });
 
@@ -292,7 +293,72 @@ describe('BullhornWebhookHandler', () => {
       requestId: 3,
       lastRequestId: 2,
     };
-    const results = await handler.handleEvents(event);
+    const results = await handler.handleEvents(event, 'unit-test-webhook-secret');
     expect(results[0].action).toBe('no_action');
+  });
+});
+
+
+describe('BullhornWebhookHandler — inbound auth (SCRUM-3901)', () => {
+  const event = { events: [{ eventId: 'e1', entityName: 'Candidate', entityId: 1, eventType: 'FILE' }] } as any;
+  it('rejects every event when the presented secret is missing', async () => {
+    const handler = new BullhornWebhookHandler(TEST_CONFIG);
+    expect(await handler.handleEvents(event, undefined)).toEqual([{ eventId: 'e1', action: 'rejected_unauthenticated' }]);
+  });
+  it('rejects every event when the presented secret mismatches', async () => {
+    const handler = new BullhornWebhookHandler(TEST_CONFIG);
+    expect(await handler.handleEvents(event, 'wrong')).toEqual([{ eventId: 'e1', action: 'rejected_unauthenticated' }]);
+  });
+  it('fails closed when no secret is configured, even if one is presented', async () => {
+    const handler = new BullhornWebhookHandler({ ...TEST_CONFIG, webhookSecret: undefined });
+    expect(handler.verifyInboundSecret('anything')).toBe(false);
+    expect(await handler.handleEvents(event, 'anything')).toEqual([{ eventId: 'e1', action: 'rejected_unauthenticated' }]);
+  });
+  it('constantTimeEqual compares equal-length strings byte-wise and rejects length mismatch', () => {
+    expect(constantTimeEqual('abc', 'abc')).toBe(true);
+    expect(constantTimeEqual('abc', 'abd')).toBe(false);
+    expect(constantTimeEqual('abc', 'abcd')).toBe(false);
+  });
+
+  // Failing closed on an unset secret is correct, but silent: a deploy that
+  // simply forgot to set BULLHORN_WEBHOOK_SECRET rejects 100% of real events
+  // as `rejected_unauthenticated` and looks, from the outside, exactly like
+  // an attacker being turned away. Say so once, at construction.
+  it('warns once at construction when no webhook secret is configured', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      new BullhornWebhookHandler({ ...TEST_CONFIG, webhookSecret: undefined });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = String(warn.mock.calls[0][0]);
+      expect(message).toContain('webhookSecret');
+      expect(message).toContain('rejected_unauthenticated');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not warn when a webhook secret IS configured, and never prints it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      new BullhornWebhookHandler(TEST_CONFIG);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('never includes the secret value in the construction warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // Even the empty-string case (falsy, so it warns) must not echo config.
+      new BullhornWebhookHandler({ ...TEST_CONFIG, webhookSecret: '' });
+      const printed = warn.mock.calls.flat().map(String).join(' ');
+      expect(printed).not.toContain(TEST_CONFIG.webhookSecret as string);
+      expect(printed).not.toContain('bh-test-token');
+      expect(printed).not.toContain('ak_test_bullhorn');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
