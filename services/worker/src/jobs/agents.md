@@ -1,5 +1,8 @@
 # services/worker/src/jobs/agents.md
 
+## 2026-09-05 — PR #2495 release review: incomplete reorg scans remain failures
+
+`detectReorgs` now rejects malformed or unreadable tip heights, non-404 transaction lookup failures, missing confirmation status/block identity, and failed status reverts with `completed: false`. Successful sibling checks retain their counts, but any failed required check prevents the existing cron route from returning a healthy 200. The SECURED-to-SUBMITTED compare-and-set also repeats `legal_hold = false`, so a hold added after selection wins at write time. This enforces the existing legal-hold invariant without adding an anchor transition. Regression probes were observed failing before the changes; production is unchanged and fresh T3 staging remains required.
 ## 2026-09-05 — oldest DocuSign release candidate integration
 
 PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
