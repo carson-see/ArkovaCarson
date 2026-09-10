@@ -9,21 +9,24 @@
  * Lifecycle (per row): pending|queued → processing → materialized → anchored,
  * or → failed. Skipped rows are out of scope here (the producer sets them).
  *
- * EXACTLY-ONCE / CONCURRENCY SAFETY (no migration):
- *   The claim is a per-row compare-and-set UPDATE:
- *     UPDATE connector_artifact SET status='processing'
- *       WHERE id = :id AND org_id = :org AND status IN ('pending','queued')
- *       RETURNING id
- *   Postgres evaluates this atomically under a row lock, so two concurrent
- *   drain cycles racing the same row: the winner's UPDATE matches and returns
- *   the row; the loser's UPDATE matches ZERO rows (status already 'processing')
- *   and returns null → it skips. This is the exactly-once guarantee a
- *   `FOR UPDATE SKIP LOCKED` claim gives, achieved without a new migration (the
- *   rule for this story is NO new migration). A row is never claimed — and
- *   therefore never materialized/charged/anchored — twice. The credit debit is
- *   *additionally* idempotent: `debit_and_enqueue_anchor` keys the DEBIT on the
- *   anchor id, so even a crash between claim and debit re-drives the SAME single
- *   charge (never a double-debit).
+ * CONCURRENCY AND PUBLICATION (migration 0445):
+ *   The claim uses an org-scoped status CAS and returns its own fresh content.
+ *   The service-role materialize_connector_artifact_anchor RPC locks that row,
+ *   validates the captured timestamp, fingerprint and complete metadata, and
+ *   publishes the anchor and artifact link in ONE transaction. A concurrent
+ *   provenance heal either commits before validation (no publication), or
+ *   waits until the link is set and its anchor_id IS NULL guard fails.
+ *
+ *   Never split creation from linking: claim_pending_anchors can observe any
+ *   committed PENDING anchor, including one a later link CAS would reject.
+ *   A compensating delete cannot close that broadcast window. The model's
+ *   broadcastRequiresFreshLinkedAnchor invariant includes that observer.
+ *
+ *   Stale/uncertain RPC replies cause no compensating artifact writes: an old
+ *   client cannot identify a newer processing lease, and a missing response
+ *   can follow a successful commit. The existing reaper/confirmation paths
+ *   recover either case, retaining anchor_id for idempotent debit retries.
+ *   Credits move only through debit_and_enqueue_anchor, keyed on anchor id.
  *
  * §1.6A: this module handles ONLY the server-computed fingerprint + bounded,
  * PII-scrubbed metadata that already live on the row. It never reads, fetches,
@@ -98,7 +101,19 @@ export const AnchorInsertPayload = z
     // Arkova fetched (§1.5). That is why this is an enum and not a literal.
     fingerprint_source: z.enum(['document_bytes', 'issuer_record_attestation']),
   })
-  .strict();
+  .strict()
+  .refine(
+    value => value.fingerprint_source === (value.metadata['_direction'] === 'inbound'
+      ? 'issuer_record_attestation' : 'document_bytes'),
+    { message: 'fingerprint source must match connector provenance', path: ['fingerprint_source'] },
+  );
+
+const AtomicMaterializationReply = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('linked'), anchor_id: dbUuid('anchor_id'),
+    public_id: z.string().nullable(), created: z.boolean() }),
+  z.object({ outcome: z.literal('superseded') }),
+  z.object({ outcome: z.literal('lost_lease') }),
+]);
 
 /** Page size per drain pass per org — bounded so one org can't starve the cycle. */
 const DRAIN_LIMIT_DEFAULT = 50;
@@ -119,16 +134,25 @@ export interface ConnectorArtifactRow {
   metadata: Record<string, unknown> | null;
   anchor_id: string | null;
   credit_deduction_id: string | null;
+  /** Captured at claim time; SQL checks it with fingerprint AND full metadata. */
+  updated_at: string;
 }
 
 export interface MaterializedAnchor {
+  outcome: 'linked';
   anchorId: string;
   anchorPublicId: string | null;
+  created: boolean;
 }
+
+/** Rejected/uncertain publication must not write a possibly newer lease. */
+export type MaterializationOutcome = MaterializedAnchor | { outcome: 'superseded' | 'lost_lease' };
 
 export interface DebitResult {
   success: boolean;
   error?: string;
+  /** Transport or malformed replies do not establish whether a debit committed. */
+  outcome?: 'uncertain';
 }
 
 /** Bounded, PII-scrubbed alert payload (§1.6A — never raw bytes/fingerprint). */
@@ -156,7 +180,7 @@ export interface ConnectorArtifactDrainDeps {
   db: DrainDb;
   logger: DrainLogger;
   /** Materialize a PENDING anchor from a claimed artifact (fingerprint-only). */
-  materializeAnchor: (row: ConnectorArtifactRow) => Promise<MaterializedAnchor>;
+  materializeAnchor: (row: ConnectorArtifactRow) => Promise<MaterializationOutcome>;
   /** Charge AT SECURING via debit_and_enqueue_anchor (mig 0341). */
   debitAndEnqueueAnchor: (args: { orgId: string; anchorId: string }) => Promise<DebitResult>;
   /**
@@ -252,6 +276,8 @@ export interface ConnectorArtifactDrainResult {
    * gone) and were re-queued by the confirmation step to re-drive the debit.
    */
   reconfirmRequeued: number;
+  /** Legacy response field retained as zero: rejected snapshots are not requeued by this caller. */
+  supersededRequeued: number;
 }
 
 /**
@@ -375,7 +401,7 @@ async function resolveOrgActorUserId(
 }
 
 /**
- * Default materializer: insert a PENDING anchor from the artifact's
+ * Default materializer: atomically publish and link a PENDING anchor from the artifact's
  * server-computed fingerprint (§1.6A — fingerprint only, never bytes). The
  * anchor schema requires `user_id` (resolved to an org owner/admin actor) and
  * `filename`; `credential_type` is CONTRACT_POSTSIGNING (the connector-sourced
@@ -387,7 +413,7 @@ async function resolveOrgActorUserId(
 export async function defaultMaterializeAnchor(
   row: ConnectorArtifactRow,
   deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
-): Promise<MaterializedAnchor> {
+): Promise<MaterializationOutcome> {
   const userId = await resolveOrgActorUserId(deps, row.org_id);
 
   // SCRUM-2904 envelope-level guard: if the declared-hash rules path already
@@ -397,20 +423,13 @@ export async function defaultMaterializeAnchor(
   // (user_id, fingerprint) unique index below only catches the equal-hash case;
   // this catches the DIFFERENT-hash case (asserted vs measured fingerprint).
   // Keyed on the envelope id (external_ref), org-scoped. Fail-closed: a lookup
-  // error throws into the per-row try/catch (row marked failed/retryable) rather
+  // error leaves the row recoverable for the lease reaper, rather
   // than risk a duplicate. §1.6A: reads coarse ids only — never bytes.
   const existingEnvelopeAnchor = await findExistingEnvelopeAnchor({
     db: deps.db,
     orgId: row.org_id,
     envelopeId: row.external_ref,
   });
-  if (existingEnvelopeAnchor) {
-    return {
-      anchorId: existingEnvelopeAnchor.id,
-      anchorPublicId: existingEnvelopeAnchor.publicId,
-    };
-  }
-
   const filename =
     metadataString(row.metadata, 'filename') ??
     metadataString(row.metadata, 'external_filename') ??
@@ -456,37 +475,31 @@ export async function defaultMaterializeAnchor(
   };
 
   // Validate the persisted row before insert (§1.2). Parse failures throw into
-  // the per-row try/catch → the row is marked failed + alerted, never persisted.
+  // the per-row try/catch → publication is withheld and a bounded alert is raised.
   const validatedPayload = AnchorInsertPayload.parse(insertPayload);
 
-  const { data, error } = await deps.db
-    .from('anchors')
-    .insert(validatedPayload)
-    .select('id, public_id')
-    .single();
-
-  if (error) {
-    if ((error as { code?: string }).code === '23505') {
-      const { data: existing, error: lookupError } = await deps.db
-        .from('anchors')
-        .select('id, public_id')
-        .eq('org_id', row.org_id)
-        .eq('user_id', userId)
-        .eq('fingerprint', row.fingerprint_sha256)
-        .is('deleted_at', null)
-        .neq('status', 'REVOKED')
-        .maybeSingle();
-      if (lookupError || !existing) {
-        throw new Error(
-          `materialize duplicate-resolve failed: ${(lookupError as { message?: string })?.message ?? 'no row'}`,
-        );
-      }
-      return { anchorId: existing.id as string, anchorPublicId: (existing.public_id as string) ?? null };
-    }
-    throw new Error(`materialize anchor failed: ${(error as { message?: string }).message ?? 'unknown'}`);
-  }
-
-  return { anchorId: data.id as string, anchorPublicId: (data.public_id as string) ?? null };
+  // The SQL transaction locks and validates the captured artifact before any
+  // anchor can become visible to another worker. Never split this RPC back
+  // into an INSERT followed by a compensating freshness/link statement.
+  const { data, error } = await callRpc<unknown>(deps.db as Parameters<typeof callRpc>[0], 'materialize_connector_artifact_anchor', {
+    p_artifact_id: row.id,
+    p_org_id: row.org_id,
+    p_expected_updated_at: row.updated_at,
+    p_expected_fingerprint: row.fingerprint_sha256,
+    p_expected_metadata: row.metadata,
+    p_anchor_payload: validatedPayload,
+    p_existing_anchor_id: row.anchor_id ?? existingEnvelopeAnchor?.id ?? null,
+  });
+  // A transport error can follow a committed transaction. Do not compensate
+  // by clearing its link or overwriting a newly acquired processing lease.
+  if (error) return { outcome: 'lost_lease' };
+  const parsed = AtomicMaterializationReply.safeParse(data);
+  if (!parsed.success) return { outcome: 'lost_lease' };
+  if (parsed.data.outcome !== 'linked') return { outcome: parsed.data.outcome };
+  return {
+    outcome: 'linked', anchorId: parsed.data.anchor_id,
+    anchorPublicId: parsed.data.public_id, created: parsed.data.created,
+  };
 }
 
 /**
@@ -511,9 +524,19 @@ async function defaultDebitAndEnqueueAnchor(
       p_expected_status: 'PENDING',
     },
   );
-  if (error) return { success: false, error: error.message ?? 'debit rpc error' };
-  const result = data as { success?: boolean; error?: string } | null;
-  if (!result?.success) return { success: false, error: result?.error ?? 'debit failed' };
+  // A transport error may arrive after COMMIT. Only an explicit, validated
+  // business rejection establishes that no debit landed; unknown replies must
+  // leave the linked artifact available to confirmation/idempotent recovery.
+  if (error) return { success: false, outcome: 'uncertain', error: boundedReason(error.message) };
+  const parsed = z.discriminatedUnion('success', [
+    z.object({ success: z.literal(true) }),
+    z.object({ success: z.literal(false), error: z.enum([
+      'invalid_amount', 'reference_id_required', 'org_not_initialized',
+      'insufficient_credits', 'anchor_not_in_expected_status',
+    ]) }),
+  ]).safeParse(data);
+  if (!parsed.success) return { success: false, outcome: 'uncertain', error: 'debit_reply_unrecognized' };
+  if (!parsed.data.success) return { success: false, error: parsed.data.error };
   return { success: true };
 }
 
@@ -612,25 +635,46 @@ function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifa
 }
 
 /**
- * Claim a single row with a compare-and-set UPDATE. Returns true only if THIS
- * call transitioned it pending|queued → processing. A concurrent winner leaves
- * the loser's UPDATE matching zero rows → false (skip, never double-anchor).
+ * Claim a single row with a compare-and-set UPDATE. Returns the row's FRESH
+ * content (via the UPDATE's own `RETURNING`) only if THIS call transitioned it
+ * pending|queued → processing; `null` if a concurrent winner already claimed it
+ * (the loser's UPDATE matches zero rows → skip, never double-anchor).
+ *
+ * SECURITY (code-review finding, 2026-09-01 — closes a TOCTOU that let a drain
+ * mint an anchor from a FORGED fingerprint): this CAS UPDATE's `RETURNING` is
+ * the ONE point of truth for what gets materialized. The caller's batch SELECT
+ * a moment earlier is only a candidate-id list — its row content can go stale
+ * before this row's turn: `findExistingEnvelopeAnchor`, `resolveOrgActorUserId`,
+ * and every earlier row in the same batch (processed sequentially, each with
+ * its own awaits) all cost real wall-clock time, during which
+ * `docusign-envelope-completed.ts`'s provenance auto-heal can run and correctly
+ * overwrite this row's `fingerprint_sha256`/`metadata` (its own `WHERE
+ * anchor_id IS NULL` still matches an unclaimed row). Returning the row as of
+ * THIS UPDATE — not the batch-read snapshot — means materialization always
+ * sees whichever write (heal or claim) actually landed first, exactly as the
+ * heal's own `EvalPlanQual` reasoning already assumes for the reverse
+ * direction. Never widen this back to a boolean and re-introduce a second read
+ * of the row.
  */
-async function claimRow(deps: ConnectorArtifactDrainDeps, orgId: string, id: string): Promise<boolean> {
+async function claimRow(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  id: string,
+): Promise<ConnectorArtifactRow | null> {
   const { data, error } = await deps.db
     .from('connector_artifact')
     .update({ status: 'processing', updated_at: new Date().toISOString() })
     .eq('id', id)
     .eq('org_id', orgId)
     .in('status', DRAINABLE_STATUSES as unknown as string[])
-    .select('id')
+    .select('id, org_id, status, fingerprint_sha256, byte_length, source, external_ref, metadata, anchor_id, credit_deduction_id, updated_at')
     .maybeSingle();
 
   if (error) {
     deps.logger.warn({ error, artifactId: id, orgId }, 'connector-artifact claim failed');
-    return false;
+    return null;
   }
-  return data != null;
+  return (data as ConnectorArtifactRow | null) ?? null;
 }
 
 /**
@@ -705,7 +749,7 @@ async function confirmOneMaterializedArtifact(
 
   if (isAnchorAdvanced(anchor)) {
     // Irreversibly advanced → promote to terminal anchored (status-guarded).
-    if (await markStatus(deps, orgId, ref.id, 'materialized', 'anchored', { anchor_id: anchorId })) {
+    if (await markAnchored(deps, orgId, ref.id, anchorId)) {
       result.anchored += 1;
       result.confirmed += 1;
       deps.logger.info({ orgId, artifactId: ref.id, anchorId, anchorStatus: anchor!.status }, 'connector-artifact confirmed anchored');
@@ -750,6 +794,7 @@ export async function drainConnectorArtifactsForOrg(
     failed: 0,
     confirmed: 0,
     reconfirmRequeued: 0,
+    supersededRequeued: 0,
   };
 
   // CONFIRMATION PRE-STEP: promote/reconcile prior-pass `materialized` rows
@@ -759,10 +804,15 @@ export async function drainConnectorArtifactsForOrg(
   // PENDING and would reject a BROADCASTING anchor).
   await confirmMaterializedArtifacts(deps, orgId, limit, result);
 
-  // Candidate rows for THIS org only.
+  // Candidate rows for THIS org only. DELIBERATELY id-only: this SELECT feeds
+  // ONLY the claim loop below with WHICH rows to attempt, never their content.
+  // Row CONTENT (fingerprint_sha256, metadata, anchor_id, ...) is read exactly
+  // once, at claim time, from `claimRow`'s own CAS UPDATE `RETURNING` — see
+  // that function's header for why a second, earlier read here would be a
+  // stale-snapshot TOCTOU.
   const { data: candidates, error: selectError } = await deps.db
     .from('connector_artifact')
-    .select('id, org_id, status, fingerprint_sha256, byte_length, source, external_ref, metadata, anchor_id, credit_deduction_id')
+    .select('id')
     .eq('org_id', orgId)
     .in('status', DRAINABLE_STATUSES as unknown as string[])
     .order('created_at', { ascending: true })
@@ -775,16 +825,21 @@ export async function drainConnectorArtifactsForOrg(
     throw new Error(`connector-artifact select failed for org ${orgId}`);
   }
 
-  const rows = (candidates ?? []) as ConnectorArtifactRow[];
-  if (rows.length === 0) return result;
+  const candidateIds = ((candidates ?? []) as Array<{ id?: string }>)
+    .map((r) => r.id)
+    .filter((id): id is string => typeof id === 'string');
+  if (candidateIds.length === 0) return result;
 
-  for (const row of rows) {
+  for (const id of candidateIds) {
     // Concurrency-safe claim. A loser (already 'processing') skips silently —
-    // it is NOT a failure, it's the exactly-once guarantee working.
-    const claimed = await claimRow(deps, orgId, row.id);
-    if (!claimed) continue;
+    // it is NOT a failure, it's the exactly-once guarantee working. The
+    // returned `claimedRow` is the row's content AS OF THIS CAS UPDATE — the
+    // only content ever passed into materialization (never the id-only
+    // candidate list above).
+    const claimedRow = await claimRow(deps, orgId, id);
+    if (!claimedRow) continue;
     result.claimed += 1;
-    await drainOneClaimedRow(deps, orgId, row, result);
+    await drainOneClaimedRow(deps, orgId, claimedRow, result);
   }
 
   deps.logger.info({ orgId, ...result }, 'connector-artifact drain pass complete');
@@ -794,9 +849,9 @@ export async function drainConnectorArtifactsForOrg(
 /**
  * Full pipeline for ONE claimed row: materialize → debit at SECURING →
  * submit + confirm. Never throws into the loop (per-row failure isolation);
- * the catch routes to `handleRowDrainError`, which distinguishes pre-debit
- * (terminal `failed`) from post-debit (left `materialized` — the charge
- * already landed, the CONFIRMATION step owns the row from there).
+ * unconfirmed publication leaves recovery to the reaper/confirmation path.
+ * After a confirmed link, pre-debit errors may fail a materialized row;
+ * post-debit errors retain it for confirmation because the charge landed.
  */
 async function drainOneClaimedRow(
   deps: ConnectorArtifactDrainDeps,
@@ -810,20 +865,31 @@ async function drainOneClaimedRow(
   // Instead leave it RETRYABLE so the reaper re-resolves the SAME anchor
   // (debit idempotent on anchorId → no double-charge).
   let debitSucceeded = false;
+  let publicationCommitted = false;
 
   try {
-    // 1) Materialize a PENDING anchor (fingerprint-only, §1.6A).
-    const { anchorId } = await deps.materializeAnchor(row);
-    // STATUS-GUARDED processing → materialized. A zero-row match = LOST LEASE
-    // (the reaper re-queued the row, or another worker reclaimed it). STOP the
-    // row before debiting/anchoring on a stale lease — and DON'T count it.
-    if (!(await markStatus(deps, orgId, row.id, 'processing', 'materialized', { anchor_id: anchorId }))) {
-      deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease before debit — stopping row');
+    // Creation/reuse and the guarded link are one database transaction.
+    const materialized = await deps.materializeAnchor(row);
+    if (materialized.outcome !== 'linked') {
+      if (materialized.outcome === 'superseded') {
+        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'artifact_snapshot_rejected' });
+      } else {
+        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'artifact_materialization_uncertain' });
+      }
+      // No compensating status update: the row may belong to a newer lease,
+      // or the RPC may have committed before its response was lost. Existing
+      // recovery retains the original anchor id for an idempotent paid retry.
       return;
     }
+    publicationCommitted = true;
+    const anchorId = materialized.anchorId;
 
     // 2) Charge AT SECURING — and ONLY here. Never at enqueue/claim.
     const debit = await deps.debitAndEnqueueAnchor({ orgId, anchorId });
+    if (debit.outcome === 'uncertain') {
+      reportUncertainDebit(deps, orgId, row.id, debit.error ?? 'debit_reply_unrecognized');
+      return;
+    }
     if (!debit.success) {
       await handleDebitFailure(deps, orgId, row, anchorId, debit.error, result);
       return;
@@ -832,8 +898,33 @@ async function drainOneClaimedRow(
 
     await submitAndConfirmAnchor(deps, orgId, row, anchorId, result);
   } catch (err) {
+    if (!publicationCommitted) {
+      deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'artifact_materialization_uncertain' });
+      deps.logger.error({ orgId, artifactId: row.id, reason: boundedReason(String(err)) },
+        'connector artifact publication did not return a confirmed link; leaving recovery to the existing lease reaper');
+      return;
+    }
+    if (!debitSucceeded) {
+      reportUncertainDebit(deps, orgId, row.id,
+        err instanceof Error ? err.message : 'debit_request_threw', err);
+      return;
+    }
     await handleRowDrainError(deps, orgId, row, err, debitSucceeded, result);
   }
+}
+
+/** Unknown debit outcomes must never strand a possibly charged artifact. */
+function reportUncertainDebit(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  artifactId: string,
+  rawReason: string,
+  err?: unknown,
+): void {
+  const reason = boundedReason(rawReason);
+  deps.emitAlert({ scope: 'row', orgId, artifactId, reason: 'debit_outcome_uncertain' });
+  deps.logger.error({ err, reason, orgId, artifactId },
+    'connector-artifact debit outcome uncertain; left materialized for recovery');
 }
 
 /**
@@ -918,7 +1009,7 @@ async function reconcileRejectedDebitAnchor(
 
   if (isAnchorAdvanced(advancedAnchor)) {
     // Irreversibly advanced → promote to terminal anchored (status-guarded).
-    if (await markStatus(deps, orgId, row.id, 'materialized', 'anchored', { anchor_id: anchorId })) {
+    if (await markAnchored(deps, orgId, row.id, anchorId)) {
       result.anchored += 1;
       result.confirmed += 1;
       deps.logger.info({ orgId, artifactId: row.id, anchorId, anchorStatus: advancedAnchor!.status }, 'connector-artifact debit saw advanced anchor — promoted anchored (idempotent, no re-charge)');
@@ -993,7 +1084,7 @@ async function submitAndConfirmAnchor(
 
   // STATUS-GUARDED materialized → anchored. A zero-row match = LOST LEASE
   // (reaper/another worker took it) → stop, don't count anchored.
-  if (!(await markStatus(deps, orgId, row.id, 'materialized', 'anchored', { anchor_id: anchorId }))) {
+  if (!(await markAnchored(deps, orgId, row.id, anchorId))) {
     deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease before mark-anchored — stopping row');
     return;
   }
@@ -1052,80 +1143,72 @@ async function handleRowDrainError(
 }
 
 /**
- * STATUS-GUARDED transition that RETURNS whether a row actually matched.
- * `.eq('status', from)` means a row the reaper has already re-queued (or another
- * worker reclaimed/anchored) is NOT clobbered by a slow/zombie worker finishing
- * its old pass — the UPDATE matches zero rows. `.select('id').maybeSingle()`
- * surfaces that zero-row case as `false` (a LOST LEASE), so the caller can STOP
- * the row instead of pressing on with a stale lease. A DB error is also `false`
- * (fail-closed — don't proceed on an unconfirmed transition).
+ * THE guarded artifact transition. One place implements the safety property
+ * every status write in this module shares: org-scoped, guarded on the exact
+ * `from` status, RETURNS whether a row actually matched, and fails CLOSED on a
+ * DB error (`false`). A zero-row match means LOST LEASE — the reaper re-queued
+ * the row, or another worker reclaimed it — so the caller must STOP rather
+ * than press on with a stale lease.
+ *
+ * This replaced five hand-rolled copies of the same builder chain. The guard
+ * set IS the safety property (see this file's header), so it lives once.
+ *
+ * Publication is deliberately absent from this helper: processing ->
+ * materialized belongs exclusively to the atomic SQL transaction.
  */
-async function markStatus(
+async function transitionArtifact(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
   id: string,
-  from: 'processing' | 'materialized',
-  to: 'materialized' | 'anchored',
+  from: 'materialized',
+  to: 'queued' | 'anchored',
   extra: Record<string, unknown> = {},
 ): Promise<boolean> {
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), ...extra, status: to };
+
   const { data, error } = await deps.db
     .from('connector_artifact')
-    .update({ status: to, updated_at: new Date().toISOString(), ...extra })
+    .update(patch)
     .eq('id', id)
     .eq('org_id', orgId)
     .eq('status', from)
     .select('id')
     .maybeSingle();
   if (error) {
-    deps.logger.warn({ error, orgId, artifactId: id, from, to }, `connector-artifact mark-${to} failed`);
+    deps.logger.warn({ error, orgId, artifactId: id, from, to }, `connector-artifact ${from}->${to} transition failed`);
     return false;
   }
   return data != null;
 }
 
+/** Terminal promote: `materialized -> anchored`, recording the anchor. */
+async function markAnchored(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  id: string,
+  anchorId: string,
+): Promise<boolean> {
+  return transitionArtifact(deps, orgId, id, 'materialized', 'anchored', { anchor_id: anchorId });
+}
+
 /**
- * RETRYABLE requeue: reset a row back to 'queued' so the next daily drain
- * re-claims it. Used for insufficient_credits — a transient condition, not a
- * hard failure. STATUS-GUARDED on the in-flight `materialized` status (the row
- * is materialized by step 1 before the debit runs), consistent with the
- * `markStatus` pattern: if the reaper has already re-queued the row (or another
- * worker reclaimed it), this matches zero rows and does NOT clobber it.
- */
-/**
- * RETRYABLE requeue: reset a row back to 'queued' so the next daily drain
- * re-claims it. Used for insufficient_credits — a transient condition, not a
- * hard failure. STATUS-GUARDED on the in-flight `materialized` status (the row
- * is materialized by step 1 before the debit runs) and RETURNS whether a row
- * matched: a zero-row update means the reaper/another worker already took the
- * row (LOST LEASE) → the caller must NOT also count it.
+ * RETRYABLE requeue for a MATERIALIZED row: back to 'queued' so the next daily
+ * drain re-claims it. Used for `insufficient_credits` and by the confirmation
+ * step — transient conditions, not hard failures. `failed` is NOT a drainable
+ * status, so marking one of these failed would strand the row forever.
  */
 async function markRequeued(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
   id: string,
 ): Promise<boolean> {
-  const { data, error } = await deps.db
-    .from('connector_artifact')
-    .update({ status: 'queued', updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .eq('org_id', orgId)
-    .eq('status', 'materialized')
-    .select('id')
-    .maybeSingle();
-  if (error) {
-    deps.logger.warn({ error, orgId, artifactId: id }, 'connector-artifact mark-requeued failed');
-    return false;
-  }
-  return data != null;
+  return transitionArtifact(deps, orgId, id, 'materialized', 'queued');
 }
 
 /**
- * Terminal `failed` transition — STATUS-GUARDED and RETURNS whether a row
- * matched. The guard is `status IN ('processing','materialized')` (the only
- * in-flight statuses this worker holds a lease in): a row the reaper already
- * re-queued ('queued') or another worker already anchored ('anchored') will NOT
- * be flipped back to 'failed' — the LOST-LEASE case matches zero rows and the
- * caller stops the row without counting it.
+ * Terminal failure is permitted only after confirmed publication, while the
+ * row is still materialized. A late old-client error must never fail a newer
+ * processing lease acquired after a requeue. Zero matched rows count nothing.
  */
 async function markFailed(
   deps: ConnectorArtifactDrainDeps,
@@ -1148,13 +1231,10 @@ async function markFailed(
   // silently dropped — the UPDATE set status only, so the sole surviving copy
   // was a Sentry alert.
   //
-  // This is a read-modify-WRITE of the whole `metadata` column from the snapshot
-  // taken at claim time. Safe TODAY because `markFailed` is the only writer of
-  // this column after insert (`enqueue_connector_artifact` is ON CONFLICT DO
-  // NOTHING). The first writer that does `ON CONFLICT DO UPDATE` on `metadata`
-  // gets silently clobbered by this. The durable form is a server-side
-  // `metadata = metadata || jsonb_build_object('drain_error', $1)` in an RPC,
-  // which needs a migration — do that before adding a second writer.
+  // The atomic transaction validated this captured metadata before linking.
+  // This path runs only after its successful reply, and the materialized-only
+  // guard excludes prepublication processing leases. F1 heal cannot edit the
+  // linked artifact because its own guard requires anchor_id IS NULL.
   const existingMetadata =
     row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
       ? (row.metadata as Record<string, unknown>)
@@ -1168,7 +1248,7 @@ async function markFailed(
     })
     .eq('id', id)
     .eq('org_id', orgId)
-    .in('status', ['processing', 'materialized'])
+    .eq('status', 'materialized')
     .select('id')
     .maybeSingle();
   if (error) {
@@ -1197,8 +1277,8 @@ async function markFailed(
  *
  * The reaper re-queues ONLY `processing` rows. A `processing` row has NOT been
  * debited (the debit only runs AFTER the processing→materialized transition), so
- * its anchor (if materialize even created one before the crash) is still PENDING
- * — a re-drive is SAFE (materialize idempotent on the (user_id,fingerprint)
+ * no unlinked anchor was published by the atomic materializer.
+ * A re-drive is safe (materialize idempotent on the (user_id,fingerprint)
  * unique index; debit re-drives the SAME single charge — never a double).
  *
  * Crucially the reaper does NOT touch `materialized` rows: those may hold an
@@ -1267,6 +1347,8 @@ export interface ConnectorArtifactDrainCronResult {
   confirmed: number;
   /** Materialized rows re-queued by confirmation (anchor lost forward progress). */
   reconfirmRequeued: number;
+  /** Legacy field retained as zero; rejected snapshots are left for existing recovery. */
+  supersededRequeued: number;
 }
 
 export interface ConnectorArtifactDrainCronDeps {
@@ -1404,6 +1486,7 @@ export async function runConnectorArtifactDrain(
     failed: 0,
     confirmed: 0,
     reconfirmRequeued: 0,
+    supersededRequeued: 0,
   };
 
   if (!enabled) {
@@ -1431,6 +1514,7 @@ export async function runConnectorArtifactDrain(
       base.failed += r.failed;
       base.confirmed += r.confirmed;
       base.reconfirmRequeued += r.reconfirmRequeued;
+      base.supersededRequeued += r.supersededRequeued;
     } catch (err) {
       // Per-org isolation: surface as a cycle alert, keep draining other orgs.
       base.orgsFailed += 1;

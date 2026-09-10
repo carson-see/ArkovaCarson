@@ -1,5 +1,25 @@
+## 2026-09-10 — PR #2570 unknown debit response recovery
+
+A lost/malformed debit RPC response can follow a committed charge. The default
+adapter now returns an explicit uncertain outcome; thrown debit calls follow the
+same recovery path. Leave the linked artifact materialized, emit a bounded alert,
+and let confirmation/requeue retain its original anchor for idempotent debit retry.
+Only validated business rejections may take the existing failure/requeue paths.
+The previous terminal-failure behavior was reproduced through the default adapter
+before this change. Full-schema lost-response/retry evidence must accompany release.
+
 # services/worker/src/jobs/agents.md
 
+## 2026-09-10 — PR #2570 atomic connector publication (SCRUM-3882)
+
+The materializer now calls `materialize_connector_artifact_anchor` (migration 0445). SQL locks and revalidates the captured artifact version, fingerprint, and complete metadata before creating/reusing an anchor and linking it in the same transaction. It locks the owner/admin membership and scopes artifact and anchor reads by organization. The old insert/link/compensating-delete sequence allowed a separate broadcaster to claim an unlinked stale anchor and has been removed. Unknown RPC replies never license a debit or a compensating lease write; confirmation/reaping retain the original anchor id. Declared inbound provenance stays `issuer_record_attestation`; measured outbound provenance stays `document_bytes`. PR #2566 and this child require complete-stack T3 qualification; local checks do not establish staging or production state.
+
+
+## 2026-09-05 — PR #2566 concurrent provenance-heal CAS repair
+
+The F1 heal must revalidate its declared-row authorization in the UPDATE, not only in the prior read. Two outbound jobs can read the same inbound row; after the first commits measured provenance, the second must not overwrite it as another "declared" heal. The write now filters id, org_id, the captured fingerprint, full captured metadata and anchor_id IS NULL. PostgREST `.eq()` interpolates its value, so JSONB equality must pass `JSON.stringify(metadata)`; a JavaScript object would become `eq.[object Object]`.
+
+Validation: two RED/GREEN interleavings cover different-fingerprint and equal-fingerprint metadata reclassification; the real Supabase client test captures the serialized PATCH filters and verifies the first winner survives. Local PostgreSQL sessions additionally observed the second writer waiting on the first row lock then affecting zero rows. The residual anchor-publication race remains owned by PR #2570 / migration 0437; this repair does not make PR #2566 independently release-ready or claim new staging evidence.
 ## 2026-09-05 — PR #2565 durable attempt and provenance repair
 
 This update supersedes the earlier unresolved marker/pacing note and the historical T2/no-migration description below. Migration0438 adds a service-only completion-marker trigger without editing frozen0423, a FORCE-RLS attempt table keyed by org/envelope, and service-only candidate/claim RPCs. A claim reserves15 minutes even after a failed provider request or lost write CAS. Completed envelopes stay excluded; failed attempts can retry after cooldown. There is no claim that an envelope is never polled twice or that this grants provider approval.
@@ -126,6 +146,20 @@ backfill write). T2 (worker behavior).
 PRs #2472/#2474/#2476 are tested together. The shared artifact materializer requires an explicit fingerprint evidence class: fetched outbound documents use `document_bytes`; inbound declared fingerprints use `issuer_record_attestation`. Combined tests retain signer capture, inbound flag control, both insert classifications, and rejection of missing classifications. This integration is staging preparation, not production or completed soak evidence.
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
+
+## 2026-09-01 — CRITICAL: `connector-artifact-drain.ts` materialized anchors from a STALE batch-read snapshot, bypassing the F1-heal (code review)
+
+`drainConnectorArtifactsForOrg`'s per-org candidate `SELECT` read full row content (`fingerprint_sha256`, `metadata`, `anchor_id`, ...) into memory ONCE, then `claimRow` only returned a boolean, so `drainOneClaimedRow`/`defaultMaterializeAnchor` always minted the anchor from that ORIGINAL batch-read `row` object — never from what the claim's own CAS `UPDATE` actually matched. Attack: a forged inbound `connector_artifact` row wins the `enqueue_connector_artifact` `ON CONFLICT DO NOTHING` race (attacker-chosen `fingerprint_sha256`, `metadata._direction: 'inbound'`); the drain's batch `SELECT` captures the forged value; before THIS row's turn in the (sequentially-processed, up to `DRAIN_LIMIT_MAX`=200 rows) batch loop, `docusign-envelope-completed.ts`'s F1-heal (2026-08-31 entry below) correctly supersedes the row (`fingerprint_sha256 := verified`, strips `_direction`) because its guard is only `WHERE anchor_id IS NULL`; the drain then mints `anchors.fingerprint = <forged>` from the stale snapshot anyway. Net: `connector_artifact` shows the verified hash, but the ANCHOR — the thing that gets debited, submitted, and SECURED — carries the attacker's value, and can be mis-stamped `fingerprint_source: 'issuer_record_attestation'` (declared) instead of omitted (unclassified/measured), since the batch-read `metadata._direction` snapshot is also stale.
+
+**Fix.** `claimRow` (previously `Promise<boolean>`) now `.select('id, org_id, status, fingerprint_sha256, byte_length, source, external_ref, metadata, anchor_id, credit_deduction_id')` on its own CAS `UPDATE` and returns the FRESH `ConnectorArtifactRow | null` — the claim's own `RETURNING` is now the ONE point of truth for row content, matching the same `EvalPlanQual`/READ-COMMITTED reasoning the heal's own header already documents for its own internal read-then-write. `drainConnectorArtifactsForOrg`'s candidate `SELECT` is now id-only (`.select('id')`) — a pure candidate list, never a content source; the claim loop passes `claimRow`'s returned row (not the id-only candidate) into `drainOneClaimedRow`. Verified no other call site of `materializeAnchor`/`drainOneClaimedRow` exists (`rule-action-dispatcher.ts`'s `materializeAnchorQueueItem` is an unrelated, differently-named function over a different table).
+
+**This does NOT fully close the window.** `claimRow`'s capture and the eventual `anchors` INSERT (inside `defaultMaterializeAnchor`) are still two separate statements, separated by `resolveOrgActorUserId` + `findExistingEnvelopeAnchor` (both awaited DB round trips) — and the heal's guard (`anchor_id IS NULL`) has no notion of "this row was already claimed." The fix closes the LARGEST instance of the window (the batch-order-dependent one); a smaller residual window remains, formally reproduced in `machines/docusignInboundDedup.machine.ts`'s 2026-09-01 TOCTOU extension (see that file's `agents.md` entry) — disclosed there as an unresolved follow-up, not silently fixed further in this PR.
+
+Also HIGH (same review): `docusign-envelope-completed.ts`'s F1-heal previously fired on `fingerprintMismatch || wonByInboundRow` and healed on EITHER — but the CTO precedence rule ("a MEASURED fingerprint supersedes a DECLARED one, never the reverse") only licenses superseding a row PROVABLY declared/untrusted (`wonByInboundRow`, i.e. `metadata._direction === 'inbound'`). A bare `fingerprintMismatch` against a non-inbound-marked row is NOT evidence of forgery — it can be two legitimate outbound executions for the same envelope hashing differently (redelivered webhook, job retry, DocuSign's combined-PDF embedding a fetch-time timestamp) — and auto-healing that shape lets the SECOND run silently overwrite the FIRST run's equally-measured value, mislabeling the audit row as forgery resolution, and defeats `ON CONFLICT DO NOTHING`'s idempotency (the fingerprint can flap between retries). Fixed: a new `autoHealLicensed = wonByInboundRow` gate — the heal's atomic `UPDATE` only runs when `autoHealLicensed`; a bare mismatch against a non-declared row now stays in DETECT-AND-THROW territory (the pre-#2520 posture) with its own distinct audit `reason: 'fingerprint_mismatch_non_declared_row_autoheal_not_licensed'` / `winner: 'unresolved_non_declared_mismatch'`, never attempting the supersede `UPDATE`.
+
+Tests: `connector-artifact-drain.test.ts` new `'TOCTOU regression'` case (batch-SELECT interception mutates the row mid-drain to simulate a heal landing between candidate-read and claim; asserts `materializeAnchor` receives the VERIFIED fingerprint and healed metadata, never the forged batch snapshot — verified to fail against the pre-fix code via a temporary revert). `docusign-envelope-completed.test.ts`: the pre-existing "detects a mismatch without `_direction`" test previously asserted a SUCCESSFUL heal for that shape — corrected to assert NO auto-heal (throw + the new audit reason), since that was exactly the over-broad-heal bug. All 55 + 27 = 82 tests green.
+
+T3 (security + data integrity — anchor lifecycle, chain/treasury path).
 
 ## 2026-08-31 — F1-heal (SCRUM-3818 go-live gate, follow-up to PR #2476): `docusign-envelope-completed.ts` auto-heals a declared/forged provenance conflict instead of only detecting it
 
@@ -964,6 +998,34 @@ mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local c
 
 **2026-08-03 addendum (PR #1944, GH #1835):** a 4th spec, `DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`, was added to `run-lease.ts` — see the `GH #1835` entry near the top of this file for the full writeup. It deliberately follows every convention above (per-job lease id/type, `withRunLease` wrapping, dedicated test suite) EXCEPT it is not in the `RUN_LEASE_SPECS` array: this job's only real cadence is hourly on both trigger paths, which equals the `CLOUD_RUN_REQUEST_TIMEOUT_MS` ceiling this section derives every other TTL against, so the array's own `ttlMs > slowestRecordedCadenceMs` test would be unsatisfiable for it. Not a gap in this job's protection — `withRunLease` still guards it identically — just a reason it can't share the cross-cutting array test the other three do.
 
+## 2026-09-01 — connector-artifact drain: the claim-to-mint TOCTOU gate (`connector-artifact-drain.ts`)
+
+Second and final half of the stale-snapshot fix. The first half made `claimRow`'s CAS `UPDATE ... RETURNING` the only source of row CONTENT (the batch SELECT is id-only), closing the batch-order-dependent window worth up to `DRAIN_LIMIT_MAX`=200 earlier rows of awaited work. That was necessary, not sufficient: `claimRow`'s capture and the `anchors` INSERT are still two statements separated by two awaited round trips (`resolveOrgActorUserId`, `findExistingEnvelopeAnchor`), and `docusign-envelope-completed.ts`'s F1-heal guards its supersede UPDATE **only** on `anchor_id IS NULL` — it has no notion of "this row was already claimed into `processing`". So the heal could still land inside that residual window and the drain would mint an anchor from the fingerprint it had already ruled forged.
+
+**The gate.** The freshness assertion is fused into the CAS that sets `anchor_id` — the very column the heal reads — rather than being a separate re-read (which would just be one more read-then-act):
+
+```sql
+UPDATE connector_artifact
+   SET status='materialized', anchor_id=:anchorId, updated_at=now()
+ WHERE id=:id AND org_id=:org AND status='processing'
+   AND fingerprint_sha256 = :fingerprintCapturedAtClaimTime
+RETURNING id
+```
+
+Postgres evaluates the predicate atomically under the row lock, and re-evaluates it against the post-commit row (EvalPlanQual) if it queues behind the heal's concurrent UPDATE. One statement, both directions: a heal in the window → zero rows → nothing linked/debited/anchored and the row is requeued to re-drain against the healed value (the heal WINS, per the CTO precedence ruling); the link first → `anchor_id` non-null → the heal's own pre-existing guard locks it out and it takes its documented "already materialized" branch. **No migration, no new `status` value** (0343's CHECK constraint is a closed set), **and no change to `docusign-envelope-completed.ts`.**
+
+**Discriminating the two zero-row causes without a read.** Zero rows means either the fingerprint moved or the lease was lost, and they need opposite handling (requeue vs. leave-alone). Rather than re-read, the discrimination is itself a guarded CAS: attempt `processing → queued`. It matches only while we still hold the lease, so a match proves *superseded* and a miss proves *lost lease*.
+
+**The orphan, and why it exists.** `connector_artifact.anchor_id` is a NOT-DEFERRABLE FK to `anchors(id)` (0343), so the anchor id **cannot** be reserved before the `anchors` row exists — the INSERT must precede the gate. A rejected gate therefore leaves a PENDING, unlinked anchor, and `claim_pending_anchors` claims `status='PENDING' AND deleted_at IS NULL`: left alone it would be batch-anchored and broadcast to Bitcoin carrying the superseded fingerprint. That is the whole bug merely relocated. `abortSupersededMint` neutralizes it with a **guarded soft-delete** (`deleted_at` — the filter BOTH `claim_pending_anchors` and `findExistingEnvelopeAnchor` already apply, so the orphan becomes invisible to the broadcaster and to the drain's own reuse guard, while the row survives for forensics; a hard DELETE would destroy the evidence of an attempted forgery). The WHERE clause `status='PENDING' AND chain_tx_id IS NULL AND deleted_at IS NULL` is the safety property — if a concurrent batch-anchor already claimed it, this matches zero rows and we alert `orphan_anchor_neutralize_failed` rather than race the broadcaster.
+
+**Two things you can get wrong here:**
+- `MaterializedAnchor.created` gates the neutralization. Only an anchor THIS pass **inserted** may be soft-deleted; one merely REUSED (the envelope guard, or the 23505 duplicate-resolve) belongs to another writer and may be live. Absence of the flag means "not ours" — fail-safe (leave a visible orphan), never fail-destructive.
+- The `lost_lease` outcome deliberately does **not** neutralize. It does not prove the anchor is unlinked (the new owner may have linked it; the CAS may have errored after committing server-side), and soft-deleting a live anchor is worse than leaving an orphan an operator can see.
+
+New counter `supersededRequeued` on both `ConnectorArtifactDrainResult` and the cron result — counted separately from `failed` because nothing failed: the gate did its job, no charge landed, and the row is drainable again.
+
+**Formally verified**, not just tested: `machines/docusignInboundDedup.machine.ts`, invariant `anchorNeverMintedFromSupersededFingerprint`. That invariant shipped RED against the pre-gate code and passes now **without being weakened** — deleting the guard from `mintAnchorFromCapture` reproduces the counterexample verbatim. `npm run verify:machines`: PASSED 5/5. The orphan lifecycle is **out of the model's scope** (an unlinked anchor is not `anchorMaterialized`) and is pinned by unit tests instead — do not cite the machine as proof that path is correct.
+
 ## 2026-08-01 — Queues lane (PR #1813): the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
 
 Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-01, the live
@@ -1696,3 +1758,7 @@ there too.
 Full rationale, plus the separate and higher-severity `FETCH_TIME_SNAPSHOT` mis-classification these same
 anchors still emit on three public surfaces:
 `docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.
+
+## 2026-09-10 — PR #2570 current-main integration review
+
+The current main merge preserves both the atomic connector publication and uncertain-debit recovery changes, alongside PR #2565 signer backfill and PR #2695 timestamp semantics. The only manual conflict was this documentation file; both complete entries were retained. Migration 0445 is unchanged. Targeted default-adapter, connector, signer and route tests qualify the combined source; production migration and deployment remain separate release prerequisites.

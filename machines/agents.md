@@ -1,6 +1,59 @@
 # machines/agents.md
 
+## 2026-09-10 — PR #2570 models independent broadcaster publication
+
+The DocuSign model now includes anchor publication and an independently schedulable broadcaster claim. `broadcastRequiresFreshLinkedAnchor` prevents a broadcaster claiming an unlinked or superseded anchor. Atomic minting publishes and links together; a separate inserted-anchor action is a negative control. The model checks the concurrency design; SQL tests separately check full metadata equality, tenant scope, permissions, and real row locks. It does not model unknown external calls or replace staging qualification.
+
 TLA+ PreCheck formal verification models for critical state machines.
+
+## 2026-09-01 — `docusignInboundDedup.machine.ts`: the claim-to-mint TOCTOU is CLOSED (invariant now passes, unweakened)
+
+Context: the TOCTOU extension added to this machine earlier the same day deliberately shipped RED. It split the drain's single atomic `materializeAnchorFromArtifact` into `captureArtifactFingerprint` (models `claimRow`'s CAS `RETURNING`) + `mintAnchorFromCapture` (models the link, using the CAPTURED value), which made a real residual bug in `services/worker/src/jobs/connector-artifact-drain.ts` expressible for the first time. TLC found it: `forgeInbound` → `capture` (FORGED) → `outboundHealsForgery` (live class becomes REAL) → `mint` (anchor holds FORGED). The new invariant `anchorNeverMintedFromSupersededFingerprint` was left FAILING and documented rather than weakened.
+
+**The code changed; the invariant did not.** `linkMaterializedAnchor` now fuses the freshness assertion into the CAS that sets `anchor_id` — the very column `docusign-envelope-completed.ts`'s F1-heal guards on:
+
+```sql
+UPDATE connector_artifact
+   SET status='materialized', anchor_id=:anchorId, updated_at=now()
+ WHERE id=:id AND org_id=:org AND status='processing'
+   AND fingerprint_sha256 = :fingerprintCapturedAtClaimTime   -- the gate
+RETURNING id
+```
+
+One statement closes the window from both directions. A heal anywhere between claim and link makes the predicate false → zero rows → nothing linked, nothing debited, nothing anchored, row requeued to re-drain against the healed value (the heal WINS, per the CTO precedence ruling). The link landing first sets `anchor_id` non-null → the heal's pre-existing `anchor_id IS NULL` guard locks it out and it takes its documented "already materialized" branch. **No migration, no new status value, and NO change to `docusign-envelope-completed.ts`.**
+
+Why a re-read before the INSERT was rejected as the fix: it is one more read-then-act — the heal can land between the re-read and the INSERT and nothing notices. Why a single claim+materialize+mark RPC was rejected: it needs a migration, and this achieves the same guarantee with an existing statement. The freshness predicate has to be evaluated by Postgres *in the same statement that publishes the anchor*, or it is not a gate.
+
+Model deltas (both minimal, both faithful):
+- `mintAnchorFromCapture` gains the guard `capturedFingerprintClass[e] = fingerprintClass[e]`. Modeled as a GUARD, not a check-then-act pair, because in the real code it is a WHERE-clause predicate on the same atomic UPDATE (row lock + EvalPlanQual on a post-commit re-evaluation). A two-action model would be a FALSE positive.
+- New `abortSupersededMint` covers the zero-row outcome: resets `capturedFingerprintClass[e]` to `NONE`, which re-enables `captureArtifactFingerprint` — that reset IS the requeue.
+- `outboundHealsForgery` / `outboundLosesRaceUnhealed` / all three invariants UNCHANGED.
+
+**Mutation-tested, not just asserted:** deleting the guard from `mintAnchorFromCapture` reproduces the header's counterexample verbatim (`proofPassed: false`, `Invariant anchorNeverMintedFromSupersededFingerprint is violated`); restoring it returns `proofPassed: true`. That is the regression test for the fix.
+
+| tier | proofPassed | invariants | generated / distinct | queue | depth | deadlock |
+|---|---|---|---|---|---|---|
+| pr (2 envelopes) | true | 3 | 865 / 256 | 0 | 9 | checked |
+| nightly (4 envelopes) | true | 3 | 442,369 / 65,536 | 0 | 17 | checked |
+
+`machineSha256 927a4177973a5a6f8aca4c05c9d70910d1f8b54b9ae3265233abd99987068f9e` (stable across comment-only edits — the hash covers the semantic machine, not the file). `npm run verify:machines` from the repo root: **PASSED 5/5**.
+
+**Deliberately NOT modeled — read this before assuming the machine covers it.** `connector_artifact.anchor_id` is a NOT-DEFERRABLE FK to `anchors(id)` (migration 0343), so the anchor id cannot be reserved before the `anchors` row exists: the INSERT must precede the gate, and a rejected gate therefore leaves an **inserted-but-unlinked orphan anchor**. That row is never LINKED — which is what `anchorMaterialized` models — so it is outside this machine's state entirely. The real code neutralizes it with a guarded soft-delete (`deleted_at`, the filter BOTH `claim_pending_anchors` and `findExistingEnvelopeAnchor` already apply) and alerts `orphan_anchor_neutralize_failed` when that guard matches zero rows. **That behaviour is pinned by unit tests in `connector-artifact-drain.test.ts`, not by TLC.** Do not cite this machine as proof the orphan path is correct.
+
+## 2026-09-01 — TOCTOU extension (superseded by the entry above; kept for the reasoning)
+
+The extension that made the claim-to-mint window modelable, and shipped RED on purpose. Its counterexample trace and certificate live in `docusignInboundDedup.machine.ts`'s own header, which now records both the failing revision's finding and the fix. `machineSha256` of the failing revision was `e4b22f11a4d55979d3ad977964738d78b80b06c8d6c167513eeff7846cd9ff47` (506 generated / 200 distinct, halted on first violation at depth 8). The lesson worth keeping: a 121-state, fully-verified proof missed a real bug for months because the model collapsed *read current state* and *act on it* into one atomic action. When the code does `capture → await → act`, the model must have a variable for the captured value, or the proof is answering an easier question than the one you asked.
+
+
+## 2026-09-01 — TOCTOU extension: `docusignInboundDedup.machine.ts` splits materialization into capture+mint and FAILS a new invariant (code review of `jobs/connector-artifact-drain.ts`) — real, disclosed, UNRESOLVED finding
+
+Code review found `jobs/connector-artifact-drain.ts` materializing an anchor from a STALE in-memory row snapshot: `drainConnectorArtifactsForOrg`'s batch `SELECT` read row content once, then handed it unchanged through `resolveOrgActorUserId`/`findExistingEnvelopeAnchor` (real awaited DB round trips, plus every earlier row in the batch) into the `anchors` INSERT — a window `docusign-envelope-completed.ts`'s F1-heal (PR #2520, gated only on `connector_artifact.anchor_id IS NULL`) could land inside of, healing the persisted row while the drain still minted the anchor from the pre-heal (forged) value. Fixed in code: `claimRow`'s CAS `UPDATE` now `RETURNING`s the row's fresh content and the caller passes THAT into `drainOneClaimedRow`/`materializeAnchor` — the batch `SELECT` is now id-only, a pure candidate list.
+
+The PRE-fix machine could not express this bug at all: `materializeAnchorFromArtifact` was ONE atomic action reading `fingerprintClass[e]` at the instant it fired — no snapshot, no gap, so a 121-state fully-verified proof was silent on a real vulnerability. This extension REPLACES that action with two — `captureArtifactFingerprint` (models `claimRow`'s `RETURNING`) and `mintAnchorFromCapture` (models the `anchors` INSERT, using the CAPTURED value, never a fresh read) — with two new per-envelope 3-valued variables (`capturedFingerprintClass`, `anchorFingerprintClass`) and a new invariant `anchorNeverMintedFromSupersededFingerprint`: once an anchor is materialized, its baked-in fingerprint class must equal the artifact's CURRENT fingerprint class (deliberately NOT "never forged" — that would wrongly flag the pre-existing, accepted "attacker's row wins outright, materializes before the heal ever runs" case, which is `outboundLosesRaceUnhealed`'s documented operator-reconciliation exception, not this bug).
+
+**Result: FAILS, on purpose left failing.** `npx tla-precheck check docusignInboundDedup.machine.ts` (from `machines/`): `proofPassed: false`. TLC finds a genuine counterexample in 8 steps / 506 states generated / 200 distinct (halts on first violation, not full exploration): `materializeOutbound(e1)` [unrelated envelope] → `forgeInbound(e2)` [attacker wins, `fingerprintClass=FORGED`] → `captureArtifactFingerprint(e2)` [captures FORGED] → `outboundHealsForgery(e2)` [heal fires — its guard is only `not(anchorMaterialized[e2])`, which is still true — `fingerprintClass:=REAL`] → `mintAnchorFromCapture(e2)` [mints from the STALE capture: `anchorFingerprintClass:=FORGED`] — now `fingerprintClass[e2]=REAL` but `anchorFingerprintClass[e2]=FORGED`. `machineSha256 e4b22f11a4d55979d3ad977964738d78b80b06c8d6c167513eeff7846cd9ff47`. Full trace + certificate summary in the machine file's header.
+
+**Why this is expected, not a bug in the proof.** The code fix (`claimRow` now reads fresh AT CLAIM TIME) closes the LARGEST instance of the window — the batch-order-dependent one, up to `DRAIN_LIMIT_MAX`=200 earlier rows' worth of awaited work. It does NOT make materialization atomic end-to-end: `claimRow`'s capture and the `anchors` INSERT are still two separate statements separated by `resolveOrgActorUserId` + `findExistingEnvelopeAnchor`, and the heal's guard has no notion of "this row was already claimed." TLC proves that SMALLER residual window is still formally sufficient to reproduce the bug. This was reported to the operator as a genuine follow-up rather than silently fixed further (out of the reviewed PR's stated scope) or masked by weakening the invariant — per explicit instruction, the invariant is NOT softened to force a pass. `pr` tier budget: 100_000 → 2_000_000, `graphEquivalence` now OFF on `pr` too (raw product 1,296² = 1,679,616 exceeds the 100k equivalence cap — a real, disclosed regression from the previous 121/121-equivalent proof, not incidental). `nightly` budget: 100_000_000 → 3_000_000_000_000.
 
 ## 2026-08-31 — F1-heal extension: `docusignInboundDedup.machine.ts` gains the auto-heal transition (SCRUM-3818 go-live gate, follow-up to PR #2476)
 
