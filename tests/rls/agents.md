@@ -140,3 +140,9 @@ needed), which reuses the 2026-08-15 e2e sign-out guard's detector:
 - **Do not serialize the suite instead** (`fileParallelism: false` in
   `vitest.config.rls.ts`): it would hide this class of collision and slow
   every RLS run; parallel execution is itself part of what the suite proves.
+
+## 2026-09-10 — PR #2694 complete-schema fixture correction
+
+The fingerprint index-plan suite now creates its own organization and required profiles row after auth.users. A complete committed Supabase replay exposed anchors_user_id_fkey during the old setup, before any of the seven plan checks executed. Teardown deletes only this run’s user/org fixture, including partial setup. An overlong fingerprint negative case also pins the unconstrained bpchar cast against accidental character(64) truncation. Migration 0441 remains immutable.
+
+The same full-schema run showed a second fixture defect: enable_seqscan=off still permits the planner to choose another index. With only one SECURED row it legitimately chose the status index. The suite now seeds 2,048 owned SECURED background rows so the fingerprint is selective, still asserting Index Cond and the uncast negative control without a latency threshold.

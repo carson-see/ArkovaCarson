@@ -27,12 +27,12 @@
  * rows, and no CI fixture will ever be that big. Seeding to prod scale to make
  * a stopwatch meaningful would trade a fast, exact test for a slow, flaky one.
  *
- * So this pins the PLAN, which is true or false at ANY table size:
+ * So this pins the PLAN, which is tested against a selective owned fixture:
  *
  *   1. `SET enable_seqscan = off` removes the only variable that actually
- *      depends on row count. What is left is a question about the PREDICATE, not
- *      about cost: can this comparison drive that btree at all? A type-mismatched
- *      predicate cannot, on ten rows or ten million.
+ *      permits a sequential scan. Index selection still depends on cost, so
+ *      the suite seeds 2,048 owned SECURED rows to make the fingerprint
+ *      selective compared with the status index. The assertion is structural.
  *   2. The assertion is on `Index Cond`, not on the index NAME appearing
  *      somewhere in the plan. With seqscan disabled the planner will happily
  *      choose a FULL scan of `idx_anchors_fingerprint_lookup` and apply
@@ -56,7 +56,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { describe, expect, it, beforeAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 
 const INDEX = 'idx_anchors_fingerprint_lookup';
 
@@ -121,9 +121,9 @@ function lookupQuery(fingerprint: string): string {
 type PlanNode = { 'Node Type'?: string; 'Index Name'?: string; 'Index Cond'?: string; Filter?: string; Plans?: PlanNode[] };
 
 function explain(query: string): PlanNode[] {
-  // enable_seqscan=off is what makes this assertion independent of fixture size:
-  // it removes cost-based plan choice and leaves only "is this predicate
-  // index-compatible?". LOCAL so it dies with the transaction.
+  // Disable sequential scans, but retain real competition among indexes.
+  // The owned SECURED background cohort makes the fingerprint selective;
+  // enable_seqscan=off alone does not force a particular index.
   const raw = sql(`BEGIN; SET LOCAL enable_seqscan = off; EXPLAIN (FORMAT JSON, COSTS OFF) ${query} ROLLBACK;`);
   const json = raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1);
   const nodes: PlanNode[] = [];
@@ -144,6 +144,7 @@ function indexCondFor(nodes: PlanNode[], index: string): string | undefined {
 
 const RUN = randomUUID();
 const USER_ID = randomUUID();
+const ORG_ID = randomUUID();
 const securedFingerprint = randomBytes(32).toString('hex');
 const pendingFingerprint = randomBytes(32).toString('hex');
 const unknownFingerprint = randomBytes(32).toString('hex');
@@ -168,12 +169,33 @@ describe('0441 — fingerprint lookup keeps idx_anchors_fingerprint_lookup usabl
     )).toContain('character(64)');
     expect(sql(`SELECT count(*) FROM pg_class WHERE relname=${quote(INDEX)}`).trim()).toContain('1');
 
-    sql(`INSERT INTO auth.users (id, email) VALUES (${quote(USER_ID)}::uuid, ${quote(`fp-plan-${RUN}@arkova.local`)}) ON CONFLICT DO NOTHING;`);
+    sql(`BEGIN;
+      INSERT INTO public.organizations (id, legal_name, display_name) VALUES (${quote(ORG_ID)}::uuid, ${quote(`fp-plan-${RUN}`)}, ${quote(`fp-plan-${RUN}`)});
+      INSERT INTO auth.users (id, email) VALUES (${quote(USER_ID)}::uuid, ${quote(`fp-plan-${RUN}@arkova.local`)});
+      INSERT INTO public.profiles (id, email, org_id, role) VALUES (${quote(USER_ID)}::uuid, ${quote(`fp-plan-${RUN}@arkova.local`)}, ${quote(ORG_ID)}::uuid, 'ORG_ADMIN');
+      COMMIT;`);
     seed(securedFingerprint, 'SECURED');
     seed(pendingFingerprint, 'PENDING');
+    // With only one SECURED row the status index is legitimately as selective
+    // as the fingerprint index. A modest owned cohort makes the comparison
+    // meaningful without a timing assertion or a production-sized fixture.
+    sql(`INSERT INTO public.anchors (user_id, fingerprint, filename, file_size, status, credential_type, metadata, chain_tx_id, chain_timestamp)
+      SELECT ${quote(USER_ID)}::uuid, md5(${quote(RUN)} || i::text) || md5(i::text || ${quote(RUN)}),
+        'fp-plan-background-' || i || '.pdf', 1024, 'SECURED', 'OTHER', '{}'::jsonb, ${quote(`tx-${RUN}`)}, now()
+      FROM generate_series(1, 2048) AS i;`);
     // The planner needs statistics that exist; without ANALYZE a brand-new row
     // set can leave the relation at its default estimate.
     sql('ANALYZE public.anchors;');
+  });
+
+  afterAll(() => {
+    // This suite owns every identity it creates, including partial setup failures.
+    sql(`BEGIN; SET LOCAL request.jwt.claims = '{"role":"service_role"}';
+      DELETE FROM public.anchors WHERE user_id = ${quote(USER_ID)}::uuid;
+      DELETE FROM public.profiles WHERE id = ${quote(USER_ID)}::uuid;
+      DELETE FROM auth.users WHERE id = ${quote(USER_ID)}::uuid;
+      DELETE FROM public.organizations WHERE id = ${quote(ORG_ID)}::uuid;
+      COMMIT;`);
   });
 
   it('the live function body casts the PARAMETER, not the column', () => {
@@ -222,6 +244,12 @@ describe('0441 — fingerprint lookup keeps idx_anchors_fingerprint_lookup usabl
     const unknown = sql(`SELECT public.get_public_anchor_by_fingerprint(${quote(unknownFingerprint)});`).trim();
     expect(inFlight).toContain('Record not found');
     expect(inFlight).toBe(unknown);
+  });
+
+  it('an overlong input is not truncated into an existing fingerprint', () => {
+    const result = sql(`SELECT public.get_public_anchor_by_fingerprint(${quote(securedFingerprint + '0')});`).trim();
+    expect(result).toContain('Record not found');
+    expect(result).toBe(sql(`SELECT public.get_public_anchor_by_fingerprint(${quote(unknownFingerprint)});`).trim());
   });
 
   it('POSITIVE CONTROL — uppercase input still resolves through the cast', () => {
