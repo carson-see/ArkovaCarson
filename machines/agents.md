@@ -6,6 +6,15 @@ The DocuSign model now includes anchor publication and an independently schedula
 
 TLA+ PreCheck formal verification models for critical state machines.
 
+## 2026-09-07 — `agentPassport.machine.ts` (SCRUM-4493 / SCRUM-4494): ComputeID AgentPassport ↔ agent lifecycle
+
+New machine for the ComputeID partner integration (epic SCRUM-4492). Models the per-agent-row state driven by `api/v1/agents-computeid.ts` (admit), `api/v1/webhooks/computeid.ts` (`passport.suspended` / `reinstated` / `revoked`) and `api/v1/agents.ts` (mint key, admin revoke): `NONE → ACTIVE ⇄ SUSPENDED`, `ACTIVE|SUSPENDED → REVOKED` (terminal), plus a per-agent `keyActive` bool.
+
+**What modeling found before TLC ran:** `middleware/apiKeyAuth.ts` authenticates on the `api_keys` row alone (`is_active`, `revoked_at`, `expires_at`) and never joins `agents.status`, so an agent whose status is `suspended` but whose keys are live still authenticates — suspension would be decorative. The webhook handler therefore deactivates keys on `passport.suspended` (`revocation_reason = 'computeid:passport.suspended'`) and reinstates exactly those keys on `passport.reinstated`; `mintKey` is guarded on ACTIVE (matches `POST /agents/:agentId/key`'s 409). Invariant `keyImpliesActive` pins it. **The same gap exists in the pre-existing `PATCH /api/v1/agents/:agentId {status:'suspended'}` path** (sets `suspended_at` only, keys untouched) — reported on PR #2668, not widened into it.
+
+Deliberately not modeled: the signed-timestamp ordering guard in `integrations/computeid/binding.ts` (a per-delivery comparison with no cross-row state; the DSL has no arithmetic; `binding.test.ts` pins it).
+
+Certificate (tier `pr`): proofPassed true; invariants keyImpliesActive, revokedHasNoKey, suspendedHasNoKey, noKeyBeforeAdmission; graph equivalence true (16/16 states, 48/48 edges); TLC 49 generated / 16 distinct; deadlock check off (REVOKED terminal by design). Picked up automatically by `npm run verify:machines` / the `tla-verify` CI job (the script globs).
 ## 2026-09-01 — `docusignInboundDedup.machine.ts`: the claim-to-mint TOCTOU is CLOSED (invariant now passes, unweakened)
 
 Context: the TOCTOU extension added to this machine earlier the same day deliberately shipped RED. It split the drain's single atomic `materializeAnchorFromArtifact` into `captureArtifactFingerprint` (models `claimRow`'s CAS `RETURNING`) + `mintAnchorFromCapture` (models the link, using the CAPTURED value), which made a real residual bug in `services/worker/src/jobs/connector-artifact-drain.ts` expressible for the first time. TLC found it: `forgeInbound` → `capture` (FORGED) → `outboundHealsForgery` (live class becomes REAL) → `mint` (anchor holds FORGED). The new invariant `anchorNeverMintedFromSupersededFingerprint` was left FAILING and documented rather than weakened.
@@ -263,6 +272,33 @@ New invariants: **`supplementaryRequiresOriginalAttestation`** (supp ≠ NONE �
 Budgets raised for the added 3-valued variable: pr `2,304 × 3 = 6,912` per-anchor combos → `6,912² = 47,775,744` raw (budget 50M, was 6M); nightly `6,912³ = 330,225,942,528` (budget 350B, was 15B). `graphEquivalence` stays off on both (pre-existing — over the 100k cap).
 
 `check` results (`npm run verify:machines`, TLC2 2026.03.16.234659): **pr** proofPassed=true, **17 invariants** (was 14), **8,363 generated / 1,369 distinct** (was 3,221 / 529), deadlock checked, "No error has been found". **nightly** proofPassed=true, 464,092 / 50,653 distinct. `PASSED 4/4` across all machines.
+
+## PR #2782 — certificate block metadata binding
+
+`proofBlockMetadata.machine.ts` models independently updated anchor/proof rows and the two captured reads. Three invariants require a known matching block before using anchor metadata, reject known mismatches, and avoid mislabeling missing identity as a mismatch. TLA PreCheck check passes with graph equivalence: 198 states and 1,386 transitions in both interpreters; deadlock checking is enabled. Two separate negative controls restore unconditional preference or remove the known-identity guard, and both violate `anchorRequiresKnownMatchingBlock`. The runtime contract enumerates every reachable decision state and metadata-availability combination against the real resolver. This machine owns no database table and has no adapter; its finite proof does not assert Bitcoin consensus, source accuracy or freshness of later database state.
+## 2026-09-10 — bounded broadcast recovery and unknown replies (SCRUM-4539)
+
+`broadcastRecovery.machine.ts` models the bounded SQL claim, reply loss, protected txid/journal rows, overlapping tick guard, old claim removal, and re-claim. The pr tier explicitly verifies graph equivalence: six safety invariants, 142 TypeScript/TLC states and 411 edges. Three altered DSL controls fail when protection, unknown-outcome reporting, or old-claim removal is removed. A ten-step interpreter trace was compared to actual committed 0442/0449 SQL, including a lost reply and exactly one subsequent worker claim. Production bounds are 500 rows/40 passes; the two-anchor/one-row/two-pass tier is a finite safety abstraction, not a throughput or unconditional liveness proof. This multi-row RPC/network boundary does not fit the generated single-table adapter; no generated SQL or adapter is deployed.
+## 2026-09-10 — ComputeID atomic enforcement (SCRUM-4535 / SCRUM-4536)
+
+`agentPassportAtomic.machine.ts` models one provider-suspended agent/key and overlapping restore/revoke deliveries, including reads, row locks, transaction failure, CAS retry and an uncertain response. `pr` explicitly enables graph equivalence: the 2026-09-10 check passed all three safety invariants with 46 states / 80 edges in both TLC and TypeScript (`equivalent: true`; estimate 19,440, budget 100,000). No liveness/fairness claim is made; terminal states are allowed. Removing the atomic rollback reproduces an acknowledged incomplete restore; splitting the restore key write reproduces a revoked agent with an active key. Generated certificates and counterexample artifacts remain untracked.
+
+The operation spans `agents` and `api_keys`, outside the single-table adapter subset. This bounded model is a design proof, not a generated production adapter or a whole-system proof. Migration `0448` implements the SQL transaction boundary; the real concurrent PostgreSQL regression harness separately verifies that boundary. HMAC, timestamp ordering and suspension/key ownership are tested at their actual receiver, binding and SQL boundaries. Run `scripts/verify-machines.sh agentPassportAtomic`.
+
+
+## 2026-09-10 — Agent-key authority (SCRUM-4558 / SCRUM-4559)
+
+`agentKeyAuthority.machine.ts` models one visible admission/key overlapping provider revoke, stale administrator PATCH and uncertain-mint cleanup. Parent locks cover the insertion/cleanup window; revocation is terminal and cleanup cannot detach a committed key. The finite `pr` tier explicitly enables graph equivalence and disables deadlock checking because completed operations are terminal states. Transaction errors release locks without changing committed state. Multiple mints, metadata/org snapshots and SQL deadlock/retry behavior remain real PostgreSQL test contracts. This two-table operation is outside the generated adapter subset. Run `scripts/verify-machines.sh agentKeyAuthority` using the pinned vendored TLC jar.
+
+
+## 2026-09-10 — Original passport lifecycle certificate correction
+
+The original `agentPassport.machine.ts` prose claimed graph equivalence but omitted the explicit check under the current CLI default. Both `pr` and `nightly` now request `graphEquivalence: true`; pinned CLI/TLC checks and actual certificate equivalence pass at both tiers (16 states/48 edges and 256 states/1536 edges respectively). This lifecycle abstraction does not prove temporal input validation, tenant-wide passport revocation ownership, or real handler transaction boundaries; the new atomic/authority models and SQL regressions cover their stated narrower boundaries.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+The current `agentKeyAuthority.machine.ts` removes the retired compensating-cleanup path: admission now commits agent, key and audits in one transaction. The remaining direct-mint/PATCH model passes at 20 states / 32 edges. New `passportAdmission.machine.ts` models absent-row serialization, two organizations, terminal provider authority, rollback, unknown responses and mandatory audits; its PR proof and graph equivalence pass at 525 states / 1681 edges. Five negative controls reproduce missing sentinel locks, global-revocation bypass, missing audits, late mint and stale PATCH. These are bounded design proofs with real SQL tests, not generated runtime adapters.
 
 ## subOrgListingConsent.machine.ts (SCRUM-3864)
 

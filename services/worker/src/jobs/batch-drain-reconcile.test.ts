@@ -384,8 +384,8 @@ vi.mock('../utils/db.js', async () => {
       if (table === 'job_queue') return grantedRunLeaseTable();
       throw new Error(`unexpected table ${table}`);
     },
-    rpc: async (fn: string, params: Record<string, unknown>) => {
-      switch (fn) {
+    rpc: (fn: string, params: Record<string, unknown>) => {
+      const response = (() => { switch (fn) {
         case 'claim_pending_anchors':
           return { data: rpcClaimPendingAnchors(params as never), error: null };
         case 'submit_batch_anchors': {
@@ -397,7 +397,8 @@ vi.mock('../utils/db.js', async () => {
           return { data: rpcRecoverStuckBroadcasts((params as { p_stale_minutes: number }).p_stale_minutes), error: null };
         default:
           return { data: null, error: { code: 'PGRST202', message: `no function ${fn}` } };
-      }
+      } })();
+      return Object.assign(Promise.resolve(response), { abortSignal: () => Promise.resolve(response) });
     },
   },
   withDbTimeout: async (fn: () => Promise<unknown>) => fn(),

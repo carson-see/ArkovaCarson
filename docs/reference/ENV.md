@@ -500,6 +500,31 @@ MIDDESK_WEBHOOK_SECRET=
 # path. Change via runbook Sandbox → production cutover.
 MIDDESK_SANDBOX=true
 
+# ─── ComputeID AgentPassport integration (partner: ComputeID / CortexOS) ───
+# Both surfaces are DARK by default (503 vendor_gated). Turning the flag on
+# requires BOTH values below; config.ts refuses to boot otherwise.
+#   POST /webhooks/computeid              — passport.revoked / .suspended / .reinstated receiver
+#   POST /api/v1/agents/computeid/admit   — offline receipt verify → agent + agent-scoped key
+# Activation is a separate T1 PR: create the Secret Manager entries FIRST, then
+# add them to deploy-worker.yml --set-secrets and the flag to --set-env-vars.
+# Referencing a Secret Manager entry that does not exist fails the whole deploy.
+ENABLE_COMPUTEID_INTEGRATION=false
+
+# HMAC-SHA256 secret(s) we hand to ComputeID at registration
+# (POST https://api.aicomputeid.com/v1/webhooks/register with
+#  url = <WORKER_PUBLIC_URL>/webhooks/computeid). Comma-separated list allowed
+# (current,next): register a second webhook carrying the new secret, then have
+# the partner retire the old registration — their API has no deregister or
+# rotate endpoint (verified 2026-09-07), so rotation needs a human on their side.
+COMPUTEID_WEBHOOK_SECRET=
+
+# Pinned ComputeID CA. Production: the X.509 PEM served by
+# https://api.aicomputeid.com/v1/ca/cert (RSA-2048, CN=ComputeID-CA, C=CY,
+# key_id ebb276c2f18ed34f, valid 2026-08-16 → 2036-08-13). Staging / tests: a
+# bare SPKI public-key PEM whose private key the soak driver holds. NEVER
+# fetched at runtime — rotation = partner's 30-day notice → update → redeploy.
+COMPUTEID_CA_CERT_PEM=
+
 # ─── SCRUM-1099 / SCRUM-1100 — Google Drive connector + rule binding ───
 # See docs/runbooks/integrations/drive.md for GCP OAuth app setup.
 # OAuth refresh tokens live in Secret Manager; Postgres stores connection

@@ -830,3 +830,95 @@ describe('S3-C2 provider-failure semantics — transient read failure degrades t
     expectNoProofFields(proof);
   });
 });
+
+// ─── SCRUM-3953: the confirmed proof must carry the CHAIN's height ───
+
+describe('fetchConfirmationProof — authoritative block height', () => {
+  /** Build the 3-tx confirmed-path fixture used by the height tests. */
+  function confirmedFixture() {
+    const leaves = [0, 1, 2].map((s) => makeTxidLE(s + 900));
+    const idx = 1;
+    const targetTxId = displayHex(leaves[idx]);
+    const proofHex = buildMerkleBlockHex(leaves, idx);
+    const headerHex = proofHex.slice(0, 160);
+    const blockHash = Buffer.from(dsha(Buffer.from(headerHex, 'hex'))).reverse().toString('hex');
+    return { targetTxId, proofHex, headerHex, blockHash };
+  }
+
+  it('reports the height of the block the tx was MINED into, not the caller-supplied one', async () => {
+    const { targetTxId, proofHex, headerHex, blockHash } = confirmedFixture();
+    const getBlockHeader = vi.fn().mockResolvedValue({ height: 965116 });
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue({
+        txid: targetTxId, confirmations: 12, blockhash: blockHash, vout: [],
+      }),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(proofHex),
+      getBlockHeader,
+    } as Partial<ProviderSliceType>);
+
+    // The caller passes the STALE broadcast-time tip. It must not survive.
+    const proof = await fetchConfirmationProof(provider, {
+      chainTxId: targetTxId,
+      blockHeight: 965112,
+      minConfirmations: 6,
+    });
+
+    expect(proof.status).toBe('confirmed');
+    expect(proof.blockHeight).toBe(965116);
+    expect(getBlockHeader).toHaveBeenCalledWith(blockHash);
+  });
+
+  it('reports the block time read from the verified header, not the broadcast wall clock', async () => {
+    const { targetTxId, proofHex, headerHex, blockHash } = confirmedFixture();
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue({
+        txid: targetTxId, confirmations: 12, blockhash: blockHash, vout: [],
+      }),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(proofHex),
+    });
+    const proof = await fetchConfirmationProof(provider, { chainTxId: targetTxId, minConfirmations: 6 });
+    const nTime = Buffer.from(headerHex, 'hex').readUInt32LE(68);
+    expect(proof.blockTimestamp).toBe(new Date(nTime * 1000).toISOString());
+  });
+
+  it('omits the height rather than echoing a stale one when the provider cannot supply it', async () => {
+    const { targetTxId, proofHex, headerHex, blockHash } = confirmedFixture();
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue({
+        txid: targetTxId, confirmations: 12, blockhash: blockHash, vout: [],
+      }),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(proofHex),
+      // no getBlockHeader
+    });
+
+    const proof = await fetchConfirmationProof(provider, {
+      chainTxId: targetTxId,
+      blockHeight: 965112,
+      minConfirmations: 6,
+    });
+
+    expect(proof.status).toBe('confirmed');
+    // NEVER republish the caller's stale tip as if it were measured (§1.5).
+    expect(proof.blockHeight).toBeUndefined();
+  });
+
+  it('still confirms when the height lookup throws — height is omitted, proof stands', async () => {
+    const { targetTxId, proofHex, headerHex, blockHash } = confirmedFixture();
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue({
+        txid: targetTxId, confirmations: 12, blockhash: blockHash, vout: [],
+      }),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(proofHex),
+      getBlockHeader: vi.fn().mockRejectedValue(new HttpError('boom', 503)),
+    } as Partial<ProviderSliceType>);
+
+    const proof = await fetchConfirmationProof(provider, { chainTxId: targetTxId, minConfirmations: 6 });
+    expect(proof.status).toBe('confirmed');
+    expect(proof.blockHeight).toBeUndefined();
+    expect(proof.blockHeader).toBe(headerHex);
+  });
+});
