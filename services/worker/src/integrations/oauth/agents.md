@@ -1,7 +1,7 @@
 # agents.md — services/worker/src/integrations/oauth/
 
-_Last updated: 2026-09-02 (Adobe Sign parse-layer bounds in code/constraint parity with `organization_rule_events`)._
 _Last updated: 2026-08-29 (docusign-bilateral PR-2: `resolveDocusignEnvironment` env-tag resolver)._
+_Last updated: 2026-09-02 (Adobe Sign parse-layer bounds in code/constraint parity with `organization_rule_events`)._
 
 ## What This Folder Contains
 
