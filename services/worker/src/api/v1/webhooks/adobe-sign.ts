@@ -15,6 +15,7 @@
 import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { db } from '../../../utils/db.js';
+import { config } from '../../../config.js';
 import { logger } from '../../../utils/logger.js';
 import { adaptAdobeSign } from '../../../integrations/connectors/adapters.js';
 import {
@@ -35,6 +36,65 @@ function getRawBody(req: Request): Buffer | null {
   return Buffer.isBuffer(rawBody) ? rawBody : null;
 }
 
+function clientIdHeader(req: Request): string | undefined {
+  const raw = req.headers['x-adobesign-clientid'];
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
+/**
+ * Constant-time string compare. The Adobe client id is not a signing secret
+ * (Adobe sends it to us), but this endpoint's whole job is to answer "do you
+ * recognize this id" — comparing in constant time keeps that answer from
+ * being probeable by timing, matching `drive.ts`'s channel-token compare.
+ */
+function safeEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, 'utf8');
+  const bBuf = Buffer.from(b, 'utf8');
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+}
+
+/**
+ * Adobe's webhook REGISTRATION challenge.
+ *
+ * Adobe will not create a webhook until the target URL answers an HTTPS GET
+ * carrying `X-AdobeSign-ClientId` with a 2XX AND the same client id echoed
+ * back in a response header of that name. Adobe's own guidance is explicit
+ * that an endpoint which does not recognize the id "MUST NOT respond with
+ * the success response" — so an unknown/absent id is refused here rather
+ * than blanket-echoed, which would let any caller register OUR endpoint
+ * against THEIR Adobe application.
+ *
+ * This is why `org_integrations.webhook_id` has never been populated in any
+ * environment: with no GET route, `POST /api/rest/v6/webhooks` fails
+ * Adobe-side and no webhook id is ever minted to store. Migration `0426`
+ * added the column; this makes the id obtainable in the first place.
+ *
+ * https://helpx.adobe.com/sign/developer/webhook/create.html
+ */
+adobeSignWebhookRouter.get('/', (req: Request, res: Response) => {
+  const expectedClientId = config.adobeSignClientId;
+  if (!expectedClientId) {
+    logger.error('ADOBE_SIGN_CLIENT_ID not set — registration challenge cannot be answered');
+    res.status(503).json({ error: { code: 'webhook_unconfigured' } });
+    return;
+  }
+
+  const presented = clientIdHeader(req);
+  if (!presented || !safeEqual(presented, expectedClientId)) {
+    // Never log the presented value — it identifies a third party's Adobe app.
+    logger.warn(
+      { presented: presented ? 'mismatch' : 'absent' },
+      'Adobe Sign registration challenge refused — unrecognized client id',
+    );
+    res.status(403).json({ error: { code: 'unrecognized_client_id' } });
+    return;
+  }
+
+  res.set('X-AdobeSign-ClientId', expectedClientId);
+  res.status(200).json({ ok: true });
+});
+
 function signatureHeader(req: Request): string | undefined {
   // Adobe documents both the SHA256 header and the older base ClientId proof.
   const sha = req.headers['x-adobesign-clientid-authentication-sha256'];
@@ -47,14 +107,14 @@ async function findIntegration(
   webhookId: string | null,
 ): Promise<AdobeIntegrationRow | null> {
   if (!webhookId) return null;
-  // Provider webhook registrations use the shared subscription_id column.
-  // org_integrations has no webhook_id column; a typed query catches that drift.
+  // Migration 0426 supplies the dedicated, uniquely registered Adobe webhook ID.
+  // Deploy this candidate only after its schema; the OAuth writer uses this column.
   // eslint-disable-next-line arkova/missing-org-filter -- resolve tenant from authenticated provider webhook ID
   const { data, error } = await db
     .from('org_integrations')
     .select('id, org_id')
     .eq('provider', 'adobe_sign')
-    .eq('subscription_id', webhookId)
+    .eq('webhook_id', webhookId)
     .is('revoked_at', null)
     .maybeSingle();
   if (error) {
@@ -161,7 +221,7 @@ async function dlqInsert(args: {
   agreementId: string | null;
   reason: string;
   payloadHash: string;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any).from('webhook_dlq').insert({
@@ -172,10 +232,13 @@ async function dlqInsert(args: {
       payload_hash: args.payloadHash,
     });
     if (error) {
-      logger.warn({ error }, 'Adobe Sign webhook: DLQ insert failed (non-fatal)');
+      logger.warn({ error }, 'Adobe Sign webhook: DLQ insert failed');
+      return false;
     }
+    return true;
   } catch (err) {
-    logger.warn({ error: err }, 'Adobe Sign webhook: DLQ insert threw (non-fatal)');
+    logger.warn({ error: err }, 'Adobe Sign webhook: DLQ insert threw');
+    return false;
   }
 }
 
@@ -287,6 +350,15 @@ adobeSignWebhookRouter.post('/', async (req: Request, res: Response) => {
     const integration = await findIntegration(event.webhookId);
     if (!integration) {
       logger.warn({ webhookId: event.webhookId }, 'Adobe Sign webhook: unknown connected webhook');
+      // Acknowledge an orphan only after its bounded failure record is durable.
+      // Otherwise return 500 so the provider retains responsibility for retry.
+      const recorded = await dlqInsert({
+        webhookId: event.webhookId,
+        agreementId: event.agreementId,
+        reason: 'unregistered_webhook_id',
+        payloadHash,
+      });
+      if (!recorded) throw new Error('orphan_dlq_persistence_failed');
       res.status(200).json({ ok: true, orphaned: true });
       return;
     }
