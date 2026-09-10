@@ -380,6 +380,48 @@ script. Source: `docs/staging/consolidated-mm-2026-08/soak-start-2026-08-30T1546
   **exits non-zero** — a rig that never linked must never reach a deploy, and the
   failure message says the project exists, is billable, and names teardown.
 
+## Operator MCP/SDK probes were calling names that no longer exist (PR #2589 review, 2026-09-05)
+
+`fullsoak-mcp-probe.sh` and `fullsoak-sdk-integration.sh` are operator scripts
+with no CI coverage, so nothing caught them drifting off the live surface. Both
+had, and every run they produced FAILs that described the script rather than the
+system.
+
+- **`fullsoak-mcp-probe.sh` drove 15 dead tool names.** Post-D4 (SCRUM-2589)
+  every hosted tool is `arkova_`-prefixed, `nessie_query` excepted, and the two
+  verification tools were **RENAMED, not merely prefixed**: `verify_credential`
+  → `arkova_verify_anchor`, `search_credentials` → `arkova_search_anchors`.
+  Neither old name resolves. All 16 call sites and their assertion text now
+  match `TOOL_DEFINITIONS` in `services/edge/src/mcp-tools.ts`, which stays the
+  authority; T-00 still pins the count at 16. When that file changes, this
+  script changes with it — there is no test to notice otherwise.
+- **`fullsoak-sdk-integration.sh` probed two names that were never published.**
+  The published names are **UNSCOPED**: npm `arkova` (packages/sdk) and
+  `arkova-mcp-server` (sdks/mcp-server), PyPI `arkova`. The scoped
+  `@carsonarkova/sdk` and `@arkova/mcp-server` 404, so Phase A recorded two
+  false "NOT PUBLISHED" FAILs on every run. `@arkova/langchain` genuinely has no
+  registry artifact and is now **SKIP / N/A** — but a 200 on it is a **FAIL**,
+  because that means this inventory is stale, not that the leg passed. The
+  Phase A row id now carries the kind (`A-npm-arkova` / `A-pypi-arkova`), since
+  `arkova` is published on both registries and the two rows collided.
+- **Its MCP leg called renamed and removed tools.** `arkova_verify_credential`
+  / `arkova_credential_status` / `arkova_search_credentials` are now
+  `arkova_verify_anchor` / `arkova_anchor_status` / `arkova_search_anchors`
+  with the live argument names (`public_id`, `query`), the closed 6-tool set is
+  pinned, and `nessie_ask` — removed by D5 — is asserted **gone**: unadvertised
+  in `TOOL_DEFINITIONS` AND rejected with `Unknown tool`, rather than simply not
+  called. Python client methods (`c.get_record`, `c.list_orgs`, …) are NOT tool
+  names and were correctly left alone.
+- **The report prose was wrong about the registry.** It claimed "there is no
+  registry artifact to install"; two of the three npm packages are published.
+  The TypeScript legs are worktree builds **by choice**, so the smoke asserts
+  the head under soak — which is not evidence about the published tag, and the
+  artifact now says so.
+
+Verification for a change to either script: `bash -n` on the file, plus
+`node --check` on the extracted `smoke.mjs` heredoc for the SDK script (its JS
+is inside a quoted heredoc, so a syntax error there surfaces only at run time,
+mid-soak).
 ## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner
 
 `uat03_mailbox_driver.py` is stdlib-only and defaults to a no-network dry run. It restricts execution to the exact PR2655 preview, named UAT03 standalone project, or the released reorg-3836 project paired with its exact existing worker URL. Manifest/evidence JSON paths stay within this checkout’s ignored `artifacts/uat03-mailbox` directory; traversal/symlink escapes and overwriting existing evidence are rejected. It checks committed driver/health head and readable installed hook, then exercises actual Auth/worker/Data API/mailbox timing and concurrency. IMAP credentials and mailbox proof stay in memory; artifacts contain only labels/status/booleans and created fixture IDs. It never provisions or activates anything, and its output cannot claim a complete hosted release. `uat03_mailbox_driver_test.py` tests target/recipient/proof/evidence guards without network; `uat03-mailbox-driver.test.ts` runs those checks in the existing Vitest suite.
