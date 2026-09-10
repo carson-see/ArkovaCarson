@@ -59,38 +59,14 @@ The probe now names the endpoint, HTTP status, GoTrue code, server `msg` and the
 
 #2691 is a DRAFT: it is T2 by path (`src/components/auth/` — sensitive user-facing contract surface) on the frontend-targeted evidence path, and its `RM-approved targeted evidence` / approver / soak fields are human-owned.
 
-### 2026-09-08 — verify-by-fingerprint is TIMING OUT in prod; migration 0441 written, pre-soak
+### 2026-09-10 — fingerprint lookup review and current release record (PR #2694)
 
-- **The defect.** `anchors.fingerprint` is `character(64)`; `get_public_anchor_by_fingerprint`'s parameter is
-  `text`. Migration `0386` (the body live in prod) compares them bare, and with no `bpchar = text` operator
-  Postgres casts the **COLUMN** — the prod plan reads `Filter: ((fingerprint)::text = …)`. A btree on the bare
-  bpchar column cannot drive that, so `idx_anchors_fingerprint_lookup` goes unused, the planner falls back to
-  `idx_anchors_status_secured_submitted` at **cost 2,302,395** over the ~3.5M-row SECURED partition, and the
-  statement exceeds `statement_timeout`. The edge MCP tools `verify` (by fingerprint) and `get_fingerprint` on
-  `https://edge.arkova.ai` return `isError: "Document verification timed out"`. Verified against prod
-  `vzwyaatejekddvltxyye` via `EXPLAIN`; found 2026-09-08 during the SCRUM-3797 edge catch-up deploy and written
-  up as finding 1 of `docs/staging/edge-retro-2026-09-07/DEPLOY.md` (HANDOFF entry `bd72f65ff`).
-- **Not a regression.** `get_public_anchor_by_fingerprint` has 0 grep hits in the June edge bundle. The catch-up
-  added the path; the path is slow. The fix is forward, not a rollback.
-- **`0441_fingerprint_lookup_bpchar_cast.sql` — file only, NOT applied to prod, NOT applied to any rig.** One
-  clause: cast the PARAMETER, `lower(p_fingerprint)::bpchar`. Same mechanism and same remedy as `0370`
-  (SCRUM-3031) on this same column — cast only the non-indexed side. 0386's SECURED-only invariant, the
-  `created_at DESC, id DESC` tiebreak, the `{"error":"Record not found"}` envelope for both the not-found and
-  in-flight cases, SECURITY DEFINER, `search_path`, grants and response shape are all byte-identical.
-- **Evidence is local, and labelled as such.** Local Postgres 17.9 repro at 300,020 rows rebuilt to prod's index
-  shapes: before = `Filter: ((fingerprint)::text = …)`, Rows Removed by Filter **300,019**, **65.788 ms**; after =
-  `Index Cond`, **0.058 ms**. Prod's own `EXPLAIN (ANALYZE)` with the cast is **3.020 ms**. Transcripts and the
-  full write-up: `docs/staging/fingerprint-timeout-0441/`.
-- **Ratchet: `tests/rls/fingerprint-lookup-index-plan.test.ts` pins the PLAN, not the clock.** The 12h retro-soak
-  could not have caught this — the rig fixture is 10 rows, where a seq scan is instant. The test sets
-  `enable_seqscan = off`, extracts the predicate from the LIVE `pg_proc` body, and asserts an **Index Cond** on
-  `idx_anchors_fingerprint_lookup` (not merely the index name, which a full index scan with a
-  `(fingerprint)::text` Filter would also satisfy). Red before / green after, with the rollback rehearsed:
-  0386 body = 3 failed, 0441 = 7 passed, 0386 re-applied = 3 failed, 0441 re-applied = 7 passed.
-- **Owed and NOT done by this session:** the T3 48h soak (no rig provisioned; no rig in an open window was
-  touched), the prod apply + numeric ledger reconciliation (RTE/CTO-owned), and the Jira story + Confluence
-  Bug Tracker row — **the Atlassian connector is unauthenticated in this session**, so neither could be filed.
-  Paste-ready text for both: `docs/staging/fingerprint-timeout-0441/JIRA-AND-BUG-TRACKER.md`.
+Migration 0441 casts the input parameter to bpchar so the fingerprint index can narrow public verification lookups. The immutable SQL preserves SECURED-only results, deletion guards, deterministic ordering and the existing public redaction function.
+
+Read-only production catalog verification confirms the executable function body and intended grants match 0441, and the numeric migration ledger contains 0441. The September8 pre-apply observation is superseded by this readback. [SCRUM-4542 acceptance criteria and release record](https://arkova.atlassian.net/wiki/spaces/A/pages/140902420) contains the review and deployment evidence; the related production defect remains SCRUM-4516.
+
+The complete committed schema exposed two test-fixture defects: a missing profiles row and an assumption that disabling sequential scans forces the fingerprint index. The corrected suite owns its organization, profile and background records and cleans them up. All eight real plan/behavior checks pass; exact0386 rollback reproduces three failures and exact0441 reapply restores all eight. No new completed48-hour soak is claimed. Current hosted checks and Mergify admission are tracked on the PR.
+
 
 ### 2026-09-08T02:20Z → 13:15Z — CTO session: #2655 merged with 0436 live, the whole queue un-conflicted, a Supabase control-plane outage took three windows
 
@@ -2534,3 +2510,5 @@ _Last refreshed: 2026-09-08 by Claude-Opus-5 MFA-E2E-flake session — claims ve
 
 _Last refreshed: 2026-09-08 by Claude-Opus-5 fingerprint-timeout session — claims verified against prod EXPLAIN, a local Postgres 17.9 repro, and red/green test output._
 _Last refreshed: 2026-09-09 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-10 by Codex release review — claims verified against gcloud/MCP/CI output._
