@@ -7,7 +7,7 @@ Zapier app source code (INT-05).
 - **`authentication.ts`** — API key auth: user provides `ak_*` key, validated via health endpoint.
 - **`constants.ts`** — `BASE_URL`, `DEFAULT_EVENTS`, `VALID_EVENTS`, `BATCH_SYNC_LIMIT`. (The webhook-event export is named `VALID_EVENTS`; `VALID_WEBHOOK_EVENTS` is the worker-side name it mirrors.)
 - **`makecom.json`** — Make.com (Integromat) integration manifest.
-- **`actions/`** — Zapier action definitions (anchorDocument, verifyCredential, batchVerify).
+- **`actions/`** — Zapier action definitions (anchorDocument, verifyAnchor, batchVerify).
 - **`triggers/`** — Zapier trigger definitions (anchorSecured, anchorRevoked).
 
 ## Conventions
@@ -31,3 +31,11 @@ honest.
 Drift is gated by `scripts/ci/check-webhook-event-registration-drift.ts` (runs in the required root
 `Tests` job). The pin in `../test/zapier.test.ts` is a second, local check — no workflow runs this
 package's suite, so it is not a CI gate on its own.
+
+## 2026-09-02 — "Credential" removed from action labels (SCRUM-3901 / epic SCRUM-3894)
+
+`actions/verifyCredential.ts` → `actions/verifyAnchor.ts` (`verifyAnchorAction`, key `verify_anchor`);
+labels/descriptions no longer say "Credential" ("Verify Anchor", "Batch Verify Anchors"). Zapier
+exposes labels to AI-action tool pickers, so the same collision that caused BUG-2026-09-02-001 applied.
+The `credential_type` FIELD is unchanged (it mirrors the API). Safe: the app was never registered on
+the Zapier platform (`.zapierapprc` absent), so no live Zap references the old key.

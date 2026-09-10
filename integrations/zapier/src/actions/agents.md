@@ -4,7 +4,7 @@ Zapier action definitions for Arkova (INT-05).
 
 ## Files
 - **`anchorDocument.ts`** — submits a SHA-256 fingerprint for Bitcoin anchoring via `POST /api/v1/anchor`.
-- **`verifyCredential.ts`** — verifies a credential by public ID via `GET /api/v1/verify/:publicId`.
+- **`verifyAnchor.ts`** — verifies an anchor by public ID via `GET /api/v1/verify/:publicId`.
 - **`batchVerify.ts`** — verifies up to 20 credentials in one request via `POST /api/v1/verify/batch`.
 
 ## Conventions
