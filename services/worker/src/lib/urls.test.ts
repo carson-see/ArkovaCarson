@@ -20,6 +20,7 @@ import {
   buildActivateUrl,
   buildInviteAcceptUrl,
   buildLoginUrl,
+  buildSetPasswordUrl,
   BILLING_SUCCESS_URL,
   BILLING_CANCEL_URL,
   BILLING_PORTAL_RETURN_URL,
@@ -27,6 +28,9 @@ import {
 } from './urls.js';
 
 describe('URL builders', () => {
+  it('routes recovery to the password form', () => {
+    expect(buildSetPasswordUrl()).toBe('https://app.arkova.ai/set-password');
+  });
   describe('buildVerifyUrl', () => {
     it('builds a verify URL from a public_id', () => {
       expect(buildVerifyUrl('pub_abc123')).toBe('https://app.arkova.ai/verify/pub_abc123');
