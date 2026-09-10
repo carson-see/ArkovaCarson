@@ -18,16 +18,21 @@ from lib.local_postgres import LocalPostgres, quote
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--pg-bin', required=True)
-    parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--output', required=True, type=Path,
+                        help='New directory inside the current working directory')
     parser.add_argument('--baseline', action='store_true')
     args = parser.parse_args()
+    output_root = Path.cwd().resolve()
+    output = args.output.resolve()
+    if output == output_root or not output.is_relative_to(output_root):
+        parser.error('--output must stay inside the current working directory')
     repo = Path(__file__).resolve().parents[3]
     baseline = repo/'supabase/migrations/0432_suborg_rpc_role_enum_coercion_fix.sql'
     repair = repo/'supabase/migrations/0450_scrum4878_suborg_rollup_canonical_admin.sql'
     parent, child, other = [str(uuid.uuid4()) for _ in range(3)]
     actors = {name: str(uuid.uuid4()) for name in ['owner', 'admin', 'profile', 'profile_member', 'platform', 'foreign', 'member', 'missing']}
     checks = []
-    with LocalPostgres(args.output, args.pg_bin) as pg:
+    with LocalPostgres(output, args.pg_bin) as pg:
         pg.query("""
 CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
 CREATE SCHEMA auth;
@@ -85,7 +90,7 @@ INSERT INTO org_members VALUES
             grants = [line for line in baseline.read_text().splitlines() if line.startswith(('REVOKE ALL ON FUNCTION public.get_parent_credit_rollup(', 'GRANT EXECUTE ON FUNCTION public.get_parent_credit_rollup('))]
             assert len(definitions) == 2 and len(grants) == 4
             rollback = "BEGIN; SET LOCAL lock_timeout='5s';\n" + '\n'.join(definitions + grants) + "\nNOTIFY pgrst, 'reload schema'; COMMIT;"
-            (args.output/'rollback.sql').write_text(rollback+'\n')
+            (output/'rollback.sql').write_text(rollback+'\n')
             pg.query(rollback)
             result = pg.value(f"SET ROLE service_role; SELECT public.get_parent_credit_rollup({quote(parent)},{quote(actors['profile'])});")
             checks.append({'case':'literal rollback restores the reproduced denial','passed':result=={'error':'parent_admin_required'}})
@@ -101,7 +106,7 @@ INSERT INTO org_members VALUES
     receipt={'mode':'isolated PostgreSQL focused schema','baseline':args.baseline,'checks':checks,'passed':all(x['passed'] for x in checks),'cluster_stopped':True,'baseline_sha256':hashlib.sha256(baseline.read_bytes()).hexdigest()}
     if not args.baseline:
         receipt['repair_sha256']=hashlib.sha256(repair.read_bytes()).hexdigest()
-    (args.output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
     print(json.dumps({'passed':receipt['passed'],'checks':len(checks),'failed':[x['case'] for x in checks if not x['passed']]}))
     return 0 if receipt['passed'] else 1
 

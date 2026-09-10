@@ -69,3 +69,7 @@ profile/platform administrator denial in immutable 0432. The default applies
 0450 and checks both overloads, service-only ACLs, authority revocation,
 unchanged balances and literal rollback/reapplication. Its declared focused
 schema does not replace a full Supabase replay or hosted HTTP verification.
+
+The output directory must resolve beneath the current working directory. Run
+from the intended evidence parent; traversal or symlink escapes are rejected
+before a cluster starts or any evidence file is written.
