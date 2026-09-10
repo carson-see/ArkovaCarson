@@ -22,7 +22,10 @@
     }
   ],
   "auth": {
-    "schemes": ["api_key", "oauth2_bearer"],
+    "schemes": [
+      "api_key",
+      "oauth2_bearer"
+    ],
     "apiKey": {
       "header": "X-API-Key",
       "provisioning": "https://app.arkova.ai/settings/api-keys"
@@ -49,13 +52,20 @@
   "tools": [
     {
       "name": "verify_credential",
-      "description": "Verify a credential's authenticity and current status by its public identifier. Returns verification status, issuer information, credential type, dates, and network anchoring proof.",
+      "description": "Verify a credential's authenticity and current status by its public identifier. Returns verification status, issuer information, credential type, dates, and network anchoring proof. Evidence strength is not uniform: check the returned fingerprint_source — \"issuer_record_attestation\" means Arkova did not independently measure the fingerprint from a document (fingerprint_evidence_note explains why); only \"document_bytes\" is a fingerprint Arkova computed from document bytes itself.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "public_id": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64, "description": "The credential's public identifier (e.g., ARK-2026-001)" }
+          "public_id": {
+            "type": "string",
+            "pattern": "^ARK-[A-Z0-9-]{3,60}$",
+            "maxLength": 64,
+            "description": "The credential's public identifier (e.g., ARK-2026-001)"
+          }
         },
-        "required": ["public_id"],
+        "required": [
+          "public_id"
+        ],
         "additionalProperties": false
       }
     },
@@ -65,10 +75,22 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Natural language search query (e.g., \"University of Michigan computer science degree\")" },
-          "max_results": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum number of results to return (default: 10, max: 50)" }
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Natural language search query (e.g., \"University of Michigan computer science degree\")"
+          },
+          "max_results": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "Maximum number of results to return (default: 10, max: 50)"
+          }
         },
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "additionalProperties": false
       }
     },
@@ -78,54 +100,105 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "q": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Natural language query or exact SHA-256 fingerprint" },
-          "type": { "type": "string", "enum": ["all", "org", "record", "fingerprint", "document"], "default": "all", "description": "Optional result filter" },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 50, "description": "Maximum results to return (capped to the record search RPC ceiling)" },
-          "max_results": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Deprecated alias for limit; prefer limit for REST v2 parity" }
+          "q": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Natural language query or exact SHA-256 fingerprint"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "all",
+              "org",
+              "record",
+              "fingerprint",
+              "document"
+            ],
+            "default": "all",
+            "description": "Optional result filter"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 50,
+            "description": "Maximum results to return (capped to the record search RPC ceiling)"
+          },
+          "max_results": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "Deprecated alias for limit; prefer limit for REST v2 parity"
+          }
         },
-        "required": ["q"],
+        "required": [
+          "q"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "verify",
-      "description": "Agent-friendly v2 verification tool. Verify whether a SHA-256 document fingerprint has been anchored. Canonical name for this capability — get_fingerprint is a documented alias returning the identical response.",
+      "description": "Agent-friendly v2 verification tool. Verify whether a SHA-256 document fingerprint has been anchored. Check the returned fingerprint_source: \"issuer_record_attestation\" means Arkova did not independently measure this fingerprint from a document. Canonical name for this capability — get_fingerprint is a documented alias returning the identical response.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "fingerprint": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "minLength": 64, "maxLength": 64, "description": "64-character SHA-256 document fingerprint" }
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64,
+            "description": "64-character SHA-256 document fingerprint"
+          }
         },
-        "required": ["fingerprint"],
+        "required": [
+          "fingerprint"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "verify_document",
-      "description": "Verify a document by its SHA-256 fingerprint. Checks if the document has been anchored and returns the anchor proof including the network receipt and timestamp. Same underlying lookup as verify; kept for backward compatibility with earlier integrations.",
+      "description": "Verify a document by its SHA-256 fingerprint. Checks if the document has been anchored and returns the anchor proof including the network receipt and timestamp. Check the returned fingerprint_source before treating every match as equally strong: \"issuer_record_attestation\" means Arkova never independently measured this fingerprint from a document. Same underlying lookup as verify; kept for backward compatibility with earlier integrations.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "content_hash": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "minLength": 64, "maxLength": 64, "description": "SHA-256 fingerprint of the document to verify" }
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64,
+            "description": "SHA-256 fingerprint of the document to verify"
+          }
         },
-        "required": ["content_hash"],
+        "required": [
+          "content_hash"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "verify_batch",
-      "description": "Verify multiple credentials in a single call. Accepts up to 100 public IDs and returns each result in input order. Use this when an agent needs to validate a list of credentials (e.g., a candidate portfolio, a screening pipeline batch).",
+      "description": "Verify multiple credentials in a single call. Accepts up to 100 public IDs and returns each result in input order. Use this when an agent needs to validate a list of credentials (e.g., a candidate portfolio, a screening pipeline batch). Evidence strength varies per record — check each result's fingerprint_source rather than assuming every entry in the batch was verified the same way.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "public_ids": {
             "type": "array",
-            "items": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64 },
+            "items": {
+              "type": "string",
+              "pattern": "^ARK-[A-Z0-9-]{3,60}$",
+              "maxLength": 64
+            },
             "minItems": 1,
             "maxItems": 100,
             "description": "Array of credential public identifiers (max 100). Each is verified individually."
           }
         },
-        "required": ["public_ids"],
+        "required": [
+          "public_ids"
+        ],
         "additionalProperties": false
       }
     },
@@ -137,61 +210,96 @@
         "properties": {
           "public_ids": {
             "type": "array",
-            "items": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64 },
+            "items": {
+              "type": "string",
+              "pattern": "^ARK-[A-Z0-9-]{3,60}$",
+              "maxLength": 64
+            },
             "minItems": 1,
             "maxItems": 25,
             "description": "Array of Arkova public IDs to verify (max 25)"
           }
         },
-        "required": ["public_ids"],
+        "required": [
+          "public_ids"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "get_anchor",
-      "description": "Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id. Canonical name for this capability — get_record and get_document are documented aliases returning the identical response; verify_credential returns the same underlying data shaped for direct credential lookups.",
+      "description": "Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id. Check the returned fingerprint_source: \"issuer_record_attestation\" means Arkova did not independently measure this fingerprint from a document. Canonical name for this capability — get_record and get_document are documented aliases returning the identical response; verify_credential returns the same underlying data shaped for direct credential lookups.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "public_id": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64, "description": "Arkova public identifier (for example ARK-DOC-ABCDEF)" }
+          "public_id": {
+            "type": "string",
+            "pattern": "^ARK-[A-Z0-9-]{3,60}$",
+            "maxLength": 64,
+            "description": "Arkova public identifier (for example ARK-DOC-ABCDEF)"
+          }
         },
-        "required": ["public_id"],
+        "required": [
+          "public_id"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "get_record",
-      "description": "Get public-safe record metadata by Arkova public ID. Use after search returns a record public_id. Alias of get_anchor (identical response) kept for v2 REST parity — result-type-specific naming makes the search → get_* workflow self-documenting when an agent doesn't already know the result type.",
+      "description": "Get public-safe record metadata by Arkova public ID. Use after search returns a record public_id. Check the returned fingerprint_source: \"issuer_record_attestation\" means Arkova did not independently measure this fingerprint from a document. Alias of get_anchor (identical response) kept for v2 REST parity — result-type-specific naming makes the search → get_* workflow self-documenting when an agent doesn't already know the result type.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "public_id": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64, "description": "Arkova public identifier returned by search" }
+          "public_id": {
+            "type": "string",
+            "pattern": "^ARK-[A-Z0-9-]{3,60}$",
+            "maxLength": 64,
+            "description": "Arkova public identifier returned by search"
+          }
         },
-        "required": ["public_id"],
+        "required": [
+          "public_id"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "get_document",
-      "description": "Get public-safe document metadata by Arkova public ID. Use after search returns a document public_id. Alias of get_anchor (identical response) kept for v2 REST parity — see get_record for why the alias exists.",
+      "description": "Get public-safe document metadata by Arkova public ID. Use after search returns a document public_id. Check the returned fingerprint_source: \"issuer_record_attestation\" means Arkova did not independently measure this fingerprint from a document. Alias of get_anchor (identical response) kept for v2 REST parity — see get_record for why the alias exists.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "public_id": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64, "description": "Arkova public identifier returned by search" }
+          "public_id": {
+            "type": "string",
+            "pattern": "^ARK-[A-Z0-9-]{3,60}$",
+            "maxLength": 64,
+            "description": "Arkova public identifier returned by search"
+          }
         },
-        "required": ["public_id"],
+        "required": [
+          "public_id"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "get_fingerprint",
-      "description": "Get public-safe record metadata by SHA-256 fingerprint. Use after search returns a fingerprint result. Alias of verify (identical response) kept for v2 REST parity — see get_record for why the alias exists.",
+      "description": "Get public-safe record metadata by SHA-256 fingerprint. Use after search returns a fingerprint result. Check the returned fingerprint_source: \"issuer_record_attestation\" means Arkova did not independently measure this fingerprint from a document. Alias of verify (identical response) kept for v2 REST parity — see get_record for why the alias exists.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "fingerprint": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "minLength": 64, "maxLength": 64, "description": "SHA-256 fingerprint returned by search" }
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64,
+            "description": "SHA-256 fingerprint returned by search"
+          }
         },
-        "required": ["fingerprint"],
+        "required": [
+          "fingerprint"
+        ],
         "additionalProperties": false
       }
     },
@@ -201,9 +309,17 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "public_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$", "minLength": 2, "maxLength": 128, "description": "Organization public identifier returned by search" }
+          "public_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$",
+            "minLength": 2,
+            "maxLength": 128,
+            "description": "Organization public identifier returned by search"
+          }
         },
-        "required": ["public_id"],
+        "required": [
+          "public_id"
+        ],
         "additionalProperties": false
       }
     },
@@ -233,11 +349,31 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Natural language query (e.g., \"Apple annual revenue 2025\")" },
-          "mode": { "type": "string", "enum": ["retrieval", "context"], "default": "retrieval", "description": "\"retrieval\" returns raw ranked documents; \"context\" returns a synthesized answer with citations" },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum number of results (default: 10, max: 50)" }
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Natural language query (e.g., \"Apple annual revenue 2025\")"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "retrieval",
+              "context"
+            ],
+            "default": "retrieval",
+            "description": "\"retrieval\" returns raw ranked documents; \"context\" returns a synthesized answer with citations"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "Maximum number of results (default: 10, max: 50)"
+          }
         },
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "additionalProperties": false
       }
     },
@@ -247,21 +383,61 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "content_hash": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "minLength": 64, "maxLength": 64, "description": "SHA-256 fingerprint of the document content" },
-          "record_type": { "type": "string", "maxLength": 50, "description": "Type of record (e.g., patent_grant, 10-K, regulatory_notice)" },
-          "source": { "type": "string", "maxLength": 50, "description": "Source identifier (e.g., edgar, uspto, federal_register)" },
-          "title": { "type": "string", "maxLength": 500, "description": "Title of the document" },
-          "source_url": { "type": "string", "format": "uri", "maxLength": 2048, "description": "URL of the original document" },
-          "idempotency_key": { "type": "string", "format": "uuid", "description": "Client-supplied UUID for retry deduplication" }
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$",
+            "minLength": 64,
+            "maxLength": 64,
+            "description": "SHA-256 fingerprint of the document content"
+          },
+          "record_type": {
+            "type": "string",
+            "maxLength": 50,
+            "description": "Type of record (e.g., patent_grant, 10-K, regulatory_notice)"
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 50,
+            "description": "Source identifier (e.g., edgar, uspto, federal_register)"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Title of the document"
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "URL of the original document"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client-supplied UUID for retry deduplication"
+          }
         },
-        "required": ["content_hash"],
+        "required": [
+          "content_hash"
+        ],
         "additionalProperties": false
       }
     }
   ],
   "links": [
-    { "rel": "api-catalog", "href": "https://app.arkova.ai/.well-known/api-catalog" },
-    { "rel": "service-desc", "href": "https://api.arkova.ai/v2/openapi.json", "type": "application/openapi+json" },
-    { "rel": "describedby", "href": "https://app.arkova.ai/auth.md", "type": "text/markdown" }
+    {
+      "rel": "api-catalog",
+      "href": "https://app.arkova.ai/.well-known/api-catalog"
+    },
+    {
+      "rel": "service-desc",
+      "href": "https://api.arkova.ai/v2/openapi.json",
+      "type": "application/openapi+json"
+    },
+    {
+      "rel": "describedby",
+      "href": "https://app.arkova.ai/auth.md",
+      "type": "text/markdown"
+    }
   ]
 }

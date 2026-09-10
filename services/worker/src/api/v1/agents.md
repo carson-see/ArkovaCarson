@@ -554,6 +554,10 @@ test that dies without it is a comment.**
 
 The rule is written down ONCE in `scripts/ci/public-pii-projection-contract.json`. **Change it there plus all three implementations in one PR** — the contract test fails otherwise, which is the point.
 
+**FD-FERPA-1 (2026-08-21) — the REG-02 block consulted the flag and published anyway.** `suppressDirectory` was computed as `anchor.directory_info_opt_out && (anchor.credential_type && FERPA_EDUCATION_TYPES.includes(anchor.credential_type))`. The inner clause is **falsy for a null credential type**, and every anchor in production that carries `directory_info_opt_out` has `credential_type IS NULL` (measured on `vzwyaatejekddvltxyye`), so this block suppressed nothing for 100% of the records the control exists to protect. Six tests covered it; none of them passed a null type. Consulting a flag and honouring it are different things, and only a test that passes the shape production actually holds can tell them apart.
+
+It now routes through `suppressesDirectoryInfo()` in `constants/ferpa.ts` — a named, fail-closed predicate shared with the SQL projection (migration `0415`), so the two anonymous surfaces cannot answer differently for the same row. An ABSENT type suppresses; a PRESENT non-education type still publishes (§99.37 is an education-records right, and `verify.test.ts` pins that boundary on this path). Do not re-inline it: `src/tests/ferpa-directory-info-opt-out.contract.test.ts` fails if the `suppressDirectory` statement mentions `FERPA_EDUCATION_TYPES` directly. The REG-03 re-disclosure notice a few lines below **keeps** its truthiness check on purpose — that notice asserts the record IS an education record, so it must fail OPEN where suppression fails CLOSED.
+
 **The policy decision (stated, not inherited).** Academic-record suppression here is **UNCONDITIONAL**, matching the other two — deliberately NOT gated on `directory_info_opt_out`, even though the surrounding REG-02 code is. Opt-out means the default is *publish*, and default-publish is the defect class; the field was not covered by the opt-out anyway; and one row with three anonymous projections giving three answers is not a privacy posture (the verify **page** reads the SQL path, which suppresses — the API disagreeing with the page it serves *is* the drift). Cost: an issuer-authored description no longer ships on an academic record for anyone. It already did not ship on either other public projection, so nothing publicly reachable elsewhere is lost.
 
 **What the gate does.** Two layers, mirroring 0385:
@@ -1065,3 +1069,32 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
+
+## 2026-08-30 — `fingerprint_rederivability` (FETCH_TIME_SNAPSHOT) is gated on PROOF of a fetch
+
+`verify.ts` (`mapAnchorRow`) and `verify-proof.ts` no longer emit the fetch-time "Measured…" caveat on
+`connector_source` alone. The declared-hash rules dispatcher writes the same `connector_source='docusign'`
+without ever fetching, so both now gate on positive fetch evidence — `resolveServerFetchedConnectorSource` /
+`connectorFingerprintRederivabilityFieldsFor` (requires a non-empty `connector_artifact_id`, stamped only by
+`connector-artifact-drain.ts`). See `constants/agents.md` (2026-08-30), SCRUM-3299 / SCRUM-3825.
+
+- **`AnchorByPublicId.connector_source` was RENAMED to `server_fetched_connector_source`.** Internal transport
+  field only — never a response key, not in `API_RICH_KEYS`, so no §1.8 surface change. Renamed because the
+  old name invited exactly the bug that was fixed: assigning the raw `metadata.connector_source` marker to it
+  re-arms the false "Measured…" claim. The name now states the invariant, and the only two writers are
+  `mapAnchorRow` (via the resolver) and `EMPTY_API_RICH_FIELDS` (null). **Never assign the raw marker to it.**
+- The `isConnectorFetchSource(...)` re-check at the emission site is a closed-set STRING guard, not a
+  re-derivation of fetch evidence — it cannot see metadata. Fetch proof lives entirely in the constructor.
+- **`verifyCache.ts` `KEY_PREFIX` bumped `verify:v6:` → `verify:v7:`** — mandatory per the standing rule below:
+  this change REMOVES response fields for declared-hash anchors, and a pre-deploy cache entry would otherwise
+  keep serving the false claim for the full TTL. `invalidateVerificationCache` does not help (the row is
+  unchanged, so nothing re-fires). Ratchet test in `utils/verifyCache.namespace.test.ts`.
+
+## 2026-09-05 — PR 2499 integration with inbound artifacts
+
+Inbound issuer attestations have artifact IDs too. The combined gate checks the
+explicit fingerprint_source first and emits declared_unverified with its note;
+only other records with a recognized connector marker and artifact stamp may emit
+fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
+and authenticated packet exports load the typed source; the signable proof bundle
+is unchanged. Regression reproduced before the fix; local validation is not soak evidence.
