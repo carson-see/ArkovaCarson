@@ -189,3 +189,68 @@ describe('logger error serialization (silent-failure hardening)', () => {
     expect((line.error as Record<string, unknown>).message).toBe('cyclic');
   });
 });
+
+
+/**
+ * SCRUM-3439 (§1.4): credential-bearing URL fields must never survive to the
+ * emitted line. The RPC endpoint carries its credential in the URL PATH — prod
+ * `BITCOIN_RPC_URL` is `https://go.getblock.io/<ACCESS_TOKEN>` — and the
+ * pii-scrub `URL_TOKEN_REGEX` only matches `token=`-style QUERY params, so a
+ * path token would otherwise pass every other guard untouched.
+ *
+ * Call sites that legitimately want the endpoint log a SANITIZED origin under
+ * a different key (`rpcOrigin`, via `sanitizeRpcUrlForError`). That makes this
+ * list unambiguous: a log object carrying a field literally named `rpcUrl` /
+ * `bitcoinRpcUrl` / `baseRpcUrl` is always a mistake, so it is removed
+ * wholesale — the same belt-and-braces shape as the SCRUM-2492 byte fields.
+ */
+describe('credential-bearing URL redaction (SCRUM-3439, §1.4)', () => {
+  const SECRET = 'a1b2c3d4-super-secret-getblock-access-token';
+  const SECRET_URL = `https://go.getblock.io/${SECRET}`;
+
+  it.each(['rpcUrl', 'bitcoinRpcUrl', 'baseRpcUrl'])(
+    'removes a top-level `%s` field without disturbing its siblings',
+    (field) => {
+      const { logger, lines } = captureLogger();
+
+      logger.info({ [field]: SECRET_URL, provider: 'getblock' }, 'Creating provider');
+
+      const [line] = lines();
+      expect(line[field]).toBeUndefined();
+      expect(JSON.stringify(line)).not.toContain(SECRET);
+      // The line must stay useful — only the credential-bearing key is dropped.
+      expect(line.provider).toBe('getblock');
+      expect(line.msg).toBe('Creating provider');
+    },
+  );
+
+  it('removes a nested `rpcUrl` field', () => {
+    const { logger, lines } = captureLogger();
+
+    logger.info({ cfg: { rpcUrl: SECRET_URL, type: 'getblock' } }, 'config');
+
+    const [line] = lines();
+    const cfg = line.cfg as Record<string, unknown>;
+    expect(cfg.rpcUrl).toBeUndefined();
+    expect(cfg.type).toBe('getblock');
+    expect(JSON.stringify(line)).not.toContain(SECRET);
+  });
+
+  it('leaves the sanitized `rpcOrigin` field intact (it is the correlation value)', () => {
+    const { logger, lines } = captureLogger();
+
+    logger.info({ rpcOrigin: 'https://go.getblock.io', provider: 'getblock' }, 'Creating provider');
+
+    const [line] = lines();
+    expect(line.rpcOrigin).toBe('https://go.getblock.io');
+  });
+
+  it('leaves unrelated URL fields intact (public endpoints carry no credential)', () => {
+    const { logger, lines } = captureLogger();
+
+    logger.info({ mempoolBaseUrl: 'https://mempool.space/api' }, 'Creating provider');
+
+    const [line] = lines();
+    expect(line.mempoolBaseUrl).toBe('https://mempool.space/api');
+  });
+});
