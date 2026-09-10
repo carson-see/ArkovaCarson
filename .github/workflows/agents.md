@@ -749,6 +749,18 @@ The E2E job now runs `playwright.uat03.config.ts` after Chromium installation an
 
 The SQL confirmation regressions receive the masked local DB URL from `supabase status`, including the actual CI port selected by the startup helper. Their role-corruption setup uses the local bootstrap administrator; a connection/administrator check precedes assertions, and failures match PostgreSQL stderr rather than SQL text embedded in a failed command.
 
+## 2026-09-10 — PR #2694: forward the selected SQL port to RLS tests
+
+The CI Supabase wrapper selects a free port block, normally database port 15422.
+The fingerprint plan suite reads `RLS_DATABASE_URL`; exporting only the OAuth
+suite's `UAT03_DATABASE_URL` left it connecting to the unused default 54322.
+The shared extraction step now masks and outputs the actual `DB_URL`, and the
+RLS step receives it as `RLS_DATABASE_URL`. OAuth retains its bootstrap-admin
+username on that same database. The loopback guard, SQL cases, fixture ownership,
+and migration 0441 are unchanged. Real workflow extraction on an isolated full
+schema passed all eight cases, failed three under 0386, and passed all eight
+after reapplying immutable 0441 with seeded identities preserved.
+
 ## 2026-09-10 — SCRUM-4565: isolate Mergify status edits from required checks
 
 Mergify rewrites speculative PR bodies as required checks change. The shared PR
