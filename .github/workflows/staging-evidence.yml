@@ -55,13 +55,13 @@ on:
 # must neither cancel a source check nor replace its success/failure status.
 # Real source/base changes and all ordinary PR evidence edits still run.
 concurrency:
-  group: staging-evidence-${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && 'status-edit' || 'gate' }}
+  group: staging-evidence-${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]' && 'status-edit' || 'gate' }}
   cancel-in-progress: true
 
 jobs:
   staging-evidence:
-    if: ${{ !(github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]') }}
-    name: ${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && 'Staging evidence status edit' || 'Staging Soak Evidence Gate' }}
+    if: ${{ !(github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]') }}
+    name: ${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]' && 'Staging evidence status edit' || 'Staging Soak Evidence Gate' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

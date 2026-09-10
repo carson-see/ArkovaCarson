@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 // A skipped job must NOT reuse the required gate's name: otherwise a status
 // edit can replace a failed/pending source check with a skipped conclusion.
-const STATUS_EDIT = "github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]'";
+const STATUS_EDIT = "github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]'";
 const WORKFLOWS = [
   ['migration-drift.yml', 'Check supabase/migrations vs prod', 'Migration drift status edit'],
   ['staging-evidence.yml', 'Staging Soak Evidence Gate', 'Staging evidence status edit'],
@@ -31,7 +31,8 @@ describe.each(WORKFLOWS)('%s Mergify status edits', (file, requiredName, editNam
   });
 
   it.each([
-    ['spoofable branch identity', " && github.event.pull_request.user.login == 'mergify[bot]'", ''],
+    ['spoofable branch identity', " && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]'", ''],
+    ['human or other-bot edit treated as status', " && github.event.sender.login == 'mergify[bot]'", ''],
     ['base change treated as status', ' && github.event.changes.base == null', ''],
     ['every edited event ignored', ' && github.event.changes.body', ''],
     ['source check cancelled by edits', "&& 'status-edit' || 'gate'", "&& 'gate' || 'gate'"],

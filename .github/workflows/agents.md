@@ -735,7 +735,8 @@ running checks on those metadata edits; run 34518240789 lost its staging check
 before any step executed and the queue removed its original PR.
 
 Only an `edited` event with a body change, no base change, the queue branch prefix,
-and the immutable `mergify[bot]` PR author is ignored. It has a separate
+the immutable `mergify[bot]` PR author, and a `mergify[bot]` event sender is
+ignored. Human/other-bot edits keep the normal gate. It has a separate
 `status-edit` concurrency group and a distinct, non-required skipped job name.
 Both are necessary: a predicate alone still permits workflow cancellation, and
 reusing the required job name could replace a failed/pending source result with a
