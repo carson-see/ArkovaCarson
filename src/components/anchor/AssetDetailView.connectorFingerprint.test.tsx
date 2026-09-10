@@ -102,3 +102,62 @@ describe('AssetDetailView — connector-sourced re-verify caveat', () => {
     expect(screen.queryByTestId('connector-fingerprint-mismatch-hint')).toBeNull();
   });
 });
+
+// docusign-bilateral-2026-08 (SCRUM-3818 go-live blocker): a DocuSign INBOUND
+// declared-hash anchor (connector_source='docusign' AND fingerprintSource=
+// 'issuer_record_attestation') is a materially DIFFERENT case from an
+// ordinary connector-fetched anchor: Arkova never retrieved or hashed this
+// document at all — the fingerprint is DocuSign's own declared value, relayed
+// by Arkova. Before this fix, `connectorAnchor` (fingerprintSource undefined)
+// and this case rendered the IDENTICAL REVERIFY_NOTE, which falsely claims
+// "Its fingerprint matches the exact file as retrieved at securing time" —
+// Arkova retrieved nothing. §1.5 / R-7.
+describe('AssetDetailView — DECLARED_UNVERIFIED (inbound declared-hash) re-verify caveat', () => {
+  const declaredUnverifiedAnchor = {
+    ...baseAnchor,
+    metadata: { connector_source: 'docusign', external_ref: 'env-123' },
+    fingerprintSource: 'issuer_record_attestation',
+  };
+
+  it('shows the DECLARED_UNVERIFIED-specific note, NOT the fetch-time REVERIFY_NOTE', () => {
+    render(<AssetDetailView anchor={declaredUnverifiedAnchor} />);
+    const note = screen.getByTestId('connector-fingerprint-reverify-note');
+    expect(note).toHaveTextContent(CONNECTOR_FINGERPRINT_LABELS.DECLARED_UNVERIFIED_REVERIFY_NOTE);
+    expect(note).not.toHaveTextContent(CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE);
+    // Must never claim the fingerprint matches "the exact file as retrieved" —
+    // Arkova never retrieved anything for this class.
+    expect(note.textContent).not.toContain('matches the exact file as retrieved');
+  });
+
+  it('regression: a connector-sourced anchor with fingerprintSource=document_bytes still gets the ORIGINAL fetch-time note', () => {
+    render(
+      <AssetDetailView
+        anchor={{ ...declaredUnverifiedAnchor, fingerprintSource: 'document_bytes' }}
+      />,
+    );
+    const note = screen.getByTestId('connector-fingerprint-reverify-note');
+    expect(note).toHaveTextContent(CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE);
+  });
+
+  it('regression: connectorAnchor with NO fingerprintSource (today\'s shape) still gets the ORIGINAL fetch-time note, byte-identical', () => {
+    render(<AssetDetailView anchor={connectorAnchor} />);
+    const note = screen.getByTestId('connector-fingerprint-reverify-note');
+    expect(note).toHaveTextContent(CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE);
+  });
+
+  it('adds the DECLARED_UNVERIFIED mismatch hint instead of the fetch-time one', async () => {
+    render(<AssetDetailView anchor={declaredUnverifiedAnchor} />);
+
+    screen.getByText('Verify Document').click();
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-file-upload')).toBeInTheDocument();
+    });
+    screen.getByTestId('mock-file-upload').click();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('connector-fingerprint-mismatch-hint')).toHaveTextContent(
+        CONNECTOR_FINGERPRINT_LABELS.DECLARED_UNVERIFIED_REVERIFY_MISMATCH_HINT,
+      );
+    });
+  });
+});

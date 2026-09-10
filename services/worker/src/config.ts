@@ -355,6 +355,19 @@ const ConfigSchema = z.object({
    */
   enableDocusignQueueReconciliation: boolFlag(false),
   /**
+   * docusign-bilateral-2026-08 (feasibility spike, SCRUM-3817/SCRUM-3818):
+   * gates the INBOUND (Recipient Connect / received-envelope) webhook path in
+   * services/worker/src/api/v1/webhooks/docusign.ts. When false, an inbound
+   * classification acknowledges HTTP 200 with NO nonce consumed and NO
+   * durable write (see the handler for the fail-closed rationale) — the
+   * OUTBOUND (own-account envelope-completed) path is entirely unaffected by
+   * this flag either way. Default false: this is a NEW external trust
+   * boundary (any connected org's valid Connect HMAC key can self-POST a
+   * self-signed "inbound" event) and is NOT going live this cycle — see the
+   * cross-field guard below for the prerequisite flags it requires when on.
+   */
+  enableDocusignInbound: boolFlag(false),
+  /**
    * Signer backfill (record-detail signer rows, follow-on to
    * signer capture / PR #2474) — gates
    * `POST /jobs/docusign-signer-backfill`, which enriches PRE-existing
@@ -812,6 +825,43 @@ const ConfigSchema = z.object({
     });
   }
 
+  // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818): the inbound webhook
+  // path reuses the connector_artifact enqueue+drain pipeline (declared-hash
+  // anchoring, §1.6A adjacent) rather than the rules engine, and it needs
+  // BOTH the DocuSign webhook mount itself AND both connector_artifact stages
+  // live — without any one of the three, an inbound delivery would either
+  // never reach the classifier (webhook off) or enqueue a connector_artifact
+  // that nothing ever drains into an anchor (enqueue on, drain off), silently
+  // piling up `pending` rows. Mirrors the enableDocusignQueueReconciliation
+  // guard immediately above.
+  if (cfg.enableDocusignInbound && !cfg.enableDocusignWebhook) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_INBOUND=true requires ENABLE_DOCUSIGN_WEBHOOK=true — '
+        + 'the inbound classifier lives inside the /webhooks/docusign handler, which 503s without it.',
+      path: ['enableDocusignInbound'],
+    });
+  }
+  if (cfg.enableDocusignInbound && !cfg.enableConnectorArtifactEnqueue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_INBOUND=true requires ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true — '
+        + 'the declared-hash inbound path enqueues a connector_artifact directly; without this flag it has no producer to reuse.',
+      path: ['enableDocusignInbound'],
+    });
+  }
+  if (cfg.enableDocusignInbound && !cfg.enableConnectorArtifactDrain) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_INBOUND=true requires ENABLE_CONNECTOR_ARTIFACT_DRAIN=true — '
+        + 'without the drain consumer, inbound connector_artifact rows enqueue but never materialize into an anchor.',
+      path: ['enableDocusignInbound'],
+    });
+  }
+
   // Signer backfill calls the DocuSign eSignature REST API using a refreshed
   // access token resolved via the same OAuth connection flow ENABLE_DOCUSIGN_OAUTH
   // gates — without it there is no live/refreshable connection to authenticate
@@ -960,6 +1010,8 @@ function loadConfig(): Config {
     // Default OFF in prod — the reconciliation re-materializes via the DS-03
     // producer, which is itself gated by ENABLE_CONNECTOR_ARTIFACT_ENQUEUE.
     enableDocusignQueueReconciliation: process.env.ENABLE_DOCUSIGN_QUEUE_RECONCILIATION,
+    // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818): inbound webhook path.
+    enableDocusignInbound: process.env.ENABLE_DOCUSIGN_INBOUND,
     // Signer backfill for pre-existing (outbound-only) DocuSign anchors.
     enableDocusignSignerBackfill: process.env.ENABLE_DOCUSIGN_SIGNER_BACKFILL,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
