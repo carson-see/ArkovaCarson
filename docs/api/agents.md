@@ -2,6 +2,70 @@
 
 Developer-facing API documentation. Engineering mirrors and guides for the Arkova Verification API.
 
+## 2026-09-05 — the `arkova_` rename vs §1.8: what moved and what did not (SCRUM-4465 / BUG-2026-09-02-001)
+
+§1.8 freezes the published verification API schema: no breaking changes without a `v2+`
+prefix and a 12-month deprecation. The MCP tool rename touched a field inside that spec,
+so the decision is recorded here rather than left to be re-litigated by the next reader.
+
+**`operationId` did not change, and must not.** `search`, `verify`, `get_anchor`,
+`list_orgs`, `get_organization`, `get_record`, `get_fingerprint`, `get_document` are the
+same strings they were. They name REST operations, and generated clients key off them —
+renaming one silently breaks every consumer that regenerated from the spec. The v2 REST
+paths did not move either.
+
+**`x-agent-usage.tool_name` DID change, to `arkova_<operationId>`.** That is an `x-`
+vendor extension, which OpenAPI defines as ignorable by any tool that does not recognise
+it. Measured, not assumed: the only readers of `x-agent-usage` in this repository are
+`scripts/ci/check-api-contract-drift.ts` and two test files
+(`services/worker/src/api/v2/openapi.test.ts`,
+`services/worker/src/mcp-tool-schemas.test.ts`). Neither SDK reads it, no runtime code
+path reads it, and it is not part of any request or response body. So changing it is not
+a §1.8 breaking change — nothing that §1.8 protects can observe it.
+
+**And it is a security exception regardless.** The bare tool names are what caused an
+agent to sweep local secrets (BUG-2026-09-02-001); a field that advertises a tool name to
+an agent has to advertise the name the server actually registers, or the annotation is
+worse than absent. A deprecation window is not available for a defect of that shape.
+
+`check-api-contract-drift.ts` now derives the expected value as `arkova_${operationId}`
+rather than comparing the two for equality, which is what keeps the two identifiers
+pinned to each other while they differ by a fixed prefix.
+
+## 2026-09-05 — three ways these docs were wrong about the rename, and they are different failures
+
+Worth separating, because the fix for each is a different discipline.
+
+**`agent-workflows.md` — right in the table, wrong in the example.** The surface matrix
+listed `arkova_search` / `arkova_get_anchor`; the three `MCP:` fenced blocks under it
+still called `search({...})` and `get_anchor({...})`. The existing test read the matrix,
+so the document was correct exactly where it was checked and broken where it is copied.
+`agentWorkflows.test.ts` now parses the `MCP:` blocks and rejects any call whose name is
+not a registered tool. REST paths and SDK method calls in the neighbouring blocks are
+deliberately out of that scope — they are correct bare.
+
+**`mcp-tools.md` — the changelog was rewritten into the present.** The v1.0 / v1.1 / v1.2
+rows were re-spelled with `arkova_*` names, so the table claimed the March 2026 release
+added `arkova_verify_document`. A changelog exists to answer "what was this client calling
+when they integrated"; rewriting it destroys the only record of that. Restored verbatim
+from `main`. When a rename lands, the changelog rows are the one place you do NOT sweep —
+add a row (v3.0 does exactly this) instead.
+
+**`README.md` — the tool list was a live claim, and it was false.** It told new
+integrations to prefer `search` / `verify` / `list_orgs` / `get_anchor`. There are no
+aliases: v3.0 removed the bare names on purpose, so every name on that list was
+unroutable. Now lists all 16 registered tools and says the old names are gone rather than
+deprecated. The Python paragraph one screen above was listing SDK METHODS in the same
+bare-backtick style, which reads as a second tool namespace; it now says methods, and two
+factual errors surfaced while checking it against `client.py` (the four v2 detail methods
+were missing, and "write/anchoring workflows remain in the TypeScript SDK" is false —
+`anchor()` and `anchor_bulk()` are on the Python client).
+
+Standing rule this leaves behind: `mcp-tools.md` is gate-checked for tool coverage and
+claim parity, `README.md` and `agent-workflows.md` are not equally covered. Anything you
+write about tool names in this folder should be phrased so a gate could check it, and if
+it is executable, a gate should.
+
 ## 2026-07-28 v1 spec canonical source flip (pentest-prep API contract audit)
 
 - `openapi.yaml` is DEMOTED — no longer canonical. It had drifted 12+ mounted `/api/v1` routes behind the runtime-served spec (`services/worker/src/api/v1/docs.ts`, served at `GET /api/docs/spec.json`), which is what a pen tester enumerating the API actually sees. `docs.ts` is now canonical, matching the v2 pattern (`services/worker/src/api/v2/openapi.ts`). See `docs/api/canonical-sources.md`.
@@ -31,7 +95,7 @@ Developer-facing API documentation. Engineering mirrors and guides for the Arkov
 - A published description is a CLAIM (§1.13 R-7), governed like any other. When runtime behaviour and
   a description disagree, one of them is a defect — say which. 2026-08-15: `/nessie/query` is marked
   DISABLED + `deprecated: true` in `openapi.yaml` with the 503 `nessie_disabled` envelope documented
-  as its only reachable response (CTO ruling R-1), and `search_credentials` in `mcp-tools.md` now
+  as its only reachable response (CTO ruling R-1), and `search_anchors` in `mcp-tools.md` now
   leads with lexical substring matching rather than semantic similarity (BUG-026 — a false
   description, not a broken search; no behaviour changed).
 - `mcp-tools.md` mirrors the live tool descriptions in `services/edge/src/mcp-tools.ts`, and
