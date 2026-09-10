@@ -765,3 +765,8 @@ Two traps this code is shaped around:
   proof), which an INSERT-on-conflict would silently create. `missing` is still
   exact — the returned rows name which ids existed, so the shortfall inside a
   statement is a real count.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+ComputeID webhook limiting now uses its own per-IP bucket (SCRUM-4569), preventing one anonymous source from consuming the provider budget globally. The existing bounded store and limiter isolation remain in place; a different-IP starvation regression exercises the actual limiter.
