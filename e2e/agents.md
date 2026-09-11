@@ -471,3 +471,10 @@ foreign-private-profile denials. Enrollment screenshots mask QR and secret data.
 At375px the header account button is named by initials, because the full name
 is hidden. MFA sign-out probes use the banner's menu trigger across widths;
 they still click the real Sign out action and require a new-login challenge.
+
+## 2026-09-11 — UAT-04 all-user MFA
+
+Auth setup removes old fixture factors, performs real TOTP enrollment, and saves
+only same-user `authenticated`/AAL2 sessions. The former 2099 enforcement-date
+override is gone. Browser coverage pins direct `/login` and `/signup` AAL1
+routing to the non-skippable gate for individual and organization users.
