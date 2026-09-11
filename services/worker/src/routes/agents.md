@@ -2,6 +2,15 @@
 
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
+## 2026-09-11 — UAT-22 selected-org platform invitation route
+
+`POST /api/admin/organizations/:id/invitations` is mounted on `adminRouter`. It uses the router's
+authenticated identity and the handler independently requires platform-admin authority; request
+body display names or actor fields are never trusted. The durable invitation UUID is returned only
+as an identifier—the single-use invitation token never enters the HTTP response.
+`GET /api/admin/organizations/:id` supplies the selected-org metadata that browser RLS correctly
+hides from a platform admin whose home membership belongs to a different organization.
+
 ## 2026-09-02 — a /health mock that omits `getAnchoringRpcStatus` is now a live cold-cache test
 
 `buildHealthResponse` falls back to the module-local `UNPROBED` constant

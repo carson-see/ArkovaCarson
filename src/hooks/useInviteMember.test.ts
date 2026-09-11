@@ -58,6 +58,112 @@ describe('useInviteMember', () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sent: true }) });
   });
 
+  it('uses the selected-org admin endpoint for a platform admin and skips the tenant RPC', async () => {
+    mockResolveSafeWorkerEndpoint.mockImplementation((base: string, path: string) => new URL(path, base));
+    const { result } = renderHook(() => useInviteMember({ platformAdmin: true }));
+
+    await act(async () => {
+      await result.current.inviteMember({ ...defaultOptions, role: 'ORG_ADMIN' });
+    });
+
+    expect(mockRpc).not.toHaveBeenCalled();
+    const [url, requestInit] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`/api/admin/organizations/${defaultOptions.orgId}/invitations`);
+    const body = JSON.parse(requestInit.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      email: 'test@example.com',
+      role: 'ORG_ADMIN',
+      idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+  });
+
+  it('keeps the same admin submission key after delivery failure, then clears it after success', async () => {
+    mockResolveSafeWorkerEndpoint.mockImplementation((base: string, path: string) => new URL(path, base));
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({ sent: false }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ sent: true }) })
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ sent: true }) });
+    const { result } = renderHook(() => useInviteMember({ platformAdmin: true }));
+
+    await act(async () => { await result.current.inviteMember(defaultOptions); });
+    await act(async () => { await result.current.inviteMember(defaultOptions); });
+    await act(async () => { await result.current.inviteMember(defaultOptions); });
+
+    const keys = mockFetch.mock.calls.map((call) => {
+      const body = JSON.parse((call[1] as RequestInit).body as string) as { idempotency_key: string };
+      return body.idempotency_key;
+    });
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[1]);
+  });
+
+  it('rotates the admin submission key when the selected invite intent changes', async () => {
+    mockResolveSafeWorkerEndpoint.mockImplementation((base: string, path: string) => new URL(path, base));
+    mockFetch.mockResolvedValue({ ok: false, status: 502, json: async () => ({ sent: false }) });
+    const { result } = renderHook(() => useInviteMember({ platformAdmin: true }));
+
+    await act(async () => { await result.current.inviteMember(defaultOptions); });
+    await act(async () => {
+      await result.current.inviteMember({ ...defaultOptions, email: 'other@example.com' });
+    });
+
+    const first = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string) as { idempotency_key: string };
+    const second = JSON.parse((mockFetch.mock.calls[1][1] as RequestInit).body as string) as { idempotency_key: string };
+    expect(second.idempotency_key).not.toBe(first.idempotency_key);
+  });
+
+  it('fails closed when a 2xx invitation response does not confirm sent=true', async () => {
+    mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ sent: false }) });
+    const { result } = renderHook(() => useInviteMember());
+
+    let success = true;
+    await act(async () => { success = await result.current.inviteMember(defaultOptions); });
+
+    expect(success).toBe(false);
+    expect(result.current.error).toContain('email could not be sent');
+  });
+
+  it('surfaces the selected-org already-member conflict without claiming an invite was created', async () => {
+    mockResolveSafeWorkerEndpoint.mockImplementation((base: string, path: string) => new URL(path, base));
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ sent: false, code: 'already_member' }),
+    });
+    const { result } = renderHook(() => useInviteMember({ platformAdmin: true }));
+
+    await act(async () => { await result.current.inviteMember(defaultOptions); });
+
+    expect(result.current.error).toBe('This person is already a member of the organization.');
+    expect(result.current.error).not.toContain('created');
+  });
+
+  it('uses neutral copy when a selected-org request fails before its state is known', async () => {
+    mockResolveSafeWorkerEndpoint.mockImplementation((base: string, path: string) => new URL(path, base));
+    mockFetch.mockRejectedValueOnce(new TypeError('network failed'));
+    const { result } = renderHook(() => useInviteMember({ platformAdmin: true }));
+
+    await act(async () => { await result.current.inviteMember(defaultOptions); });
+
+    expect(result.current.error).toBe('The invitation could not be confirmed or sent. Please try again.');
+    expect(result.current.error).not.toContain('created');
+  });
+
+  it('only claims creation when the worker explicitly reports post-insert delivery failure', async () => {
+    mockResolveSafeWorkerEndpoint.mockImplementation((base: string, path: string) => new URL(path, base));
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: async () => ({ sent: false, created: true, code: 'email_delivery_failed' }),
+    });
+    const { result } = renderHook(() => useInviteMember({ platformAdmin: true }));
+
+    await act(async () => { await result.current.inviteMember(defaultOptions); });
+
+    expect(result.current.error).toBe('Invitation was created, but the email could not be sent. Please try again.');
+  });
+
   it('should successfully invite a member', async () => {
     mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
 

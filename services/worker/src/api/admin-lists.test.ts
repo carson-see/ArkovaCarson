@@ -35,7 +35,7 @@ vi.mock('../utils/logger.js', () => ({
   logger: mockLogger,
 }));
 
-import { handleAdminUsers, handleAdminRecords, handleAdminSubscriptions } from './admin-lists.js';
+import { handleAdminUsers, handleAdminRecords, handleAdminSubscriptions, handleAdminOrganizationDetail } from './admin-lists.js';
 import { ADMIN_PAGE_SIZE } from './admin-lists.js';
 import type { Request, Response } from 'express';
 
@@ -91,6 +91,47 @@ describe('Admin Lists API', () => {
       await handleAdminSubscriptions('user-123', mockReq(), res);
 
       expect(res.statusCode).toBe(403);
+    });
+  });
+
+  describe('handleAdminOrganizationDetail', () => {
+    const orgId = '11111111-1111-4111-8111-111111111111';
+
+    it('blocks a non-platform-admin before the selected-org read', async () => {
+      mockIsPlatformAdmin.mockResolvedValue(false);
+      const res = mockRes();
+
+      await handleAdminOrganizationDetail('ordinary-user', orgId, res);
+
+      expect(res.statusCode).toBe(403);
+      expect(mockDbFrom).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed selected-org id before the database read', async () => {
+      mockIsPlatformAdmin.mockResolvedValue(true);
+      const res = mockRes();
+
+      await handleAdminOrganizationDetail('platform-admin', 'not-an-org-id', res);
+
+      expect(res.statusCode).toBe(400);
+      expect(mockDbFrom).not.toHaveBeenCalled();
+    });
+
+    it('returns the exact selected organization through the trusted admin client', async () => {
+      mockIsPlatformAdmin.mockResolvedValue(true);
+      const organization = { id: orgId, display_name: 'PlanBook Selected' };
+      const maybeSingle = vi.fn().mockResolvedValue({ data: organization, error: null });
+      const eq = vi.fn(() => ({ maybeSingle }));
+      const select = vi.fn(() => ({ eq }));
+      mockDbFrom.mockReturnValue({ select });
+      const res = mockRes();
+
+      await handleAdminOrganizationDetail('platform-admin', orgId, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockDbFrom).toHaveBeenCalledWith('organizations');
+      expect(eq).toHaveBeenCalledWith('id', orgId);
+      expect(res.body).toEqual({ organization });
     });
   });
 

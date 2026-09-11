@@ -10,6 +10,7 @@
  */
 
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
@@ -17,6 +18,44 @@ import { readInChunks } from '../utils/chunkedRead.js';
 
 /** Default page size — shared with frontend useAdminList hook */
 export const ADMIN_PAGE_SIZE = 25;
+
+// ─── GET /api/admin/organizations/:id ───────────────────────
+
+export async function handleAdminOrganizationDetail(
+  userId: string,
+  orgId: string,
+  res: Response,
+): Promise<void> {
+  if (!(await isPlatformAdmin(userId))) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+  if (!z.string().uuid().safeParse(orgId).success) {
+    res.status(400).json({ error: 'A valid organization is required.' });
+    return;
+  }
+
+  try {
+    const { data: organization, error } = await db
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .maybeSingle();
+    if (error) {
+      logger.error({ orgId }, 'Admin organization detail query failed');
+      res.status(500).json({ error: 'Failed to fetch organization' });
+      return;
+    }
+    if (!organization) {
+      res.status(404).json({ error: 'Organization not found.' });
+      return;
+    }
+    res.json({ organization });
+  } catch (error) {
+    logger.error({ error, orgId }, 'Admin organization detail request failed');
+    res.status(500).json({ error: 'Failed to fetch organization' });
+  }
+}
 
 /**
  * Escape ilike wildcard characters AND PostgREST filter syntax characters.

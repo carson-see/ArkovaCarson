@@ -1,5 +1,14 @@
 # agents.md — pages
-_Last updated: 2026-08-31_
+_Last updated: 2026-09-11_
+
+## 2026-09-11 — UAT-22 selected-org invitations
+
+`OrgProfilePage` passes the authenticated profile's platform-admin status to
+`useInviteMember`. This lets the existing Invite Member dialog act on the org in the URL while
+ordinary ORG_ADMIN users retain the tenant-scoped RPC path. The selected organization ID remains
+the route parameter; no client-supplied org or actor display field is authoritative.
+The same status selects the worker-backed organization metadata read, so a foreign selected org
+renders its real name instead of the previous generic `Organization` fallback.
 
 ## 2026-08-31 — `IndependentVerifyPage` told readers to run a file that does not exist
 

@@ -246,6 +246,8 @@ describe('acceptInvitation — existing-user join path', () => {
     const admin = {
       createUser: vi.fn(),
     };
+    const profileBackfill = chain({ error: null });
+    const membershipInsert = chain({ error: null });
     const deps = makeDeps(
       {
         invitations: [
@@ -255,11 +257,11 @@ describe('acceptInvitation — existing-user join path', () => {
         organizations: [chain({ data: ORG_ROW, error: null })],
         profiles: [
           chain({ data: { email: 'invitee@example.com' }, error: null }), // caller email check
-          chain({ error: null }), // org_id backfill
+          profileBackfill, // org_id backfill
         ],
         org_members: [
           chain({ data: null, error: null }), // no existing membership
-          chain({ error: null }), // insert
+          membershipInsert, // insert
         ],
         audit_events: [chain({ error: null })],
       },
@@ -269,12 +271,42 @@ describe('acceptInvitation — existing-user join path', () => {
     const result = await acceptInvitation(deps, { token: TOKEN, callerId: 'user-1' });
 
     expect(admin.createUser).not.toHaveBeenCalled();
+    expect(membershipInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+      org_id: 'org-1',
+      role: 'member',
+    }));
+    // Existing accounts can belong to another home org. The conditional
+    // backfill must never silently reassign that profile.
+    expect(profileBackfill.update).toHaveBeenCalledWith({ org_id: 'org-1', role: 'INDIVIDUAL' });
+    expect(profileBackfill.is).toHaveBeenCalledWith('org_id', null);
     expect(result).toEqual({
       orgId: 'org-1',
       orgName: 'Example Org',
       verificationRequired: false,
       verificationEmailSent: false,
     });
+  });
+
+  it('maps a chosen ORG_ADMIN invitation to an admin membership on acceptance', async () => {
+    const adminInvitation = { ...INVITATION_ROW, role: 'ORG_ADMIN' as const };
+    const membershipInsert = chain({ error: null });
+    const profileBackfill = chain({ error: null });
+    const deps = makeDeps({
+      invitations: [chain({ data: adminInvitation, error: null }), chain({ error: null })],
+      organizations: [chain({ data: ORG_ROW, error: null })],
+      profiles: [
+        chain({ data: { email: 'invitee@example.com' }, error: null }),
+        profileBackfill,
+      ],
+      org_members: [chain({ data: null, error: null }), membershipInsert],
+      audit_events: [chain({ error: null })],
+    });
+
+    await acceptInvitation(deps, { token: TOKEN, callerId: 'existing-user' });
+
+    expect(membershipInsert.insert).toHaveBeenCalledWith(expect.objectContaining({ role: 'admin' }));
+    expect(profileBackfill.update).toHaveBeenCalledWith({ org_id: 'org-1', role: 'ORG_ADMIN' });
+    expect(profileBackfill.is).toHaveBeenCalledWith('org_id', null);
   });
 });
 
