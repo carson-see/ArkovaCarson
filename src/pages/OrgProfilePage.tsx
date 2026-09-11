@@ -56,15 +56,16 @@ export function OrgProfilePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null);
+  const platformAdmin = isPlatformAdmin(profile);
+  const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null, platformAdmin);
   const { members: orgMembers, loading: orgMembersLoading, refreshMembers: refreshOrgMembers } = useOrgMembers(orgId ?? null);
   const { revokeAnchor } = useRevokeAnchor();
-  const { inviteMember } = useInviteMember();
+  const { inviteMember } = useInviteMember({ platformAdmin });
 
   // User's role in this org
   const [userRole, setUserRole] = useState<OrgMemberRole | null>(null);
   const [roleLoading, setRoleLoading] = useState(true);
-  const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(profile);
+  const isAdmin = userRole === 'owner' || userRole === 'admin' || platformAdmin;
   const issueCredentialRole = isAdmin ? 'ORG_ADMIN' : 'INDIVIDUAL';
 
   // Admin-only: the "Org admins can view invitations" RLS policy already
@@ -80,7 +81,7 @@ export function OrgProfilePage() {
   // so the browser's RLS-scoped queries (useOrgMembers, profiles search) return 0
   // rows. Route the roster + add-member flow through the service_role worker
   // endpoints instead. Real org members keep the client-side path untouched.
-  const isForeignOrgAdmin = isPlatformAdmin(profile) && !roleLoading && !userRole;
+  const isForeignOrgAdmin = platformAdmin && !roleLoading && !userRole;
   const { members: adminMembers, loading: adminMembersLoading, refreshMembers: refreshAdminMembers } = useAdminOrgMembers(
     orgId ?? null,
     isForeignOrgAdmin,
