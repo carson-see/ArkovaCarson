@@ -8,10 +8,15 @@
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { decodeJwt } from 'jose';
+import type { SendEmailOptions } from '../email/sender.js';
 
 const { capturedSendEmail } = vi.hoisted(() => ({
-  capturedSendEmail: vi.fn(async () => ({ success: true, messageId: 'uat22-captured' })),
+  capturedSendEmail: vi.fn(async (_options: SendEmailOptions) => ({
+    success: true,
+    messageId: 'uat22-captured',
+  })),
 }));
 vi.mock('../email/sender.js', () => ({ sendEmail: capturedSendEmail }));
 
@@ -20,7 +25,6 @@ import express from 'express';
 import request from 'supertest';
 import { adminRouter } from '../routes/admin.js';
 import { anchorRouter } from '../routes/anchor.js';
-import { totp } from '../../../../e2e/helpers/totp.js';
 
 const runLocal = process.env.UAT22_LOCAL_INTEGRATION === '1';
 const suite = runLocal ? describe : describe.skip;
@@ -33,6 +37,36 @@ const emails = {
   alreadyMember: `uat22-member-${suffix}@example.test`,
   newMember: `uat22-new-${suffix}@example.test`,
 };
+
+const base32Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function totp(secret: string): string {
+  const clean = secret.toUpperCase().replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let value = 0;
+  const bytes: number[] = [];
+
+  for (const char of clean) {
+    value = (value << 5) | base32Alphabet.indexOf(char);
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeBigUInt64BE(BigInt(counter));
+  const hmac = createHmac('sha1', Buffer.from(bytes)).update(counterBuffer).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const binaryCode =
+    ((hmac[offset] & 0x7f) << 24) |
+    (hmac[offset + 1] << 16) |
+    (hmac[offset + 2] << 8) |
+    hmac[offset + 3];
+  return String(binaryCode % 1_000_000).padStart(6, '0');
+}
 
 suite('UAT-22 selected-org invitation — real local DB and mounted routes', () => {
   let service: SupabaseClient;
@@ -237,10 +271,10 @@ suite('UAT-22 selected-org invitation — real local DB and mounted routes', () 
     expect(adminRows![0]).toMatchObject({ role: 'ORG_ADMIN', org_id: selectedOrgId, email: emails.existingElsewhere });
     const inviteCalls = capturedSendEmail.mock.calls.filter(([options]) => options.emailType === 'invitation');
     expect(inviteCalls).toHaveLength(2);
-    expect(inviteCalls[0][0].idempotencyKey).toBe(`invitation/${adminInviteKey}`);
-    expect(inviteCalls[1][0].idempotencyKey).toBe(`invitation/${adminInviteKey}`);
-    expect(inviteCalls[0][0].subject).toContain(`UAT22 Selected ${suffix}`);
-    expect(inviteCalls[0][0].subject).not.toContain('client-spoofed');
+    expect(inviteCalls.at(0)?.[0].idempotencyKey).toBe(`invitation/${adminInviteKey}`);
+    expect(inviteCalls.at(1)?.[0].idempotencyKey).toBe(`invitation/${adminInviteKey}`);
+    expect(inviteCalls.at(0)?.[0].subject).toContain(`UAT22 Selected ${suffix}`);
+    expect(inviteCalls.at(0)?.[0].subject).not.toContain('client-spoofed');
 
     const acceptedAdmin = await request(app)
       .post('/api/invitations/accept')
