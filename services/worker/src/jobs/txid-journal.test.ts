@@ -303,13 +303,11 @@ describe('SCRUM-2692 scheduled recovery ordering', () => {
     expect(genericIndex).toBeGreaterThan(journalIndex);
   });
 
-  it('keeps the manual fallback fail-closed around unresolved journal anchor ids', () => {
+  it('keeps journal eligibility inside the atomic SQL recovery boundary', () => {
     const source = readFileSync(new URL('./broadcast-recovery.ts', import.meta.url), 'utf8');
-
-    expect(source).toContain('loadProtectedJournalAnchorIds');
-    expect(source).toContain('protectedAnchorIds.has(anchor.id)');
-    expect(source).toContain('journal protection scan failed — refusing manual stale recovery');
-    expect(source).toContain('(data ?? []).length >= 1000');
+    expect(source).not.toContain('loadProtectedJournalAnchorIds');
+    expect(source).not.toContain(".from('anchors')");
+    expect(source).toContain("db.rpc('recover_stuck_broadcasts'");
   });
 
   it('fails closed when journal protection cannot be loaded and rotates HELD work fairly', () => {

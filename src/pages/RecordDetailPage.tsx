@@ -268,6 +268,7 @@ export function RecordDetailPage() {
               status: anchor.status,
               chain_tx_id: anchor.chain_tx_id ?? null,
               chain_block_height: anchor.chain_block_height ?? null,
+              chain_block_hash: anchor.chain_block_hash ?? null,
               chain_timestamp: anchor.chain_timestamp ?? null,
             });
             // If a packet exists but `leaf_count` could not be sourced (a batch
@@ -296,6 +297,7 @@ export function RecordDetailPage() {
               expiresAt: anchor.expires_at ?? undefined,
               networkReceipt: anchor.chain_tx_id ?? undefined,
               blockHeight: anchor.chain_block_height ?? undefined,
+              blockHash: anchor.chain_block_hash ?? undefined,
               proof,
               proofComplete: complete,
             });

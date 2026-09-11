@@ -1714,6 +1714,24 @@ export type Database = {
           },
         ]
       }
+      computeid_passport_authority: {
+        Row: {
+          created_at: string
+          passport_id: string
+          revoked_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          passport_id: string
+          revoked_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          passport_id?: string
+          revoked_at?: string | null
+        }
+        Relationships: []
+      }
       connector_alert_state: {
         Row: {
           connector_id: string
@@ -7128,6 +7146,21 @@ export type Database = {
         Args: { p_org_id: string; p_org_role?: string; p_user_id: string }
         Returns: undefined
       }
+      admit_computeid_agent: {
+        Args: {
+          p_description?: string
+          p_key_hash: string
+          p_key_prefix: string
+          p_name: string
+          p_org_id: string
+          p_passport_id: string
+          p_principal_id: string
+          p_receipt_expires_at: string
+          p_receipt_issued_at?: string
+          p_scopes: string[]
+        }
+        Returns: Json
+      }
       allocate_credits_to_sub_org: {
         Args: {
           p_amount: number
@@ -7143,6 +7176,20 @@ export type Database = {
         Returns: string
       }
       anonymize_user_data: { Args: { p_user_id: string }; Returns: Json }
+      apply_computeid_agent_transition: {
+        Args: {
+          p_agent_id: string
+          p_event: string
+          p_event_at: string
+          p_expected_metadata: Json
+          p_expected_status: Database["public"]["Enums"]["agent_status"]
+          p_key_enforcement: string
+          p_org_id: string
+          p_passport_id: string
+          p_update: Json
+        }
+        Returns: boolean
+      }
       archive_old_audit_events: {
         Args: { retention_days?: number }
         Returns: number
@@ -7361,6 +7408,14 @@ export type Database = {
             }
             Returns: Json
           }
+      enqueue_computeid_failure: {
+        Args: {
+          p_external_id?: string
+          p_payload_hash: string
+          p_reason: string
+        }
+        Returns: boolean
+      }
       enqueue_connector_artifact: {
         Args: {
           p_byte_length?: number
@@ -7503,10 +7558,12 @@ export type Database = {
         Args: { p_max_depth?: number; p_root_id: string }
         Returns: Json
       }
-      get_parent_credit_rollup: {
-        Args: { p_parent_org_id: string }
-        Returns: Json
-      }
+      get_parent_credit_rollup:
+        | { Args: { p_parent_org_id: string }; Returns: Json }
+        | {
+            Args: { p_caller_user_id: string; p_parent_org_id: string }
+            Returns: Json
+          }
       get_payment_ledger: {
         Args: { p_limit?: number; p_offset?: number }
         Returns: {
@@ -7741,6 +7798,18 @@ export type Database = {
         }
         Returns: Json
       }
+      materialize_connector_artifact_anchor: {
+        Args: {
+          p_anchor_payload: Json
+          p_artifact_id: string
+          p_existing_anchor_id?: string
+          p_expected_fingerprint: string
+          p_expected_metadata: Json
+          p_expected_updated_at: string
+          p_org_id: string
+        }
+        Returns: Json
+      }
       next_webhook_sequence: { Args: never; Returns: number }
       org_credit_ledger_divergence: {
         Args: { p_org_id?: string }
@@ -7782,6 +7851,10 @@ export type Database = {
           with_proof: number
         }[]
       }
+      record_computeid_passport_revocation: {
+        Args: { p_event_at: string; p_passport_id: string }
+        Returns: boolean
+      }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string
@@ -7804,7 +7877,7 @@ export type Database = {
         }[]
       }
       recover_stuck_broadcasts: {
-        Args: { p_stale_minutes?: number }
+        Args: { p_limit?: number; p_stale_minutes?: number }
         Returns: {
           anchor_fingerprint: string
           anchor_id: string
@@ -7973,6 +8046,17 @@ export type Database = {
         Returns: Json
       }
       start_payment_grace: { Args: { p_org_id: string }; Returns: Json }
+      stop_suborg_docusign_inheritance: {
+        Args: {
+          p_caller_user_id: string
+          p_child_org_id: string
+          p_inherited_from_org_id: string
+          p_integration_id: string
+          p_parent_org_id: string
+          p_revoked_at?: string
+        }
+        Returns: Json
+      }
       submit_batch_anchors: {
         Args: {
           p_anchor_ids: string[]

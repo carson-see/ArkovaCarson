@@ -93,3 +93,16 @@ describe('CIBA OpenAPI spec (SCRUM-1122)', () => {
     expect(json).toContain('queue-resolution.ts');
   });
 });
+
+
+it('publishes ComputeID admission with API-key auth, required signed receipt fields and actual result statuses', () => {
+  const operation = cibaOpenApiSpec.paths['/api/v1/agents/computeid/admit'].post;
+  expect(operation.security).toEqual([{ OrganizationApiKey: [] }]);
+  const body = operation.requestBody.content['application/json'].schema;
+  expect(body.required).toEqual(['passport_id', 'verification_receipt']);
+  expect(body.properties.verification_receipt.required).toContain('receipt_payload');
+  expect(body.properties.verification_receipt.required).toContain('receipt_signature');
+  expect(operation.responses['201'].content['application/json'].schema.required).toContain('key');
+  expect(operation.responses['409']).toBeDefined();
+  expect(operation.responses['503']).toBeDefined();
+});

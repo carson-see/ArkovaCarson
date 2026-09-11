@@ -1,6 +1,68 @@
 # machines/agents.md
 
+## 2026-09-10 — PR #2570 models independent broadcaster publication
+
+The DocuSign model now includes anchor publication and an independently schedulable broadcaster claim. `broadcastRequiresFreshLinkedAnchor` prevents a broadcaster claiming an unlinked or superseded anchor. Atomic minting publishes and links together; a separate inserted-anchor action is a negative control. The model checks the concurrency design; SQL tests separately check full metadata equality, tenant scope, permissions, and real row locks. It does not model unknown external calls or replace staging qualification.
+
 TLA+ PreCheck formal verification models for critical state machines.
+
+## 2026-09-07 — `agentPassport.machine.ts` (SCRUM-4493 / SCRUM-4494): ComputeID AgentPassport ↔ agent lifecycle
+
+New machine for the ComputeID partner integration (epic SCRUM-4492). Models the per-agent-row state driven by `api/v1/agents-computeid.ts` (admit), `api/v1/webhooks/computeid.ts` (`passport.suspended` / `reinstated` / `revoked`) and `api/v1/agents.ts` (mint key, admin revoke): `NONE → ACTIVE ⇄ SUSPENDED`, `ACTIVE|SUSPENDED → REVOKED` (terminal), plus a per-agent `keyActive` bool.
+
+**What modeling found before TLC ran:** `middleware/apiKeyAuth.ts` authenticates on the `api_keys` row alone (`is_active`, `revoked_at`, `expires_at`) and never joins `agents.status`, so an agent whose status is `suspended` but whose keys are live still authenticates — suspension would be decorative. The webhook handler therefore deactivates keys on `passport.suspended` (`revocation_reason = 'computeid:passport.suspended'`) and reinstates exactly those keys on `passport.reinstated`; `mintKey` is guarded on ACTIVE (matches `POST /agents/:agentId/key`'s 409). Invariant `keyImpliesActive` pins it. **The same gap exists in the pre-existing `PATCH /api/v1/agents/:agentId {status:'suspended'}` path** (sets `suspended_at` only, keys untouched) — reported on PR #2668, not widened into it.
+
+Deliberately not modeled: the signed-timestamp ordering guard in `integrations/computeid/binding.ts` (a per-delivery comparison with no cross-row state; the DSL has no arithmetic; `binding.test.ts` pins it).
+
+Certificate (tier `pr`): proofPassed true; invariants keyImpliesActive, revokedHasNoKey, suspendedHasNoKey, noKeyBeforeAdmission; graph equivalence true (16/16 states, 48/48 edges); TLC 49 generated / 16 distinct; deadlock check off (REVOKED terminal by design). Picked up automatically by `npm run verify:machines` / the `tla-verify` CI job (the script globs).
+## 2026-09-01 — `docusignInboundDedup.machine.ts`: the claim-to-mint TOCTOU is CLOSED (invariant now passes, unweakened)
+
+Context: the TOCTOU extension added to this machine earlier the same day deliberately shipped RED. It split the drain's single atomic `materializeAnchorFromArtifact` into `captureArtifactFingerprint` (models `claimRow`'s CAS `RETURNING`) + `mintAnchorFromCapture` (models the link, using the CAPTURED value), which made a real residual bug in `services/worker/src/jobs/connector-artifact-drain.ts` expressible for the first time. TLC found it: `forgeInbound` → `capture` (FORGED) → `outboundHealsForgery` (live class becomes REAL) → `mint` (anchor holds FORGED). The new invariant `anchorNeverMintedFromSupersededFingerprint` was left FAILING and documented rather than weakened.
+
+**The code changed; the invariant did not.** `linkMaterializedAnchor` now fuses the freshness assertion into the CAS that sets `anchor_id` — the very column `docusign-envelope-completed.ts`'s F1-heal guards on:
+
+```sql
+UPDATE connector_artifact
+   SET status='materialized', anchor_id=:anchorId, updated_at=now()
+ WHERE id=:id AND org_id=:org AND status='processing'
+   AND fingerprint_sha256 = :fingerprintCapturedAtClaimTime   -- the gate
+RETURNING id
+```
+
+One statement closes the window from both directions. A heal anywhere between claim and link makes the predicate false → zero rows → nothing linked, nothing debited, nothing anchored, row requeued to re-drain against the healed value (the heal WINS, per the CTO precedence ruling). The link landing first sets `anchor_id` non-null → the heal's pre-existing `anchor_id IS NULL` guard locks it out and it takes its documented "already materialized" branch. **No migration, no new status value, and NO change to `docusign-envelope-completed.ts`.**
+
+Why a re-read before the INSERT was rejected as the fix: it is one more read-then-act — the heal can land between the re-read and the INSERT and nothing notices. Why a single claim+materialize+mark RPC was rejected: it needs a migration, and this achieves the same guarantee with an existing statement. The freshness predicate has to be evaluated by Postgres *in the same statement that publishes the anchor*, or it is not a gate.
+
+Model deltas (both minimal, both faithful):
+- `mintAnchorFromCapture` gains the guard `capturedFingerprintClass[e] = fingerprintClass[e]`. Modeled as a GUARD, not a check-then-act pair, because in the real code it is a WHERE-clause predicate on the same atomic UPDATE (row lock + EvalPlanQual on a post-commit re-evaluation). A two-action model would be a FALSE positive.
+- New `abortSupersededMint` covers the zero-row outcome: resets `capturedFingerprintClass[e]` to `NONE`, which re-enables `captureArtifactFingerprint` — that reset IS the requeue.
+- `outboundHealsForgery` / `outboundLosesRaceUnhealed` / all three invariants UNCHANGED.
+
+**Mutation-tested, not just asserted:** deleting the guard from `mintAnchorFromCapture` reproduces the header's counterexample verbatim (`proofPassed: false`, `Invariant anchorNeverMintedFromSupersededFingerprint is violated`); restoring it returns `proofPassed: true`. That is the regression test for the fix.
+
+| tier | proofPassed | invariants | generated / distinct | queue | depth | deadlock |
+|---|---|---|---|---|---|---|
+| pr (2 envelopes) | true | 3 | 865 / 256 | 0 | 9 | checked |
+| nightly (4 envelopes) | true | 3 | 442,369 / 65,536 | 0 | 17 | checked |
+
+`machineSha256 927a4177973a5a6f8aca4c05c9d70910d1f8b54b9ae3265233abd99987068f9e` (stable across comment-only edits — the hash covers the semantic machine, not the file). `npm run verify:machines` from the repo root: **PASSED 5/5**.
+
+**Deliberately NOT modeled — read this before assuming the machine covers it.** `connector_artifact.anchor_id` is a NOT-DEFERRABLE FK to `anchors(id)` (migration 0343), so the anchor id cannot be reserved before the `anchors` row exists: the INSERT must precede the gate, and a rejected gate therefore leaves an **inserted-but-unlinked orphan anchor**. That row is never LINKED — which is what `anchorMaterialized` models — so it is outside this machine's state entirely. The real code neutralizes it with a guarded soft-delete (`deleted_at`, the filter BOTH `claim_pending_anchors` and `findExistingEnvelopeAnchor` already apply) and alerts `orphan_anchor_neutralize_failed` when that guard matches zero rows. **That behaviour is pinned by unit tests in `connector-artifact-drain.test.ts`, not by TLC.** Do not cite this machine as proof the orphan path is correct.
+
+## 2026-09-01 — TOCTOU extension (superseded by the entry above; kept for the reasoning)
+
+The extension that made the claim-to-mint window modelable, and shipped RED on purpose. Its counterexample trace and certificate live in `docusignInboundDedup.machine.ts`'s own header, which now records both the failing revision's finding and the fix. `machineSha256` of the failing revision was `e4b22f11a4d55979d3ad977964738d78b80b06c8d6c167513eeff7846cd9ff47` (506 generated / 200 distinct, halted on first violation at depth 8). The lesson worth keeping: a 121-state, fully-verified proof missed a real bug for months because the model collapsed *read current state* and *act on it* into one atomic action. When the code does `capture → await → act`, the model must have a variable for the captured value, or the proof is answering an easier question than the one you asked.
+
+
+## 2026-09-01 — TOCTOU extension: `docusignInboundDedup.machine.ts` splits materialization into capture+mint and FAILS a new invariant (code review of `jobs/connector-artifact-drain.ts`) — real, disclosed, UNRESOLVED finding
+
+Code review found `jobs/connector-artifact-drain.ts` materializing an anchor from a STALE in-memory row snapshot: `drainConnectorArtifactsForOrg`'s batch `SELECT` read row content once, then handed it unchanged through `resolveOrgActorUserId`/`findExistingEnvelopeAnchor` (real awaited DB round trips, plus every earlier row in the batch) into the `anchors` INSERT — a window `docusign-envelope-completed.ts`'s F1-heal (PR #2520, gated only on `connector_artifact.anchor_id IS NULL`) could land inside of, healing the persisted row while the drain still minted the anchor from the pre-heal (forged) value. Fixed in code: `claimRow`'s CAS `UPDATE` now `RETURNING`s the row's fresh content and the caller passes THAT into `drainOneClaimedRow`/`materializeAnchor` — the batch `SELECT` is now id-only, a pure candidate list.
+
+The PRE-fix machine could not express this bug at all: `materializeAnchorFromArtifact` was ONE atomic action reading `fingerprintClass[e]` at the instant it fired — no snapshot, no gap, so a 121-state fully-verified proof was silent on a real vulnerability. This extension REPLACES that action with two — `captureArtifactFingerprint` (models `claimRow`'s `RETURNING`) and `mintAnchorFromCapture` (models the `anchors` INSERT, using the CAPTURED value, never a fresh read) — with two new per-envelope 3-valued variables (`capturedFingerprintClass`, `anchorFingerprintClass`) and a new invariant `anchorNeverMintedFromSupersededFingerprint`: once an anchor is materialized, its baked-in fingerprint class must equal the artifact's CURRENT fingerprint class (deliberately NOT "never forged" — that would wrongly flag the pre-existing, accepted "attacker's row wins outright, materializes before the heal ever runs" case, which is `outboundLosesRaceUnhealed`'s documented operator-reconciliation exception, not this bug).
+
+**Result: FAILS, on purpose left failing.** `npx tla-precheck check docusignInboundDedup.machine.ts` (from `machines/`): `proofPassed: false`. TLC finds a genuine counterexample in 8 steps / 506 states generated / 200 distinct (halts on first violation, not full exploration): `materializeOutbound(e1)` [unrelated envelope] → `forgeInbound(e2)` [attacker wins, `fingerprintClass=FORGED`] → `captureArtifactFingerprint(e2)` [captures FORGED] → `outboundHealsForgery(e2)` [heal fires — its guard is only `not(anchorMaterialized[e2])`, which is still true — `fingerprintClass:=REAL`] → `mintAnchorFromCapture(e2)` [mints from the STALE capture: `anchorFingerprintClass:=FORGED`] — now `fingerprintClass[e2]=REAL` but `anchorFingerprintClass[e2]=FORGED`. `machineSha256 e4b22f11a4d55979d3ad977964738d78b80b06c8d6c167513eeff7846cd9ff47`. Full trace + certificate summary in the machine file's header.
+
+**Why this is expected, not a bug in the proof.** The code fix (`claimRow` now reads fresh AT CLAIM TIME) closes the LARGEST instance of the window — the batch-order-dependent one, up to `DRAIN_LIMIT_MAX`=200 earlier rows' worth of awaited work. It does NOT make materialization atomic end-to-end: `claimRow`'s capture and the `anchors` INSERT are still two separate statements separated by `resolveOrgActorUserId` + `findExistingEnvelopeAnchor`, and the heal's guard has no notion of "this row was already claimed." TLC proves that SMALLER residual window is still formally sufficient to reproduce the bug. This was reported to the operator as a genuine follow-up rather than silently fixed further (out of the reviewed PR's stated scope) or masked by weakening the invariant — per explicit instruction, the invariant is NOT softened to force a pass. `pr` tier budget: 100_000 → 2_000_000, `graphEquivalence` now OFF on `pr` too (raw product 1,296² = 1,679,616 exceeds the 100k equivalence cap — a real, disclosed regression from the previous 121/121-equivalent proof, not incidental). `nightly` budget: 100_000_000 → 3_000_000_000_000.
 
 ## 2026-08-31 — F1-heal extension: `docusignInboundDedup.machine.ts` gains the auto-heal transition (SCRUM-3818 go-live gate, follow-up to PR #2476)
 
@@ -210,3 +272,39 @@ New invariants: **`supplementaryRequiresOriginalAttestation`** (supp ≠ NONE �
 Budgets raised for the added 3-valued variable: pr `2,304 × 3 = 6,912` per-anchor combos → `6,912² = 47,775,744` raw (budget 50M, was 6M); nightly `6,912³ = 330,225,942,528` (budget 350B, was 15B). `graphEquivalence` stays off on both (pre-existing — over the 100k cap).
 
 `check` results (`npm run verify:machines`, TLC2 2026.03.16.234659): **pr** proofPassed=true, **17 invariants** (was 14), **8,363 generated / 1,369 distinct** (was 3,221 / 529), deadlock checked, "No error has been found". **nightly** proofPassed=true, 464,092 / 50,653 distinct. `PASSED 4/4` across all machines.
+
+## PR #2782 — certificate block metadata binding
+
+`proofBlockMetadata.machine.ts` models independently updated anchor/proof rows and the two captured reads. Three invariants require a known matching block before using anchor metadata, reject known mismatches, and avoid mislabeling missing identity as a mismatch. TLA PreCheck check passes with graph equivalence: 198 states and 1,386 transitions in both interpreters; deadlock checking is enabled. Two separate negative controls restore unconditional preference or remove the known-identity guard, and both violate `anchorRequiresKnownMatchingBlock`. The runtime contract enumerates every reachable decision state and metadata-availability combination against the real resolver. This machine owns no database table and has no adapter; its finite proof does not assert Bitcoin consensus, source accuracy or freshness of later database state.
+## 2026-09-10 — bounded broadcast recovery and unknown replies (SCRUM-4539)
+
+`broadcastRecovery.machine.ts` models the bounded SQL claim, reply loss, protected txid/journal rows, overlapping tick guard, old claim removal, and re-claim. The pr tier explicitly verifies graph equivalence: six safety invariants, 142 TypeScript/TLC states and 411 edges. Three altered DSL controls fail when protection, unknown-outcome reporting, or old-claim removal is removed. A ten-step interpreter trace was compared to actual committed 0442/0449 SQL, including a lost reply and exactly one subsequent worker claim. Production bounds are 500 rows/40 passes; the two-anchor/one-row/two-pass tier is a finite safety abstraction, not a throughput or unconditional liveness proof. This multi-row RPC/network boundary does not fit the generated single-table adapter; no generated SQL or adapter is deployed.
+## 2026-09-10 — ComputeID atomic enforcement (SCRUM-4535 / SCRUM-4536)
+
+`agentPassportAtomic.machine.ts` models one provider-suspended agent/key and overlapping restore/revoke deliveries, including reads, row locks, transaction failure, CAS retry and an uncertain response. `pr` explicitly enables graph equivalence: the 2026-09-10 check passed all three safety invariants with 46 states / 80 edges in both TLC and TypeScript (`equivalent: true`; estimate 19,440, budget 100,000). No liveness/fairness claim is made; terminal states are allowed. Removing the atomic rollback reproduces an acknowledged incomplete restore; splitting the restore key write reproduces a revoked agent with an active key. Generated certificates and counterexample artifacts remain untracked.
+
+The operation spans `agents` and `api_keys`, outside the single-table adapter subset. This bounded model is a design proof, not a generated production adapter or a whole-system proof. Migration `0448` implements the SQL transaction boundary; the real concurrent PostgreSQL regression harness separately verifies that boundary. HMAC, timestamp ordering and suspension/key ownership are tested at their actual receiver, binding and SQL boundaries. Run `scripts/verify-machines.sh agentPassportAtomic`.
+
+
+## 2026-09-10 — Agent-key authority (SCRUM-4558 / SCRUM-4559)
+
+`agentKeyAuthority.machine.ts` models one visible admission/key overlapping provider revoke, stale administrator PATCH and uncertain-mint cleanup. Parent locks cover the insertion/cleanup window; revocation is terminal and cleanup cannot detach a committed key. The finite `pr` tier explicitly enables graph equivalence and disables deadlock checking because completed operations are terminal states. Transaction errors release locks without changing committed state. Multiple mints, metadata/org snapshots and SQL deadlock/retry behavior remain real PostgreSQL test contracts. This two-table operation is outside the generated adapter subset. Run `scripts/verify-machines.sh agentKeyAuthority` using the pinned vendored TLC jar.
+
+
+## 2026-09-10 — Original passport lifecycle certificate correction
+
+The original `agentPassport.machine.ts` prose claimed graph equivalence but omitted the explicit check under the current CLI default. Both `pr` and `nightly` now request `graphEquivalence: true`; pinned CLI/TLC checks and actual certificate equivalence pass at both tiers (16 states/48 edges and 256 states/1536 edges respectively). This lifecycle abstraction does not prove temporal input validation, tenant-wide passport revocation ownership, or real handler transaction boundaries; the new atomic/authority models and SQL regressions cover their stated narrower boundaries.
+
+
+## 2026-09-10 — ComputeID historical review closure
+
+The current `agentKeyAuthority.machine.ts` removes the retired compensating-cleanup path: admission now commits agent, key and audits in one transaction. The remaining direct-mint/PATCH model passes at 20 states / 32 edges. New `passportAdmission.machine.ts` models absent-row serialization, two organizations, terminal provider authority, rollback, unknown responses and mandatory audits; its PR proof and graph equivalence pass at 525 states / 1681 edges. Five negative controls reproduce missing sentinel locks, global-revocation bypass, missing audits, late mint and stale PATCH. These are bounded design proofs with real SQL tests, not generated runtime adapters.
+
+## subOrgListingConsent.machine.ts (SCRUM-3864)
+
+- Models the two-party listing-consent lifecycle added by migration `0429`: `parentOf`, `parentOptin`, `childOptin` per org. Proves that a consent pair can never outlive the affiliation it was given for — the failure that would publish an edge nobody agreed to.
+- Verified 2026-09-01: `proofPassed: true`, `equivalent: true`, 31 distinct states, invariants `listedImpliesAffiliated`, `noConsentWithoutAffiliation`, `noSelfParent`.
+- **`parent_approval_status` is deliberately NOT a separate variable.** `parentOf` alone carries "is there a live edge", and revoke is modelled as un-affiliation. Modelling the enum too pushed the graph to 262k estimated states, over the 100k equivalence-tier cap, for no additional consent property.
+- **The tree is NOT one level deep, and a draft invariant that claimed so was disproved by TLC** in three steps (`affiliate(o2,o1)` then `affiliate(o1,o3)`): an org that already has children can itself become a sub-org. That is correct — `check_sub_org_depth` permits a chain to depth 3, and the code rule is only that a sub-org may not *create* affiliates. The consequence is load-bearing: because chains are real, `0429` prunes `get_org_subtree` at the RECURSIVE term so a confidential org hides the branch beneath it, not just itself.
+- Authorization (who may sign which half) is **out of scope** — actor identity is not in this state. It is proven empirically instead, checks 5 and 9 of `docs/staging/hakichain-suborgs-2026-09/verify-0429.sql`.
+- Documentation-only, like `partnerProvisioning` and `calibrationWorkflow`: no `runtimeAdapter`. The consent columns live on `organizations`, which this machine does not own, so the adapter subset does not fit. Runtime enforcement is the `protect_org_tenancy_fields()` trigger; this spec proves that trigger's reset rule is sufficient.

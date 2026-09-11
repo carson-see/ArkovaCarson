@@ -704,3 +704,16 @@ describe('rateLimit', () => {
     });
   });
 });
+
+
+it('isolates the ComputeID sender from another anonymous caller exhausting its budget', () => {
+  setRateLimitStore(new Map());
+  for (let i = 0; i < 101; i++) {
+    const { req, res, next } = createMockReqResWithKey('192.0.2.1', '/webhooks/computeid');
+    rateLimiters.computeidWebhook(req, res, next);
+  }
+  const { req, res, next } = createMockReqResWithKey('192.0.2.2', '/webhooks/computeid');
+  rateLimiters.computeidWebhook(req, res, next);
+  expect(res.status).not.toHaveBeenCalledWith(429);
+  expect(next).toHaveBeenCalledOnce();
+});

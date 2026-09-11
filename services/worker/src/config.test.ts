@@ -8,6 +8,7 @@
  * via Zod. We set required env vars BEFORE importing so the singleton loads.
  */
 
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 
 // Set required env vars before config.ts module-level execution
@@ -477,6 +478,24 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
       ...PROD_SIGNET,
       ENABLE_DOCUSIGN_WEBHOOK: 'true',
       DOCUSIGN_CONNECT_HMAC_SECRET: undefined,
+    });
+  });
+
+  // SCRUM-4492 — the ComputeID flag turns on an inbound revocation receiver and
+  // an admission endpoint that mints keys; both must refuse to boot without the
+  // secret list and a usable CA pin, using the SAME secret parser as the handler.
+  describe('ENABLE_COMPUTEID_INTEGRATION boot guards', () => {
+    const SPKI_PEM = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ type: 'spki', format: 'pem' }) as string;
+    it('rejects when the flag is on but COMPUTEID_WEBHOOK_SECRET is missing or only separators', async () => {
+      await expectConfigToReject({ ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: undefined, COMPUTEID_CA_CERT_PEM: SPKI_PEM });
+      await expectConfigToReject({ ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: ' , ', COMPUTEID_CA_CERT_PEM: SPKI_PEM });
+    });
+    it('rejects when the flag is on but the CA pin is missing or unparseable', async () => {
+      await expectConfigToReject({ ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: 's1,s2', COMPUTEID_CA_CERT_PEM: undefined });
+      await expectConfigToReject({ ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: 's1', COMPUTEID_CA_CERT_PEM: 'not a pem' });
+    });
+    it('rejects a bare public-key pin in production (only an X.509 CA certificate is acceptable there)', async () => {
+      await expectConfigToReject({ NODE_ENV: 'production', ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: 's1', COMPUTEID_CA_CERT_PEM: SPKI_PEM });
     });
   });
 

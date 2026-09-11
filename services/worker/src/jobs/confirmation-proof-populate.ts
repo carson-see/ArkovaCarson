@@ -47,6 +47,16 @@ export interface ConfirmationProofCandidate {
   anchorId: string;
   chainTxId: string;
   blockHeight?: number | null;
+  /**
+   * SCRUM-3953: `anchors.chain_block_height` / `chain_block_hash` — the height
+   * and block the CONFIRMATION pass recorded from the chain. Used only as the
+   * fallback when the proof could not measure a height itself, and only if
+   * `confirmedBlockHash` names the SAME block the proof just verified — so a
+   * transient `getblockheader` failure cannot leave the broadcast tip in place
+   * forever (a populated row is never re-scanned for its height).
+   */
+  confirmedBlockHeight?: number | null;
+  confirmedBlockHash?: string | null;
   /** Previously-recorded block hash (for reorg detection), if known. */
   expectedBlockHash?: string | null;
   /**
@@ -254,7 +264,15 @@ export async function populateConfirmationProofs(
           anchorId: anchor.anchorId,
           blockHeader: proof.blockHeader,
           blockHash: proof.blockHash,
-          blockHeight: anchor.blockHeight ?? null,
+          // SCRUM-3953: the height and time the PROOF measured, never the
+          // anchor's own recorded values. The old `anchor.blockHeight ?? null`
+          // wrote the broadcast-time chain TIP straight back onto itself, so
+          // `anchor_proofs` was never corrected while `anchors` was — and each
+          // anchor kept its OWN stale tip, so one block hash ended up carrying
+          // several heights. `undefined` means "not measured ⇒ leave the column
+          // alone", which is why these are `?? undefined` and not `?? null`.
+          blockHeight: proof.blockHeight ?? confirmedHeightFor(anchor, proof.blockHash),
+          blockTimestamp: proof.blockTimestamp ?? undefined,
           // R1: the bitcoin-tree inclusion evidence this job used to compute
           // and discard. Written in the SAME row UPDATE as the header it was
           // derived under, so header and branch can never disagree about which
@@ -310,6 +328,19 @@ export async function populateConfirmationProofs(
   );
 
   return result;
+}
+
+/**
+ * The anchor's confirmation-recorded height, but ONLY when that confirmation
+ * named the same block the proof verified (hash-equal, case-insensitive).
+ * Anything else — no recorded hash, a different block, a non-integer height —
+ * yields `undefined`, which the writer reads as "leave the column alone".
+ */
+function confirmedHeightFor(anchor: ConfirmationProofCandidate, provenBlockHash: string): number | undefined {
+  const h = anchor.confirmedBlockHeight;
+  const hash = anchor.confirmedBlockHash;
+  if (typeof h !== 'number' || !Number.isInteger(h) || h < 0 || !hash) return undefined;
+  return hash.toLowerCase() === provenBlockHash.toLowerCase() ? h : undefined;
 }
 
 function errMsg(err: unknown): string {
@@ -369,6 +400,7 @@ interface ProofScanRow {
   anchors: {
     chain_tx_id: string | null;
     chain_block_height: number | null;
+    chain_block_hash?: string | null;
     status: string | null;
   } | null;
 }
@@ -481,7 +513,7 @@ export async function populateConfirmationProofsForSecuredAnchors(
     // manufactures a pair that the reader's index/side cross-check can never
     // reject. Re-deriving both halves from the chain and writing them
     // atomically is strictly better evidence for the same row.
-    .select('anchor_id, receipt_id, block_height, block_hash, block_header, anchors!inner(chain_tx_id, chain_block_height, status)')
+    .select('anchor_id, receipt_id, block_height, block_hash, block_header, anchors!inner(chain_tx_id, chain_block_height, chain_block_hash, status)')
     .not('merkle_root', 'is', null)
     // K3 + H4: incomplete = ANY bitcoin-tree column still null.
     //
@@ -558,7 +590,12 @@ export async function populateConfirmationProofsForSecuredAnchors(
       return {
         anchorId: row.anchor_id,
         chainTxId: txId,
-        blockHeight: row.block_height ?? row.anchors?.chain_block_height ?? null,
+        // SCRUM-3953: informational only (reorg detection compares hashes), but
+        // the anchor's confirmed value first — `row.block_height` is the
+        // broadcast-time tip on every row this scan still sees.
+        blockHeight: row.anchors?.chain_block_height ?? row.block_height ?? null,
+        confirmedBlockHeight: row.anchors?.chain_block_height ?? null,
+        confirmedBlockHash: row.anchors?.chain_block_hash ?? null,
         // K1: on a FIRST population there is no recorded block yet, and reorg
         // safety comes from gettxoutproof being pinned to the tx's CURRENT
         // block (a proof that doesn't contain the tx ⇒ stale). But once K3 lets
