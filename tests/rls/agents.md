@@ -153,3 +153,6 @@ The same full-schema run showed a second fixture defect: enable_seqscan=off stil
 email-before-MFA transition, AAL1 denial, AAL2 access, private Storage, service
 credentials, and preservation of an existing pre-request hook. Keep its fixture
 IDs and temporary policies suite-owned, and retain the old-token negative controls.
+All other RLS positive clients use a shared, process-locked TOTP factor through
+`elevateRlsClientToAal2()`; keep that real GoTrue elevation instead of weakening
+the production MFA gate or substituting a locally signed token.
