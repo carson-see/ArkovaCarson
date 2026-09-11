@@ -12,6 +12,10 @@ vi.mock('../../../services/worker/src/email/sender.js', () => ({ sendEmail: capt
 import { anchorRouter } from '../../../services/worker/src/routes/anchor.js';
 import { adminRouter } from '../../../services/worker/src/routes/admin.js';
 import { setRateLimitStore } from '../../../services/worker/src/utils/rateLimit.js';
+import type {} from '../../../services/worker/src/types/express.js';
+import type {} from '../../../services/worker/src/middleware/apiKeyAuth.js';
+import type {} from '../../../services/worker/src/middleware/requireOrgId.js';
+import type {} from '../../../services/worker/src/api/v1/keys.js';
 import { runLocalDriverSmoke } from './uat04-uat22-auth-invite-driver.js';
 
 const dbUrl = process.env.DB_URL ?? '';
