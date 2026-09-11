@@ -1,4 +1,3 @@
-/* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT, not manual query scoping */
 /**
  * useProfile Hook Tests
  *
@@ -45,7 +44,10 @@ describe('useProfile', () => {
 
   function setupSession(user: { id: string; email: string } | null) {
     mockGetSession.mockResolvedValue({
-      data: { session: user ? { user } : null },
+      data: { session: user ? {
+        user,
+        access_token: `h.${btoa(JSON.stringify({ sub: user.id, aal: 'aal2', role: 'authenticated' }))}.s`,
+      } : null },
       error: null,
     });
   }
@@ -71,16 +73,57 @@ describe('useProfile', () => {
 
   it('defers profile reads until a pending session refreshes to confirmed', async () => {
     const user = { id: 'pending-profile-user', email: 'pending@example.test' };
-    const pending = { user, access_token: `h.${btoa(JSON.stringify({ role: 'arkova_email_pending' }))}.s` };
+    const pending = { user, access_token: `h.${btoa(JSON.stringify({ sub: user.id, role: 'arkova_email_pending', aal: 'aal1' }))}.s` };
     mockGetSession.mockResolvedValue({ data: { session: pending }, error: null });
     setupProfileFetch({ ...user, role: 'INDIVIDUAL' });
     const { result } = await renderWithProvider();
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(mockFrom).not.toHaveBeenCalled();
     const onChange = mockOnAuthStateChange.mock.calls[0][0];
-    await act(async () => onChange('TOKEN_REFRESHED', { user, access_token: `h.${btoa(JSON.stringify({ role: 'authenticated' }))}.s` }));
+    await act(async () => onChange('TOKEN_REFRESHED', { user, access_token: `h.${btoa(JSON.stringify({ sub: user.id, role: 'authenticated', aal: 'aal2' }))}.s` }));
     await waitFor(() => expect(result.current.profile?.id).toBe(user.id));
     expect(mockFrom).toHaveBeenCalledWith('profiles');
+  });
+
+  it('hides a warm cached profile when an AAL2 token is still email-pending', async () => {
+    const user = { id: 'cached-profile-user', email: 'cached@example.test' };
+    setupSession(user);
+    setupProfileFetch({ ...user, role: 'INDIVIDUAL', requires_manual_review: false });
+    const { result } = await renderWithProvider();
+    await waitFor(() => expect(result.current.profile?.id).toBe(user.id));
+
+    const onChange = mockOnAuthStateChange.mock.calls[0][0];
+    await act(async () => onChange('TOKEN_REFRESHED', {
+      user,
+      access_token: `h.${btoa(JSON.stringify({
+        sub: user.id, role: 'arkova_email_pending', aal: 'aal2',
+      }))}.s`,
+    }));
+    await waitFor(() => expect(result.current.profile).toBeNull());
+    expect(result.current.error).toBeNull();
+  });
+
+  it('refetches a warm profile after the same user upgrades from AAL1 to AAL2', async () => {
+    const user = { id: 'upgrading-profile-user', email: 'upgrade@example.test' };
+    setupSession(user);
+    setupProfileFetch({ ...user, full_name: 'Before', role: 'INDIVIDUAL', requires_manual_review: false });
+    const { result } = await renderWithProvider();
+    await waitFor(() => expect(result.current.profile?.full_name).toBe('Before'));
+
+    const onChange = mockOnAuthStateChange.mock.calls[0][0];
+    await act(async () => onChange('TOKEN_REFRESHED', {
+      user,
+      access_token: `h.${btoa(JSON.stringify({ sub: user.id, role: 'authenticated', aal: 'aal1' }))}.s`,
+    }));
+    await waitFor(() => expect(result.current.profile).toBeNull());
+
+    setupProfileFetch({ ...user, full_name: 'After', role: 'INDIVIDUAL', requires_manual_review: false });
+    await act(async () => onChange('TOKEN_REFRESHED', {
+      user,
+      access_token: `h.${btoa(JSON.stringify({ sub: user.id, role: 'authenticated', aal: 'aal2' }))}.s`,
+    }));
+    await waitFor(() => expect(result.current.profile?.full_name).toBe('After'));
+    expect(mockFrom).toHaveBeenCalledTimes(2);
   });
 
   it('throws when used outside ProfileProvider', async () => {

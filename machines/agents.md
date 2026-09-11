@@ -308,3 +308,10 @@ The current `agentKeyAuthority.machine.ts` removes the retired compensating-clea
 - **The tree is NOT one level deep, and a draft invariant that claimed so was disproved by TLC** in three steps (`affiliate(o2,o1)` then `affiliate(o1,o3)`): an org that already has children can itself become a sub-org. That is correct — `check_sub_org_depth` permits a chain to depth 3, and the code rule is only that a sub-org may not *create* affiliates. The consequence is load-bearing: because chains are real, `0429` prunes `get_org_subtree` at the RECURSIVE term so a confidential org hides the branch beneath it, not just itself.
 - Authorization (who may sign which half) is **out of scope** — actor identity is not in this state. It is proven empirically instead, checks 5 and 9 of `docs/staging/hakichain-suborgs-2026-09/verify-0429.sql`.
 - Documentation-only, like `partnerProvisioning` and `calibrationWorkflow`: no `runtimeAdapter`. The consent columns live on `organizations`, which this machine does not own, so the adapter subset does not fit. Runtime enforcement is the `protect_org_tenancy_fields()` trigger; this spec proves that trigger's reset rule is sufficient.
+
+## 2026-09-11 — UAT-04 authority model
+
+`mandatoryMfaAuthority.machine.ts` models mailbox precedence, MFA enrollment and
+verification before or after mailbox proof, AAL1 session resets with and without
+a factor, and product/key-provision authority. TLC proves the modeled invariants;
+adapter correctness is established separately by runtime tests.

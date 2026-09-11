@@ -674,3 +674,9 @@ Field, section and proof-line helpers reserve page space before painting. Wrappe
 ## PR #2782 — bind certificate metadata to one block
 
 `proofBlockMetadata.ts` is shared by the database proof reader and certificate builder. Confirmed anchor height/time can replace proof metadata only after matching both block hashes. A known mismatch withholds the packet; an unknown identity retains only the proof row's existing metadata and does not establish a fresh measurement. Height values must be nonnegative safe integers. RecordDetailPage supplies the anchor hash to both readers. Regression tests cover mismatches, absent identities, case-normalized matches and the actual page callback. The finite TLA model and interpreter contract cover selection semantics; they do not prove Bitcoin consensus, stored-data accuracy or snapshot freshness.
+
+## 2026-09-11 — UAT-04 session hint
+
+`sessionHasAal2` is a browser routing hint that requires matching `sub`, `aal2`,
+and role `authenticated`. Signed-token verification and authorization remain at
+the worker, edge, Auth hook, PostgREST, and RLS boundaries.

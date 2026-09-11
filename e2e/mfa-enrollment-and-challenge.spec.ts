@@ -24,14 +24,10 @@
  * soak harness ships one outside this repo; no such project exists here.
  *
  * Covers:
- *  (a) an INDIVIDUAL enrolls TOTP in Settings, then completes the SAME
+ *  (a) an INDIVIDUAL completes mandatory enrollment, then completes the SAME
  *      factor as a login challenge on the next sign-in;
- *  (b) a disposable ORG_ADMIN (own throwaway `organizations` row — see
- *      `createDisposableOrg`, needed because `RouteGuard` sends an
- *      org-id-less ORG_ADMIN to `/onboarding/org` instead of `/dashboard`)
- *      sees the dismissible grace nudge before the enforcement date and
- *      still reaches the app;
- *  (c) a disposable ORG_ADMIN past the enforcement date hits the hard
+ *  (b) an organization member cannot use `/signup` to bypass mandatory MFA;
+ *  (c) a disposable ORG_ADMIN hits the hard
  *      `MfaEnrollmentRequired` screen and can complete it — proves the
  *      block is a real onboarding step, not a dead end;
  *  (d) a user with one verified factor adds a second "backup" factor and
@@ -52,7 +48,6 @@ import {
   createDisposableOrg,
   deleteDisposableOrg,
   loginViaUi,
-  setEnforceDateOverride,
   readSecretFromSettings,
   submitTotpCodeWithBoundaryRetry,
   waitForMfaManagementOutcome,
@@ -94,7 +89,7 @@ test.describe('MFA enrollment and login challenge', () => {
   // Two real verifications can each require the next 30s RFC6238 step.
   // Per-action deadlines remain unchanged; reserve a budget for both flows.
   test.describe.configure({ timeout: 90_000 });
-  test('individual enrolls TOTP in Settings, then completes it again at the next login', async ({ page }) => {
+  test('individual completes mandatory TOTP enrollment, then completes it again at the next login', async ({ page }) => {
     const serviceClient = getServiceClient();
     const fullName = 'E2E MFA Individual';
     let userId: string | null = null;
@@ -109,19 +104,14 @@ test.describe('MFA enrollment and login challenge', () => {
 
       await loginViaUi(page, user.email, user.password);
       await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
-      await acceptDisclaimerIfVisible(page);
-
-      await page.goto('/settings');
-      await page.getByTestId('twofactor-enable').click();
-
-      const secret = await readSecretFromSettings(page);
+      await expect(page.getByTestId('mfa-enrollment-required')).toBeVisible();
+      const secret = (await page.getByTestId('mfa-enrollment-secret').innerText()).trim();
       await submitTotpCodeWithBoundaryRetry(page, secret, {
-        codeTestId: 'twofactor-verify-code',
-        submitTestId: 'twofactor-verify-submit',
-        errorTestId: 'twofactor-error',
+        codeTestId: 'mfa-enrollment-code',
+        submitTestId: 'mfa-enrollment-submit',
+        errorTestId: 'mfa-enrollment-error',
       });
-
-      await expect(page.getByText(TWO_FACTOR_SETUP_LABELS.STATUS_ENABLED)).toBeVisible({ timeout: 10_000 });
+      await acceptDisclaimerIfVisible(page);
 
       // Sign out (disposable user — safe to end its own session) and sign
       // back in: the fresh aal1 session must now be challenged.
@@ -159,44 +149,30 @@ test.describe('MFA enrollment and login challenge', () => {
     }
   });
 
-  test('a disposable ORG_ADMIN sees the dismissible grace nudge before the enforcement date and still reaches the app', async ({ page }) => {
+  test('an organization member cannot use /signup to bypass mandatory MFA', async ({ page }) => {
     const serviceClient = getServiceClient();
     let userId: string | null = null;
     let orgId: string | null = null;
 
     try {
-      // RouteGuard sends an ORG_ADMIN with no org_id to /onboarding/org, not
-      // /dashboard — this spec needs the real app to assert #main-content
-      // and the nudge together, so it needs a real (throwaway) org.
-      const org = await createDisposableOrg(serviceClient, { namePrefix: 'e2e-mfa-grace-org' });
+      const org = await createDisposableOrg(serviceClient, { namePrefix: 'e2e-mfa-member-org' });
       orgId = org.orgId;
 
       const user = await createDisposableUser(serviceClient, {
-        role: 'ORG_ADMIN',
+        role: 'ORG_MEMBER',
         orgId,
-        emailPrefix: 'e2e-mfa-grace',
+        emailPrefix: 'e2e-mfa-member',
       });
       userId = user.userId;
 
-      // Far-future override: this must hold regardless of the real wall-clock
-      // date relative to the 2026-09-21 default.
-      await setEnforceDateOverride(page, '2099-01-01T00:00:00Z');
-
       await loginViaUi(page, user.email, user.password);
       await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
-      await acceptDisclaimerIfVisible(page);
-
-      // Grace, not a block: the nudge shows AND the app content is reachable.
-      await expect(page.getByTestId('mfa-grace-nudge')).toBeVisible({ timeout: 10_000 });
-      await expect(page.locator('#main-content')).toBeVisible();
-
-      await page.getByTestId('mfa-grace-nudge-dismiss').click();
-      await expect(page.getByTestId('mfa-grace-nudge')).toBeHidden();
-
-      // Dismissal is sessionStorage-backed (per-session, not per-visit) — it
-      // must survive a reload of the same tab.
-      await page.reload();
-      await expect(page.getByTestId('mfa-grace-nudge')).toBeHidden();
+      await expect(page.getByTestId('mfa-enrollment-required')).toBeVisible();
+      await expect(page.locator('#main-content')).toBeHidden();
+      await page.goto('/signup');
+      await expect(page).toHaveURL(/\/dashboard(?:[/?#]|$)/, { timeout: 15_000 });
+      await expect(page.getByTestId('mfa-enrollment-required')).toBeVisible();
+      await expect(page.locator('#main-content')).toBeHidden();
     } finally {
       // Delete the user first — profiles.id cascades on auth.users delete,
       // so the org has no remaining referencing row by the time it's deleted.
@@ -205,7 +181,7 @@ test.describe('MFA enrollment and login challenge', () => {
     }
   });
 
-  test('a disposable ORG_ADMIN past the enforcement date must enroll before entering, and can', async ({ page }) => {
+  test('a disposable ORG_ADMIN must enroll before entering, and can', async ({ page }) => {
     const serviceClient = getServiceClient();
     let userId: string | null = null;
 
@@ -216,8 +192,6 @@ test.describe('MFA enrollment and login challenge', () => {
       });
       userId = user.userId;
 
-      // Past override: proves the hard-block screen, not just the grace path.
-      await setEnforceDateOverride(page, '2020-01-01T00:00:00Z');
       await loginViaUi(page, user.email, user.password);
 
       await expect(page.getByTestId('mfa-enrollment-required')).toBeVisible({ timeout: 15_000 });
@@ -259,16 +233,16 @@ test.describe('MFA enrollment and login challenge', () => {
 
       await loginViaUi(page, user.email, user.password);
       await page.waitForURL(APP_URL_PATTERN, { timeout: 15_000 });
+      await expect(page.getByTestId('mfa-enrollment-required')).toBeVisible();
+      const firstSecret = (await page.getByTestId('mfa-enrollment-secret').innerText()).trim();
+      await submitTotpCodeWithBoundaryRetry(page, firstSecret, {
+        codeTestId: 'mfa-enrollment-code',
+        submitTestId: 'mfa-enrollment-submit',
+        errorTestId: 'mfa-enrollment-error',
+      });
       await acceptDisclaimerIfVisible(page);
 
       await page.goto('/settings');
-      await page.getByTestId('twofactor-enable').click();
-      const firstSecret = await readSecretFromSettings(page);
-      await submitTotpCodeWithBoundaryRetry(page, firstSecret, {
-        codeTestId: 'twofactor-verify-code',
-        submitTestId: 'twofactor-verify-submit',
-        errorTestId: 'twofactor-error',
-      });
       await expect(page.getByTestId('twofactor-add-backup')).toBeVisible({ timeout: 10_000 });
 
       // Verifying a newly-enrolled factor elevates THIS session to aal2
@@ -382,7 +356,7 @@ test.describe('MFA enrollment and login challenge', () => {
     }
   });
 
-  test('an individual platform administrator must enroll after the deadline', async ({ page }) => {
+  test('an individual platform administrator must enroll before entering', async ({ page }) => {
     const serviceClient = getServiceClient();
     let userId: string | null = null;
     try {
@@ -393,7 +367,6 @@ test.describe('MFA enrollment and login challenge', () => {
       const profile = await serviceClient.from('profiles').select('is_platform_admin').eq('id', userId).single();
       expect(profile.error).toBeNull();
       expect(profile.data?.is_platform_admin).toBe(true);
-      await setEnforceDateOverride(page, '2020-01-01T00:00:00Z');
       await loginViaUi(page, user.email, user.password);
       await expect(page.getByTestId('mfa-enrollment-required')).toBeVisible({ timeout: 15_000 });
       await expect(page.locator('#main-content')).toBeHidden();
@@ -428,8 +401,13 @@ test.describe('MFA enrollment and login challenge', () => {
         userIds.push(user.userId);
         const foreign = await createDisposableUser(serviceClient, { role: 'ORG_ADMIN', orgId: foreignOrg.orgId, emailPrefix: 'e2e-mfa-foreign' });
         userIds.push(foreign.userId);
-        await setEnforceDateOverride(page, '2099-01-01T00:00:00Z');
         await loginViaUi(page, user.email, user.password);
+        const enrollmentSecret = (await page.getByTestId('mfa-enrollment-secret').innerText()).trim();
+        await submitTotpCodeWithBoundaryRetry(page, enrollmentSecret, {
+          codeTestId: 'mfa-enrollment-code',
+          submitTestId: 'mfa-enrollment-submit',
+          errorTestId: 'mfa-enrollment-error',
+        });
         await expect(page.locator('#main-content')).toBeVisible({ timeout: 15_000 });
         await page.goto('/admin/overview');
         await expect(page).toHaveURL(/\/dashboard(?:[/?#]|$)/, { timeout: 15_000 });
