@@ -935,17 +935,20 @@ jobs:
           SUPABASE_URL=$(supabase status --output json | jq -r '.API_URL')
           SUPABASE_ANON_KEY=$(supabase status --output json | jq -r '.ANON_KEY')
           SUPABASE_SERVICE_ROLE_KEY=$(supabase status --output json | jq -r '.SERVICE_ROLE_KEY')
+          SUPABASE_JWT_SECRET=$(supabase status --output json | jq -r '.JWT_SECRET')
           # SQL role-corruption tests need the local bootstrap administrator and
           # the actual free port selected by ci-supabase-start.sh (instead of the default port 54322).
           RLS_DATABASE_URL=$(supabase status --output json | jq -r '.DB_URL')
           UAT03_DATABASE_URL=$(printf '%s' "$RLS_DATABASE_URL" | sed 's#://postgres:#://supabase_admin:#')
           echo "::add-mask::$SUPABASE_ANON_KEY"
           echo "::add-mask::$SUPABASE_SERVICE_ROLE_KEY"
+          echo "::add-mask::$SUPABASE_JWT_SECRET"
           echo "::add-mask::$RLS_DATABASE_URL"
           echo "::add-mask::$UAT03_DATABASE_URL"
           echo "url=$SUPABASE_URL" >> "$GITHUB_OUTPUT"
           echo "anon_key=$SUPABASE_ANON_KEY" >> "$GITHUB_OUTPUT"
           echo "service_role_key=$SUPABASE_SERVICE_ROLE_KEY" >> "$GITHUB_OUTPUT"
+          echo "jwt_secret=$SUPABASE_JWT_SECRET" >> "$GITHUB_OUTPUT"
           echo "database_url=$RLS_DATABASE_URL" >> "$GITHUB_OUTPUT"
           echo "uat03_database_url=$UAT03_DATABASE_URL" >> "$GITHUB_OUTPUT"
 
@@ -1010,9 +1013,11 @@ jobs:
           SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
           SUPABASE_ANON_KEY: ${{ steps.supabase-keys.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-keys.outputs.service_role_key }}
+          SUPABASE_JWT_SECRET: ${{ steps.supabase-keys.outputs.jwt_secret }}
           RLS_TEST_PASSWORD: Arkova2026!
           RLS_DATABASE_URL: ${{ steps.supabase-keys.outputs.database_url }}
           UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
+          UAT04_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
 
       - name: Install worker dependencies
         id: worker-deps
