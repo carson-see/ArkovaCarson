@@ -2,6 +2,11 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-09-11",
+      "author": "CTO release closeout — founder-authorized PR backlog drain",
+      "note": "REMOVED all 27 reconciled exemptions after independent verification against main 649cfce0edf0a062c3d32e84d72499f4384901e4 and the current 149-row production migration ledger: 0415, 0420, 0421, 0422, 0423, 0424, 0425, 0426, 0427, 0429, 0430, 0431, 0432, 0433, 0434, 0435, 0438, 0439, 0441, 0442, 0444, 0445, 0446, 0447, 0448, 0449, 0450. Every listed numeric version is present in production and has exactly one source SQL file on main. Historical admission records are preserved. 0443 remains unapplied and is not exempted; its held PR #2825 still requires protected historical repair, actual immutable migration application and numeric ledger reconciliation. This removes stale audit suppressions without changing gate logic, database state, source SQL, or the existing soak exception."
+    },
+    {
       "date": "2026-09-10",
       "author": "CTO release admission — founder-authorized backlog drain",
       "note": "Admission immediately before the reviewed finite production application: 0429–0432, 0444, 0446, 0447 and 0450 (#2572); 0445 (#2570); 0448 (#2668); 0449 (#2693). 0443 is excluded pending separate protected backfill/performance qualification. This entry does not assert application or completed soak. The operator must record actual per-file application, conditional timestamp-to-canonical reconciliation, independent catalog/ACL/ledger readback and remove any unapplied admission in the same operation if stopped. Successful exemptions are removed when their SQL lands on main. Earlier history and stale-prefix cleanup are unchanged."
@@ -207,33 +212,5 @@
       "note": "REMOVED 15 now-stale exemptions whose owning PRs merged today and whose source .sql is present on main — 0350, 0351, 0352, 0353, 0359, 0360, 0362, 0363, 0364, 0375, 0379, 0380, 0383, 0385, 0390. Verified by listing supabase/migrations/ on origin/main, not assumed. A stale exemption is worse than no exemption: it masks a future real drift on that prefix. STILL EXEMPT (source not yet on main): 0381 (#1782 merged but file landed via that PR — recheck), 0382 (#1808), 0386 (#1854), 0387 (its branch has no PR), 0388 (#1863)."
     }
   ],
-  "exemptPrefixes": [
-    "0415",
-    "0420",
-    "0421",
-    "0422",
-    "0423",
-    "0424",
-    "0425",
-    "0426",
-    "0427",
-    "0429",
-    "0430",
-    "0431",
-    "0432",
-    "0433",
-    "0434",
-    "0435",
-    "0438",
-    "0439",
-    "0441",
-    "0442",
-    "0444",
-    "0445",
-    "0446",
-    "0447",
-    "0448",
-    "0449",
-    "0450"
-  ]
+  "exemptPrefixes": []
 }

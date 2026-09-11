@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /**
  * Contract tests for `.claude/hooks/check-prod-migration-apply.sh`.
@@ -42,6 +44,21 @@ const apply = (project_id: string, name: string) => ({
   tool_input: { project_id, name, query: 'SELECT 1;' },
 });
 
+function withExemptions(prefixes: string[], check: (env: Record<string, string>) => void) {
+  const root = mkdtempSync(join(tmpdir(), 'arkova-migration-hook-'));
+  try {
+    const snapshots = join(root, 'scripts/ci/snapshots');
+    mkdirSync(snapshots, { recursive: true });
+    writeFileSync(
+      join(snapshots, 'ledger-numeric-exemptions.json'),
+      JSON.stringify({ exemptPrefixes: prefixes }),
+    );
+    check({ CLAUDE_PROJECT_DIR: root, ARKOVA_ALLOW_UNRECONCILED_PROD_APPLY: '' });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 describe('check-prod-migration-apply.sh — scope', () => {
   it('ignores tools that are not apply_migration', () => {
     expect(invoke({ tool_name: 'Bash', tool_input: { command: 'ls' } }).decision).toBe('allow');
@@ -66,12 +83,18 @@ describe('check-prod-migration-apply.sh — prod applies', () => {
   });
 
   it('ALLOWS a prod apply whose prefix is already exempted — the same-motion rule satisfied', () => {
-    const exempt = JSON.parse(
-      readFileSync('scripts/ci/snapshots/ledger-numeric-exemptions.json', 'utf8'),
-    ).exemptPrefixes as string[];
-    // Guard the fixture: if the snapshot is empty this test would pass vacuously.
-    expect(exempt.length).toBeGreaterThan(0);
-    expect(invoke(apply(PROD, `${exempt[0]}_whatever_it_was`)).decision).toBe('allow');
+    // An isolated non-Git fixture proves the exemption grants admission;
+    // a reconciled production snapshot may legitimately have no exemptions.
+    withExemptions(['9998'], (env) => {
+      expect(invoke(apply(PROD, '9998_fixture'), env).decision).toBe('allow');
+      expect(invoke(apply(PROD, '9999_unlisted'), env).decision).toBe('deny');
+    });
+  });
+
+  it('DENIES an unmerged prod apply when the exemption snapshot is empty', () => {
+    withExemptions([], (env) => {
+      expect(invoke(apply(PROD, '9998_fixture'), env).decision).toBe('deny');
+    });
   });
 
   it('DENIES the exact 0425 shape — prefix neither on main nor exempted', () => {
