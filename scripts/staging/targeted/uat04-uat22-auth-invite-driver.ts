@@ -132,6 +132,10 @@ interface Runtime {
   homeOrgId: string;
   existingUserId: string;
   adminSession: HumanSession | null;
+  expectedEmailConfigured: boolean;
+  managementQueryOverride?: (query: string) => Promise<unknown[]>;
+  hostedAuthSimulated?: boolean;
+  rateLimitWaitOverride?: (waitMs: number) => Promise<void>;
 }
 
 interface HumanSession {
@@ -261,6 +265,13 @@ export function buildLongProbePlan(orgId: string): LongProbe[] {
   ];
 }
 
+export function boundedRateLimitWait(retryAfter: string | null, now: number, destroyBy: string): number | null {
+  const retrySeconds = Number(retryAfter);
+  const requestedWait = Number.isFinite(retrySeconds) && retrySeconds > 0 ? retrySeconds * 1000 + 250 : 61_000;
+  const remainingLease = Date.parse(destroyBy) - now;
+  return remainingLease > 0 ? Math.min(requestedWait, 61_000, remainingLease) : null;
+}
+
 export function isDirectRun(moduleUrl: string, argv1: string | undefined): boolean {
   if (!argv1) return false;
   try {
@@ -286,12 +297,12 @@ function record(runtime: Runtime, label: string, passed: boolean, status?: numbe
   if (!passed) throw new Error(`check_failed:${label}`);
 }
 
-async function jsonFetch(url: string, init: RequestInit = {}): Promise<{ status: number; body: unknown }> {
+async function jsonFetch(url: string, init: RequestInit = {}): Promise<{ status: number; body: unknown; headers: Headers }> {
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   const raw = await response.text();
   let body: unknown = null;
   try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
-  return { status: response.status, body };
+  return { status: response.status, body, headers: response.headers };
 }
 
 function bearer(token: string): Record<string, string> {
@@ -299,14 +310,23 @@ function bearer(token: string): Record<string, string> {
 }
 
 async function worker(runtime: Runtime, method: string, path: string, token?: string, body?: unknown) {
-  return jsonFetch(`${runtime.manifest.workerUrl}${path}`, {
-    method,
-    headers: token ? bearer(token) : { 'Content-Type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await jsonFetch(`${runtime.manifest.workerUrl}${path}`, {
+      method,
+      headers: token ? bearer(token) : { 'Content-Type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    if (result.status !== 429 || attempt === 2) return result;
+    const waitMs = boundedRateLimitWait(result.headers.get('retry-after'), Date.now(), runtime.manifest.destroyBy);
+    if (waitMs === null) return result;
+    if (runtime.rateLimitWaitOverride) await runtime.rateLimitWaitOverride(waitMs);
+    else await new Promise((resolveWait) => setTimeout(resolveWait, waitMs));
+  }
+  throw new Error('worker_retry_exhausted');
 }
 
 async function managementQuery(runtime: Runtime, query: string): Promise<unknown[]> {
+  if (runtime.managementQueryOverride) return runtime.managementQueryOverride(query);
   const result = await jsonFetch(
     `https://api.supabase.com/v1/projects/${runtime.manifest.supabaseProjectRef}/database/query`,
     {
@@ -350,6 +370,10 @@ async function verifyCatalog(runtime: Runtime): Promise<void> {
 }
 
 async function verifyHostedAuth(runtime: Runtime): Promise<void> {
+  if (runtime.hostedAuthSimulated) {
+    record(runtime, 'hosted-auth-hook-local-simulation', true, undefined, 'local_simulation');
+    return;
+  }
   const result = await jsonFetch(
     `https://api.supabase.com/v1/projects/${runtime.manifest.supabaseProjectRef}/config/auth`,
     { headers: { Authorization: `Bearer ${runtime.managementToken}` } },
@@ -393,7 +417,6 @@ async function createOrgFixture(runtime: Runtime, label: string): Promise<string
     display_name: name,
     legal_name: name,
     org_prefix: `U${randomUUID().replaceAll('-', '').slice(0, 15).toUpperCase()}`,
-    is_test: true,
   }).select('id').single();
   if (error || !data?.id) throw new Error('fixture_org_create_failed');
   runtime.orgIds.add(data.id as string);
@@ -633,7 +656,7 @@ async function invitationAndProvisioning(runtime: Runtime, admin: HumanSession, 
   record(runtime, 'platform-health-db-and-config', health.status === 200
     && isObject(healthBody.checks) && isObject(healthBody.checks.supabase)
     && healthBody.checks.supabase.status === 'ok'
-    && isObject(healthBody.config) && healthBody.config.email === true, health.status);
+    && isObject(healthBody.config) && healthBody.config.email === runtime.expectedEmailConfigured, health.status);
   const deniedHealth = await worker(runtime, 'GET', '/api/admin/system-health', ordinary.aal2);
   record(runtime, 'ordinary-platform-health-forbidden', deniedHealth.status === 403, deniedHealth.status);
 }
@@ -689,7 +712,7 @@ async function runLongPhase(runtime: Runtime): Promise<void> {
       const healthSemantics = probe.path === '/api/admin/system-health'
         ? isObject(result.body) && isObject(result.body.checks) && isObject(result.body.checks.supabase)
           && result.body.checks.supabase.status === 'ok'
-          && isObject(result.body.config) && result.body.config.email === true
+          && isObject(result.body.config) && result.body.config.email === runtime.expectedEmailConfigured
         : true;
       record(runtime, `long-${probe.label}`, result.status === 200 && healthSemantics, result.status);
     }
@@ -732,6 +755,7 @@ async function cleanup(runtime: Runtime): Promise<boolean> {
     await managementQuery(runtime, `BEGIN;
       SET LOCAL session_replication_role=replica;
       DELETE FROM public.audit_events WHERE actor_id IN (${users}) OR org_id IN (${orgs});
+      DELETE FROM public.admin_org_provisioning_requests WHERE actor_id IN (${users}) OR org_id IN (${orgs});
       COMMIT;`);
   } catch {
     ok = false;
@@ -777,12 +801,88 @@ async function cleanup(runtime: Runtime): Promise<boolean> {
       (SELECT count(*) FROM public.profiles WHERE id IN (${users}) OR org_id IN (${orgs}) OR lower(email) IN (${sqlList(runtime.userEmails)}))::int AS profiles,
       (SELECT count(*) FROM public.org_members WHERE user_id IN (${users}) OR org_id IN (${orgs}))::int AS memberships,
       (SELECT count(*) FROM public.invitations WHERE id IN (${invitations}) OR org_id IN (${orgs}) OR lower(email) IN (${sqlList(runtime.userEmails)}))::int AS invitations,
+      (SELECT count(*) FROM public.admin_org_provisioning_requests WHERE actor_id IN (${users}) OR org_id IN (${orgs}))::int AS provisioning_requests,
       (SELECT count(*) FROM public.organizations WHERE id IN (${orgs}) OR display_name IN (${sqlList(runtime.orgNames)}))::int AS organizations`);
     const counts = isObject(rows[0]) ? rows[0] : {};
-    return ok && ['users', 'profiles', 'memberships', 'invitations', 'organizations'].every((key) => counts[key] === 0);
+    return ok && ['users', 'profiles', 'memberships', 'invitations', 'provisioning_requests', 'organizations']
+      .every((key) => counts[key] === 0);
   } catch {
     return false;
   }
+}
+
+export interface LocalDriverSmokeOptions {
+  supabaseUrl: string;
+  anonKey: string;
+  serviceKey: string;
+  workerUrl: string;
+  expectedEmailConfigured: boolean;
+  queryLocalDatabase: (query: string) => Promise<unknown[]>;
+  resetLocalRateLimit: () => Promise<void>;
+}
+
+export async function runLocalDriverSmoke(options: LocalDriverSmokeOptions): Promise<{
+  scope: 'local-only';
+  checks: CheckResult[];
+  cleanedUp: boolean;
+}> {
+  if (process.env.UAT0422_LOCAL_DRIVER_SMOKE !== '1' || process.env.NODE_ENV !== 'test') {
+    throw new Error('Local driver smoke requires the explicit test-only opt-in');
+  }
+  for (const [name, raw] of [['supabaseUrl', options.supabaseUrl], ['workerUrl', options.workerUrl]] as const) {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname)) {
+      throw new Error(`${name} must be a loopback HTTP URL`);
+    }
+  }
+  const sourceHead = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const now = Date.now();
+  const runtime: Runtime = {
+    manifest: {
+      schemaVersion: 1,
+      rigId: RIG_ID,
+      sourceHead,
+      supabaseProjectRef: 'local-driver-smoke',
+      supabaseUrl: options.supabaseUrl,
+      cloudRunService: EXPECTED_SERVICE,
+      workerUrl: options.workerUrl,
+      createdAt: new Date(now).toISOString(),
+      destroyBy: new Date(now + LEASE_MS).toISOString(),
+      bootstrapCatalogSha256: EXPECTED_CATALOG_SHA256,
+    },
+    args: { manifestPath: 'local-simulation', durationMin: 1, intervalSec: 60, execute: true, liveEmail: false },
+    anonKey: options.anonKey,
+    serviceKey: options.serviceKey,
+    managementToken: 'local-simulation',
+    checks: [],
+    secrets: new Set([options.anonKey, options.serviceKey]),
+    userIds: new Set(),
+    userEmails: new Set(),
+    orgIds: new Set(),
+    orgNames: new Set(),
+    invitationIds: new Set(),
+    startedAt: now,
+    password: `Uat0422-${randomBytes(24).toString('base64url')}!`,
+    selectedOrgId: '',
+    homeOrgId: '',
+    existingUserId: '',
+    adminSession: null,
+    expectedEmailConfigured: options.expectedEmailConfigured,
+    managementQueryOverride: options.queryLocalDatabase,
+    hostedAuthSimulated: true,
+    rateLimitWaitOverride: async () => options.resetLocalRateLimit(),
+  };
+  registerSecret(runtime, runtime.password);
+  let failure: unknown;
+  try {
+    await runAdmission(runtime);
+  } catch (error) {
+    failure = error;
+  }
+  const cleanedUp = await cleanup(runtime);
+  if (failure) throw failure;
+  if (!cleanedUp) throw new Error('local_driver_cleanup_failed');
+  return { scope: 'local-only', checks: runtime.checks, cleanedUp };
 }
 
 function evidence(runtime: Runtime, complete: boolean, cleanedUp: boolean): Evidence {
@@ -862,6 +962,7 @@ async function main(): Promise<void> {
     homeOrgId: '',
     existingUserId: '',
     adminSession: null,
+    expectedEmailConfigured: true,
   };
   runtime.anonKey = registerSecret(runtime, env('STAGING_SUPABASE_ANON_KEY'));
   runtime.serviceKey = registerSecret(runtime, env('STAGING_SUPABASE_SERVICE_ROLE_KEY'));

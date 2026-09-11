@@ -52,7 +52,9 @@ npx tsx scripts/staging/targeted/uat04-uat22-auth-invite-driver.ts \
   --duration 2880 --interval-sec 900 --execute --live-email
 ```
 
-The generic isolated-rig provisioner only hash-binds a driver path; it does not execute this driver or establish the required public IAM, candidate CORS, Resend binding, hosted Auth setting, or captured catalog baseline. Those are explicit admission prerequisites. Driver completion is not a release verdict: browser checks at 1280px/375px, the authorized private-export/signed-URL positive path, measured Cloud Run uptime and wall-clock floors, and residual release gates remain separate. The health endpoint's Bitcoin field is configuration-derived and does not prove live chain connectivity.
+The generic isolated-rig provisioner only hash-binds a driver path; it does not execute this driver or establish the required public IAM, candidate CORS, Resend binding, hosted Auth setting, or captured catalog baseline. Those are explicit admission prerequisites. Qualification also requires Cloud Run min-instances=1/max-instances=1; a restart resets the externally measured uptime clock. Driver completion is not a release verdict: browser checks at 1280px/375px, the authorized private-export/signed-URL positive path, measured Cloud Run uptime and wall-clock floors, and residual release gates remain separate. The health endpoint's Bitcoin field is configuration-derived and does not prove live chain connectivity.
+
+The four permitted delivery targets are `delivered+uat04-22-0911-existing@resend.dev`, `delivered+uat04-22-0911-new@resend.dev`, `delivered+uat04-22-0911-already@resend.dev`, and `delivered+uat04-22-0911-provision@resend.dev`. The opt-in local runtime check uses `uat04-uat22-local-smoke.vitest.config.ts`; ordinary Vitest discovery does not include its `*.local-smoke.ts` file. It requires `UAT0422_LOCAL_DRIVER_SMOKE=1` and loopback API, worker, and PostgreSQL URLs. The test captures the sender and labels its result `local-only`; it cannot substitute for hosted delivery or soak evidence.
 
 ## Tests
 

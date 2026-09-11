@@ -4,6 +4,7 @@ import {
   APPROVED_RECIPIENTS,
   EXPECTED_CATALOG_SHA256,
   buildLongProbePlan,
+  boundedRateLimitWait,
   catalogSql,
   isDirectRun,
   parseUatArgs,
@@ -115,6 +116,14 @@ describe('UAT04/UAT22 driver execution contract', () => {
       'GET /api/admin/organizations/00000000-0000-4000-8000-000000000001/members',
     ]);
     expect(plan.every((item) => item.method === 'GET')).toBe(true);
+  });
+
+  it('bounds 429 pacing by the limiter window and remaining rig lease', () => {
+    const now = Date.parse('2026-09-12T12:00:00Z');
+    expect(boundedRateLimitWait('999999', now, '2026-09-14T12:00:00Z')).toBe(61_000);
+    expect(boundedRateLimitWait('30', now, '2026-09-14T12:00:00Z')).toBe(30_250);
+    expect(boundedRateLimitWait('invalid', now, new Date(now + 10_000).toISOString())).toBe(10_000);
+    expect(boundedRateLimitWait('1', now, new Date(now).toISOString())).toBeNull();
   });
 
   it('redacts sensitive keys and registered secret values before evidence serialization', () => {
