@@ -26,8 +26,15 @@ import request from 'supertest';
 import { adminRouter } from '../routes/admin.js';
 import { anchorRouter } from '../routes/anchor.js';
 
-const runLocal = process.env.UAT22_LOCAL_INTEGRATION === '1';
-const suite = runLocal ? describe : describe.skip;
+if (process.env.UAT22_LOCAL_INTEGRATION !== '1') {
+  throw new Error('Run this suite with vitest.config.uat22-local.ts and explicit local-stack credentials');
+}
+for (const name of ['SUPABASE_URL', 'SUPABASE_DB_URL'] as const) {
+  const endpoint = new URL(process.env[name] ?? '');
+  if (!['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname)) {
+    throw new Error(`${name} must target an owned loopback fixture`);
+  }
+}
 const password = 'Uat22-local-only-Password9!';
 const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 const emails = {
@@ -68,7 +75,7 @@ function totp(secret: string): string {
   return String(binaryCode % 1_000_000).padStart(6, '0');
 }
 
-suite('UAT-22 selected-org invitation — real local DB and mounted routes', () => {
+describe('UAT-22 selected-org invitation — real local DB and mounted routes', () => {
   let service: SupabaseClient;
   let homeOrgId: string;
   let selectedOrgId: string;
@@ -175,23 +182,28 @@ suite('UAT-22 selected-org invitation — real local DB and mounted routes', () 
     // audit_events is intentionally immutable. session_replication_role is
     // transaction-local to this psql session, so concurrent test sessions keep
     // their triggers while this uniquely-prefixed fixture is removed.
-    const sql = `
+    const fixtureUsers = execFileSync('psql', [dbUrl, '-XAt', '-v', 'ON_ERROR_STOP=1', '-c',
+      `select id from auth.users where email like 'uat22-%-${suffix}@example.test'`],
+    { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    execFileSync('psql', [dbUrl, '-X', '-v', 'ON_ERROR_STOP=1', '-c', `
       begin;
       set local session_replication_role=replica;
       delete from public.audit_events where actor_id in
         (select id from public.profiles where email like 'uat22-%-${suffix}@example.test')
         or org_id in (select id from public.organizations where display_name like 'UAT22 % ${suffix}');
+      commit;
       delete from public.invitations where email like 'uat22-%-${suffix}@example.test'
         or org_id in (select id from public.organizations where display_name like 'UAT22 % ${suffix}');
       delete from public.org_members where user_id in
         (select id from public.profiles where email like 'uat22-%-${suffix}@example.test')
         or org_id in (select id from public.organizations where display_name like 'UAT22 % ${suffix}');
-      delete from public.profiles where email like 'uat22-%-${suffix}@example.test';
-      delete from auth.users where email like 'uat22-%-${suffix}@example.test';
-      delete from public.organizations where display_name like 'UAT22 % ${suffix}';
-      commit;
-    `;
-    execFileSync('psql', [dbUrl, '-v', 'ON_ERROR_STOP=1', '-c', sql], { stdio: 'ignore' });
+    `], { stdio: 'ignore' });
+    for (const userId of fixtureUsers) {
+      const removed = await service.auth.admin.deleteUser(userId);
+      if (removed.error) throw removed.error;
+    }
+    execFileSync('psql', [dbUrl, '-X', '-v', 'ON_ERROR_STOP=1', '-c',
+      `delete from public.organizations where display_name like 'UAT22 % ${suffix}'`], { stdio: 'ignore' });
   }, 30_000);
 
   it('authorizes a foreign selected-org platform admin, rejects negatives, replays safely, and preserves chosen roles', async () => {
