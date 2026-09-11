@@ -14,6 +14,8 @@
  * the JSON parses and that every endpoint is present).
  */
 
+import { API_KEY_SCOPES } from '../apiScopes.js';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SpecPathItem = Record<string, any>;
 
@@ -33,6 +35,10 @@ interface CibaOpenApiSpec {
 }
 
 const securitySchemes: Record<string, unknown> = {
+  OrganizationApiKey: {
+    type: 'apiKey', in: 'header', name: 'X-API-Key',
+    description: 'Organization API key; ComputeID admission requires agents:manage. JWT-only credentials are not accepted.',
+  },
   OrgAdminBearer: {
     type: 'http',
     scheme: 'bearer',
@@ -536,6 +542,55 @@ function readPaths(): Record<string, SpecPathItem> {
   };
 }
 
+function computeidAdmissionPaths(): Record<string, SpecPathItem> {
+  return {
+    '/api/v1/agents/computeid/admit': {
+      post: {
+        tags: ['Agents', 'API Key'],
+        security: [{ OrganizationApiKey: [] }],
+        summary: 'Admit a ComputeID AgentPassport and return one scoped key (disabled by default)',
+        description: 'Source: integrations/computeid/schemas.ts. Requires agents:manage. Exact signed receipt bytes are verified offline. Terminal provider revocation blocks every organization; a newer receipt cannot reissue the passport. Arkova limits receipt validity to 24 hours. Agent, hashed key and security audits commit together.',
+        requestBody: { required: true, content: { 'application/json': { schema: {
+          type: 'object', required: ['passport_id', 'verification_receipt'],
+          properties: {
+            passport_id: { type: 'string', format: 'uuid' },
+            name: { type: 'string', minLength: 1, maxLength: 200 },
+            description: { type: 'string', maxLength: 1000 },
+            allowed_scopes: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'string', enum: [...API_KEY_SCOPES] },
+              description: 'Requested scopes are intersected with the documented passport-agent allowlist; management scopes are never granted.' },
+            verification_receipt: {
+              type: 'object', required: ['passport_id', 'status', 'issued_at', 'expires_at', 'key_id', 'receipt_signature', 'receipt_algorithm', 'receipt_payload'],
+              properties: {
+                passport_id: { type: 'string', format: 'uuid' }, status: { type: 'string' },
+                signature_valid: { type: 'boolean', nullable: true },
+                issued_at: { type: 'string', format: 'date-time' }, expires_at: { type: 'string', format: 'date-time' },
+                key_id: { type: 'string', pattern: '^[0-9a-f]{16}$' },
+                receipt_signature: { type: 'string', maxLength: 4096 },
+                receipt_algorithm: { type: 'string', enum: ['RSA-SHA256'] },
+                receipt_payload: { type: 'string', minLength: 2, maxLength: 16384, description: 'Exact signed JSON bytes; do not reserialize.' },
+              },
+            },
+          },
+        } } } },
+        responses: {
+          '201': { description: 'Atomic admission succeeded; raw key is returned once.', content: { 'application/json': { schema: {
+            type: 'object', required: ['agent', 'binding', 'key', 'key_id', 'key_prefix', 'scopes', 'warning'],
+            properties: { agent: { type: 'object' }, binding: { type: 'object' }, key: { type: 'string' },
+              key_id: { type: 'string', format: 'uuid' }, key_prefix: { type: 'string' },
+              scopes: { type: 'array', items: { type: 'string' } }, warning: { type: 'string' } },
+          } } } },
+          '400': { description: 'Invalid request or no permitted scopes' },
+          '401': { description: 'Missing API key or invalid/expired receipt' },
+          '403': { description: 'API key lacks agents:manage' },
+          '409': { description: 'Passport is terminally revoked or already bound in this organization' },
+          '500': { description: 'Admission transaction failed; no raw key is returned' },
+          '503': { description: 'Integration disabled (default)' },
+        },
+      },
+    },
+  };
+}
+
 function webhookPaths(): Record<string, SpecPathItem> {
   return {
     '/webhooks/docusign': {
@@ -584,6 +639,19 @@ function webhookPaths(): Record<string, SpecPathItem> {
         },
       },
     },
+    '/webhooks/computeid': {
+      post: {
+        tags: ['Webhook', 'HMAC'],
+        security: [{ WebhookHmac: [] }],
+        summary:
+          'ComputeID AgentPassport revocation receiver — passport.revoked / passport.suspended / passport.reinstated (gated by ENABLE_COMPUTEID_INTEGRATION)',
+        responses: {
+          '200': { description: 'Acknowledged (applied / ignored / orphaned)' },
+          '401': { description: 'Invalid signature' },
+          '503': { description: 'Vendor gated (default)' },
+        },
+      },
+    },
   };
 }
 
@@ -607,6 +675,7 @@ export const cibaOpenApiSpec: CibaOpenApiSpec = {
     ...rulesPaths(),
     ...queuePaths(),
     ...readPaths(),
+    ...computeidAdmissionPaths(),
     ...webhookPaths(),
   },
 };

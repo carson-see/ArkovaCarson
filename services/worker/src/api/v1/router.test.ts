@@ -21,6 +21,15 @@ describe('api v1 router attestation batch routes', () => {
     );
   });
 
+  it('mounts the ComputeID admission router before the JWT-only /agents mount so API-key callers are not 401ed by requireAuth', () => {
+    const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+    const admission = /router\.use\(\s*['"]\/agents\/computeid['"]\s*,\s*computeidGate\s*,\s*batchRateLimiter\s*,\s*requireScopeAnyAuth\(\s*['"]agents:manage['"]\s*\)\s*,\s*agentsComputeIdRouter\s*\)/.exec(routerSource);
+    const jwt = /router\.use\(\s*['"]\/agents['"]\s*,\s*requireAuth\s*,\s*agentsRouter\s*\)/.exec(routerSource);
+    expect(admission).not.toBeNull();
+    expect(jwt).not.toBeNull();
+    expect(admission!.index).toBeLessThan(jwt!.index);
+  });
+
   it('mounts webhook self-service before the broad API-key webhook router so diagnostics are not double rate-limited', () => {
     const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
 

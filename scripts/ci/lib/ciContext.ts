@@ -348,6 +348,7 @@ export const LABELS = {
   ciConfigChange: 'ci-config-change',
   confluenceDriftSkip: 'confluence-drift-skip',
   worktreeBranchException: 'worktree-branch-exception',
+  proofBlockHeightReviewed: 'proof-block-height-reviewed',
 } as const;
 
 /**

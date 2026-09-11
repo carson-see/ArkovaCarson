@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-09-10 — PR #2693: bounded recovery reviewed; new corrective migration awaits staging qualification
+
+- **Story:** [SCRUM-4539](https://arkova.atlassian.net/browse/SCRUM-4539), verification subtask SCRUM-4540, documentation subtask SCRUM-4541; [Confluence 140771339](https://arkova.atlassian.net/wiki/spaces/A/pages/140771339). Related original incident: SCRUM-4521.
+- **Behavior:** the worker uses bounded recovery RPCs (500 rows/request, 40 attempted requests, 90-second request budget including journal reconciliation). It refuses missing/failed/malformed RPC replies and retains acknowledged progress. The previous client-side fallback is removed: review reproduced a newly persisted txid/journal being overwritten and zero-row updates counted as successful recovery. A process-local guard remains held until slow journal reconciliation settles; its current interface is not cancellable, so no absolute 90-second journal completion guarantee is claimed.
+- **Database:** immutable migration 0442 remains unchanged. New 0449 corrects JSON operator grouping so a reset removes the old claim fields while preserving unrelated metadata and the previous owner audit field. It materializes the locked bounded cohort and includes its own transaction with a five-second lock timeout. A parentheses-only development candidate failed actual bound tests; materializing the cohort corrected that regression. The inherited metadata defect does not by itself demonstrate a double anchor: the existing claim RPC overwrites stale claim values.
+- **Local verification:** complete committed Supabase schema lineage, 10,000 real stale rows drained in 21 requests, SQL bound/default/clamp/ACL checks, txid/deleted/PENDING+HELD journal guards, concurrent disjoint claims, a durable journal writer race, and a committed SQL reply loss followed by exactly one later worker claim. Rollback to exact 0442 reproduces the metadata failure; reapply passes. A blocked direct migration runner times out after five seconds and leaves the function unchanged.
+- **Formal verification:** pinned TLA PreCheck passes six invariants and graph equivalence (142 states, 411 edges); three deliberately broken DSL controls fail. Ten interpreter transitions match the actual SQL trace. This finite safety abstraction is not a performance or unconditional liveness proof; it does not submit a Bitcoin transaction.
+- **Release state:** this entry records local preparation only. The corrected worker and 0449 still need their authorized staging application, exact revision verification, required qualification, current CI and merge admission. The historical incident's staging window does not qualify this new source. Do not treat this preparation as a deployment receipt or completed soak.
 ### 2026-09-10 — PR #2572 integrated repair prepared; release qualification remains pending
 
 The local repair now includes remote PR head `72070341cf3f833869c63b2392178b74e5398353` and main `8fe0ac4e808cc60f73d7b7771d4852ac0624da95`. It closes cap lookup/admission and affiliation races (SCRUM-4467–4469), locks parent authority across credit/suspension mutation RPCs (SCRUM-4470–4471), and supports multiple DocuSign accounts with atomic inheritance stop (SCRUM-4532/4533). Original migrations 0429–0432 remain byte-identical. New local candidates are **0444** (parent-authority RPC locks), **0446** (atomic DocuSign stop and audit), and **0447** (atomic approved-child cap). The unpublished cap file moved from 0443 to 0447 after new PR #2782 claimed 0443; its bytes did not change. Prefix 0445 remains reserved for #2570. Recheck open-PR prefix ownership and both branch tips before publication.
@@ -277,7 +285,7 @@ _Last refreshed: 2026-09-05 by Claude Fable 5.1 (CTO session) — claims verifie
 
 [PR #2653](https://github.com/carson-see/ArkovaCarson/pull/2653) merged via Mergify at 16:49:30 UTC (`3954ca54d5d44cc15902756af0a70b44df79c6be`). Vercel production deployment `dpl_7g6sgAjbDxiuWfog58gZTL8krFJu` was independently verified READY with `app.arkova.ai` on that merge at 16:52 UTC. Later main deployments retain the signup change. Logged-out signup passed actual headless Chrome checks at 1280/375: immediate registration controls, retired beta gate absent, keyboard/error/navigation behavior and no horizontal overflow. No account writes. [Production metadata, screenshots and independent CTO verification](https://arkova.atlassian.net/wiki/spaces/A/pages/137134081); [merge-candidate CI passed](https://github.com/carson-see/ArkovaCarson/actions/runs/33976208584) (18,992 tests and 349 E2E cases). API, worker, webhook, MCP and SDK authentication were unchanged by this frontend fix. OAuth branding/mailbox verification and MFA retain their separate UAT ownership. Final close-out is tracked in SCRUM-4031 after the required observation deadline of 17:19:30 UTC.
 
-### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, BUG-2026-09-02-001)
+### Bug — `anchor_proofs.block_height` is the broadcast-time chain tip, not the block the tx landed in (found 2026-09-02, SCRUM-3953 / BUG-2026-09-02-005)
 
 **711,027 of 713,949** prod `anchor_proofs` rows (99.6%) carry a `block_height` that disagrees with
 `anchors.chain_block_height`. Every single disagreement is **low** (`proof_lower=711027`,
@@ -323,7 +331,7 @@ soak fixture. **Not a regression from that PR** — the rows predate it — and 
 the 711k-row backfill is a T3 migration needing operator approval and its own soak.
 **Not yet logged in the Confluence Bug Tracker** — the Atlassian MCP connector is unauthenticated in
 this session and the `Atlassian` Secret Manager token returns 401. Paste-ready entry is in the
-session report; whoever has Atlassian auth should file it as BUG-2026-09-02-001.
+session report. (Filed the same day by another session as SCRUM-3953 / BUG-2026-09-02-005; fix is branch `fix/scrum-3953-proof-block-height`, migration `0443`.)
 
 ### DB — three admin RPCs ran unguarded DDL on the hot `profiles` table (fixed, pre-soak, 2026-09-01)
 
@@ -2520,6 +2528,7 @@ _Last refreshed: 2026-09-08 by Claude-Opus-5-CTO-session — claims verified aga
 
 _Last refreshed: 2026-09-08 by Claude-Opus-5 MFA-E2E-flake session — claims verified against gcloud/MCP/CI output._
 
+_Last refreshed: 2026-09-08 by Claude-Opus-5-SCRUM-4521-session — claims verified against gcloud/MCP/CI output (this entry asserts no prod or rig state; its claims are local vitest/tsc output only)._
 _Last refreshed: 2026-09-08 by Claude-Opus-5 fingerprint-timeout session — claims verified against prod EXPLAIN, a local Postgres 17.9 repro, and red/green test output._
 _Last refreshed: 2026-09-09 by Claude-Opus-5-CTO-session — claims verified against gcloud/MCP/CI output._
 

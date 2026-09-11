@@ -74,6 +74,22 @@ export interface ConfirmationProof {
   chainTxId: string;
   /** Block hash the tx was mined into (display-hex, 64-char). Absent when pending/stale-missing. */
   blockHash?: string;
+  /**
+   * SCRUM-3953: the MEASURED height of the block named by `blockHash`,
+   * read back from the chain at confirmation time. Absent when the provider
+   * cannot supply it — never the caller's `req.blockHeight`, which is the tip
+   * at BROADCAST and is wrong by however many blocks were mined since. §1.5:
+   * this field is measured or it is not present.
+   */
+  blockHeight?: number;
+  /**
+   * SCRUM-3953: the block's own time, read from bytes [68,72) of the 80-byte
+   * header this proof just verified (uint32 LE, seconds). Measured, not
+   * asserted: `anchor_proofs.block_timestamp` used to carry the BROADCAST wall
+   * clock (`new Date()` in `broadcastSignedTx`), which is always earlier than
+   * the block and fails the verifiers' timestamp-honesty step.
+   */
+  blockTimestamp?: string;
   /** Raw 80-byte block header (160-hex). PROOF-01 on_chain.block_header. */
   blockHeader?: string;
   /** The block's merkleroot extracted from the header (display-hex, 64-char). */
@@ -92,7 +108,11 @@ export interface ConfirmationProof {
 export interface ConfirmationProofRequest {
   /** The SECURED anchor's chain_tx_id. */
   chainTxId: string;
-  /** Expected block height (informational; reorg detection compares hashes, not heights). */
+  /**
+   * Previously-recorded height (informational only; reorg detection compares
+   * hashes, not heights). NOT echoed into the result — the confirmed proof
+   * reports the height it measured, or none. See SCRUM-3953.
+   */
   blockHeight?: number | null;
   /**
    * Previously-recorded block hash, if any. When supplied AND the freshly
@@ -802,6 +822,15 @@ export async function fetchConfirmationProof(
     };
   }
 
+  // SCRUM-3953: read the block's OWN height. This is deliberately the
+  // last step and deliberately non-fatal — the proof above is already complete
+  // and independently checkable, so a provider that cannot answer must not
+  // downgrade a confirmed proof. When it cannot answer we return NO height,
+  // which the persistence layer reads as "leave the column alone". What we must
+  // never do is fall back to `req.blockHeight`: that is the tip at broadcast,
+  // and echoing it is exactly what froze 711k wrong heights into prod.
+  const measuredHeight = await fetchMeasuredBlockHeight(provider, blockHash);
+
   return {
     status: 'confirmed',
     chainTxId,
@@ -811,7 +840,47 @@ export async function fetchConfirmationProof(
     merkleBranch: parsed.merkleBranch,
     txIndex: parsed.txIndex,
     confirmations,
+    ...(measuredHeight != null ? { blockHeight: measuredHeight } : {}),
+    blockTimestamp: headerTimestamp(parsed.blockHeader),
   };
+}
+
+/**
+ * ISO time of a verified 80-byte header: nTime is bytes [68,72), uint32 LE
+ * seconds since the epoch. The caller has already checked the header is exactly
+ * 160 hex and hashes to the block, so this is a measurement, not a guess.
+ */
+function headerTimestamp(headerHex: string): string {
+  const seconds = Buffer.from(headerHex, 'hex').readUInt32LE(68);
+  return new Date(seconds * 1000).toISOString();
+}
+
+/**
+ * The chain's own height for `blockHash`, or `null` when it cannot be measured.
+ *
+ * Never throws and never guesses: a provider without `getBlockHeader`, a
+ * transport failure, or a non-integer/negative answer all yield `null` so the
+ * caller omits the field rather than publishing an unmeasured number (§1.5).
+ */
+async function fetchMeasuredBlockHeight(
+  provider: ConfirmationProofProvider,
+  blockHash: string,
+): Promise<number | null> {
+  if (typeof provider.getBlockHeader !== 'function') return null;
+  try {
+    const header = await provider.getBlockHeader(blockHash);
+    const height = header?.height;
+    if (typeof height !== 'number' || !Number.isInteger(height) || height < 0) {
+      return null;
+    }
+    return height;
+  } catch (err) {
+    logger.debug(
+      { blockHash, err: errMsg(err) },
+      'confirmation-proof: block height lookup failed — proof stands without a measured height',
+    );
+    return null;
+  }
 }
 
 function errMsg(err: unknown): string {

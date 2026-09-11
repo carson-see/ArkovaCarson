@@ -440,6 +440,14 @@ export const rateLimiters = {
     keyGenerator: () => 'docusign', // Global limit, own bucket (SCRUM-3418)
   }),
 
+  // Keep unauthenticated callers in separate IP buckets so one caller cannot
+  // consume the provider's revocation budget before HMAC verification.
+  computeidWebhook: rateLimit({
+    windowMs: 60000,
+    maxRequests: 100,
+    scope: 'computeid-webhook',
+  }),
+
   // Checkout: 10 req/min per IP
   checkout: rateLimit({
     windowMs: 60000,

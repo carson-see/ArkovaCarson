@@ -36,6 +36,7 @@ function securedAnchor(overrides: Partial<ProofSourceAnchor> = {}): ProofSourceA
     status: 'SECURED',
     chain_tx_id: 'd'.repeat(64),
     chain_block_height: 850123,
+    chain_block_hash: 'f'.repeat(64),
     chain_timestamp: '2026-06-02T03:00:00Z',
     ...overrides,
   };
@@ -260,5 +261,102 @@ describe('B3 — the audit packet carries the bitcoin-tree inclusion evidence', 
     const result = await sourceProofInput(client as never, securedAnchor());
     expect(result.proof!.tx_inclusion_branch).toEqual([]);
     expect(result.proof!.tx_block_index).toBe(0);
+  });
+});
+
+// ─── SCRUM-3953 ────────────────────────────────────────────────────
+//
+// `anchor_proofs.block_height` is the chain tip at BROADCAST, not the height of
+// the block the tx was mined into, and it disagreed with
+// `anchors.chain_block_height` on 711,027 of 713,949 prod rows (always low).
+// The certificate packet must publish the chain-true height, because every
+// Arkova verifier binds `block_height` to the chain and rejects a mismatch
+// with HEIGHT_MISMATCH — a false negative on a genuine anchor.
+
+describe('sourceProofInput — block_height provenance', () => {
+  it('withholds a packet when the anchor and proof name different blocks', async () => {
+    const { client } = makeSupabase({ proofRow: SINGLE_LEAF_ROW });
+    const result = await sourceProofInput(client as never, securedAnchor({
+      chain_block_hash: 'e'.repeat(64),
+      chain_block_height: 965200,
+      chain_timestamp: '2026-09-03T03:00:00Z',
+    }));
+    expect(result).toEqual({ proof: undefined, complete: false });
+  });
+
+  it('does not borrow anchor metadata without a matching block identity', async () => {
+    const { client } = makeSupabase({ proofRow: SINGLE_LEAF_ROW });
+    const { proof } = await sourceProofInput(client as never, securedAnchor({
+      chain_block_hash: null,
+      chain_block_height: 965200,
+      chain_timestamp: '2026-09-03T03:00:00Z',
+    }));
+    expect(proof?.block_height).toBe(SINGLE_LEAF_ROW.block_height);
+    expect(proof?.block_timestamp).toBe(SINGLE_LEAF_ROW.block_timestamp);
+  });
+
+  it('matches block identity case-insensitively before taking confirmed metadata', async () => {
+    const { client } = makeSupabase({ proofRow: SINGLE_LEAF_ROW });
+    const { proof } = await sourceProofInput(client as never, securedAnchor({
+      chain_block_hash: 'F'.repeat(64), chain_block_height: 965200,
+    }));
+    expect(proof?.block_height).toBe(965200);
+  });
+
+  it('publishes anchors.chain_block_height, NOT the stale anchor_proofs value', async () => {
+    const { client } = makeSupabase({
+      // The prod shape: proof row frozen 4 blocks behind the real height.
+      proofRow: { ...BATCHED_ROW, block_height: 965112 },
+      count: 8,
+    });
+
+    const { proof, complete } = await sourceProofInput(
+      client as never,
+      securedAnchor({ chain_block_height: 965116 }),
+    );
+
+    expect(complete).toBe(true);
+    expect(proof?.block_height).toBe(965116);
+  });
+
+  it('falls back to the proof row only when the anchor carries no height', async () => {
+    const { client } = makeSupabase({
+      proofRow: { ...SINGLE_LEAF_ROW, block_height: 850123 },
+    });
+
+    const { proof } = await sourceProofInput(
+      client as never,
+      securedAnchor({ chain_block_height: null }),
+    );
+
+    expect(proof?.block_height).toBe(850123);
+  });
+
+  it('emits a height that agrees with the block_hash it ships beside', async () => {
+    const { client } = makeSupabase({
+      proofRow: { ...SINGLE_LEAF_ROW, block_height: 960611 },
+    });
+
+    const { proof } = await sourceProofInput(
+      client as never,
+      securedAnchor({ chain_block_height: 960613 }),
+    );
+
+    // block_hash comes from the confirmed chain read; the height must be the
+    // one that resolves to THAT block, not an earlier tip.
+    expect(proof?.block_hash).toBe(SINGLE_LEAF_ROW.block_hash);
+    expect(proof?.block_height).toBe(960613);
+  });
+
+  it('publishes anchors.chain_timestamp, NOT the broadcast wall clock on the proof row', async () => {
+    const { client } = makeSupabase({
+      proofRow: { ...BATCHED_ROW, block_timestamp: '2026-09-02T02:01:28Z' },
+      count: 8,
+    });
+    const { proof } = await sourceProofInput(
+      client as never,
+      securedAnchor({ chain_timestamp: '2026-09-02T02:58:11Z' }),
+    );
+    expect(proof?.block_timestamp).toBe('2026-09-02T02:58:11Z');
   });
 });
