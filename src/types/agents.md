@@ -120,3 +120,22 @@ current SQL files and canonical seed replayed on a fresh isolated Supabase
 schema. Catalog regeneration confirmed the same RPC entry in both canonical
 files. This includes current0444/0446/0447 filenames and all merged migrations;
 it does not claim staging qualification or a full-file type resynchronization.
+
+## 2026-09-12 — 0453 type delta was HAND-WRITTEN, not regenerated (SCRUM-3971)
+
+`organizations.public_id` goes `string | null` -> `string` in `Row`, and the four
+`*_as_api_key` / `_suborg_api_key_authorized` functions were added to
+`Functions`. Both copies are byte-identical to each other.
+
+**Not produced by `npm run gen:types`.** Applying 0453 to any live database was
+out of scope for the session that wrote it (no staging rig, no prod, no local
+stack), and generating types requires an applied schema. Whoever applies 0453
+should run `gen:types` once as a canonical-regeneration check and correct any
+drift from these entries.
+
+One detail that is easy to get wrong on a regeneration: `public_id` stays
+OPTIONAL in `Insert`. It is NOT NULL as of 0453 but it also gained a column
+DEFAULT in the same migration, and the generator marks a field optional when the
+column is nullable OR has a default. Without that default the field becomes
+mandatory and `src/hooks/useOnboarding.ts:161`/`:217` stop typechecking — which is
+how the default came to exist. Do not "tidy" the DEFAULT away.

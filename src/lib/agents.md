@@ -674,3 +674,22 @@ Field, section and proof-line helpers reserve page space before painting. Wrappe
 ## PR #2782 — bind certificate metadata to one block
 
 `proofBlockMetadata.ts` is shared by the database proof reader and certificate builder. Confirmed anchor height/time can replace proof metadata only after matching both block hashes. A known mismatch withholds the packet; an unknown identity retains only the proof row's existing metadata and does not establish a fresh measurement. Height values must be nonnegative safe integers. RecordDetailPage supplies the anchor hash to both readers. Regression tests cover mismatches, absent identities, case-normalized matches and the actual page callback. The finite TLA model and interpreter contract cover selection semantics; they do not prove Bitcoin consensus, stored-data accuracy or snapshot freshness.
+
+## 2026-09-12 — `apiScopes.ts` mirrors `ORG_API_SCOPES` BY NAME (SCRUM-3971)
+
+`orgs:manage` was added to the worker vocabulary in a new exported
+`ORG_API_SCOPES` array. This copy must export an array of the SAME NAME:
+`scripts/ci/check-api-scope-vocabulary.ts` parses both files and resolves the
+spread into `API_KEY_SCOPES` by name, and it THROWS ("Missing exported array
+ORG_API_SCOPES") rather than reporting a diff when the name is absent here.
+
+`API_SCOPE_LABELS` and `API_SCOPE_BADGE_CLASSES` are exhaustive `Record`s over
+`DisplayApiScope`, so a new scope that is added to the array and not to both maps
+is a typecheck failure, not a runtime blank. The label lives in `copy.ts`
+(`API_KEY_LABELS.SCOPE_ORGS_MANAGE`) per §1.3 — never inline a user-visible
+string here.
+
+`SELECTABLE_API_SCOPES` is derived from `API_V2_SCOPES`, so `orgs:manage` does
+NOT appear in the create-key picker. That is the existing behaviour for every
+non-v2 scope and is deliberate for now: the first `orgs:manage` keys are minted
+deliberately, not self-served. Adding it to the picker is its own change.

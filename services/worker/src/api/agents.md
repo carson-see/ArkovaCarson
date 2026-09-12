@@ -446,3 +446,27 @@ PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-
 ## PR #2695 — timestamp helper simplification (2026-09-10)
 
 The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.
+
+## 2026-09-12 — `apiScopes.ts`: `orgs:manage`, and why there is no `orgs:read` (SCRUM-3971)
+
+ONE new scope, in a new `ORG_API_SCOPES` array spread into `API_KEY_SCOPES`.
+Reads on the sub-organization surface are served by the EXISTING `read:orgs`; a
+separate `orgs:read` would have been a second spelling of a grant every affected
+key already holds, and every integration would have had to be re-issued.
+
+`scopeSatisfies` makes `orgs:manage` satisfy `read:orgs`, one-way. A key granted
+only the write scope must still be able to LIST what it may act on, or the write
+scope is unusable alone. `read:orgs` never satisfies `orgs:manage` — that is the
+direction that would matter, and `apiScopes.test.ts` pins both halves.
+
+**The array name is load-bearing.** `scripts/ci/check-api-scope-vocabulary.ts`
+resolves the spread by NAME in both copies, so `src/lib/apiScopes.ts` must export
+`ORG_API_SCOPES` too — the gate THROWS (not warns) if it is missing there. Six
+surfaces move together or CI is red: worker vocabulary, frontend vocabulary +
+`API_SCOPE_LABELS` + `API_SCOPE_BADGE_CLASSES`, the LATEST migration naming EACH
+of `api_keys_scopes_known_values` and `agents_allowed_scopes_known_values`,
+`docs/api/README.md`, and `docs/api/openapi.yaml`'s `x-arkova-canonical-scopes`.
+
+`orgs:manage` is in the vocabulary but deliberately NOT in
+`PASSPORT_AGENT_SCOPE_ALLOWLIST` — a delegated agent key never manages
+organizations.

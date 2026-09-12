@@ -1250,3 +1250,63 @@ ComputeID admission now uses service-only `admit_computeid_agent`: one passport 
 `resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+## 2026-09-12 — sub-organization management is reachable by an API key (SCRUM-3971)
+
+`orgSubOrgs.ts` now serves TWO mounts. `index.ts:532` (`/api/v1/org/sub-orgs`,
+`requireAuthMw`) is the dashboard's, and is byte-unchanged. `orgSubOrgsApiKey.ts`
+(`orgSubOrgsApiRouter`, mounted at `/organizations/sub-orgs` inside `router.ts`)
+is the API-key one. **They could not be one mount**: `requireAuthMw` resolves a
+Supabase user and 401s an API-key caller before any nested route runs, so
+`/api/v1/org/...` is JWT territory by construction. Do not "consolidate" them.
+
+**Everything caller-shaped lives in `orgSubOrgsCaller.ts`.** Read that file's
+header before touching either mount. The three rules that matter:
+
+- An API key acts as `req.apiKey.orgId`, **never** `req.apiKey.userId`. The
+  latter is the human who minted the key; using it would let any key inherit
+  whatever that person can do in any organization they belong to.
+- An organization with a `parent_org_id` is refused outright
+  (`403 sub_org_cannot_manage_sub_orgs`), rather than returning an empty list.
+  `check_sub_org_depth` permits one level today; if that limit is ever raised,
+  an unguarded key surface would silently start exposing grandchildren.
+- Both credentials on one request is `409 ambiguous_caller`, unconditionally.
+  Neither mount can produce that combination today — it is a guard against a
+  future mount, not a live path.
+
+**404 is the convention on the key surface and 403 is the convention on the
+JWT one, and that asymmetry is deliberate.** A dashboard caller was shown the
+organization, so confirming it exists tells them nothing. A key caller supplies
+an identifier from outside, so a 403 on "another parent's child" would make the
+endpoint an existence oracle over every organization's public id. Absent,
+another parent's, not-yet-approved and suspended all collapse to one
+`404 sub_org_not_found`. A lookup **error** is 503 — an outage is not an absence.
+
+**Six routes, not ten** (CTO ruling R5). `create` writes the acting USER into
+the new affiliate's `org_members` as `owner` and a key has no user to put there
+(SCRUM-5060 owns the owner semantics); `request`/`cancel` act on the caller's
+OWN affiliation and are self-escalation primitives, not parent administration;
+`max` is an account setting. All four stay JWT-only.
+
+**Two places where this surface is deliberately STRICTER than the dashboard**,
+because a partner cannot tell a degraded answer from a real one:
+a failed DocuSign inheritance-marker lookup 503s here (the JWT list degrades to
+"nobody is inheriting"), and a credit-rollup child with no public id 503s rather
+than being dropped from the list — a missing row reads as "that affiliate has no
+balance", which is a materially wrong answer about money.
+
+**Audit `details` is JSON on all three sub-org writers now** (was prose).
+`audit_events.actor_id` is `REFERENCES public.profiles(id)`, so an API-key actor
+has nothing it can legally put there and a user id there would be a false
+statement about who acted: key-driven rows carry `actor_id NULL` plus
+`details.actor = {actor_kind, actor_api_key_id, actor_key_prefix}`. Verified by
+grep at the time of the change that NO code in either tree reads the `details` of
+a `SUB_ORG_*` event — `audit-export.ts` exports anchors, not audit events — so
+the shape change has no consumer to break. Historical prose rows are left as-is.
+
+**Inherited middleware, accepted and stated** (CTO ruling R10): these routes sit
+inside the v1 chain, so `verificationApiGate`, `idempotency`,
+`requirePaymentCurrent` and `usageTracking` all apply. `usageTracking` has NO
+exemption mechanism, so administration traffic DOES consume the key's monthly
+quota and can 429 a free-tier key; that is documented on every path in `docs.ts`
+and `docs/api/openapi.yaml` rather than quietly accepted.
