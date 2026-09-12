@@ -1580,7 +1580,12 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
-            description: 'Already approved, the affiliate cap is reached, or the affiliation changed under the request. Never a 500.',
+            description: 'Already approved, the affiliate cap is reached, or the affiliation changed under the request.',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+          },
+          '500': {
+            description:
+              'audit_write_failed — the affiliation status WAS changed and the audit row could not be written. The two are separate statements, so the change cannot be rolled back from here; the error names the audit write rather than pretending the action failed. A retry is safe and answers 409 already_approved / already_revoked.',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
@@ -1607,6 +1612,11 @@ export const openApiSpec: Record<string, any> = {
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
             description: 'Already revoked, or the affiliation changed under the request.',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+          },
+          '500': {
+            description:
+              'audit_write_failed — the affiliation status WAS changed and the audit row could not be written. The two are separate statements, so the change cannot be rolled back from here; the error names the audit write rather than pretending the action failed. A retry is safe and answers 409 already_approved / already_revoked.',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },

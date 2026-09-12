@@ -1312,6 +1312,18 @@ grant. `GET /` (the directory read) stays `read:orgs`. **When a route's gate and
 its RPC's own predicate disagree, the published contract is the lie — fix the
 gate, not the docs.**
 
+**The approve/revoke audit insert is checked** (review U4). It was
+fire-and-forget — `await db.from('audit_events').insert(...)` with the result
+discarded — so a failed insert answered 200 with no record of the transition.
+On the key path `actor_id` is NULL by construction (FK to `profiles`), so
+`details.actor` is the ONLY attribution that exists; a swallowed insert is an
+affiliation that changed with nothing naming who changed it. Both mounts now
+answer `500 audit_write_failed`. The status change is already committed at that
+point (separate statements, not one transaction) so the error names the audit
+write rather than pretending the action failed; a retry is safe and answers
+`already_approved` / `already_revoked`. This is the same call 0453's
+`suspend_suborg_as_api_key` makes, where SQL can fail the whole transaction.
+
 **Two places where this surface is deliberately STRICTER than the dashboard**,
 because a partner cannot tell a degraded answer from a real one:
 a failed DocuSign inheritance-marker lookup 503s here (the JWT list degrades to

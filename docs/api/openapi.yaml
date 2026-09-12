@@ -1026,6 +1026,11 @@ paths:
           description: Rate limit exceeded
         "503":
           description: A required lookup or RPC was unavailable
+        "500":
+          description: >-
+            audit_write_failed — the affiliation status WAS changed and the audit
+            row could not be written. Separate statements, so the change cannot be
+            rolled back from here; a retry is safe and answers 409.
 
   /organizations/sub-orgs/revoke:
     post:
@@ -1070,6 +1075,11 @@ paths:
           description: Rate limit exceeded
         "503":
           description: A required lookup or RPC was unavailable
+        "500":
+          description: >-
+            audit_write_failed — the affiliation status WAS changed and the audit
+            row could not be written. Separate statements, so the change cannot be
+            rolled back from here; a retry is safe and answers 409.
 
   /organizations/sub-orgs/credits:
     post:

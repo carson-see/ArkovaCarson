@@ -536,6 +536,23 @@ describe('lifecycle on the key surface', () => {
     expect(res.status).toBe(404);
   });
 
+  /**
+   * U4. The audit insert used to be fire-and-forget, so a failed insert
+   * answered 200 with no record of the transition. On this surface `actor_id`
+   * is NULL by construction, so `details.actor` is the ONLY attribution that
+   * exists — a swallowed insert is an affiliation that changed with no
+   * attributable actor.
+   */
+  it('500s audit_write_failed when the audit insert fails, instead of answering 200', async () => {
+    mockStatusActionDb({
+      child: { ...APPROVED_CHILD, parent_approval_status: 'PENDING' },
+      auditError: { message: 'audit table unavailable' },
+    });
+    const res = await post('/approve', { org_public_id: CHILD_PUB });
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('audit_write_failed');
+  });
+
   it('404s credits on a suspended affiliate — money never moves into a dead affiliation', async () => {
     mockStatusActionDb({ child: { ...APPROVED_CHILD, suspended: true } });
     const res = await post('/credits', { org_public_id: CHILD_PUB, amount: 5 });

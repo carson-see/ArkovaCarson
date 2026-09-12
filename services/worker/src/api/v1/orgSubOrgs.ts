@@ -604,13 +604,23 @@ async function updateAffiliateStatus(
  * which key acted. JSON with an `actor` block carries it. `audit-export.ts`
  * renders both shapes (`renderAuditDetails` falls back to the raw string), so
  * historical prose rows keep exporting unchanged.
+ *
+ * **The insert error is NOT discarded (review U4).** It used to be: the write
+ * was fire-and-forget, so approve/revoke answered 200 with no audit record
+ * whenever the insert failed. On the key path that is worse than on the JWT
+ * path — `actor_id` is NULL by construction there, so `details.actor` is the
+ * only attribution that exists. A failure now answers `500 audit_write_failed`
+ * on BOTH mounts. The status change is already committed at that point and
+ * cannot be undone from here, so the error names the audit write specifically
+ * rather than pretending the action failed; a retry is safe and answers
+ * `already_approved` / `already_revoked`.
  */
 async function auditAffiliateStatus(
   context: AffiliateActionContext,
   action: AffiliateActionSpec,
-): Promise<void> {
+): Promise<RouteResult<void>> {
   const { actorId, actor } = subOrgAuditActor(context.caller);
-  await db.from('audit_events').insert({
+  const { error: auditError } = await db.from('audit_events').insert({
     actor_id: actorId,
     event_type: action.auditEventType,
     event_category: 'ORG',
@@ -626,6 +636,23 @@ async function auditAffiliateStatus(
       actor,
     }),
   });
+
+  if (auditError) {
+    // The status HAS already changed — this is a separate statement, not the
+    // same transaction, and there is nothing to roll back into. Reporting 200
+    // anyway would be the worse answer: on the key path `actor_id` is NULL by
+    // construction, so `details.actor` is the ONLY record of which key acted,
+    // and a silently-missing row is an affiliation that changed with no
+    // attributable actor at all. 0453's `suspend_suborg_as_api_key` makes the
+    // same call the only way SQL can — it fails the transaction.
+    logger.error(
+      { error: auditError, orgId: context.orgId, childOrgId: context.childOrgId, event: action.auditEventType },
+      'suborg_status_audit_write_failed',
+    );
+    return routeFailure(500, 'audit_write_failed');
+  }
+
+  return routeSuccess(undefined);
 }
 
 /**
@@ -641,7 +668,9 @@ export async function applyAffiliateStatusAction(
   const updateResult = await updateAffiliateStatus(context, action);
   if (!updateResult.ok) return updateResult;
 
-  await auditAffiliateStatus(context, action);
+  const auditResult = await auditAffiliateStatus(context, action);
+  if (!auditResult.ok) return auditResult;
+
   logger.info({ orgId: context.orgId, childOrgId: context.childOrgId }, action.successLog);
   return routeSuccess(undefined);
 }
