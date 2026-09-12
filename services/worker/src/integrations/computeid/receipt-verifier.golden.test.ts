@@ -114,6 +114,37 @@ describe('GOLDEN: real ComputeID receipts verify offline against the pinned CA',
         expect(verifyComputeIdReceipt({ receipt, ca, expectedPassportId: other.passportId, now }))
           .toEqual({ ok: false, reason: 'passport_id_mismatch' });
       });
+
+      // W1 (CTO review 2026-09-12), replayed on the REAL bytes rather than a
+      // synthetic receipt. ComputeID mints the receipt before it reads the
+      // row, so a genuinely-active receipt can arrive attached to a body that
+      // already says `revoked`. The receipt still verifies — it IS authentic —
+      // which is exactly why the re-check must not treat "signature valid" as
+      // "the passport is active now".
+      it('still verifies when the UNSIGNED top-level status is flipped to revoked — the receipt is not the whole truth', () => {
+        const verdict = verifyComputeIdReceipt({ receipt, ca, expectedPassportId: entry.passportId, now });
+        expect(verdict).toMatchObject({ ok: true });
+
+        const flippedBody = { ...entry.response, status: 'revoked', revoked_at: '2026-09-07T18:55:00.000Z' };
+        // The outer body is unsigned, so tampering with it cannot and does not
+        // change the verdict on the receipt.
+        expect(verifyComputeIdReceipt({ receipt, ca, expectedPassportId: entry.passportId, now }))
+          .toMatchObject({ ok: true });
+        expect(flippedBody.status).not.toBe(JSON.parse(receipt.receipt_payload).status);
+      });
+
+      // The other half: flipping the status the CA SIGNED does break it, which
+      // is what makes the pair meaningful — the signature covers the receipt
+      // payload and nothing else.
+      it('the signed status is covered by the signature even though the body status is not', () => {
+        const tampered = {
+          ...receipt,
+          receipt_payload: receipt.receipt_payload.replace('"status":"active"', '"status":"revoked"'),
+        };
+        expect(tampered.receipt_payload).not.toBe(receipt.receipt_payload);
+        expect(verifyComputeIdReceipt({ receipt: tampered, ca, expectedPassportId: entry.passportId, now }))
+          .toEqual({ ok: false, reason: 'invalid_signature' });
+      });
     });
   }
 });

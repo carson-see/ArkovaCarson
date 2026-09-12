@@ -21,6 +21,7 @@
 import { config } from '../../config.js';
 import { DB_UUID_RE } from '../../utils/db-row-validation.js';
 import { readTextBounded } from '../../utils/body-read-timeout.js';
+import { createSafeFetchImpl, type SafeFetchDeps } from '../../lib/safe-fetch.js';
 import { ComputeIdVerifyResponse, type ComputeIdVerifyResponseT } from './schemas.js';
 
 export const VERIFY_REQUEST_TIMEOUT_MS = 5_000;
@@ -42,8 +43,16 @@ export type VerifyOutcome =
 
 export interface VerifyClientOptions {
   timeoutMs?: number;
-  /** Injected in tests; defaults to the platform `fetch`. */
+  /**
+   * Injected in tests; defaults to the IP-pinned `createSafeFetchImpl()`.
+   * Overriding this bypasses the egress guard — only tests may.
+   */
   fetchImpl?: typeof fetch;
+  /**
+   * Drives the egress guard's resolve/dispatch seam deterministically in tests
+   * (the DNS-rebind adversary). Ignored when `fetchImpl` is supplied.
+   */
+  safeFetchDeps?: SafeFetchDeps;
 }
 
 /** True when the re-check has everything it needs to call the partner at all. */
@@ -66,13 +75,20 @@ export async function fetchPassportVerification(
   // cannot silently turn a stored value into a request to another host.
   if (url.origin !== base.origin) return { ok: false, reason: 'invalid_passport_id' };
 
-  const doFetch = opts.fetchImpl ?? fetch;
+  // IP-PINNED EGRESS, not the raw global `fetch` (lib/agents.md: every worker
+  // outbound call goes through safe-fetch). The origin is config-sourced, but
+  // config is env-tunable and the hostname is resolved by DNS we do not
+  // control — so without pinning, a rebind delivers Arkova's partner API key,
+  // and the reply, to 169.254.169.254. `createSafeFetchImpl` resolves once,
+  // rejects private/link-local/metadata targets, connects to the validated IP,
+  // and never follows a redirect: a 3xx comes back as a 3xx.
+  const doFetch = opts.fetchImpl ?? createSafeFetchImpl(opts.safeFetchDeps);
   let res: Response;
   try {
-    res = await doFetch(url, {
+    res = await doFetch(url.toString(), {
       method: 'GET',
       headers: { 'X-API-Key': apiKey, Accept: 'application/json' },
-      redirect: 'error',
+      redirect: 'manual',
       signal: AbortSignal.timeout(opts.timeoutMs ?? VERIFY_REQUEST_TIMEOUT_MS),
     });
   } catch (err) {
@@ -80,6 +96,9 @@ export async function fetchPassportVerification(
     return { ok: false, reason: name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'request_failed' };
   }
 
+  // A 3xx is not ok, so it lands here as `http_error` with its own status and
+  // is never followed — the `Location` a compromised partner or an on-path
+  // attacker chose is read by nobody.
   if (!res.ok) return { ok: false, reason: 'http_error', status: res.status };
 
   // Declared size first: a body that ANNOUNCES more than the cap is refused

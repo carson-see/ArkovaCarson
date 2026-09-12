@@ -84,6 +84,18 @@ export const RECHECK_VERIFY_CONCURRENCY = 6;
 /** `job_queue` singleton row carrying the scan cursor between runs. */
 export const RECHECK_CURSOR_ROW_ID = '00000000-0000-4000-8000-00000004495c';
 export const RECHECK_CURSOR_ROW_TYPE = 'computeid_recheck_cursor';
+/**
+ * The schedule this job is meant to be bound on, in ONE place. It is the
+ * `withCronMonitoring` slug's declared crontab AND the schedule quoted in
+ * `scripts/gcp-setup/cloud-scheduler.sh`'s NOT_SCHEDULED reason, and a test
+ * asserts the two agree — nothing else bound the literal, so Sentry's monitor
+ * could have drifted from the gcloud binding silently.
+ *
+ * Hourly but deliberately OFF the top of the hour: every `/jobs/*` route
+ * shares one per-IP burst guard, so spreading hourly jobs away from `:00`
+ * keeps one job's burst from eating another's headroom.
+ */
+export const COMPUTEID_RECHECK_CRON = '17 * * * *';
 
 export type RecheckSkipReason = 'flag_off' | 'api_key_unconfigured' | 'ca_pin_unusable';
 
@@ -286,7 +298,13 @@ function observe(outcome: VerifyOutcome, passportId: string, ca: PinnedCa, now: 
   return { kind: 'unsigned', status: unsignedStatus };
 }
 
-const STATUS_EVENT: Record<string, ComputeIdPassportEvent> = {
+/**
+ * Partner status → the event a webhook would have carried. Every KEY must be
+ * a real `AgentStatus`: `decideEvent` compares the key against `agent.status`,
+ * so a key outside the enum can never equal one and the divergence it exists
+ * to catch would read as `unknown_status` forever. Test-pinned.
+ */
+export const STATUS_EVENT: Record<string, ComputeIdPassportEvent> = {
   revoked: 'passport.revoked',
   suspended: 'passport.suspended',
   active: 'passport.reinstated',
@@ -295,7 +313,7 @@ const STATUS_EVENT: Record<string, ComputeIdPassportEvent> = {
 export type RecheckDecision =
   | { event: ComputeIdPassportEvent; timestamp: string; tombstone: boolean }
   /** Nothing to do, and why — so a permanent divergence is counted rather than silent. */
-  | { event: null; reason: 'agreed' | 'unknown_status' | 'insufficient_evidence' | 'locally_terminal' };
+  | { event: null; reason: 'agreed' | 'unknown_status' | 'insufficient_evidence' | 'locally_terminal' | 'suspended_by_org' };
 
 const AGREED = { event: null, reason: 'agreed' } as const;
 
@@ -317,7 +335,7 @@ const AGREED = { event: null, reason: 'agreed' } as const;
  * not about stopping the keys.
  */
 export function decideEvent(
-  agent: Pick<BoundAgentRow, 'status'>,
+  agent: Pick<BoundAgentRow, 'status' | 'metadata'>,
   observation: Observation,
   now: Date,
 ): RecheckDecision {
@@ -335,6 +353,17 @@ export function decideEvent(
   if (agent.status.toLowerCase() === 'revoked') return { event: null, reason: 'locally_terminal' };
 
   if (event === 'passport.reinstated') {
+    // Only a suspension WE applied can be lifted by a partner event —
+    // `binding.ts` answers `suspended_by_org` otherwise. Mirror that here or
+    // the job submits the same doomed event every hour: binding's noop branch
+    // still returns a metadata `update`, so each run takes the row lock,
+    // writes a falsified `last_event: 'passport.reinstated'`, ratchets the
+    // ordering floor and adds a permanent `declined`. The guard is
+    // REINSTATE-ONLY — an org-suspended agent must stay suspendable, so this
+    // can never fail open in the restrictive direction.
+    if (readBinding(agent.metadata)?.suspended_by !== 'computeid') {
+      return { event: null, reason: 'suspended_by_org' };
+    }
     // Reactivating API keys demands the strongest evidence we can get.
     if (observation.kind !== 'signed') return { event: null, reason: 'insufficient_evidence' };
     if (observation.passportSignatureValid === false) return { event: null, reason: 'insufficient_evidence' };
@@ -529,7 +558,12 @@ export async function runComputeIdPassportRecheck(
 
   // A run in which EVERY partner call was refused for authentication has
   // verified nothing — the classic shape of a rotated partner key. It must not
-  // read as a healthy run.
+  // read as a healthy run, and a Sentry *message* alone is not enough: the
+  // route answers 200 and `withCronMonitoring` then reports an OK check-in, so
+  // the cron monitor would say the safety net is healthy while it is doing
+  // nothing at all. THROW instead (CTO ruling 2026-09-12) — the route's catch
+  // turns this into a 500, the check-in goes to `error`, and the monitor pages.
+  // Partial auth failures do not qualify: one bad passport is not a rotated key.
   if (result.unresolvedAuth > 0 && result.unresolvedAuth === result.passportsVerified) {
     logger.error({ ...result }, 'ComputeID re-check: every partner call was rejected — the API key is likely rotated or revoked');
     Sentry.captureMessage('ComputeID re-check: all partner calls rejected (auth)', {
@@ -537,7 +571,11 @@ export async function runComputeIdPassportRecheck(
       fingerprint: ['computeid-recheck-auth-failure'],
       extra: { passportsVerified: result.passportsVerified },
     });
-  } else if (result.truncated) {
+    throw new Error(
+      `ComputeID re-check verified nothing: all ${result.passportsVerified} partner call(s) failed authentication`,
+    );
+  }
+  if (result.truncated) {
     logger.warn({ ...result }, 'ComputeID re-check: capped before a full pass — coverage resumes next run');
     Sentry.captureMessage('ComputeID re-check truncated by run cap', {
       level: 'warning',

@@ -78,7 +78,7 @@ gcloud scheduler jobs create http computeid-passport-recheck \
   --oidc-token-audience='https://arkova-worker-270018525501.us-central1.run.app'
 ```
 
-`17 * * * *`, not `0 * * * *`: every `/jobs/*` route shares one per-IP rate limiter and the top-of-hour pile-up already costs other jobs 429s. Until (a) and (b) are done the route answers `200 {"skipped":true,"reason":"api_key_unconfigured"}` — harmless, but it is not protecting anything.
+`17 * * * *`, not `0 * * * *`: every `/jobs/*` route shares one per-IP burst guard, so spreading hourly jobs off `:00` keeps one job's burst from eating another's headroom. SCRUM-4475 replaced the global bucket, so `:00` is no longer actively costing other jobs 429s — this is prevention, not a live incident. Until (a) and (b) are done the route answers `200 {"skipped":true,"reason":"api_key_unconfigured"}` — harmless, but it is not protecting anything.
 
 ## Rollback
 

@@ -37,6 +37,7 @@ const {
   RECHECK_MAX_AGENTS_PER_RUN,
   RECHECK_MAX_VERIFY_CALLS,
   RECHECK_VERIFY_CONCURRENCY,
+  STATUS_EVENT,
 } = await import('./computeid-passport-recheck.js');
 type RecheckPorts = import('./computeid-passport-recheck.js').RecheckPorts;
 type Observation = import('./computeid-passport-recheck.js').Observation;
@@ -365,6 +366,29 @@ describe('runComputeIdPassportRecheck — bounds', () => {
     expect(r.checked).toBe(RECHECK_MAX_AGENTS_PER_RUN);
   });
 
+  it('stops at the VERIFY cap when every agent carries a DISTINCT passport', async () => {
+    // The other two cap tests share one passport, so the memo hides the verify
+    // cap entirely and only the agent cap is ever exercised. 1:1 is the real
+    // fleet shape and the verify cap (200) is the binding one.
+    let issued = 0;
+    const p = ports({
+      listBoundAgents: vi.fn(async (_c: string | undefined, limit: number) =>
+        Array.from({ length: limit }, () => {
+          const i = issued++;
+          const row = agent('active', `a${String(i).padStart(6, '0')}`);
+          (row.metadata as { computeid: { passport_id: string } }).computeid.passport_id =
+            `b390e5e6-c79d-4f02-9a42-${String(i).padStart(12, '0')}`;
+          return row;
+        }),
+      ),
+      verifyPassport: vi.fn(async (id: string) => ({ ok: true as const, response: { passport_id: id, status: 'active' } as never })),
+    });
+    const r = await runComputeIdPassportRecheck(p);
+    expect(r.truncated).toBe(true);
+    expect(r.passportsVerified).toBe(RECHECK_MAX_VERIFY_CALLS);
+    expect(r.checked).toBeLessThan(RECHECK_MAX_AGENTS_PER_RUN);
+  });
+
   it('caps outbound partner calls and memoizes per passport', async () => {
     expect(RECHECK_MAX_VERIFY_CALLS).toBeLessThanOrEqual(RECHECK_MAX_AGENTS_PER_RUN);
     const rows = Array.from({ length: 50 }, (_, i) => agent('active', `a${i}`));
@@ -397,32 +421,66 @@ describe('decideEvent', () => {
   const signedActive: Observation = { kind: 'signed', status: 'active', at: ISSUED_AT, passportSignatureValid: true, expiresAt: EXPIRES };
 
   it('declines an unrecognized partner status rather than guessing — and names it as drift', () => {
-    const d = decideEvent({ status: 'active' }, { kind: 'signed', status: 'quarantined', at: ISSUED_AT, passportSignatureValid: true, expiresAt: EXPIRES }, NOW);
+    const d = decideEvent(agent('active'), { kind: 'signed', status: 'quarantined', at: ISSUED_AT, passportSignatureValid: true, expiresAt: EXPIRES }, NOW);
     expect(d).toEqual({ event: null, reason: 'unknown_status' });
   });
 
   it('does nothing when the partner agrees with us', () => {
-    expect(decideEvent({ status: 'active' }, signedActive, NOW)).toEqual({ event: null, reason: 'agreed' });
+    expect(decideEvent(agent('active'), signedActive, NOW)).toEqual({ event: null, reason: 'agreed' });
   });
 
   it('does nothing for an unresolved observation', () => {
-    expect(decideEvent({ status: 'active' }, { kind: 'unresolved', reason: 'verify_timeout' }, NOW))
+    expect(decideEvent(agent('active'), { kind: 'unresolved', reason: 'verify_timeout' }, NOW))
       .toEqual({ event: null, reason: 'insufficient_evidence' });
   });
 
   it('stops submitting events for an agent we have already revoked (terminal, per binding.ts + 0448)', () => {
-    expect(decideEvent({ status: 'revoked' }, { kind: 'unsigned', status: 'suspended' }, NOW))
+    expect(decideEvent(agent('revoked'), { kind: 'unsigned', status: 'suspended' }, NOW))
       .toEqual({ event: null, reason: 'locally_terminal' });
   });
 
   it('downgrades an unsigned revocation to a suspension and refuses the tombstone', () => {
-    expect(decideEvent({ status: 'active' }, { kind: 'unsigned', status: 'revoked' }, NOW))
+    expect(decideEvent(agent('active'), { kind: 'unsigned', status: 'revoked' }, NOW))
       .toEqual({ event: 'passport.suspended', timestamp: NOW.toISOString(), tombstone: false });
   });
 
   it('grants the tombstone to a signed revocation', () => {
-    expect(decideEvent({ status: 'active' }, { kind: 'signed', status: 'revoked', at: ISSUED_AT, passportSignatureValid: true, expiresAt: EXPIRES }, NOW))
+    expect(decideEvent(agent('active'), { kind: 'signed', status: 'revoked', at: ISSUED_AT, passportSignatureValid: true, expiresAt: EXPIRES }, NOW))
       .toEqual({ event: 'passport.revoked', timestamp: ISSUED_AT, tombstone: true });
+  });
+
+  it('does not try to reinstate an agent the ORGANIZATION suspended', () => {
+    // `binding.ts` lifts only a suspension WE applied (`suspended_by`
+    // 'computeid'); anything else is `suspended_by_org`. Without a matching
+    // guard here the job submits `passport.reinstated` every hour forever,
+    // and binding's noop branch still returns a metadata `update` — so each
+    // run takes the row lock, writes a falsified `last_event`, ratchets the
+    // ordering floor and adds a permanent `declined`.
+    const orgSuspended = agent('suspended');
+    delete (orgSuspended.metadata as { computeid: { suspended_by?: string } }).computeid.suspended_by;
+    expect(decideEvent(orgSuspended, { kind: 'signed', status: 'active', at: ISSUED_AT, passportSignatureValid: true, expiresAt: EXPIRES }, NOW))
+      .toEqual({ event: null, reason: 'suspended_by_org' });
+  });
+
+  it('still reinstates a suspension WE applied', () => {
+    expect(decideEvent(agent('suspended'), { kind: 'signed', status: 'active', at: ISSUED_AT, passportSignatureValid: true, expiresAt: EXPIRES }, NOW))
+      .toEqual({ event: 'passport.reinstated', timestamp: ISSUED_AT, tombstone: false });
+  });
+
+  it('an org-suspended agent is still SUSPENDABLE — the guard is reinstate-only, never fail-open', () => {
+    const orgSuspended = agent('active');
+    expect(decideEvent(orgSuspended, { kind: 'unsigned', status: 'revoked' }, NOW))
+      .toEqual({ event: 'passport.suspended', timestamp: NOW.toISOString(), tombstone: false });
+  });
+
+  it('every STATUS_EVENT key is a real AgentStatus — a typo would silently never match', () => {
+    // `decideEvent` compares the mapped key against `agent.status`. A key
+    // outside the enum can never equal one, so the divergence it is supposed
+    // to catch reads as "unknown status" forever.
+    const agentStatuses: ReadonlyArray<BoundAgentRow['status']> = ['active', 'suspended', 'revoked'];
+    for (const key of Object.keys(STATUS_EVENT)) {
+      expect(agentStatuses).toContain(key as BoundAgentRow['status']);
+    }
   });
 });
 
@@ -463,16 +521,36 @@ describe('runComputeIdPassportRecheck — clock, cursor and diagnostics', () => 
     expect((calls[0][0] as { payloadHash: string }).payloadHash).toMatch(PAYLOAD_HASH_RE);
   });
 
-  it('does not read as a healthy run when EVERY partner call was rejected for authentication', async () => {
+  it('THROWS when every partner call was rejected for authentication, so the cron monitor pages', async () => {
+    // CTO ruling 2026-09-12. A rotated partner key verifies nothing, and a
+    // 200 lets `withCronMonitoring` report an OK check-in — the monitor then
+    // says the safety net is healthy while it is doing nothing at all. The
+    // route's catch turns this into a 500, which is what fires the alert.
     const p = ports({
       listBoundAgents: onePage([agent('active')]),
       verifyPassport: vi.fn(async () => ({ ok: false as const, reason: 'http_error' as const, status: 401 })),
     });
-    await expect(runComputeIdPassportRecheck(p)).resolves.toMatchObject({ unresolved: 1, unresolvedAuth: 1 });
+    await expect(runComputeIdPassportRecheck(p)).rejects.toThrow(/authentication/i);
     expect(captureMessage).toHaveBeenCalledWith(
       expect.stringContaining('all partner calls rejected'),
       expect.objectContaining({ level: 'error' }),
     );
+  });
+
+  it('does NOT throw when only SOME calls failed auth — a partial failure is not a rotated key', async () => {
+    const rows = [agent('active', 'a1'), agent('active', 'a2')];
+    (rows[1].metadata as { computeid: { passport_id: string } }).computeid.passport_id =
+      'adff394c-131d-4a5a-b7d5-a799d92af678';
+    let call = 0;
+    const p = ports({
+      listBoundAgents: onePage(rows),
+      verifyPassport: vi.fn(async (id: string) =>
+        call++ === 0
+          ? { ok: false as const, reason: 'http_error' as const, status: 401 }
+          : { ok: true as const, response: { passport_id: id, status: 'active' } as never },
+      ),
+    });
+    await expect(runComputeIdPassportRecheck(p)).resolves.toMatchObject({ unresolvedAuth: 1, passportsVerified: 2 });
   });
 
   it('a partner outage is unresolved but NOT an auth failure', async () => {

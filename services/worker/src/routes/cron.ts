@@ -36,7 +36,7 @@ import {
 import { runProofCoverageCheck } from '../jobs/proof-coverage-monitor.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { runPlatformHealthDigest } from '../jobs/platform-health-digest-cron.js';
-import { runComputeIdPassportRecheck } from '../jobs/computeid-passport-recheck.js';
+import { COMPUTEID_RECHECK_CRON, runComputeIdPassportRecheck } from '../jobs/computeid-passport-recheck.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
@@ -820,7 +820,7 @@ cronRouter.post('/computeid-passport-recheck', async (_req, res) => {
   try {
     const result = await withCronMonitoring(
       'computeid-passport-recheck',
-      '17 * * * *',
+      COMPUTEID_RECHECK_CRON,
       () => runComputeIdPassportRecheck(),
     )();
     res.json(result);

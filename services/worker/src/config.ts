@@ -870,6 +870,22 @@ const ConfigSchema = z.object({
         });
       }
     }
+  } else if (cfg.computeidCaCertPem?.trim()) {
+    // VALIDATE-IF-PRESENT (SCRUM-4495 review). Since 2026-09-12 the pin is
+    // wired into deploy-worker.yml `--set-secrets` while the flag is still
+    // false, so a malformed or rotated PEM now sits in prod completely
+    // unexercised — and is first parsed by the activation deploy, i.e. the one
+    // moment nobody wants a surprise. Warn (never `addIssue`) while the flag is
+    // off: a dark integration must not be able to fail the worker's boot.
+    try {
+      loadPinnedCa(cfg.computeidCaCertPem);
+    } catch (err) {
+      console.warn(
+        '[config] COMPUTEID_CA_CERT_PEM is set but is NOT a usable CA pin '
+        + `(${err instanceof Error ? err.message : String(err)}). The ComputeID integration is dark, so this is not fatal — `
+        + 'but flipping ENABLE_COMPUTEID_INTEGRATION=true will fail the boot until it is fixed.',
+      );
+    }
   }
 
   // Veremark: when the webhook is enabled, the HMAC secret must be set.

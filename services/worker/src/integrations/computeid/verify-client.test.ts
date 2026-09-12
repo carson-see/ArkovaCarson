@@ -65,10 +65,14 @@ describe('fetchPassportVerification', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('refuses to follow redirects (an off-origin redirect is an error, never a request we make)', async () => {
+  it('refuses to follow redirects (an off-origin redirect is surfaced, never a request we make)', async () => {
+    // `manual`, not `error`: the safe-fetch impl surfaces the 3xx so we can
+    // report its status, rather than collapsing it into an opaque throw. The
+    // behavioural assertion — that the redirect is never followed — is the
+    // "does not follow a redirect" test below, which counts dispatch calls.
     const fetchImpl = vi.fn(async () => jsonResponse({ passport_id: PASSPORT, status: 'active' }));
     await fetchPassportVerification(PASSPORT, { fetchImpl: fetchImpl as unknown as typeof fetch });
-    expect((fetchImpl.mock.calls[0] as unknown as [URL, RequestInit])[1].redirect).toBe('error');
+    expect((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].redirect).toBe('manual');
   });
 
   it('passes an abort signal so a hung partner cannot hold the hourly job open', async () => {
@@ -121,6 +125,51 @@ describe('fetchPassportVerification', () => {
     await expect(fetchPassportVerification(PASSPORT, { fetchImpl: fetchImpl as unknown as typeof fetch }))
       .resolves.toEqual({ ok: false, reason: 'response_too_large' });
     expect(read).toBe(false);
+  });
+
+  it('refuses a partner base URL that resolves to the cloud metadata IP', async () => {
+    // `computeidApiBaseUrl` is env-tunable, and even when it is not, the
+    // hostname is resolved by DNS we do not control. Without an IP-pinned
+    // egress primitive a rebind sends Arkova's partner API key — and the reply
+    // — to 169.254.169.254. This is the residual SSRF the raw global `fetch`
+    // left open (lib/agents.md: all worker egress goes through safe-fetch).
+    configMock.computeidApiBaseUrl = 'https://partner.rebind.test';
+    const dispatch = vi.fn();
+    const out = await fetchPassportVerification(PASSPORT, {
+      safeFetchDeps: { resolve: async () => ['169.254.169.254'], dispatch },
+    });
+    expect(out).toEqual({ ok: false, reason: 'request_failed' });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('connects to the PINNED resolved IP, not a re-resolved one', async () => {
+    configMock.computeidApiBaseUrl = 'https://partner.example.test';
+    const dispatch = vi.fn(async () => ({
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      url: `https://partner.example.test/v1/agents/${PASSPORT}/verify`,
+      arrayBuffer: async () => new TextEncoder().encode(JSON.stringify({ passport_id: PASSPORT, status: 'active' })).buffer,
+    }));
+    const out = await fetchPassportVerification(PASSPORT, {
+      safeFetchDeps: { resolve: async () => ['203.0.113.7'], dispatch },
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(dispatch).toHaveBeenCalledWith('203.0.113.7', expect.stringContaining('/v1/agents/'), expect.anything());
+  });
+
+  it('does not follow a redirect — a 3xx is an http_error, never another request', async () => {
+    configMock.computeidApiBaseUrl = 'https://partner.example.test';
+    const dispatch = vi.fn(async () => ({
+      status: 302,
+      headers: new Headers({ location: 'http://169.254.169.254/latest/meta-data/' }),
+      url: 'https://partner.example.test/v1/agents/x/verify',
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+    const out = await fetchPassportVerification(PASSPORT, {
+      safeFetchDeps: { resolve: async () => ['203.0.113.7'], dispatch },
+    });
+    expect(out).toEqual({ ok: false, reason: 'http_error', status: 302 });
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('does not park forever on a partner that sends headers and then stalls the body', async () => {
