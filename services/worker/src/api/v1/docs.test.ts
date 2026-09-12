@@ -174,6 +174,30 @@ describe('OpenAPI spec', () => {
     expect(openApiSpec.paths['/usage'].get['x-arkova-required-scopes']).toEqual(['usage:read']);
   });
 
+  // SCRUM-3981 — the served spec is what a partner reads before minting a key
+  // (docs/api/canonical-sources.md: docs.ts is canonical for v1, openapi.yaml
+  // is demoted). Every /webhooks* operation now declares the scope it requires
+  // and the 403 it answers without it.
+  it('documents webhooks:manage and a 403 on every /webhooks* operation', () => {
+    const webhookPaths = Object.keys(openApiSpec.paths).filter((p) => p.startsWith('/webhooks'));
+    expect(webhookPaths.length).toBeGreaterThan(0);
+
+    let operationCount = 0;
+    for (const path of webhookPaths) {
+      for (const [method, operation] of Object.entries(openApiSpec.paths[path])) {
+        const op = operation as Record<string, unknown>;
+        operationCount += 1;
+        expect(op['x-arkova-required-scopes'], `${method.toUpperCase()} ${path}`).toEqual(['webhooks:manage']);
+        const responses = op.responses as Record<string, { description?: string }>;
+        expect(responses['403'], `${method.toUpperCase()} ${path} must document its 403`).toBeDefined();
+        expect(responses['403'].description).toContain('insufficient_scope');
+      }
+    }
+    // Matches the 10 routes webhooksRouter registers (webhooks-scope.test.ts
+    // asserts the same count off the Express stack).
+    expect(operationCount).toBe(10);
+  });
+
   it('/anchor/submit requestBody mirrors /anchor requestBody', () => {
     const anchorBody = openApiSpec.paths['/anchor'].post.requestBody;
     const submitBody = openApiSpec.paths['/anchor/submit'].post.requestBody;

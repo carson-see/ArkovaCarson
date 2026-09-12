@@ -84,7 +84,11 @@ function ownRoutes(): MountedRoute[] {
 const ENDPOINT_ID = '11111111-1111-4111-8111-111111111111';
 
 /** Concrete request for a route: `:id` filled in, plus the minimum body. */
-function requestFor(route: MountedRoute): { method: ExpressMethod; url: string; body: unknown } {
+function requestFor(route: MountedRoute): {
+  method: ExpressMethod;
+  url: string;
+  body: Record<string, string> | undefined;
+} {
   const url = `/api/v1/webhooks${route.path === '/' ? '' : route.path.replace(':id', ENDPOINT_ID)}`;
   const body =
     route.method === 'post' || route.method === 'patch'
