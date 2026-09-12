@@ -7,17 +7,17 @@
   "approval_status": "pending",
   "approval_actor": "",
   "approval_time": "",
-  "train_launch_sha": "6cb68f88ef27eb3e460bc85d5ce8ec3de15c35f0",
-  "target_main_sha": "de36f2afcb6573963cf75a68b8564ebf1f72b2fe",
+  "train_launch_sha": "89dba6baafa1f73311e6885bcb85698d7f3d709d",
+  "target_main_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
   "allowed_base_shas": [
-    "de36f2afcb6573963cf75a68b8564ebf1f72b2fe"
+    "8c09886eb3c75e4fc070d27b7b1a577c08422f09"
   ],
   "covered_main_shas": [],
   "included_prs": [
     {
       "number": 2837,
       "head_sha": "3f7575459c97e18d07db377d68943989dc87720f",
-      "base_sha": "de36f2afcb6573963cf75a68b8564ebf1f72b2fe",
+      "base_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "TypeCheck & Lint, Tests, Policy Lints, Dependency Scanning green on head after review fold; only Staging Soak Evidence Gate red pending this manifest.",
@@ -28,7 +28,7 @@
     {
       "number": 2834,
       "head_sha": "0b1f1897a609e8afb1be20b828aeb5b4be3e0241",
-      "base_sha": "de36f2afcb6573963cf75a68b8564ebf1f72b2fe",
+      "base_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "Required checks green on head; SonarCloud S6505 addressed with --no-install + test fake.",
@@ -38,8 +38,8 @@
     },
     {
       "number": 2841,
-      "head_sha": "90811d106f8d74259bdd3a4851cf0c97c3d3297e",
-      "base_sha": "de36f2afcb6573963cf75a68b8564ebf1f72b2fe",
+      "head_sha": "492260d03c46b779b5440a3c2f52662f9b0545f7",
+      "base_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "Worker 5,585 tests; root 92; Lighthouse HF-429 flake re-run.",
@@ -49,8 +49,8 @@
     },
     {
       "number": 2842,
-      "head_sha": "4c611fa8037078795100c5b8325a91584efaef64",
-      "base_sha": "de36f2afcb6573963cf75a68b8564ebf1f72b2fe",
+      "head_sha": "aeddccc4b7e2a3a74a0ae0fb39f95bca4ad9b31f",
+      "base_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "Policy Lints fixed (bounded body read); 125+213+79 worker tests; TLA 12/12.",
@@ -65,18 +65,18 @@
     "staging_api_base": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
     "staging_url": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
     "cloud_run_service": "arkova-worker-cto-train-b-0912-staging",
-    "revision": "arkova-worker-cto-train-b-0912-staging-00007-lis",
+    "revision": "",
     "deploy_tag": "train-b2",
-    "image_digest": "sha256:27b752fcbe9a6b983ef6762217d9c3691512835ab3ec90cb0cfaa3e2d2a7cc91",
+    "image_digest": "",
     "supabase_project_ref": "xhvasifpunswhsgfsstd",
-    "deploy_log_id": "2",
+    "deploy_log_id": "",
     "preflight_result": "environment_type=clean_mirror"
   },
   "soak": {
-    "start": "2026-09-12T21:56:48Z",
+    "start": "",
     "end": "",
     "duration_hours": 4,
-    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@84c0ce462",
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@45549ba9d",
     "result": "",
     "evidence_links": [],
     "expires_at": "2026-09-19T21:56:48Z"
@@ -102,7 +102,8 @@
   "exceptions": [
     "#2841 email delivery not exercised on the rig (no Resend key by decision); template pinned by unit tests.",
     "#2842 lit reconciliation path not exercised (flag off = prod state); offline golden receipt test + 38 unit tests.",
-    "Post-soak T0 delta: none expected."
+    "Post-soak T0 delta: none expected.",
+    "Window 1 (head 6cb68f88e, rev 00007-lis, 21:56:48Z\u2192) superseded: #2841/#2842 gap fixes (492260d03, aeddccc4b) changed the train head; window 2 runs on 89dba6baa."
   ],
   "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b2-2026-09-12.json",
   "staging_branch": "rc/train-b2-2026-09-12",
