@@ -20,6 +20,7 @@
  */
 import { config } from '../../config.js';
 import { DB_UUID_RE } from '../../utils/db-row-validation.js';
+import { readTextBounded } from '../../utils/body-read-timeout.js';
 import { ComputeIdVerifyResponse, type ComputeIdVerifyResponseT } from './schemas.js';
 
 export const VERIFY_REQUEST_TIMEOUT_MS = 5_000;
@@ -81,11 +82,23 @@ export async function fetchPassportVerification(
 
   if (!res.ok) return { ok: false, reason: 'http_error', status: res.status };
 
+  // Declared size first: a body that ANNOUNCES more than the cap is refused
+  // without reading a byte of it, so the cap below is the backstop for a
+  // response that lies or omits the header, not the only line of defence.
+  const declared = Number(res.headers?.get?.('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > VERIFY_MAX_RESPONSE_BYTES) {
+    return { ok: false, reason: 'response_too_large' };
+  }
+
   let text: string;
   try {
-    text = await res.text();
-  } catch {
-    return { ok: false, reason: 'request_failed' };
+    // `AbortSignal.timeout` above bounds the REQUEST, not this read: a partner
+    // that sends headers and then stalls the body parks this await forever
+    // (F-D0-5 / feedback_bounded_body_reads). The URL carries no credential —
+    // the API key is a header — so it is safe in the timeout error's message.
+    text = await readTextBounded(res, url.toString(), opts.timeoutMs ?? VERIFY_REQUEST_TIMEOUT_MS);
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error && err.name === 'BodyReadTimeoutError' ? 'timeout' : 'request_failed' };
   }
   if (Buffer.byteLength(text, 'utf8') > VERIFY_MAX_RESPONSE_BYTES) {
     return { ok: false, reason: 'response_too_large' };

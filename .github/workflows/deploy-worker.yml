@@ -300,19 +300,29 @@ jobs:
       - name: Preflight required Secret Manager entries
         run: |
           set -uo pipefail
-          MISSING=""
+          # `describe` needs secretmanager.secrets.get, which roles/
+          # secretmanager.secretAccessor does NOT grant. Discarding stderr
+          # would therefore report a PERMISSION_DENIED as "the secret does not
+          # exist" and red EVERY prod deploy with a fix instruction that
+          # cannot work. Each failure is classified from its own stderr, and
+          # anything that is not an unambiguous NOT_FOUND fails with the real
+          # gcloud message instead of a guess.
+          STATUS=0
           for secret in computeid-webhook-secret computeid-ca-cert-pem; do
-            if ! gcloud secrets describe "${secret}" \
-                 --project=${{ env.PROJECT_ID }} >/dev/null 2>&1; then
-              MISSING="${MISSING} ${secret}"
+            ERR_FILE="$(mktemp)"
+            if gcloud secrets describe "${secret}" \
+                 --project=${{ env.PROJECT_ID }} >/dev/null 2>"${ERR_FILE}"; then
+              continue
             fi
-          done
-          if [ -n "${MISSING}" ]; then
-            for secret in ${MISSING}; do
+            ERR="$(tr '\n' ' ' <"${ERR_FILE}")"
+            if printf '%s' "${ERR}" | grep -qiE 'NOT_FOUND|was not found|does not (or may not )?exist'; then
               echo "::error title=Missing Secret Manager secret::${secret} does not exist in project ${{ env.PROJECT_ID }}, but deploy-worker.yml passes it to --set-secrets. Cloud Run will reject the revision. Create it first: printf %s \"<value>\" | gcloud secrets create ${secret} --project=${{ env.PROJECT_ID }} --replication-policy=automatic --data-file=- (values for the ComputeID secrets come from the partner — never commit them). Then re-run this workflow."
-            done
-            exit 1
-          fi
+            else
+              echo "::error title=Secret Manager preflight could not check ${secret}::gcloud could not describe ${secret} in ${{ env.PROJECT_ID }}, and this is NOT a not-found. Most likely the deploy service account lacks secretmanager.secrets.get (roles/secretmanager.secretAccessor does not include it). gcloud said: ${ERR}"
+            fi
+            STATUS=1
+          done
+          if [ "${STATUS}" -ne 0 ]; then exit 1; fi
           echo "All newly-wired Secret Manager entries exist."
 
       - name: Build image

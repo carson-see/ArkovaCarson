@@ -19,8 +19,10 @@
  * boot. This file is NOT in that set — nothing in the config boot path imports
  * it — so it may use `db` and `logger` like any other runtime module.
  */
+import { createHash } from 'node:crypto';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { Sentry } from '../../utils/sentry.js';
 import type { Json } from '../../types/database.types.js';
 import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import { applyPassportEvent, type AgentStatus, type KeyEnforcement } from './binding.js';
@@ -28,6 +30,21 @@ import type { ComputeIdPassportEvent } from './schemas.js';
 
 /** Page size for the bound-agent scan. Bounded so one passport cannot unbound-loop a request. */
 export const BOUND_AGENT_PAGE_SIZE = 200;
+
+/**
+ * `enqueue_computeid_failure` (migration 0448) RAISEs `22023` unless
+ * `p_payload_hash` matches this exactly. It is a contract, not a convention:
+ * a producer that passes anything else gets EVERY DLQ row rejected, and since
+ * `recordPassportFailure` cannot re-raise (the DLQ is the diagnostic of last
+ * resort, not the operation), the loss is silent. Both producers therefore
+ * mint their hash through `payloadHashOf` and nothing else.
+ */
+export const PAYLOAD_HASH_RE = /^[0-9a-f]{64}$/;
+
+/** Lowercase hex SHA-256 — the one shape the DLQ accepts. */
+export function payloadHashOf(input: string | Buffer): string {
+  return createHash('sha256').update(input).digest('hex');
+}
 
 export interface BoundAgentRow {
   id: string;
@@ -58,22 +75,40 @@ export type TransitionOutcome =
  * Record a failure for operator follow-up. Fixed reason strings only — the
  * partner's free-text `reason` and the raw body never reach the DLQ, the
  * logger, or Sentry.
+ *
+ * A rejected DLQ write is itself an incident: this row is the only durable
+ * trace of a failed transition, so losing it means a revoked passport's keys
+ * stay live with nothing to page on. It therefore logs at ERROR and raises a
+ * Sentry event rather than the warn it used to — a malformed `payloadHash`
+ * rejects EVERY row from that producer, so a warn buried in an otherwise
+ * healthy 200 is exactly how this stays invisible.
  */
 export async function recordPassportFailure(args: {
   reason: string;
   externalId: string | null;
   payloadHash: string;
 }): Promise<void> {
+  const reason = truncateUtf16Safe(args.reason, 500);
   try {
     const { error } = await db.rpc('enqueue_computeid_failure', {
-      p_reason: truncateUtf16Safe(args.reason, 500),
+      p_reason: reason,
       p_payload_hash: args.payloadHash,
       ...(args.externalId !== null ? { p_external_id: args.externalId } : {}),
     });
-    if (error) logger.warn({ error }, 'ComputeID: DLQ insert failed (non-fatal)');
+    if (error) reportDlqLoss(reason, error);
   } catch (err) {
-    logger.warn({ error: err }, 'ComputeID: DLQ insert threw (non-fatal)');
+    reportDlqLoss(reason, err);
   }
+}
+
+/** The DLQ row did not land. Loud, aggregated, and free of partner bytes. */
+function reportDlqLoss(reason: string, error: unknown): void {
+  logger.error({ error, reason }, 'ComputeID: DLQ insert REJECTED — this failure is now untracked');
+  Sentry.captureMessage('ComputeID: DLQ insert rejected', {
+    level: 'error',
+    fingerprint: ['computeid-dlq-insert-rejected'],
+    extra: { reason },
+  });
 }
 
 /**

@@ -110,6 +110,35 @@ describe('fetchPassportVerification', () => {
       .resolves.toEqual({ ok: false, reason: 'response_too_large' });
   });
 
+  it('refuses an oversized body on its DECLARED length, without reading it', async () => {
+    let read = false;
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-length': String(VERIFY_MAX_RESPONSE_BYTES + 1) }),
+      text: async () => { read = true; return 'x'; },
+    });
+    await expect(fetchPassportVerification(PASSPORT, { fetchImpl: fetchImpl as unknown as typeof fetch }))
+      .resolves.toEqual({ ok: false, reason: 'response_too_large' });
+    expect(read).toBe(false);
+  });
+
+  it('does not park forever on a partner that sends headers and then stalls the body', async () => {
+    // `AbortSignal.timeout` bounds the REQUEST; the body read is its own await
+    // with no deadline of its own (F-D0-5). One parked read inside this job
+    // holds the whole hourly reconciliation open.
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: null,
+      text: () => new Promise<string>(() => {}),
+    });
+    await expect(
+      fetchPassportVerification(PASSPORT, { fetchImpl: fetchImpl as unknown as typeof fetch, timeoutMs: 25 }),
+    ).resolves.toEqual({ ok: false, reason: 'timeout' });
+  });
+
   it('keeps the full verification_receipt so the caller can verify its signature', async () => {
     const receipt = {
       passport_id: PASSPORT,
