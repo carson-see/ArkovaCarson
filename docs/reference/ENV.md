@@ -322,6 +322,13 @@ REPLICATE_API_TOKEN=                # QA only
 AI_BATCH_CONCURRENCY=3
 CF_AI_MODEL=
 
+# SCRUM-4939 — ai_credits auto-provisioning
+AI_CREDITS_MONTHLY_ALLOCATION=100   # allocation for an auto-provisioned ai_credits period row
+                                    # (cost-tracker.ts ensureAICreditsPeriod). Must be a positive
+                                    # integer; unset/blank/non-numeric/<=0/fractional all fall back
+                                    # to 100. Only affects a NEWLY-created period row — never
+                                    # overwrites an existing row's monthly_allocation.
+
 # SCRUM-1061 — Vertex AI SDK migration (Gemini Golden only, NOT Nessie)
 ENABLE_VERTEX_AI=false              # when true, Gemini Golden uses Vertex AI SDK + SA auth
 GCP_PROJECT_ID=arkova1              # GCP project for Vertex AI

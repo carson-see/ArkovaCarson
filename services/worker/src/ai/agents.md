@@ -1,6 +1,38 @@
 # agents.md — services/worker/src/ai/
 
-_Last updated: 2026-08-03_
+_Last updated: 2026-09-12_
+
+## 2026-09-12 `cost-tracker.ts` — `ensureAICreditsPeriod` auto-provisions the current `ai_credits` period (SCRUM-4939)
+
+Since PR #2442 made `check_ai_credits` / `deduct_ai_credits` fail CLOSED when no `ai_credits` row
+covers the caller's current period, every org with no row got a hard 503 `credit_system_unavailable`
+on its very first AI extraction — nothing had ever provisioned that row (no trigger, cron, or code
+path did it). The CTO manually seeded rows for known orgs as a stopgap; this is the permanent fix.
+
+`ensureAICreditsPeriod(orgId, now = new Date())` selects for a row covering `now` (mirroring
+`deduct_ai_credits`'s own `period_start <= now AND period_end > now` window, not an exact match on a
+calendar-aligned `period_start`) and inserts one only when none exists, using
+`resolveAICreditsMonthlyAllocation()` (env `AI_CREDITS_MONTHLY_ALLOCATION`, default 100 — see
+`docs/reference/ENV.md`) and `used_this_month: 0`. It never overwrites an existing row.
+
+**No unique constraint exists on `(org_id, period_start)`** — `ai_credits` only has a primary key on
+`id` (`supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`) — so this is a select-then-insert,
+not an upsert. That absence is also why the lookup uses the period-covering window instead of an exact
+`period_start` match: `deduct_ai_credits`'s `UPDATE` has no row limit, so a second, overlapping-period
+row for the same org would let a future deduction silently double-increment two rows at once. A race
+against a concurrent insert is treated as non-fatal (logged at warn, function returns `false`) — the
+caller's own `deduct_ai_credits` call remains the actual gate either way.
+
+Wired in before the debit in both fail-closed callers: `api/v1/ai-extract.ts` calls it immediately
+before `deductAICredits` (only when `orgId` is defined); `api/v1/ai-extract-batch.ts` calls it once
+before `checkAICredits`, not per-row before each per-item debit, because the batch route latches
+`hasFiniteCredits` from that single `checkAICredits` call and reuses it for every row in the batch —
+provisioning after that point would leave `hasFiniteCredits` stale for the whole request. Both call sites
+skip the call when `orgId` is undefined; user-only credit rows are out of scope for this fix.
+
+`ai-search.ts` and `ai-verify-search.ts` were deliberately NOT touched — see the api/v1 `agents.md`
+2026-06-24 entry: they debit AFTER the work is already done and are a different (still fail-open) defect
+class, not "the same deduct pattern" this fix addresses.
 
 ## 2026-08-03 `report-generator.ts` — discarded Supabase `error` masked as COMPLETE
 

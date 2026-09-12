@@ -13,7 +13,12 @@
 import { Router, Request, Response } from 'express';
 import { ExtractionRequestSchema } from '../../ai/schemas.js';
 import { createExtractionProvider } from '../../ai/factory.js';
-import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
+import {
+  checkAICredits,
+  deductAICredits,
+  ensureAICreditsPeriod,
+  logAIUsageEvent,
+} from '../../ai/cost-tracker.js';
 import { captureCreditRpcFailureAlert } from '../../utils/sentry.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
@@ -244,6 +249,15 @@ router.post('/', async (req: Request, res: Response) => {
         limit: creditBalance.monthlyAllocation,
       });
       return;
+    }
+
+    // SCRUM-4939: nothing has ever provisioned an `ai_credits` row for an
+    // org (no trigger/cron/code path did it), so a first-ever extraction for
+    // a brand-new org previously hit the fail-closed 503 below unconditionally.
+    // Provision the current period's row here — non-fatal on its own failure,
+    // since `deductAICredits` immediately after is still the real gate.
+    if (orgId) {
+      await ensureAICreditsPeriod(orgId);
     }
 
     const deducted = await deductAICredits(orgId, userId, 1);

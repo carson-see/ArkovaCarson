@@ -2,6 +2,23 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
+
+Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI
+extraction for a brand-new org no longer 503s: since PR #2442, `deduct_ai_credits` fails CLOSED when
+no `ai_credits` row covers the current period, and nothing ever provisioned that row. Read
+`ai/agents.md`'s 2026-09-12 entry for the full mechanism (no unique constraint on the table, why the
+lookup window matches `deduct_ai_credits`'s own, race handling).
+
+Placement differs between the two routes on purpose: `ai-extract.ts` calls it immediately before its
+single `deductAICredits` call. `ai-extract-batch.ts` calls it ONCE before `checkAICredits`, not before
+each per-row `deductAICredits` inside `parallelMap` — the batch route latches `hasFiniteCredits` from
+that one `checkAICredits` result and reuses it for every row, so provisioning has to land before that
+read or the whole batch would treat a freshly-created org as still-unmetered. Both skip the call when
+`orgId` is undefined. A genuine deduction failure (insufficient credits / RPC error) still fails CLOSED
+with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
+check itself.
+
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
 `router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.

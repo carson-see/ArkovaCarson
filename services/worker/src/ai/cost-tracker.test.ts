@@ -4,7 +4,7 @@
  * Verifies credit checking, deduction, and usage event logging.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../utils/db.js', () => ({
   db: {
@@ -23,12 +23,30 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 import { db } from '../utils/db.js';
+import { logger } from '../utils/logger.js';
 import {
   checkAICredits,
   deductAICredits,
   logAIUsageEvent,
+  ensureAICreditsPeriod,
+  resolveAICreditsMonthlyAllocation,
   CREDIT_ALLOCATIONS,
 } from './cost-tracker.js';
+
+/**
+ * Builds a chainable mock for the `db.from('ai_credits').select(...)` lookup
+ * `ensureAICreditsPeriod` performs before deciding whether to insert. Mirrors
+ * the `.eq().lte().gt().maybeSingle()` shape used in `requirePaymentCurrent.ts`.
+ */
+function createSelectChain(finalResult: { data: unknown; error: unknown }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chain: any = {};
+  chain.eq = vi.fn(() => chain);
+  chain.lte = vi.fn(() => chain);
+  chain.gt = vi.fn(() => chain);
+  chain.maybeSingle = vi.fn().mockResolvedValue(finalResult);
+  return chain;
+}
 
 describe('AI Cost Tracker', () => {
   beforeEach(() => {
@@ -246,6 +264,153 @@ describe('AI Cost Tracker', () => {
           success: false,
         }),
       ).resolves.not.toThrow();
+    });
+  });
+
+  describe('resolveAICreditsMonthlyAllocation (SCRUM-4939)', () => {
+    const ORIGINAL = process.env.AI_CREDITS_MONTHLY_ALLOCATION;
+
+    afterEach(() => {
+      if (ORIGINAL === undefined) {
+        delete process.env.AI_CREDITS_MONTHLY_ALLOCATION;
+      } else {
+        process.env.AI_CREDITS_MONTHLY_ALLOCATION = ORIGINAL;
+      }
+    });
+
+    it('defaults to 100 when unset', () => {
+      delete process.env.AI_CREDITS_MONTHLY_ALLOCATION;
+      expect(resolveAICreditsMonthlyAllocation()).toBe(100);
+    });
+
+    it('defaults to 100 when blank', () => {
+      process.env.AI_CREDITS_MONTHLY_ALLOCATION = '   ';
+      expect(resolveAICreditsMonthlyAllocation()).toBe(100);
+    });
+
+    it('uses a valid positive integer from the env', () => {
+      process.env.AI_CREDITS_MONTHLY_ALLOCATION = '250';
+      expect(resolveAICreditsMonthlyAllocation()).toBe(250);
+    });
+
+    it.each(['0', '-5', '1.5', 'abc', 'NaN', 'Infinity'])(
+      'falls back to 100 for invalid value %s',
+      (value) => {
+        process.env.AI_CREDITS_MONTHLY_ALLOCATION = value;
+        expect(resolveAICreditsMonthlyAllocation()).toBe(100);
+        expect(logger.warn).toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('ensureAICreditsPeriod (SCRUM-4939)', () => {
+    const ORIGINAL = process.env.AI_CREDITS_MONTHLY_ALLOCATION;
+
+    afterEach(() => {
+      if (ORIGINAL === undefined) {
+        delete process.env.AI_CREDITS_MONTHLY_ALLOCATION;
+      } else {
+        process.env.AI_CREDITS_MONTHLY_ALLOCATION = ORIGINAL;
+      }
+    });
+
+    it('returns false immediately for an empty orgId without touching the DB', async () => {
+      const result = await ensureAICreditsPeriod('');
+      expect(result).toBe(false);
+      expect(db.from).not.toHaveBeenCalled();
+    });
+
+    it('creates a row for the current UTC calendar month when none exists', async () => {
+      delete process.env.AI_CREDITS_MONTHLY_ALLOCATION;
+      const selectChain = createSelectChain({ data: null, error: null });
+      const insertMock = vi.fn().mockResolvedValue({ error: null });
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn(() => selectChain),
+        insert: insertMock,
+      });
+
+      const now = new Date('2026-09-12T14:00:00Z');
+      const result = await ensureAICreditsPeriod('org-123', now);
+
+      expect(result).toBe(true);
+      expect(db.from).toHaveBeenCalledWith('ai_credits');
+      expect(insertMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          org_id: 'org-123',
+          monthly_allocation: 100,
+          used_this_month: 0,
+          period_start: '2026-09-01T00:00:00.000Z',
+          period_end: '2026-10-01T00:00:00.000Z',
+        }),
+      );
+    });
+
+    it('honors AI_CREDITS_MONTHLY_ALLOCATION when creating a row', async () => {
+      process.env.AI_CREDITS_MONTHLY_ALLOCATION = '250';
+      const selectChain = createSelectChain({ data: null, error: null });
+      const insertMock = vi.fn().mockResolvedValue({ error: null });
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn(() => selectChain),
+        insert: insertMock,
+      });
+
+      await ensureAICreditsPeriod('org-123', new Date('2026-09-12T14:00:00Z'));
+
+      expect(insertMock).toHaveBeenCalledWith(
+        expect.objectContaining({ monthly_allocation: 250 }),
+      );
+    });
+
+    it('is a no-op and never overwrites used_this_month when a row already covers the period', async () => {
+      const selectChain = createSelectChain({ data: { id: 'row-1' }, error: null });
+      const insertMock = vi.fn();
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn(() => selectChain),
+        insert: insertMock,
+      });
+
+      const result = await ensureAICreditsPeriod('org-123', new Date('2026-09-12T14:00:00Z'));
+
+      expect(result).toBe(true);
+      expect(insertMock).not.toHaveBeenCalled();
+    });
+
+    it('returns false without throwing when the period lookup errors', async () => {
+      const selectChain = createSelectChain({ data: null, error: { message: 'timeout' } });
+      const insertMock = vi.fn();
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn(() => selectChain),
+        insert: insertMock,
+      });
+
+      const result = await ensureAICreditsPeriod('org-123');
+
+      expect(result).toBe(false);
+      expect(insertMock).not.toHaveBeenCalled();
+    });
+
+    it('returns false without throwing when the insert fails (treated as non-fatal race)', async () => {
+      const selectChain = createSelectChain({ data: null, error: null });
+      const insertMock = vi.fn().mockResolvedValue({ error: { message: 'duplicate key value' } });
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn(() => selectChain),
+        insert: insertMock,
+      });
+
+      const result = await ensureAICreditsPeriod('org-123');
+
+      expect(result).toBe(false);
+      expect(logger.warn).toHaveBeenCalled();
+    });
+
+    it('returns false without throwing on an unexpected exception', async () => {
+      (db.from as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error('boom');
+      });
+
+      const result = await ensureAICreditsPeriod('org-123');
+
+      expect(result).toBe(false);
     });
   });
 });
