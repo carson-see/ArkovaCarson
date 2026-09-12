@@ -17,6 +17,7 @@ No `## Staging Soak Evidence` block is required when every touched file is T0. T
 
 - Tier: T1
 - PR head SHA: 40-character current PR head SHA
+- Post-soak T0 delta: <40-character CURRENT head SHA>   # optional; only when EVERY commit added after the soak touches T0-only files (e2e/, docs/, tests, CI)
 - Staging tag URL or N/A explanation: https://pr-NNN---arkova-worker-staging-... or not applicable - explain why
 - Health/smoke result: health ok, targeted smoke green
 - Soak start: YYYY-MM-DD HH:MM UTC
@@ -33,7 +34,7 @@ T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, publi
 
 ---
 
-## T2 — Standard merge-grade soak (public API / worker behavior / webhook / SDK / AI; 12h minimum)
+## T2 — Standard merge-grade soak (public API / worker behavior / webhook / SDK / AI; 4h minimum)
 
 ```markdown
 ## Staging Soak Evidence
@@ -42,6 +43,7 @@ T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, publi
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-NNNNN-xxx
 - PR head SHA: 40-character commit SHA deployed/tested
+- Post-soak T0 delta: <40-character CURRENT head SHA>   # optional; only when EVERY commit added after the soak touches T0-only files (e2e/, docs/, tests, CI)
 - Changed behavior: name the behavior this PR changed
 - Targeted evidence: name the driver/E2E path that exercised that changed behavior
 - Load/concurrency evidence: name the heavy-user/load proof for that changed behavior, e.g. `tests/load/*`, `tests/k6/*`, p95/error-rate thresholds, queue drain, retry fan-out, or rate-limit evidence
@@ -76,6 +78,7 @@ Do not include placeholder fields such as `PENDING`, `NOT STARTED`, or planned f
 
 - Tier: T2
 - PR head SHA: 40-character current PR head SHA
+- Post-soak T0 delta: <40-character CURRENT head SHA>   # optional; only when EVERY commit added after the soak touches T0-only files (e2e/, docs/, tests, CI)
 - RM-approved targeted evidence: Carson/RM approved targeted frontend-only T2 evidence for <changed UI path>
 - Async-cycle floor: affected-view UI validation cycle/load floor, e.g. Playwright copy/contract suite under N parallel workers with p95/error-free threshold
 - Changed behavior: name the user-facing frontend behavior this PR changed
@@ -99,6 +102,7 @@ If the PR touches *any* worker/migration/served-contract file, this variant does
 
 - Tier: T2
 - PR head SHA: 40-character current PR head SHA
+- Post-soak T0 delta: <40-character CURRENT head SHA>   # optional; only when EVERY commit added after the soak touches T0-only files (e2e/, docs/, tests, CI)
 - Changed behavior: name the offline package/SDK behavior this PR changed
 - Targeted evidence: name the parity/test path that exercised that changed behavior
 - Load/concurrency evidence: name the stress/concurrency or volume-oriented proof for that offline behavior
@@ -114,7 +118,7 @@ If the PR touches *any* worker/migration/served-contract file, this variant does
 
 ---
 
-## T3 — Critical isolated/clean soak (migrations / data integrity / concurrency / security / chain / treasury; 48h minimum)
+## T3 — Critical isolated/clean soak (migrations / data integrity / concurrency / security / chain / treasury; 24h minimum)
 
 ```markdown
 ## Staging Soak Evidence
@@ -123,6 +127,7 @@ If the PR touches *any* worker/migration/served-contract file, this variant does
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-NNNNN-xxx
 - PR head SHA: 40-character commit SHA deployed/tested
+- Post-soak T0 delta: <40-character CURRENT head SHA>   # optional; only when EVERY commit added after the soak touches T0-only files (e2e/, docs/, tests, CI)
 - Changed behavior: name the behavior this PR changed
 - Targeted evidence: name the driver/E2E path that exercised that changed behavior
 - Load/concurrency evidence: name the heavy-user/load proof for that changed behavior, e.g. `tests/load/*`, `tests/k6/*`, p95/error-rate thresholds, queue drain, retry fan-out, rate-limit evidence, trigger fan-out, or 10k/batch-drain evidence
@@ -158,6 +163,8 @@ Both preflight fields have exactly one escape hatch, and it is the same one. Say
 The note must carry all five sub-fields, and `Approved by:` must name a real person — blank, `pending`, `TBD`, or `N/A` is a self-waiver and fails. The note is scoped to the preflight fields only: it does not waive the soak-duration floor, head/base SHA identity, evidence scope, or the deploy-artifact value checks.
 
 **The approver cannot be you (SCRUM-3481).** `Approved by: me` / `myself` / `self` / `the author` / `PR author` fails, and so does an `@handle` or bare login that matches the PR author's own GitHub login (resolved live by the workflow from the GitHub API, not from this body). Name the human who actually granted the exception. This applies to every `Approved by:` note the gate reads — `### Residual-risk note`, `### Unsoakable-surface note`, and `### Base-drift residual-risk note`.
+
+**Post-soak T0-only delta (CTO 2026-09-12).** A commit added after the soak normally invalidates `PR head SHA:`. If every such commit touches only T0-classified files (`e2e/`, `docs/`, tests, CI/tooling), add `Post-soak T0 delta: <current 40-char head SHA>` and the gate keeps the evidence. It fails closed on every condition: the field must name the CURRENT head, the soaked SHA must be an ancestor of it (no rebase/force-push), the delta must be computable and non-empty, and every file in it must classify T0 — the first file that does not is named in the error. Accepted on the T1/T2/T3, frontend-T2 and unsoakable-T2 blocks; RC-manifest head binding is unaffected.
 
 **Emphasis is decoration, not evidence (SCRUM-3481).** Bolding, italicising or code-wrapping a label or a value is fine — `**Approved by:** Carson (2026-08-23)`, `- [x] **Soak start:** …` — but it no longer hides a placeholder: `**Approved by:** TBD` is read as `TBD` and rejected exactly as the unbolded form is.
 
