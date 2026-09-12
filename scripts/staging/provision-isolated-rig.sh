@@ -1846,7 +1846,7 @@ replay_schema() {
   while (( attempt <= LINK_MAX_ATTEMPTS )); do
     echo "executing (attempt ${attempt}/${LINK_MAX_ATTEMPTS}): npx supabase db push --linked" >&2
     set +e
-    out="$(npx supabase db push --linked 2>&1)"; rc=$?
+    out="$(npx --no-install supabase db push --linked 2>&1)"; rc=$?
     set -e
     printf '%s\n' "$out"
     if (( rc == 0 )); then
