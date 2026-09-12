@@ -36,7 +36,11 @@ async function main() {
   probes.push(probe('worker_identity_matches_candidate', true, identityOk, { detail: { status: health.status, git_sha: health.body?.git_sha, uptime: health.body?.uptime, revision, imageDigest, checks: health.body?.checks } }));
 
   const ctx = { admin, state, ANON_KEY, SERVICE_KEY, workerFetch, restFetch, probe, hashApiKey, SUPABASE_URL, TAG_URL, PREFIX, cycleId, env: process.env };
-  const modules = readdirSync(new URL('./probes/', import.meta.url)).filter((f) => f.endsWith('.mjs')).sort();
+  // TRAIN_PROBES="2837,2834" limits a window to the PRs in that train (default: every module).
+  const only = (process.env.TRAIN_PROBES ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const modules = readdirSync(new URL('./probes/', import.meta.url))
+    .filter((f) => f.endsWith('.mjs') && (only.length === 0 || only.some((n) => f.startsWith(`${n}-`))))
+    .sort();
   const perPr = {};
   for (const f of modules) {
     const mod = await import(new URL(`./probes/${f}`, import.meta.url));
@@ -51,7 +55,7 @@ async function main() {
   const cyclePass = identityOk && probes.every((p) => p.pass);
   const evidence = {
     rig: 'cto-train-b-0912', candidate_sha: CANDIDATE_SHA, tag_url: TAG_URL, revision, image: imageDigest,
-    cycle_id: cycleId, started_at: startedAt.toISOString(), finished_at: new Date().toISOString(),
+    train: only.length ? only : 'all', cycle_id: cycleId, started_at: startedAt.toISOString(), finished_at: new Date().toISOString(),
     per_pr: perPr, probes, cycle_pass: cyclePass,
   };
   writeFileSync(`${OUT_DIR}/cycle-${cycleId}.json`, JSON.stringify(evidence, null, 2));

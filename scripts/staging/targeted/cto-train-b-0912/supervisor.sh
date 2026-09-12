@@ -10,11 +10,14 @@ LOCK="$OUT_DIR/supervisor.pid"
 if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK")" 2>/dev/null; then echo "another supervisor ($(cat "$LOCK")) holds $LOCK" >&2; exit 2; fi
 echo $$ > "$LOCK"
 export TRAIN_CANDIDATE_SHA="$CANDIDATE_SHA"
+export TRAIN_PROBES="${TRAIN_PROBES:-}"   # e.g. "2837,2834,2841,2842" for train B2
 export TRAIN_TAG_URL="${TRAIN_TAG_URL:-https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app}"
 export STAGING_SUPABASE_SERVICE_ROLE_KEY="$(gcloud secrets versions access latest --secret=supabase-service-role-key-cto-train-b-0912-staging --project=arkova1)"
 export STAGING_SUPABASE_ANON_KEY="$(gcloud secrets versions access latest --secret=supabase-anon-key-cto-train-b-0912-staging --project=arkova1)"
 export CRON_SECRET="$(gcloud secrets versions access latest --secret=cron-secret --project=arkova1)"
 export API_KEY_HMAC_SECRET="$(gcloud secrets versions access latest --secret=api-key-hmac-secret-staging --project=arkova1)"
+# webhook_endpoints.url CHECK requires https://; a literal private IP is refused before any socket.
+export TRAIN_2836_PRIVATE_URL="${TRAIN_2836_PRIVATE_URL:-https://169.254.169.254/}"
 export FIXTURE_STATE="${FIXTURE_STATE:-/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b/state/fixtures.json}"
 wait_for_healthy() {
   local deadline=$((SECONDS + 180))
