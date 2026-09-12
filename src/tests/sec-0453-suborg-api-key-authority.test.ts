@@ -20,9 +20,14 @@
  *     `audit_events_actor_id_fkey` REFERENCES `public.profiles(id)`, so an
  *     api_key id there is an FK violation and a user id there is a false
  *     statement about who acted.
- *   - The child row is locked FOR UPDATE before authority is decided, so a
- *     reparent committed mid-flight cannot be authorized against the old
- *     parent (the SCRUM-4470 property 0444 exists to hold).
+ *   - The child's PARENTHOOD is read under a `FOR UPDATE` row lock, so a
+ *     reparent committed mid-flight cannot be authorized against the old parent
+ *     (the SCRUM-4470 property 0444 exists to hold). Note what this is NOT: the
+ *     lock does not have to precede the authority predicate, and in 0444 —
+ *     which these bodies copy verbatim — it does so in `suspend_suborg` and
+ *     does not in `allocate_credits_to_sub_org`. The predicate here never reads
+ *     the child, so its position cannot affect the race; the thing that must be
+ *     locked is the `v_actual_parent` comparison, and it is, in both.
  *   - anon and authenticated are REVOKEd explicitly. `REVOKE FROM PUBLIC` alone
  *     does not undo the baseline's `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON
  *     FUNCTIONS TO anon, authenticated`, which grants the two browser roles
@@ -177,9 +182,24 @@ describe('0453 content guard — the audit actor', () => {
 });
 
 describe('0453 content guard — the SCRUM-4470 reparent property survives', () => {
-  it.each(WRITE_FNS)('%s locks the child row FOR UPDATE before authorizing', (fnName) => {
+  /**
+   * The previous version of this case was titled "locks the child row FOR
+   * UPDATE before authorizing" and asserted only `toContain('FOR UPDATE')` — a
+   * claim about ORDER pinned by a test that cannot detect order, and a claim
+   * that was false for allocate anyway. What actually has to hold is that the
+   * parent comparison reads a value taken UNDER the lock.
+   */
+  it.each([
+    ['allocate_credits_to_sub_org_as_api_key', 'p_child_org_id', 'not_a_sub_org'],
+    ['suspend_suborg_as_api_key', 'p_sub_org_id', 'not_a_child_of_parent'],
+  ])('%s compares v_actual_parent only after locking the child row', (fnName, idArg, errCode) => {
     const body = extractFunctionBlock(executableSql(migration()), fnName);
-    expect(body).toContain('FOR UPDATE');
+    const lock = body.indexOf(`WHERE id = ${idArg} FOR UPDATE`);
+    const compare = body.indexOf('v_actual_parent <> p_parent_org_id');
+    expect(lock, `${fnName}: no FOR UPDATE on the child row`).toBeGreaterThan(-1);
+    expect(compare, `${fnName}: no parenthood comparison`).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(compare);
+    expect(body).toContain(`'${errCode}'`);
   });
 
   it('allocate keeps the LEAST/GREATEST credit-row lock order', () => {
@@ -358,10 +378,15 @@ describe.skipIf(!RUN_LIVE)('SEC-0453: live behaviour (throwaway/isolated DB, 045
   type Rpc = { data: Record<string, unknown> | null; error: { code?: string; message?: string } | null };
 
   async function serviceRpc(fn: string, args: Record<string, unknown>): Promise<Rpc> {
-    const { serviceClient } = (await helpers()) as unknown as {
-      serviceClient: () => { rpc: (fn: string, args: Record<string, unknown>) => Promise<Rpc> };
+    // `createServiceClient`, not `serviceClient`: `src/tests/rls/helpers.ts`
+    // exports the former and has never exported the latter, and the `as unknown
+    // as` cast below hid that from the compiler — every case in this block
+    // would have died on `serviceClient is not a function` the first time
+    // anyone ran it with RUN_LIVE_RLS=1 (review X2).
+    const { createServiceClient } = (await helpers()) as unknown as {
+      createServiceClient: () => { rpc: (fn: string, args: Record<string, unknown>) => Promise<Rpc> };
     };
-    return serviceClient().rpc(fn, args);
+    return createServiceClient().rpc(fn, args);
   }
 
   /** Seeded by the rig fixture: see docs/staging for the provisioning script. */

@@ -59,10 +59,30 @@
 --      ambiguity waiting for the first caller that omits an optional argument.
 --      Distinct names cost nothing and cannot be resolved wrongly.
 --
--- The bodies are migration 0444's / 0450's verbatim, including the
--- `FOR UPDATE` on the child row before the authority decision and the
--- LEAST()/GREATEST() credit-row lock order, with exactly three differences,
--- each forced and each listed here rather than left to be spotted in a diff:
+-- The bodies are migration 0444's / 0450's verbatim, including each function's
+-- own `FOR UPDATE` placement and the LEAST()/GREATEST() credit-row lock order,
+-- with exactly three differences, each forced and each listed here rather than
+-- left to be spotted in a diff:
+--
+-- On that placement, precisely (an earlier draft of this header claimed the
+-- child row is locked before the authority decision in BOTH writers; that is
+-- 0444's shape for `suspend_suborg` and NOT for `allocate_credits_to_sub_org`,
+-- and these bodies are faithful to each):
+--
+--   * `suspend_suborg_as_api_key` — `SELECT ... FOR UPDATE` and the
+--     `not_a_child_of_parent` test come FIRST, authority second (0444:132-149).
+--   * `allocate_credits_to_sub_org_as_api_key` — authority FIRST, then
+--     `SELECT ... FOR UPDATE` and the `not_a_sub_org` test (0444:42-55).
+--
+-- The SCRUM-4470 property survives both orders, and that is why neither was
+-- "fixed" here: the reparent race is about the CHILD's parenthood, and in both
+-- functions the `v_actual_parent <> p_parent_org_id` comparison is made on a
+-- value read UNDER the row lock. The authority predicate in this file
+-- (`_suborg_api_key_authorized(p_parent_org_id, key)`) does not read the child
+-- at all, so where it sits relative to the lock cannot change what it decides.
+-- Swapping allocate's order would only change which error an unauthorized
+-- caller naming a foreign child receives — from `parent_admin_required` to the
+-- more disclosive `not_a_sub_org` — so it is deliberately left alone.
 --
 --   a. The authority predicate. `_suborg_api_key_authorized(org, key)` replaces
 --      the org_members / profiles pair: an active, unrevoked, unexpired key
