@@ -63,7 +63,20 @@ type CreateAffiliateOrgInput = z.infer<typeof CreateAffiliateOrgSchema>;
 interface RouteFailure {
   ok: false;
   status: number;
+  /**
+   * The human-readable half. The JWT dashboard mount sends this verbatim and
+   * has done since SCRUM-3865, so it is frozen there by its own consumers.
+   */
   error: string;
+  /**
+   * The machine-readable half (review U6). The API-key mount is a PUBLISHED,
+   * §1.8-frozen surface: an English sentence in `error` is not something an
+   * integration can branch on, and "Affiliated-organization limit reached (3 of
+   * 3)." would freeze a count into the contract. Every failure a key caller can
+   * reach carries a code; the key mount sends the code (and its own status for
+   * it) while the JWT mount keeps the prose and the status it has always sent.
+   */
+  code?: string;
 }
 
 interface RouteSuccess<T> {
@@ -110,6 +123,8 @@ export interface AffiliateActionContext {
 export interface AffiliateActionSpec {
   targetStatus: 'APPROVED' | 'REVOKED';
   alreadyStatusError: string;
+  /** Machine code for `alreadyStatusError` on the published key surface (U6). */
+  alreadyStatusCode: 'already_approved' | 'already_revoked';
   updateFailureError: string;
   auditEventType: 'SUB_ORG_APPROVED' | 'SUB_ORG_REVOKED';
   auditVerb: 'Approved' | 'Revoked';
@@ -121,18 +136,18 @@ function routeSuccess<T>(value: T): RouteSuccess<T> {
   return { ok: true, value };
 }
 
-function routeFailure(status: number, error: string): RouteFailure {
-  return { ok: false, status, error };
+function routeFailure(status: number, error: string, code?: string): RouteFailure {
+  return code === undefined ? { ok: false, status, error } : { ok: false, status, error, code };
 }
 
 /** SCRUM-4467: distinguish definitive cap rejection from retryable write conflicts. */
 function subOrgCapWriteFailure(error: { code?: string; message?: string } | null): RouteFailure | null {
   if (error?.code === '23514' && error.message === 'sub_org_limit_reached') {
-    return routeFailure(409, 'sub_org_limit_reached');
+    return routeFailure(409, 'sub_org_limit_reached', 'sub_org_limit_reached');
   }
   // Lock waits and transaction conflicts are retryable, never successful writes.
   if (error?.code && ['55P03', '40001', '40P01'].includes(error.code)) {
-    return routeFailure(503, 'cap_check_unavailable');
+    return routeFailure(503, 'cap_check_unavailable', 'cap_check_unavailable');
   }
   return null;
 }
@@ -553,7 +568,7 @@ async function updateAffiliateStatus(
   action: AffiliateActionSpec,
 ): Promise<RouteResult<void>> {
   if (context.childOrg.parent_approval_status === action.targetStatus) {
-    return routeFailure(400, action.alreadyStatusError);
+    return routeFailure(400, action.alreadyStatusError, action.alreadyStatusCode);
   }
 
   // D3 — the cap applies to BOTH paths that add a sub-org. Approving a pending
@@ -567,6 +582,7 @@ async function updateAffiliateStatus(
         cap.unavailable
           ? 'Could not verify the affiliated-organization limit. Try again.'
           : `Affiliated-organization limit reached (${cap.current} of ${cap.limit}).`,
+        cap.unavailable ? 'cap_check_unavailable' : 'sub_org_limit_reached',
       );
     }
   }
@@ -587,10 +603,10 @@ async function updateAffiliateStatus(
     const capFailure = subOrgCapWriteFailure(updateError);
     if (capFailure) return capFailure;
     logger.error({ error: updateError }, action.failureLog);
-    return routeFailure(500, action.updateFailureError);
+    return routeFailure(500, action.updateFailureError, 'status_update_failed');
   }
   if (!updatedOrg) {
-    return routeFailure(409, 'Affiliation changed. Refresh and try again.');
+    return routeFailure(409, 'Affiliation changed. Refresh and try again.', 'affiliation_changed');
   }
 
   return routeSuccess(undefined);
@@ -665,7 +681,7 @@ async function auditAffiliateStatus(
       { error: auditError, orgId: context.orgId, childOrgId: context.childOrgId, event: action.auditEventType },
       'suborg_status_audit_write_failed',
     );
-    return routeFailure(500, 'audit_write_failed');
+    return routeFailure(500, 'audit_write_failed', 'audit_write_failed');
   }
 
   return routeSuccess(undefined);
@@ -725,6 +741,7 @@ async function handleAffiliateStatusAction(
 export const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
   targetStatus: 'APPROVED',
   alreadyStatusError: 'Organization is already approved',
+  alreadyStatusCode: 'already_approved',
   updateFailureError: 'Failed to approve organization',
   auditEventType: 'SUB_ORG_APPROVED',
   auditVerb: 'Approved',
@@ -735,6 +752,7 @@ export const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
 export const REVOKE_AFFILIATE_ACTION: AffiliateActionSpec = {
   targetStatus: 'REVOKED',
   alreadyStatusError: 'Affiliation is already revoked',
+  alreadyStatusCode: 'already_revoked',
   updateFailureError: 'Failed to revoke affiliation',
   auditEventType: 'SUB_ORG_REVOKED',
   auditVerb: 'Revoked',
@@ -1218,12 +1236,30 @@ orgSubOrgsRouter.post('/max', async (req: Request, res: Response) => {
 // child really is a sub-org of that parent, so authorization does not depend on
 // this layer being correct.
 
-/** suspend_suborg error code -> HTTP status. Anything unlisted is a 500. */
+/**
+ * `suspend_suborg` / `suspend_suborg_as_api_key` error code -> HTTP status.
+ *
+ * Anything unlisted is `RPC_UNEXPECTED_STATUS` (502), NOT 500: an unmapped code
+ * is a structured refusal the RPC chose to return, so the request did not fail
+ * *here* — it was answered by an upstream we do not have a mapping for. A 500
+ * tells an integrator "retry, this is our bug"; a 502 tells them "the call was
+ * refused for a reason this version does not name", which is what actually
+ * happened and is what the key surface needs when SQL grows a new code before
+ * the worker learns it (review U7).
+ */
 const SUSPEND_RPC_STATUS: Record<string, number> = {
   unauthenticated: 401,
   parent_admin_required: 403,
   not_a_child_of_parent: 404,
+  // 0453. `api_keys.created_by` is NOT NULL, so this is unreachable for a key
+  // that exists; it fires only if that column ever becomes nullable. 503, not
+  // 403: the key IS authorized, the RPC just could not resolve the principal
+  // it must stamp on the row — an operational gap, and a retry is meaningful.
+  api_key_principal_unresolved: 503,
 };
+
+/** See SUSPEND_RPC_STATUS: an unmapped structured refusal is upstream, not ours. */
+const RPC_UNEXPECTED_STATUS = 502;
 
 /** Credits are whole units; the bound is a sanity rail, not a business limit. */
 export const MAX_CREDIT_TRANSFER = 100_000_000;
@@ -1275,6 +1311,8 @@ const CREDIT_RPC_STATUS: Record<string, number> = {
   // unlike the anchor path nothing here is purchasable in the moment.
   insufficient_parent_balance: 409,
   insufficient_child_balance: 409,
+  // 0453 — see SUSPEND_RPC_STATUS for why this is a 503 (review U7).
+  api_key_principal_unresolved: 503,
 };
 
 /**
@@ -1370,7 +1408,7 @@ export async function allocateSubOrgCreditsCore(
 
   if (!data || data.error) {
     const code = data?.error ?? 'unknown_error';
-    return { status: CREDIT_RPC_STATUS[code] ?? 500, body: { error: code } };
+    return { status: CREDIT_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS, body: { error: code } };
   }
 
   logger.info(
@@ -1408,7 +1446,7 @@ export async function subOrgCreditRollupCore(
 
   if (!data || data.error) {
     const code = data?.error ?? 'unknown_error';
-    return { status: CREDIT_RPC_STATUS[code] ?? 500, body: { error: code } };
+    return { status: CREDIT_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS, body: { error: code } };
   }
 
   return { status: 200, rollup: data };
@@ -1466,7 +1504,7 @@ export async function offboardSubOrgCore(
       // strands them somewhere nobody can spend or recover them.
       const code = reclaimData?.error ?? 'unknown_error';
       return {
-        status: CREDIT_RPC_STATUS[code] ?? 500,
+        status: CREDIT_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS,
         body: { error: code, reclaimed: 0, suspended: false },
       };
     }
@@ -1491,7 +1529,7 @@ export async function offboardSubOrgCore(
     const code = suspendData?.error ?? 'unknown_error';
     logger.warn({ childOrgId, reclaimed, code }, 'suborg_offboard_partial');
     return {
-      status: SUSPEND_RPC_STATUS[code] ?? 500,
+      status: SUSPEND_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS,
       body: { error: code, reclaimed, suspended: false },
     };
   }

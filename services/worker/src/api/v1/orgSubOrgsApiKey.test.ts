@@ -553,6 +553,36 @@ describe('lifecycle on the key surface', () => {
     expect(res.body.error).toBe('audit_write_failed');
   });
 
+  /**
+   * U6. The shared core answers the dashboard with English sentences —
+   * "Affiliated-organization limit reached (1 of 1)." carries a live COUNT.
+   * This surface is frozen on publication (§1.8), so it publishes machine
+   * codes and the status `docs.ts` documents (409 for a state conflict, not
+   * the core's 400).
+   */
+  it('publishes sub_org_limit_reached as a 409 code, never the counted sentence', async () => {
+    mockStatusActionDb({
+      child: { ...APPROVED_CHILD, parent_approval_status: 'PENDING' },
+      maxSubOrgs: 1,
+      capChildren: [{ id: CHILD }],
+    });
+    const res = await post('/approve', { org_public_id: CHILD_PUB });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('sub_org_limit_reached');
+    expect(JSON.stringify(res.body)).not.toMatch(/Affiliated-organization limit/);
+  });
+
+  it('publishes the compare-and-set miss as 409 affiliation_changed, not prose', async () => {
+    mockStatusActionDb({
+      child: { ...APPROVED_CHILD, parent_approval_status: 'PENDING' },
+      casResult: null,
+    });
+    const res = await post('/approve', { org_public_id: CHILD_PUB });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('affiliation_changed');
+    expect(JSON.stringify(res.body)).not.toMatch(/Refresh and try again/);
+  });
+
   it('404s credits on a suspended affiliate — money never moves into a dead affiliation', async () => {
     mockStatusActionDb({ child: { ...APPROVED_CHILD, suspended: true } });
     const res = await post('/credits', { org_public_id: CHILD_PUB, amount: 5 });
@@ -585,6 +615,73 @@ function sweep(value: unknown, path: string, findings: string[]): void {
     }
   }
 }
+
+/**
+ * U7. `api_key_principal_unresolved` is a code only 0453's `*_as_api_key`
+ * functions can return, and neither status map listed it, so it fell through
+ * to a bare 500 — "our bug, retry" for a refusal the database chose. Any other
+ * unmapped structured refusal is a 502 for the same reason: the call was
+ * answered upstream, not dropped here.
+ */
+describe('RPC codes this worker version does not name (U7)', () => {
+  it('503s api_key_principal_unresolved on POST /credits instead of 500', async () => {
+    mockDb({ children: [APPROVED_CHILD] });
+    rpc().mockResolvedValueOnce({ data: { error: 'api_key_principal_unresolved' }, error: null });
+    const res = await request(buildApp(['orgs:manage']))
+      .post('/api/v1/organizations/sub-orgs/credits')
+      .send({ org_public_id: CHILD_PUB, amount: 5 });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('api_key_principal_unresolved');
+  });
+
+  it('502s, not 500s, a structured refusal the status map has never heard of', async () => {
+    mockDb({ children: [APPROVED_CHILD] });
+    rpc().mockResolvedValueOnce({ data: { error: 'some_future_sql_code' }, error: null });
+    const res = await request(buildApp(['orgs:manage']))
+      .post('/api/v1/organizations/sub-orgs/credits')
+      .send({ org_public_id: CHILD_PUB, amount: 5 });
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('some_future_sql_code');
+  });
+
+  it('503s api_key_principal_unresolved on GET /credits', async () => {
+    mockDb();
+    rpc().mockResolvedValueOnce({ data: { error: 'api_key_principal_unresolved' }, error: null });
+    const res = await request(buildApp(['orgs:manage'])).get('/api/v1/organizations/sub-orgs/credits');
+    expect(res.status).toBe(503);
+  });
+});
+
+/**
+ * U13. `resolveSubOrgCaller` reads and 403s on the acting organization, so a
+ * miss in the cap read is that row disappearing mid-request. `?? null` reported
+ * it as "no affiliate cap" — an unlimited-looking answer derived from a row
+ * that is gone.
+ */
+describe('the acting organization cannot vanish into a null cap (U13)', () => {
+  it('503s the list when the cap read finds no acting organization', async () => {
+    const from = db.from as unknown as ReturnType<typeof vi.fn>;
+    let organizationsCall = 0;
+    from.mockImplementation((table: string) => {
+      if (table !== 'organizations') throw new Error(`unexpected table ${table}`);
+      const chain: Record<string, unknown> = {};
+      chain.select = () => chain;
+      chain.eq = () => chain;
+      chain.order = () => Promise.resolve({ data: [], error: null });
+      chain.maybeSingle = () => {
+        organizationsCall += 1;
+        // 1st = resolveSubOrgCaller's acting-org read (present);
+        // 2nd = the cap read, after the row has gone.
+        return Promise.resolve({ data: organizationsCall === 1 ? ACTING_PARENT : null, error: null });
+      };
+      return chain;
+    });
+
+    const res = await request(buildApp(['read:orgs'])).get('/api/v1/organizations/sub-orgs');
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('sub_org_list_unavailable');
+  });
+});
 
 describe('no raw uuid escapes this surface (R11)', () => {
   it('sweeps every route response recursively', async () => {

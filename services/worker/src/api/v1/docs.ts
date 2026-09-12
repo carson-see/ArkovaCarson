@@ -73,8 +73,14 @@ const SUB_ORG_COMMON_RESPONSES = {
     content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
   },
   '429': { $ref: '#/components/responses/RateLimited' },
+  '502': {
+    description:
+      'The underlying database function refused the call with a code this API version does not name. `error` carries that code verbatim. Not a 500: the request was answered, not dropped.',
+    content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+  },
   '503': {
-    description: 'A required lookup or RPC was unavailable. Never returned in place of a definitive answer.',
+    description:
+      'A required lookup or RPC was unavailable — including `api_key_principal_unresolved`, where the key is authorized but the principal it must stamp on the row could not be resolved. Never returned in place of a definitive answer.',
     content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
   },
 } as const;
@@ -1580,7 +1586,8 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
-            description: 'Already approved, the affiliate cap is reached, or the affiliation changed under the request.',
+            description:
+              'A state conflict, named by a machine code in `error`: `already_approved`, `sub_org_limit_reached` (the affiliate cap), or `affiliation_changed` (the affiliation moved under the request — re-read and retry).',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '500': {
@@ -1611,7 +1618,8 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
-            description: 'Already revoked, or the affiliation changed under the request.',
+            description:
+              'A state conflict, named by a machine code in `error`: `already_revoked` or `affiliation_changed` (the affiliation moved under the request — re-read and retry).',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '500': {

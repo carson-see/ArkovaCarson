@@ -1019,13 +1019,24 @@ paths:
         "404":
           description: No addressable affiliate answers to this public id
         "409":
-          description: Already approved, affiliate cap reached, or the affiliation changed under the request
+          description: >-
+            A state conflict, named by a machine code in `error`: already_approved,
+            sub_org_limit_reached (the affiliate cap), or affiliation_changed (the
+            affiliation moved under the request - re-read and retry).
         "422":
           description: Request body failed validation
         "429":
           description: Rate limit exceeded
+        "502":
+          description: >-
+            The underlying database function refused the call with a code this API
+            version does not name; `error` carries that code verbatim. Not a 500 -
+            the request was answered, not dropped.
         "503":
-          description: A required lookup or RPC was unavailable
+          description: >-
+            A required lookup or RPC was unavailable, including
+            api_key_principal_unresolved (the key is authorized, but the principal
+            it must stamp on the row could not be resolved).
         "500":
           description: >-
             audit_write_failed — the affiliation status WAS changed and the audit
@@ -1068,13 +1079,24 @@ paths:
         "404":
           description: No addressable affiliate answers to this public id
         "409":
-          description: Already revoked, or the affiliation changed under the request
+          description: >-
+            A state conflict, named by a machine code in `error`: already_revoked
+            or affiliation_changed (the affiliation moved under the request -
+            re-read and retry).
         "422":
           description: Request body failed validation
         "429":
           description: Rate limit exceeded
+        "502":
+          description: >-
+            The underlying database function refused the call with a code this API
+            version does not name; `error` carries that code verbatim. Not a 500 -
+            the request was answered, not dropped.
         "503":
-          description: A required lookup or RPC was unavailable
+          description: >-
+            A required lookup or RPC was unavailable, including
+            api_key_principal_unresolved (the key is authorized, but the principal
+            it must stamp on the row could not be resolved).
         "500":
           description: >-
             audit_write_failed — the affiliation status WAS changed and the audit
@@ -1141,8 +1163,16 @@ paths:
           description: Request body failed validation
         "429":
           description: Rate limit exceeded
+        "502":
+          description: >-
+            The underlying database function refused the call with a code this API
+            version does not name; `error` carries that code verbatim. Not a 500 -
+            the request was answered, not dropped.
         "503":
-          description: A required lookup or RPC was unavailable
+          description: >-
+            A required lookup or RPC was unavailable, including
+            api_key_principal_unresolved (the key is authorized, but the principal
+            it must stamp on the row could not be resolved).
     get:
       operationId: getSubOrganizationCreditRollup
       summary: Affiliate credit rollup
@@ -1185,8 +1215,16 @@ paths:
           description: Insufficient scope
         "429":
           description: Rate limit exceeded
+        "502":
+          description: >-
+            The underlying database function refused the call with a code this API
+            version does not name; `error` carries that code verbatim. Not a 500 -
+            the request was answered, not dropped.
         "503":
-          description: A required lookup or RPC was unavailable
+          description: >-
+            A required lookup or RPC was unavailable, including
+            api_key_principal_unresolved (the key is authorized, but the principal
+            it must stamp on the row could not be resolved).
 
   /organizations/sub-orgs/offboard:
     post:
@@ -1249,8 +1287,16 @@ paths:
           description: Request body failed validation
         "429":
           description: Rate limit exceeded
+        "502":
+          description: >-
+            The underlying database function refused the call with a code this API
+            version does not name; `error` carries that code verbatim. Not a 500 -
+            the request was answered, not dropped.
         "503":
-          description: A required lookup or RPC was unavailable
+          description: >-
+            A required lookup or RPC was unavailable, including
+            api_key_principal_unresolved (the key is authorized, but the principal
+            it must stamp on the row could not be resolved).
 
   /jobs/{jobId}:
     get:

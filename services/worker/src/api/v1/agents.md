@@ -1324,6 +1324,29 @@ write rather than pretending the action failed; a retry is safe and answers
 `already_approved` / `already_revoked`. This is the same call 0453's
 `suspend_suborg_as_api_key` makes, where SQL can fail the whole transaction.
 
+**The key surface publishes machine codes, the dashboard keeps its prose**
+(review U6). The shared cores answer with an English sentence — and
+`Affiliated-organization limit reached (3 of 3).` embeds a LIVE COUNT, which
+§1.8 would freeze into the contract on publication. `RouteFailure` therefore
+carries an optional `code` beside `error`; `orgSubOrgsApiKey.ts`'s
+`KEY_STATUS_ACTION_HTTP` maps that code to this surface's status
+(`already_approved` / `already_revoked` / `sub_org_limit_reached` /
+`affiliation_changed` -> 409, matching what `docs.ts` has always documented;
+`cap_check_unavailable` -> 503; `status_update_failed` / `audit_write_failed` ->
+500) and sends the code as `error`. The JWT mount reads `error` and is
+byte-unchanged. A core failure with no `code` degrades to
+`status_update_failed` rather than leaking a sentence.
+
+**An unmapped RPC code is a 502, not a 500** (review U7).
+`CREDIT_RPC_STATUS` / `SUSPEND_RPC_STATUS` did not list
+`api_key_principal_unresolved` — a code only 0453's `*_as_api_key` functions can
+return — so it fell through to a bare 500. It is now a **503** (the key IS
+authorized; the RPC merely could not resolve the principal it must stamp on the
+row, so a retry is meaningful), and every OTHER unmapped structured refusal is a
+**502**: the RPC answered, we simply do not name its code, and telling an
+integrator "500, our bug, retry" about a deliberate refusal is a lie. Add the
+code to the map when SQL grows one; the 502 is the honest default until then.
+
 **Two places where this surface is deliberately STRICTER than the dashboard**,
 because a partner cannot tell a degraded answer from a real one:
 a failed DocuSign inheritance-marker lookup 503s here (the JWT list degrades to

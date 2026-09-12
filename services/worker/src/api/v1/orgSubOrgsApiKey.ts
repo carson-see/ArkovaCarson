@@ -261,6 +261,16 @@ orgSubOrgsApiRouter.get('/', async (req: Request, res: Response) => {
       return;
     }
 
+    // `resolveSubOrgCaller` already read this row and 403'd if it was absent,
+    // so a miss here is the row disappearing mid-request. `?? null` would
+    // publish "this organization has no affiliate cap" — an unlimited-looking
+    // answer derived from a vanished row (review U13).
+    if (!parentOrg) {
+      logger.error({ orgId: caller.orgId }, 'suborg_api_acting_org_vanished');
+      res.status(503).json({ error: 'sub_org_list_unavailable' });
+      return;
+    }
+
     // Which affiliates currently run on THIS organization's DocuSign
     // connection. The JWT surface degrades to "nobody is inheriting" when this
     // read fails, because it is an additive field on a panel that already
@@ -319,7 +329,7 @@ orgSubOrgsApiRouter.get('/', async (req: Request, res: Response) => {
         docusign_inherited: inheritingIds.has(row.id),
         created_at: row.created_at,
       })),
-      max_sub_orgs: parentOrg?.max_sub_orgs ?? null,
+      max_sub_orgs: parentOrg.max_sub_orgs ?? null,
       count: rows.length,
     });
   } catch (error) {
@@ -329,6 +339,33 @@ orgSubOrgsApiRouter.get('/', async (req: Request, res: Response) => {
 });
 
 // ─── POST /approve, POST /revoke ─────────────────────────────────────────────
+/**
+ * Core failure code -> status ON THIS SURFACE (review U6).
+ *
+ * The shared core answers the JWT dashboard with an English sentence and the
+ * status that mount has sent since SCRUM-3865. Neither is publishable here:
+ * §1.8 freezes this shape on publication, an integration cannot branch on
+ * prose, and `Affiliated-organization limit reached (3 of 3).` would freeze a
+ * live count into the contract. `docs.ts` and `docs/api/openapi.yaml` document
+ * 409 for the already-in-that-state cases, so the status moves too — 400 said
+ * "your request was malformed" about a request that was perfectly well formed
+ * and simply conflicted with the current state.
+ *
+ * `already_approved` / `already_revoked` are, as of the per-action predicates,
+ * unreachable from THIS mount (the resolver 404s a child that is already in the
+ * target status before the core is called). They are mapped anyway: the core is
+ * shared, and a predicate that widens later must not start emitting prose.
+ */
+const KEY_STATUS_ACTION_HTTP: Record<string, number> = {
+  already_approved: 409,
+  already_revoked: 409,
+  sub_org_limit_reached: 409,
+  affiliation_changed: 409,
+  cap_check_unavailable: 503,
+  status_update_failed: 500,
+  audit_write_failed: 500,
+};
+
 type ChildResolver = (
   caller: SubOrgCaller,
   orgPublicId: string,
@@ -367,7 +404,11 @@ async function handleStatusAction(
     );
 
     if (!result.ok) {
-      res.status(result.status).json({ error: result.error });
+      // No code means the core grew a failure this surface has not classified.
+      // `status_update_failed` is the honest generic: the transition did not
+      // happen and we are not going to publish the sentence that says why.
+      const code = result.code ?? 'status_update_failed';
+      res.status(KEY_STATUS_ACTION_HTTP[code] ?? result.status).json({ error: code });
       return;
     }
 
