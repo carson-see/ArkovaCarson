@@ -8,6 +8,29 @@ const defaultWaitTimeoutMs = 25_000;
 
 interface LockOptions {
   waitTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+function abortedLockError(name: string): Error {
+  const error = new Error(`Cancelled while waiting for shared RLS fixture lock: ${name}`);
+  error.name = 'AbortError';
+  return error;
+}
+
+function waitForRetry(delayMs: number, signal: AbortSignal | undefined, name: string): Promise<void> {
+  if (!signal) return new Promise(resolve => setTimeout(resolve, delayMs));
+  if (signal.aborted) return Promise.reject(abortedLockError(name));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortedLockError(name));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function canonicalResource(resource: string): string {
@@ -37,17 +60,31 @@ export async function acquireSharedFixtureLock(
   const lockPath = sharedFixtureLockPath(name, resource);
   const startedAt = Date.now();
   const waitTimeoutMs = options.waitTimeoutMs ?? defaultWaitTimeoutMs;
+  let firstAttempt = true;
 
   for (;;) {
+    if (options.signal?.aborted) throw abortedLockError(name);
+    if (!firstAttempt && Date.now() - startedAt >= waitTimeoutMs) {
+      throw new Error(`Timed out waiting for shared RLS fixture lock: ${name}`);
+    }
     try {
       mkdirSync(lockPath, { mode: 0o700 });
+      // A lifecycle owner may cancel while this waiter is between its last
+      // signal check and atomic mkdir. Never return a late-acquired lock after
+      // cleanup has already run.
+      if (options.signal?.aborted) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw abortedLockError(name);
+      }
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (Date.now() - startedAt > waitTimeoutMs) {
+      if (Date.now() - startedAt >= waitTimeoutMs) {
         throw new Error(`Timed out waiting for shared RLS fixture lock: ${name}`);
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
+      const remainingMs = waitTimeoutMs - (Date.now() - startedAt);
+      await waitForRetry(Math.min(50, Math.max(1, remainingMs)), options.signal, name);
+      firstAttempt = false;
     }
   }
 
