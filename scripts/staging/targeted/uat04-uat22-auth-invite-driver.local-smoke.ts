@@ -74,6 +74,13 @@ describe('UAT04/UAT22 driver local admission runtime', () => {
     expect(result).toMatchObject({ scope: 'local-only', cleanedUp: true });
     expect(result.checks.length).toBeGreaterThan(20);
     expect(result.checks.every((check) => check.passed)).toBe(true);
+    for (const label of [
+      'finite-quota-provisioning-semantics',
+      'null-quota-test-provision',
+      'null-quota-test-replay-semantics',
+      'null-quota-billable-provision',
+      'null-quota-billable-replay-semantics',
+    ]) expect(result.checks).toContainEqual(expect.objectContaining({ label, passed: true }));
     expect(capturedSendEmail).toHaveBeenCalled();
     const leftovers = await localQuery(`SELECT
       (SELECT count(*) FROM auth.users WHERE email LIKE '%uat04-22-0911%')::int AS users,

@@ -18,6 +18,13 @@ import { writeEvidenceFile } from './runtime.js';
 export const RIG_ID = 'uat04-22-0911';
 const PROD_REF = 'vzwyaatejekddvltxyye';
 const SHARED_REFS = new Set(['fizyjojbebyalirtjjht', 'ujtlwnoqfhtitcmsnrpq']);
+const STANDING_REF = 'fizyjojbebyalirtjjht';
+const STANDING_SERVICE = 'arkova-worker-staging';
+const STANDING_WORKER_URL = 'https://arkova-worker-staging-kvojbeutfa-uc.a.run.app';
+const STANDING_SERVICE_UID = 'a8e256d2-a5f9-41be-b880-8b85c4382bd3';
+const STANDING_PROJECT = 'arkova1';
+const STANDING_REGION = 'us-central1';
+const STANDING_PRS = [2825, 2831, 2832] as const;
 const EXPECTED_SERVICE = `arkova-worker-${RIG_ID}-staging`;
 const LEASE_MS = 72 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -53,21 +60,81 @@ export const EXPECTED_CATALOG_SHA256 = createHash('sha256')
   .update(JSON.stringify(EXPECTED_CATALOG))
   .digest('hex');
 
-export interface AdmissionManifest {
+interface BaseAdmissionManifest {
   schemaVersion: 1;
   rigId: typeof RIG_ID;
   sourceHead: string;
   supabaseProjectRef: string;
   supabaseUrl: string;
-  cloudRunService: typeof EXPECTED_SERVICE;
+  cloudRunService: string;
   workerUrl: string;
   createdAt: string;
   destroyBy: string;
   bootstrapCatalogSha256: string;
 }
 
+export interface IsolatedAdmissionManifest extends BaseAdmissionManifest {
+  admissionMode?: 'isolated';
+  cloudRunService: typeof EXPECTED_SERVICE;
+}
+
+export interface StandingLeaseMember {
+  prNumber: 2825 | 2831 | 2832;
+  sourceHead: string;
+  reason: string;
+  acquiredBy: string;
+  acquiredAt: string;
+}
+
+export interface StandingAdmissionManifest extends BaseAdmissionManifest {
+  admissionMode: 'exclusive-standing-mirror';
+  runId: string;
+  baselineSourceHead: string;
+  sourceMembership: StandingLeaseMember[];
+  acceptedBaseline149Sha256: string;
+  expectedRcMigrationCount: number;
+  expectedRcLedgerSha256: string;
+  historicalLeaseSha256: string;
+  standingService: {
+    projectId: typeof STANDING_PROJECT;
+    region: typeof STANDING_REGION;
+    uid: typeof STANDING_SERVICE_UID;
+    generation: number;
+    revision: string;
+    imageDigest: string;
+    configurationSha256: string;
+  };
+}
+
+export type AdmissionManifest = IsolatedAdmissionManifest | StandingAdmissionManifest;
+
+export interface StandingObservation {
+  ledgerCount: number;
+  baselineCount: number;
+  leaseCount: number;
+  baseline149Sha256: string;
+  ledgerSha256: string;
+  historicalLeaseSha256: string;
+  leaseRows: Array<{
+    pr_number: number;
+    reason: string | null;
+    acquired_by: string | null;
+    acquired_at: string;
+  }>;
+  service: {
+    uid: string;
+    generation: number;
+    revision: string;
+    imageDigest: string;
+    configurationSha256: string;
+    trafficRevision: string;
+    trafficPercent: number;
+  };
+}
+
 export interface UatArgs {
   manifestPath: string;
+  manifestSha256?: string;
   evidenceOut?: string;
   durationMin: number;
   intervalSec: number;
@@ -96,6 +163,9 @@ interface Evidence {
   driver: 'uat04-uat22-auth-invite';
   rigId: typeof RIG_ID;
   sourceHead: string;
+  admissionMode: 'isolated' | 'exclusive-standing-mirror';
+  runId: string | null;
+  manifestSha256: string | null;
   supabaseProjectRef: string;
   cloudRunService: string;
   workerUrl: string;
@@ -138,6 +208,7 @@ interface Runtime {
   managementQueryOverride?: (query: string) => Promise<unknown[]>;
   hostedAuthSimulated?: boolean;
   rateLimitWaitOverride?: (waitMs: number) => Promise<void>;
+  standingObservationOverride?: () => Promise<StandingObservation>;
 }
 
 interface HumanSession {
@@ -202,10 +273,94 @@ function asUrl(value: unknown, name: string): URL {
   }
 }
 
+function requireSha(value: unknown, name: string, length: 40 | 64): string {
+  const sha = requireString(value, name);
+  if (!new RegExp(`^[0-9a-f]{${length}}$`).test(sha) || /^([0-9a-f])\1+$/.test(sha)) {
+    throw new Error(`${name} must be a non-placeholder lowercase ${length === 40 ? 'Git SHA' : 'SHA-256'}`);
+  }
+  return sha;
+}
+
+function leaseWindow(value: JsonObject, now: number): { createdAt: string; destroyBy: string } {
+  const createdAt = requireString(value.createdAt, 'createdAt');
+  const destroyBy = requireString(value.destroyBy, 'destroyBy');
+  const createdMs = Date.parse(createdAt);
+  const destroyMs = Date.parse(destroyBy);
+  if (!Number.isFinite(createdMs) || !Number.isFinite(destroyMs)) throw new Error('Lease timestamps must be valid ISO dates');
+  if (createdMs > now) throw new Error('Resource lease cannot start in the future');
+  if (destroyMs - createdMs !== LEASE_MS) throw new Error('Resource lease must be exactly 72 hours');
+  if (now >= destroyMs) throw new Error('Resource lease is expired');
+  return { createdAt: new Date(createdMs).toISOString(), destroyBy: new Date(destroyMs).toISOString() };
+}
+
+function validateStandingManifest(value: JsonObject, now: number): StandingAdmissionManifest {
+  const sourceHead = requireSha(value.sourceHead, 'sourceHead', 40);
+  if (value.supabaseProjectRef !== STANDING_REF) throw new Error(`standing mode requires project ${STANDING_REF}`);
+  if (value.supabaseUrl !== `https://${STANDING_REF}.supabase.co`) throw new Error('standing Supabase URL is not bound to its project');
+  if (value.cloudRunService !== STANDING_SERVICE || value.workerUrl !== STANDING_WORKER_URL) {
+    throw new Error('standing worker identity does not match the admitted service');
+  }
+  if (value.bootstrapCatalogSha256 !== EXPECTED_CATALOG_SHA256) throw new Error('bootstrap catalog identity does not match this driver');
+  const { createdAt, destroyBy } = leaseWindow(value, now);
+  const runId = requireString(value.runId, 'runId');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(runId)) {
+    throw new Error('runId must be a UUID');
+  }
+  const baselineSourceHead = requireSha(value.baselineSourceHead, 'baselineSourceHead', 40);
+  if (!Array.isArray(value.sourceMembership) || value.sourceMembership.length !== STANDING_PRS.length) {
+    throw new Error('sourceMembership must contain exactly PRs 2825, 2831, and 2832');
+  }
+  const sourceMembership = value.sourceMembership.map((raw, index) => {
+    if (!isObject(raw) || raw.prNumber !== STANDING_PRS[index]) throw new Error('sourceMembership must be ordered 2825, 2831, 2832');
+    const sourceMemberHead = requireSha(raw.sourceHead, `sourceMembership[${index}].sourceHead`, 40);
+    const reason = requireString(raw.reason, `sourceMembership[${index}].reason`);
+    const acquiredBy = requireString(raw.acquiredBy, `sourceMembership[${index}].acquiredBy`);
+    const acquiredAt = requireString(raw.acquiredAt, `sourceMembership[${index}].acquiredAt`);
+    if (!Number.isFinite(Date.parse(acquiredAt))) throw new Error(`sourceMembership[${index}].acquiredAt must be an ISO date`);
+    for (const binding of [`run=${runId}`, `starts=${createdAt}`, `expires=${destroyBy}`, `combined=${sourceHead}`, `pr=${raw.prNumber}`, `head=${sourceMemberHead}`]) {
+      if (!reason.includes(binding)) throw new Error(`sourceMembership[${index}].reason is not target-bound`);
+    }
+    const acquiredMs = Date.parse(acquiredAt);
+    if (acquiredMs < Date.parse(createdAt) || acquiredMs >= Date.parse(destroyBy)) throw new Error(`sourceMembership[${index}].acquiredAt is outside the run lease`);
+    return { prNumber: raw.prNumber, sourceHead: sourceMemberHead, reason, acquiredBy, acquiredAt: new Date(acquiredMs).toISOString() } as StandingLeaseMember;
+  });
+  const expectedRcMigrationCount = value.expectedRcMigrationCount;
+  if (!Number.isSafeInteger(expectedRcMigrationCount) || (expectedRcMigrationCount as number) <= 149) {
+    throw new Error('expectedRcMigrationCount must be a manifest-supplied integer greater than baseline 149');
+  }
+  if (!isObject(value.standingService)) throw new Error('standingService is required');
+  const standingService = value.standingService;
+  if (standingService.projectId !== STANDING_PROJECT || standingService.region !== STANDING_REGION
+      || standingService.uid !== STANDING_SERVICE_UID) throw new Error('standingService identity mismatch');
+  if (!Number.isSafeInteger(standingService.generation) || (standingService.generation as number) < 1) throw new Error('standingService.generation is invalid');
+  const revision = requireString(standingService.revision, 'standingService.revision');
+  if (!revision.startsWith(`${STANDING_SERVICE}-`)) throw new Error('standingService.revision is invalid');
+  const imageDigest = requireString(standingService.imageDigest, 'standingService.imageDigest');
+  if (!/^(?:[a-z0-9._/:-]+@)?sha256:[0-9a-f]{64}$/.test(imageDigest)
+      || /sha256:([0-9a-f])\1+$/.test(imageDigest)) throw new Error('standingService.imageDigest is invalid');
+  return {
+    schemaVersion: 1, admissionMode: 'exclusive-standing-mirror', rigId: RIG_ID,
+    sourceHead, supabaseProjectRef: STANDING_REF, supabaseUrl: `https://${STANDING_REF}.supabase.co`,
+    cloudRunService: STANDING_SERVICE, workerUrl: STANDING_WORKER_URL, createdAt, destroyBy,
+    bootstrapCatalogSha256: EXPECTED_CATALOG_SHA256, runId, baselineSourceHead, sourceMembership,
+    acceptedBaseline149Sha256: requireSha(value.acceptedBaseline149Sha256, 'acceptedBaseline149Sha256', 64),
+    expectedRcMigrationCount: expectedRcMigrationCount as number,
+    expectedRcLedgerSha256: requireSha(value.expectedRcLedgerSha256, 'expectedRcLedgerSha256', 64),
+    historicalLeaseSha256: requireSha(value.historicalLeaseSha256, 'historicalLeaseSha256', 64),
+    standingService: {
+      projectId: STANDING_PROJECT, region: STANDING_REGION, uid: STANDING_SERVICE_UID,
+      generation: standingService.generation as number, revision, imageDigest,
+      configurationSha256: requireSha(standingService.configurationSha256, 'standingService.configurationSha256', 64),
+    },
+  };
+}
+
 export function validateManifest(value: unknown, now = Date.now()): AdmissionManifest {
   if (!isObject(value)) throw new Error('Admission manifest must be an object');
   if (value.schemaVersion !== 1) throw new Error('schemaVersion must be 1');
   if (value.rigId !== RIG_ID) throw new Error(`rigId must be ${RIG_ID}`);
+  if (value.admissionMode === 'exclusive-standing-mirror') return validateStandingManifest(value, now);
+  if (value.admissionMode !== undefined && value.admissionMode !== 'isolated') throw new Error('unsupported admissionMode');
   const sourceHead = requireString(value.sourceHead, 'sourceHead');
   if (!/^[0-9a-f]{40}$/.test(sourceHead)) throw new Error('sourceHead must be a full lowercase Git SHA');
   const supabaseProjectRef = requireString(value.supabaseProjectRef, 'supabaseProjectRef');
@@ -227,14 +382,7 @@ export function validateManifest(value: unknown, now = Date.now()): AdmissionMan
       || workerUrl.pathname !== '/' || workerUrl.search || workerUrl.hash) {
     throw new Error('worker URL is not bound to the isolated Cloud Run service');
   }
-  const createdAt = requireString(value.createdAt, 'createdAt');
-  const destroyBy = requireString(value.destroyBy, 'destroyBy');
-  const createdMs = Date.parse(createdAt);
-  const destroyMs = Date.parse(destroyBy);
-  if (!Number.isFinite(createdMs) || !Number.isFinite(destroyMs)) throw new Error('Lease timestamps must be valid ISO dates');
-  if (createdMs > now) throw new Error('Resource lease cannot start in the future');
-  if (destroyMs - createdMs !== LEASE_MS) throw new Error('Resource lease must be exactly 72 hours');
-  if (now >= destroyMs) throw new Error('Resource lease is expired');
+  const { createdAt, destroyBy } = leaseWindow(value, now);
   if (value.bootstrapCatalogSha256 !== EXPECTED_CATALOG_SHA256) {
     throw new Error('bootstrap catalog identity does not match this driver');
   }
@@ -246,10 +394,25 @@ export function validateManifest(value: unknown, now = Date.now()): AdmissionMan
     supabaseUrl: supabaseUrl.origin,
     cloudRunService: EXPECTED_SERVICE,
     workerUrl: workerUrl.origin,
-    createdAt: new Date(createdMs).toISOString(),
-    destroyBy: new Date(destroyMs).toISOString(),
+    createdAt,
+    destroyBy,
     bootstrapCatalogSha256: EXPECTED_CATALOG_SHA256,
   };
+}
+
+export function validateManifestDocument(raw: string, expectedSha256: string | undefined, now = Date.now()): AdmissionManifest {
+  if (expectedSha256 !== undefined) {
+    const expected = requireSha(expectedSha256, '--manifest-sha256', 64);
+    const actual = createHash('sha256').update(raw).digest('hex');
+    if (actual !== expected) throw new Error('manifest SHA-256 mismatch');
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error('Admission manifest must be valid JSON'); }
+  const manifest = validateManifest(parsed, now);
+  if (manifest.admissionMode === 'exclusive-standing-mirror' && expectedSha256 === undefined) {
+    throw new Error('--manifest-sha256 is required for standing mode');
+  }
+  return manifest;
 }
 
 export function parseUatArgs(argv: string[]): UatArgs {
@@ -257,6 +420,7 @@ export function parseUatArgs(argv: string[]): UatArgs {
     args: argv,
     options: {
       manifest: { type: 'string' },
+      'manifest-sha256': { type: 'string' },
       'evidence-out': { type: 'string' },
       duration: { type: 'string' },
       'interval-sec': { type: 'string' },
@@ -278,7 +442,7 @@ export function parseUatArgs(argv: string[]): UatArgs {
   const liveEmail = values['live-email'] === true;
   if (execute && !liveEmail) throw new Error('--execute requires explicit --live-email opt-in');
   if (execute && !values['evidence-out']) throw new Error('--execute requires --evidence-out');
-  return { manifestPath, evidenceOut: values['evidence-out'], durationMin, intervalSec, execute, liveEmail };
+  return { manifestPath, manifestSha256: values['manifest-sha256'], evidenceOut: values['evidence-out'], durationMin, intervalSec, execute, liveEmail };
 }
 
 const SENSITIVE_KEY = /authorization|token|secret|password|apikey|api_key|signedurl|activation_link/i;
@@ -369,7 +533,14 @@ async function worker(runtime: Runtime, method: string, path: string, token?: st
   throw new Error('worker_retry_exhausted');
 }
 
-async function managementQuery(runtime: Runtime, query: string): Promise<unknown[]> {
+function assertFixtureRequestLease(runtime: Runtime, allowTerminalCleanup = false): void {
+  if (runtime.manifest.admissionMode === 'exclusive-standing-mirror' && !allowTerminalCleanup) {
+    assertWorkerRequestLease(Date.now(), runtime.manifest.destroyBy);
+  }
+}
+
+async function managementQuery(runtime: Runtime, query: string, allowTerminalCleanup = false): Promise<unknown[]> {
+  assertFixtureRequestLease(runtime, allowTerminalCleanup);
   if (runtime.managementQueryOverride) return runtime.managementQueryOverride(query);
   const result = await jsonFetch(
     `https://api.supabase.com/v1/projects/${runtime.manifest.supabaseProjectRef}/database/query`,
@@ -381,6 +552,203 @@ async function managementQuery(runtime: Runtime, query: string): Promise<unknown
   );
   if (result.status !== 200 || !Array.isArray(result.body)) throw new Error('management_query_failed');
   return result.body;
+}
+
+/**
+ * The admission packet must calculate hashes from the returned arrays using
+ * recursively key-sorted compact JSON, UTF-8 bytes, and SHA-256. The baseline
+ * excludes the three target RC migrations and must contain exactly 149 rows;
+ * the RC digest covers the full expected ledger.
+ */
+export function standingStateSql(): string {
+  return `WITH ordered_ledger AS (
+      SELECT version::text AS version, name::text AS name, statements
+      FROM supabase_migrations.schema_migrations ORDER BY version
+    ), baseline AS (
+      SELECT * FROM ordered_ledger WHERE version NOT IN ('0443','0451','0452') ORDER BY version
+    ), historical AS (
+      SELECT pr_number, reason, acquired_by, acquired_at
+      FROM public.staging_lease WHERE pr_number IN (2571,2637,2668) ORDER BY pr_number
+    ), rc AS (
+      SELECT pr_number, reason, acquired_by, acquired_at
+      FROM public.staging_lease WHERE pr_number IN (2825,2831,2832) ORDER BY pr_number
+    ) SELECT
+      (SELECT count(*)::int FROM ordered_ledger) AS ledger_count,
+      (SELECT count(*)::int FROM baseline) AS baseline_count,
+      (SELECT count(*)::int FROM public.staging_lease) AS lease_count,
+      (SELECT jsonb_agg(to_jsonb(b) ORDER BY version) FROM baseline b) AS baseline_rows,
+      (SELECT jsonb_agg(to_jsonb(l) ORDER BY version) FROM ordered_ledger l) AS ledger_rows,
+      (SELECT jsonb_agg(to_jsonb(h) ORDER BY pr_number) FROM historical h) AS historical_rows,
+      (SELECT jsonb_agg(to_jsonb(r) ORDER BY pr_number) FROM rc r) AS lease_rows;`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isObject(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+export function canonicalEvidenceSha256(value: unknown): string {
+  // Matches `jq -cS .`: compact sorted JSON followed by its terminating LF.
+  return createHash('sha256').update(`${canonicalJson(value)}\n`).digest('hex');
+}
+
+const CLOUD_RUN_CONTROLLER_ANNOTATIONS = new Set([
+  'run.googleapis.com/build-id',
+  'run.googleapis.com/build-name',
+  'run.googleapis.com/build-source-location',
+  'run.googleapis.com/client-name',
+  'run.googleapis.com/client-version',
+  'run.googleapis.com/operation-id',
+  'serving.knative.dev/creator',
+  'serving.knative.dev/lastModifier',
+]);
+
+function stableAnnotations(value: unknown): unknown {
+  if (!isObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !CLOUD_RUN_CONTROLLER_ANNOTATIONS.has(key)));
+}
+
+function stableServiceSpec(value: JsonObject): JsonObject {
+  const copy = structuredClone(value);
+  if (isObject(copy.template) && isObject(copy.template.metadata)) {
+    copy.template.metadata.annotations = stableAnnotations(copy.template.metadata.annotations);
+  }
+  return copy;
+}
+
+/** Hashes configuration and serving identity while omitting controller clocks, conditions, and resourceVersion. */
+export function standingServiceConfigurationSha256(serviceDocument: unknown): string {
+  if (!isObject(serviceDocument) || !isObject(serviceDocument.metadata) || !isObject(serviceDocument.spec)) {
+    throw new Error('invalid standing Cloud Run service document');
+  }
+  const metadata = serviceDocument.metadata;
+  const stable = {
+    apiVersion: serviceDocument.apiVersion,
+    kind: serviceDocument.kind,
+    metadata: {
+      name: metadata.name,
+      namespace: metadata.namespace,
+      uid: metadata.uid,
+      generation: metadata.generation,
+      labels: metadata.labels,
+      annotations: stableAnnotations(metadata.annotations),
+    },
+    spec: stableServiceSpec(serviceDocument.spec),
+  };
+  return createHash('sha256').update(canonicalJson(stable)).digest('hex');
+}
+
+async function observeStandingState(runtime: Runtime): Promise<StandingObservation> {
+  if (runtime.standingObservationOverride) return runtime.standingObservationOverride();
+  const rows = await managementQuery(runtime, standingStateSql());
+  const row = isObject(rows[0]) ? rows[0] : {};
+  const manifest = runtime.manifest;
+  if (manifest.admissionMode !== 'exclusive-standing-mirror') throw new Error('standing observation requested for isolated rig');
+  assertFixtureRequestLease(runtime);
+  const serviceRaw = execFileSync('gcloud', [
+    'run', 'services', 'describe', manifest.cloudRunService,
+    '--project', manifest.standingService.projectId, '--region', manifest.standingService.region, '--format=json',
+  ], { encoding: 'utf8', timeout: REQUEST_TIMEOUT_MS });
+  const serviceDocument: unknown = JSON.parse(serviceRaw);
+  if (!isObject(serviceDocument) || !isObject(serviceDocument.metadata) || !isObject(serviceDocument.status)) {
+    throw new Error('standing_service_observation_invalid');
+  }
+  const revision = requireString(serviceDocument.status.latestReadyRevisionName, 'latestReadyRevisionName');
+  assertFixtureRequestLease(runtime);
+  const revisionRaw = execFileSync('gcloud', [
+    'run', 'revisions', 'describe', revision,
+    '--project', manifest.standingService.projectId, '--region', manifest.standingService.region, '--format=json',
+  ], { encoding: 'utf8', timeout: REQUEST_TIMEOUT_MS });
+  const revisionDocument: unknown = JSON.parse(revisionRaw);
+  if (!isObject(revisionDocument) || !isObject(revisionDocument.status)) throw new Error('standing_revision_observation_invalid');
+  const traffic = Array.isArray(serviceDocument.status.traffic)
+    ? serviceDocument.status.traffic.find((item) => isObject(item) && item.revisionName === revision)
+    : undefined;
+  const leaseRows = Array.isArray(row.lease_rows) ? row.lease_rows : [];
+  if (!Array.isArray(row.baseline_rows) || !Array.isArray(row.ledger_rows) || !Array.isArray(row.historical_rows)) {
+    throw new Error('standing_ledger_observation_invalid');
+  }
+  const imageDigest = revisionDocument.status.imageDigest;
+  return {
+    ledgerCount: Number(row.ledger_count),
+    baselineCount: Number(row.baseline_count),
+    leaseCount: Number(row.lease_count),
+    ledgerSha256: canonicalEvidenceSha256(row.ledger_rows),
+    baseline149Sha256: canonicalEvidenceSha256(row.baseline_rows),
+    historicalLeaseSha256: canonicalEvidenceSha256(row.historical_rows),
+    leaseRows: leaseRows.map((item) => {
+      if (!isObject(item)) throw new Error('standing_lease_row_invalid');
+      return {
+        pr_number: Number(item.pr_number),
+        reason: typeof item.reason === 'string' ? item.reason : null,
+        acquired_by: typeof item.acquired_by === 'string' ? item.acquired_by : null,
+        acquired_at: new Date(requireString(item.acquired_at, 'lease.acquired_at')).toISOString(),
+      };
+    }),
+    service: {
+      uid: requireString(serviceDocument.metadata.uid, 'service.uid'),
+      generation: Number(serviceDocument.metadata.generation),
+      revision,
+      imageDigest: requireString(imageDigest, 'revision.imageDigest'),
+      configurationSha256: standingServiceConfigurationSha256(serviceDocument),
+      trafficRevision: isObject(traffic) ? requireString(traffic.revisionName, 'traffic.revisionName') : '',
+      trafficPercent: isObject(traffic) ? Number(traffic.percent) : 0,
+    },
+  };
+}
+
+export function verifyStandingObservation(
+  manifest: StandingAdmissionManifest,
+  observation: StandingObservation,
+  now = Date.now(),
+): void {
+  assertWorkerRequestLease(now, manifest.destroyBy);
+  if (observation.baseline149Sha256 !== manifest.acceptedBaseline149Sha256) throw new Error('standing baseline149 drift');
+  if (observation.baselineCount !== 149) throw new Error('standing baseline must contain exactly 149 migrations');
+  if (observation.ledgerCount !== manifest.expectedRcMigrationCount
+      || observation.ledgerSha256 !== manifest.expectedRcLedgerSha256) throw new Error('standing RC ledger drift');
+  if (observation.historicalLeaseSha256 !== manifest.historicalLeaseSha256) throw new Error('standing historical lease drift');
+  if (observation.leaseCount !== 6) throw new Error('standing unexpected lease membership');
+  const expectedRows = manifest.sourceMembership.map((row) => ({
+    pr_number: row.prNumber, reason: row.reason, acquired_by: row.acquiredBy,
+    acquired_at: new Date(row.acquiredAt).toISOString(),
+  }));
+  const observedRows = observation.leaseRows.map((row) => ({
+    ...row, acquired_at: new Date(row.acquired_at).toISOString(),
+  }));
+  if (JSON.stringify(observedRows) !== JSON.stringify(expectedRows)) throw new Error('standing RC lease membership drift');
+  const expected = manifest.standingService;
+  const actual = observation.service;
+  if (actual.uid !== expected.uid || actual.generation !== expected.generation || actual.revision !== expected.revision
+      || actual.imageDigest !== expected.imageDigest || actual.configurationSha256 !== expected.configurationSha256
+      || actual.trafficRevision !== expected.revision || actual.trafficPercent !== 100) {
+    throw new Error('standing service identity/configuration drift');
+  }
+}
+
+async function verifyStandingTarget(runtime: Runtime): Promise<void> {
+  const manifest = runtime.manifest;
+  if (manifest.admissionMode !== 'exclusive-standing-mirror') return;
+  assertFixtureRequestLease(runtime);
+  const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  record(runtime, 'standing-current-source-head', currentHead === manifest.sourceHead);
+  const members = [manifest.baselineSourceHead, ...manifest.sourceMembership.map((row) => row.sourceHead)];
+  for (const head of members) {
+    try {
+      execFileSync('git', ['merge-base', '--is-ancestor', head, manifest.sourceHead], { stdio: 'ignore' });
+    } catch {
+      record(runtime, 'standing-exact-source-membership', false);
+    }
+  }
+  record(runtime, 'standing-exact-source-membership', true);
+  const observation = await observeStandingState(runtime);
+  try {
+    verifyStandingObservation(manifest, observation);
+  } catch {
+    record(runtime, 'standing-live-ledger-lease-service-identity', false);
+  }
+  record(runtime, 'standing-live-ledger-lease-service-identity', true);
 }
 
 export function catalogSql(): string {
@@ -418,6 +786,7 @@ async function verifyHostedAuth(runtime: Runtime): Promise<void> {
     record(runtime, 'hosted-auth-hook-local-simulation', true, undefined, 'local_simulation');
     return;
   }
+  assertFixtureRequestLease(runtime);
   const result = await jsonFetch(
     `https://api.supabase.com/v1/projects/${runtime.manifest.supabaseProjectRef}/config/auth`,
     { headers: { Authorization: `Bearer ${runtime.managementToken}` } },
@@ -449,8 +818,20 @@ async function verifyCleanStart(runtime: Runtime): Promise<void> {
   for (const email of Object.values(APPROVED_RECIPIENTS)) runtime.userEmails.add(email);
 }
 
-function service(runtime: Runtime): SupabaseClient {
-  return createClient(runtime.manifest.supabaseUrl, runtime.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+function client(runtime: Runtime, key: string, allowTerminalCleanup = false): SupabaseClient {
+  return createClient(runtime.manifest.supabaseUrl, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: (input, init) => {
+        assertFixtureRequestLease(runtime, allowTerminalCleanup);
+        return fetch(input, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      },
+    },
+  });
+}
+
+function service(runtime: Runtime, allowTerminalCleanup = false): SupabaseClient {
+  return client(runtime, runtime.serviceKey, allowTerminalCleanup);
 }
 
 async function createOrgFixture(runtime: Runtime, label: string): Promise<string> {
@@ -518,7 +899,7 @@ function totp(secret: string): string {
 }
 
 async function enrollHuman(runtime: Runtime, userId: string, email: string): Promise<HumanSession> {
-  const human = createClient(runtime.manifest.supabaseUrl, runtime.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const human = client(runtime, runtime.anonKey);
   const signed = await human.auth.signInWithPassword({ email, password: runtime.password });
   if (signed.error || !signed.data.session) throw new Error('aal1_signin_failed');
   const aal1 = registerSecret(runtime, signed.data.session.access_token);
@@ -538,7 +919,7 @@ async function enrollHuman(runtime: Runtime, userId: string, email: string): Pro
 }
 
 async function reauthenticate(runtime: Runtime, session: HumanSession): Promise<{ aal1: string; aal2: string }> {
-  const human = createClient(runtime.manifest.supabaseUrl, runtime.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const human = client(runtime, runtime.anonKey);
   const signed = await human.auth.signInWithPassword({ email: session.email, password: runtime.password });
   if (signed.error || !signed.data.session) throw new Error('repeat_aal1_signin_failed');
   const aal1 = registerSecret(runtime, signed.data.session.access_token);
@@ -556,10 +937,12 @@ async function reauthenticate(runtime: Runtime, session: HumanSession): Promise<
 async function aalBoundary(runtime: Runtime, session: HumanSession, label: string): Promise<void> {
   const aal1Worker = await worker(runtime, 'GET', '/api/admin/system-health', session.aal1);
   record(runtime, `${label}-worker-aal1-denied`, aal1Worker.status === 401, aal1Worker.status);
+  assertFixtureRequestLease(runtime);
   const aal1Data = await jsonFetch(`${runtime.manifest.supabaseUrl}/rest/v1/profiles?select=id&id=eq.${session.userId}`, {
     headers: { apikey: runtime.anonKey, Authorization: `Bearer ${session.aal1}` },
   });
   record(runtime, `${label}-postgrest-aal1-denied`, [401, 403].includes(aal1Data.status), aal1Data.status);
+  assertFixtureRequestLease(runtime);
   const aal2Data = await jsonFetch(`${runtime.manifest.supabaseUrl}/rest/v1/profiles?select=id&id=eq.${session.userId}`, {
     headers: { apikey: runtime.anonKey, Authorization: `Bearer ${session.aal2}` },
   });
@@ -664,6 +1047,47 @@ async function invitationAndProvisioning(runtime: Runtime, admin: HumanSession, 
   record(runtime, 'platform-provision-organization-replay', provisionReplay.status === 201
     && isObject(provisionReplay.body) && isObject(provisionReplay.body.organization)
     && provisionReplay.body.organization.org_id === provisionedOrgId, provisionReplay.status);
+  const { data: finiteCredits, error: finiteCreditsError } = await db.from('org_credits').select('anchor_quota,cap_enforced')
+    .eq('org_id', provisionedOrgId).single();
+  const { count: finiteReceipts, error: finiteReceiptsError } = await db.from('admin_org_provisioning_requests')
+    .select('idempotency_key', { count: 'exact', head: true }).eq('idempotency_key', provisionKey);
+  record(runtime, 'finite-quota-provisioning-semantics', !finiteCreditsError && !finiteReceiptsError
+    && finiteCredits?.anchor_quota === 10
+    && finiteCredits.cap_enforced === true && finiteReceipts === 1);
+
+  for (const isTest of [true, false]) {
+    const nullKey = randomUUID();
+    const nullName = `UAT0422 Null Quota ${isTest ? 'Test' : 'Billable'} ${nullKey}`;
+    runtime.orgNames.add(nullName);
+    const nullBody = {
+      display_name: nullName,
+      legal_name: nullName,
+      anchor_quota: null,
+      credits: 0,
+      is_test: isTest,
+      idempotency_key: nullKey,
+    };
+    const created = await worker(runtime, 'POST', '/api/admin/organizations', admin.aal2, nullBody);
+    const nullOrgId = isObject(created.body) && isObject(created.body.organization)
+      ? created.body.organization.org_id : null;
+    const createdOrganization = isObject(created.body) && isObject(created.body.organization)
+      ? created.body.organization : {};
+    record(runtime, `null-quota-${isTest ? 'test' : 'billable'}-provision`, created.status === 201
+      && typeof nullOrgId === 'string' && createdOrganization.anchor_quota === null, created.status);
+    runtime.orgIds.add(nullOrgId as string);
+    const replayed = await worker(runtime, 'POST', '/api/admin/organizations', admin.aal2, nullBody);
+    const { data: nullCredits, error: nullCreditsError } = await db.from('org_credits').select('anchor_quota,cap_enforced,is_test')
+      .eq('org_id', nullOrgId).single();
+    const { count: receiptCount, error: receiptError } = await db.from('admin_org_provisioning_requests')
+      .select('idempotency_key', { count: 'exact', head: true }).eq('idempotency_key', nullKey);
+    record(runtime, `null-quota-${isTest ? 'test' : 'billable'}-replay-semantics`, replayed.status === 201
+      && isObject(replayed.body) && isObject(replayed.body.organization)
+      && replayed.body.organization.org_id === nullOrgId
+      && replayed.body.organization.anchor_quota === null
+      && !nullCreditsError && !receiptError
+      && nullCredits?.anchor_quota === null && nullCredits.cap_enforced === false
+      && nullCredits.is_test === isTest && receiptCount === 1, replayed.status);
+  }
   runtime.userEmails.add(APPROVED_RECIPIENTS.provision);
   const provisionUser = await worker(runtime, 'POST', '/api/admin/users', admin.aal2, {
     email: APPROVED_RECIPIENTS.provision,
@@ -723,6 +1147,7 @@ async function verifyWorkerProcess(runtime: Runtime): Promise<void> {
 async function runAdmission(runtime: Runtime): Promise<void> {
   const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   record(runtime, 'exact-source-head', currentHead === runtime.manifest.sourceHead);
+  await verifyStandingTarget(runtime);
   await verifyWorkerProcess(runtime);
   await verifyHostedAuth(runtime);
   await verifyCatalog(runtime);
@@ -762,6 +1187,8 @@ async function runLongPhase(runtime: Runtime): Promise<void> {
   const admin = runtime.adminSession;
   if (!admin) throw new Error('admin_session_missing');
   while (Date.now() < endAt) {
+    await verifyStandingTarget(runtime);
+    await verifyWorkerProcess(runtime);
     const cycle = await reauthenticate(runtime, admin);
     const denied = await worker(runtime, 'GET', '/api/admin/system-health', cycle.aal1);
     record(runtime, 'long-aal1-worker-denied', denied.status === 401, denied.status);
@@ -788,6 +1215,7 @@ async function runLongPhase(runtime: Runtime): Promise<void> {
     await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(runtime.args.intervalSec * 1000, remaining)));
   }
   // Sample at the end too: the preceding loop sample can be one interval old.
+  await verifyStandingTarget(runtime);
   await verifyWorkerProcess(runtime);
 }
 
@@ -797,7 +1225,7 @@ async function cleanup(runtime: Runtime): Promise<boolean> {
     const owned = await managementQuery(runtime, `SELECT 'user' AS kind, id::text AS id
       FROM auth.users WHERE lower(email) IN (${sqlList(runtime.userEmails)})
       UNION ALL SELECT 'org' AS kind, id::text AS id
-      FROM public.organizations WHERE display_name IN (${sqlList(runtime.orgNames)})`);
+      FROM public.organizations WHERE display_name IN (${sqlList(runtime.orgNames)})`, true);
     for (const row of owned) {
       if (!isObject(row) || typeof row.id !== 'string') continue;
       if (row.kind === 'user') runtime.userIds.add(row.id);
@@ -814,11 +1242,12 @@ async function cleanup(runtime: Runtime): Promise<boolean> {
       SET LOCAL session_replication_role=replica;
       DELETE FROM public.audit_events WHERE actor_id IN (${users}) OR org_id IN (${orgs});
       DELETE FROM public.admin_org_provisioning_requests WHERE actor_id IN (${users}) OR org_id IN (${orgs});
-      COMMIT;`);
+      DELETE FROM public.org_credit_deductions WHERE org_id IN (${orgs});
+      COMMIT;`, true);
   } catch {
     ok = false;
   }
-  const db = service(runtime);
+  const db = service(runtime, true);
   try {
     const invitationFilters = [postgrestIn('id', runtime.invitationIds), postgrestIn('org_id', runtime.orgIds)].filter(Boolean);
     if (invitationFilters.length > 0) {
@@ -859,10 +1288,11 @@ async function cleanup(runtime: Runtime): Promise<boolean> {
       (SELECT count(*) FROM public.profiles WHERE id IN (${users}) OR org_id IN (${orgs}) OR lower(email) IN (${sqlList(runtime.userEmails)}))::int AS profiles,
       (SELECT count(*) FROM public.org_members WHERE user_id IN (${users}) OR org_id IN (${orgs}))::int AS memberships,
       (SELECT count(*) FROM public.invitations WHERE id IN (${invitations}) OR org_id IN (${orgs}) OR lower(email) IN (${sqlList(runtime.userEmails)}))::int AS invitations,
+      (SELECT count(*) FROM public.org_credit_deductions WHERE org_id IN (${orgs}))::int AS credit_deductions,
       (SELECT count(*) FROM public.admin_org_provisioning_requests WHERE actor_id IN (${users}) OR org_id IN (${orgs}))::int AS provisioning_requests,
-      (SELECT count(*) FROM public.organizations WHERE id IN (${orgs}) OR display_name IN (${sqlList(runtime.orgNames)}))::int AS organizations`);
+      (SELECT count(*) FROM public.organizations WHERE id IN (${orgs}) OR display_name IN (${sqlList(runtime.orgNames)}))::int AS organizations`, true);
     const counts = isObject(rows[0]) ? rows[0] : {};
-    return ok && ['users', 'profiles', 'memberships', 'invitations', 'provisioning_requests', 'organizations']
+    return ok && ['users', 'profiles', 'memberships', 'invitations', 'credit_deductions', 'provisioning_requests', 'organizations']
       .every((key) => counts[key] === 0);
   } catch {
     return false;
@@ -950,6 +1380,9 @@ function evidence(runtime: Runtime, complete: boolean, cleanedUp: boolean): Evid
     driver: 'uat04-uat22-auth-invite',
     rigId: RIG_ID,
     sourceHead: runtime.manifest.sourceHead,
+    admissionMode: runtime.manifest.admissionMode ?? 'isolated',
+    runId: runtime.manifest.admissionMode === 'exclusive-standing-mirror' ? runtime.manifest.runId : null,
+    manifestSha256: runtime.args.manifestSha256 ?? null,
     supabaseProjectRef: runtime.manifest.supabaseProjectRef,
     cloudRunService: runtime.manifest.cloudRunService,
     workerUrl: runtime.manifest.workerUrl,
@@ -983,7 +1416,8 @@ function checkpoint(runtime: Runtime, complete: boolean, cleanedUp: boolean): vo
 
 async function main(): Promise<void> {
   const args = parseUatArgs(process.argv.slice(2));
-  const manifest = validateManifest(JSON.parse(readFileSync(resolve(args.manifestPath), 'utf8')));
+  const manifestRaw = readFileSync(resolve(args.manifestPath), 'utf8');
+  const manifest = validateManifestDocument(manifestRaw, args.manifestSha256);
   if (Date.now() + args.durationMin * 60_000 > Date.parse(manifest.destroyBy)) {
     throw new Error('Requested soak duration exceeds the admitted 72-hour lease');
   }
