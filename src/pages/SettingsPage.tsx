@@ -32,6 +32,7 @@ import { DataCorrectionForm } from '@/components/auth/DataCorrectionForm';
 import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 import { IdentityVerification } from '@/components/auth/IdentityVerification';
 import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
+import { parseSocialLinksForWrite } from '@/lib/socialLinks';
 
 export function SettingsPage() {
   const { user, signOut } = useAuth();
@@ -93,10 +94,14 @@ export function SettingsPage() {
 
   const handleSaveSocial = useCallback(async () => {
     setError(null);
-    const cleaned = Object.fromEntries(
-      Object.entries(socialLinks).filter(([, v]) => v && v.trim()),
-    );
-    const success = await updateProfile({ social_links: Object.keys(cleaned).length > 0 ? cleaned : null } );
+    // SCRUM-4989: Zod on the write path (Constitution §1.1) — anything that is
+    // not an http(s) URL / @handle never reaches profiles.social_links.
+    const parsed = parseSocialLinksForWrite(socialLinks);
+    if (!parsed.ok) {
+      setError(PROFILE_LABELS.socialLinks.invalid[parsed.key]);
+      return;
+    }
+    const success = await updateProfile({ social_links: parsed.value } );
     if (success) {
       setSocialSaved(true);
       setTimeout(() => setSocialSaved(false), 2000);

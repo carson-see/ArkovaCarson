@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/tooltip';
 import { orgProfilePath, ROUTES } from '@/lib/routes';
 import type { Database } from '@/types/database.types';
+import { safeSocialHref } from '@/lib/socialLinks';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 
@@ -43,9 +44,16 @@ interface ProfileCardProps {
   onTogglePrivacy: (isPublic: boolean) => void;
 }
 
-function parseSocialLinks(raw: unknown): Record<string, string> {
-  if (!raw || typeof raw !== 'object') return {};
-  return raw as Record<string, string>;
+// SCRUM-4989: every stored value goes through safeSocialHref, so a value that
+// is not an http(s) URL (or an @handle for X) renders as no link at all.
+// Previously the raw string was placed straight into href.
+function parseSocialLinks(raw: unknown): { linkedin: string | null; twitter: string | null } {
+  if (!raw || typeof raw !== 'object') return { linkedin: null, twitter: null };
+  const record = raw as Record<string, unknown>;
+  return {
+    linkedin: safeSocialHref('linkedin', record.linkedin),
+    twitter: safeSocialHref('twitter', record.twitter),
+  };
 }
 
 export function ProfileCard({ profile, organization, loading, onTogglePrivacy }: Readonly<ProfileCardProps>) {
