@@ -250,6 +250,49 @@ describe('0453 content guard — vocabulary and column changes', () => {
     }
   });
 
+  /**
+   * U3. Postgres holds every lock until COMMIT, so an ACCESS EXCLUSIVE taken on
+   * `organizations` early in a transaction is held across everything that
+   * follows — including two full-table VALIDATE scans. That is the 2026-08-11
+   * P0 mechanism, and `SET LOCAL lock_timeout` does nothing about it: it bounds
+   * ACQUISITION, not hold time. The ordering below is the mitigation, so it is
+   * pinned rather than left to the next person editing the file.
+   */
+  it('takes the organizations ACCESS EXCLUSIVE last — after both VALIDATE scans', () => {
+    const body = sql();
+    const orgAlter = body.indexOf('ALTER TABLE public.organizations ALTER COLUMN public_id SET DEFAULT');
+    expect(orgAlter).toBeGreaterThan(-1);
+    for (const constraint of ['api_keys_scopes_known_values', 'agents_allowed_scopes_known_values']) {
+      const validate = body.indexOf(`VALIDATE CONSTRAINT ${constraint}`);
+      expect(validate, `VALIDATE ${constraint} is missing`).toBeGreaterThan(-1);
+      expect(
+        validate,
+        `VALIDATE ${constraint} runs INSIDE the organizations exclusive window`,
+      ).toBeLessThan(orgAlter);
+    }
+    // Nothing but the second ALTER, its COMMENT, the NOTIFY and the COMMIT may
+    // follow the first one — no function creation, no row write, no scan.
+    const tail = body.slice(orgAlter);
+    expect(tail).not.toContain('CREATE OR REPLACE FUNCTION');
+    expect(tail).not.toContain('VALIDATE CONSTRAINT');
+    expect(tail).not.toMatch(/^UPDATE /m);
+    expect(tail).not.toMatch(/^GRANT /m);
+  });
+
+  it('backfills NULL public_id with one statement, not a per-row PL/pgSQL loop', () => {
+    const body = sql();
+    expect(body).toContain('UPDATE public.organizations');
+    expect(body).toContain('WHERE public_id IS NULL');
+    // The loop issued an UPDATE and a function call per row inside the same
+    // transaction, for a set that is empty in prod.
+    expect(body).not.toContain('$backfill$');
+    expect(body).not.toContain('FOR v_row IN SELECT id FROM public.organizations');
+    // And it must precede the NOT NULL, or the NOT NULL can fail on a row the
+    // backfill was meant to repair.
+    expect(body.indexOf('WHERE public_id IS NULL'))
+      .toBeLessThan(body.indexOf('ALTER COLUMN public_id SET NOT NULL'));
+  });
+
   it('bounds the hot-table DDL and reloads the PostgREST schema cache', () => {
     const body = sql();
     // `organizations` is a hot table; an unbounded ALTER on it is the

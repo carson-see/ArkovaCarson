@@ -310,6 +310,23 @@ Ratcheted by `src/tests/sec-0453-suborg-api-key-authority.test.ts` — three of
 those five clauses are invisible to any integration test that uses a
 freshly-minted key, so they are pinned in the migration text instead.
 
+**4. Statement ORDER inside one transaction is a lock decision.** Postgres holds
+every lock until COMMIT, so an ACCESS EXCLUSIVE taken early is held across
+everything that follows. The first cut of 0453 took the AEL on `organizations`
+(`ALTER COLUMN public_id SET DEFAULT` / `SET NOT NULL`) and then ran both
+`VALIDATE CONSTRAINT` statements — full scans of `api_keys` and `agents` — inside
+the same transaction, so a hot table's exclusive lock was held for the duration
+of two unrelated table scans. `SET LOCAL lock_timeout` does NOT help here: it
+bounds acquisition, not hold time, and a FIFO lock queue means the AEL blocks
+everything behind it (the 2026-08-11 P0 mechanism). Reordered so the two
+`organizations` ALTERs are the LAST statements before `NOTIFY`/`COMMIT`; the
+per-row PL/pgSQL backfill loop became one `UPDATE … WHERE public_id IS NULL`.
+Pinned by `src/tests/sec-0453-suborg-api-key-authority.test.ts` ("takes the
+organizations ACCESS EXCLUSIVE last"). The file stays ONE transaction: the
+migration runner's behaviour with several `BEGIN;`/`COMMIT;` blocks in one file
+was not verifiable in the authoring session and no migration here has ever used
+more than one — a half-applied migration is worse than a millisecond AEL window.
+
 Both CHECKs re-added `ADD CONSTRAINT … NOT VALID` then `VALIDATE CONSTRAINT`, so
 the AccessExclusive window excludes the scan. Both `database.types.ts` copies
 are HAND-WRITTEN: no rig, prod or local stack was reachable in the authoring

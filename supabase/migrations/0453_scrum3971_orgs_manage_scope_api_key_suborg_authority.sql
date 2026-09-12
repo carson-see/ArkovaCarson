@@ -83,6 +83,40 @@
 --      `api_keys`, so the refusal is unreachable for a key that exists — it is
 --      there so a future nullable column cannot turn into a silent skip.
 --
+-- LOCK ANALYSIS (statement order in this file is load-bearing).
+--
+-- `organizations` is a hot table and `ALTER COLUMN ... SET DEFAULT` /
+-- `SET NOT NULL` each take ACCESS EXCLUSIVE on it. Postgres holds every lock a
+-- transaction acquires until COMMIT, so the AEL is held from the first of those
+-- ALTERs to the end of the transaction — NOT for the duration of the statement.
+-- `SET LOCAL lock_timeout` bounds ACQUISITION only; it does nothing about how
+-- long a lock already held blocks everyone queued behind it, and a Postgres lock
+-- queue is FIFO, so an AEL on `organizations` becomes a barrier in front of every
+-- later lock request including PostgREST's schema-cache introspection. That is
+-- the 2026-08-11 P0 mechanism (11m39s of service_unavailable on /api/v1/verify),
+-- and CLAUDE.md §1.2 exists because of it.
+--
+-- The first cut of this file took that AEL and then ran both
+-- `VALIDATE CONSTRAINT` statements — full scans of `api_keys` and `agents` —
+-- inside the same transaction, so the `organizations` AEL was held for the
+-- duration of two unrelated table scans. Reordered: everything that scans,
+-- creates a function, or writes a row happens FIRST, and the two `organizations`
+-- ALTERs are the last statements before `NOTIFY` / `COMMIT`. The AEL window is
+-- now the two ALTERs plus the NOT NULL verification scan (16 rows in prod,
+-- counted in this session) plus commit.
+--
+-- Why one transaction and not five: the migration runner's behaviour with
+-- SEVERAL `BEGIN;`/`COMMIT;` blocks in one file was NOT verified in the session
+-- that wrote this (no rig, no local stack, no prod), and no migration in
+-- `supabase/migrations/` has ever used more than one. A wrong guess there
+-- half-applies a migration, which is strictly worse than the millisecond-scale
+-- AEL window the reordering already produces. Splitting the file is a follow-up
+-- for a session that can measure it.
+--
+-- The per-row PL/pgSQL backfill loop is gone: it issued one UPDATE per NULL row
+-- (and one function call per row) inside the same transaction, for a set that is
+-- empty in prod. One statement, `WHERE public_id IS NULL`, does the same work.
+--
 -- No RLS change: all six functions are SECURITY DEFINER and service_role-only,
 -- reached exclusively through the worker. No table gains or loses a policy.
 --
@@ -111,9 +145,10 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
--- 1. organizations.public_id: collision-safe default, guarded backfill, NOT NULL.
--- Bounded at 100 attempts so a broken generator raises instead of spinning
--- inside a migration holding locks on a hot table.
+-- 1. The collision-safe generator for organizations.public_id.
+-- Created FIRST: it is the column default installed in step 5, and the
+-- backfill in step 4 calls it. Bounded at 100 attempts so a broken generator
+-- raises instead of spinning inside a migration holding locks on a hot table.
 CREATE OR REPLACE FUNCTION public.generate_unique_org_public_id() RETURNS text
     LANGUAGE plpgsql
     VOLATILE
@@ -151,25 +186,12 @@ COMMENT ON FUNCTION public.generate_unique_org_public_id() IS
 REVOKE ALL ON FUNCTION public.generate_unique_org_public_id() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.generate_unique_org_public_id() TO service_role;
 
-DO $backfill$
-DECLARE
-  v_row record;
-BEGIN
-  FOR v_row IN SELECT id FROM public.organizations WHERE public_id IS NULL LOOP
-    UPDATE public.organizations
-       SET public_id = public.generate_unique_org_public_id()
-     WHERE id = v_row.id;
-  END LOOP;
-END;
-$backfill$;
-
-ALTER TABLE public.organizations ALTER COLUMN public_id SET DEFAULT public.generate_unique_org_public_id();
-ALTER TABLE public.organizations ALTER COLUMN public_id SET NOT NULL;
-
-COMMENT ON COLUMN public.organizations.public_id IS
-  'Customer-facing organization identifier. NOT NULL with a collision-safe DEFAULT since 0453 (SCRUM-3971): the API-key sub-organization surface addresses organizations only by this value, never by the internal uuid. Do not drop the DEFAULT - without it generated Insert types make this column mandatory and browser-side organization creation stops typechecking.';
-
--- 2. scope vocabulary 20 -> 21 (adds orgs:manage)
+-- 2. Scope vocabulary 20 -> 21 (adds orgs:manage).
+-- Both CHECKs go in NOT VALID and are validated immediately after, so the
+-- ACCESS EXCLUSIVE each ADD CONSTRAINT takes on `api_keys` / `agents` excludes
+-- the scan; the VALIDATE itself takes only SHARE UPDATE EXCLUSIVE on its own
+-- table. These scans run BEFORE the `organizations` ALTERs so they cannot be
+-- held inside that table's exclusive window.
 ALTER TABLE public.api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_known_values;
 ALTER TABLE public.api_keys ADD CONSTRAINT api_keys_scopes_known_values
   CHECK ((cardinality(scopes) >= 1) AND (scopes <@ ARRAY['read:records'::text, 'read:orgs'::text, 'read:search'::text, 'write:anchors'::text, 'admin:rules'::text, 'verify'::text, 'verify:batch'::text, 'usage:read'::text, 'keys:manage'::text, 'compliance:read'::text, 'compliance:write'::text, 'oracle:read'::text, 'oracle:write'::text, 'anchor:write'::text, 'anchor:read'::text, 'attestations:write'::text, 'attestations:read'::text, 'webhooks:manage'::text, 'agents:manage'::text, 'keys:read'::text, 'orgs:manage'::text]))
@@ -448,6 +470,30 @@ REVOKE ALL ON FUNCTION public.suspend_suborg_as_api_key(uuid, uuid, text, uuid) 
 GRANT EXECUTE ON FUNCTION public.suspend_suborg_as_api_key(uuid, uuid, text, uuid) TO service_role;
 REVOKE ALL ON FUNCTION public.get_parent_credit_rollup_as_api_key(uuid, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_parent_credit_rollup_as_api_key(uuid, uuid) TO service_role;
+
+-- 4. Backfill any NULL public_id BEFORE the NOT NULL.
+-- One statement, not a per-row PL/pgSQL loop: the loop issued an UPDATE and a
+-- function call per row for a set that is EMPTY in prod (16 organizations, 0
+-- with NULL public_id, counted read-only in the authoring session). It is kept
+-- at all only for environments that predate the
+-- `generate_org_public_id_on_insert` trigger. This takes ROW EXCLUSIVE on
+-- `organizations`, not ACCESS EXCLUSIVE.
+UPDATE public.organizations
+   SET public_id = public.generate_unique_org_public_id()
+ WHERE public_id IS NULL;
+
+-- 5. THE ONLY ACCESS EXCLUSIVE WINDOW ON `organizations` IN THIS FILE.
+-- Last on purpose — see LOCK ANALYSIS in the header. Every scan, function
+-- creation and row write above has already committed its work inside this
+-- transaction, so the AEL is held for these two ALTERs (plus the NOT NULL
+-- verification scan over 16 rows) and the commit, and nothing else.
+-- DEFAULT BEFORE NOT NULL: `supabase gen types` marks an Insert field required
+-- when the column is NOT NULL *and* has no default.
+ALTER TABLE public.organizations ALTER COLUMN public_id SET DEFAULT public.generate_unique_org_public_id();
+ALTER TABLE public.organizations ALTER COLUMN public_id SET NOT NULL;
+
+COMMENT ON COLUMN public.organizations.public_id IS
+  'Customer-facing organization identifier. NOT NULL with a collision-safe DEFAULT since 0453 (SCRUM-3971): the API-key sub-organization surface addresses organizations only by this value, never by the internal uuid. Do not drop the DEFAULT - without it generated Insert types make this column mandatory and browser-side organization creation stops typechecking.';
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;
