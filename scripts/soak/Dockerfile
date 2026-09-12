@@ -20,7 +20,10 @@ ENV PORT=8080
 EXPOSE 8080
 # SCRUM-4988 (Checkov CKV_DOCKER_2): loadgen-server answers 200 JSON on every
 # path, so /status doubles as the liveness probe. busybox wget ships in alpine.
+# Shell form, so ${PORT} is expanded in the CONTAINER at probe time: the server
+# binds process.env.PORT (loadgen-server.ts) and Cloud Run injects that var, so
+# a hardcoded 8080 would probe the wrong port whenever PORT is overridden.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:8080/status >/dev/null || exit 1
+  CMD wget -qO- "http://127.0.0.1:${PORT:-8080}/status" >/dev/null || exit 1
 USER node
 CMD ["node", "dist/loadgen-server.js"]
