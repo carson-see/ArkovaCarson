@@ -913,6 +913,306 @@ paths:
               schema:
                 type: integer
 
+  # SCRUM-3971 — sub-organization management over an organization API key.
+  # Additive under §1.8. Every response is public-id only; the internal
+  # organization uuid is never emitted, and sending one as `org_public_id`
+  # returns 400 `use_public_id` rather than a silent 404.
+  #
+  # Mount consequences that apply to all six operations: each request counts
+  # against the key's monthly usage quota (usageTracking has no exemption
+  # mechanism for administration routes), and an organization whose payment
+  # state has lapsed cannot reach them at all (requirePaymentCurrent sits ahead
+  # of the whole /api/v1 prefix).
+  #
+  # 404 is the convention on this surface: absent, another parent's, not yet
+  # approved and suspended are deliberately indistinguishable, so the endpoint
+  # is not an existence oracle over organization public ids. The dashboard
+  # surface at /org/sub-orgs keeps its 403s, which are correct there.
+  /organizations/sub-orgs:
+    get:
+      operationId: listSubOrganizations
+      summary: List affiliated organizations
+      description: >-
+        List the organizations affiliated with the calling key's organization,
+        by public id, with the platform cap and current count. Requires
+        `read:orgs`; `orgs:manage` also satisfies it.
+      tags: [Organizations]
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: Affiliated organizations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sub_orgs, count]
+                properties:
+                  sub_orgs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SubOrganization"
+                  max_sub_orgs:
+                    type: integer
+                    nullable: true
+                  count:
+                    type: integer
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient scope, or the key's own organization is itself an affiliate
+        "429":
+          description: Rate limit exceeded
+        "503":
+          description: A required lookup was unavailable
+
+  /organizations/sub-orgs/approve:
+    post:
+      operationId: approveSubOrganization
+      summary: Approve a pending affiliation
+      description: >-
+        Approve an organization that has requested affiliation with the calling
+        key's organization. Requires `orgs:manage`. Subject to the platform
+        affiliate cap, which surfaces as 409.
+      tags: [Organizations]
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubOrganizationSelector"
+      responses:
+        "200":
+          description: Affiliation approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubOrganizationStatus"
+        "400":
+          description: org_public_id was an internal uuid (use_public_id)
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient scope
+        "404":
+          description: No addressable affiliate answers to this public id
+        "409":
+          description: Already approved, affiliate cap reached, or the affiliation changed under the request
+        "422":
+          description: Request body failed validation
+        "429":
+          description: Rate limit exceeded
+        "503":
+          description: A required lookup or RPC was unavailable
+
+  /organizations/sub-orgs/revoke:
+    post:
+      operationId: revokeSubOrganization
+      summary: Revoke an affiliation
+      description: >-
+        Revoke the affiliation of an organization affiliated with the calling
+        key's organization. Requires `orgs:manage`. Revocation severs the
+        affiliation only — it does not reclaim credits or suspend the
+        organization. Use /organizations/sub-orgs/offboard for that.
+      tags: [Organizations]
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubOrganizationSelector"
+      responses:
+        "200":
+          description: Affiliation revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubOrganizationStatus"
+        "400":
+          description: org_public_id was an internal uuid (use_public_id)
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient scope
+        "404":
+          description: No addressable affiliate answers to this public id
+        "409":
+          description: Already revoked, or the affiliation changed under the request
+        "422":
+          description: Request body failed validation
+        "429":
+          description: Rate limit exceeded
+        "503":
+          description: A required lookup or RPC was unavailable
+
+  /organizations/sub-orgs/credits:
+    post:
+      operationId: allocateSubOrganizationCredits
+      summary: Allocate or reclaim affiliate credits
+      description: >-
+        Move credits between the calling key's organization and one of its
+        approved affiliates. Positive allocates, negative reclaims. Requires
+        `orgs:manage`. One database transaction that re-verifies the affiliation
+        under a row lock.
+      tags: [Organizations]
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [org_public_id, amount]
+              properties:
+                org_public_id:
+                  type: string
+                  minLength: 2
+                  maxLength: 128
+                amount:
+                  type: integer
+                  description: Whole credits. Positive allocates, negative reclaims. Never zero.
+                note:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Transfer applied
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [parent_balance, child_balance, amount]
+                properties:
+                  parent_balance:
+                    type: integer
+                  child_balance:
+                    type: integer
+                  amount:
+                    type: integer
+        "400":
+          description: org_public_id was an internal uuid (use_public_id)
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient scope
+        "404":
+          description: No addressable approved affiliate answers to this public id
+        "409":
+          description: insufficient_parent_balance or insufficient_child_balance
+        "422":
+          description: Request body failed validation
+        "429":
+          description: Rate limit exceeded
+        "503":
+          description: A required lookup or RPC was unavailable
+    get:
+      operationId: getSubOrganizationCreditRollup
+      summary: Affiliate credit rollup
+      description: >-
+        Balances for the calling key's organization and each of its affiliates.
+        Balances ONLY — a parent sees what its affiliates spend, never what they
+        secured. Requires `read:orgs`.
+      tags: [Organizations]
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: Credit rollup
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [parent_balance, children]
+                properties:
+                  parent_balance:
+                    type: integer
+                  children:
+                    type: array
+                    items:
+                      type: object
+                      required: [public_id, balance, monthly_allocation]
+                      properties:
+                        public_id:
+                          type: string
+                        balance:
+                          type: integer
+                        monthly_allocation:
+                          type: integer
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient scope
+        "429":
+          description: Rate limit exceeded
+        "503":
+          description: A required lookup or RPC was unavailable
+
+  /organizations/sub-orgs/offboard:
+    post:
+      operationId: offboardSubOrganization
+      summary: Offboard an affiliate
+      description: >-
+        Reclaim an affiliate's remaining credits to the parent, then suspend it.
+        Requires `orgs:manage`. The order is deliberate and the operation is
+        retry-safe: if the suspend fails after a successful reclaim the response
+        reports `reclaimed > 0` with `suspended: false`, and a retry finishes the
+        job without moving credits twice. The affiliate's anchored records are
+        NOT touched — they stay verifiable after the relationship ends.
+      tags: [Organizations]
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [org_public_id]
+              properties:
+                org_public_id:
+                  type: string
+                  minLength: 2
+                  maxLength: 128
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Offboarded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reclaimed, suspended]
+                properties:
+                  reclaimed:
+                    type: integer
+                  suspended:
+                    type: boolean
+                  already_suspended:
+                    type: boolean
+        "400":
+          description: org_public_id was an internal uuid (use_public_id)
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient scope
+        "404":
+          description: No addressable affiliate answers to this public id
+        "409":
+          description: insufficient_child_balance — nothing is suspended when the reclaim fails
+        "422":
+          description: Request body failed validation
+        "429":
+          description: Rate limit exceeded
+        "503":
+          description: A required lookup or RPC was unavailable
+
   /jobs/{jobId}:
     get:
       operationId: getJobStatus
@@ -963,6 +1263,52 @@ components:
         detail:
           type: string
         instance:
+          type: string
+
+    SubOrganization:
+      type: object
+      required: [public_id, display_name, suspended, docusign_inherited, created_at]
+      properties:
+        public_id:
+          type: string
+          description: Public identifier. The internal uuid is never returned.
+        display_name:
+          type: string
+        domain:
+          type: string
+          nullable: true
+        verification_status:
+          type: string
+          nullable: true
+        parent_approval_status:
+          type: string
+          nullable: true
+        suspended:
+          type: boolean
+        docusign_inherited:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    SubOrganizationSelector:
+      type: object
+      required: [org_public_id]
+      properties:
+        org_public_id:
+          type: string
+          minLength: 2
+          maxLength: 128
+          description: Public identifier of the affiliated organization. NOT the internal uuid.
+
+    SubOrganizationStatus:
+      type: object
+      required: [status, public_id]
+      properties:
+        status:
+          type: string
+          enum: [APPROVED, REVOKED]
+        public_id:
           type: string
 
     SearchV2Response:

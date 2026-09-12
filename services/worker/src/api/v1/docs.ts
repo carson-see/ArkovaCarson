@@ -44,6 +44,65 @@ const ANCHOR_SUBMIT_RESPONSES = {
   '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
 } as const;
 
+/**
+ * SCRUM-3971 — sub-organization management over an organization API key.
+ *
+ * Additive under §1.8: six new paths, no existing shape touched. Every
+ * response here is PUBLIC-ID ONLY; the internal organization uuid is never
+ * emitted, and sending one as `org_public_id` is a 400 (`use_public_id`)
+ * rather than a silent 404.
+ *
+ * OpenAPI 3.0.3: `nullable: true`, never `type: 'null'` and never a type array
+ * — those are 3.1 spellings that make this served document invalid for every
+ * 3.0 consumer (the defect class pinned by `docs.test.ts`).
+ */
+const SUB_ORG_SELECTOR_PROPERTY = {
+  type: 'string',
+  minLength: 2,
+  maxLength: 128,
+  description: 'Public identifier of the affiliated organization. NOT the internal uuid — sending one returns 400 use_public_id.',
+  example: 'k7mqx3ptr9wz',
+} as const;
+
+const SUB_ORG_COMMON_RESPONSES = {
+  '401': { $ref: '#/components/responses/Unauthorized' },
+  '403': { $ref: '#/components/responses/Forbidden' },
+  '404': {
+    description:
+      'No affiliated organization the caller may address answers to this public id. Deliberately indistinguishable from "belongs to another parent", "not approved yet" and "suspended" — this endpoint is not an existence oracle.',
+    content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+  },
+  '429': { $ref: '#/components/responses/RateLimited' },
+  '503': {
+    description: 'A required lookup or RPC was unavailable. Never returned in place of a definitive answer.',
+    content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+  },
+} as const;
+
+const SUB_ORG_SELECTOR_BODY = {
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['org_public_id'],
+        properties: { org_public_id: SUB_ORG_SELECTOR_PROPERTY },
+      },
+    },
+  },
+} as const;
+
+/**
+ * Stated on every path below because it is a real consequence of the mount and
+ * there is no exemption mechanism to hide behind: these routes are inside the
+ * v1 chain, so each request increments the key's monthly usage counter and a
+ * free-tier key can be 429'd by administration traffic alone. An organization
+ * whose payment state has lapsed cannot reach them at all
+ * (`requirePaymentCurrent` sits ahead of the whole /api/v1 prefix).
+ */
+const SUB_ORG_MOUNT_NOTE =
+  ' Counts against the API key monthly usage quota (no exemption exists for administration routes) and requires the organization payment state to be current.';
+
 const CLE_CREDIT_ROW_SCHEMA = {
   type: 'object',
   properties: {
@@ -1460,6 +1519,227 @@ export const openApiSpec: Record<string, any> = {
       },
     },
     // ── Webhook CRUD (INT-09) ─────────────────────────────────────────────
+    '/organizations/sub-orgs': {
+      get: {
+        summary: 'List affiliated organizations',
+        description:
+          'List the organizations affiliated with the calling key\'s organization, by public id. Returns the platform cap and the current count alongside.'
+          + SUB_ORG_MOUNT_NOTE,
+        operationId: 'listSubOrganizations',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        responses: {
+          '200': {
+            description: 'Affiliated organizations',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['sub_orgs', 'count'],
+                  properties: {
+                    sub_orgs: { type: 'array', items: { $ref: '#/components/schemas/SubOrganization' } },
+                    max_sub_orgs: { type: 'integer', nullable: true, description: 'Platform cap on affiliates for this organization; null means the default applies.' },
+                    count: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          ...SUB_ORG_COMMON_RESPONSES,
+        },
+      },
+    },
+    '/organizations/sub-orgs/approve': {
+      post: {
+        summary: 'Approve a pending affiliation',
+        description:
+          'Approve an organization that has requested affiliation with the calling key\'s organization. Requires the orgs:manage scope. Subject to the platform affiliate cap (409).'
+          + SUB_ORG_MOUNT_NOTE,
+        operationId: 'approveSubOrganization',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: SUB_ORG_SELECTOR_BODY,
+        responses: {
+          '200': {
+            description: 'Affiliation approved',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/SubOrganizationStatus' } } },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '409': {
+            description: 'Already approved, the affiliate cap is reached, or the affiliation changed under the request. Never a 500.',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+          },
+          '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          ...SUB_ORG_COMMON_RESPONSES,
+        },
+      },
+    },
+    '/organizations/sub-orgs/revoke': {
+      post: {
+        summary: 'Revoke an affiliation',
+        description:
+          'Revoke the affiliation of an organization affiliated with the calling key\'s organization. Requires the orgs:manage scope. Revocation severs the affiliation; it does not reclaim credits or suspend the organization — use /offboard for that.'
+          + SUB_ORG_MOUNT_NOTE,
+        operationId: 'revokeSubOrganization',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: SUB_ORG_SELECTOR_BODY,
+        responses: {
+          '200': {
+            description: 'Affiliation revoked',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/SubOrganizationStatus' } } },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '409': {
+            description: 'Already revoked, or the affiliation changed under the request.',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+          },
+          '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          ...SUB_ORG_COMMON_RESPONSES,
+        },
+      },
+    },
+    '/organizations/sub-orgs/credits': {
+      post: {
+        summary: 'Allocate or reclaim affiliate credits',
+        description:
+          'Move credits between the calling key\'s organization and one of its approved affiliates. A positive amount allocates, a negative amount reclaims. Requires the orgs:manage scope. The transfer is a single database transaction that re-verifies the affiliation under a row lock.'
+          + SUB_ORG_MOUNT_NOTE,
+        operationId: 'allocateSubOrganizationCredits',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['org_public_id', 'amount'],
+                properties: {
+                  org_public_id: SUB_ORG_SELECTOR_PROPERTY,
+                  amount: { type: 'integer', description: 'Whole credits. Positive allocates to the affiliate, negative reclaims to the parent. Never zero.', example: 100 },
+                  note: { type: 'string', maxLength: 500 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Transfer applied',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['parent_balance', 'child_balance', 'amount'],
+                  properties: {
+                    parent_balance: { type: 'integer' },
+                    child_balance: { type: 'integer' },
+                    amount: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '409': {
+            description: 'insufficient_parent_balance or insufficient_child_balance. A conflict with the current balance, not a payment prompt — nothing here is purchasable in the moment.',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+          },
+          '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          ...SUB_ORG_COMMON_RESPONSES,
+        },
+      },
+      get: {
+        summary: 'Affiliate credit rollup',
+        description:
+          'Balances for the calling key\'s organization and each of its affiliates. Balances ONLY: a parent sees what its affiliates spend, never what they secured.'
+          + SUB_ORG_MOUNT_NOTE,
+        operationId: 'getSubOrganizationCreditRollup',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        responses: {
+          '200': {
+            description: 'Credit rollup',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['parent_balance', 'children'],
+                  properties: {
+                    parent_balance: { type: 'integer' },
+                    children: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['public_id', 'balance', 'monthly_allocation'],
+                        properties: {
+                          public_id: { type: 'string' },
+                          balance: { type: 'integer' },
+                          monthly_allocation: { type: 'integer' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          ...SUB_ORG_COMMON_RESPONSES,
+        },
+      },
+    },
+    '/organizations/sub-orgs/offboard': {
+      post: {
+        summary: 'Offboard an affiliate',
+        description:
+          'Reclaim an affiliate\'s remaining credits to the parent and then suspend it. Requires the orgs:manage scope. The order is deliberate and the operation is retry-safe: if the suspend fails after a successful reclaim, the response reports reclaimed > 0 with suspended false and a retry finishes the job without moving credits twice. The affiliate\'s anchored records are NOT touched — they stay verifiable after the relationship ends.'
+          + SUB_ORG_MOUNT_NOTE,
+        operationId: 'offboardSubOrganization',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['org_public_id'],
+                properties: {
+                  org_public_id: SUB_ORG_SELECTOR_PROPERTY,
+                  reason: { type: 'string', maxLength: 500 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Offboarded',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['reclaimed', 'suspended'],
+                  properties: {
+                    reclaimed: { type: 'integer', description: 'Credits returned to the parent by this call. Zero on a retry that already reclaimed.' },
+                    suspended: { type: 'boolean' },
+                    already_suspended: { type: 'boolean', description: 'True when the affiliate was already suspended before this call.' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '409': {
+            description: 'insufficient_child_balance — the reclaim conflicts with the current balance. Nothing is suspended when the reclaim fails.',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+          },
+          '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          ...SUB_ORG_COMMON_RESPONSES,
+        },
+      },
+    },
     '/webhooks': {
       post: {
         summary: 'Register a webhook endpoint',
@@ -2393,6 +2673,28 @@ export const openApiSpec: Record<string, any> = {
           total: { type: 'integer' },
         },
       },
+      SubOrganization: {
+        type: 'object',
+        required: ['public_id', 'display_name', 'suspended', 'docusign_inherited', 'created_at'],
+        properties: {
+          public_id: { type: 'string', description: 'Public identifier. The internal uuid is never returned.' },
+          display_name: { type: 'string' },
+          domain: { type: 'string', nullable: true },
+          verification_status: { type: 'string', nullable: true, enum: ['UNVERIFIED', 'PENDING', 'VERIFIED', null] },
+          parent_approval_status: { type: 'string', nullable: true, enum: ['PENDING', 'APPROVED', 'REVOKED', null] },
+          suspended: { type: 'boolean' },
+          docusign_inherited: { type: 'boolean', description: 'Whether this affiliate currently runs on the parent organization DocuSign connection.' },
+          created_at: { type: 'string', format: 'date-time' },
+        },
+      },
+      SubOrganizationStatus: {
+        type: 'object',
+        required: ['status', 'public_id'],
+        properties: {
+          status: { type: 'string', enum: ['APPROVED', 'REVOKED'] },
+          public_id: { type: 'string' },
+        },
+      },
       IntegrityResponse: {
         type: 'object',
         properties: {
@@ -2446,6 +2748,7 @@ export const openApiSpec: Record<string, any> = {
     { name: 'Attestations', description: 'Attestation claims (create, verify, revoke)' },
     { name: 'Compliance', description: 'Regulatory lookups, CLE verification, compliance checks' },
     { name: 'Webhooks', description: 'Webhook management, testing, and delivery logs' },
+    { name: 'Organizations', description: 'Sub-organization management over an organization API key (orgs:manage)' },
     { name: 'Jobs', description: 'Async batch job polling' },
     { name: 'Usage', description: 'API usage and quota monitoring' },
     { name: 'Key Management', description: 'API key lifecycle management (requires Supabase JWT)' },

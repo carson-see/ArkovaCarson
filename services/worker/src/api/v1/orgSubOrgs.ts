@@ -1181,7 +1181,7 @@ const SUSPEND_RPC_STATUS: Record<string, number> = {
 };
 
 /** Credits are whole units; the bound is a sanity rail, not a business limit. */
-const MAX_CREDIT_TRANSFER = 100_000_000;
+export const MAX_CREDIT_TRANSFER = 100_000_000;
 
 const AllocateCreditsSchema = z.object({
   childOrgId: z.string().uuid(),
@@ -1203,10 +1203,16 @@ interface AllocateCreditsRpcResult {
   error?: string;
 }
 
-interface CreditRollupRpcResult {
+export interface CreditRollupRpcResult {
   parent_org_id?: string;
   parent_balance?: number;
-  children?: { child_org_id: string; balance: number; monthly_allocation: number }[];
+  children?: {
+    child_org_id: string;
+    /** Added by migration 0453's `*_as_api_key` sibling; absent on the user overload. */
+    child_public_id?: string | null;
+    balance: number;
+    monthly_allocation: number;
+  }[];
   error?: string;
 }
 
