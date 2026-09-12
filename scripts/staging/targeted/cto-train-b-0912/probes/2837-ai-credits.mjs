@@ -99,6 +99,25 @@ async function allRows(admin, orgId) {
   return { rows: data ?? [], error: error?.message ?? null };
 }
 
+/**
+ * Rows whose period has already ENDED, by parsed instant.
+ *
+ * Never compare these bounds as strings. PostgREST renders `timestamptz` as
+ * `2026-09-01T00:00:00+00:00` while `Date.prototype.toISOString()` produces
+ * `2026-09-01T00:00:00.000Z` — the same instant, never `===`. Cycle 1
+ * (2026-09-12T21:48:24Z, rev 00005-z58) failed `2837_stale_prior_row_untouched`
+ * on exactly that: the row was present and correct, the string match found
+ * nothing, and the probe reported `actual: null` as if provisioning had deleted
+ * it. Server-side filters (`.lte`/`.gt`/`.gte`) are unaffected — PostgREST
+ * parses those — so this is the only place in the module that needed it.
+ */
+function endedRows(rows, at = Date.now()) {
+  return rows.filter((r) => {
+    const end = Date.parse(r.period_end);
+    return Number.isFinite(end) && end <= at;
+  });
+}
+
 /** Remove every ai_credits row for the probe org — the cold-start precondition. */
 async function clearCredits(admin, orgId) {
   const { error } = await admin.from('ai_credits').delete().eq('org_id', orgId);
@@ -293,9 +312,24 @@ export async function run(ctx) {
   out.push(probe('2837_stale_prior_row_http_outcome', [200, 402], stale.status, {
     detail: 'DIAGNOSTIC, not a regression gate. 200 = check_ai_credits read the fresh row; 402 = it read the exhausted prior row via the documented WHERE-precedence bug (own T3 migration). Either way the provisioning assertion above is the claim under test.',
   }));
-  const staleRow = (await allRows(admin, orgC)).rows.find((r) => r.period_end === start.toISOString());
-  out.push(probe('2837_stale_prior_row_untouched', 100, staleRow?.used_this_month ?? null, {
-    detail: 'Provisioning must never rewrite an existing period row.',
+  // Partition by parsed instant, not by string equality (see endedRows).
+  const orgRows = await allRows(admin, orgC);
+  const ended = endedRows(orgRows.rows);
+  // Guard first, so a read that found NOTHING can never again be reported as a
+  // bare `actual: null` that reads like "provisioning deleted the row".
+  out.push(probe('2837_stale_prior_row_still_present', 1, ended.length, {
+    detail: {
+      allRows: orgRows.rows,
+      readError: orgRows.error,
+      seededPeriod: { period_start: prevStart.toISOString(), period_end: start.toISOString() },
+      note: '0 here means the prior row is gone (a real regression); >1 means the cold-start clear did not run.',
+    },
+  }));
+  out.push(probe('2837_stale_prior_row_untouched', 100, ended[0]?.used_this_month ?? null, {
+    detail: {
+      row: ended[0] ?? null,
+      note: 'Provisioning must never rewrite an existing period row. Read via parsed instants; PostgREST renders timestamptz as +00:00, not .000Z.',
+    },
   }));
 
   // ── 3. TOCTOU: concurrent first-ever requests converge to ONE row ────────
