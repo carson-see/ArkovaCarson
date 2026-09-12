@@ -23,60 +23,14 @@ import {
   PRIVATE_IP_PATTERNS,
   isPrivateIp,
 } from '../lib/ssrf-guard.js';
-import { createSafeFetchImpl, SafeFetchError } from '../lib/safe-fetch.js';
+import { formatEgressFailure, webhookFetch } from './egress.js';
 
-// ─── SCRUM-4983: IP-pinned egress for every outbound webhook socket ───────────
-//
-// `isPrivateUrlResolved()` above is a pre-check, not a connection guard. It
-// resolves the endpoint host, validates the answers, and returns — then the
-// dispatch below used plain `fetch(endpoint.url)`, which resolves AGAIN. A
-// tenant-controlled webhook host that answers a public A record during the
-// check and 169.254.169.254 (TTL 0) at dispatch time reached the GCE metadata
-// server. `redirect: 'manual'` never closed that gap; the socket target did.
-//
-// All webhook dispatch now goes through `createSafeFetchImpl()` from
-// lib/safe-fetch.ts: resolve → validate → CONNECT TO THE PINNED IP with the
-// original Host/SNI. The connection target is, by construction, the address
-// that was validated. This is the same primitive credential-source imports and
-// the CTDL registry fetch already use in prod.
-//
-// The pre-check stays: it is cheap, it logs a clear "blocked" line before any
-// delivery_log row is written, and the two layers fail independently.
-//
-// Tests: the pinned dispatch uses undici's own fetch (see safe-fetch.ts), so
-// `vi.stubGlobal('fetch', …)` does NOT intercept it. Suites that drive the real
-// delivery module inject a fetch via `__setWebhookFetchForTests`.
-type WebhookFetchFn = (url: string, init?: RequestInit) => Promise<Response>;
-let webhookFetchOverride: WebhookFetchFn | null = null;
-let pinnedWebhookFetch: WebhookFetchFn | null = null;
-
-function webhookFetch(url: string, init: RequestInit): Promise<Response> {
-  if (webhookFetchOverride) return webhookFetchOverride(url, init);
-  pinnedWebhookFetch ??= createSafeFetchImpl();
-  return pinnedWebhookFetch(url, init);
-}
-
-/** Test seam — pass null to restore the pinned production dispatch. */
-export function __setWebhookFetchForTests(impl: WebhookFetchFn | null): void {
-  webhookFetchOverride = impl;
-}
-
-/**
- * A SafeFetchError whose cause is the destination itself (private target,
- * unresolvable, bad scheme/URL, hostile redirect) is not transient. Retrying
- * it five times only re-attempts the same egress; it goes straight to the DLQ.
- */
-const PERMANENT_EGRESS_CODES = new Set([
-  'private_target',
-  'unresolvable',
-  'scheme_not_allowed',
-  'invalid_url',
-  'redirect_invalid',
-]);
-
-function isPermanentEgressRefusal(error: unknown): error is SafeFetchError {
-  return error instanceof SafeFetchError && PERMANENT_EGRESS_CODES.has(error.code);
-}
+// ─── SCRUM-4983: every outbound socket is IP-pinned — see ./egress.ts ────────
+// `isPrivateUrlResolved()` above is a pre-check, not a connection guard. Both
+// dispatch sites below go through `webhookFetch` (resolve → validate → connect
+// to the pinned IP). The pre-check stays: it is cheap, it logs a clear
+// "blocked" line before any delivery_log row is written, and the two layers
+// fail independently.
 
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
@@ -701,11 +655,10 @@ async function deliverToEndpoint(
   } catch (error) {
     // Network error — unless the pinned egress layer refused the destination
     // itself (SCRUM-4983), which is permanent: same URL, same answer.
-    const egressRefused = isPermanentEgressRefusal(error);
+    const egress = formatEgressFailure(error);
+    const egressRefused = egress.permanent;
     const shouldRetry = !egressRefused && attempt < MAX_RETRIES;
-    const errorMessage = egressRefused
-      ? `egress_refused: ${error.code}`
-      : error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = egress.message;
 
     await db
       .from('webhook_delivery_logs')
@@ -723,12 +676,18 @@ async function deliverToEndpoint(
 
     // DH-12: Move to dead letter queue if permanently failed
     if (!shouldRetry) {
-      await moveToDeadLetterQueue(endpoint, payload, errorMessage, attempt, 'http_delivery');
+      await moveToDeadLetterQueue(
+        endpoint,
+        payload,
+        errorMessage,
+        attempt,
+        egressRefused ? 'egress_refused' : 'http_delivery',
+      );
     }
 
     if (egressRefused) {
       logger.warn(
-        { endpointId: endpoint.id, eventId: payload.event_id, code: error.code, attempt },
+        { endpointId: endpoint.id, eventId: payload.event_id, code: egress.code, attempt },
         'Blocked webhook delivery at dispatch (pinned egress refused the resolved target)',
       );
     } else {
@@ -924,7 +883,13 @@ export async function dispatchWebhookEvent(
  * (endpoint_id, event_type, event_id, failure_kind) so re-DLQ of the SAME
  * failure mode is a no-op, while the two distinct modes can each keep one row.
  */
-type DlqFailureKind = 'http_delivery' | 'log_write';
+// `egress_refused` (SCRUM-4983): Arkova itself refused to open the socket
+// (private/metadata target, no DNS answer, bad scheme) — a tenant URL/DNS
+// problem, not a receiver failure. Keeping it distinct from `http_delivery`
+// stops support from telling a tenant "your server is down" when the real
+// answer is "your hostname resolves to a private address". The column is free
+// text (0338) so no migration is needed.
+type DlqFailureKind = 'http_delivery' | 'log_write' | 'egress_refused';
 
 /**
  * Move permanently failed webhook deliveries to a dead letter queue
@@ -1173,16 +1138,15 @@ export async function replayDelivery(
 
     return { ok: isSuccess, status_code: response.status, new_delivery_id: newLog.id };
   } catch (err) {
-    const egressRefused = isPermanentEgressRefusal(err);
-    const msg = egressRefused
-      ? `egress_refused: ${err.code}`
-      : err instanceof Error ? err.message : 'unknown';
+    const egress = formatEgressFailure(err);
+    const egressRefused = egress.permanent;
+    const msg = egress.message;
     await dbAny
       .from('webhook_delivery_logs')
       .update({ status: 'failed', error_message: truncateUtf16Safe(msg, 500) })
       .eq('id', newLog.id);
     if (egressRefused) {
-      logger.warn({ endpointId: endpoint.id, deliveryId, code: err.code }, 'Replay blocked at dispatch — pinned egress refused the resolved target');
+      logger.warn({ endpointId: endpoint.id, deliveryId, code: egress.code }, 'Replay blocked at dispatch — pinned egress refused the resolved target');
       return { ok: false, error: 'ssrf_blocked', new_delivery_id: newLog.id };
     }
     return { ok: false, error: 'delivery_failed', new_delivery_id: newLog.id };

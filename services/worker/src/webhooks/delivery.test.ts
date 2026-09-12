@@ -245,8 +245,8 @@ import {
   __resetWebhookFlagCacheForTest,
   resetCircuitBreakers,
   resolveDlqEntry,
-  __setWebhookFetchForTests,
 } from './delivery.js';
+import { __setWebhookFetchForTests } from './egress.js';
 
 // SCRUM-4983: production dispatch is IP-pinned through undici's own fetch, which
 // vi.stubGlobal('fetch') cannot intercept. Route the module's dispatch back to

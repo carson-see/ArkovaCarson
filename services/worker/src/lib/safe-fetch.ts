@@ -46,6 +46,26 @@ export class SafeFetchError extends Error {
 }
 
 /**
+ * A SafeFetchError caused by the DESTINATION itself — private/link-local
+ * target, no DNS answer, disallowed scheme, malformed URL, hostile redirect —
+ * is not transient: the same URL yields the same refusal on every attempt.
+ * Callers with a retry ladder (webhook delivery/replay) must not retry these.
+ * `request_failed`, `deadline_exceeded`, `too_many_redirects` and
+ * `response_too_large` stay retryable (receiver/network conditions can change).
+ */
+export const PERMANENT_SAFE_FETCH_CODES: ReadonlySet<SafeFetchErrorCode> = new Set<SafeFetchErrorCode>([
+  'private_target',
+  'unresolvable',
+  'scheme_not_allowed',
+  'invalid_url',
+  'redirect_invalid',
+]);
+
+export function isPermanentSafeFetchError(error: unknown): error is SafeFetchError {
+  return error instanceof SafeFetchError && PERMANENT_SAFE_FETCH_CODES.has(error.code);
+}
+
+/**
  * The minimal response surface safeFetch exposes. Deliberately narrower than
  * the DOM `Response` so a stub dispatch (tests) and the undici dispatch (prod)
  * satisfy the same contract.

@@ -113,8 +113,8 @@ import {
   isCircuitOpen,
   resetCircuitBreakers,
   __resetWebhookFlagCacheForTest,
-  __setWebhookFetchForTests,
 } from '../webhooks/delivery.js';
+import { __setWebhookFetchForTests } from '../webhooks/egress.js';
 // SCRUM-4983: pinned dispatch bypasses the global fetch stub — route it back.
 __setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
 import { poisonAt, illFormedStringPaths } from './utf16-poison.js';

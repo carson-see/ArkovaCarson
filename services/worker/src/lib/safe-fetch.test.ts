@@ -25,6 +25,7 @@
 import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { isPermanentSafeFetchError, SafeFetchError as SafeFetchErrorClass } from './safe-fetch.js';
 import {
   safeFetch,
   safeFetchSingleHop,
@@ -400,5 +401,24 @@ describe('defaultSafeFetchDeps().dispatch (real undici Agent pin)', () => {
     expect(res.status).toBe(200);
     const parsed = JSON.parse(Buffer.from(await res.arrayBuffer()).toString('utf8'));
     expect(parsed.ok).toBe(true);
+  });
+});
+
+describe('isPermanentSafeFetchError (SCRUM-4983 review)', () => {
+  it('classifies destination-caused refusals as permanent', () => {
+    for (const code of ['private_target', 'unresolvable', 'scheme_not_allowed', 'invalid_url', 'redirect_invalid'] as const) {
+      expect(isPermanentSafeFetchError(new SafeFetchErrorClass(code, code))).toBe(true);
+    }
+  });
+
+  it('leaves transient / receiver-caused codes retryable', () => {
+    for (const code of ['request_failed', 'deadline_exceeded', 'too_many_redirects', 'response_too_large'] as const) {
+      expect(isPermanentSafeFetchError(new SafeFetchErrorClass(code, code))).toBe(false);
+    }
+  });
+
+  it('is false for non-SafeFetchError values', () => {
+    expect(isPermanentSafeFetchError(new Error('private_target'))).toBe(false);
+    expect(isPermanentSafeFetchError(null)).toBe(false);
   });
 });

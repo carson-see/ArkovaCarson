@@ -14,7 +14,8 @@ const { mockDbFrom, mockLogger } = vi.hoisted(() => ({
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 
-import { replayDelivery, __setWebhookFetchForTests } from './delivery.js';
+import { replayDelivery } from './delivery.js';
+import { __setWebhookFetchForTests } from './egress.js';
 
 // SCRUM-4983: see delivery.test.ts — the pinned dispatch bypasses the global.
 __setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));

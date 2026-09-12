@@ -180,27 +180,49 @@ declaration stops resolving, and runs inside the already-required `Tests` job
 via the root vitest `scripts/**` glob — no workflow wiring needed. Register a
 schema in this file and that check goes red until every mirror follows.
 
-## 2026-09-12 SCRUM-4983 — every outbound webhook socket is IP-pinned
+## 2026-09-12 SCRUM-4983 — every outbound webhook socket is IP-pinned (`egress.ts`)
 
 `isPrivateUrlResolved()` was a pre-check, not a connection guard: it resolved and validated the
-endpoint host, and then `deliverToEndpoint` / `replayDelivery` dispatched with plain `fetch()`, which
-resolved AGAIN. A tenant-controlled host answering a public A record during the check and
-`169.254.169.254` (TTL 0) at dispatch reached the GCE metadata server; `redirect: 'manual'` never
-covered that. Both dispatch sites now go through `webhookFetch()`, which is `createSafeFetchImpl()`
-from `lib/safe-fetch.ts` — resolve → validate → connect to the PINNED IP with the original Host/SNI —
-the same primitive the credential-source import and CTDL registry fetch already use in prod. The
-pre-check stays (cheap, logs "blocked" before any delivery_log row exists, fails independently).
+endpoint host, and then the dispatch site called plain `fetch()`, which resolved AGAIN. A
+tenant-controlled host answering a public A record during the check and `169.254.169.254` (TTL 0)
+at dispatch reached the GCE metadata server; `redirect: 'manual'` never covered that.
 
-**A refusal from the pinned layer is permanent.** `SafeFetchError` codes `private_target`,
-`unresolvable`, `scheme_not_allowed`, `invalid_url`, `redirect_invalid` mark the log row `failed`
-with `error_message = egress_refused: <code>`, `next_retry_at = null`, and move the event to the DLQ
-in one attempt; `replayDelivery` returns `ssrf_blocked`. `request_failed` and `deadline_exceeded` stay
-on the normal retry ladder. Do not add a retry for the permanent codes — same URL, same answer.
+**All five dispatch sites now go through `webhookFetch()` in `./egress.ts`** — `deliverToEndpoint`
+and `replayDelivery` here, `sendVerificationPing` and `POST /api/v1/webhooks/test` in
+`api/v1/webhooks.ts`, and `POST /:id/test` in `api/v1/webhooks-self-service.ts`. `webhookFetch` is
+`createSafeFetchImpl()` from `lib/safe-fetch.ts` — resolve → validate → connect to the PINNED IP
+with the original Host/SNI — the same primitive the credential-source import and CTDL registry
+fetch use in prod. The pre-check stays (cheap, logs "blocked" before any delivery_log row exists,
+fails independently). `scripts/ci/ban-raw-fetch-worker.ts` no longer allow-lists
+`webhooks/delivery.ts` or `api/v1/webhooks.ts`: a new bare `fetch(` in either is a lint finding.
+The review that found the three un-migrated sites is on PR #2836; the first cut of this note
+claimed full coverage while only `delivery.ts` was migrated — grep for `fetch(` before repeating
+a coverage claim.
+
+**A refusal from the pinned layer is permanent.** `isPermanentSafeFetchError()` (exported from
+`lib/safe-fetch.ts`, the single classification for every consumer) covers `private_target`,
+`unresolvable`, `scheme_not_allowed`, `invalid_url`, `redirect_invalid`. `formatEgressFailure()`
+in `egress.ts` turns it into `{ permanent, code, message }`; delivery marks the log row `failed`
+with `error_message = egress_refused: <code>`, `next_retry_at = null`, and moves the event to the
+DLQ with `failure_kind = 'egress_refused'` (free-text column from 0338, no migration — distinct
+from `http_delivery` so support does not tell a tenant "your server is down" when their hostname
+resolves to a private address). `replayDelivery` returns `ssrf_blocked`; both test pings and the
+verification ping answer `400 invalid_url`. `request_failed`, `deadline_exceeded`,
+`too_many_redirects`, `response_too_large` stay on the normal retry ladder — webhooks are
+at-least-once with `event_id` for receiver-side dedupe, so a retry after an oversized ack (5 MiB
+cap, previously an unbounded `text()` read) is the same class as a retry after a timeout.
 
 **Tests:** the pinned dispatch uses undici's own `fetch`, so `vi.stubGlobal('fetch', …)` does not
-intercept it. `delivery.test.ts`, `replay.test.ts`, `circuit-breaker.test.ts` and
-`tests/webhook-delivery-roundtrip.test.ts` call `__setWebhookFetchForTests((url, init) =>
+intercept it. `delivery.test.ts`, `replay.test.ts`, `circuit-breaker.test.ts`,
+`tests/webhook-delivery-roundtrip.test.ts`, `api/v1/webhooks-test-ping.test.ts` and
+`api/v1/webhooks-self-service.test.ts` call `__setWebhookFetchForTests((url, init) =>
 globalThis.fetch(url, init))` at module load so their existing `mockFetch` assertions hold. The
-rebinding cases inject `createSafeFetchImpl({ resolve, dispatch })` with a resolver that answers the
-metadata IP and assert `dispatch` is never called. A new suite that drives the real module against a
-stubbed global must inject the seam too, or its deliveries will attempt real egress.
+rebinding cases inject `createSafeFetchImpl({ resolve, dispatch })` with a resolver that answers
+the metadata IP and assert `dispatch` is never called. A new suite that drives a real dispatch
+site against a stubbed global must inject the seam too, or its deliveries will attempt real egress.
+
+**Known, deliberately deferred (SCRUM-5036):** `defaultSafeFetchDeps().dispatch` builds and closes
+a fresh undici `Agent` per call (no keep-alive reuse), and each delivery resolves DNS twice (the
+pre-check and the pin). Webhook fan-out is the first hot path on this primitive; a pooled Agent
+keyed by pinned IP and a shared resolve are the follow-up. IPv6-literal hosts (`https://[…]/`) pass
+the bracketed hostname as TLS `servername` (SCRUM-5038).
