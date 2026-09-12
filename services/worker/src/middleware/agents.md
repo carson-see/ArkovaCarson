@@ -456,7 +456,7 @@ hosts were fully hardened, the worker origin and `api.arkova.ai` returned only `
 Set: HSTS (same value as the Vercel hosts, so the preload entry stays coherent), `nosniff`,
 `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, a deny-all `Permissions-Policy`, and a CSP.
 The CSP is route-aware: `default-src 'none'` everywhere except under `/api/docs`, where
-swagger-ui-express needs `'self'` + `'unsafe-inline'` (script and style) + Google Fonts; both policies
+swagger-ui-express needs `'self'` + `'unsafe-inline'` (script and style); both policies
 carry `frame-ancestors 'none'`. Nothing served by the worker is designed to be framed — the embed
 widget iframes `app.arkova.ai/embed/verify/…` (Vercel), and the badge is consumed as an `<img>`,
 which X-Frame-Options does not touch. `securityHeaders.test.ts` pins the header set on JSON, SVG and
@@ -467,15 +467,20 @@ route. If you add an HTML surface, extend `isDocsPath` deliberately rather than 
 case-insensitive by default, so `/API/docs` serves the real swagger HTML and must get `DOCS_CSP`, not
 `default-src 'none'`. (2) `DOCS_CSP` `img-src` allows `https://app.arkova.ai` because `docs.ts`
 sets `customfavIcon` to `https://app.arkova.ai/favicon.svg` (the old `arkova-26.vercel.app/favicon.ico`
-was a 404) — change both together. (3) The values that deliberately differ
+was a 404) — change both together, and it is the ONLY third-party origin in `DOCS_CSP` (a test pins
+that). The earlier `fonts.googleapis.com` / `fonts.gstatic.com` allowances were removed: swagger-ui-dist
+ships CSS, JS and images same-origin (images as `data:` URIs) and `nordicVaultCss` only names font
+families with system fallbacks, so nothing ever loaded a webfont. (3) The values that deliberately differ
 from `vercel.json`: `Referrer-Policy: no-referrer` (Vercel: `strict-origin-when-cross-origin`),
 `X-Frame-Options: DENY` (Vercel: `SAMEORIGIN` — no worker route is framed; the embed widget iframes
 `app.arkova.ai`, not the worker), and `Permissions-Policy` adds `payment=()` and `usb=()`. HSTS is
 byte-identical on purpose (preload coherence). (4) The `nosemgrep` annotations in `ai/gemini.ts` and
 `utils/gcp-auth.ts` sit on the line IMMEDIATELY above the `fetch(` call — Semgrep ignores the
 annotation anywhere else in a comment block; rule id verified against the Sekura `sast_findings.json`
-(`typescript.react.security.react-insecure-request.react-insecure-request`, gemini.ts:1042 /
-gcp-auth.ts:77). (5) This is defense-in-depth, not a substitute: SCRUM-3888 (close the public Cloud
+(`typescript.react.security.react-insecure-request.react-insecure-request`) — grep for `nosemgrep:`
+in `ai/gemini.ts` and `utils/gcp-auth.ts` rather than trusting a line number, which the Sekura report
+pinned at gemini.ts:1042 / gcp-auth.ts:77 and which moves with every edit above the call.
+(5) This is defense-in-depth, not a substitute: SCRUM-3888 (close the public Cloud
 Run origin) stays open; `edge.arkova.ai` gets the same set under SCRUM-5040 once an edge deploy
 pipeline exists; the R-5 config-drift scaffold (`scripts/ci/check-config-drift.ts`) only snapshots
 the `vercel.json` CSP, so a worker-CSP change has no drift gate today — keep this file and the

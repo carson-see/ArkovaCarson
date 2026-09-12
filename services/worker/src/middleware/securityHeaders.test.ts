@@ -59,6 +59,16 @@ describe('securityHeaders (SCRUM-4987)', () => {
     expect(DOCS_CSP).toMatch(/img-src 'self' data: https:\/\/app\.arkova\.ai/);
   });
 
+  it('allow-lists exactly one third-party origin — the favicon host', () => {
+    // Least privilege: every remote origin in DOCS_CSP must correspond to a
+    // resource swagger actually loads. swagger-ui-dist ships its CSS, JS and
+    // every image as same-origin assets (images are data: URIs) and the custom
+    // stylesheet in api/v1/docs.ts declares font families without loading any
+    // webfont, so the favicon host is the only origin that earns its place.
+    const origins = [...DOCS_CSP.matchAll(/https?:\/\/[^\s;]+/g)].map((m) => m[0]);
+    expect([...new Set(origins)]).toEqual(['https://app.arkova.ai']);
+  });
+
   it('does not let a docs-looking prefix widen the API policy', () => {
     expect(isDocsPath('/api/docs')).toBe(true);
     expect(isDocsPath('/api/docs/')).toBe(true);

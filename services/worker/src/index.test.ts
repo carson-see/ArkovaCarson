@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { Express } from 'express';
 import supertest from 'supertest';
+import { DOCS_CSP } from './middleware/securityHeaders.js';
 
 // ---- Hoisted mocks ----
 
@@ -403,6 +404,16 @@ describe('worker server', () => {
       expect(res.headers['Strict-Transport-Security']).toBe('max-age=63072000; includeSubDomains; preload');
       expect(res.headers['X-Frame-Options']).toBe('DENY');
       expect(res.headers['Content-Security-Policy']).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    });
+
+    it('the REAL docs mount gets the swagger-compatible CSP, not default-src none', async () => {
+      // securityHeaders.test.ts proves the policy choice against a hand-built
+      // app; this proves it against the actual `app.use('/api/docs', docsRouter)`
+      // mount, so the two cannot drift.
+      const res = await request(app, 'GET', '/api/docs/spec.json');
+      expect(res.status).toBe(200);
+      expect(res.headers['Content-Security-Policy']).toBe(DOCS_CSP);
+      expect(res.headers['X-Frame-Options']).toBe('DENY');
     });
 
     it('an unmatched route still carries the headers', async () => {

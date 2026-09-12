@@ -25,8 +25,8 @@
  *  - Permissions-Policy: deny the powerful features outright.
  *  - Content-Security-Policy: `default-src 'none'` for the JSON/SVG surface.
  *    The one HTML surface, /api/docs (swagger-ui-express, inline bootstrap
- *    script + inline styles + Google Fonts), gets its own policy: the
- *    inline allowances it needs and nothing wider.
+ *    script + inline styles + a cross-origin favicon), gets its own policy:
+ *    the inline allowances it needs and nothing wider.
  *
  * Nothing here is a substitute for the rate limiters, auth or RLS; it closes
  * the browser-side class (clickjacking, MIME sniffing, downgrade, referrer
@@ -45,8 +45,14 @@ export const API_CSP =
 export const DOCS_CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com",
+  // No webfont is loaded: swagger-ui-dist ships its own CSS/JS same-origin and
+  // the custom stylesheet in api/v1/docs.ts only names font families
+  // ('DM Sans', 'JetBrains Mono') with system fallbacks — there is no @import
+  // and no <link> to fonts.googleapis.com. Allow-listing Google Fonts here
+  // would be a permission nothing consumes; add it back only alongside the
+  // stylesheet change that needs it.
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
   // docs.ts sets customfavIcon to app.arkova.ai/favicon.svg; without this host
   // the favicon is a CSP violation on every docs load. Change both together.
   "img-src 'self' data: https://app.arkova.ai",
