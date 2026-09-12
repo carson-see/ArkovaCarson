@@ -204,9 +204,14 @@ a coverage claim.
 `unresolvable`, `scheme_not_allowed`, `invalid_url`, `redirect_invalid`. `formatEgressFailure()`
 in `egress.ts` turns it into `{ permanent, code, message }`; delivery marks the log row `failed`
 with `error_message = egress_refused: <code>`, `next_retry_at = null`, and moves the event to the
-DLQ with `failure_kind = 'egress_refused'` (free-text column from 0338, no migration — distinct
-from `http_delivery` so support does not tell a tenant "your server is down" when their hostname
-resolves to a private address). `replayDelivery` returns `ssrf_blocked`; both test pings and the
+DLQ. **The DLQ row keeps `failure_kind = 'http_delivery'`.** `failure_kind` is NOT free text:
+migration 0338 ships `CHECK (failure_kind IN ('http_delivery', 'log_write'))` and that constraint
+is live on prod (verified 2026-09-12) — a third value is rejected with 23514, and because the DLQ
+write is a PostgREST upsert the rejection returns in `{ error }` rather than throwing, so the row
+would be lost silently. The "your hostname resolves to a private address" vs "your server is down"
+distinction lives in `error_message` (`egress_refused: <code>`) and the structured warn log
+instead; a real `egress_refused` kind needs a migration widening the CHECK, which makes the change
+T3. `replayDelivery` returns `ssrf_blocked`; both test pings and the
 verification ping answer `400 invalid_url`. `request_failed`, `deadline_exceeded`,
 `too_many_redirects`, `response_too_large` stay on the normal retry ladder — webhooks are
 at-least-once with `event_id` for receiver-side dedupe, so a retry after an oversized ack (5 MiB

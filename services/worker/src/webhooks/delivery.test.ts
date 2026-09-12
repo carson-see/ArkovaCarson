@@ -1155,6 +1155,33 @@ describe('deliverToEndpoint', () => {
         expect.anything(),
       );
     });
+
+    // CTO review (2026-09-12): migration 0338 constrains the column —
+    // CHECK (failure_kind IN ('http_delivery', 'log_write')) — verified live on
+    // prod. A row with failure_kind = 'egress_refused' is rejected with 23514,
+    // and the DLQ upsert never checks its PostgREST `{ error }`, so the row is
+    // lost silently while the "Moved to dead letter queue" info line still
+    // fires. The refusal reason belongs in error_message until a migration
+    // widens the CHECK.
+    it('dead-letters a refused delivery with a failure_kind the 0338 CHECK accepts', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      dlqUpsert.mockClear();
+      dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-1' }, error: null }));
+      pinnedStub(['169.254.169.254']);
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(dlqUpsert).toHaveBeenCalledTimes(1);
+      const dlqRow = dlqUpsert.mock.calls[0][0] as unknown as {
+        failure_kind: string;
+        error_message: string;
+      };
+      // The ONLY two values migration 0338's CHECK constraint permits.
+      expect(['http_delivery', 'log_write']).toContain(dlqRow.failure_kind);
+      expect(dlqRow.error_message).toMatch(/^egress_refused: private_target/);
+    });
   });
 
   it('sets status to retrying with next_retry_at on HTTP 500 (attempt 1)', async () => {

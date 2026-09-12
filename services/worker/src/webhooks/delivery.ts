@@ -676,13 +676,9 @@ async function deliverToEndpoint(
 
     // DH-12: Move to dead letter queue if permanently failed
     if (!shouldRetry) {
-      await moveToDeadLetterQueue(
-        endpoint,
-        payload,
-        errorMessage,
-        attempt,
-        egressRefused ? 'egress_refused' : 'http_delivery',
-      );
+      // `errorMessage` already carries `egress_refused: <code>` for a pinned-layer
+      // refusal; `failure_kind` must stay inside migration 0338's CHECK.
+      await moveToDeadLetterQueue(endpoint, payload, errorMessage, attempt, 'http_delivery');
     }
 
     if (egressRefused) {
@@ -883,13 +879,20 @@ export async function dispatchWebhookEvent(
  * (endpoint_id, event_type, event_id, failure_kind) so re-DLQ of the SAME
  * failure mode is a no-op, while the two distinct modes can each keep one row.
  */
-// `egress_refused` (SCRUM-4983): Arkova itself refused to open the socket
-// (private/metadata target, no DNS answer, bad scheme) — a tenant URL/DNS
-// problem, not a receiver failure. Keeping it distinct from `http_delivery`
-// stops support from telling a tenant "your server is down" when the real
-// answer is "your hostname resolves to a private address". The column is free
-// text (0338) so no migration is needed.
-type DlqFailureKind = 'http_delivery' | 'log_write' | 'egress_refused';
+// `failure_kind` is NOT free text. Migration 0338 ships
+//   CHECK (failure_kind IN ('http_delivery', 'log_write'))
+// and that constraint is live on prod. A third value is rejected with 23514 —
+// and because the upsert below is a PostgREST call, a rejection comes back as
+// `{ error }` rather than a throw, so an out-of-CHECK value loses the DLQ row
+// SILENTLY while the "Moved to dead letter queue" info line still fires.
+//
+// SCRUM-4983 therefore records a pinned-egress refusal as a normal
+// `http_delivery` DLQ row and carries the distinction in `error_message`
+// (`egress_refused: <code>`) plus the structured warn log, so support can still
+// tell "your hostname resolves to a private address" from "your server is
+// down". Adding a genuine `egress_refused` kind needs a migration widening the
+// CHECK, which makes the change T3.
+type DlqFailureKind = 'http_delivery' | 'log_write';
 
 /**
  * Move permanently failed webhook deliveries to a dead letter queue
@@ -909,7 +912,7 @@ async function moveToDeadLetterQueue(
 ): Promise<void> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (db as any)
+    const dlqResult = (await (db as any)
       .from('webhook_dead_letter_queue')
       .upsert(
         {
@@ -931,7 +934,23 @@ async function moveToDeadLetterQueue(
           onConflict: 'endpoint_id,event_type,event_id,failure_kind',
           ignoreDuplicates: true,
         },
+      )) as { error?: { message?: string } | null } | null;
+
+    // PostgREST reports a rejected write (CHECK violation, RLS, bad column) in
+    // `{ error }` — it does NOT throw — so without this the catch below never
+    // runs and the success line below claims a row that was never written.
+    if (dlqResult?.error) {
+      logger.error(
+        {
+          endpointId: endpoint.id,
+          eventId: payload.event_id,
+          failureKind,
+          error: dlqResult.error,
+        },
+        'Failed to write to dead letter queue (rejected by the database)',
       );
+      return;
+    }
 
     logger.info(
       { endpointId: endpoint.id, eventId: payload.event_id, lastAttempt, failureKind },
