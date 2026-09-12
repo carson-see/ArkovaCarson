@@ -45,7 +45,6 @@
 - Jira: 157 issues were in Needs Human. Live rule discovered: **a Story cannot close without ≥1 subtask** (bounce comment; not in the R1–R6 registry). Execution: 14 orphan subtasks closed; 73 `wontdo-2026-09-08` stories given a `[Close-out]` subtask and closed; 5 shipped stories (SCRUM-2353/2365/2653/2692/2777) given `[Verify]`+`[Close-out]` subtasks and closed with Confluence comments; 64 KEEP stories given user-story text/subtasks — see `jira-execution.log`. Result: 87 closed (14 orphan subtasks, 68 won't-do stories, 5 shipped stories — Confluence pages 146341890/146440197/146145309 created, 99057789/99024943 commented); 5 won't-do stories bounced by the parent-epic rule (SCRUM-2637, 3473, 3567, 3716, 3725 — need a parent, then Done); 7 parentless issues for the CTO: SCRUM-1195, 1196, 1978, 2972, 2976, 2978, 2989. Needs Human 157 → 70.
 - Cost plan (estimates, no billing export exists): `scratchpad/cost-reduction-plan.md`. Biggest levers: GitHub Actions ~$1.1k/mo dominated by 26-job CI fan-out (24,280 runs/30 d, 43% on `mergify/*`); Mergify `batch_size` is already 1 (the 10→3 idea is moot); dead rigs above (~$50/mo); Sekura VM $182/mo.
 
-_Last refreshed: 2026-09-12 by Claude Fable 5.1 (CTO session) — claims verified against gcloud/MCP/CI output._
 
 
 ### 2026-09-11T18:39Z — one PR remains; historical repair continues under finite review
@@ -2602,4 +2601,4 @@ _Last refreshed: 2026-09-09 by Claude-Opus-5-CTO-session — claims verified aga
 _Last refreshed: 2026-09-10 by Codex PR #2572 repair session — claims verified against gcloud/MCP/CI output (local test and SQL receipts; hosted CI remains incomplete and no new production application is claimed)._
 _Last refreshed: 2026-09-10 by Codex release review — claims verified against gcloud/MCP/CI output._
 
-_Last refreshed: 2026-09-11 by Codex release review — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-12 by Claude Fable 5.1 (CTO session) — claims verified against gcloud/MCP/CI output._
