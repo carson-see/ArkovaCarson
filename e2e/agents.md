@@ -453,7 +453,9 @@ Historical change log: [./agents-changelog.md](./agents-changelog.md)
 
 ## 2026-09-05 — SCRUM-4035 OAuth confirmation routing
 
-`oauth-email-confirmation.spec.ts` runs via `playwright.uat03.config.ts` in CI before hosted-stack setup. Its seven real-app browser cases mock only external Auth/worker boundaries and verify pending routing without profile reads, delivery/retry, explicit proof confirmation, account switching/recovery, normal authenticated routing, and profile loading after confirmation. The default config excludes this separately executed fixture; no tests are conditionally skipped. Screenshots at 1280/375 are uploaded. This does not prove hosted Google consent or real mailbox receipt.
+`oauth-email-confirmation.spec.ts` runs via `playwright.uat03.config.ts` in CI before hosted-stack setup. Its seven real-app browser cases mock only external Auth/worker boundaries and verify pending routing without profile reads, delivery/retry, explicit proof confirmation, account switching/recovery, post-MFA authenticated routing, and mandatory MFA after confirmation. The default config excludes this separately executed fixture; no tests are conditionally skipped. Screenshots at 1280/375 are uploaded. This does not prove hosted Google consent or real mailbox receipt.
+
+The synthetic session JWT must include an explicit `aal`. Post-MFA onboarding controls use `authenticated`/`aal2`; completing mailbox confirmation yields `authenticated`/`aal1` and must stop at mandatory MFA without reading `profiles`. A role-only `authenticated` fixture is not proof of product authority.
 ## PR #2637 soak closeout timing correction (2026-09-05)
 
 The 12h UI window contained three failures and is preserved as failed evidence.
