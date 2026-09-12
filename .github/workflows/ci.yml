@@ -924,9 +924,16 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
-          version: 1.123.0
+          # UAT-04 exercises the custom access token hook. CLI 1.123.0 ignores
+          # both [auth.mfa] and [auth.hook.custom_access_token], so its GoTrue
+          # runtime minted ordinary authenticated tokens for AAL1 users.
+          version: 2.98.2
 
       - name: Start Supabase
+        env:
+          # CLI 2.x pipelines migrations; rewrite concurrent index DDL only in
+          # this throwaway checkout (see scripts/ci-supabase-start.sh).
+          CI_SUPABASE_STRIP_CONCURRENTLY: '1'
         run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
@@ -955,6 +962,17 @@ jobs:
       - name: Run database reset
         id: db-reset
         run: supabase db reset
+
+      - name: Restore committed migration sources
+        # CLI 2.x needs the CI-only CONCURRENTLY rewrite for both start and reset.
+        # Restore the checkout before source-contract tests inspect production DDL.
+        if: always()
+        run: |
+          test "${CI:-}" = "true"
+          git restore --source=HEAD --worktree -- supabase/migrations
+          git clean -fd -- supabase/migrations
+          git diff --exit-code -- supabase/migrations
+          test -z "$(git ls-files --others --exclude-standard -- supabase/migrations)"
 
       # CI-worker-test-skip fix — this step (root frontend/scripts suite) and
       # everything below it through "Run worker tests with coverage" are
