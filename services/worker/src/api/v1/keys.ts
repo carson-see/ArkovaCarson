@@ -58,7 +58,7 @@ const ApiKeyScopeSchema = z.enum(API_KEY_SCOPES);
 
 export const CreateKeySchema = z.object({
   name: z.string().min(1).max(100),
-  scopes: z.array(ApiKeyScopeSchema).min(1).default(DEFAULT_API_KEY_SCOPES),
+  scopes: z.array(ApiKeyScopeSchema).min(1).max(30).default(DEFAULT_API_KEY_SCOPES), // max mirrors docs/api/openapi.yaml maxItems (SCRUM-4984 PR)
   // SCRUM-5023: `.positive()` already forbids 0 and negatives, so this route
   // cannot write an expiry in the past — prod's one born-expired row (expiry
   // BEFORE creation) did not come from here. `.max()` is the new half: an
