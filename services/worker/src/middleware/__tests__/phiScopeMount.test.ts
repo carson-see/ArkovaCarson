@@ -70,7 +70,7 @@ describe('PHI / student-PII mounts carry a scope guard that cannot no-op', () =>
   // alone — with or without `compliance:read` — gets a 401 before
   // `requireScopeAnyAuth` runs. That is FAIL-CLOSED, so this PR changes
   // nothing here; whether an API key SHOULD be able to reach a PHI/FERPA
-  // route at all is a product decision, filed as a follow-up. This is a
+  // route at all is a product decision, filed as SCRUM-5070. This is a
   // source-level pin in the style of the rest of this file: it reads the
   // guard, it does not execute it (`requireAuth` is a module-local function
   // in router.ts and is not exported).

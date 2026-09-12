@@ -35,8 +35,8 @@ served spec (`docs.ts`, canonical per `docs/api/canonical-sources.md`) declares
 Deliberately NOT changed: the PHI/FERPA mounts at the bottom of `router.ts`. `requireAuth` runs
 first there and rejects any caller whose Authorization header is absent or starts with
 `Bearer ak_`, so an API key never reaches `requireScopeAnyAuth('compliance:read')` — fail-closed
-today. Whether a key SHOULD be able to reach those routes is a product decision, filed as a
-follow-up rather than decided in a webhooks PR.
+today. Whether a key SHOULD be able to reach those routes is a product decision, filed as
+SCRUM-5070 rather than decided in a webhooks PR.
 
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
