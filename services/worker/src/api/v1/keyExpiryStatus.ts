@@ -13,6 +13,14 @@
  * route and the expiry-notice cron read the answer from here. Add a caller
  * before you add a second derivation.
  *
+ * EXCEPT `middleware/apiKeyAuth.ts`, which still runs its own comparison and
+ * was deliberately NOT consolidated here: `isExpiredAt` fails CLOSED on an
+ * unparseable timestamp and treats the exact expiry millisecond as expired,
+ * where the middleware does neither, so routing it through this module would
+ * tighten authentication rather than refactor it. That is a credential-path
+ * change and needs its own story. Until then this module is what every
+ * surface REPORTS and `apiKeyAuth.ts` is what REFUSES — see `api/v1/agents.md`.
+ *
  * §1.8: `status` and `expires_in_days` are ADDITIVE nullable fields on the
  * frozen v1 contract. The raw columns stay, byte-unchanged — a client that
  * reads `is_active` keeps seeing exactly what it saw.

@@ -37,9 +37,12 @@ vi.mock('../emails/api-key-expiry.js', () => ({
 
 import {
   runApiKeyExpiryNotice,
+  makeApiKeyExpiryNoticeDeps,
+  EXPIRY_NOTICE_EVENT,
   type ApiKeyExpiryNoticeDeps,
   type ExpiringKeyRow,
 } from './api-key-expiry-notice.js';
+import { db } from '../utils/db.js';
 
 const NOW = new Date('2026-09-12T09:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -317,5 +320,75 @@ describe('recipients and payload', () => {
     expect(result.failed).toBe(1);
     expect(result.notified).toBe(1);
     expect(result.scanned).toBe(2);
+  });
+});
+
+/**
+ * Everything above drives the INJECTED deps, which is what makes the sweep
+ * testable — but it also means the real query builders in
+ * `makeApiKeyExpiryNoticeDeps()` were never asserted. The dedupe lookup is the
+ * one that cannot be got wrong quietly: it reads `audit_events`, a table shared
+ * by every subsystem, and its filters are the only thing stopping a row that
+ * belongs to something else from being mistaken for a prior notice.
+ */
+describe('the real dedupe query (makeApiKeyExpiryNoticeDeps)', () => {
+  /** Chainable PostgREST stub that records the filters it was given. */
+  function queryStub(result: { data?: unknown; error?: unknown } = { data: [], error: null }) {
+    const calls: Array<[string, ...unknown[]]> = [];
+    const chain: Record<string, unknown> = {};
+    for (const method of ['select', 'eq', 'is', 'not', 'lte', 'in']) {
+      chain[method] = vi.fn((...args: unknown[]) => {
+        calls.push([method, ...args]);
+        return chain;
+      });
+    }
+    // Awaited at the end of the chain.
+    chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject);
+    return { chain, calls, eqCalls: () => calls.filter((c) => c[0] === 'eq').map((c) => c.slice(1)) };
+  }
+
+  beforeEach(() => {
+    vi.mocked(db.from).mockReset();
+  });
+
+  it('scopes the dedupe lookup by target_type, not by target_id alone', async () => {
+    // `target_id` is a bare TEXT column shared across every audit subject in
+    // the table — anchors, orgs, webhooks, api_keys. Without `target_type`,
+    // any other row that happened to carry this key's uuid and an
+    // `api_key.expiry_notice` event_type would read as a prior notice and
+    // swallow the one warning the key had coming. The filter is cheap; the
+    // failure it prevents is silent and permanent.
+    const { chain, calls, eqCalls } = queryStub({ data: [], error: null });
+    vi.mocked(db.from).mockReturnValue(chain as never);
+
+    const deps = makeApiKeyExpiryNoticeDeps();
+    await deps.listPriorNotices('key-1');
+
+    expect(vi.mocked(db.from)).toHaveBeenCalledWith('audit_events');
+    expect(eqCalls()).toContainEqual(['target_type', 'api_key']);
+    // All three filters together, so a future edit cannot drop one and still
+    // look scoped.
+    expect(eqCalls()).toEqual(
+      expect.arrayContaining([
+        ['event_type', EXPIRY_NOTICE_EVENT],
+        ['target_type', 'api_key'],
+        ['target_id', 'key-1'],
+      ]),
+    );
+    // Only `details` is read back — the row's actor and org are none of this
+    // job's business.
+    expect(calls.find((c) => c[0] === 'select')?.[1]).toBe('details');
+  });
+
+  it('THROWS rather than reporting "no prior notice" when the dedupe lookup fails', async () => {
+    // The failure mode this guards is re-sending to every admin on every run
+    // for as long as the error persists. An empty result and a failed query
+    // must never be indistinguishable.
+    const { chain } = queryStub({ data: null, error: { message: 'connection reset' } });
+    vi.mocked(db.from).mockReturnValue(chain as never);
+
+    const deps = makeApiKeyExpiryNoticeDeps();
+    await expect(deps.listPriorNotices('key-1')).rejects.toThrow(/dedupe lookup failed/);
   });
 });

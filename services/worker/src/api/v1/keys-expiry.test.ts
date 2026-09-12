@@ -208,7 +208,12 @@ describe('GET /api/v1/keys — §1.8 additive status fields', () => {
     // out". A response field of the same name means a countdown that goes
     // negative. One name, two opposite meanings, is how a client ends up
     // PUTting a countdown back as a duration.
-    seedKey({ expires_at: new Date(Date.now() + 3 * DAY_MS).toISOString() });
+    // 2.5 days out, NOT 3: `days_until_expiry` FLOORS, so a whole-day seed is
+    // a coin flip on the request clock — sampled in the same millisecond it
+    // floors to 3, a millisecond later to 2. The half-day offset puts the
+    // value in the middle of a day's band, so it pins 2 no matter how long
+    // the request takes. Same reason the expiring_soon test above seeds 5.5.
+    seedKey({ expires_at: new Date(Date.now() + 2.5 * DAY_MS).toISOString() });
 
     const res = await request(makeApp()).get('/api/v1/keys').expect(200);
     expect('expires_in_days' in res.body.keys[0]).toBe(false);

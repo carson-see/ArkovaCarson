@@ -1,6 +1,8 @@
 ## 2026-09-12 — SCRUM-5023: `status` / `days_until_expiry` on `/keys`, and expiry is now PATCHable
 
-**Read `keyExpiryStatus.ts` before touching any key-status logic. It is the ONE derivation.**
+**Read `keyExpiryStatus.ts` before touching any key-status logic. It is the one derivation for every
+REPORTED status — with one documented exception, `middleware/apiKeyAuth.ts`, which still decides
+ENFORCEMENT for itself (see the caveat at the end of this entry).**
 `api_keys` stores `is_active`, `revoked_at` and `expires_at` as three independent columns, and every
 consumer used to combine them itself. `middleware/apiKeyAuth.ts` has refused expired keys since it was
 written (`api_key_expired`); GET `/keys` returned the raw columns and left the caller to guess. Prod
@@ -10,6 +12,23 @@ HakiChain's two among them, created 2026-06-01 with a 30-day expiry and lapsed 2
 columns are byte-unchanged, so `is_active` still reads `true` on an expired key and clients must
 prefer `status`. **DO NOT** re-derive either field anywhere else — `keys.ts`, the expiry-notice cron
 (`jobs/api-key-expiry-notice.ts`) and the dashboard badge all read this one module's answer.
+
+**CAVEAT — `middleware/apiKeyAuth.ts` is a SECOND, independent expiry check and this story did not
+consolidate it.** Line ~211 still runs its own `new Date(apiKey.expires_at) < new Date()`. It is not a
+stale copy left by accident; routing it through `isExpiredAt` is **not** a no-op and would change
+authentication behaviour in two ways (verified 2026-09-12):
+
+| `expires_at` | middleware | `isExpiredAt` |
+|---|---|---|
+| unparseable (`'not-a-date'`) | authenticates — fails **OPEN** | refuses — fails closed |
+| exactly `now` to the millisecond | authenticates | refuses |
+
+Both differences would make auth *stricter*, which is the right direction but is a change to the
+credential path, not to a display field — it needs its own change, its own tests and its own soak, and
+it must also keep the distinct `api_key_revoked` / `api_key_expired` codes that `deriveKeyStatus`
+collapses into one `revoked` ranking. Until that lands: `keyExpiryStatus.ts` is what every surface
+REPORTS, `apiKeyAuth.ts` is what actually REFUSES, and the two can disagree on exactly the two rows
+above. Do not describe the derivation as universal while this line exists.
 
 Two judgement calls it encodes, both load-bearing:
 - **`revoked` outranks `expired`** when a row is both. A revoke is a deliberate act and the admin must
