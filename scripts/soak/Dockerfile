@@ -18,5 +18,9 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 ENV PORT=8080
 EXPOSE 8080
+# SCRUM-4988 (Checkov CKV_DOCKER_2): loadgen-server answers 200 JSON on every
+# path, so /status doubles as the liveness probe. busybox wget ships in alpine.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/status >/dev/null || exit 1
 USER node
 CMD ["node", "dist/loadgen-server.js"]

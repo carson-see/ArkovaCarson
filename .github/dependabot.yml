@@ -77,6 +77,20 @@ updates:
     commit-message:
       prefix: "chore(deps-edge):"
 
+  # Zapier integration (SCRUM-4988: Sekura Phase 2 found form-data 4.0.5 here —
+  # this directory had no Dependabot coverage at all)
+  - package-ecosystem: "npm"
+    directory: "/integrations/zapier"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "zapier"
+    commit-message:
+      prefix: "chore(deps-zapier):"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
