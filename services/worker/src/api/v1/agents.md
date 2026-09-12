@@ -1302,6 +1302,16 @@ relationship decision. The diagram lives above `ChildPredicate` in
 `orgSubOrgsCaller.ts` and is mirrored in `docs.ts` / `docs/api/openapi.yaml`;
 the reachability matrix is `orgSubOrgsCaller.test.ts`.
 
+**`GET /organizations/sub-orgs/credits` requires `orgs:manage`, not `read:orgs`**
+(review U2). The route was published and gated as `read:orgs` while
+`get_parent_credit_rollup_as_api_key` delegates to `_suborg_api_key_authorized`,
+which requires `orgs:manage` in SQL — so a `read:orgs` key reached the RPC and
+got a permanent `parent_admin_required` 403 indistinguishable from a real
+authority failure. Balances are money data; `read:orgs` is the directory-shaped
+grant. `GET /` (the directory read) stays `read:orgs`. **When a route's gate and
+its RPC's own predicate disagree, the published contract is the lie — fix the
+gate, not the docs.**
+
 **Two places where this surface is deliberately STRICTER than the dashboard**,
 because a partner cannot tell a degraded answer from a real one:
 a failed DocuSign inheritance-marker lookup 503s here (the JWT list degrades to

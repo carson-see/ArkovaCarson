@@ -104,8 +104,10 @@ const db = _db as any;
 export const orgSubOrgsApiRouter = Router();
 
 /**
- * Write gate. The MOUNT in `api/v1/router.ts` requires `read:orgs` router-wide;
- * each mutating route additionally requires `orgs:manage`. Declared per route
+ * Management gate. The MOUNT in `api/v1/router.ts` requires `read:orgs`
+ * router-wide; every mutating route AND the credit rollup additionally require
+ * `orgs:manage` — the rollup because its RPC requires it in SQL and because
+ * balances are money data, not directory data. Declared per route
  * rather than as a second `router.use`, because a `use` would have to be
  * ordered above every POST and below every GET — an ordering nobody can see
  * from the route declarations, and the shape that made
@@ -414,7 +416,21 @@ orgSubOrgsApiRouter.post('/credits', requireOrgsManage, async (req: Request, res
 });
 
 // ─── GET /credits — rollup ───────────────────────────────────────────────────
-orgSubOrgsApiRouter.get('/credits', async (req: Request, res: Response) => {
+//
+// `orgs:manage`, NOT `read:orgs`, despite being a GET. Two reasons, and the
+// first one alone settles it:
+//
+//   1. The SQL says so. `get_parent_credit_rollup_as_api_key` delegates to
+//      `_suborg_api_key_authorized`, which requires `orgs:manage` (migration
+//      0453). Gating the route on `read:orgs` published a contract the database
+//      refuses: a `read:orgs` key reached the RPC and got a permanent
+//      `parent_admin_required` 403 with no way to tell it from a real refusal.
+//   2. Balances are money data. `read:orgs` is the directory-shaped grant — who
+//      the affiliates are — and a partner's remaining spend is not that.
+//
+// The route gate now refuses BEFORE the RPC, so the 403 names the missing scope
+// instead of surfacing an authority failure from inside a transaction.
+orgSubOrgsApiRouter.get('/credits', requireOrgsManage, async (req: Request, res: Response) => {
   try {
     const caller = await requireKeyCaller(req, res);
     if (!caller) return;

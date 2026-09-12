@@ -1139,7 +1139,10 @@ paths:
       description: >-
         Balances for the calling key's organization and each of its affiliates.
         Balances ONLY — a parent sees what its affiliates spend, never what they
-        secured. Requires `read:orgs`.
+        secured. Requires `orgs:manage`: balances are money data, and
+        `get_parent_credit_rollup_as_api_key` requires that grant in SQL, so
+        gating this operation on `read:orgs` would publish a contract the
+        database refuses.
       tags: [Organizations]
       security:
         - apiKey: []

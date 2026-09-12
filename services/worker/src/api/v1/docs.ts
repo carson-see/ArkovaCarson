@@ -1535,7 +1535,7 @@ export const openApiSpec: Record<string, any> = {
       get: {
         summary: 'List affiliated organizations',
         description:
-          'List the organizations affiliated with the calling key\'s organization, by public id. Returns the platform cap and the current count alongside.'
+          'List the organizations affiliated with the calling key\'s organization, by public id. Requires the read:orgs scope; orgs:manage also satisfies it. Returns the platform cap and the current count alongside.'
           + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'listSubOrganizations',
@@ -1669,7 +1669,7 @@ export const openApiSpec: Record<string, any> = {
       get: {
         summary: 'Affiliate credit rollup',
         description:
-          'Balances for the calling key\'s organization and each of its affiliates. Balances ONLY: a parent sees what its affiliates spend, never what they secured.'
+          'Balances for the calling key\'s organization and each of its affiliates. Requires the orgs:manage scope — balances are money data, and the underlying function requires that grant in SQL, so read:orgs alone would publish a contract the database refuses. Balances ONLY: a parent sees what its affiliates spend, never what they secured.'
           + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'getSubOrganizationCreditRollup',

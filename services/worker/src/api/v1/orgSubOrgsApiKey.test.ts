@@ -253,6 +253,28 @@ describe('authentication and scope', () => {
     const res = await request(buildApp(['orgs:manage'])).get('/api/v1/organizations/sub-orgs');
     expect(res.status).toBe(200);
   });
+
+  /**
+   * U2. `get_parent_credit_rollup_as_api_key` requires `orgs:manage` in SQL
+   * (0453 -> `_suborg_api_key_authorized`), so a route gated on `read:orgs`
+   * published a contract the database refuses: the key reached the RPC and got
+   * a permanent `parent_admin_required` it could not distinguish from a real
+   * authority failure. The refusal belongs at the gate, and BEFORE the RPC.
+   */
+  it('403s GET /credits for a read:orgs key, before the RPC is ever called', async () => {
+    mockDb();
+    const res = await request(buildApp(['read:orgs'])).get('/api/v1/organizations/sub-orgs/credits');
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('insufficient_scope');
+    expect(res.body.required).toBe('orgs:manage');
+    expect(rpc()).not.toHaveBeenCalled();
+  });
+
+  it('still admits GET / (the directory read) to a read:orgs key', async () => {
+    mockDb({ children: [APPROVED_CHILD] });
+    const res = await request(buildApp(['read:orgs'])).get('/api/v1/organizations/sub-orgs');
+    expect(res.status).toBe(200);
+  });
 });
 
 describe('GET / — list', () => {
@@ -440,7 +462,7 @@ describe('write routes — happy paths', () => {
       error: null,
     });
 
-    const res = await request(buildApp(['read:orgs'])).get('/api/v1/organizations/sub-orgs/credits');
+    const res = await request(buildApp(['orgs:manage'])).get('/api/v1/organizations/sub-orgs/credits');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       parent_balance: 100,
@@ -458,7 +480,7 @@ describe('write routes — happy paths', () => {
       },
       error: null,
     });
-    const res = await request(buildApp(['read:orgs'])).get('/api/v1/organizations/sub-orgs/credits');
+    const res = await request(buildApp(['orgs:manage'])).get('/api/v1/organizations/sub-orgs/credits');
     expect(res.status).toBe(503);
     expect(res.body.error).toBe('rollup_projection_unavailable');
   });
@@ -562,7 +584,7 @@ describe('no raw uuid escapes this surface (R11)', () => {
       },
       error: null,
     });
-    bodies['GET /credits'] = (await request(buildApp(['read:orgs']))
+    bodies['GET /credits'] = (await request(buildApp(['orgs:manage']))
       .get('/api/v1/organizations/sub-orgs/credits')).body;
 
     mockDb({ children: [APPROVED_CHILD] });

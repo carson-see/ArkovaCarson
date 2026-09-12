@@ -68,9 +68,10 @@ Search endpoints return `public_id` values that can be passed directly to the ma
 | API v2 REST | `read:records`, `read:orgs`, `read:search`, `write:anchors`, `admin:rules` |
 | Legacy v1 compatibility | `verify`, `verify:batch`, `usage:read`, `keys:manage` |
 | Compliance and operations | `compliance:read`, `compliance:write`, `oracle:read`, `oracle:write`, `anchor:write`, `anchor:read`, `attestations:write`, `attestations:read`, `webhooks:manage`, `agents:manage`, `keys:read` |
-| Sub-organization management | `orgs:manage` |
+| Sub-organization management (including `GET /organizations/sub-orgs/credits`) | `orgs:manage` |
+| Sub-organization listing (`GET /organizations/sub-orgs`) | `read:orgs` |
 
-`POST /api/v1/anchor` accepts either `anchor:write` or `write:anchors`. `GET /api/v1/usage` requires `usage:read`; read/search scopes do not include usage analytics. A key holding `orgs:manage` also satisfies `read:orgs` — the sub-organization write grant contains the read grant, so a parent key that can act on its affiliates can always list them; the implication does not run the other way.
+`POST /api/v1/anchor` accepts either `anchor:write` or `write:anchors`. `GET /api/v1/usage` requires `usage:read`; read/search scopes do not include usage analytics. A key holding `orgs:manage` also satisfies `read:orgs` — the sub-organization write grant contains the read grant, so a parent key that can act on its affiliates can always list them; the implication does not run the other way. The credit rollup (`GET /organizations/sub-orgs/credits`) is the one GET on that surface that requires `orgs:manage` rather than `read:orgs`: balances are money data, and the function behind it requires that grant in SQL.
 
 ### 3. TypeScript SDK — `arkova`
 
