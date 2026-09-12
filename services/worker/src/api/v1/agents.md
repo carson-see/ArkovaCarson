@@ -1250,3 +1250,26 @@ ComputeID admission now uses service-only `admit_computeid_agent`: one passport 
 `resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+## 2026-09-12 SCRUM-4984 / SCRUM-4985 — fail-closed tenant scoping on the AI read endpoints; entity-verify stops building filter grammar
+
+**`tenantRowAccess.ts` is the only allowed way to answer "may this caller read this row" on a v1
+handler that scopes by org.** `ai-provenance.ts` and `ai-accountability-report.ts` both used
+`row.org_id && callerOrgId && row.org_id !== callerOrgId` to deny. That is only true when both sides
+are present and differ, so an INDIVIDUAL caller (no `profiles.org_id`), an orphan row, or a select list
+that never fetched `org_id` (ai-provenance never did — the guard was dead code) all fell through to
+"allowed". Sekura Phase 2's LLM pass flagged neither; the CTO verification of its claims did. The rule
+is now positive — same org, or caller owns the row — and both handlers answer **404, not 403**, so
+`public_id` / fingerprint enumeration cannot confirm what other tenants hold. ai-provenance filters the
+manifest list rather than checking only `manifests[0]`, because two orgs can legitimately hold
+manifests for the same fingerprint (same public document, extracted twice). If you add a v1 handler
+that reads a tenant-scoped row under `requireAuth`, select `org_id, user_id` and call
+`callerMayReadRow`; the test files pin that the columns are selected.
+
+**`entity-verify.ts` no longer hand-builds a PostgREST `.or()` string.** The attestation lookup used
+to interpolate the raw `identifier` query param into `subject_identifier.eq.${identifier}`, so a comma
+or operator in it appended clauses and widened a targeted lookup into enumeration (`name` on the line
+above WAS escaped — the inconsistency is the tell). Each term now goes through the query builder
+(`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
+`entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
+filters here; if you need OR semantics across columns, run the terms separately and union.
