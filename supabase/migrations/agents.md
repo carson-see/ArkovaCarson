@@ -245,6 +245,80 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 deliberate renumber to `0349`; the rest were never claimed or were released.
 Never assume a gap is free — apply the next-free rule above.
 
+## Recent migrations (PR #2844)
+
+`0453_scrum3971_orgs_manage_scope_api_key_suborg_authority.sql` (SCRUM-3971) —
+three changes in one file, and the reason they cannot be split is mechanical:
+`scripts/ci/check-api-scope-vocabulary.ts` reads the LATEST migration naming
+EACH of `api_keys_scopes_known_values` and `agents_allowed_scopes_known_values`,
+so separating the two CHECK re-adds leaves one constraint on an older file and
+reds the gate.
+
+**Three things worth more than the diff.**
+
+**1. A NOT NULL without a DEFAULT changes the generated TypeScript, not just the
+schema.** `supabase gen types` marks an `Insert` field REQUIRED when the column
+is NOT NULL *and* has no column default. `organizations.public_id` had no
+default — a BEFORE INSERT trigger filled it — so `SET NOT NULL` alone made
+`public_id` mandatory in
+`Database['public']['Tables']['organizations']['Insert']` and reds
+`src/hooks/useOnboarding.ts:161` and `:217` with `TS2345: Property 'public_id'
+is missing`. That is the real browser path for creating an organization, and it
+correctly does not supply a server-minted identifier. Measured, not predicted:
+typecheck failed before the default was added and passes after. **If you add a
+NOT NULL to a trigger-populated column anywhere in this schema, run `npm run
+typecheck` before assuming it is a pure DDL change.**
+
+The default is `generate_unique_org_public_id()`, not the bare
+`generate_public_id()`, because a bare default trades the trigger's
+re-draw-on-collision loop for a unique violation. It is SECURITY DEFINER
+*because of* that loop: the trigger's own
+`WHILE EXISTS (SELECT 1 FROM organizations …)` runs as the INSERTING role and is
+therefore RLS-filtered, so it never saw a collision with a row the caller cannot
+read. It is service_role-only — `organizations` has FORCE RLS with a SELECT
+policy and an UPDATE policy and NO insert policy (baseline:13117/13121), so
+neither browser role can reach a column default there.
+
+**2. Three FK columns decided the audit shape, and they are easy to miss.**
+`audit_events.actor_id` is `REFERENCES public.profiles(id)` (baseline:11700), so
+a key-driven write CANNOT put an api_key id there (FK violation) and must not
+put the key's owning user there (a false statement about who acted) — hence
+`actor_id NULL` plus
+`details.actor = {actor_kind, actor_api_key_id, actor_key_prefix}`. But
+`org_credit_allocations.granted_by` is `uuid NOT NULL REFERENCES auth.users(id)`
+(baseline:8461/11985) and `organizations.suspended_by` is
+`REFERENCES auth.users(id)` (baseline:12060), so those two have no NULL option
+and are stamped with `api_keys.created_by` — the authorizing principal, the same
+identity `agents.registered_by` records for passport-admitted agents. It is
+PROVENANCE and is never read for authority. **Check the FK before choosing what
+a non-human actor writes into an actor column; the three columns here needed
+three different answers.**
+
+**3. Distinctly named functions, not overloads.** PostgREST resolves an overload
+by argument NAMES. `allocate_credits_to_sub_org(uuid, uuid, integer, text, uuid)`
+already exists with `p_caller_user_id` as the fifth argument, so a same-arity
+sibling differing only in that name is an ambiguity waiting for the first caller
+that omits an optional argument. `*_as_api_key` costs nothing and cannot resolve
+wrongly.
+
+Bodies are 0444's / 0450's verbatim otherwise, including `FOR UPDATE` on the
+child row BEFORE the authority decision (the SCRUM-4470 property) and the
+`LEAST`/`GREATEST` credit-row lock order. One helper,
+`_suborg_api_key_authorized(uuid, uuid)`, carries the whole authority predicate:
+active, unrevoked, unexpired key OF THAT ORGANIZATION holding `orgs:manage`.
+Ratcheted by `src/tests/sec-0453-suborg-api-key-authority.test.ts` — three of
+those five clauses are invisible to any integration test that uses a
+freshly-minted key, so they are pinned in the migration text instead.
+
+Both CHECKs re-added `ADD CONSTRAINT … NOT VALID` then `VALIDATE CONSTRAINT`, so
+the AccessExclusive window excludes the scan. Both `database.types.ts` copies
+are HAND-WRITTEN: no rig, prod or local stack was reachable in the authoring
+session. Run `npm run gen:types` once at apply time as a canonical check.
+
+The ROLLBACK re-adds both CHECKs `NOT VALID` on purpose — after a rollback an
+`orgs:manage` key may still exist and `VALIDATE` would fail on it. Revoke those
+keys first.
+
 ## Recent migrations (PR #1862)
 
 `0389_anchors_ce_registry_ctid_partial_index.sql` — partial index
