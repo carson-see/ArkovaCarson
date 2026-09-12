@@ -5,6 +5,7 @@
  * and integration details. Includes Organization JSON-LD schema for SEO.
  */
 
+import { toJsonLd } from '@/lib/jsonLd';
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Building2, Code2, Layers, Webhook, KeyRound, Headphones, Anchor, Lock, Database, Terminal, BookOpen, Bot, Bell, ArrowRight, CheckCircle2, Globe } from 'lucide-react';
@@ -42,7 +43,7 @@ function OrganizationSchema() {
     <script
       type="application/ld+json"
       dangerouslySetInnerHTML={{
-        __html: JSON.stringify({
+        __html: toJsonLd({
           '@context': 'https://schema.org',
           '@type': 'Organization',
           name: 'Arkova',

@@ -32,7 +32,7 @@ import { DataCorrectionForm } from '@/components/auth/DataCorrectionForm';
 import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 import { IdentityVerification } from '@/components/auth/IdentityVerification';
 import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
-import { parseSocialLinksForWrite } from '@/lib/socialLinks';
+import { parseSocialLinksForWrite, pickSocialLinks } from '@/lib/socialLinks';
 
 export function SettingsPage() {
   const { user, signOut } = useAuth();
@@ -54,7 +54,9 @@ export function SettingsPage() {
   if (profile && !nameInitialized) {
     setFullName(profile.full_name ?? '');
     setBio(profileAny?.bio ?? '');
-    setSocialLinks(profileAny?.social_links ?? {});
+    // Legacy keys outside the four we render are dropped here so they can
+    // never block a save (the write schema strips them too).
+    setSocialLinks(pickSocialLinks(profileAny?.social_links));
     setNameInitialized(true);
   }
 

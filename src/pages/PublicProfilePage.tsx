@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { OrgVerifiedBadge } from '@/components/shared/VerifiedBadge';
-import { safeSocialHref, type SocialLinkKey } from '@/lib/socialLinks';
+import { resolveSocialLinks } from '@/lib/socialLinks';
 
 function getInitials(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
@@ -30,8 +30,8 @@ function formatRole(role: string): string {
 }
 
 // SCRUM-4989: the old normalizeUrl only prefixed https:// onto values that
-// lacked a scheme; a `javascript:` value survived as-is. safeSocialHref
-// returns null for anything that is not an http(s) URL / @handle.
+// lacked a scheme; a `javascript:` value survived as-is. resolveSocialLinks
+// keeps only the four known keys and only http(s) hrefs / @handles.
 
 export function PublicProfilePage() {
   const { profileId } = useParams<{ profileId: string }>();
@@ -103,9 +103,7 @@ export function PublicProfilePage() {
                 </p>
               )}
               <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-4">
-                {Object.entries(links)
-                  .map(([key, value]) => [key, safeSocialHref(key as SocialLinkKey, value)] as const)
-                  .filter((entry): entry is readonly [string, string] => entry[1] !== null)
+                {Object.entries(resolveSocialLinks(links))
                   .map(([key, href]) => (
                     <a
                       key={key}

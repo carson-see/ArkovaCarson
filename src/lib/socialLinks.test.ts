@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { safeSocialHref, parseSocialLinksForWrite } from './socialLinks';
+import { parseSocialLinksForWrite, pickSocialLinks, resolveSocialLinks, safeSocialHref } from './socialLinks';
 
 describe('safeSocialHref (SCRUM-4989)', () => {
   it('passes https and http URLs through', () => {
@@ -63,10 +63,43 @@ describe('parseSocialLinksForWrite (SCRUM-4989)', () => {
     });
   });
 
-  it('rejects unknown keys and reports them against the generic website field', () => {
-    expect(parseSocialLinksForWrite({ mastodon: 'https://m.example/@ada' } as never)).toEqual({
-      ok: false,
-      key: 'website',
+  it('drops unknown (legacy) keys instead of blocking the save', () => {
+    // profiles.social_links was an unvalidated jsonb for its whole history, so
+    // a row can carry keys outside the four we render. Those must never make
+    // the settings form un-saveable for a user who did not touch them.
+    expect(
+      parseSocialLinksForWrite({ mastodon: 'https://m.example/@ada', github: 'github.com/ada' } as never),
+    ).toEqual({ ok: true, value: { github: 'github.com/ada' } });
+  });
+});
+
+describe('pickSocialLinks (SCRUM-4989 review)', () => {
+  it('keeps only the four known keys with string values', () => {
+    expect(
+      pickSocialLinks({ linkedin: 'linkedin.com/in/ada', mastodon: 'x', github: 42, website: '' }),
+    ).toEqual({ linkedin: 'linkedin.com/in/ada', website: '' });
+  });
+
+  it('returns an empty object for non-objects', () => {
+    expect(pickSocialLinks(null)).toEqual({});
+    expect(pickSocialLinks('str')).toEqual({});
+  });
+});
+
+describe('resolveSocialLinks (SCRUM-4989 review)', () => {
+  it('resolves every known key through safeSocialHref and drops unsafe ones', () => {
+    expect(
+      resolveSocialLinks({
+        linkedin: 'linkedin.com/in/ada',
+        twitter: '@ada',
+        github: 'javascript:alert(1)',
+        website: 'https://ada.example',
+        mastodon: 'https://m.example/@ada',
+      }),
+    ).toEqual({
+      linkedin: 'https://linkedin.com/in/ada',
+      twitter: 'https://x.com/ada',
+      website: 'https://ada.example/',
     });
   });
 });
