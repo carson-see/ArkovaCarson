@@ -28,11 +28,12 @@ import { extractCleMetadataView } from '@/components/credentials/cleMetadataView
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, CONFIRMATION_PROGRESS_LABELS, CONNECTOR_FINGERPRINT_LABELS, DOCUSIGN_RECORD_LINKS_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, CONFIRMATION_PROGRESS_LABELS, CONNECTOR_FINGERPRINT_LABELS, DOCUSIGN_RECORD_LINKS_LABELS, DRIVE_RECORD_LINKS_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
 import { isConnectorSourcedAnchorMetadata } from '@/lib/connectorFingerprint';
 import { sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import { accountUrl, envelopeUrl, signerUrl, resolveDocusignEnv, type DocusignEnv } from '@/lib/docusignLinks';
+import { fileUrl as driveFileUrl, folderUrl as driveFolderUrl, sharedDriveUrl as driveSharedDriveUrl } from '@/lib/driveLinks';
 import {
   Tooltip,
   TooltipContent,
@@ -385,18 +386,63 @@ function AnchorRecordGrid({ anchor, status, formatDate }: Readonly<AnchorRecordG
 }
 
 /**
- * DocuSign record deep links (bilateral rollout, frontend-targeted T2).
- * Authenticated record-detail METADATA section only — the public
- * verification page is explicitly out of scope for this rollout.
+ * Which connected system a record came from, for link-rendering purposes.
  *
- * Maps a generic-metadata-loop key to the DocuSign builder that owns it.
- * `null`/absent keys fall through to the caller's existing plain-text
- * render — this table can only ever ADD a link, never change what a
- * non-DocuSign anchor or an unrecognised key already shows.
+ * `null` means "no recognised provider" — the overwhelming majority of
+ * records, and every record whose metadata was not written by the worker
+ * connector pipeline.
  */
-function buildDocusignMetadataHref(metaKey: string, value: unknown, env: DocusignEnv): string | null {
-  if (metaKey === 'account_id') return accountUrl(value, env);
-  if (metaKey === 'envelope_id') return envelopeUrl(value, env);
+type RecordSourceProvider = 'docusign' | 'google_drive' | null;
+
+/**
+ * THE forgery gate for every source-specific link on this page (SCRUM-3818 for
+ * DocuSign, SCRUM-4507 for Drive). Exact string equality against a closed set
+ * — never a prefix, a case-insensitive compare, or a `startsWith`.
+ *
+ * What makes that equality worth anything: migration 0423 STRIPS
+ * `connector_source` from any INSERT by a caller other than `service_role`, and
+ * reverts any UPDATE that tampers with it. So on a row written after 0423, the
+ * marker can only have come from the worker connector pipeline. Rows written
+ * BEFORE 0423 could carry an org-authored marker — which is why what a marker
+ * unlocks is bounded to rendering identifiers the org itself supplied, back at
+ * the source system the org itself controls. No trust badge, no verification
+ * claim, and nothing that reaches a public surface, hangs off this gate.
+ */
+function resolveRecordSourceProvider(
+  metadata: Record<string, unknown> | null | undefined,
+): RecordSourceProvider {
+  const marker = metadataString(metadata, 'connector_source');
+  if (marker === 'docusign') return 'docusign';
+  if (marker === 'google_drive') return 'google_drive';
+  return null;
+}
+
+/**
+ * Record source deep links, authenticated record-detail METADATA section only
+ * — the public verification page is explicitly out of scope.
+ *
+ * Maps a generic-metadata-loop key to the builder that owns it, FOR THE
+ * RESOLVED PROVIDER. `null`/absent keys fall through to the caller's existing
+ * plain-text render — this table can only ever ADD a link, never change what
+ * an unrecognised provider or an unrecognised key already shows.
+ *
+ * SCRUM-4507: `google_drive` maps NO key here on purpose, and that is a
+ * decision rather than an omission. Three of Drive's four identifiers are
+ * `_`-prefixed and the generic dump hides `_`-prefixed keys by construction
+ * (BUG-2026-07-17-010), so a Drive record's links would be split across two
+ * sections with no labels and no §1.5 note. They render together in
+ * `DriveSourceChips` instead. Routing the decision through this one dispatcher
+ * keeps "which provider owns which link" a single, closed, readable answer.
+ */
+function buildSourceMetadataHref(
+  provider: RecordSourceProvider,
+  metaKey: string,
+  value: unknown,
+  docusignEnv: DocusignEnv,
+): string | null {
+  if (provider !== 'docusign') return null;
+  if (metaKey === 'account_id') return accountUrl(value, docusignEnv);
+  if (metaKey === 'envelope_id') return envelopeUrl(value, docusignEnv);
   return null;
 }
 
@@ -433,7 +479,7 @@ function DocusignLinkChip({ href, testId, children }: Readonly<DocusignLinkChipP
 interface MetadataRowProps {
   metaKey: string;
   value: unknown;
-  isDocusign: boolean;
+  provider: RecordSourceProvider;
   docusignEnv: DocusignEnv;
 }
 
@@ -448,8 +494,8 @@ interface MetadataRowProps {
  * falls back to the pre-existing plain-text render byte-for-byte — this can
  * only ever ADD a link, never change what already renders.
  */
-function MetadataRow({ metaKey, value, isDocusign, docusignEnv }: Readonly<MetadataRowProps>) {
-  const href = isDocusign ? buildDocusignMetadataHref(metaKey, value, docusignEnv) : null;
+function MetadataRow({ metaKey, value, provider, docusignEnv }: Readonly<MetadataRowProps>) {
+  const href = buildSourceMetadataHref(provider, metaKey, value, docusignEnv);
   const testId = metaKey === 'account_id' ? 'docusign-account-link' : 'docusign-envelope-link';
   return (
     <div className="flex gap-4">
@@ -464,6 +510,117 @@ function MetadataRow({ metaKey, value, isDocusign, docusignEnv }: Readonly<Metad
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * SCRUM-4507 — Google Drive source link-back.
+ *
+ * One labelled block holding every Drive identifier a record owner needs to
+ * get back to the file this record was secured from, plus the §1.5 statement
+ * of what those links do and do NOT assert.
+ *
+ * WHY A DEDICATED BLOCK rather than links inside the generic metadata dump
+ * (which is how the DocuSign account/envelope links render): three of the four
+ * identifiers are `_`-prefixed and `isAnchorMetadataVisible` hides every
+ * `_`-prefixed key (BUG-2026-07-17-010). Rendering them through the dump would
+ * mean either weakening that filter or showing half the block. Neither is
+ * worth it for identifiers that read far better together, under labels, with
+ * the note attached.
+ *
+ * EVERY element degrades independently. A malformed or absent id simply omits
+ * its chip — `fileUrl`/`folderUrl`/`sharedDriveUrl` return `null` for anything
+ * that is not a Drive id, so an injection-shaped value produces no element at
+ * all rather than a sanitized one. If nothing is renderable the whole block
+ * self-hides, including the note: a §1.5 statement about links that are not on
+ * screen would be a claim about nothing.
+ */
+interface DriveSourceChipsProps {
+  metadata: Record<string, unknown> | null | undefined;
+}
+
+function DriveSourceChips({ metadata }: Readonly<DriveSourceChipsProps>) {
+  const fileHref = driveFileUrl(metadata?.file_id);
+  const folderId = metadataString(metadata, '_drive_folder_id');
+  const folderHref = driveFolderUrl(folderId);
+  const folderPath = metadataString(metadata, '_drive_folder_path');
+  const sharedDriveId = metadataString(metadata, '_drive_shared_drive_id');
+  const sharedDriveHref = driveSharedDriveUrl(sharedDriveId);
+  const revision = metadataString(metadata, 'revision_id');
+  // §1.5: `revision_id` is only a real Drive revision when the producer
+  // resolved a headRevisionId. For a Workspace-native file it is a synthetic
+  // `mtime:`/`evt:` token, so calling it a "revision" would name something
+  // Arkova never measured. Anything that is not exactly 'head_revision' —
+  // including a legacy record with no kind recorded at all — gets the weaker,
+  // true label.
+  const revisionKind = metadataString(metadata, '_drive_revision_kind');
+  const revisionLabel = revisionKind === 'head_revision'
+    ? DRIVE_RECORD_LINKS_LABELS.REVISION_LABEL
+    : DRIVE_RECORD_LINKS_LABELS.MODIFIED_TIME_LABEL;
+
+  if (!fileHref && !folderHref && !sharedDriveHref && !revision) return null;
+
+  return (
+    <>
+      <Separator />
+      <div className="space-y-3" data-testid="drive-source-section">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+          {DRIVE_RECORD_LINKS_LABELS.SECTION_LABEL}
+        </span>
+        <div className="space-y-2">
+          {fileHref && (
+            <div className="flex gap-4">
+              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
+                {DRIVE_RECORD_LINKS_LABELS.FILE_LABEL}:
+              </span>
+              <DocusignLinkChip href={fileHref} testId="drive-file-link">
+                {DRIVE_RECORD_LINKS_LABELS.OPEN_IN_DRIVE}
+              </DocusignLinkChip>
+            </div>
+          )}
+          {folderHref && (
+            <div className="flex gap-4">
+              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
+                {DRIVE_RECORD_LINKS_LABELS.FOLDER_LABEL}:
+              </span>
+              {/* The resolved human path is what an owner recognises; the
+                  opaque folder id is the fallback when the path walk never
+                  ran or failed. */}
+              <DocusignLinkChip href={folderHref} testId="drive-folder-link">
+                {folderPath ?? folderId}
+              </DocusignLinkChip>
+            </div>
+          )}
+          {sharedDriveHref && (
+            <div className="flex gap-4">
+              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
+                {DRIVE_RECORD_LINKS_LABELS.SHARED_DRIVE_LABEL}:
+              </span>
+              <DocusignLinkChip href={sharedDriveHref} testId="drive-shared-drive-link">
+                {sharedDriveId}
+              </DocusignLinkChip>
+            </div>
+          )}
+          {revision && (
+            <div className="flex gap-4">
+              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
+                {revisionLabel}:
+              </span>
+              {/* NEVER a link. The stored value is not always a Drive revision
+                  id, and the deep-link shape for one has not been verified
+                  against the live product — a link that works for some records
+                  and 404s for others is worse than plain text. */}
+              <span className="text-xs font-mono break-all" data-testid="drive-revision-plain">
+                {revision}
+              </span>
+            </div>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground" data-testid="drive-source-note">
+          {DRIVE_RECORD_LINKS_LABELS.SOURCE_NOTE}
+        </p>
+      </div>
+    </>
   );
 }
 
@@ -596,7 +753,11 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   // DocuSign record deep links (bilateral rollout, frontend-targeted T2):
   // gated strictly on connector_source === 'docusign' — a non-DocuSign
   // anchor never sees a link, regardless of what its metadata contains.
-  const isDocusignAnchor = metadataString(anchor.metadata, 'connector_source') === 'docusign';
+  // SCRUM-3818 / SCRUM-4507: ONE resolved provider drives every source-specific
+  // link on this page. Exact-equality gate — see resolveRecordSourceProvider.
+  const sourceProvider = resolveRecordSourceProvider(anchor.metadata);
+  const isDocusignAnchor = sourceProvider === 'docusign';
+  const isDriveAnchor = sourceProvider === 'google_drive';
   const docusignEnv = resolveDocusignEnv(anchor.metadata?._docusign_env);
   // CPE-R1 (SCRUM-1847): the CPE section is gated on the credential_source_import
   // entitlement, resolved by the parent page and passed via hasImportEntitlement.
@@ -957,7 +1118,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                         key={key}
                         metaKey={key}
                         value={value}
-                        isDocusign={isDocusignAnchor}
+                        provider={sourceProvider}
                         docusignEnv={docusignEnv}
                       />
                     ))
@@ -974,6 +1135,12 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           {isDocusignAnchor && (
             <DocusignSignerRows signers={anchor.metadata?._signers} env={docusignEnv} />
           )}
+
+          {/* Google Drive source link-back (SCRUM-4507) — dedicated block for
+              the Drive file / folder / shared drive / revision, gated strictly
+              on connector_source === 'google_drive'. Self-hides when no Drive
+              identifier is renderable. */}
+          {isDriveAnchor && <DriveSourceChips metadata={anchor.metadata} />}
         </CardContent>
       </Card>
 

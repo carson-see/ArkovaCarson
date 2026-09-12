@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
 import { AssetDetailView } from './AssetDetailView';
-import { DOCUSIGN_RECORD_LINKS_LABELS } from '@/lib/copy';
+import { DOCUSIGN_RECORD_LINKS_LABELS, DRIVE_RECORD_LINKS_LABELS } from '@/lib/copy';
 
 describe('AssetDetailView', () => {
   const mockAnchor = {
@@ -599,6 +599,272 @@ describe('AssetDetailView', () => {
       expect(queryByText(/^docusign env:$/i)).not.toBeInTheDocument();
       // Nor should the raw array/string ever appear serialized inline.
       expect(queryByText(/recipient_id_guid/)).not.toBeInTheDocument();
+    });
+  });
+
+  /**
+   * SCRUM-4507 — Google Drive source link-back.
+   *
+   * Same shape as the DocuSign block above and gated the same way: the chips
+   * render ONLY when `metadata.connector_source === 'google_drive'` exactly.
+   * That equality is the forgery gate — migration 0423 strips
+   * `connector_source` from any INSERT by a non-`service_role` caller and
+   * reverts it on UPDATE, so for rows written after 0423 the marker can only
+   * have come from the worker connector pipeline.
+   *
+   * The Drive identifiers live in a dedicated source block rather than as
+   * links inside the generic metadata dump, because three of the four
+   * (`_drive_*`) are underscore-prefixed and that dump hides underscore keys
+   * by construction (BUG-2026-07-17-010).
+   */
+  describe('Google Drive source link-back (SCRUM-4507)', () => {
+    const DRIVE_FILE_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+    const DRIVE_FOLDER_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+    const DRIVE_SHARED_DRIVE_ID = '0AOaBcDeFgHiJkLmNoP';
+
+    const driveAnchor = {
+      ...mockAnchor,
+      metadata: {
+        connector_source: 'google_drive',
+        file_id: DRIVE_FILE_ID,
+        revision_id: 'rev-head-0001',
+        _drive_folder_id: DRIVE_FOLDER_ID,
+        _drive_folder_path: '/Legal/Contracts',
+        _drive_shared_drive_id: DRIVE_SHARED_DRIVE_ID,
+        _drive_revision_kind: 'head_revision',
+      },
+    };
+
+    it('renders the source file chip as a link to the Drive file', () => {
+      const { getByTestId } = render(<AssetDetailView anchor={driveAnchor} />);
+
+      const link = getByTestId('drive-file-link');
+      expect(link).toHaveAttribute('href', `https://drive.google.com/file/d/${DRIVE_FILE_ID}/view`);
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    });
+
+    it('renders the folder chip labelled by the resolved folder path', () => {
+      const { getByTestId } = render(<AssetDetailView anchor={driveAnchor} />);
+
+      const link = getByTestId('drive-folder-link');
+      expect(link).toHaveAttribute('href', `https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}`);
+      // The human path is what the owner recognises; the opaque id is not.
+      expect(link).toHaveTextContent('/Legal/Contracts');
+    });
+
+    it('falls back to the folder id as the label when no folder path was resolved', () => {
+      const noPath = {
+        ...driveAnchor,
+        metadata: { ...driveAnchor.metadata, _drive_folder_path: null },
+      };
+      const { getByTestId } = render(<AssetDetailView anchor={noPath} />);
+
+      const link = getByTestId('drive-folder-link');
+      expect(link).toHaveAttribute('href', `https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}`);
+      expect(link).toHaveTextContent(DRIVE_FOLDER_ID);
+    });
+
+    it('renders the shared drive chip', () => {
+      const { getByTestId } = render(<AssetDetailView anchor={driveAnchor} />);
+
+      expect(getByTestId('drive-shared-drive-link')).toHaveAttribute(
+        'href',
+        `https://drive.google.com/drive/folders/${DRIVE_SHARED_DRIVE_ID}`,
+      );
+    });
+
+    it('omits the shared drive chip for a My Drive record', () => {
+      const myDrive = {
+        ...driveAnchor,
+        metadata: { ...driveAnchor.metadata, _drive_shared_drive_id: null },
+      };
+      const { queryByTestId, getByTestId } = render(<AssetDetailView anchor={myDrive} />);
+
+      expect(queryByTestId('drive-shared-drive-link')).not.toBeInTheDocument();
+      // The rest of the block still renders.
+      expect(getByTestId('drive-file-link')).toBeInTheDocument();
+    });
+
+    it('renders the revision as plain text, never as a link', () => {
+      const { getByTestId, queryByTestId } = render(<AssetDetailView anchor={driveAnchor} />);
+
+      const revision = getByTestId('drive-revision-plain');
+      expect(revision).toHaveTextContent('rev-head-0001');
+      expect(revision.tagName).not.toBe('A');
+      expect(revision.querySelector('a')).toBeNull();
+      expect(queryByTestId('drive-revision-link')).not.toBeInTheDocument();
+    });
+
+    it('labels a head_revision record as a source revision', () => {
+      const { getByText } = render(<AssetDetailView anchor={driveAnchor} />);
+      expect(getByText(`${DRIVE_RECORD_LINKS_LABELS.REVISION_LABEL}:`)).toBeInTheDocument();
+    });
+
+    it('labels a modified_time record as a modification time, not a revision', () => {
+      // §1.5: a Workspace-native file has no revision id at all — the value is
+      // a synthetic `mtime:` token. Calling that "revision" would state
+      // something the producer never measured.
+      const nativeDoc = {
+        ...driveAnchor,
+        metadata: {
+          ...driveAnchor.metadata,
+          revision_id: 'mtime:2026-05-04T01:23:00Z',
+          _drive_revision_kind: 'modified_time',
+        },
+      };
+      const { getByText, queryByText } = render(<AssetDetailView anchor={nativeDoc} />);
+
+      expect(getByText(`${DRIVE_RECORD_LINKS_LABELS.MODIFIED_TIME_LABEL}:`)).toBeInTheDocument();
+      expect(queryByText(`${DRIVE_RECORD_LINKS_LABELS.REVISION_LABEL}:`)).not.toBeInTheDocument();
+    });
+
+    it('labels a record with NO recorded revision kind as a modification time', () => {
+      // A Drive anchor written before SCRUM-4507 has no `_drive_revision_kind`.
+      // Absence must fall to the WEAKER label: claiming "revision" for a value
+      // whose kind was never recorded asserts something never measured (§1.5).
+      const legacy = {
+        ...driveAnchor,
+        metadata: { ...driveAnchor.metadata, _drive_revision_kind: null },
+      };
+      const { getByText, queryByText } = render(<AssetDetailView anchor={legacy} />);
+
+      expect(getByText(`${DRIVE_RECORD_LINKS_LABELS.MODIFIED_TIME_LABEL}:`)).toBeInTheDocument();
+      expect(queryByText(`${DRIVE_RECORD_LINKS_LABELS.REVISION_LABEL}:`)).not.toBeInTheDocument();
+    });
+
+    it('labels an event_time record as a modification time too', () => {
+      const eventTime = {
+        ...driveAnchor,
+        metadata: {
+          ...driveAnchor.metadata,
+          revision_id: 'evt:2026-05-04T02:00:00Z:file-evt',
+          _drive_revision_kind: 'event_time',
+        },
+      };
+      const { getByText } = render(<AssetDetailView anchor={eventTime} />);
+      expect(getByText(`${DRIVE_RECORD_LINKS_LABELS.MODIFIED_TIME_LABEL}:`)).toBeInTheDocument();
+    });
+
+    it('states what is measured and what is NOT asserted about the linked Drive item', () => {
+      const { getByTestId } = render(<AssetDetailView anchor={driveAnchor} />);
+      expect(getByTestId('drive-source-note')).toHaveTextContent(
+        DRIVE_RECORD_LINKS_LABELS.SOURCE_NOTE,
+      );
+    });
+
+    // ── Forgery gate ────────────────────────────────────────────────────────
+    it('renders ZERO Drive chips when connector_source is absent', () => {
+      const forged = {
+        ...mockAnchor,
+        metadata: {
+          file_id: DRIVE_FILE_ID,
+          revision_id: 'rev-head-0001',
+          _drive_folder_id: DRIVE_FOLDER_ID,
+          _drive_shared_drive_id: DRIVE_SHARED_DRIVE_ID,
+          _drive_revision_kind: 'head_revision',
+        },
+      };
+      const { queryByTestId } = render(<AssetDetailView anchor={forged} />);
+
+      for (const testId of [
+        'drive-file-link',
+        'drive-folder-link',
+        'drive-shared-drive-link',
+        'drive-revision-plain',
+        'drive-source-note',
+      ]) {
+        expect(queryByTestId(testId)).not.toBeInTheDocument();
+      }
+    });
+
+    it('renders ZERO Drive chips for a near-miss connector_source value', () => {
+      for (const marker of ['googledrive', 'google_drive ', 'Google_Drive', 'drive', 'connector']) {
+        const nearMiss = {
+          ...driveAnchor,
+          metadata: { ...driveAnchor.metadata, connector_source: marker },
+        };
+        const { queryByTestId, unmount } = render(<AssetDetailView anchor={nearMiss} />);
+        expect(queryByTestId('drive-file-link'), `marker ${marker} must not pass the gate`).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+
+    it('renders no Drive chips on a DocuSign anchor, and no DocuSign rows on a Drive anchor', () => {
+      const { queryByTestId, unmount } = render(<AssetDetailView anchor={driveAnchor} />);
+      expect(queryByTestId('docusign-account-link')).not.toBeInTheDocument();
+      expect(queryByTestId('docusign-envelope-link')).not.toBeInTheDocument();
+      expect(queryByTestId('docusign-signer-row')).not.toBeInTheDocument();
+      // RTL binds queries to document.body, not to this render's container, so
+      // the Drive markup has to come down before the DocuSign case is asserted
+      // — otherwise the second query would find the first render's chips.
+      unmount();
+
+      const docusignOnly = {
+        ...mockAnchor,
+        metadata: {
+          connector_source: 'docusign',
+          account_id: '11111111-2222-4333-8444-555555555555',
+          envelope_id: '66666666-7777-4888-8999-aaaaaaaaaaaa',
+          // A DocuSign row that somehow also carries Drive keys must still
+          // show zero Drive chips — the provider gate is exclusive.
+          file_id: DRIVE_FILE_ID,
+          _drive_folder_id: DRIVE_FOLDER_ID,
+        },
+      };
+      const { queryByTestId: q2, getByTestId: g2 } = render(<AssetDetailView anchor={docusignOnly} />);
+      expect(g2('docusign-account-link')).toBeInTheDocument();
+      expect(q2('drive-file-link')).not.toBeInTheDocument();
+      expect(q2('drive-folder-link')).not.toBeInTheDocument();
+    });
+
+    // ── Degrade safely on malformed input ───────────────────────────────────
+    it('renders no href and no javascript: URL for an injection-shaped file id', () => {
+      const injection = {
+        ...driveAnchor,
+        metadata: {
+          ...driveAnchor.metadata,
+          file_id: 'javascript:alert(document.cookie)',
+          _drive_folder_id: '../../../etc/passwd',
+          _drive_shared_drive_id: 'https://evil.example.com/steal',
+        },
+      };
+      const { queryByTestId, container } = render(<AssetDetailView anchor={injection} />);
+
+      expect(queryByTestId('drive-file-link')).not.toBeInTheDocument();
+      expect(queryByTestId('drive-folder-link')).not.toBeInTheDocument();
+      expect(queryByTestId('drive-shared-drive-link')).not.toBeInTheDocument();
+      for (const a of Array.from(container.querySelectorAll('a[href]'))) {
+        const href = a.getAttribute('href')?.toLowerCase().trim() ?? '';
+        expect(href.startsWith('javascript:')).toBe(false);
+        expect(href.includes('evil.example.com')).toBe(false);
+      }
+    });
+
+    it('renders the source block with no chips at all when every Drive identifier is invalid', () => {
+      const empty = {
+        ...mockAnchor,
+        metadata: { connector_source: 'google_drive' },
+      };
+      const { queryByTestId } = render(<AssetDetailView anchor={empty} />);
+
+      expect(queryByTestId('drive-file-link')).not.toBeInTheDocument();
+      expect(queryByTestId('drive-folder-link')).not.toBeInTheDocument();
+      expect(queryByTestId('drive-shared-drive-link')).not.toBeInTheDocument();
+      expect(queryByTestId('drive-revision-plain')).not.toBeInTheDocument();
+      // Nothing measured -> nothing claimed: the note does not render either.
+      expect(queryByTestId('drive-source-note')).not.toBeInTheDocument();
+    });
+
+    it('never renders the _drive_* keys as raw generic metadata rows', () => {
+      const { queryByText } = render(<AssetDetailView anchor={driveAnchor} />);
+
+      // The generic dump derives labels via key.replace(/_/g, ' '), so a leak
+      // would read "drive folder id:" / "drive revision kind:".
+      expect(queryByText(/^drive folder id:$/i)).not.toBeInTheDocument();
+      expect(queryByText(/^drive shared drive id:$/i)).not.toBeInTheDocument();
+      expect(queryByText(/^drive revision kind:$/i)).not.toBeInTheDocument();
+      expect(queryByText(/^drive folder path:$/i)).not.toBeInTheDocument();
     });
   });
 });
