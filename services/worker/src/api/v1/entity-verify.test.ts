@@ -144,3 +144,83 @@ describe('entity-verify attestation filter (SCRUM-4985)', () => {
     expect(res.body.total_attestations).toBe(1);
   });
 });
+
+/**
+ * CTO review of PR #2835 — `anchor_proof` was `null` for every row.
+ *
+ * The `public_records` select list never included `anchor_id`, so
+ * `recordsList.filter((r) => r.anchor_id)` matched nothing, the `anchors`
+ * lookup never ran, and `anchor_proof` was `null` on every result — on an
+ * endpoint documented as "Returns a verification summary with anchor proofs"
+ * and billed at $0.005/request. In prod 3,840,032 of 3,840,033
+ * `public_records` rows carry an `anchor_id`, so this was the whole payload.
+ *
+ * The mock below PROJECTS to the select list the way PostgREST does. A mock
+ * that returns whatever fixture it was handed cannot see this class of bug:
+ * the defect is in the column list, not in the row handling.
+ */
+describe('entity-verify anchor proofs', () => {
+  const app = createApp();
+
+  /** Mock chain that honours `.select('a, b, c')` by projecting the rows. */
+  function projectingChain(rows: Array<Record<string, unknown>>) {
+    let columns: string[] | null = null;
+    const chain: Record<string, unknown> = {};
+    for (const method of ['eq', 'in', 'or', 'ilike', 'order', 'limit', 'single']) {
+      chain[method] = vi.fn(() => chain);
+    }
+    chain.select = vi.fn((list: string) => {
+      columns = list.split(',').map((c) => c.trim());
+      return chain;
+    });
+    Object.defineProperty(chain, 'then', {
+      value: (resolve: (v: unknown) => void) => {
+        const projected = rows.map((row) =>
+          Object.fromEntries(
+            Object.entries(row).filter(([k]) => !columns || columns.includes(k)),
+          ),
+        );
+        return Promise.resolve({ data: projected, error: null }).then(resolve);
+      },
+    });
+    return chain;
+  }
+
+  function mockTables(records: Array<Record<string, unknown>>, anchors: Array<Record<string, unknown>>) {
+    vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+      const table = (args as unknown as string[])[0];
+      if (table === 'public_records') return projectingChain(records) as never;
+      if (table === 'anchors') return projectingChain(anchors) as never;
+      return projectingChain([]) as never;
+    });
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('populates anchor_proof for a record that has an anchor', async () => {
+    mockTables(
+      [{ id: 'rec-1', source: 'USPTO', source_id: 'SRC-1', title: 'Acme', anchor_id: 'anch-1' }],
+      [{ id: 'anch-1', status: 'SECURED', chain_tx_id: 'tx-abc', chain_block_height: 900001, public_id: 'ANC-1' }],
+    );
+
+    const res = await request(app).get('/').query({ identifier: 'SRC-1' });
+    expect(res.status).toBe(200);
+    expect(res.body.records).toHaveLength(1);
+    expect(res.body.records[0].anchor_proof).toEqual({
+      status: 'SECURED',
+      chain_tx_id: 'tx-abc',
+      block_height: 900001,
+    });
+    // anchor_id is an internal id — it must not leak into the public payload
+    // (Constitution §6: only public_id + derived fields).
+    expect(res.body.records[0]).not.toHaveProperty('anchor_id');
+  });
+
+  it('leaves anchor_proof null for a record with no anchor', async () => {
+    mockTables([{ id: 'rec-2', source: 'USPTO', source_id: 'SRC-2', title: 'Acme', anchor_id: null }], []);
+
+    const res = await request(app).get('/').query({ identifier: 'SRC-2' });
+    expect(res.status).toBe(200);
+    expect(res.body.records[0].anchor_proof).toBeNull();
+  });
+});

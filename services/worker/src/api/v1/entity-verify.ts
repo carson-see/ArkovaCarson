@@ -54,9 +54,16 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     // Search across public records for entity mentions
      
+    // `anchor_id` is selected for the anchor-proof lookup below and is NOT in
+    // the response shape — the payload exposes only the derived `anchor_proof`
+    // (Constitution §6: never surface internal ids). It was missing from this
+    // list, so the proof lookup never ran and `anchor_proof` was `null` on
+    // every row of a paid endpoint documented as returning anchor proofs.
+    // Additive to the frozen schema (§1.8): a field that was always null now
+    // carries a value. CTO ruling, PR #2835 review.
     let query = dbAny
       .from('public_records')
-      .select('id, source, source_id, source_url, record_type, title, content_hash, metadata, created_at')
+      .select('id, source, source_id, source_url, record_type, title, content_hash, metadata, anchor_id, created_at')
       .order('created_at', { ascending: false })
       .limit(limit);
 
