@@ -1331,14 +1331,32 @@ a failed DocuSign inheritance-marker lookup 503s here (the JWT list degrades to
 than being dropped from the list — a missing row reads as "that affiliate has no
 balance", which is a materially wrong answer about money.
 
-**Audit `details` is JSON on all three sub-org writers now** (was prose).
+**Audit `details` is JSON on all four sub-org writers now** (was prose).
 `audit_events.actor_id` is `REFERENCES public.profiles(id)`, so an API-key actor
 has nothing it can legally put there and a user id there would be a false
 statement about who acted: key-driven rows carry `actor_id NULL` plus
-`details.actor = {actor_kind, actor_api_key_id, actor_key_prefix}`. Verified by
-grep at the time of the change that NO code in either tree reads the `details` of
-a `SUB_ORG_*` event — `audit-export.ts` exports anchors, not audit events — so
-the shape change has no consumer to break. Historical prose rows are left as-is.
+`details.actor = {actor_kind, actor_api_key_id, actor_key_prefix}`.
+
+**Correction (review U5): the shape change DOES have consumers.** The code
+comment and this note both claimed `audit-export.ts` renders both shapes via a
+`renderAuditDetails` fallback. That symbol does not exist anywhere in either
+tree, and `audit-export.ts` exports ANCHORS, not audit events. The two real
+readers of `audit_events.details` are:
+
+* `services/worker/src/audit/cloud-logging-sink.ts:127` — `safeParseDetails`
+  does `JSON.parse` with a `{ raw }` fallback, so it handles prose and JSON
+  alike. Nothing to do.
+* `services/worker/src/api/account-export.ts:126` — the GDPR subject-access
+  export selects `details` and emits it VERBATIM with no parse, so a user's own
+  export now shows a JSON string instead of an English sentence for the four
+  `SUB_ORG_*` events they authored. **Accepted**: the export is a faithful copy
+  of the stored column, the JSON is self-describing, and it carries strictly
+  more than the sentence did. Key-driven rows have `actor_id = NULL` and so
+  never appear in any subject-access export.
+
+Historical prose rows are left as-is. **The lesson: "no consumer" is a grep
+result with a date on it — grep for the COLUMN, not for a symbol you expect to
+find.**
 
 **Inherited middleware, accepted and stated** (CTO ruling R10): these routes sit
 inside the v1 chain, so `verificationApiGate`, `idempotency`,

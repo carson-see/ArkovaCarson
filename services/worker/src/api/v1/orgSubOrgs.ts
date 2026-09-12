@@ -601,9 +601,25 @@ async function updateAffiliateStatus(
  * was a logged-in user whose id sat in `actor_id`, useless once an API key can
  * act: `audit_events.actor_id` is `REFERENCES public.profiles(id)`, so a key
  * has nothing it can legally put there, and the sentence had nowhere to record
- * which key acted. JSON with an `actor` block carries it. `audit-export.ts`
- * renders both shapes (`renderAuditDetails` falls back to the raw string), so
- * historical prose rows keep exporting unchanged.
+ * which key acted. JSON with an `actor` block carries it.
+ *
+ * **Who actually reads `audit_events.details`** (grepped, review U5 — an earlier
+ * version of this comment named a `renderAuditDetails` fallback in
+ * `audit-export.ts`; no such symbol exists and `audit-export.ts` exports
+ * ANCHORS, not audit events):
+ *
+ *   - `audit/cloud-logging-sink.ts:127` `safeParseDetails` — `JSON.parse` with a
+ *     `{ raw }` fallback, so it handles both shapes. Prose rows keep flowing.
+ *   - `api/account-export.ts:126` — the GDPR subject-access export selects
+ *     `details` and emits it VERBATIM, with no parse. A user's own export
+ *     therefore now shows a JSON string rather than an English sentence for the
+ *     four `SUB_ORG_*` events they authored. Accepted and documented: the
+ *     export is a faithful copy of the stored column, the JSON is
+ *     self-describing, and it carries strictly MORE than the sentence did.
+ *     Key-driven rows have `actor_id = NULL` and so never appear in any user's
+ *     subject-access export at all.
+ *
+ * Historical prose rows are left exactly as they are.
  *
  * **The insert error is NOT discarded (review U4).** It used to be: the write
  * was fire-and-forget, so approve/revoke answered 200 with no audit record

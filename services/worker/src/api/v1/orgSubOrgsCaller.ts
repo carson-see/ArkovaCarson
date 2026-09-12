@@ -408,8 +408,12 @@ export function resolveOwnedChild(
  * `audit_events.actor_id` is `REFERENCES public.profiles(id)`, so an API key
  * has no value it can legally put there — and substituting the key's owning
  * user would assert a human took an action they did not take. The actor moves
- * into `details` instead, which `api/v1/audit-export.ts` renders for both
- * shapes.
+ * into `details` instead.
+ *
+ * The consumers of that column, and what the shape change does to each, are
+ * listed once — above `auditAffiliateStatus` in `orgSubOrgs.ts`. (They are NOT
+ * `audit-export.ts`, which this comment used to claim: that endpoint exports
+ * anchors and has no `renderAuditDetails`.)
  */
 export function subOrgAuditActor(caller: SubOrgCaller): {
   actorId: string | null;
