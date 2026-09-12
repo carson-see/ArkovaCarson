@@ -84,12 +84,23 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    # Limit 2, not the 5/10 the other entries carry: the repo runs against a
+    # 12-open-PR ceiling (memory/feedback_pr_queue_ceiling_12.md) and this is
+    # release tooling, not a runtime surface. CTO ruling, 2026-09-12.
+    open-pull-requests-limit: 2
     labels:
       - "dependencies"
       - "zapier"
     commit-message:
       prefix: "chore(deps-zapier):"
+    groups:
+      zapier-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
