@@ -679,6 +679,8 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
   'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
+  'attestation.created': 'An attestation was created and is awaiting securing.',
+  'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
 };
 
 // =============================================================================

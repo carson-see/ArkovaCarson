@@ -95,3 +95,28 @@ unset in prod 2026-08-29). Root cause chain: the worker
 `services/worker/src/webhooks/agents.md` producer table (this catalog's cited
 verification source) had never gained the `credential.*` rows — fixed in the
 same PR. Verify liveness against dispatch sites, not prose.
+
+## 2026-09-12 — attestation events added to the picker + catalog (SCRUM-3982)
+
+`attestation.created` and `attestation.revoked` are now registered in the
+worker's `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, so they are subscribable and this
+workspace has to mirror them. Added to `AVAILABLE_EVENTS` (after
+`compliance.document_expiring` — order is `toEqual`-pinned), `CATALOG_DATA`,
+and `WEBHOOK_EVENT_DESCRIPTIONS` in `src/lib/copy.ts`.
+
+Liveness, verified against the dispatch sites and not inferred:
+
+- `attestation.created` — `live: true`. `POST /api/v1/attestations` dispatches
+  it, and the `profiles` lookup above the guard really does select `org_id`.
+- `attestation.revoked` — `live: false`, and the picker label carries the
+  "(coming soon)" suffix. The revoke handler's dispatch is guarded on
+  `attestation.attester_org_id` while its ownership query selects only
+  `id, status, attester_user_id`, so the guard is always false and this event
+  has never been delivered. Flipping the badge means fixing that select in
+  `services/worker/src/api/v1/attestations.ts`, not editing this file
+  (§1.13 R-7).
+
+`attestation.created`'s payload fields dropped `fingerprint` in the same PR —
+the producer was shipping the document-derived hash (§1.6) on an unregistered
+event, so nothing checked it. `WebhookEventCatalog.test.tsx` gained a pin
+keeping `attestation.revoked` deferred, mirroring the `credential.verified` one.

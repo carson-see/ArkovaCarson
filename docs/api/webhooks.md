@@ -87,6 +87,19 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 
 `compliance.document_expiring` payload `data`: `public_id`, `status` (always `SECURED`), `expires_at`, `days_remaining` (positive integer), `warning_level` (`7_day`), plus optional `credential_type`, `label`, `org_public_id`.
 
+### Attestation Lifecycle (SCRUM-3982)
+
+| Event | Fired When | Status |
+|---|---|---|
+| `attestation.created` | An attester creates an attestation via `POST /api/v1/attestations`. Fires at creation, before the attestation is secured — pair with `anchor.secured` for the on-chain finality signal. | Stable |
+| `attestation.revoked` | An attester withdraws an attestation via `PATCH /api/v1/attestations/{public_id}/revoke`. | Contract defined; subscriptions are accepted and the payload contract is locked, but the emit point is **not yet reachable in production** — no delivery of this event has occurred |
+
+`attestation.created` payload `data`: `public_id`, `attestation_type`, `status` (`DRAFT` or `PENDING` — a creation event never carries a terminal status), `created_at`, plus optional `org_public_id`.
+
+`attestation.revoked` payload `data`: `public_id`, `status` (always `REVOKED`), `revocation_reason`, `revoked_at`, plus optional `attestation_type` and `org_public_id`.
+
+Both obey the same allowlist as every other family: public ids only, no internal UUIDs, no document fingerprint, RFC 3339 timestamps with an explicit timezone. Until SCRUM-3982 these two events were dispatched without being registered, so no endpoint could subscribe to them and their payloads were not schema-checked; registering them is what makes the field ban enforceable, not merely documented.
+
 **Credential-event delivery status:** `credential.issued` and `credential.status_changed` are live — subscribed endpoints receive them today. `credential.verified` is the one exception: its payload schema, dispatch validation, HMAC signing, and CRUD acceptance are all live, and you can register a subscription for it now via `POST /webhooks` (or update an existing subscription), but emission is behind a production feature gate that has not been enabled — deliveries begin when that gate opens, with no re-registration needed. All three schemas obey the same allowlist rules as anchor events: `public_id`-only (including `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps with explicit timezone (`Z` or `±HH:MM`). See `services/worker/src/webhooks/payload-schemas.ts` for the canonical contract.
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.

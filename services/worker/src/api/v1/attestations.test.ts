@@ -12,7 +12,9 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import crypto from 'crypto';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import { BANNED_PAYLOAD_KEYS, validateWebhookPayload } from '../../webhooks/payload-schemas.js';
 
 // Mock db and logger
 const mockFrom = vi.fn();
@@ -461,5 +463,116 @@ describe('Attestation rich evidence helpers', () => {
 
     expect(capped.map((item) => item.public_id)).toEqual(['ARK-CRED-1', 'ARK-CRED-3']);
     expect(capAttestorCredentialLineage(lineage, 'ARK-CRED-2')).toEqual([]);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * SCRUM-3982 — outbound webhook payloads from this router.
+ *
+ * The route handlers are mounted behind `requireAuth` + Supabase, and this
+ * suite has no HTTP harness, so the dispatch payloads are asserted against the
+ * SOURCE of their own call sites. That is deliberate and not a weaker test
+ * than a spy: the thing being ratcheted is the literal set of keys written at
+ * the call site, and reading it straight from the file catches a re-added
+ * `fingerprint` no matter which code path reaches the dispatch.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('attestation webhook payloads carry public ids only (SCRUM-3982)', () => {
+  const SOURCE = readFileSync(
+    new URL('./attestations.ts', import.meta.url),
+    'utf-8',
+  );
+
+  /**
+   * Top-level keys of the object literal passed to
+   * `dispatchWebhookEvent(orgExpr, '<eventType>', idExpr, { … })`.
+   * Brace-balanced so a nested object cannot truncate the scan.
+   */
+  function dispatchedPayloadKeys(eventType: string): string[] {
+    const marker = `'${eventType}'`;
+    const at = SOURCE.indexOf(marker);
+    expect(at, `no dispatchWebhookEvent call site for ${eventType}`).toBeGreaterThan(-1);
+    const open = SOURCE.indexOf('{', at);
+    expect(open).toBeGreaterThan(-1);
+
+    let depth = 0;
+    let close = -1;
+    for (let i = open; i < SOURCE.length; i++) {
+      if (SOURCE[i] === '{') depth++;
+      else if (SOURCE[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          close = i;
+          break;
+        }
+      }
+    }
+    expect(close, 'unbalanced object literal').toBeGreaterThan(open);
+
+    const body = SOURCE.slice(open + 1, close);
+    const keys: string[] = [];
+    let nesting = 0;
+    for (const line of body.split('\n')) {
+      const trimmed = line.trim();
+      const match = /^([a-z_][a-z0-9_]*)\s*:/i.exec(trimmed);
+      if (nesting === 0 && match) keys.push(match[1]);
+      nesting += (line.match(/[{[]/g) ?? []).length - (line.match(/[}\]]/g) ?? []).length;
+    }
+    return keys;
+  }
+
+  it('attestation.created no longer ships the document fingerprint (CLAUDE.md §1.6)', () => {
+    const keys = dispatchedPayloadKeys('attestation.created');
+    expect(keys).not.toContain('fingerprint');
+    expect(keys).toEqual(['public_id', 'attestation_type', 'status', 'created_at']);
+  });
+
+  it('attestation.revoked ships public ids only', () => {
+    const keys = dispatchedPayloadKeys('attestation.revoked');
+    expect(keys).toEqual(['public_id', 'status', 'revocation_reason', 'revoked_at']);
+  });
+
+  it.each(['attestation.created', 'attestation.revoked'])(
+    '%s carries no key the outbound allowlist bans',
+    (eventType) => {
+      for (const key of dispatchedPayloadKeys(eventType)) {
+        expect(BANNED_PAYLOAD_KEYS).not.toContain(key);
+        expect(key.startsWith('_')).toBe(false);
+      }
+    },
+  );
+
+  it('both dispatched payloads validate against their registered schemas', () => {
+    // Shapes built from the key lists above with representative values, so a
+    // key added at the call site without a matching schema field fails here
+    // too, not only in production.
+    const created = validateWebhookPayload('attestation.created', {
+      public_id: 'ARK-ORG-VER-ABC123',
+      attestation_type: 'VERIFICATION',
+      status: 'PENDING',
+      created_at: '2026-09-12T10:00:00Z',
+    });
+    expect(created.ok).toBe(true);
+    if (created.ok) expect(created.bypassed).toBeUndefined();
+
+    const revoked = validateWebhookPayload('attestation.revoked', {
+      public_id: 'ARK-ORG-VER-ABC123',
+      status: 'REVOKED',
+      revocation_reason: 'Issued in error',
+      revoked_at: '2026-09-12T10:00:00Z',
+    });
+    expect(revoked.ok).toBe(true);
+    if (revoked.ok) expect(revoked.bypassed).toBeUndefined();
+  });
+
+  it('the revoke handler stamps ONE revoked_at across row, webhook and response', () => {
+    // Was three separate `new Date().toISOString()` calls — the stored value,
+    // the delivered value and the returned value were all different instants.
+    const handler = SOURCE.slice(SOURCE.indexOf("router.patch('/:publicId/revoke'"))
+      // Strip line comments — the rationale comment names the old call.
+      .replace(/\/\/[^\n]*/g, '');
+    expect(handler).toContain('const revokedAt = new Date().toISOString();');
+    expect(handler.match(/new Date\(\)\.toISOString\(\)/g)).toHaveLength(1);
+    expect(handler.match(/revoked_at: revokedAt/g)).toHaveLength(3);
   });
 });

@@ -98,6 +98,16 @@ export const AVAILABLE_EVENTS = [
   // never registered in the worker allowlist, so this option could not be
   // offered and every dispatch matched zero endpoints.
   { id: 'compliance.document_expiring', label: 'Document Expiring Soon' },
+  // SCRUM-3982: both were dispatched from services/worker/src/api/v1/attestations.ts
+  // while unregistered, so no endpoint could subscribe and the payload skipped
+  // schema validation entirely (attestation.created was shipping the document
+  // fingerprint, §1.6). `attestation.created` has a reachable producer;
+  // `attestation.revoked` does not yet — its guard reads an org id the
+  // ownership query never selects — hence the suffix, mirroring the
+  // credential.verified convention. Liveness truth lives in
+  // WebhookEventCatalog.tsx CATALOG_DATA.
+  { id: 'attestation.created', label: 'Attestation Created' },
+  { id: 'attestation.revoked', label: 'Attestation Revoked (coming soon)' },
 ];
 
 export function WebhookSettings({

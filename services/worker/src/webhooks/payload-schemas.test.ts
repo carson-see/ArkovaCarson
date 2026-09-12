@@ -24,6 +24,10 @@ import {
   CredentialVerifiedPayloadSchema,
   CredentialStatusChangedPayloadSchema,
   ComplianceDocumentExpiringPayloadSchema,
+  AttestationCreatedPayloadSchema,
+  AttestationRevokedPayloadSchema,
+  BANNED_PAYLOAD_KEYS,
+  findBannedPayloadKeys,
   PAYLOAD_SCHEMAS_BY_EVENT_TYPE,
   validateWebhookPayload,
   WebhookPayloadValidationError,
@@ -773,5 +777,273 @@ describe('ComplianceDocumentExpiringPayloadSchema (BUG-002)', () => {
     });
     expect(leaked.ok).toBe(false);
     if (!leaked.ok) expect(leaked.error.eventType).toBe('compliance.document_expiring');
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * SCRUM-3982 — the banned-field ratchet.
+ *
+ * Before this change, `validateWebhookPayload` only checked payloads whose
+ * event type was a key of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`. Everything else
+ * returned `{ ok: true, bypassed: true }` with no inspection at all — and that
+ * is the path every historical leak of this class actually took. These tests
+ * pin the scan running BEFORE the registry lookup, for registered and
+ * unregistered types alike.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('BANNED_PAYLOAD_KEYS (SCRUM-3982)', () => {
+  it('lists exactly the keys the file header declares banned', () => {
+    expect([...BANNED_PAYLOAD_KEYS]).toEqual(['anchor_id', 'fingerprint', 'org_id', 'user_id']);
+  });
+
+  it('finds banned keys in payload order and ignores clean ones', () => {
+    expect(findBannedPayloadKeys({ public_id: 'pub-1', fingerprint: 'a'.repeat(64) })).toEqual([
+      'fingerprint',
+    ]);
+    expect(findBannedPayloadKeys({ anchor_id: 'x', public_id: 'p', org_id: 'y' })).toEqual([
+      'anchor_id',
+      'org_id',
+    ]);
+    expect(findBannedPayloadKeys({ public_id: 'pub-1', status: 'SECURED' })).toEqual([]);
+  });
+
+  it('treats any `_`-led key as internal-only (file header convention)', () => {
+    expect(findBannedPayloadKeys({ public_id: 'p', _internal: 1 })).toEqual(['_internal']);
+  });
+
+  it('returns nothing for non-object input rather than throwing', () => {
+    for (const input of [null, undefined, 'string', 42, ['fingerprint']]) {
+      expect(findBannedPayloadKeys(input)).toEqual([]);
+    }
+  });
+
+  it('names the offending key but never its value (the value IS the secret)', () => {
+    const fingerprint = 'deadbeef'.repeat(8);
+    const result = validateWebhookPayload('anchor.secured', { public_id: 'pub-1', fingerprint });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(WebhookPayloadValidationError);
+    expect(result.error.message).toContain('fingerprint');
+    expect(result.error.message).not.toContain(fingerprint);
+  });
+});
+
+describe('validateWebhookPayload — banned keys refused on EVERY event type (SCRUM-3982)', () => {
+  const REGISTERED = Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE);
+  // The nine types with a real `dispatchWebhookEvent` call site in
+  // services/worker/src but no entry in PAYLOAD_SCHEMAS_BY_EVENT_TYPE as of
+  // this PR — minus the two it registers. Verified with
+  // `git grep -n "dispatchWebhookEvent(" services/worker/src`.
+  const UNREGISTERED = [
+    'attestation.active',
+    'anchor.revocation_anchored',
+    'job.completed',
+    'compliance.anchor_delayed',
+    'compliance.certificate_expiring',
+    'compliance.signature_revoked',
+    'compliance.timestamp_coverage_low',
+  ];
+
+  it.each(REGISTERED.flatMap((type) => BANNED_PAYLOAD_KEYS.map((key) => [type, key] as const)))(
+    'refuses %s carrying %s',
+    (eventType, key) => {
+      const result = validateWebhookPayload(eventType, { public_id: 'pub-1', [key]: 'leaked-value' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.eventType).toBe(eventType);
+    },
+  );
+
+  it.each(UNREGISTERED.flatMap((type) => BANNED_PAYLOAD_KEYS.map((key) => [type, key] as const)))(
+    'refuses UNREGISTERED %s carrying %s (this is the path the leaks took)',
+    (eventType, key) => {
+      const result = validateWebhookPayload(eventType, { public_id: 'pub-1', [key]: 'leaked-value' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.eventType).toBe(eventType);
+    },
+  );
+
+  it('still passes a CLEAN unregistered payload with bypassed: true', () => {
+    // Deliberate: the ban is on the FIELDS, not on being unregistered. Turning
+    // unknown types into a blanket refusal would break every remaining
+    // dispatch site at once for no subscriber benefit (nothing can subscribe
+    // to an unregistered type anyway).
+    const delayed = validateWebhookPayload('compliance.anchor_delayed', {
+      pending_count: 3,
+      oldest_pending_since: '2026-09-12T10:00:00Z',
+      threshold_minutes: 60,
+    });
+    expect(delayed.ok).toBe(true);
+    if (delayed.ok) expect(delayed.bypassed).toBe(true);
+
+    // NOTE the `job_id` here: it IS an internal `batch_verification_jobs`
+    // UUID, and it is NOT in BANNED_PAYLOAD_KEYS, so this payload passes. That
+    // is a stated residual gap of this PR, pinned here so it cannot be
+    // mistaken for coverage. Closing it means registering `job.completed` with
+    // a public-id-only schema, which is follow-up work.
+    const job = validateWebhookPayload('job.completed', {
+      job_id: '550e8400-e29b-41d4-a716-446655440000',
+      status: 'complete',
+      total: 2,
+      result_count: 2,
+    });
+    expect(job.ok).toBe(true);
+    if (job.ok) expect(job.bypassed).toBe(true);
+  });
+});
+
+describe('the three real leaking producer payloads are now refused (SCRUM-3982)', () => {
+  // Each object below is copied verbatim from its producer's dispatch call.
+  // Two of them live in T3 anchor-lifecycle files this PR deliberately does
+  // NOT edit — the boundary is what stops them. Both call sites wrap the
+  // dispatch in a non-fatal try/catch, so refusal costs a warn log, not a
+  // failed job.
+
+  it('services/worker/src/jobs/revocation.ts:141 — anchor.revocation_anchored (anchor_id + fingerprint)', () => {
+    const result = validateWebhookPayload('anchor.revocation_anchored', {
+      anchor_id: '550e8400-e29b-41d4-a716-446655440000',
+      public_id: 'pub-001',
+      fingerprint: 'a'.repeat(64),
+      status: 'REVOKED',
+      revocation_tx_id: 'tx-abc',
+      revocation_block_height: 900_001,
+      original_chain_tx_id: 'tx-orig',
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const named = result.error.issues.map((i) => i.path.join('.'));
+    expect(named).toContain('anchor_id');
+    expect(named).toContain('fingerprint');
+  });
+
+  it('services/worker/src/jobs/attestationAnchor.ts:161 — attestation.active (fingerprint)', () => {
+    const result = validateWebhookPayload('attestation.active', {
+      public_id: 'ARK-ORG-VER-ABC123',
+      attestation_type: 'VERIFICATION',
+      status: 'ACTIVE',
+      chain_tx_id: 'tx-abc',
+      chain_timestamp: '2026-09-12T10:00:00Z',
+      fingerprint: 'b'.repeat(64),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('fingerprint');
+  });
+
+  it('services/worker/src/api/v1/attestations.ts — attestation.created as it was BEFORE this PR', () => {
+    const result = validateWebhookPayload('attestation.created', {
+      public_id: 'ARK-ORG-VER-ABC123',
+      attestation_type: 'VERIFICATION',
+      status: 'PENDING',
+      fingerprint: 'c'.repeat(64),
+      created_at: '2026-09-12T10:00:00Z',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('fingerprint');
+  });
+});
+
+describe('AttestationCreatedPayloadSchema (SCRUM-3982)', () => {
+  const valid = {
+    public_id: 'ARK-ORG-VER-ABC123',
+    attestation_type: 'VERIFICATION',
+    status: 'PENDING',
+    created_at: '2026-09-12T10:00:00Z',
+  };
+
+  it('accepts the payload the producer actually sends after the fingerprint drop', () => {
+    expect(AttestationCreatedPayloadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts an optional org_public_id, null included', () => {
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, org_public_id: 'org-1' }).success).toBe(true);
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, org_public_id: null }).success).toBe(true);
+  });
+
+  it('accepts DRAFT (the column default) and refuses every terminal status', () => {
+    // public.attestation_status = DRAFT | PENDING | ACTIVE | REVOKED | EXPIRED
+    // | CHALLENGED. A creation event can only carry a pre-anchoring state.
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, status: 'DRAFT' }).success).toBe(true);
+    for (const status of ['ACTIVE', 'REVOKED', 'EXPIRED', 'CHALLENGED']) {
+      expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, status }).success).toBe(false);
+    }
+  });
+
+  it.each([...BANNED_PAYLOAD_KEYS, 'attestation_id', 'attester_user_id'])(
+    'rejects the banned/internal key %s (.strict())',
+    (key) => {
+      expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, [key]: 'x' }).success).toBe(false);
+    },
+  );
+
+  it('rejects any unknown key at all', () => {
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, claims: [] }).success).toBe(false);
+  });
+
+  it('requires an ISO 8601 created_at', () => {
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, created_at: '2026-09-12' }).success).toBe(false);
+  });
+
+  it('is registered, so it no longer bypasses validation', () => {
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('attestation.created');
+    const clean = validateWebhookPayload('attestation.created', valid);
+    expect(clean.ok).toBe(true);
+    if (clean.ok) expect(clean.bypassed).toBeUndefined();
+  });
+});
+
+describe('AttestationRevokedPayloadSchema (SCRUM-3982)', () => {
+  const valid = {
+    public_id: 'ARK-ORG-VER-ABC123',
+    status: 'REVOKED',
+    revocation_reason: 'Issued in error',
+    revoked_at: '2026-09-12T10:00:00Z',
+  };
+
+  it('accepts the payload the (not-yet-reachable) producer would send', () => {
+    expect(AttestationRevokedPayloadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('mirrors the route guard on revocation_reason: min 3, no upper bound', () => {
+    // PATCH /api/v1/attestations/:publicId/revoke rejects reason.length < 3 and
+    // imposes no maximum. A `.max()` here that the route does not enforce would
+    // turn a long-but-valid revocation into a refused dispatch.
+    expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, revocation_reason: 'ab' }).success).toBe(false);
+    expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, revocation_reason: 'abc' }).success).toBe(true);
+    expect(
+      AttestationRevokedPayloadSchema.safeParse({ ...valid, revocation_reason: 'x'.repeat(5_000) }).success,
+    ).toBe(true);
+  });
+
+  it('accepts the optional attestation_type and org_public_id', () => {
+    expect(
+      AttestationRevokedPayloadSchema.safeParse({ ...valid, attestation_type: 'AUDIT', org_public_id: 'org-1' })
+        .success,
+    ).toBe(true);
+    expect(
+      AttestationRevokedPayloadSchema.safeParse({ ...valid, attestation_type: null, org_public_id: null }).success,
+    ).toBe(true);
+  });
+
+  it('rejects any status other than REVOKED', () => {
+    for (const status of ['PENDING', 'ACTIVE', 'EXPIRED']) {
+      expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, status }).success).toBe(false);
+    }
+  });
+
+  it.each([...BANNED_PAYLOAD_KEYS, 'attestation_id'])(
+    'rejects the banned/internal key %s (.strict())',
+    (key) => {
+      expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, [key]: 'x' }).success).toBe(false);
+    },
+  );
+
+  it('requires an ISO 8601 revoked_at', () => {
+    expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, revoked_at: 'yesterday' }).success).toBe(false);
+  });
+
+  it('is registered, so it no longer bypasses validation', () => {
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('attestation.revoked');
+    const clean = validateWebhookPayload('attestation.revoked', valid);
+    expect(clean.ok).toBe(true);
+    if (clean.ok) expect(clean.bypassed).toBeUndefined();
   });
 });

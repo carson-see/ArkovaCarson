@@ -30,6 +30,11 @@
  *   - `org_id`        — internal UUID
  *   - `user_id`       — internal UUID
  *   - any field starting with `_`  — internal-only convention
+ *
+ * SCRUM-3982: that ban list is no longer only a comment. It is exported as
+ * `BANNED_PAYLOAD_KEYS` and enforced by `validateWebhookPayload` BEFORE the
+ * schema lookup, so it binds unregistered event types too — the path every
+ * historical leak of this class actually travelled.
  */
 
 import { z } from 'zod';
@@ -293,6 +298,58 @@ export const ComplianceDocumentExpiringPayloadSchema = z
   .strict();
 
 /**
+ * Attestation lifecycle events (SCRUM-3982). Both have had real
+ * `dispatchWebhookEvent` call sites in
+ * `services/worker/src/api/v1/attestations.ts` since PH2-AGENT-03 while being
+ * absent from the map below — so `validateWebhookPayload` took the
+ * `bypassed: true` branch and nothing checked what left the process. The
+ * `attestation.created` site was shipping the attestation `fingerprint`
+ * (CLAUDE.md §1.6); it is dropped in the same PR that registers these.
+ *
+ * Public ids only, same allowlist as every other family: no `attestation_id`,
+ * no `anchor_id`, no `fingerprint`, no internal UUID of any kind. `.strict()`
+ * is what makes that true at runtime rather than by convention.
+ */
+export const AttestationCreatedPayloadSchema = z
+  .object({
+    public_id: z.string().min(1).max(64),
+    org_public_id: z.string().min(1).max(64).nullable().optional(),
+    // `public.attestation_type` enum (baseline migration): VERIFICATION,
+    // ENDORSEMENT, AUDIT, APPROVAL, WITNESS, COMPLIANCE, SUPPLY_CHAIN,
+    // IDENTITY, CUSTOM. Kept as a bounded string rather than a mirrored
+    // z.enum so that adding a value to the DB enum does not start failing
+    // dispatch on a payload the database itself accepted.
+    attestation_type: z.string().min(1).max(64),
+    // `public.attestation_status` is DRAFT | PENDING | ACTIVE | REVOKED |
+    // EXPIRED | CHALLENGED. A *creation* event can only carry a pre-anchoring
+    // state: the sole producer inserts `status: 'PENDING'`, and DRAFT is the
+    // column default. ACTIVE arrives via the anchoring job (which emits
+    // `attestation.active`, a different event), and REVOKED / EXPIRED /
+    // CHALLENGED cannot be a creation state. Narrowed deliberately so a
+    // future producer that emits a terminal status on `created` fails loudly
+    // instead of shipping an incoherent event.
+    status: z.enum(['DRAFT', 'PENDING']),
+    created_at: isoTimestamp,
+  })
+  .strict();
+
+export const AttestationRevokedPayloadSchema = z
+  .object({
+    public_id: z.string().min(1).max(64),
+    org_public_id: z.string().min(1).max(64).nullable().optional(),
+    attestation_type: z.string().min(1).max(64).nullable().optional(),
+    status: z.literal('REVOKED'),
+    // `PATCH /api/v1/attestations/:publicId/revoke` rejects a reason shorter
+    // than 3 characters and imposes NO upper bound. This schema mirrors that
+    // guard exactly. Do not add a `.max()` here without adding the matching
+    // bound to the route first — a cap the producer does not know about turns
+    // a long-but-valid revocation into a refused dispatch.
+    revocation_reason: z.string().min(3),
+    revoked_at: isoTimestamp,
+  })
+  .strict();
+
+/**
  * Map event_type → matching schema. Used by `dispatchWebhookEvent` to validate
  * outbound payloads against the canonical contract before signing.
  */
@@ -307,6 +364,8 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'credential.verified': CredentialVerifiedPayloadSchema,
   'credential.status_changed': CredentialStatusChangedPayloadSchema,
   'compliance.document_expiring': ComplianceDocumentExpiringPayloadSchema,
+  'attestation.created': AttestationCreatedPayloadSchema,
+  'attestation.revoked': AttestationRevokedPayloadSchema,
 } as const;
 
 export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
@@ -320,6 +379,8 @@ export type CredentialIssuedPayload = z.infer<typeof CredentialIssuedPayloadSche
 export type CredentialVerifiedPayload = z.infer<typeof CredentialVerifiedPayloadSchema>;
 export type CredentialStatusChangedPayload = z.infer<typeof CredentialStatusChangedPayloadSchema>;
 export type ComplianceDocumentExpiringPayload = z.infer<typeof ComplianceDocumentExpiringPayloadSchema>;
+export type AttestationCreatedPayload = z.infer<typeof AttestationCreatedPayloadSchema>;
+export type AttestationRevokedPayload = z.infer<typeof AttestationRevokedPayloadSchema>;
 
 export class WebhookPayloadValidationError extends Error {
   constructor(
@@ -332,13 +393,66 @@ export class WebhookPayloadValidationError extends Error {
 }
 
 /**
- * Validate an outbound webhook payload against the schema for its event type.
- * Throws `WebhookPayloadValidationError` if the payload contains banned
- * fields (anchor_id, fingerprint, user_id, org_id) or fails any schema check.
+ * The keys this file's header declares may NEVER leave Arkova on an outbound
+ * webhook, for any event type (SCRUM-3982). Every `.strict()` schema above
+ * already refuses them by virtue of not declaring them; this array is the same
+ * ban expressed as data, so it can also be applied to event types that have no
+ * schema yet.
  *
- * Unknown event types pass through without validation — the schemas in this
- * file are an allowlist, and other event types (`payment.*`, `org.*`) ride
- * the general dispatch path until their own schemas are added.
+ * Derived from the "Banned (will fail validation)" block at the top of this
+ * file — it is not a new policy, it is the existing one made enforceable on
+ * the unregistered path. Adding a key here tightens every event at once.
+ */
+export const BANNED_PAYLOAD_KEYS = [
+  'anchor_id',
+  'fingerprint',
+  'org_id',
+  'user_id',
+] as const;
+
+/** `_`-led keys are internal-only by convention (see the file header). */
+export const BANNED_PAYLOAD_KEY_PREFIX = '_';
+
+const BANNED_PAYLOAD_KEY_SET: ReadonlySet<string> = new Set<string>(BANNED_PAYLOAD_KEYS);
+
+/**
+ * Top-level banned keys present in `data`, in payload order. Empty for a clean
+ * payload, and for any non-object input (a non-object fails its schema, or —
+ * for an unregistered type — carries no keys to leak).
+ *
+ * TOP LEVEL ONLY, deliberately: this mirrors what `.strict()` does for
+ * registered types, which also only rejects unknown keys at the top of the
+ * object. A banned key nested inside a sub-object is NOT caught here; no
+ * current producer nests one, and closing that would need per-event nested
+ * schemas rather than a key scan. Stated as a gap, not silently assumed away.
+ */
+export function findBannedPayloadKeys(data: unknown): string[] {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return [];
+  return Object.keys(data as Record<string, unknown>).filter(
+    (key) => BANNED_PAYLOAD_KEY_SET.has(key) || key.startsWith(BANNED_PAYLOAD_KEY_PREFIX),
+  );
+}
+
+/**
+ * Validate an outbound webhook payload against the schema for its event type.
+ * Returns `ok: false` if the payload contains banned fields (anchor_id,
+ * fingerprint, user_id, org_id) or fails any schema check; `dispatchWebhookEvent`
+ * error-logs and throws on that, so the payload is never signed or delivered.
+ *
+ * SCRUM-3982 — the banned-key scan runs BEFORE the registry lookup, so it
+ * applies to registered AND unregistered event types alike. That is the whole
+ * point: the leak class this file exists to stop (`anchor_id` / `fingerprint`
+ * on the wire) travelled the *unregistered* path three times — BUG-002
+ * (`compliance.document_expiring`), and today `anchor.revocation_anchored` +
+ * `attestation.active`, both of which ship `fingerprint` from T3 lifecycle
+ * jobs this PR does not edit. Their dispatches are now refused at this
+ * boundary instead.
+ *
+ * A clean payload on an unknown event type still passes with `bypassed: true`.
+ * Turning "unregistered" into a blanket refusal would break seven live
+ * dispatch sites at once with no subscriber benefit — the ban is on the
+ * *fields*, not on being unregistered. Registration of the remaining types is
+ * tracked as follow-up work.
  *
  * PR #567 CodeRabbit minor fix: surfaces the unknown event type via the
  * `bypassed` flag so `dispatchWebhookEvent` can emit a debug log. Without
@@ -349,6 +463,25 @@ export function validateWebhookPayload(
   eventType: string,
   data: unknown,
 ): { ok: true; bypassed?: boolean } | { ok: false; error: WebhookPayloadValidationError } {
+  // Names the offending KEY, never its value — the value is exactly the
+  // fingerprint / UUID we are refusing to let out, and an error string is
+  // logged, sent to Sentry, and stored in `job_queue.last_error`.
+  const banned = findBannedPayloadKeys(data);
+  if (banned.length > 0) {
+    return {
+      ok: false,
+      error: new WebhookPayloadValidationError(
+        eventType,
+        banned.map((key) => ({
+          code: 'unrecognized_keys' as const,
+          keys: [key],
+          path: [key],
+          message: `'${key}' may never appear in an outbound webhook payload (CLAUDE.md §6 + §1.6)`,
+        })),
+      ),
+    };
+  }
+
   const schema = PAYLOAD_SCHEMAS_BY_EVENT_TYPE[eventType as WebhookEventType];
   if (!schema) return { ok: true, bypassed: true };
   const result = schema.safeParse(data);

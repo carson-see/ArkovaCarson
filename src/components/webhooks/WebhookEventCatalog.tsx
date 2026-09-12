@@ -105,6 +105,24 @@ const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
     live: true,
     fields: ['public_id', 'status', 'expires_at', 'days_remaining', 'warning_level', 'credential_type?', 'label?', 'org_public_id?'],
   },
+  // SCRUM-3982: `live: true` — POST /api/v1/attestations really dispatches
+  // this (services/worker/src/api/v1/attestations.ts), and the org id its
+  // guard reads IS selected. Fields mirror AttestationCreatedPayloadSchema
+  // (strict); `fingerprint` was removed from the producer in the same change.
+  'attestation.created': {
+    live: true,
+    fields: ['public_id', 'attestation_type', 'status', 'created_at', 'org_public_id?'],
+  },
+  // `live: false` — verified, not inferred. The revoke handler's dispatch is
+  // guarded on `attestation.attester_org_id`, and the ownership query above it
+  // selects only `id, status, attester_user_id`, so the guard is always false
+  // and this event has never been delivered. Subscribable + contract-locked;
+  // flipping this badge requires making the producer reachable, not editing
+  // this line (§1.13 R-7).
+  'attestation.revoked': {
+    live: false,
+    fields: ['public_id', 'status', 'revocation_reason', 'revoked_at', 'attestation_type?', 'org_public_id?'],
+  },
 };
 
 /**

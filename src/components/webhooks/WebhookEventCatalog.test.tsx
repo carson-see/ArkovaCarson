@@ -90,12 +90,29 @@ describe('WebhookEventCatalog', () => {
     'credential.issued',
     'credential.status_changed',
     'compliance.document_expiring',
+    // SCRUM-3982: emit point verified — `dispatchWebhookEvent(profile.org_id,
+    // 'attestation.created', ...)` in services/worker/src/api/v1/attestations.ts,
+    // and the `profiles` lookup above it really does select `org_id`, so the
+    // guard can be true. `attestation.revoked` is deliberately NOT here: its
+    // guard reads `attestation.attester_org_id` while the ownership query
+    // selects only `id, status, attester_user_id`, so that dispatch has never
+    // fired. Registered and subscribable, not live.
+    'attestation.created',
   ]);
 
   it('claims live only for events with a real emit point', () => {
     for (const entry of WEBHOOK_EVENT_CATALOG) {
       expect(entry.live, entry.id).toBe(LIVE_EVENT_IDS.has(entry.id));
     }
+  });
+
+  it('keeps attestation.revoked deferred while its producer is unreachable (SCRUM-3982)', () => {
+    // Flip this only after `services/worker/src/api/v1/attestations.ts` selects
+    // `attester_org_id` in the revoke handler's ownership query — the guard,
+    // not the presence of the dispatch call, is what makes the badge truthful.
+    const revoked = WEBHOOK_EVENT_CATALOG.find((e) => e.id === 'attestation.revoked');
+    expect(revoked).toBeDefined();
+    expect(revoked?.live).toBe(false);
   });
 
   it('keeps credential.verified deferred while its emit flag is dark in prod (SCRUM-1799)', () => {

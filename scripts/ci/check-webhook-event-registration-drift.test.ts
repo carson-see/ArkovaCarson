@@ -150,7 +150,28 @@ describe('check-webhook-event-registration-drift — live repository', () => {
     const canonical = readSurface(CANONICAL_SURFACE);
     expect(canonical.unresolved).toBeUndefined();
     expect(canonical.ids).toContain('anchor.superseded');
-    expect(canonical.ids.length).toBeGreaterThanOrEqual(10);
+    expect(canonical.ids.length).toBeGreaterThanOrEqual(12);
+  });
+
+  /**
+   * SCRUM-3982 registered the two attestation events. They are asserted by
+   * name rather than only by count because the count alone would stay green if
+   * one of them were dropped while an unrelated event was added.
+   */
+  it('carries the attestation lifecycle events registered by SCRUM-3982', () => {
+    const canonical = readSurface(CANONICAL_SURFACE);
+    expect(canonical.ids).toContain('attestation.created');
+    expect(canonical.ids).toContain('attestation.revoked');
+
+    // Order matters for the five order-sensitive mirrors: they are appended
+    // AFTER compliance.document_expiring, and SCRUM-3972's seven suborg.*
+    // entries land after these.
+    const tail = canonical.ids.slice(-3);
+    expect(tail).toEqual([
+      'compliance.document_expiring',
+      'attestation.created',
+      'attestation.revoked',
+    ]);
   });
 
   it.each(MIRROR_SURFACES.map((s) => [s.file, s] as const))(

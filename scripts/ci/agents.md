@@ -866,3 +866,27 @@ with the real GitHub expression evaluator; SCRUM-4565 retains the event matrix
 and negative controls for bot identity, sender identity, base changes, cancellation
 groups, and required-result preservation. All live evidence-input and per-step
 identity assertions remain enforced by the existing suite.
+
+## 2026-09-12 — webhook registration drift: two gotchas worth writing down (SCRUM-3982)
+
+Registering `attestation.created` + `attestation.revoked` exercised
+`check-webhook-event-registration-drift.ts` end to end. Both surprises came
+from the region regexes, and both fail in the safe direction (reported drift),
+which is the design working:
+
+- `packages/sdk/src/types.ts` is matched with
+  `/export type WebhookEventType\s*=([\s\S]*?);/` — non-greedy to the FIRST
+  semicolon. A semicolon inside a comment in that union truncates the region,
+  and the gate reports every member after it as missing from the mirror. The
+  failure text says "Missing", which reads like a forgotten edit rather than a
+  truncated read, so check the comment punctuation before re-adding ids.
+- The markdown surface (`docs/api/webhooks.md`) is set-compared and only counts
+  the FIRST cell of a table row, so a new event needs its own row — adding it
+  to an existing row's prose does not satisfy the gate. That is deliberate:
+  mentioned is not documented.
+
+The script's own test gained a tail-order assertion
+(`compliance.document_expiring`, `attestation.created`, `attestation.revoked`),
+so the declaration order the five order-sensitive mirrors must match is pinned
+by name, not only by count. SCRUM-3972 appends seven `suborg.*` entries after
+these — declared land order is 3982 then 3972.
