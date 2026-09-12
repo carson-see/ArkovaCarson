@@ -14,7 +14,10 @@ const { mockDbFrom, mockLogger } = vi.hoisted(() => ({
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 
-import { replayDelivery } from './delivery.js';
+import { replayDelivery, __setWebhookFetchForTests } from './delivery.js';
+
+// SCRUM-4983: see delivery.test.ts — the pinned dispatch bypasses the global.
+__setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
 
 const ORG = 'org-a';
 const DELIVERY_ID = 'log-1';
@@ -238,5 +241,59 @@ describe('replayDelivery (SCRUM-1172 AC3)', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe('delivery_failed');
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+// SCRUM-4983 — replay goes through the same IP-pinned egress as first delivery.
+import { createSafeFetchImpl } from '../lib/safe-fetch.js';
+
+describe('replayDelivery — IP-pinned egress (SCRUM-4983)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    __setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
+    vi.unstubAllGlobals();
+  });
+
+  function pinnedStub(resolved: string[]) {
+    const dispatch = vi.fn(async (_pinnedIp: string, url: string, _init?: RequestInit) => ({
+      status: 200,
+      headers: new Headers(),
+      url,
+      arrayBuffer: async () => new TextEncoder().encode('OK').buffer as ArrayBuffer,
+    }));
+    __setWebhookFetchForTests(createSafeFetchImpl({ resolve: async () => resolved, dispatch }));
+    return dispatch;
+  }
+
+  it('dispatches to the validated IP with the original URL and never via global fetch', async () => {
+    stageDb({ selectRow: defaultRow(), insertRow: { id: 'log-2' } });
+    const dispatch = pinnedStub(['203.0.113.10']);
+
+    const result = await replayDelivery(DELIVERY_ID, ORG, { urlGuard: async () => false });
+
+    expect(result.ok).toBe(true);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const [pinnedIp, url, init] = dispatch.mock.calls[0] as unknown as [string, string, RequestInit];
+    expect(pinnedIp).toBe('203.0.113.10');
+    expect(url).toBe(PUBLIC_URL);
+    expect((init.headers as Record<string, string>)['X-Arkova-Replay-Of']).toBe(DELIVERY_ID);
+  });
+
+  it('returns ssrf_blocked when the pinned resolver sees a private target at dispatch (guard passed)', async () => {
+    const { insertChain } = stageDb({ selectRow: defaultRow(), insertRow: { id: 'log-2' } });
+    const dispatch = pinnedStub(['169.254.169.254']);
+
+    const result = await replayDelivery(DELIVERY_ID, ORG, { urlGuard: async () => false });
+
+    expect(result).toEqual({ ok: false, error: 'ssrf_blocked', new_delivery_id: 'log-2' });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(insertChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'failed', error_message: expect.stringMatching(/^egress_refused: private_target/) }),
+    );
   });
 });
