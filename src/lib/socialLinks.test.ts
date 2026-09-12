@@ -19,10 +19,23 @@ describe('safeSocialHref (SCRUM-4989)', () => {
   it.each([
     'javascript:alert(document.cookie)',
     'JAVASCRIPT:alert(1)',
+    'JaVaScRiPt:alert(1)',
+    ' javascript:alert(1)',
+    '\u0009javascript:alert(1)',
     'data:text/html,<script>alert(1)</script>',
+    'DATA:text/html;base64,PHN2Zz4=',
     'vbscript:msgbox(1)',
+    'VBScript:msgbox(1)',
     'mailto:a@b.example',
     'file:///etc/passwd',
+    'blob:https://ada.example/x',
+    'about:blank',
+    'view-source:https://ada.example',
+    // Protocol-relative and backslash authorities: a browser inherits the page
+    // scheme (or normalises the backslashes) and navigates off-site.
+    '//evil.example/x',
+    '/\\evil.example/x',
+    '\\\\evil.example/x',
     'https://',
     'https://localhost',
     'not a url',
@@ -33,9 +46,29 @@ describe('safeSocialHref (SCRUM-4989)', () => {
     expect(safeSocialHref('twitter', value)).toBeNull();
   });
 
-  it('refuses a scheme hidden behind a control character', () => {
-    expect(safeSocialHref('linkedin', 'java\u000ascript:alert(1)')).toBeNull();
+  // Browsers strip these from a URL before parsing it, which is exactly how
+  // "java<sep>script:" becomes a live scheme.
+  it.each([
+    ['LF', 'java\u000ascript:alert(1)'],
+    ['CR', 'java\u000dscript:alert(1)'],
+    ['TAB', 'java\u0009script:alert(1)'],
+    ['NUL', 'java\u0000script:alert(1)'],
+    ['NBSP', 'java\u00a0script:alert(1)'],
+    ['BOM', 'java\ufeffscript:alert(1)'],
+    ['U+2028', 'java\u2028script:alert(1)'],
+    ['U+2029', 'java\u2029script:alert(1)'],
+  ])('refuses a scheme split by %s', (_label, value) => {
+    expect(safeSocialHref('linkedin', value)).toBeNull();
+    expect(safeSocialHref('twitter', value)).toBeNull();
+  });
+
+  it('refuses a control character anywhere in an otherwise valid URL', () => {
     expect(safeSocialHref('linkedin', 'https://ada.example/x\u0000')).toBeNull();
+  });
+
+  it('refuses userinfo in the authority (https://linkedin.com@evil.example goes to evil.example)', () => {
+    expect(safeSocialHref('linkedin', 'https://linkedin.com@evil.example/')).toBeNull();
+    expect(safeSocialHref('website', 'https://user:pass@ada.example/')).toBeNull();
   });
 
   it('refuses non-string values', () => {

@@ -45,6 +45,7 @@ export function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [bioSaved, setBioSaved] = useState(false);
   const [socialSaved, setSocialSaved] = useState(false);
+  const [socialError, setSocialError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,12 +96,15 @@ export function SettingsPage() {
   }, [bio, updateProfile]);
 
   const handleSaveSocial = useCallback(async () => {
-    setError(null);
+    setSocialError(null);
     // SCRUM-4989: Zod on the write path (Constitution §1.1) — anything that is
-    // not an http(s) URL / @handle never reaches profiles.social_links.
+    // not an http(s) URL / @handle never reaches profiles.social_links. The
+    // message renders inside THIS card: the page-level `error` Alert lives in
+    // the profile card far above, where a rejection from this form is off
+    // screen and the Save button just looks inert.
     const parsed = parseSocialLinksForWrite(socialLinks);
     if (!parsed.ok) {
-      setError(PROFILE_LABELS.socialLinks.invalid[parsed.key]);
+      setSocialError(PROFILE_LABELS.socialLinks.invalid[parsed.key]);
       return;
     }
     const success = await updateProfile({ social_links: parsed.value } );
@@ -108,7 +112,7 @@ export function SettingsPage() {
       setSocialSaved(true);
       setTimeout(() => setSocialSaved(false), 2000);
     } else {
-      setError('Failed to update social links');
+      setSocialError('Failed to update social links');
     }
   }, [socialLinks, updateProfile]);
 
@@ -272,7 +276,7 @@ export function SettingsPage() {
               </Label>
               <Input
                 value={socialLinks.linkedin ?? ''}
-                onChange={(e) => { setSocialLinks(prev => ({ ...prev, linkedin: e.target.value })); setSocialSaved(false); }}
+                onChange={(e) => { setSocialLinks(prev => ({ ...prev, linkedin: e.target.value })); setSocialSaved(false); setSocialError(null); }}
                 placeholder={PROFILE_LABELS.socialLinks.linkedin.placeholder}
                 disabled={updating}
               />
@@ -284,7 +288,7 @@ export function SettingsPage() {
               </Label>
               <Input
                 value={socialLinks.twitter ?? ''}
-                onChange={(e) => { setSocialLinks(prev => ({ ...prev, twitter: e.target.value })); setSocialSaved(false); }}
+                onChange={(e) => { setSocialLinks(prev => ({ ...prev, twitter: e.target.value })); setSocialSaved(false); setSocialError(null); }}
                 placeholder={PROFILE_LABELS.socialLinks.twitter.placeholder}
                 disabled={updating}
               />
@@ -296,7 +300,7 @@ export function SettingsPage() {
               </Label>
               <Input
                 value={socialLinks.github ?? ''}
-                onChange={(e) => { setSocialLinks(prev => ({ ...prev, github: e.target.value })); setSocialSaved(false); }}
+                onChange={(e) => { setSocialLinks(prev => ({ ...prev, github: e.target.value })); setSocialSaved(false); setSocialError(null); }}
                 placeholder={PROFILE_LABELS.socialLinks.github.placeholder}
                 disabled={updating}
               />
@@ -308,11 +312,16 @@ export function SettingsPage() {
               </Label>
               <Input
                 value={socialLinks.website ?? ''}
-                onChange={(e) => { setSocialLinks(prev => ({ ...prev, website: e.target.value })); setSocialSaved(false); }}
+                onChange={(e) => { setSocialLinks(prev => ({ ...prev, website: e.target.value })); setSocialSaved(false); setSocialError(null); }}
                 placeholder={PROFILE_LABELS.socialLinks.website.placeholder}
                 disabled={updating}
               />
             </div>
+            {socialError && (
+              <Alert variant="destructive">
+                <AlertDescription>{socialError}</AlertDescription>
+              </Alert>
+            )}
             <div className="flex justify-end">
               <Button
                 onClick={handleSaveSocial}

@@ -59,6 +59,9 @@ export function safeSocialHref(key: SocialLinkKey, raw: unknown): string | null 
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
   if (!parsed.hostname || !parsed.hostname.includes('.')) return null;
+  // `https://linkedin.com@evil.example/` has hostname evil.example — the part
+  // a reader recognises is userinfo, not the host. Never render one as a link.
+  if (parsed.username || parsed.password) return null;
   return parsed.toString();
 }
 
