@@ -1102,7 +1102,7 @@ jobs:
         id: uat22-local-integration
         if: always() && steps.worker-deps.outcome == 'success' && steps.db-reset.outcome == 'success'
         working-directory: services/worker
-        run: npx vitest run --config vitest.config.uat22-local.ts
+        run: node_modules/.bin/vitest run --config vitest.config.uat22-local.ts
         env:
           UAT22_LOCAL_INTEGRATION: '1'
           NODE_ENV: test
