@@ -483,6 +483,7 @@ paths:
                     - webhooks:manage
                     - agents:manage
                     - keys:read
+                    - orgs:manage
       responses:
         "201":
           description: API key created (raw key returned only once)

@@ -39,13 +39,31 @@ export const COMPLIANCE_API_SCOPES = [
   'keys:read',
 ] as const;
 
+/**
+ * Sub-organization management (SCRUM-3971).
+ *
+ * ONE scope, not two: reads on the sub-org surface are served by the existing
+ * `read:orgs`, and `orgs:manage` is a strict superset of it (see
+ * `scopeSatisfies`). A separate `orgs:read` would have been a second spelling
+ * of a grant every affected key already holds.
+ *
+ * Mirrored BY THE SAME ARRAY NAME in `src/lib/apiScopes.ts`;
+ * `scripts/ci/check-api-scope-vocabulary.ts` resolves the spread below and
+ * THROWS (not warns) if the frontend copy is missing this array.
+ */
+export const ORG_API_SCOPES = [
+  'orgs:manage',
+] as const;
+
 export const API_KEY_SCOPES = [
   ...API_V2_SCOPES,
   ...LEGACY_API_SCOPES,
   ...COMPLIANCE_API_SCOPES,
+  ...ORG_API_SCOPES,
 ] as const;
 
 export type ApiV2Scope = typeof API_V2_SCOPES[number];
+export type OrgApiScope = typeof ORG_API_SCOPES[number];
 export type ApiKeyScope = typeof API_KEY_SCOPES[number];
 
 export const DEFAULT_API_KEY_SCOPES: ApiV2Scope[] = ['read:search'];
@@ -74,6 +92,15 @@ export function scopeSatisfies(granted: string[], required: string): boolean {
   }
   if (required === 'attestations:read') {
     return granted.includes('verify');
+  }
+  // SCRUM-3971: `orgs:manage` is the write grant on the sub-organization
+  // surface and strictly contains the read grant that surface uses. A parent
+  // holding only `orgs:manage` must be able to LIST what it can act on —
+  // otherwise every integration is forced to hold both, and the pair reads as
+  // two independent capabilities when it is one. The implication is one-way:
+  // `read:orgs` never satisfies `orgs:manage`.
+  if (required === 'read:orgs') {
+    return granted.includes('orgs:manage');
   }
   return false;
 }
