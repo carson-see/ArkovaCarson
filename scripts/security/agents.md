@@ -2,6 +2,20 @@
 
 Security scanning scripts for dependency and license compliance.
 
+## 2026-09-12 — PR #2839 moved the `@img/sharp-*` band to 1.3.3 / 0.35.4 (SCRUM-4988)
+
+The root `sharp: 0.35.4` override (Trivy CVE bump, Sekura Phase 2) pulled `@img/sharp-libvips-*@1.3.3`
+and `@img/sharp-{wasm32,win32-*}@0.35.4` into the production band and, because npm dedupes wrangler's
+nested copy onto the override, deleted the miniflare-only 1.3.1 / 0.35.2 band entirely. Both exact-match
+gates went red on the PR (`security:license-denylist` inside the `sonatype-sca` job, and
+`notices-freshness`). Resolution, in the order the gate design requires: allowlist entries re-versioned
+1.2.4→1.3.3 / 0.34.5→0.35.4 with the NOT-DISTRIBUTED rationale unchanged and the 1.3.1/0.35.2 entries
+removed (no lockfile row references them); the 14 pinned notices re-versioned the same way; THEN
+`npm run license:notices:generate`. Regenerating first would have exited 0 while silently dropping the
+new LGPL versions from the copyleft block — the generator prints a "Skipped copyleft dependencies with
+no allowlist entry" warning, it does not fail. A `sharp` bump is an allowlist+pinned change, not a
+lockfile change.
+
 ## 2026-08-31 — `thirdPartyNotices.generated.json` carries ONE hand-inserted entry, because the generator cannot run
 
 Historical incident: the following failure and manual insertion describe the pre-fix state. The resolved coverage and required freshness check under Files and Conventions describe current behavior; successful generation now reproduces the QR dependency entry. Preserve the incident evidence, but do not follow its obsolete manual-edit guidance.
