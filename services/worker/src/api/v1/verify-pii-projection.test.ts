@@ -428,3 +428,73 @@ describe('the gate runs before the response is cached', () => {
     expect(cached).not.toHaveProperty('description');
   });
 });
+
+/**
+ * SCRUM-4507 — the Drive link-back must not widen this public projection.
+ *
+ * The record page gets the Drive file / folder / shared-drive identifiers.
+ * This endpoint gets a bare provider word and nothing else. The walk below is
+ * RECURSIVE and runs over the whole response rather than a named field list,
+ * so a future nested addition (`source.file_id`, `source.link`, …) fails here
+ * without anyone remembering to extend an allowlist.
+ */
+describe('SCRUM-4507: a Drive-sourced record leaks no identifier through this surface', () => {
+  const DRIVE_FILE_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_FOLDER_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const DRIVE_SHARED_DRIVE_ID = '0AOaBcDeFgHiJkLmNoP';
+  const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+  /** Every string value anywhere in the response, at any depth. */
+  function collectStrings(value: unknown, out: string[] = []): string[] {
+    if (typeof value === 'string') out.push(value);
+    else if (Array.isArray(value)) for (const v of value) collectStrings(v, out);
+    else if (value && typeof value === 'object') {
+      for (const v of Object.values(value)) collectStrings(v, out);
+    }
+    return out;
+  }
+
+  function driveAnchor() {
+    return buildTestAnchor({
+      public_id: 'ARK-2026-DRIVE-001',
+      credential_type: 'CONTRACT_POSTSIGNING',
+      connector_source: 'google_drive',
+      server_fetched_connector_source: 'google_drive',
+    });
+  }
+
+  it('emits source.provider and answers normally', async () => {
+    const body = await getVerification(driveAnchor());
+
+    expect(body.source).toEqual({ provider: 'google_drive' });
+    expect(body.verified).toBe(true);
+  });
+
+  it('carries no Drive identifier anywhere in the response, at any depth', async () => {
+    const body = await getVerification(driveAnchor());
+    const serialized = JSON.stringify(body);
+
+    for (const id of [DRIVE_FILE_ID, DRIVE_FOLDER_ID, DRIVE_SHARED_DRIVE_ID]) {
+      expect(serialized).not.toContain(id);
+    }
+    expect(serialized).not.toContain('drive.google.com');
+    expect(serialized).not.toContain('_drive_');
+  });
+
+  it('carries no UUID and no email-shaped string, at any depth', async () => {
+    const body = await getVerification(driveAnchor());
+
+    for (const s of collectStrings(body)) {
+      expect(UUID_RE.test(s), `UUID-shaped value in the public body: ${s}`).toBe(false);
+      expect(s.includes('@'), `email-shaped value in the public body: ${s}`).toBe(false);
+    }
+  });
+
+  it('the cached copy is the same narrow shape', async () => {
+    await getVerification(driveAnchor());
+
+    const [, cached] = mockSetCached.mock.calls[0] as [string, Record<string, unknown>];
+    expect(cached.source).toEqual({ provider: 'google_drive' });
+    expect(JSON.stringify(cached)).not.toContain('_drive_');
+  });
+});

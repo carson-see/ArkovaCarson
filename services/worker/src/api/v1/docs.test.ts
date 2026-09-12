@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { openApiSpec } from './docs.js';
 import { API_KEY_SCOPES } from '../apiScopes.js';
+import { CONNECTOR_FETCH_SOURCE_MARKERS } from '../../constants/connectorFingerprint.js';
 
 describe('OpenAPI spec', () => {
   it('has valid OpenAPI version', () => {
@@ -187,5 +188,88 @@ describe('OpenAPI spec', () => {
     expect(tagNames).toContain('Jobs');
     expect(tagNames).toContain('Usage');
     expect(tagNames).toContain('Key Management');
+  });
+});
+
+/**
+ * OpenAPI 3.0.3 STRUCTURAL validity (PR #2841 review V10: the version string
+ * was asserted, the document's conformance to it was not).
+ *
+ * 3.0.3 has no `type: 'null'` and no type ARRAYS — both are 3.1 (JSON Schema
+ * 2020-12) spellings. A 3.1-ism in a document declaring 3.0.3 is served to
+ * every SDK generator and linter that reads this spec, so it breaks consumers
+ * silently rather than failing our own build.
+ */
+describe('OpenAPI 3.0.3 structural conformance', () => {
+  function walk(node: unknown, path: string, visit: (n: Record<string, unknown>, p: string) => void): void {
+    if (Array.isArray(node)) {
+      node.forEach((child, i) => walk(child, `${path}[${i}]`, visit));
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    visit(obj, path);
+    for (const [key, child] of Object.entries(obj)) walk(child, `${path}.${key}`, visit);
+  }
+
+  it('uses no 3.1-only type spellings anywhere in the document', () => {
+    const offenders: string[] = [];
+    walk(openApiSpec, '$', (node, path) => {
+      if (!('type' in node)) return;
+      const t = node.type;
+      if (t === 'null') offenders.push(`${path}.type === 'null'`);
+      if (Array.isArray(t)) offenders.push(`${path}.type is an array (${JSON.stringify(t)})`);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it('expresses optional-null with `nullable: true` instead', () => {
+    // Positive control: the spec really does use the 3.0 spelling somewhere,
+    // so the assertion above is not vacuously green on a spec with no
+    // nullable fields at all.
+    let sawNullable = false;
+    walk(openApiSpec, '$', (node) => {
+      if (node.nullable === true) sawNullable = true;
+    });
+    expect(sawNullable).toBe(true);
+  });
+});
+
+/**
+ * SCRUM-4507 — the `source` object must be documented wherever
+ * VerificationResult is, and documented as identifier-free.
+ */
+describe('SCRUM-4507 source.provider is documented on VerificationResult', () => {
+  it('declares source as an object with a single closed-enum provider property', () => {
+    const source = openApiSpec.components.schemas.VerificationResult.properties.source;
+    expect(source).toBeDefined();
+    expect(source.type).toBe('object');
+    expect(Object.keys(source.properties)).toEqual(['provider']);
+    expect(source.properties.provider.type).toBe('string');
+    expect(Array.isArray(source.properties.provider.enum)).toBe(true);
+    expect(source.properties.provider.enum.length).toBeGreaterThan(0);
+  });
+
+  it('documents no identifier or deep-link property on source', () => {
+    const source = openApiSpec.components.schemas.VerificationResult.properties.source;
+    for (const banned of ['file_id', 'folder_id', 'revision_id', 'shared_drive_id', 'url', 'link', 'deep_link']) {
+      expect(source.properties).not.toHaveProperty(banned);
+    }
+  });
+
+  it('documents exactly the runtime recognised-marker vocabulary', () => {
+    // Closes the loop: verify.ts's VERIFICATION_SOURCE_PROVIDERS is asserted
+    // against the same set in verify-source-provider.test.ts, and the
+    // published YAML is asserted against THIS enum in
+    // openapi-source-provider-contract.test.ts. All three therefore agree by
+    // construction, not by anyone remembering to update a list.
+    const served = openApiSpec.components.schemas.VerificationResult.properties.source
+      .properties.provider.enum as string[];
+    expect([...served].sort()).toEqual([...CONNECTOR_FETCH_SOURCE_MARKERS].sort());
+  });
+
+  it('states the field is additive and omitted when unknown', () => {
+    const source = openApiSpec.components.schemas.VerificationResult.properties.source;
+    expect(source.description).toMatch(/omitted/i);
   });
 });

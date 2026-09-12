@@ -1063,6 +1063,31 @@ components:
             in particular, for root_only records, that no self-contained
             per-document offline proof is available, and that its absence is not
             evidence the record is invalid.
+        source:
+          type: object
+          description: >-
+            SCRUM-4507: which connected document source this record originated
+            from. OMITTED (never null, never an empty object) when the record
+            carries no recognised connector marker — absence means "not stated",
+            NOT "uploaded by a person". Carries the provider label and NOTHING
+            ELSE: no file, folder, shared-drive or revision identifier and no
+            deep link into the source system. GET /verify/{publicId} answers
+            anonymously, so a source identifier here would let any holder of a
+            public record id probe the source system for that object; those
+            identifiers are shown only to the record owner on the authenticated
+            record page. Not asserted: that the document still exists in the
+            source system, is unchanged there, or is reachable by the caller —
+            see fingerprint_rederivability for what the fingerprint does and does
+            not commit. Additive field (Constitution 1.8); no API version change.
+          properties:
+            provider:
+              type: string
+              enum: [connector, docusign, google_drive, microsoft_365]
+              description: >-
+                The connected system this record's document was retrieved from.
+                Closed vocabulary, kept in lockstep with the runtime
+                recognised-marker set in
+                services/worker/src/constants/connectorFingerprint.ts.
         compliance_controls:
           # SCRUM-2227: this was declared `type: object`, but the field has always
           # been emitted as a JSON array of control-ID strings. The object form had

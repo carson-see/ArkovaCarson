@@ -2,6 +2,21 @@
 
 Developer-facing API documentation. Engineering mirrors and guides for the Arkova Verification API.
 
+
+## 2026-09-12 — SCRUM-4507: `VerificationResult.source` is mirrored here AND in `docs.ts`
+
+`GET /verify/{publicId}` gained an additive `source: { provider }`. It exists in TWO published
+places — this YAML (handed to integrators) and the in-worker `docs.ts` spec served at
+`/api/v1/docs` — and `services/worker/src/api/v1/openapi-source-provider-contract.test.ts` asserts
+the provider enums match, for the same reason `openapi-proof-bundle-contract.test.ts` exists: the
+0427 proof-bundle fields landed in one surface and not the other and nothing compared them.
+
+The enum is the runtime recognised-marker set from
+`services/worker/src/constants/connectorFingerprint.ts`. Widening it means changing that constant,
+not editing this file. `source` carries the provider label and NOTHING else — no identifier, no deep
+link — because this endpoint answers anonymously; see `services/worker/src/api/v1/agents.md` for the
+full reasoning, which lives there and is not restated here.
+
 ## 2026-09-05 — the `arkova_` rename vs §1.8: what moved and what did not (SCRUM-4465 / BUG-2026-09-02-001)
 
 §1.8 freezes the published verification API schema: no breaking changes without a `v2+`
