@@ -6,7 +6,7 @@
  * with UAT22_LOCAL_INTEGRATION=1 and the local Supabase URL/keys.
  */
 
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { decodeJwt } from 'jose';
@@ -25,6 +25,7 @@ import express from 'express';
 import request from 'supertest';
 import { adminRouter } from '../routes/admin.js';
 import { anchorRouter } from '../routes/anchor.js';
+import { setRateLimitStore } from '../utils/rateLimit.js';
 
 if (process.env.UAT22_LOCAL_INTEGRATION !== '1') {
   throw new Error('Run this suite with vitest.config.uat22-local.ts and explicit local-stack credentials');
@@ -83,6 +84,7 @@ describe('UAT-22 selected-org invitation — real local DB and mounted routes', 
   let ordinaryId: string;
   let existingId: string;
   let alreadyMemberId: string;
+  let adminSessions: { aal1: string; aal2: string };
 
   function application() {
     const app = express();
@@ -147,6 +149,10 @@ describe('UAT-22 selected-org invitation — real local DB and mounted routes', 
     return { aal1, aal2: verified.data.access_token };
   }
 
+  // Each case gets the production in-memory backend with an independent
+  // request budget. The real limiter still applies within every scenario.
+  beforeEach(() => setRateLimitStore(new Map()));
+
   beforeAll(async () => {
     service = createClient(
       process.env.SUPABASE_URL!,
@@ -174,6 +180,7 @@ describe('UAT-22 selected-org invitation — real local DB and mounted routes', 
     await placeUser(alreadyMemberId, selectedOrgId, 'INDIVIDUAL', 'member');
     const adminResult = await service.rpc('admin_set_platform_admin', { p_user_id: adminId, p_is_admin: true });
     if (adminResult.error) throw adminResult.error;
+    adminSessions = await authenticatedSessions(emails.admin);
   }, 30_000);
 
   afterAll(async () => {
@@ -191,7 +198,12 @@ describe('UAT-22 selected-org invitation — real local DB and mounted routes', 
       delete from public.audit_events where actor_id in
         (select id from public.profiles where email like 'uat22-%-${suffix}@example.test')
         or org_id in (select id from public.organizations where display_name like 'UAT22 % ${suffix}');
+      delete from public.org_credit_deductions where org_id in
+        (select id from public.organizations where display_name like 'UAT22 % ${suffix}');
       commit;
+      delete from public.admin_org_provisioning_requests where actor_id in
+        (select id from public.profiles where email like 'uat22-%-${suffix}@example.test')
+        or org_id in (select id from public.organizations where display_name like 'UAT22 % ${suffix}');
       delete from public.invitations where email like 'uat22-%-${suffix}@example.test'
         or org_id in (select id from public.organizations where display_name like 'UAT22 % ${suffix}');
       delete from public.org_members where user_id in
@@ -206,9 +218,82 @@ describe('UAT-22 selected-org invitation — real local DB and mounted routes', 
       `delete from public.organizations where display_name like 'UAT22 % ${suffix}'`], { stdio: 'ignore' });
   }, 30_000);
 
+  it.each([false, true].flatMap((isTest) =>
+    [undefined, null, 0, 12].map((quota) => ({ isTest, quota })),
+  ))('provisions quota $quota independently of billing exclusion $isTest (SCRUM-4888)', async ({ isTest, quota }) => {
+    const app = application();
+    const body = {
+      display_name: `UAT22 Quota ${isTest} ${String(quota)} ${suffix}`,
+      idempotency_key: crypto.randomUUID(),
+      ...(quota === undefined ? {} : { anchor_quota: quota }),
+      credits: 5,
+      is_test: isTest,
+    };
+    const create = () => request(app).post('/api/admin/organizations')
+      .set('Authorization', `Bearer ${adminSessions.aal2}`).send(body);
+    const created = await create();
+    expect(created.status).toBe(201);
+    expect(created.body.organization).toMatchObject({
+      anchor_quota: quota === undefined ? 10 : quota, credits_balance: 5, is_test: isTest,
+    });
+    const orgId = created.body.organization.org_id as string;
+    const credits = await service.from('org_credits')
+      .select('anchor_quota, cap_enforced, is_test, balance').eq('org_id', orgId).single();
+    expect(credits.error).toBeNull();
+    expect(credits.data).toEqual({
+      anchor_quota: quota === undefined ? 10 : quota,
+      cap_enforced: quota !== null, is_test: isTest, balance: 5,
+    });
+    const replayed = await create();
+    expect(replayed.status).toBe(201);
+    expect(replayed.body.organization).toEqual(created.body.organization);
+    const conflicted = await request(app).post('/api/admin/organizations')
+      .set('Authorization', `Bearer ${adminSessions.aal2}`).send({ ...body, credits: 6 });
+    expect(conflicted.status).toBe(409);
+    const receipts = await service.from('admin_org_provisioning_requests')
+      .select('org_id').eq('idempotency_key', body.idempotency_key);
+    expect(receipts.error).toBeNull();
+    expect(receipts.data).toEqual([{ org_id: orgId }]);
+    const afterReplay = await service.from('org_credits').select('balance').eq('org_id', orgId).single();
+    expect(afterReplay.error).toBeNull();
+    expect(afterReplay.data?.balance).toBe(5);
+  });
+
+  it('retains provisioning input, actor and service-only guards with no partial rows', async () => {
+    const signupCap = await service.from('org_credits')
+      .select('anchor_quota, cap_enforced').eq('org_id', homeOrgId).single();
+    expect(signupCap.error).toBeNull();
+    expect(signupCap.data).toEqual({ anchor_quota: 10, cap_enforced: true });
+    const contradictoryCap = await service.from('org_credits')
+      .update({ anchor_quota: null, cap_enforced: true }).eq('org_id', homeOrgId);
+    expect(contradictoryCap.error?.code).toBe('23514');
+    const idempotencyKey = crypto.randomUUID();
+    const args = {
+      p_actor: adminId, p_idempotency_key: idempotencyKey,
+      p_display_name: `UAT22 Invalid ${suffix}`, p_legal_name: `UAT22 Invalid ${suffix}`,
+      p_anchor_quota: -1, p_credits: 5, p_is_test: false, p_allow_duplicate_name: false,
+    };
+    const invalid = await service.rpc('admin_provision_organization', args);
+    expect(invalid.error).toBeNull();
+    expect(invalid.data).toMatchObject({ success: false, error: 'invalid_input' });
+    const unprivileged = await service.rpc('admin_provision_organization', { ...args, p_actor: ordinaryId, p_anchor_quota: null });
+    expect(unprivileged.error?.code).toBe('42501');
+    const human = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${adminSessions.aal2}` } },
+    });
+    const direct = await human.rpc('admin_provision_organization', { ...args, p_anchor_quota: null });
+    expect(direct.error?.code).toBe('42501');
+    const organizations = await service.from('organizations').select('id').eq('creation_idempotency_key', idempotencyKey);
+    expect(organizations.error).toBeNull();
+    expect(organizations.data).toEqual([]);
+    const receipts = await service.from('admin_org_provisioning_requests').select('org_id').eq('idempotency_key', idempotencyKey);
+    expect(receipts.error).toBeNull();
+    expect(receipts.data).toEqual([]);
+  });
+
   it('authorizes a foreign selected-org platform admin, rejects negatives, replays safely, and preserves chosen roles', async () => {
     const app = application();
-    const adminSessions = await authenticatedSessions(emails.admin);
     const ordinarySessions = await authenticatedSessions(emails.ordinary);
     const existingSessions = await authenticatedSessions(emails.existingElsewhere);
     const adminToken = adminSessions.aal2;

@@ -121,7 +121,7 @@ describe('useInviteMember', () => {
     await act(async () => { success = await result.current.inviteMember(defaultOptions); });
 
     expect(success).toBe(false);
-    expect(result.current.error).toContain('email could not be sent');
+    expect(result.current.error).toContain('email delivery could not be confirmed');
   });
 
   it('surfaces the selected-org already-member conflict without claiming an invite was created', async () => {
@@ -161,7 +161,7 @@ describe('useInviteMember', () => {
 
     await act(async () => { await result.current.inviteMember(defaultOptions); });
 
-    expect(result.current.error).toBe('Invitation was created, but the email could not be sent. Please try again.');
+    expect(result.current.error).toBe('Invitation was created, but email delivery could not be confirmed. Please try again.');
   });
 
   it('should successfully invite a member', async () => {
@@ -326,7 +326,7 @@ describe('useInviteMember', () => {
     expect(result.current.error).not.toContain('HTTPS outside localhost');
   });
 
-  // Root cause of "invitation was created, but the email could not be sent" with
+  // Root cause of "invitation was created, but email delivery could not be confirmed" with
   // ZERO requests in prod worker logs: VITE_WORKER_URL was unset at build time and
   // the naive `|| 'http://localhost:3001'` fallback silently posted to the
   // browser's own machine. resolveWorkerBaseUrl now fails loudly instead — this
@@ -376,7 +376,7 @@ describe('useInviteMember', () => {
     });
 
     expect(success!).toBe(false);
-    expect(result.current.error).toContain('email could not be sent');
+    expect(result.current.error).toContain('email delivery could not be confirmed');
   });
 
   it('should clear error when clearError is called', async () => {
@@ -489,7 +489,7 @@ describe('useInviteMember — actionable error surfacing (SCRUM-1979)', () => {
       await result.current.inviteMember(defaultOptions);
     });
 
-    expect(mockToastError).toHaveBeenCalledWith('Invitation was created, but the email could not be sent. Please try again.');
+    expect(mockToastError).toHaveBeenCalledWith('Invitation was created, but email delivery could not be confirmed. Please try again.');
   });
 
   it('surfaces the SPECIFIC validation toast for a malformed email payload (pre-RPC)', async () => {
