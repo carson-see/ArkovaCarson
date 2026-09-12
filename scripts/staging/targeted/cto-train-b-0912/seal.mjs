@@ -27,10 +27,10 @@ const env = m.environment; const soakStart = start; const soakEnd = end;
 for (const pr of m.included_prs) {
   if (onlyPrs.length && !onlyPrs.includes(pr.number)) continue;
   const key = `#${pr.number}`; const stats = perPr[key] ?? { cycles: 0, probes: 0, passed: 0, changed_behavior: '(no probe module — see manifest exceptions)' };
-  const cur = (() => { try { return execFileSync('git', ['rev-parse', `origin/${pr.branch ?? ''}`], { encoding: 'utf8' }).trim(); } catch { return pr.head_sha; } })();
+  const cur = (() => { if (!pr.branch) return pr.head_sha; try { return execFileSync('git', ['rev-parse', `origin/${pr.branch}`], { encoding: 'utf8', stdio: ['ignore','pipe','ignore'] }).trim(); } catch { return pr.head_sha; } })();
   console.log(`\n===== PR ${key} =====\n## Staging Soak Evidence\n`);
   console.log(`Tier: ${tier}`);
-  console.log(`Staging branch: rc/${m.rc_id.toLowerCase().replace('rc-', 'train-')} (integration head ${m.train_launch_sha})`);
+  console.log(`Staging branch: ${m.staging_branch} (integration head ${m.train_launch_sha})`);
   console.log(`Worker revision: ${env.revision}`);
   console.log(`PR head SHA: ${pr.head_sha}`);
   console.log(`Base SHA: ${pr.base_sha}`);
@@ -49,7 +49,7 @@ for (const pr of m.included_prs) {
   console.log(`Changed behavior: ${stats.changed_behavior}`);
   console.log(`Targeted evidence: ${stats.cycles} cycles × 5 min on the exact integration head; ${stats.passed}/${stats.probes} probe assertions passed (every probe asserts a DB delta or read-back, never a bare HTTP status); evidence ${dir} (summary.json + cycle-*.json); driver scripts/staging/targeted/cto-train-b-0912/probes/${pr.number}-*.mjs`);
   console.log(`Load/concurrency evidence: ${pr.load_evidence ?? 'concurrent probe families per cycle (see the module: parallel requests where the changed behaviour is a race), plus the rig worker\'s in-process crons running throughout; 0 5xx from the worker across the window'}`);
-  console.log(`RC manifest path: ${m.rc_manifest_path ?? 'docs/staging/rc-manifests/' + m.rc_id.toLowerCase() + '.json'}`);
+  console.log(`RC manifest path: ${m.rc_manifest_path}`);
   console.log(`Human approver: Carson (founder) — directive to the CTO session 2026-09-12 (get the queue reviewed, planned and soaking); CTO session rulings recorded in the PR body`);
   if (cur && cur !== pr.head_sha) console.log(`Post-soak T0 delta: ${cur}`);
 }
