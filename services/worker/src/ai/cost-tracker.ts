@@ -12,6 +12,7 @@
  * Each extraction = 1 credit, each embedding = 1 credit.
  */
 
+import { config } from '../config.js';
 import { db } from '../utils/db.js';
 import { callRpc } from '../utils/rpc.js';
 import { logger } from '../utils/logger.js';
@@ -48,37 +49,6 @@ export const CREDIT_ALLOCATIONS = {
   professional: 500,
   enterprise: 5000,
 } as const;
-
-/** Fallback monthly allocation for an auto-provisioned `ai_credits` period
- * row when `AI_CREDITS_MONTHLY_ALLOCATION` is unset or invalid. */
-const DEFAULT_AI_CREDITS_MONTHLY_ALLOCATION = 100;
-
-/**
- * Resolve the monthly AI credit allocation to use when auto-provisioning a
- * new `ai_credits` period row, from the `AI_CREDITS_MONTHLY_ALLOCATION` env
- * var. Falls back to `DEFAULT_AI_CREDITS_MONTHLY_ALLOCATION` for anything
- * that isn't a positive integer (unset, blank, non-numeric, zero, negative,
- * fractional, `NaN`/`Infinity`) so a bad env value can never provision a
- * broken or zero-credit period.
- */
-export function resolveAICreditsMonthlyAllocation(): number {
-  const raw = process.env.AI_CREDITS_MONTHLY_ALLOCATION;
-  if (raw === undefined || raw.trim() === '') {
-    return DEFAULT_AI_CREDITS_MONTHLY_ALLOCATION;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    logger.warn(
-      { raw },
-      'Invalid AI_CREDITS_MONTHLY_ALLOCATION — falling back to default of ' +
-        `${DEFAULT_AI_CREDITS_MONTHLY_ALLOCATION}`,
-    );
-    return DEFAULT_AI_CREDITS_MONTHLY_ALLOCATION;
-  }
-
-  return parsed;
-}
 
 /**
  * Check AI credit balance for an org or user.
@@ -154,16 +124,25 @@ export async function deductAICredits(
  * `ai_credits` has NO unique constraint on `(org_id, period_start)` (see
  * `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` — only a
  * primary key on `id`), so this is a select-then-insert rather than an
- * upsert. The lookup mirrors `deduct_ai_credits`'s own window
+ * upsert, and the insert cannot be made atomic with `ON CONFLICT`. Adding
+ * that constraint is DDL on a table read by every extraction, which is a
+ * migration (and a T3 PR) in its own right — so the TOCTOU window is closed
+ * in application code instead, by a **re-read after insert**: if a concurrent
+ * request provisioned the same org in the same instant, both requests observe
+ * the duplicate, agree on a keeper (lowest `(created_at, id)` — the row that
+ * existed first, and therefore the row with the >= usage count), and the
+ * loser deletes **only the row it just inserted**. A pre-existing row can
+ * never be deleted by this path.
+ *
+ * Leaving the duplicate in place is what makes this worth closing:
+ * `deduct_ai_credits`'s `UPDATE` has no row limit, so two overlapping-period
+ * rows for one org make every subsequent deduction increment both — the org
+ * silently burns credits at 2x for the rest of the month.
+ *
+ * The lookup mirrors `deduct_ai_credits`'s own window
  * (`period_start <= now < period_end`) rather than an exact match on a
- * calendar-aligned `period_start`, because `deduct_ai_credits`'s UPDATE has
- * no row limit — inserting a second, overlapping-period row for the same org
- * would make a future deduction silently double-increment two rows at once.
- * A race against a concurrent insert (another request provisioning the same
- * org at the same moment) is therefore treated as a non-fatal, logged
- * condition rather than an error: whichever row lands first is the one every
- * caller converges on, and the caller's own `deduct_ai_credits` call is the
- * actual source of truth for whether the operation may proceed.
+ * calendar-aligned `period_start`, so an operator-seeded row with
+ * non-calendar bounds is still recognised and never duplicated.
  *
  * Never overwrites `used_this_month` on an existing row.
  *
@@ -186,14 +165,25 @@ export async function ensureAICreditsPeriod(
   );
   const nowIso = now.toISOString();
 
-  try {
+  // Rows covering `now` for this org, oldest first. `(created_at, id)` is a
+  // total order every racer computes identically, so exactly one of them is
+  // the keeper.
+  const coveringRows = () =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing, error: selectError } = await (db as any)
+    (db as any)
       .from('ai_credits')
       .select('id')
       .eq('org_id', orgId)
       .lte('period_start', nowIso)
       .gt('period_end', nowIso)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+
+  try {
+    // `.limit(1)` so a pre-existing duplicate (seeded before this code shipped)
+    // is a no-op rather than a maybeSingle() "multiple rows" error.
+    const { data: existing, error: selectError } = await coveringRows()
+      .limit(1)
       .maybeSingle();
 
     if (selectError) {
@@ -210,22 +200,21 @@ export async function ensureAICreditsPeriod(
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: insertError } = await (db as any).from('ai_credits').insert({
-      org_id: orgId,
-      monthly_allocation: resolveAICreditsMonthlyAllocation(),
-      used_this_month: 0,
-      period_start: periodStart.toISOString(),
-      period_end: periodEnd.toISOString(),
-    });
+    const { data: inserted, error: insertError } = await (db as any)
+      .from('ai_credits')
+      .insert({
+        org_id: orgId,
+        monthly_allocation: config.aiCreditsMonthlyAllocation,
+        used_this_month: 0,
+        period_start: periodStart.toISOString(),
+        period_end: periodEnd.toISOString(),
+      })
+      .select('id')
+      .maybeSingle();
 
     if (insertError) {
-      // No unique constraint exists to race against, so this is never a
-      // Postgres duplicate-key error — but a concurrent request may have
-      // inserted its own covering row between our select and insert, or the
-      // insert may have failed for an unrelated transient reason. Either way
-      // this is non-fatal: the caller's own deduct_ai_credits call is the
-      // real gate, and will simply retry the same fail-closed path it always
-      // has if no row is actually present.
+      // Non-fatal: the caller's own deduct_ai_credits / check_ai_credits call
+      // is the real gate and still fails closed if no row is actually present.
       logger.warn(
         { error: insertError, orgId },
         'ensureAICreditsPeriod: insert failed (treated as non-fatal)',
@@ -233,11 +222,70 @@ export async function ensureAICreditsPeriod(
       return false;
     }
 
+    await reconcileConcurrentPeriodInsert(orgId, inserted?.id, coveringRows);
+
     return true;
   } catch (err) {
     logger.warn({ error: err, orgId }, 'ensureAICreditsPeriod: unexpected error');
     return false;
   }
+}
+
+/**
+ * TOCTOU compensation for {@link ensureAICreditsPeriod} (SCRUM-4939).
+ *
+ * Re-reads the covering rows after our insert. If a concurrent request raced
+ * us and there is now more than one row for this org/period, the row that
+ * existed first wins and we delete **the row we just inserted** — never any
+ * other row, and only when we are not the keeper, so at most one racer ever
+ * deletes and at least one row always survives. Best-effort: a failure here
+ * leaves a duplicate for operator reconciliation and is logged at error level.
+ */
+async function reconcileConcurrentPeriodInsert(
+  orgId: string,
+  insertedId: string | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  coveringRows: () => any,
+): Promise<void> {
+  if (!insertedId) {
+    // PostgREST returned no representation (e.g. `Prefer: return=minimal`);
+    // without our own row id we cannot safely delete anything.
+    return;
+  }
+
+  const { data: after, error: afterError } = await coveringRows();
+  if (afterError || !Array.isArray(after) || after.length <= 1) {
+    return;
+  }
+
+  if (after[0]?.id === insertedId) {
+    // We are the keeper; the racer removes its own row.
+    logger.warn(
+      { orgId, rows: after.length },
+      'ensureAICreditsPeriod: concurrent provisioning detected — keeping our row',
+    );
+    return;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: deleteError } = await (db as any)
+    .from('ai_credits')
+    .delete()
+    .eq('id', insertedId);
+
+  if (deleteError) {
+    logger.error(
+      { error: deleteError, orgId, insertedId },
+      'ensureAICreditsPeriod: could not remove duplicate period row — ' +
+        'deductions will double-count for this org until it is reconciled',
+    );
+    return;
+  }
+
+  logger.warn(
+    { orgId, insertedId },
+    'ensureAICreditsPeriod: lost a concurrent provisioning race — removed our duplicate row',
+  );
 }
 
 /**

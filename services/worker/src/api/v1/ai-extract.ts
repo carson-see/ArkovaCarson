@@ -237,6 +237,21 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
+    // SCRUM-4939: nothing has ever provisioned an `ai_credits` row for an
+    // org (no trigger/cron/code path did it), so a first-ever extraction for
+    // a brand-new org hit the fail-closed 503 below unconditionally.
+    // Provision the current period BEFORE the up-front check, not just before
+    // the debit: `check_ai_credits`'s WHERE clause is `A OR B AND C AND D`,
+    // which parses as `A OR (B AND C AND D)` — with an org id it matches ANY
+    // row for that org regardless of period (LIMIT 1, no ORDER BY). An org
+    // whose only row is an exhausted PRIOR period would otherwise 402 here and
+    // return before ever reaching provisioning. `ai-extract-batch.ts` already
+    // provisions before its own `checkAICredits` for the same reason.
+    // Non-fatal on its own failure — `deductAICredits` remains the real gate.
+    if (orgId) {
+      await ensureAICreditsPeriod(orgId);
+    }
+
     // RISK-6: Synchronous credit check and deduction.
     // Deduction is blocking — if it fails, return 402 Payment Required.
     // Beta mode: check_ai_credits returns unlimited via migration 0084 override.
@@ -249,15 +264,6 @@ router.post('/', async (req: Request, res: Response) => {
         limit: creditBalance.monthlyAllocation,
       });
       return;
-    }
-
-    // SCRUM-4939: nothing has ever provisioned an `ai_credits` row for an
-    // org (no trigger/cron/code path did it), so a first-ever extraction for
-    // a brand-new org previously hit the fail-closed 503 below unconditionally.
-    // Provision the current period's row here — non-fatal on its own failure,
-    // since `deductAICredits` immediately after is still the real gate.
-    if (orgId) {
-      await ensureAICreditsPeriod(orgId);
     }
 
     const deducted = await deductAICredits(orgId, userId, 1);

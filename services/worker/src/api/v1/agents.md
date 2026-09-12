@@ -10,8 +10,14 @@ no `ai_credits` row covers the current period, and nothing ever provisioned that
 `ai/agents.md`'s 2026-09-12 entry for the full mechanism (no unique constraint on the table, why the
 lookup window matches `deduct_ai_credits`'s own, race handling).
 
-Placement differs between the two routes on purpose: `ai-extract.ts` calls it immediately before its
-single `deductAICredits` call. `ai-extract-batch.ts` calls it ONCE before `checkAICredits`, not before
+Both routes provision BEFORE their up-front `checkAICredits` guard, not between that guard and the
+debit. `check_ai_credits`'s WHERE clause is `A OR B AND C AND D`, which Postgres parses as
+`A OR (B AND C AND D)` — given an org id it matches ANY row for that org regardless of period, with
+`LIMIT 1` and no `ORDER BY`. An org whose only row is an exhausted PRIOR period would otherwise get a
+402 from that guard and return before provisioning ever ran, which is the same "stuck org" outcome
+this fix exists to remove. (The precedence bug itself is pre-existing and needs its own migration to
+fix; ordering the calls this way makes it non-blocking.) `ai-extract-batch.ts` additionally must call
+it once before `checkAICredits`, not before
 each per-row `deductAICredits` inside `parallelMap` — the batch route latches `hasFiniteCredits` from
 that one `checkAICredits` result and reuses it for every row, so provisioning has to land before that
 read or the whole batch would treat a freshly-created org as still-unmetered. Both skip the call when

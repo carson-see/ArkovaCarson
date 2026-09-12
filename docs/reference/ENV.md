@@ -324,10 +324,12 @@ CF_AI_MODEL=
 
 # SCRUM-4939 — ai_credits auto-provisioning
 AI_CREDITS_MONTHLY_ALLOCATION=100   # allocation for an auto-provisioned ai_credits period row
-                                    # (cost-tracker.ts ensureAICreditsPeriod). Must be a positive
+                                    # (cost-tracker.ts ensureAICreditsPeriod, via typed config
+                                    # config.aiCreditsMonthlyAllocation). Must be a positive
                                     # integer; unset/blank/non-numeric/<=0/fractional all fall back
-                                    # to 100. Only affects a NEWLY-created period row — never
-                                    # overwrites an existing row's monthly_allocation.
+                                    # to 100 (= every operator-seeded prod row). Only affects a
+                                    # NEWLY-created period row — never overwrites an existing
+                                    # row's monthly_allocation.
 
 # SCRUM-1061 — Vertex AI SDK migration (Gemini Golden only, NOT Nessie)
 ENABLE_VERTEX_AI=false              # when true, Gemini Golden uses Vertex AI SDK + SA auth

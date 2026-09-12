@@ -12,16 +12,37 @@ path did it). The CTO manually seeded rows for known orgs as a stopgap; this is 
 `ensureAICreditsPeriod(orgId, now = new Date())` selects for a row covering `now` (mirroring
 `deduct_ai_credits`'s own `period_start <= now AND period_end > now` window, not an exact match on a
 calendar-aligned `period_start`) and inserts one only when none exists, using
-`resolveAICreditsMonthlyAllocation()` (env `AI_CREDITS_MONTHLY_ALLOCATION`, default 100 — see
+`config.aiCreditsMonthlyAllocation` (env `AI_CREDITS_MONTHLY_ALLOCATION`, default 100 — see
 `docs/reference/ENV.md`) and `used_this_month: 0`. It never overwrites an existing row.
+
+The allocation is read from the **typed config**, not `process.env` directly: the Dependency Scanning
+`check-worker-env-adhoc` gate (SCRUM-1258) rejects new ad-hoc `process.env` reads in the worker, and a
+Cloud Run env typo on a direct read would silently provision the wrong entitlement. The default 100
+matches every operator-seeded prod row (verified against prod 2026-09-12: 16 orgs, 16/16
+current-period rows at `monthly_allocation = 100`), so turning this on cannot change an existing org's
+entitlement.
 
 **No unique constraint exists on `(org_id, period_start)`** — `ai_credits` only has a primary key on
 `id` (`supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`) — so this is a select-then-insert,
 not an upsert. That absence is also why the lookup uses the period-covering window instead of an exact
 `period_start` match: `deduct_ai_credits`'s `UPDATE` has no row limit, so a second, overlapping-period
-row for the same org would let a future deduction silently double-increment two rows at once. A race
-against a concurrent insert is treated as non-fatal (logged at warn, function returns `false`) — the
-caller's own `deduct_ai_credits` call remains the actual gate either way.
+row for the same org would let a future deduction silently double-increment two rows at once — the org
+would burn credits at 2x for the rest of the month.
+
+**That TOCTOU window is closed in application code, not by a constraint.** Adding a unique index on
+`(org_id, period_start)` would be DDL on a table read by every extraction — its own migration, its own
+lock-timeout review (CLAUDE.md §1.2), and a T3 PR. Instead, `ensureAICreditsPeriod` **re-reads after
+its insert** (`reconcileConcurrentPeriodInsert`): if more than one row now covers the period, every
+racer computes the same keeper — the lowest `(created_at, id)`, i.e. the row that existed first and
+therefore carries the `>=` usage count — and the loser deletes **only the row it just inserted**, by
+id. A pre-existing row can never be deleted by this path, the keeper never deletes itself, so at most
+one racer deletes and at least one row always survives. If the compensating delete fails, the
+duplicate is left in place and logged at `error` level for operator reconciliation. The caller's own
+`deduct_ai_credits` call remains the actual gate either way.
+
+Still unclosed, deliberately: a unique `(org_id, period_start)` index remains the correct permanent
+fix and should land as its own T3 migration. This reduces the race window to "both inserts land AND
+the loser's compensating delete fails", it does not eliminate it.
 
 Wired in before the debit in both fail-closed callers: `api/v1/ai-extract.ts` calls it immediately
 before `deductAICredits` (only when `orgId` is defined); `api/v1/ai-extract-batch.ts` calls it once

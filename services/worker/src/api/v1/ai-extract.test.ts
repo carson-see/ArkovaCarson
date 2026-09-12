@@ -222,6 +222,42 @@ describe('AI Extraction Endpoint', () => {
       expect(ensureOrder).toBeLessThan(deductOrder);
     });
 
+    /**
+     * `check_ai_credits` has an operator-precedence bug in its WHERE clause
+     * (`A OR B AND C AND D` parses as `A OR (B AND C AND D)`), so with an org
+     * id it matches ANY row for that org regardless of period, `LIMIT 1` with
+     * no ORDER BY. An org whose only row is an exhausted PRIOR period therefore
+     * gets a 402 from this guard and returns before provisioning ever runs —
+     * the exact "org is stuck and cannot extract" failure this PR exists to
+     * fix. Provisioning must precede the check, not sit between it and the
+     * debit (this is also what ai-extract-batch.ts already does).
+     */
+    it('provisions the period BEFORE the up-front credit check, so a stale exhausted row cannot 402 first', async () => {
+      const handler = getPostHandler();
+      const { req, res } = createMockReqRes(validBody, 'user-123');
+
+      mockExtractionDatabase();
+
+      // What check_ai_credits returns for an org whose only row is a spent
+      // prior period.
+      (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+        monthlyAllocation: 100,
+        usedThisMonth: 100,
+        remaining: 0,
+        hasCredits: false,
+      });
+      (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+      await handler!(req, res);
+
+      expect(ensureAICreditsPeriod).toHaveBeenCalledWith('org-456');
+      const ensureOrder = (ensureAICreditsPeriod as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0];
+      const checkOrder = (checkAICredits as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0];
+      expect(ensureOrder).toBeLessThan(checkOrder);
+    });
+
     it('does not call ensureAICreditsPeriod when orgId is undefined', async () => {
       const handler = getPostHandler();
       const { req, res } = createMockReqRes(validBody, 'user-123');
