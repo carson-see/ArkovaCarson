@@ -10,7 +10,7 @@
  */
 
 import { useState, FormEvent } from 'react';
-import { Plus, Trash2, Key, Copy, Check, AlertCircle, Loader2, Ban } from 'lucide-react';
+import { Plus, Trash2, Key, Copy, Check, AlertCircle, Loader2, Ban, CalendarClock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -42,11 +42,21 @@ interface ApiKeySettingsProps {
   onCreate: (name: string, scopes: string[], expiresInDays?: number) => Promise<ApiKeyCreated>;
   onRevoke: (keyId: string) => Promise<void>;
   onDelete: (keyId: string) => Promise<void>;
+  /** SCRUM-5023 — set the expiry N days from now, or `null` to remove it. */
+  onExtend: (keyId: string, expiresInDays: number | null) => Promise<void>;
   loading?: boolean;
   fetchError?: string | null;
 }
 
 const AVAILABLE_SCOPES = SELECTABLE_API_SCOPES;
+
+/** SCRUM-5023 — the presets the Extend dialog offers. `null` clears the expiry. */
+const EXTEND_OPTIONS: Array<{ label: string; days: number | null }> = [
+  { label: API_KEY_LABELS.EXTEND_30_DAYS, days: 30 },
+  { label: API_KEY_LABELS.EXTEND_90_DAYS, days: 90 },
+  { label: API_KEY_LABELS.EXTEND_365_DAYS, days: 365 },
+  { label: API_KEY_LABELS.EXTEND_REMOVE, days: null },
+];
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
@@ -56,12 +66,51 @@ function formatDate(iso: string): string {
   });
 }
 
+/**
+ * SCRUM-5023 — the key's status, preferring the server's answer.
+ *
+ * The worker derives this once (`api/v1/keyExpiryStatus.ts`) and both the list
+ * route and the expiry-notice cron read it from there. The local branch exists
+ * ONLY for the rollout window in which a deployed frontend can still be
+ * talking to a worker that does not send `status` — without it every key would
+ * render Active for the length of a deploy, which is SCRUM-4515 all over again.
+ * It is deliberately the cruder derivation: it has no `expiring_soon`, because
+ * an old worker sends no `expires_in_days` to label it with.
+ */
+function resolveKeyStatus(apiKey: ApiKeyMasked): NonNullable<ApiKeyMasked['status']> {
+  if (apiKey.status) return apiKey.status;
+  if (!apiKey.is_active || apiKey.revoked_at) return 'revoked';
+  if (apiKey.expires_at && new Date(apiKey.expires_at) <= new Date()) return 'expired';
+  return 'active';
+}
+
+/** "today" / "in 1 day" / "in N days" — never "in 0 days" or "in 1 days". */
+function remainingLabel(days: number): string {
+  if (days <= 0) return API_KEY_LABELS.EXPIRES_TODAY;
+  if (days === 1) return API_KEY_LABELS.EXPIRES_IN_ONE_DAY;
+  return API_KEY_LABELS.EXPIRES_IN_DAYS.replace('{days}', String(days));
+}
+
 function KeyStatusBadge({ apiKey }: { apiKey: ApiKeyMasked }) {
-  if (!apiKey.is_active) {
+  const status = resolveKeyStatus(apiKey);
+
+  if (status === 'revoked') {
     return <Badge variant="secondary" className="bg-gray-100 text-gray-600">{API_KEY_LABELS.REVOKED}</Badge>;
   }
-  if (apiKey.expires_at && new Date(apiKey.expires_at) < new Date()) {
+  if (status === 'expired') {
     return <Badge variant="secondary" className="bg-gray-100 text-gray-600">{API_KEY_LABELS.EXPIRED}</Badge>;
+  }
+  if (status === 'expiring_soon') {
+    // Amber, and carrying the countdown: a warning the owner can act on is
+    // the deliverable here, not a second shade of "fine".
+    const suffix = typeof apiKey.expires_in_days === 'number'
+      ? ` · ${remainingLabel(apiKey.expires_in_days)}`
+      : '';
+    return (
+      <Badge variant="secondary" className="bg-amber-100 text-amber-800">
+        {`${API_KEY_LABELS.EXPIRING_SOON}${suffix}`}
+      </Badge>
+    );
   }
   return <Badge variant="default" className="bg-green-100 text-green-700">{API_KEY_LABELS.ACTIVE}</Badge>;
 }
@@ -71,6 +120,7 @@ export function ApiKeySettings({
   onCreate,
   onRevoke,
   onDelete,
+  onExtend,
   loading = false,
   fetchError = null,
 }: ApiKeySettingsProps) {
@@ -86,6 +136,10 @@ export function ApiKeySettings({
   const [confirmAction, setConfirmAction] = useState<{ type: 'revoke' | 'delete'; keyId: string } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // SCRUM-5023 extend dialog
+  const [extendKeyId, setExtendKeyId] = useState<string | null>(null);
+  const [extendLoading, setExtendLoading] = useState(false);
+  const [extendError, setExtendError] = useState<string | null>(null);
 
   const openConfirmAction = (action: { type: 'revoke' | 'delete'; keyId: string }) => {
     setActionError(null);
@@ -95,6 +149,28 @@ export function ApiKeySettings({
   const closeConfirmAction = () => {
     setActionError(null);
     setConfirmAction(null);
+  };
+
+  const openExtend = (keyId: string) => {
+    setExtendError(null);
+    setExtendKeyId(keyId);
+  };
+
+  const handleExtend = async (days: number | null) => {
+    if (!extendKeyId) return;
+    setExtendLoading(true);
+    setExtendError(null);
+    try {
+      await onExtend(extendKeyId, days);
+      setExtendKeyId(null);
+    } catch {
+      // Same discipline as revoke/delete: the expiry did NOT change, so the
+      // dialog stays open and no raw error detail (which can carry server
+      // internals) reaches the user.
+      setExtendError(API_KEY_LABELS.EXTEND_FAILED);
+    } finally {
+      setExtendLoading(false);
+    }
   };
 
   const resetForm = () => {
@@ -298,6 +374,35 @@ export function ApiKeySettings({
         </Dialog>
       </div>
 
+      {/* SCRUM-5023 — extend / clear expiry */}
+      <Dialog open={!!extendKeyId} onOpenChange={(open) => { if (!open && !extendLoading) { setExtendKeyId(null); setExtendError(null); } }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{API_KEY_LABELS.EXTEND_TITLE}</DialogTitle>
+            <DialogDescription>{API_KEY_LABELS.EXTEND_DESCRIPTION}</DialogDescription>
+          </DialogHeader>
+          {extendError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{extendError}</AlertDescription>
+            </Alert>
+          )}
+          <div className="grid gap-2">
+            {EXTEND_OPTIONS.map((option) => (
+              <Button
+                key={option.label}
+                variant={option.days === null ? 'ghost' : 'outline'}
+                disabled={extendLoading}
+                onClick={() => handleExtend(option.days)}
+              >
+                {extendLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Confirm action dialog */}
       <Dialog open={!!confirmAction} onOpenChange={(open) => { if (!open && !actionLoading) closeConfirmAction(); }}>
         <DialogContent className="sm:max-w-sm">
@@ -367,6 +472,19 @@ export function ApiKeySettings({
                     <KeyStatusBadge apiKey={apiKey} />
                   </div>
                   <div className="flex items-center gap-1">
+                    {/* SCRUM-5023: offered on EXPIRED keys too — the remedy
+                        has to be reachable from the failure. Never on a
+                        revoked key: revocation is terminal and PATCH 409s. */}
+                    {resolveKeyStatus(apiKey) !== 'revoked' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openExtend(apiKey.id)}
+                      >
+                        <CalendarClock className="h-4 w-4 mr-1" />
+                        {API_KEY_LABELS.EXTEND_KEY}
+                      </Button>
+                    )}
                     {apiKey.is_active && (
                       <Button
                         variant="ghost"

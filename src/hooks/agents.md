@@ -1,3 +1,19 @@
+## 2026-09-12 — SCRUM-5023: `useApiKeys.extendKey` sends a DURATION
+
+`extendKey(keyId, expiresInDays | null)` PATCHes `{ expires_in_days: n }`, or `{ expires_at: null }`
+to clear. **Never a timestamp.** The worker refuses a non-null `expires_at` on purpose: the server
+holds the clock, and an accepted client timestamp would let a caller write an already-past expiry.
+Sending `{ expires_in_days: null }` to clear is the other way to get a 400 — neither mistake is
+visible from a component test that only asserts the callback fired, so `useApiKeys.extend.test.tsx`
+pins the request body.
+
+`ApiKeyMasked.status` / `.expires_in_days` are OPTIONAL for a reason: a deployed frontend can be
+talking to an older worker mid-rollout. Prefer `status` over `is_active` — `is_active` is `true` on
+expired keys that authentication already refuses.
+
+`extendKey` THROWS on a non-OK response, like `revokeKey`/`deleteKey`, so the caller can keep its
+dialog open instead of implying a change that did not happen.
+
 # agents.md — hooks
 _Last updated: 2026-09-03_
 
