@@ -51,18 +51,26 @@ jobs:
           gitleaks version
 
       - name: Scan new commits for hardcoded secrets
+        # SCRUM-4990: github context values are passed through env: and read
+        # as quoted shell variables, never interpolated into the script body
+        # (Semgrep run-shell-injection; same convention as ci.yml).
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags origin "${{ github.base_ref }}"
-            RANGE="origin/${{ github.base_ref }}..HEAD"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags origin "$BASE_REF"
+            RANGE="origin/${BASE_REF}..HEAD"
           else
-            BEFORE="${{ github.event.before }}"
+            BEFORE="$BEFORE_SHA"
             # First push to a new branch reports an all-zero "before" SHA.
             if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
               RANGE="HEAD~1..HEAD"
             else
-              RANGE="${BEFORE}..${{ github.sha }}"
+              RANGE="${BEFORE}..${HEAD_SHA}"
             fi
           fi
           echo "Scanning commit range: $RANGE"
