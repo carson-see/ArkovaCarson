@@ -213,12 +213,12 @@ export async function handleAdminCreateInvitation(
     idempotencyKey: `invitation/${invitation.id}`,
   });
   if (!sendResult.success) {
-    logger.warn({ actorId, orgId, invitationId: invitation.id }, 'Admin invitation: email delivery failed');
+    logger.warn({ actorId, orgId, invitationId: invitation.id }, 'Admin invitation: email delivery unconfirmed');
     res.status(502).json({
       sent: false,
       created: true,
       code: 'email_delivery_failed',
-      error: 'Invitation was created, but the email could not be sent.',
+      error: 'Invitation was created, but email delivery could not be confirmed.',
     });
     return;
   }

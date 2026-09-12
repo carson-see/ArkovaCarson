@@ -125,7 +125,7 @@ export function useInviteMember({ platformAdmin = false }: UseInviteMemberOption
         }
         if (response.status === 502 && body.created === true && body.code === 'email_delivery_failed') {
           throw new ActionableInviteError(
-            'Invitation was created, but the email could not be sent. Please try again.',
+            'Invitation was created, but email delivery could not be confirmed. Please try again.',
           );
         }
         throw new ActionableInviteError(
@@ -174,7 +174,7 @@ export function useInviteMember({ platformAdmin = false }: UseInviteMemberOption
       } catch (emailErr) {
         console.warn('Invitation email send failed (invitation still created):', emailErr);
         throw new ActionableInviteError(
-          'Invitation was created, but the email could not be sent. Please try again.',
+          'Invitation was created, but email delivery could not be confirmed. Please try again.',
         );
       }
 
