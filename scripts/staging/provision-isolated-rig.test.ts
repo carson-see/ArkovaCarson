@@ -698,6 +698,8 @@ exit 0
   writeFileSync(
     join(stubDir, 'npx'),
     `#!/usr/bin/env bash
+# "npx --no-install <pkg>" is the S6505-safe spelling; record it as the bare call.
+if [[ "$1" == "--no-install" ]]; then shift; fi
 set -euo pipefail
 printf '%s\\n' "$*" >> "${npxLogFile}"
 printf 'npx %s\\n' "$*" >> "${orderLogFile}"
