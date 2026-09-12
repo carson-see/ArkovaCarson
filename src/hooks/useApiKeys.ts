@@ -45,8 +45,14 @@ export interface ApiKeyMasked {
    * the length of a rollout — the badge falls back to deriving locally.
    */
   status?: 'active' | 'expiring_soon' | 'expired' | 'revoked';
-  /** Whole days to expiry: 0 on the final day, negative once past, null if none. */
-  expires_in_days?: number | null;
+  /**
+   * Whole days to expiry: 0 on the final day, negative once past, null if none.
+   *
+   * NOT `expires_in_days` — that is the REQUEST field on create/extend and
+   * means "set the expiry this many days from now". One name for two opposite
+   * meanings is how a client ends up PUTting back a countdown.
+   */
+  days_until_expiry?: number | null;
 }
 
 export interface ApiKeyCreated extends ApiKeyMasked {
@@ -162,17 +168,26 @@ export function useApiKeys(options: { enabled?: boolean } = {}) {
    * holds the clock, and PATCH refuses a client-supplied `expires_at` for
    * exactly that reason. Pass `null` to remove the expiry entirely.
    *
+   * `allowShorten` acknowledges a change that moves the expiry EARLIER — the
+   * duration REPLACES the current expiry rather than adding to it, so this is
+   * reachable by accident. Without it the server answers 409
+   * `api_key_expiry_would_shorten` and writes nothing.
+   *
    * Throws on failure, like `revokeKey`/`deleteKey`, so the caller can keep
    * its dialog open and avoid implying a change that did not happen.
    */
-  const extendKey = useCallback(async (keyId: string, expiresInDays: number | null) => {
-    const body = expiresInDays === null
-      ? { expires_at: null }
-      : { expires_in_days: expiresInDays };
-
+  const extendKey = useCallback(async (
+    keyId: string,
+    expiresInDays: number | null,
+    allowShorten = false,
+  ) => {
     const res = await workerFetch(`/api/v1/keys/${keyId}`, {
       method: 'PATCH',
-      body: JSON.stringify(body),
+      body: JSON.stringify(
+        allowShorten
+          ? { expires_in_days: expiresInDays, allow_shorten: true }
+          : { expires_in_days: expiresInDays },
+      ),
     });
 
     if (!res.ok) {

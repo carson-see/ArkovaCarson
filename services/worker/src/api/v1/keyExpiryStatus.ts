@@ -101,13 +101,34 @@ export function expiresInDays(
 
 /**
  * The additive §1.8 fields for one key row, ready to spread onto a response.
+ *
+ * The response field is `days_until_expiry`, NOT `expires_in_days`. The
+ * request field on POST/PATCH is `expires_in_days` and means "set the expiry
+ * this many days from now"; echoing a same-named field back with a different
+ * meaning (a countdown that goes negative) invites a client to read one and
+ * PUT the other. Renamed before publication, while it is still free.
  */
 export function keyExpiryFields(
   row: ApiKeyExpiryFields,
   now: Date = new Date(),
-): { status: ApiKeyStatus; expires_in_days: number | null } {
+): { status: ApiKeyStatus; days_until_expiry: number | null } {
   return {
     status: deriveKeyStatus(row, now),
-    expires_in_days: expiresInDays(row.expires_at, now),
+    days_until_expiry: expiresInDays(row.expires_at, now),
   };
+}
+
+/**
+ * Is this stored expiry in the past, as `deriveKeyStatus` judges it?
+ *
+ * Exported so the notice job classifies a lapse with the SAME rule the list
+ * route renders — including the fail-closed treatment of an unparseable
+ * timestamp. A second `new Date(x) <= now` somewhere else is how the dashboard
+ * and the auth middleware came to disagree in the first place.
+ */
+export function isExpiredAt(expiresAt: string | null | undefined, now: Date = new Date()): boolean {
+  if (!expiresAt) return false;
+  const remaining = msUntilExpiry(expiresAt, now);
+  if (remaining === null) return true; // unparseable -> fail closed, as above
+  return remaining <= 0;
 }

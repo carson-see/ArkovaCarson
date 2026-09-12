@@ -31,7 +31,7 @@ const baseKey: ApiKeyMasked = {
   expires_at: '2026-09-20T00:00:00Z',
   last_used_at: null,
   status: 'expiring_soon',
-  expires_in_days: 8,
+  days_until_expiry: 8,
 };
 
 function props(keys: ApiKeyMasked[], overrides: Record<string, unknown> = {}) {
@@ -43,7 +43,7 @@ function props(keys: ApiKeyMasked[], overrides: Record<string, unknown> = {}) {
     onRevoke: vi.fn().mockResolvedValue(undefined) as unknown as (keyId: string) => Promise<void>,
     onDelete: vi.fn().mockResolvedValue(undefined) as unknown as (keyId: string) => Promise<void>,
     onExtend: vi.fn().mockResolvedValue(undefined) as unknown as (
-      keyId: string, expiresInDays: number | null,
+      keyId: string, expiresInDays: number | null, allowShorten?: boolean,
     ) => Promise<void>,
     ...overrides,
   };
@@ -64,7 +64,7 @@ describe('expiry status badge', () => {
   });
 
   it('says "today" rather than "0 days" on the final day', () => {
-    render(<ApiKeySettings {...props([{ ...baseKey, expires_in_days: 0 }])} />);
+    render(<ApiKeySettings {...props([{ ...baseKey, days_until_expiry: 0 }])} />);
 
     const badge = screen.getByText(new RegExp(API_KEY_LABELS.EXPIRING_SOON, 'i'));
     expect(badge.textContent).toMatch(/today/i);
@@ -72,7 +72,7 @@ describe('expiry status badge', () => {
   });
 
   it('says "1 day", not "1 days"', () => {
-    render(<ApiKeySettings {...props([{ ...baseKey, expires_in_days: 1 }])} />);
+    render(<ApiKeySettings {...props([{ ...baseKey, days_until_expiry: 1 }])} />);
     expect(screen.getByText(/1 day\b/)).toBeInTheDocument();
   });
 
@@ -80,7 +80,7 @@ describe('expiry status badge', () => {
     // The exact prod shape: is_active true, expiry long past. Reading
     // is_active alone is SCRUM-4515; reading `status` is the fix that holds.
     render(<ApiKeySettings {...props([
-      { ...baseKey, status: 'expired', expires_in_days: -73, expires_at: '2026-07-01T00:00:00Z' },
+      { ...baseKey, status: 'expired', days_until_expiry: -73, expires_at: '2026-07-01T00:00:00Z' },
     ])} />);
 
     expect(screen.getByText(API_KEY_LABELS.EXPIRED)).toBeInTheDocument();
@@ -93,7 +93,7 @@ describe('expiry status badge', () => {
   });
 
   it('renders Active for a key with plenty of life left', () => {
-    render(<ApiKeySettings {...props([{ ...baseKey, status: 'active', expires_in_days: 200 }])} />);
+    render(<ApiKeySettings {...props([{ ...baseKey, status: 'active', days_until_expiry: 200 }])} />);
     expect(screen.getByText(API_KEY_LABELS.ACTIVE)).toBeInTheDocument();
   });
 
@@ -103,7 +103,7 @@ describe('expiry status badge', () => {
     // reintroducing SCRUM-4515 for exactly as long as the deploy takes.
     const legacy = { ...baseKey };
     delete (legacy as Partial<ApiKeyMasked>).status;
-    delete (legacy as Partial<ApiKeyMasked>).expires_in_days;
+    delete (legacy as Partial<ApiKeyMasked>).days_until_expiry;
 
     render(<ApiKeySettings {...props([{ ...legacy, expires_at: '2026-07-01T00:00:00Z' }])} />);
     expect(screen.getByText(API_KEY_LABELS.EXPIRED)).toBeInTheDocument();
@@ -117,7 +117,7 @@ describe('extend action', () => {
   });
 
   it('offers Extend on an EXPIRED key — the remedy has to be reachable from the failure', () => {
-    render(<ApiKeySettings {...props([{ ...baseKey, status: 'expired', expires_in_days: -73 }])} />);
+    render(<ApiKeySettings {...props([{ ...baseKey, status: 'expired', days_until_expiry: -73 }])} />);
     expect(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY })).toBeInTheDocument();
   });
 
@@ -133,17 +133,115 @@ describe('extend action', () => {
     fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
     fireEvent.click(await screen.findByRole('button', { name: API_KEY_LABELS.EXTEND_90_DAYS }));
 
-    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', 90));
+    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', 90, false));
   });
 
-  it('removes the expiry entirely when asked', async () => {
+  it('removes the expiry entirely, but only after a confirmation', async () => {
+    // Removing the expiry is the one option that makes a credential permanent.
     const onExtend = vi.fn().mockResolvedValue(undefined);
     render(<ApiKeySettings {...props([baseKey], { onExtend })} />);
 
     fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
     fireEvent.click(await screen.findByRole('button', { name: API_KEY_LABELS.EXTEND_REMOVE }));
 
-    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', null));
+    // Not applied yet — the confirmation is the step.
+    expect(onExtend).not.toHaveBeenCalled();
+    expect(screen.getByText(API_KEY_LABELS.EXTEND_CONFIRM_REMOVE)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_CONFIRM_APPLY }));
+    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', null, true));
+  });
+
+  // ── An "Extend" button that shortens ──────────────────────────────────────
+  //
+  // Every preset REPLACES the expiry. On a key with eleven months left, "30
+  // days" cuts ten of them; on a key with no expiry, any preset invents one.
+  // Both are one click from a button labelled "Extend", and both break a live
+  // partner integration. The server 409s them; the dialog asks first.
+
+  it('states the CURRENT expiry, so the presets can be read as longer or shorter', () => {
+    render(<ApiKeySettings {...props([baseKey])} />);
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
+
+    expect(screen.getByTestId('extend-current-expiry').textContent)
+      .toMatch(/Currently expires/);
+  });
+
+  it('says so when the key has no expiry at all', () => {
+    render(<ApiKeySettings {...props([
+      { ...baseKey, status: 'active', expires_at: null, days_until_expiry: null },
+    ])} />);
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
+
+    expect(screen.getByTestId('extend-current-expiry'))
+      .toHaveTextContent(API_KEY_LABELS.EXTEND_CURRENT_NONE);
+  });
+
+  it('asks before SHORTENING a healthy key, and does not call through until confirmed', async () => {
+    const longLived: ApiKeyMasked = {
+      ...baseKey,
+      status: 'active',
+      expires_at: new Date(Date.now() + 330 * 24 * 60 * 60 * 1000).toISOString(),
+      days_until_expiry: 330,
+    };
+    const onExtend = vi.fn().mockResolvedValue(undefined);
+    render(<ApiKeySettings {...props([longLived], { onExtend })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
+    fireEvent.click(await screen.findByRole('button', { name: API_KEY_LABELS.EXTEND_30_DAYS }));
+
+    expect(onExtend).not.toHaveBeenCalled();
+    expect(screen.getByText(/EARLIER than/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_CONFIRM_APPLY }));
+    // allow_shorten is what stops the server 409ing the confirmed change.
+    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', 30, true));
+  });
+
+  it('lets the user back out of a shortening without changing anything', async () => {
+    const longLived: ApiKeyMasked = {
+      ...baseKey,
+      status: 'active',
+      expires_at: new Date(Date.now() + 330 * 24 * 60 * 60 * 1000).toISOString(),
+      days_until_expiry: 330,
+    };
+    const onExtend = vi.fn().mockResolvedValue(undefined);
+    render(<ApiKeySettings {...props([longLived], { onExtend })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
+    fireEvent.click(await screen.findByRole('button', { name: API_KEY_LABELS.EXTEND_30_DAYS }));
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_CONFIRM_CANCEL }));
+
+    expect(onExtend).not.toHaveBeenCalled();
+    // Back to the presets, dialog still open.
+    expect(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_90_DAYS })).toBeInTheDocument();
+  });
+
+  it('asks before putting an expiry on a key that currently has none', async () => {
+    const immortal: ApiKeyMasked = {
+      ...baseKey, status: 'active', expires_at: null, days_until_expiry: null,
+    };
+    const onExtend = vi.fn().mockResolvedValue(undefined);
+    render(<ApiKeySettings {...props([immortal], { onExtend })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
+    fireEvent.click(await screen.findByRole('button', { name: API_KEY_LABELS.EXTEND_365_DAYS }));
+
+    expect(onExtend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_CONFIRM_APPLY }));
+    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', 365, true));
+  });
+
+  it('does NOT ask when extending an already-EXPIRED key — every move forward helps', async () => {
+    const onExtend = vi.fn().mockResolvedValue(undefined);
+    render(<ApiKeySettings {...props([
+      { ...baseKey, status: 'expired', expires_at: '2026-07-01T00:00:00Z', days_until_expiry: -73 },
+    ], { onExtend })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
+    fireEvent.click(await screen.findByRole('button', { name: API_KEY_LABELS.EXTEND_30_DAYS }));
+
+    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', 30, false));
   });
 
   it('surfaces a scrubbed failure and keeps the dialog open — the expiry did NOT change', async () => {
@@ -169,7 +267,7 @@ describe('extend action', () => {
     fireEvent.click(screen.getByRole('button', { name: API_KEY_LABELS.EXTEND_KEY }));
     fireEvent.click(await screen.findByRole('button', { name: API_KEY_LABELS.EXTEND_365_DAYS }));
 
-    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', 365));
+    await waitFor(() => expect(onExtend).toHaveBeenCalledWith('key-1', 365, false));
     await waitFor(() => {
       expect(screen.queryByText(API_KEY_LABELS.EXTEND_TITLE)).not.toBeInTheDocument();
     });

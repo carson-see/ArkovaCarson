@@ -106,3 +106,50 @@ describe('the reader can act on it', () => {
     expect(html).toMatch(/nothing to redistribute/i);
   });
 });
+
+describe('subject-line sanitisation (SCRUM-5023 review)', () => {
+  // The key name is caller-supplied (`z.string().min(1).max(100)` — newlines
+  // and quotes included) and lands inside quotes in the subject. Resend builds
+  // the message from JSON, so CR/LF header injection is not reachable today;
+  // this does not depend on that staying true.
+  it('strips CR/LF from the subject', () => {
+    const { subject } = buildApiKeyExpiryEmail({
+      ...base, kind: 'expired',
+      keyName: 'prod\r\nBcc: attacker@evil.example',
+    });
+
+    expect(subject).not.toMatch(/[\r\n]/);
+    expect(subject).toContain('prod Bcc: attacker@evil.example');
+  });
+
+  it('collapses whitespace used to push content off the visible subject', () => {
+    const { subject } = buildApiKeyExpiryEmail({
+      ...base, kind: 'expired',
+      keyName: 'prod' + ' '.repeat(60) + 'ACTION REQUIRED',
+    });
+
+    expect(subject).toContain('prod ACTION REQUIRED');
+  });
+
+  it('bounds the key name so a 100-char name cannot crowd out the notice', () => {
+    const { subject } = buildApiKeyExpiryEmail({ ...base, kind: 'expired', keyName: 'x'.repeat(100) });
+
+    expect(subject).toContain('has expired');
+    expect(subject.length).toBeLessThan(200);
+  });
+
+  it('does NOT html-escape the subject — a subject line is not markup', () => {
+    // `esc()` here would ship a literal `&amp;` to the reader's inbox.
+    const { subject } = buildApiKeyExpiryEmail({ ...base, kind: 'expired', keyName: 'Ops & Billing' });
+
+    expect(subject).toContain('Ops & Billing');
+    expect(subject).not.toContain('&amp;');
+  });
+
+  it('still escapes the key name in the HTML BODY', () => {
+    const { html } = buildApiKeyExpiryEmail({ ...base, kind: 'expiring', keyName: '<img src=x onerror=alert(1)>' });
+
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&lt;img src=x');
+  });
+});

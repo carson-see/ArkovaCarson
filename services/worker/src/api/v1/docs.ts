@@ -9,7 +9,7 @@ import { Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { API_KEY_SCOPES } from '../apiScopes.js';
 import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
-import { MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js';
+import { EXPIRING_SOON_WINDOW_DAYS, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js';
 
 const router = Router();
 
@@ -436,7 +436,7 @@ export const openApiSpec: Record<string, any> = {
       patch: {
         summary: 'Update API key',
         description:
-          'Update the name or scopes of an existing API key, revoke it, or change its expiry. An expiry change cannot be combined with an activation change — send one intent per request.',
+          "Update the name or scopes of an existing API key, revoke it, or change its expiry. Expiry is set with expires_in_days (a duration from now; null removes it) — expires_at is not settable. An expiry sent alongside a revoke (is_active: false) is dropped and the revoke is honoured; an expiry cannot be combined with reactivating a key.",
         operationId: 'updateApiKey',
         tags: ['Key Management'],
         security: [{ SupabaseJWT: [] }],
@@ -458,15 +458,24 @@ export const openApiSpec: Record<string, any> = {
                   // SCRUM-5023. Expiry is set by DURATION, never by timestamp:
                   // the server holds the clock, and an accepted client
                   // timestamp could write an already-past expiry.
+                  //
+                  // `nullable: true` (NOT `type: 'null'`) — this document
+                  // declares OpenAPI 3.0.3, where the only JSON types are
+                  // string/number/integer/boolean/array/object. `type: 'null'`
+                  // is 3.1 syntax and is invalid here; see the structural
+                  // check in docs.openapi30.test.ts.
                   expires_in_days: {
                     type: 'integer',
                     minimum: 1,
                     maximum: MAX_EXPIRES_IN_DAYS,
-                    description: 'Set the expiry this many days from now. Replaces any existing expiry; it does not add to it.',
+                    nullable: true,
+                    description:
+                      'Set the expiry this many days from now, or null to remove the expiry entirely. REPLACES any existing expiry — it does not add to it — so a value earlier than the current expiry is refused with 409 api_key_expiry_would_shorten unless allow_shorten is true.',
                   },
-                  expires_at: {
-                    type: 'null',
-                    description: 'Send null to remove the expiry entirely. No other value is accepted.',
+                  allow_shorten: {
+                    type: 'boolean',
+                    default: false,
+                    description: 'Acknowledge that expires_in_days moves the expiry EARLIER (or gives an unexpiring key an expiry). Required for such a change; ignored otherwise.',
                   },
                 },
               },
@@ -479,7 +488,8 @@ export const openApiSpec: Record<string, any> = {
           '401': { $ref: '#/components/responses/Unauthorized' },
           '404': { $ref: '#/components/responses/NotFound' },
           '409': {
-            description: 'The key was revoked. Revocation is terminal — it cannot be reactivated or extended.',
+            description:
+              'api_key_already_revoked — revocation is terminal, so the key cannot be reactivated or extended; or api_key_expiry_would_shorten — the requested expiry is earlier than the current one and allow_shorten was not set.',
           },
         },
       },
@@ -2047,13 +2057,13 @@ export const openApiSpec: Record<string, any> = {
             type: 'string',
             enum: ['active', 'expiring_soon', 'expired', 'revoked'],
             description:
-              'Server-derived usability. Prefer this over is_active/expires_at: is_active is a stored flag that stays true on an expired key, while authentication rejects it. expiring_soon means live and expiring within 14 days.',
+              `Server-derived usability. Prefer this over is_active/expires_at: is_active is a stored flag that stays true on an expired key, while authentication rejects it. expiring_soon means live and expiring within ${EXPIRING_SOON_WINDOW_DAYS} days.`,
           },
-          expires_in_days: {
+          days_until_expiry: {
             type: 'integer',
             nullable: true,
             description:
-              'Whole days until expiry — 0 on the final day, negative once past, null when the key does not expire.',
+              'Whole days until expiry — 0 on the final day, negative once past, null when the key does not expire. Deliberately NOT named expires_in_days: that is the REQUEST field on POST/PATCH and means a duration to set, not a countdown to read.',
           },
         },
       },

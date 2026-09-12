@@ -123,7 +123,7 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../utils/auditEvent.js', () => ({
-  recordAuditEvent: vi.fn().mockResolvedValue(undefined),
+  recordAuditEvent: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 import { keysRouter, UpdateKeySchema, CreateKeySchema } from './keys.js';
@@ -177,7 +177,7 @@ describe('GET /api/v1/keys — §1.8 additive status fields', () => {
     const [key] = res.body.keys;
 
     expect(key.status).toBe('expired');
-    expect(key.expires_in_days).toBeLessThan(0);
+    expect(key.days_until_expiry).toBeLessThan(0);
     // §1.8: the frozen columns are byte-unchanged. A client reading is_active
     // sees exactly what it saw before — it just now has a better field.
     expect(key.is_active).toBe(true);
@@ -185,22 +185,34 @@ describe('GET /api/v1/keys — §1.8 additive status fields', () => {
   });
 
   it('reports expiring_soon with days remaining inside the window', async () => {
-    // 5.5 days out: `expires_in_days` floors to 5 regardless of how many
+    // 5.5 days out: `days_until_expiry` floors to 5 regardless of how many
     // milliseconds elapse between seeding and the request, so this pins the
     // value rather than racing the clock.
     seedKey({ expires_at: new Date(Date.now() + 5.5 * DAY_MS).toISOString() });
 
     const res = await request(makeApp()).get('/api/v1/keys').expect(200);
     expect(res.body.keys[0].status).toBe('expiring_soon');
-    expect(res.body.keys[0].expires_in_days).toBe(5);
+    expect(res.body.keys[0].days_until_expiry).toBe(5);
   });
 
-  it('reports active with a null expires_in_days for a key that never expires', async () => {
+  it('reports active with a null days_until_expiry for a key that never expires', async () => {
     seedKey({ expires_at: null });
 
     const res = await request(makeApp()).get('/api/v1/keys').expect(200);
     expect(res.body.keys[0].status).toBe('active');
-    expect(res.body.keys[0].expires_in_days).toBeNull();
+    expect(res.body.keys[0].days_until_expiry).toBeNull();
+  });
+
+  it('does NOT echo an expires_in_days field — that name is the REQUEST field', async () => {
+    // `expires_in_days` on POST/PATCH means "set the expiry this many days
+    // out". A response field of the same name means a countdown that goes
+    // negative. One name, two opposite meanings, is how a client ends up
+    // PUTting a countdown back as a duration.
+    seedKey({ expires_at: new Date(Date.now() + 3 * DAY_MS).toISOString() });
+
+    const res = await request(makeApp()).get('/api/v1/keys').expect(200);
+    expect('expires_in_days' in res.body.keys[0]).toBe(false);
+    expect(res.body.keys[0].days_until_expiry).toBe(2);
   });
 
   it('reports revoked ahead of expired when the row is both', async () => {
@@ -263,10 +275,22 @@ describe('POST /api/v1/keys — a created key can never be born expired', () => 
       new Date(res.body.created_at).getTime(),
     );
     expect(res.body.status).toBe('active');
-    // 30 days out floors to 30 or 29 depending on sub-millisecond drift
-    // between the write and the read; both are correct, 28 or 31 is not.
-    expect(res.body.expires_in_days).toBeGreaterThanOrEqual(29);
-    expect(res.body.expires_in_days).toBeLessThanOrEqual(30);
+    // EXACTLY 30. The route reads the clock ONCE for both the write and the
+    // response; reading it twice makes `now + 30d` fall a few milliseconds
+    // short of 30 whole days by the time the countdown is floored, so a key
+    // created for 30 days reports 29. A range assertion hid that.
+    expect(res.body.days_until_expiry).toBe(30);
+  });
+
+  it('reports the FULL day count on a one-day key, never "expires today"', async () => {
+    // The same off-by-one at its worst: a 1-day key floors to 0, which the
+    // dashboard renders as "expires today" on a credential just issued.
+    const res = await request(makeApp())
+      .post('/api/v1/keys')
+      .send({ name: 'one-day', scopes: ['verify'], expires_in_days: 1 })
+      .expect(201);
+
+    expect(res.body.days_until_expiry).toBe(1);
   });
 });
 
@@ -281,8 +305,8 @@ describe('PATCH /api/v1/keys/:keyId — owner-controlled expiry', () => {
 
     expect(new Date(res.body.expires_at).getTime()).toBeGreaterThan(Date.now());
     expect(res.body.status).toBe('active');
-    expect(res.body.expires_in_days).toBeGreaterThanOrEqual(89);
-    expect(res.body.expires_in_days).toBeLessThanOrEqual(90);
+    // Exactly 90, for the same one-clock reason as POST above.
+    expect(res.body.days_until_expiry).toBe(90);
   });
 
   it('sets an expiry from NOW, not from the old expiry — an extend must not stack on a stale base', async () => {
@@ -299,17 +323,17 @@ describe('PATCH /api/v1/keys/:keyId — owner-controlled expiry', () => {
     expect(new Date(res.body.expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it('clears the expiry with expires_at: null', async () => {
+  it('clears the expiry with expires_in_days: null', async () => {
     const id = seedKey({ expires_at: new Date(Date.now() + 3 * DAY_MS).toISOString() });
 
     const res = await request(makeApp())
       .patch(`/api/v1/keys/${id}`)
-      .send({ expires_at: null })
+      .send({ expires_in_days: null })
       .expect(200);
 
     expect(res.body.expires_at).toBeNull();
     expect(res.body.status).toBe('active');
-    expect(res.body.expires_in_days).toBeNull();
+    expect(res.body.days_until_expiry).toBeNull();
   });
 
   it('writes an api_key.expiry_changed audit row carrying old and new values', async () => {
@@ -342,7 +366,7 @@ describe('PATCH /api/v1/keys/:keyId — owner-controlled expiry', () => {
 
     await request(makeApp())
       .patch(`/api/v1/keys/${id}`)
-      .send({ expires_at: null })
+      .send({ expires_in_days: null })
       .expect(200);
 
     const call = vi.mocked(recordAuditEvent).mock.calls.find(
@@ -399,12 +423,121 @@ describe('PATCH /api/v1/keys/:keyId — owner-controlled expiry', () => {
     expect(UpdateKeySchema.safeParse({ expires_at: '2030-01-01T00:00:00Z' }).success).toBe(false);
   });
 
-  it('rejects sending both expires_in_days and expires_at', () => {
-    expect(UpdateKeySchema.safeParse({ expires_in_days: 30, expires_at: null }).success).toBe(false);
+  it('rejects an expiry change bundled with a REACTIVATION', () => {
+    // No safe ordering: the caller asked to bring a key back AND to re-time it
+    // in one request, and the two readings differ materially.
+    expect(UpdateKeySchema.safeParse({ is_active: true, expires_in_days: 30 }).success).toBe(false);
   });
 
-  it('rejects an expiry change bundled with a revoke — one intent per request', () => {
-    expect(UpdateKeySchema.safeParse({ is_active: false, expires_in_days: 30 }).success).toBe(false);
+  it('HONOURS a revoke that carries an expiry, dropping the expiry', async () => {
+    // A blanket "one intent per request" refusal turned the request that stops
+    // a leaked credential into a 400 that revoked nothing, just because the
+    // body carried a second field. A revoke is always safe to honour.
+    const id = seedKey({ expires_at: new Date(Date.now() + 30 * DAY_MS).toISOString() });
+
+    const res = await request(makeApp())
+      .patch(`/api/v1/keys/${id}`)
+      .send({ is_active: false, expires_in_days: 30 })
+      .expect(200);
+
+    expect(res.body.status).toBe('revoked');
+    expect(h.state.api_keys[0].is_active).toBe(false);
+    expect(h.state.api_keys[0].revoked_at).toBeTruthy();
+    // The expiry is NOT rewritten onto a key revocation just killed.
+    expect(vi.mocked(recordAuditEvent).mock.calls.some(
+      ([row]) => (row as Record<string, unknown>).event_type === 'api_key.expiry_changed',
+    )).toBe(false);
+  });
+
+  // ── An "extend" that quietly shortens ────────────────────────────────────
+  //
+  // `expires_in_days` REPLACES the expiry; it does not add to it. That is the
+  // right semantics (stacking onto a stale base is what leaves HakiChain's key
+  // in the past), but it means the SAME request that rescues a lapsed key can
+  // amputate a healthy one, and the caller cannot tell the two apart: both are
+  // `{expires_in_days: 30}` sent from a button labelled "Extend".
+
+  it('refuses a value EARLIER than the current expiry (409, nothing written)', async () => {
+    const farFuture = new Date(Date.now() + 330 * DAY_MS).toISOString();
+    const id = seedKey({ expires_at: farFuture });
+
+    const res = await request(makeApp())
+      .patch(`/api/v1/keys/${id}`)
+      .send({ expires_in_days: 30 })
+      .expect(409);
+
+    expect(res.body.error).toBe('api_key_expiry_would_shorten');
+    expect(res.body.current_expires_at).toBe(farFuture);
+    expect(h.state.api_keys[0].expires_at).toBe(farFuture);
+    expect(vi.mocked(recordAuditEvent).mock.calls.some(
+      ([row]) => (row as Record<string, unknown>).event_type === 'api_key.expiry_changed',
+    )).toBe(false);
+  });
+
+  it('refuses to give a NEVER-EXPIRING key an expiry without acknowledgement', async () => {
+    // The starkest case: the key lives forever today, so every preset is a
+    // reduction, and `Infinity` is the only honest reading of its current end.
+    const id = seedKey({ expires_at: null });
+
+    const res = await request(makeApp())
+      .patch(`/api/v1/keys/${id}`)
+      .send({ expires_in_days: 3650 })
+      .expect(409);
+
+    expect(res.body.error).toBe('api_key_expiry_would_shorten');
+    expect(res.body.current_expires_at).toBeNull();
+    expect(h.state.api_keys[0].expires_at).toBeNull();
+  });
+
+  it('applies a shortening when the caller sends allow_shorten', async () => {
+    const id = seedKey({ expires_at: new Date(Date.now() + 330 * DAY_MS).toISOString() });
+
+    const res = await request(makeApp())
+      .patch(`/api/v1/keys/${id}`)
+      .send({ expires_in_days: 30, allow_shorten: true })
+      .expect(200);
+
+    expect(res.body.days_until_expiry).toBe(30);
+  });
+
+  it('does NOT block a genuine extension', async () => {
+    const id = seedKey({ expires_at: new Date(Date.now() + 3 * DAY_MS).toISOString() });
+
+    const res = await request(makeApp())
+      .patch(`/api/v1/keys/${id}`)
+      .send({ expires_in_days: 90 })
+      .expect(200);
+
+    expect(res.body.days_until_expiry).toBe(90);
+  });
+
+  it('does NOT block a short extension of an ALREADY-EXPIRED key', async () => {
+    // Every forward move improves a key that is already refusing traffic, and
+    // this is the remedy path the dashboard offers straight from the failure.
+    const id = seedKey({ expires_at: '2026-07-01T00:00:00.000Z' });
+
+    const res = await request(makeApp())
+      .patch(`/api/v1/keys/${id}`)
+      .send({ expires_in_days: 1 })
+      .expect(200);
+
+    expect(res.body.days_until_expiry).toBe(1);
+  });
+
+  it('does NOT block REMOVING an expiry — that only lengthens the key\'s life', async () => {
+    const id = seedKey({ expires_at: new Date(Date.now() + 3 * DAY_MS).toISOString() });
+
+    const res = await request(makeApp())
+      .patch(`/api/v1/keys/${id}`)
+      .send({ expires_in_days: null })
+      .expect(200);
+
+    expect(res.body.expires_at).toBeNull();
+  });
+
+  it('accepts allow_shorten as a schema field', () => {
+    expect(UpdateKeySchema.safeParse({ expires_in_days: 30, allow_shorten: true }).success).toBe(true);
+    expect(UpdateKeySchema.safeParse({ expires_in_days: 30, allow_shorten: 'yes' }).success).toBe(false);
   });
 
   it('leaves the existing revoke path working, untouched', async () => {

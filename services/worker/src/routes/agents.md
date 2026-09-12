@@ -1,7 +1,9 @@
 ## 2026-09-12 — SCRUM-5023: `POST /jobs/api-key-expiry-notice`
 
 Daily API-key expiry notice (job in `jobs/api-key-expiry-notice.ts`, scheduler entry in
-`scripts/gcp-setup/cloud-scheduler.sh`). Flag-free but safe unconfigured: with no email provider the
+`scripts/gcp-setup/cloud-scheduler.sh`). **Cloud Scheduler is the only trigger — there is deliberately
+no `scheduled.ts` in-process entry**, so nothing about this job double-fires on a warm instance.
+Flag-free but safe unconfigured: with no email provider the
 job returns `skipped: true` without touching the database or the audit ledger, so an unconfigured
 environment does not consume a key's one warning.
 

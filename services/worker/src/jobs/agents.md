@@ -3,20 +3,46 @@
 Key expiry was entirely silent — no warning before, no notice after. This daily job emails an org's
 ORG_ADMINs at T-7 and once within 24h of a lapse.
 
-**The dedupe ledger is `audit_events`, not a column, and that is deliberate.** A notice writes
-`api_key.expiry_notice` (target_id = key id, `details.kind`) and a key carrying a matching row inside
-7 days is skipped. This story adds no migration, but the ledger is also the right shape: the job can
-run more than once a day in two independent ways — Cloud Scheduler retrying a 500, and the in-process
-backup schedule, which on Cloud Run fires on EVERY warm instance (prod `minScale = 2`, so an
-in-process cron double-runs by default). Without it the first partner to reach T-7 gets a fortnight of
-daily duplicates. **DO NOT** collapse the dedupe across kinds: `expiring` and `expired` are different
-events with different asks, and folding them swallows the one that matters most.
+**The dedupe ledger is `audit_events`, not a column, and it is keyed on (kind, `expires_at`).** A
+notice writes `api_key.expiry_notice` (target_id = key id, `details.kind`, `details.expires_at`) and a
+key carrying a matching row is skipped. **DO NOT** replace that key with a time window. A key that
+lapsed in July stays lapsed, so any horizon — 7 days or otherwise — re-mails its `expired` notice
+every horizon, forever; and an `expiring` notice keyed to a calendar window re-fires at the seam. The
+expiry VALUE is the thing that changes when an owner acts, which is exactly why it is the right key:
+extend a key and the next approach earns a fresh warning. **DO NOT** collapse the dedupe across kinds
+either: `expiring` and `expired` are different events with different asks, and folding them swallows
+the one that matters most.
 
-**A ledger row is written ONLY after a successful send.** Recording on failure would mark the key
-notified for 7 days and permanently swallow the one warning it had coming — the same silence, now
-with an audit row asserting otherwise. Equally, the dedupe lookup THROWS on a query error rather than
-reading "no prior notice": a failed lookup that defaults to sending re-mails on every run for as long
-as the error lasts.
+**The sweep has NO lower bound on `expires_at`.** It selects every live key expiring at or before
+T+7, however long ago. The original 24h lookback matched the cron period exactly, so a key was
+eligible for its lapse notice on one run and one run only — a single missed or failed execution lost
+it permanently, and the 13 keys already lapsed when this job shipped (HakiChain's two among them)
+could never be told at all. The (kind, `expires_at`) ledger is what makes an unbounded lower bound
+safe. **First prod run will therefore mail every already-lapsed key's admins once.** That is the
+intended remedy, not a regression — but it is a one-off burst worth expecting.
+
+**Cloud Scheduler is the ONLY trigger.** There is no `routes/scheduled.ts` entry for this job. The
+dedupe is not defending against an in-process double-fire; it is defending against Scheduler
+re-driving a failed attempt, and against the daily re-selection of every key still inside the window.
+A concurrent overlap remains theoretically reachable (an attempt that outlives the 600s
+`attemptDeadline` while Cloud Run keeps executing it), which read-then-write dedupe cannot close —
+`withRunLease` from `jobs/run-lease.ts` is the fix if it is ever observed. Its spec would have to live
+OUTSIDE `RUN_LEASE_SPECS`, like `DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`: a daily cadence cannot satisfy
+that suite's `ttlMs > cadence` assertion under the 60-minute Cloud Run ceiling.
+
+**A ledger row is written ONLY after a successful send, and the write is CHECKED.** Recording on
+failure would mark the key notified and permanently swallow the one warning it had coming.
+Recording WITHOUT checking is the same defect pointing the other way: `recordAuditEvent` **never
+rejects**, so an `await` that ignores its result proves only that the attempt finished — a silently
+lost row re-mails every admin daily until the insert starts working. `recordAuditEvent` reports
+`{ ok }` for exactly this caller; a false throws and counts as a per-key failure. Equally, the dedupe
+lookup THROWS on a query error rather than reading "no prior notice": a failed lookup that defaults to
+sending re-mails on every run for as long as the error lasts.
+
+**Recipients are the UNION of `profiles.role = 'ORG_ADMIN'` and `org_members` owner/admin**, resolved
+through `utils/orgAdminRecipients.ts`. A profiles-only lookup loses real administrators: prod's
+"Fragile Rocks" org has an active expiring key, ZERO `profiles` ORG_ADMINs, and ONE `org_members`
+admin with a live address — it would have counted `noRecipients` and lapsed in silence.
 
 Unconfigured mailer ⇒ the whole run no-ops (`skipped: true`, `reason: 'email_not_configured'`) before
 touching the database. No ledger row, so a configured environment still delivers tomorrow. The route

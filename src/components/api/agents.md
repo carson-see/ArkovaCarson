@@ -9,8 +9,16 @@ refuses, and 13 of 19 prod rows were in that state.
 `resolveKeyStatus()` keeps ONE local branch, for the rollout window in which a deployed frontend can
 still be talking to a worker that does not send `status`. Without it every key renders Active for the
 length of a deploy — SCRUM-4515 again, for as long as the rollout takes. It is deliberately cruder
-(no `expiring_soon`): an old worker sends no `expires_in_days` to label one with. **DO NOT** grow it
+(no `expiring_soon`): an old worker sends no `days_until_expiry` to label one with. **DO NOT** grow it
 into a full second derivation.
+
+**The Extend dialog confirms anything that does not plainly lengthen the key's life.** Every preset
+REPLACES the expiry, so "30 days" on a key with eleven months left cuts ten of them and any preset on
+a never-expiring key invents one — both one click from a button labelled "Extend". `shortensKey()`
+mirrors the server's 409 (`api_key_expiry_would_shorten`); the server is the authority, this only
+decides whether to ask. "Remove expiry" is confirmed for the opposite reason: it is the only option
+that makes a credential permanent. The dialog states the CURRENT expiry before offering any preset,
+because a user who cannot see it cannot tell which presets extend and which cut.
 
 - `expiring_soon` is **amber** and carries the countdown. A warning the owner can act on is the
   deliverable; a second shade of "fine" is not. Plurality is handled (`today` / `in 1 day` /

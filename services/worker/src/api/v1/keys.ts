@@ -18,7 +18,7 @@ import type { TypeSafeTablesUpdate } from '../../types/database-overrides.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { API_KEY_SCOPES, DEFAULT_API_KEY_SCOPES } from '../apiScopes.js';
-import { keyExpiryFields, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js';
+import { deriveKeyStatus, isExpiredAt, keyExpiryFields, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js';
 
 const router = Router();
 
@@ -77,17 +77,33 @@ export const UpdateKeySchema = z.object({
   is_active: z.boolean().optional(),
   revocation_reason: z.string().max(500).optional(),
   /**
-   * SCRUM-5023 — extend or set an expiry, counted from NOW on the server.
-   * Same bounds as creation.
+   * SCRUM-5023 — ONE field controls the expiry, and it is a DURATION counted
+   * from now on the server: `n` sets the expiry n days out, `null` removes it
+   * entirely. A client-supplied timestamp is never accepted — it would trust
+   * the caller's clock and re-open the exact door this story closes, letting
+   * an owner write an already-past expiry and re-create the silent lapse by
+   * hand. Same bounds as creation.
    */
-  expires_in_days: z.number().int().positive().max(MAX_EXPIRES_IN_DAYS).optional(),
+  expires_in_days: z.number().int().positive().max(MAX_EXPIRES_IN_DAYS).nullable().optional(),
   /**
-   * Clear the expiry. `null` is the ONLY accepted value: a client-supplied
-   * timestamp would (a) trust the caller's clock and (b) re-open the exact
-   * door this story closes, letting an owner write an already-past expiry
-   * and re-create the silent-lapse defect by hand.
+   * NOT a way to set the expiry — a REJECTER. `expires_at` is the response
+   * field's name, so a client that reads a key and PUTs part of it back will
+   * reach for it; without this it would be stripped as an unknown key and the
+   * request would 200 having changed nothing. `z.null()` makes any value a
+   * loud 400 pointing at `expires_in_days`, and a literal `null` is a no-op.
    */
-  expires_at: z.null().optional(),
+  expires_at: z.null({
+    message: 'expires_at cannot be set directly. Use expires_in_days (a number of days from now, or null to remove the expiry).',
+  }).optional(),
+  /**
+   * SCRUM-5023 — acknowledge that the new expiry is EARLIER than the current
+   * one. Off by default: `expires_in_days` replaces the expiry rather than
+   * adding to it, so `30` on a key with eleven months left silently cuts ten
+   * of them, and on a key with no expiry at all it invents one. Both are
+   * indistinguishable from an extend at the call site and both break a live
+   * partner integration. The route 409s instead unless this says otherwise.
+   */
+  allow_shorten: z.boolean().optional(),
 }).refine(
   (d) => d.revocation_reason === undefined || d.is_active === false,
   {
@@ -95,19 +111,15 @@ export const UpdateKeySchema = z.object({
     path: ['revocation_reason'],
   },
 ).refine(
-  (d) => !(d.expires_in_days !== undefined && d.expires_at === null),
+  // One intent per request — but ONLY against a REACTIVATION. The original
+  // form of this rule also rejected `{is_active: false, expires_in_days: n}`,
+  // which used to revoke the key and now 400s without revoking it: the request
+  // that stops a leaked credential turned into a no-op because it carried a
+  // second field. A revoke is always safe to honour, so the expiry is dropped
+  // (see the handler) rather than the whole request.
+  (d) => !(d.expires_in_days !== undefined && d.is_active === true),
   {
-    message: 'Send either expires_in_days or expires_at: null, not both',
-    path: ['expires_in_days'],
-  },
-).refine(
-  // One intent per request. A body carrying both a revoke and an expiry change
-  // has no correct ordering: revoking makes the key permanently unusable, so
-  // the expiry write would be applied to a corpse and the response would
-  // report an expiry the caller can never use.
-  (d) => !((d.expires_in_days !== undefined || d.expires_at === null) && d.is_active !== undefined),
-  {
-    message: 'An expiry change cannot be combined with an activation change',
+    message: 'An expiry change cannot be combined with reactivating a key',
     path: ['expires_in_days'],
   },
 );
@@ -178,9 +190,13 @@ router.post('/', async (req, res) => {
     // Generate key
     const { raw, hash, prefix } = generateApiKey(hmacSecret);
 
-    // Calculate expiry
+    // Calculate expiry. ONE clock for the write and the response below: two
+    // `new Date()` reads make `now + 30d` land a few milliseconds short of 30
+    // whole days once `days_until_expiry` floors it, so a freshly created
+    // 30-day key reports 29 and a 1-day key reports "expires today".
+    const now = new Date();
     const expiresAt = expires_in_days
-      ? new Date(Date.now() + expires_in_days * 24 * 60 * 60 * 1000).toISOString()
+      ? new Date(now.getTime() + expires_in_days * 24 * 60 * 60 * 1000).toISOString()
       : null;
 
     // Insert into DB (hash only — raw key never stored)
@@ -213,7 +229,7 @@ router.post('/', async (req, res) => {
     // Return raw key ONCE — Constitution 1.4.
     res.status(201).json({
       ...toPublicKey(inserted),
-      ...keyExpiryFields(inserted),
+      ...keyExpiryFields(inserted, now),
       key: raw,
       warning: 'Save this key now. It cannot be retrieved again.',
     });
@@ -326,15 +342,23 @@ router.patch('/:keyId', async (req, res) => {
       return;
     }
 
+    // ONE clock for this request: the expiry written below and the status
+    // derived for the response are computed from the same instant.
+    const now = new Date();
+
     const updateData: TypeSafeTablesUpdate<'api_keys'> = {};
     if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
 
     // ── SCRUM-5023: expiry change (extend / set / clear) ──────────────────
-    // The schema guarantees at most one of these is present and that neither
-    // arrives alongside `is_active`, so this block cannot race the revoke
-    // block below.
-    const wantsExpiryChange =
-      parsed.data.expires_in_days !== undefined || parsed.data.expires_at === null;
+    // A REVOKE WINS. `{is_active: false, expires_in_days: n}` is honoured as a
+    // revoke with the expiry dropped: refusing the whole request would turn
+    // the call that stops a leaked credential into a 400, and writing the
+    // expiry too would stamp a future date on a key revocation has made
+    // permanently unusable. The schema already forbids pairing an expiry with
+    // a REACTIVATION, which has no safe reading either way.
+    const revoking = parsed.data.is_active === false;
+    const requestedDays = revoking ? undefined : parsed.data.expires_in_days;
+    const wantsExpiryChange = requestedDays !== undefined;
     let expiryChange: { old: string | null; next: string | null } | null = null;
 
     if (wantsExpiryChange) {
@@ -349,7 +373,7 @@ router.patch('/:keyId', async (req, res) => {
       // would go on refusing one of those while the owner stared at a freshly
       // extended expiry — the same contradiction between stored state and
       // usability that this story exists to remove.
-      if (existing.revoked_at || existing.is_active === false) {
+      if (deriveKeyStatus(existing) === 'revoked') {
         res.status(409).json({
           error: 'api_key_already_revoked',
           message: 'This API key was revoked and cannot be extended. Create a new key instead.',
@@ -357,13 +381,39 @@ router.patch('/:keyId', async (req, res) => {
         return;
       }
 
-      const next = parsed.data.expires_in_days !== undefined
+      const next = requestedDays !== null
         // Counted from NOW, never from the OLD expiry. Stacking onto a stale
         // base is the failure this story is about: HakiChain's key expired
         // 2026-07-01, and `old + 30d` would land it in the past again — an
         // "extend" that visibly succeeds and changes nothing.
-        ? new Date(Date.now() + parsed.data.expires_in_days * 24 * 60 * 60 * 1000).toISOString()
+        //
+        // ONE `now` for the write and the response. Reading the clock twice
+        // makes `now + 30d` fall a few milliseconds short of 30 whole days by
+        // the time the response is derived, so a 30-day key reports 29 and a
+        // 1-day key reports 0 — "expires today" on a key just created.
+        ? new Date(now.getTime() + requestedDays * 24 * 60 * 60 * 1000).toISOString()
         : null;
+
+      // AN EXTEND MUST NOT SHORTEN. `expires_in_days` REPLACES the expiry, so
+      // `30` on a key with eleven months left cuts ten of them, and on a key
+      // with no expiry it invents one — and the caller cannot tell either from
+      // a genuine extend, because the request looks identical. A key already
+      // in the past is exempt: every forward move is an improvement there, and
+      // that is the remedy path the dashboard offers from the failure itself.
+      if (!parsed.data.allow_shorten && next !== null && !isExpiredAt(existing.expires_at, now)) {
+        const currentMs = existing.expires_at ? new Date(existing.expires_at).getTime() : Infinity;
+        if (new Date(next).getTime() < currentMs) {
+          res.status(409).json({
+            error: 'api_key_expiry_would_shorten',
+            message: existing.expires_at
+              ? 'That expiry is earlier than the key\'s current one. Send allow_shorten: true to shorten it deliberately.'
+              : 'This key has no expiry, so setting one shortens its life. Send allow_shorten: true to do that deliberately.',
+            current_expires_at: existing.expires_at ?? null,
+            requested_expires_at: next,
+          });
+          return;
+        }
+      }
 
       updateData.expires_at = next;
       expiryChange = { old: existing.expires_at ?? null, next };
@@ -462,7 +512,7 @@ router.patch('/:keyId', async (req, res) => {
       );
     }
 
-    res.json({ ...toPublicKey(updated), ...keyExpiryFields(updated) });
+    res.json({ ...toPublicKey(updated), ...keyExpiryFields(updated, now) });
   } catch (err) {
     logger.error({ error: err }, 'API key update failed');
     res.status(500).json({ error: 'Internal server error' });

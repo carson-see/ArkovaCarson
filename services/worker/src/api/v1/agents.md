@@ -1,4 +1,4 @@
-## 2026-09-12 — SCRUM-5023: `status` / `expires_in_days` on `/keys`, and expiry is now PATCHable
+## 2026-09-12 — SCRUM-5023: `status` / `days_until_expiry` on `/keys`, and expiry is now PATCHable
 
 **Read `keyExpiryStatus.ts` before touching any key-status logic. It is the ONE derivation.**
 `api_keys` stores `is_active`, `revoked_at` and `expires_at` as three independent columns, and every
@@ -6,7 +6,7 @@ consumer used to combine them itself. `middleware/apiKeyAuth.ts` has refused exp
 written (`api_key_expired`); GET `/keys` returned the raw columns and left the caller to guess. Prod
 (read-only, 2026-09-12) held 19 keys, **13 of them `is_active = true` with an expiry already past** —
 HakiChain's two among them, created 2026-06-01 with a 30-day expiry and lapsed 2026-07-01. `status`
-(`active` | `expiring_soon` | `expired` | `revoked`) and `expires_in_days` are §1.8-additive; the raw
+(`active` | `expiring_soon` | `expired` | `revoked`) and `days_until_expiry` are §1.8-additive; the raw
 columns are byte-unchanged, so `is_active` still reads `true` on an expired key and clients must
 prefer `status`. **DO NOT** re-derive either field anywhere else — `keys.ts`, the expiry-notice cron
 (`jobs/api-key-expiry-notice.ts`) and the dashboard badge all read this one module's answer.
@@ -21,13 +21,43 @@ Two judgement calls it encodes, both load-bearing:
 past expiry impossible here, so prod's one born-expired row (expiry BEFORE creation) did **not** come
 from this route — it is still unattributed; do not "fix" it by loosening this bound.
 
-`PATCH /keys/:keyId` accepts `{ expires_in_days: n }` or `{ expires_at: null }`. **Expiry is set by
-DURATION, never by timestamp** — an accepted client `expires_at` would trust the caller's clock and
-re-open the past-expiry door, so a non-null value is a 400. The new expiry counts from **now**, never
-from the old one: `old + 30d` on HakiChain's key lands back in the past, an extend that visibly
-succeeds and changes nothing. An expiry change may not be combined with an `is_active` change (one
-intent per request), and a revoked key 409s. Every change writes `api_key.expiry_changed` carrying the
-PERSISTED old/new values. Suites: `keyExpiryStatus.test.ts`, `keys-expiry.test.ts`.
+**The response field is `days_until_expiry`, NOT `expires_in_days`.** `expires_in_days` is the REQUEST
+field on POST/PATCH and means "set the expiry this many days from now"; the response field is a
+countdown that goes negative. One name for two opposite meanings invites a client to read one and PUT
+the other. Renamed before publication.
+
+`PATCH /keys/:keyId` takes ONE expiry field: `{ expires_in_days: n }` sets it n days out,
+`{ expires_in_days: null }` removes it. **Expiry is set by DURATION, never by timestamp** — an
+accepted client `expires_at` would trust the caller's clock and re-open the past-expiry door, so
+`expires_at` survives in the schema only as a REJECTER (`z.null()`): any value is a loud 400, because
+without it the field would be stripped as unknown and the request would 200 having changed nothing.
+
+The new expiry counts from **now**, never from the old one: `old + 30d` on HakiChain's key lands back
+in the past, an extend that visibly succeeds and changes nothing.
+
+**Because it REPLACES rather than adds, an "extend" can shorten.** `{expires_in_days: 30}` on a key
+with eleven months left cuts ten of them; on a key with no expiry it invents one — and the request is
+byte-identical to a genuine extend. The route answers **409 `api_key_expiry_would_shorten`** unless
+`allow_shorten: true` is sent. An already-EXPIRED key is exempt: every forward move improves it, and
+that is the remedy path the dashboard offers from the failure itself.
+
+An expiry may not be combined with a REACTIVATION (`is_active: true`) — no safe ordering. It **may**
+accompany a revoke (`is_active: false`), which is honoured with the expiry DROPPED: refusing the whole
+request would turn the call that stops a leaked credential into a 400 that revokes nothing.
+
+A revoked key 409s `api_key_already_revoked` (checked via `deriveKeyStatus`, so a pre-FD-P7
+withdrawn-but-unstamped row is covered). Every change writes `api_key.expiry_changed` carrying the
+PERSISTED old/new values.
+
+**Both routes read the clock ONCE** for the write and the response. Reading it twice makes `now + 30d`
+fall milliseconds short of 30 whole days by the time the countdown is floored, so a 30-day key reports
+29 and a 1-day key reports "expires today".
+
+`docs.ts` declares OpenAPI **3.0.3**, where the only types are string/number/integer/boolean/array/
+object. `type: 'null'` and type ARRAYS are 3.1 syntax and are invalid here — use `nullable: true`.
+`docs.openapi30.test.ts` walks the whole spec and fails the build on either.
+
+Suites: `keyExpiryStatus.test.ts`, `keys-expiry.test.ts`, `docs.openapi30.test.ts`.
 
 # services/worker/src/api/v1/agents.md
 

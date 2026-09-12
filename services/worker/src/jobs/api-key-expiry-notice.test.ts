@@ -7,13 +7,17 @@
  *
  * THE DEDUPE IS THE HARD PART, and it is deliberately schema-free. There is no
  * `last_notified_at` column and this story does not add one (no migration in
- * scope), so the audit trail IS the ledger: an `api_key.expiry_notice` row per
- * key per kind, and a key with a matching row inside the last 7 days is
- * skipped. That makes re-sends idempotent across the two ways this job can run
- * twice in a day — Cloud Scheduler retrying a 500, and the in-process backup
- * schedule firing on every warm Cloud Run instance (prod runs minScale 2, so
- * every in-process cron fires at least twice). Without it the first partner to
- * hit T-7 gets a fortnight of daily duplicate mail.
+ * scope), so the audit trail IS the ledger: an `api_key.expiry_notice` row
+ * carrying the kind AND the expiry it was about, and a key with a matching row
+ * is skipped. Cloud Scheduler is the job's only trigger — there is no
+ * in-process schedule for it — but Scheduler re-drives a failed attempt and
+ * the sweep runs daily, so without the ledger every partner inside the notice
+ * window would be re-mailed every day.
+ *
+ * KEYED ON (kind, expires_at), NOT ON A TIME WINDOW. A key that lapsed in July
+ * stays lapsed, so any time-boxed horizon re-mails its "expired" notice
+ * forever. The expiry VALUE is the thing that changes when an owner acts, so
+ * it is what the ledger keys on.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -26,7 +30,7 @@ vi.mock('../utils/db.js', () => ({ db: { from: vi.fn() } }));
 vi.mock('../utils/logger.js', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
-vi.mock('../utils/auditEvent.js', () => ({ recordAuditEvent: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../utils/auditEvent.js', () => ({ recordAuditEvent: vi.fn().mockResolvedValue({ ok: true }) }));
 vi.mock('../emails/api-key-expiry.js', () => ({
   sendApiKeyExpiryEmail: vi.fn().mockResolvedValue({ success: true }),
 }));
@@ -60,7 +64,7 @@ function makeDeps(overrides: Partial<ApiKeyExpiryNoticeDeps> = {}): ApiKeyExpiry
     emailConfigured: true,
     now: NOW,
     listKeysInWindow: vi.fn().mockResolvedValue([keyRow()]),
-    listRecentNoticeKinds: vi.fn().mockResolvedValue([]),
+    listPriorNotices: vi.fn().mockResolvedValue([]),
     listOrgAdminEmails: vi.fn().mockResolvedValue(['admin@partner.example']),
     sendNotice: vi.fn().mockResolvedValue({ success: true }),
     recordNotice: vi.fn().mockResolvedValue(undefined),
@@ -73,13 +77,27 @@ beforeEach(() => {
 });
 
 describe('window selection', () => {
-  it('asks for keys from 24h behind to 7 days ahead', async () => {
+  it('asks for every live key expiring at or before 7 days ahead, with NO lower bound', async () => {
     const deps = makeDeps();
     await runApiKeyExpiryNotice(deps);
 
-    const [windowStart, windowEnd] = vi.mocked(deps.listKeysInWindow).mock.calls[0];
-    expect(new Date(windowStart).getTime()).toBe(NOW.getTime() - DAY_MS);
-    expect(new Date(windowEnd).getTime()).toBe(NOW.getTime() + 7 * DAY_MS);
+    const call = vi.mocked(deps.listKeysInWindow).mock.calls[0];
+    expect(call).toHaveLength(1);
+    expect(new Date(call[0]).getTime()).toBe(NOW.getTime() + 7 * DAY_MS);
+  });
+
+  it('notifies a key that lapsed LONG ago — the 13 prod rows this story is about', async () => {
+    // A 24h lookback made a key eligible for its lapse notice on exactly one
+    // run. HakiChain's keys expired 2026-07-01, months before this job
+    // existed, so a lower bound would have guaranteed they were never told —
+    // the exact silence the story was filed to end.
+    const deps = makeDeps({
+      listKeysInWindow: vi.fn().mockResolvedValue([keyRow({ expires_at: at(-73) })]),
+    });
+    const result = await runApiKeyExpiryNotice(deps);
+
+    expect(deps.sendNotice).toHaveBeenCalledWith(expect.objectContaining({ kind: 'expired' }));
+    expect(result.notified).toBe(1);
   });
 
   it('classifies a future expiry as "expiring"', async () => {
@@ -107,13 +125,54 @@ describe('dedupe via the audit trail', () => {
     expect(result.deduped).toBe(0);
   });
 
-  it('skips a key already notified for the SAME kind inside the window', async () => {
-    const deps = makeDeps({ listRecentNoticeKinds: vi.fn().mockResolvedValue(['expiring']) });
+  it('skips a key already notified for the SAME kind AND the same expiry', async () => {
+    const deps = makeDeps({
+      listPriorNotices: vi.fn().mockResolvedValue([{ kind: 'expiring', expiresAt: at(3) }]),
+    });
     const result = await runApiKeyExpiryNotice(deps);
 
     expect(deps.sendNotice).not.toHaveBeenCalled();
     expect(result.deduped).toBe(1);
     expect(result.notified).toBe(0);
+  });
+
+  it('NEVER re-mails a long-lapsed key, however many runs go by', async () => {
+    // The failure a time-boxed horizon produces: an expiry in the past does
+    // not move, so a 7-day window makes the "expired" notice weekly mail
+    // forever. Keying on the expiry VALUE ends it at one.
+    const expiresAt = at(-73);
+    const deps = makeDeps({
+      listKeysInWindow: vi.fn().mockResolvedValue([keyRow({ expires_at: expiresAt })]),
+      listPriorNotices: vi.fn().mockResolvedValue([{ kind: 'expired', expiresAt }]),
+    });
+    const result = await runApiKeyExpiryNotice(deps);
+
+    expect(deps.sendNotice).not.toHaveBeenCalled();
+    expect(result.deduped).toBe(1);
+  });
+
+  it('warns again once the owner extends, because the expiry VALUE changed', async () => {
+    // The prior notice was about the OLD expiry. The key has since been
+    // extended and is approaching a new one — a fresh warning is owed.
+    const deps = makeDeps({
+      listKeysInWindow: vi.fn().mockResolvedValue([keyRow({ expires_at: at(3) })]),
+      listPriorNotices: vi.fn().mockResolvedValue([{ kind: 'expiring', expiresAt: at(-40) }]),
+    });
+    const result = await runApiKeyExpiryNotice(deps);
+
+    expect(deps.sendNotice).toHaveBeenCalledTimes(1);
+    expect(result.notified).toBe(1);
+  });
+
+  it('ignores a legacy ledger row that carries no expiry', async () => {
+    // A row written before the expiry was recorded cannot prove WHICH notice
+    // was sent. One duplicate email beats swallowing the warning entirely.
+    const deps = makeDeps({
+      listPriorNotices: vi.fn().mockResolvedValue([{ kind: 'expiring', expiresAt: null }]),
+    });
+    const result = await runApiKeyExpiryNotice(deps);
+
+    expect(result.notified).toBe(1);
   });
 
   it('still sends the EXPIRED notice to a key that already got the EXPIRING one', async () => {
@@ -123,7 +182,7 @@ describe('dedupe via the audit trail', () => {
     // would have been stale and the lapse notice never arrived.
     const deps = makeDeps({
       listKeysInWindow: vi.fn().mockResolvedValue([keyRow({ expires_at: at(-0.5) })]),
-      listRecentNoticeKinds: vi.fn().mockResolvedValue(['expiring']),
+      listPriorNotices: vi.fn().mockResolvedValue([{ kind: 'expiring', expiresAt: at(-0.5) }]),
     });
     const result = await runApiKeyExpiryNotice(deps);
 
@@ -131,22 +190,34 @@ describe('dedupe via the audit trail', () => {
     expect(result.notified).toBe(1);
   });
 
-  it('looks back exactly 7 days for prior notices', async () => {
+  it('asks for prior notices by key id, unbounded in time', async () => {
     const deps = makeDeps();
     await runApiKeyExpiryNotice(deps);
 
-    const [keyId, since] = vi.mocked(deps.listRecentNoticeKinds).mock.calls[0];
-    expect(keyId).toBe('key-1');
-    expect(new Date(since).getTime()).toBe(NOW.getTime() - 7 * DAY_MS);
+    expect(vi.mocked(deps.listPriorNotices).mock.calls[0]).toEqual(['key-1']);
   });
 
-  it('records the notice with the kind, so the next run can dedupe on it', async () => {
+  it('records the notice with the kind AND the expiry, so the next run can dedupe on it', async () => {
     const deps = makeDeps();
     await runApiKeyExpiryNotice(deps);
 
     expect(deps.recordNotice).toHaveBeenCalledWith(
-      expect.objectContaining({ keyId: 'key-1', orgId: 'org-1', kind: 'expiring' }),
+      { keyId: 'key-1', orgId: 'org-1', kind: 'expiring', expiresAt: at(3) },
     );
+  });
+
+  it('counts a FAILED ledger write as a failure, not a notification', async () => {
+    // `recordAuditEvent` never rejects, so an unchecked `await` reported
+    // success on a lost row — and the key was re-mailed on every run until the
+    // insert started working. The real deps throw; the run must not count it.
+    const deps = makeDeps({
+      recordNotice: vi.fn().mockRejectedValue(new Error('ledger write failed')),
+    });
+    const result = await runApiKeyExpiryNotice(deps);
+
+    expect(deps.sendNotice).toHaveBeenCalledTimes(1);
+    expect(result.notified).toBe(0);
+    expect(result.failed).toBe(1);
   });
 
   it('does NOT record a notice when every send failed — the run must be retryable', async () => {

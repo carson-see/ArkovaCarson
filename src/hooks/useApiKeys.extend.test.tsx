@@ -1,13 +1,17 @@
 /**
  * SCRUM-5023 — `extendKey` request shape.
  *
- * The PATCH body is the part that can silently be wrong. The worker accepts
- * `expires_in_days` (a duration, applied from the server's clock) or
- * `expires_at: null` (clear), and REFUSES a non-null `expires_at` precisely so
- * a client cannot write a past expiry from its own clock. A hook that sent
- * `{ expires_at: <iso> }` would 400 on every call, and a hook that sent
- * `{ expires_in_days: null }` to clear would 400 too — neither is visible from
- * a component test that only asserts the callback fired.
+ * The PATCH body is the part that can silently be wrong. ONE field carries the
+ * intent: `expires_in_days` is a duration applied from the SERVER's clock, and
+ * `null` removes the expiry. A non-null `expires_at` is refused by the worker
+ * precisely so a client cannot write a past expiry from its own clock, so a
+ * hook that sent `{ expires_at: <iso> }` would 400 on every call — and none of
+ * that is visible from a component test that only asserts the callback fired.
+ *
+ * `allow_shorten` is the other half: `expires_in_days` REPLACES the expiry, so
+ * without the flag the worker 409s any value earlier than the current one. A
+ * hook that never sent it would make the confirmed "yes, shorten it" path fail
+ * every time.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -58,7 +62,7 @@ describe('extendKey', () => {
     expect(body.expires_at).toBeUndefined();
   });
 
-  it('clears the expiry with expires_at: null, not expires_in_days: null', async () => {
+  it('clears the expiry with expires_in_days: null, never a timestamp field', async () => {
     const { result } = renderHook(() => useApiKeys(), { wrapper });
 
     await act(async () => {
@@ -66,7 +70,31 @@ describe('extendKey', () => {
     });
 
     const call = workerFetch.mock.calls.find(([path]) => String(path).includes('/keys/key-1'));
-    expect(JSON.parse(call![1].body)).toEqual({ expires_at: null });
+    const body = JSON.parse(call![1].body);
+    expect(body).toEqual({ expires_in_days: null });
+    expect('expires_at' in body).toBe(false);
+  });
+
+  it('omits allow_shorten unless the caller asked for it', async () => {
+    const { result } = renderHook(() => useApiKeys(), { wrapper });
+
+    await act(async () => {
+      await result.current.extendKey('key-1', 30);
+    });
+
+    const call = workerFetch.mock.calls.find(([path]) => String(path).includes('/keys/key-1'));
+    expect('allow_shorten' in JSON.parse(call![1].body)).toBe(false);
+  });
+
+  it('sends allow_shorten when the caller confirmed a shortening', async () => {
+    const { result } = renderHook(() => useApiKeys(), { wrapper });
+
+    await act(async () => {
+      await result.current.extendKey('key-1', 30, true);
+    });
+
+    const call = workerFetch.mock.calls.find(([path]) => String(path).includes('/keys/key-1'));
+    expect(JSON.parse(call![1].body)).toEqual({ expires_in_days: 30, allow_shorten: true });
   });
 
   it('throws on a non-OK response so the caller can keep its dialog open', async () => {

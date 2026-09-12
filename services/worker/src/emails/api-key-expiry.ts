@@ -16,7 +16,7 @@
  * about an API key, not the chain.
  */
 import { sendEmail, type SendResult } from '../email/sender.js';
-import { esc, SHARED_STYLES, wrapTemplate, formatUtc } from './_template.js';
+import { esc, SHARED_STYLES, wrapTemplate, formatUtc, subjectSafe, relativeDaysLabel } from './_template.js';
 
 export type ApiKeyExpiryKind = 'expiring' | 'expired';
 
@@ -40,13 +40,6 @@ const STYLES = {
   alert: 'padding: 16px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; color: #991b1b;',
 } as const;
 
-function remainingLabel(daysRemaining: number | null): string {
-  if (daysRemaining === null) return 'soon';
-  if (daysRemaining <= 0) return 'today';
-  if (daysRemaining === 1) return 'in 1 day';
-  return `in ${daysRemaining} days`;
-}
-
 export function buildApiKeyExpiryEmail(
   data: ApiKeyExpiryEmailData,
 ): { subject: string; html: string } {
@@ -56,9 +49,15 @@ export function buildApiKeyExpiryEmail(
   const manageUrl = esc(data.manageKeysUrl);
   const expired = data.kind === 'expired';
 
+  // `subjectSafe`, not `esc`: a subject line is not HTML, so escaping would
+  // ship a literal `&quot;` to the inbox. The key name is caller-supplied and
+  // sits inside quotes here, so control characters are stripped, whitespace is
+  // collapsed, and the length is bounded — enough that one ORG_ADMIN cannot
+  // compose a name that forges the shape of a system notice to their peers.
+  const safeName = subjectSafe(data.keyName);
   const subject = expired
-    ? `Your Arkova API key "${data.keyName}" has expired`
-    : `Your Arkova API key "${data.keyName}" expires ${remainingLabel(data.daysRemaining)}`;
+    ? `Your Arkova API key "${safeName}" has expired`
+    : `Your Arkova API key "${safeName}" expires ${relativeDaysLabel(data.daysRemaining)}`;
 
   // The two kinds carry different asks. "Expiring" is a reminder with time to
   // act; "expired" reports that requests are ALREADY being refused — the state
@@ -69,7 +68,7 @@ export function buildApiKeyExpiryEmail(
          Requests using it are being refused until you extend the expiry or create a replacement.
        </div>`
     : `<div style="${STYLES.warn}">
-         <strong>This key expires ${esc(remainingLabel(data.daysRemaining))}.</strong><br/>
+         <strong>This key expires ${esc(relativeDaysLabel(data.daysRemaining))}.</strong><br/>
          It stops working after ${when} unless you extend it.
        </div>`;
 

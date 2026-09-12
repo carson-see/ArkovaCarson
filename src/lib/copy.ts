@@ -725,6 +725,17 @@ export const API_KEY_LABELS = {
   EXTEND_365_DAYS: '1 year',
   EXTEND_REMOVE: 'Remove expiry',
   EXTEND_FAILED: 'Failed to change the expiry. It is unchanged — please try again.',
+  // Every preset REPLACES the current expiry rather than adding to it, so the
+  // current one has to be on screen: without it a user cannot tell which
+  // presets extend the key and which quietly cut it short.
+  EXTEND_CURRENT: 'Currently expires {date}.',
+  EXTEND_CURRENT_NONE: 'This key currently has no expiry.',
+  EXTEND_CONFIRM_SHORTEN:
+    '{option} is EARLIER than this key\u2019s current expiry. The key will stop working sooner than it does today.',
+  EXTEND_CONFIRM_REMOVE:
+    'This key will never expire. It stays usable until someone revokes it.',
+  EXTEND_CONFIRM_APPLY: 'Yes, change it',
+  EXTEND_CONFIRM_CANCEL: 'Go back',
   LAST_USED: 'Last used',
   NEVER_USED: 'Never used',
   FETCH_ERROR: 'Unable to load API keys. Please refresh and try again.',
