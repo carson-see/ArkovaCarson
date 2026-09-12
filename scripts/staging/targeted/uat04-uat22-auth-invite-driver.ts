@@ -109,6 +109,7 @@ interface Evidence {
   approvedRecipients: string[];
   checks: CheckResult[];
   allChecksPassed: boolean;
+  workerUptime: WorkerUptimeObservation | null;
   releaseQualification: 'not_assessed';
   prerequisitesNotProvenByDriver: string[];
 }
@@ -133,6 +134,7 @@ interface Runtime {
   existingUserId: string;
   adminSession: HumanSession | null;
   expectedEmailConfigured: boolean;
+  workerUptime: WorkerUptimeObservation | null;
   managementQueryOverride?: (query: string) => Promise<unknown[]>;
   hostedAuthSimulated?: boolean;
   rateLimitWaitOverride?: (waitMs: number) => Promise<void>;
@@ -149,6 +151,43 @@ interface HumanSession {
 
 const isObject = (value: unknown): value is JsonObject =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+interface WorkerUptimeObservation {
+  bootEarliestMs: number;
+  bootLatestMs: number;
+  firstUptimeSeconds: number;
+  lastUptimeSeconds: number;
+  lastReceivedAt: number;
+  samples: number;
+}
+
+/** A common process start must fit every response's request/response interval. */
+export function observeWorkerUptime(
+  previous: WorkerUptimeObservation | null,
+  uptime: unknown,
+  requestedAt: number,
+  receivedAt: number,
+): WorkerUptimeObservation {
+  if (typeof uptime !== 'number' || !Number.isSafeInteger(uptime) || uptime < 0
+      || !Number.isFinite(requestedAt) || !Number.isFinite(receivedAt) || receivedAt < requestedAt) {
+    throw new Error('invalid_worker_uptime');
+  }
+  // The worker rounds process.uptime() down to whole seconds. Its sampling
+  // instant is between our request and response; retain that uncertainty.
+  const bootEarliestMs = Math.max(previous?.bootEarliestMs ?? -Infinity, requestedAt - (uptime + 1) * 1000);
+  const bootLatestMs = Math.min(previous?.bootLatestMs ?? Infinity, receivedAt - uptime * 1000);
+  if (bootEarliestMs > bootLatestMs || (previous
+      && (uptime < previous.lastUptimeSeconds || requestedAt < previous.lastReceivedAt))) {
+    throw new Error('worker_uptime_discontinuity');
+  }
+  return {
+    bootEarliestMs, bootLatestMs,
+    firstUptimeSeconds: previous?.firstUptimeSeconds ?? uptime,
+    lastUptimeSeconds: uptime,
+    lastReceivedAt: receivedAt,
+    samples: (previous?.samples ?? 0) + 1,
+  };
+}
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim() === '') throw new Error(`${name} is required`);
@@ -227,10 +266,10 @@ export function parseUatArgs(argv: string[]): UatArgs {
     allowPositionals: false,
   });
   const manifestPath = requireString(values.manifest, '--manifest');
-  const durationMin = values.duration === undefined ? 2880 : Number(values.duration);
+  const durationMin = values.duration === undefined ? 2910 : Number(values.duration);
   const intervalSec = values['interval-sec'] === undefined ? 900 : Number(values['interval-sec']);
-  if (!Number.isSafeInteger(durationMin) || durationMin < 1 || durationMin > 2880) {
-    throw new Error('--duration must be an integer from 1 through 2880 minutes');
+  if (!Number.isSafeInteger(durationMin) || durationMin < 1 || durationMin > 2910) {
+    throw new Error('--duration must be an integer from 1 through 2910 minutes');
   }
   if (!Number.isSafeInteger(intervalSec) || intervalSec < 60 || intervalSec > 3600) {
     throw new Error('--interval-sec must be an integer from 60 through 3600 seconds');
@@ -268,8 +307,12 @@ export function buildLongProbePlan(orgId: string): LongProbe[] {
 export function boundedRateLimitWait(retryAfter: string | null, now: number, destroyBy: string): number | null {
   const retrySeconds = Number(retryAfter);
   const requestedWait = Number.isFinite(retrySeconds) && retrySeconds > 0 ? retrySeconds * 1000 + 250 : 61_000;
-  const remainingLease = Date.parse(destroyBy) - now;
+  const remainingLease = Date.parse(destroyBy) - now - REQUEST_TIMEOUT_MS - 1;
   return remainingLease > 0 ? Math.min(requestedWait, 61_000, remainingLease) : null;
+}
+
+export function assertWorkerRequestLease(now: number, destroyBy: string): void {
+  if (!(Date.parse(destroyBy) - now > REQUEST_TIMEOUT_MS)) throw new Error('worker_request_exceeds_lease');
 }
 
 export function isDirectRun(moduleUrl: string, argv1: string | undefined): boolean {
@@ -311,6 +354,7 @@ function bearer(token: string): Record<string, string> {
 
 async function worker(runtime: Runtime, method: string, path: string, token?: string, body?: unknown) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    assertWorkerRequestLease(Date.now(), runtime.manifest.destroyBy);
     const result = await jsonFetch(`${runtime.manifest.workerUrl}${path}`, {
       method,
       headers: token ? bearer(token) : { 'Content-Type': 'application/json' },
@@ -661,12 +705,25 @@ async function invitationAndProvisioning(runtime: Runtime, admin: HumanSession, 
   record(runtime, 'ordinary-platform-health-forbidden', deniedHealth.status === 403, deniedHealth.status);
 }
 
+async function verifyWorkerProcess(runtime: Runtime): Promise<void> {
+  const requestedAt = Date.now();
+  const health = await worker(runtime, 'GET', '/health');
+  const receivedAt = Date.now();
+  record(runtime, 'public-isolated-worker-health', health.status === 200 && isObject(health.body)
+    && health.body.git_sha === runtime.manifest.sourceHead, health.status);
+  try {
+    runtime.workerUptime = observeWorkerUptime(runtime.workerUptime,
+      isObject(health.body) ? health.body.uptime : undefined, requestedAt, receivedAt);
+  } catch {
+    record(runtime, 'worker-uptime-continuous', false);
+  }
+  record(runtime, 'worker-uptime-continuous', true);
+}
+
 async function runAdmission(runtime: Runtime): Promise<void> {
   const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   record(runtime, 'exact-source-head', currentHead === runtime.manifest.sourceHead);
-  const health = await worker(runtime, 'GET', '/health');
-  record(runtime, 'public-isolated-worker-health', health.status === 200 && isObject(health.body)
-    && health.body.git_sha === runtime.manifest.sourceHead, health.status);
+  await verifyWorkerProcess(runtime);
   await verifyHostedAuth(runtime);
   await verifyCatalog(runtime);
   await verifyCleanStart(runtime);
@@ -699,7 +756,8 @@ async function runAdmission(runtime: Runtime): Promise<void> {
 }
 
 async function runLongPhase(runtime: Runtime): Promise<void> {
-  const endAt = runtime.startedAt + runtime.args.durationMin * 60_000;
+  const endAt = Date.now() + runtime.args.durationMin * 60_000;
+  assertWorkerRequestLease(endAt, runtime.manifest.destroyBy);
   const db = service(runtime);
   const admin = runtime.adminSession;
   if (!admin) throw new Error('admin_session_missing');
@@ -716,9 +774,7 @@ async function runLongPhase(runtime: Runtime): Promise<void> {
         : true;
       record(runtime, `long-${probe.label}`, result.status === 200 && healthSemantics, result.status);
     }
-    const source = await worker(runtime, 'GET', '/health');
-    record(runtime, 'long-source-head-stable', source.status === 200 && isObject(source.body)
-      && source.body.git_sha === runtime.manifest.sourceHead, source.status);
+    await verifyWorkerProcess(runtime);
     await verifyHostedAuth(runtime);
     await verifyCatalog(runtime);
     const { data: existingProfile } = await db.from('profiles').select('org_id,role').eq('id', runtime.existingUserId).single();
@@ -731,6 +787,8 @@ async function runLongPhase(runtime: Runtime): Promise<void> {
     if (remaining <= 0) break;
     await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(runtime.args.intervalSec * 1000, remaining)));
   }
+  // Sample at the end too: the preceding loop sample can be one interval old.
+  await verifyWorkerProcess(runtime);
 }
 
 async function cleanup(runtime: Runtime): Promise<boolean> {
@@ -868,6 +926,7 @@ export async function runLocalDriverSmoke(options: LocalDriverSmokeOptions): Pro
     existingUserId: '',
     adminSession: null,
     expectedEmailConfigured: options.expectedEmailConfigured,
+    workerUptime: null,
     managementQueryOverride: options.queryLocalDatabase,
     hostedAuthSimulated: true,
     rateLimitWaitOverride: async () => options.resetLocalRateLimit(),
@@ -904,6 +963,7 @@ function evidence(runtime: Runtime, complete: boolean, cleanedUp: boolean): Evid
     approvedRecipients: Object.values(APPROVED_RECIPIENTS),
     checks: runtime.checks,
     allChecksPassed: complete && cleanedUp && runtime.checks.length > 0 && runtime.checks.every((check) => check.passed),
+    workerUptime: runtime.workerUptime,
     releaseQualification: 'not_assessed',
     prerequisitesNotProvenByDriver: [
       '1280px and 375px browser checkpoints require Playwright against the admitted frontend origin',
@@ -963,6 +1023,7 @@ async function main(): Promise<void> {
     existingUserId: '',
     adminSession: null,
     expectedEmailConfigured: true,
+    workerUptime: null,
   };
   runtime.anonKey = registerSecret(runtime, env('STAGING_SUPABASE_ANON_KEY'));
   runtime.serviceKey = registerSecret(runtime, env('STAGING_SUPABASE_SERVICE_ROLE_KEY'));

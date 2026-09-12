@@ -46,7 +46,7 @@ describe('UAT04/UAT22 driver local admission runtime', () => {
     process.env.BUILD_SHA = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     const app = express();
     app.use(express.json());
-    app.get('/health', (_req, res) => res.json({ status: 'ok', git_sha: process.env.BUILD_SHA }));
+    app.get('/health', (_req, res) => res.json({ status: 'ok', git_sha: process.env.BUILD_SHA, uptime: Math.floor(process.uptime()) }));
     app.use('/api', anchorRouter);
     app.use('/api', adminRouter);
     server = app.listen(0, '127.0.0.1');

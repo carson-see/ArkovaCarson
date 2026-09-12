@@ -10,11 +10,31 @@ import {
   parseUatArgs,
   redactEvidence,
   validateManifest,
+  observeWorkerUptime,
+  assertWorkerRequestLease,
 } from './uat04-uat22-auth-invite-driver.js';
 
 const HEAD = 'a'.repeat(40);
 const CREATED = '2026-09-11T12:00:00.000Z';
 const DESTROY = '2026-09-14T12:00:00.000Z';
+
+describe('worker uptime continuity', () => {
+  it('retains a common process start across request latency and second rounding', () => {
+    const first = observeWorkerUptime(null, 100, 200_000, 202_000);
+    const next = observeWorkerUptime(first, 1000, 1_100_000, 1_104_000);
+    expect(next).toMatchObject({ bootEarliestMs: 99_000, bootLatestMs: 102_000, firstUptimeSeconds: 100, lastUptimeSeconds: 1000, samples: 2 });
+  });
+
+  it('rejects a restart even when the new uptime exceeds the earlier sample', () => {
+    const first = observeWorkerUptime(null, 100, 200_000, 201_000);
+    expect(() => observeWorkerUptime(first, 500, 1_100_000, 1_101_000)).toThrow(/uptime_discontinuity/);
+    expect(() => observeWorkerUptime(first, 5, 210_000, 211_000)).toThrow(/uptime_discontinuity/);
+  });
+
+  it.each([undefined, '100', -1, Infinity, NaN, 1.5])('fails closed for invalid uptime %s', (uptime) => {
+    expect(() => observeWorkerUptime(null, uptime, 200_000, 201_000)).toThrow(/invalid_worker_uptime/);
+  });
+});
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
@@ -80,7 +100,7 @@ describe('UAT04/UAT22 driver execution contract', () => {
     expect(parseUatArgs(['--manifest', 'docs/staging/uat04-22-0911/admission.json'])).toMatchObject({
       execute: false,
       liveEmail: false,
-      durationMin: 2880,
+      durationMin: 2910,
       intervalSec: 900,
     });
     expect(() => parseUatArgs(['--manifest', 'x', '--execute'])).toThrow(/live-email/i);
@@ -122,8 +142,16 @@ describe('UAT04/UAT22 driver execution contract', () => {
     const now = Date.parse('2026-09-12T12:00:00Z');
     expect(boundedRateLimitWait('999999', now, '2026-09-14T12:00:00Z')).toBe(61_000);
     expect(boundedRateLimitWait('30', now, '2026-09-14T12:00:00Z')).toBe(30_250);
-    expect(boundedRateLimitWait('invalid', now, new Date(now + 10_000).toISOString())).toBe(10_000);
+    expect(boundedRateLimitWait('invalid', now, new Date(now + 10_000).toISOString())).toBeNull();
+    expect(boundedRateLimitWait('invalid', now, new Date(now + 30_000).toISOString())).toBe(9_999);
     expect(boundedRateLimitWait('1', now, new Date(now).toISOString())).toBeNull();
+  });
+
+  it('reserves a full request timeout before expiry, including the final sample', () => {
+    const expiry = Date.parse(DESTROY);
+    expect(() => assertWorkerRequestLease(expiry - 20_000, DESTROY)).toThrow(/lease/);
+    expect(() => assertWorkerRequestLease(expiry, DESTROY)).toThrow(/lease/);
+    expect(() => assertWorkerRequestLease(expiry - 20_001, DESTROY)).not.toThrow();
   });
 
   it('redacts sensitive keys and registered secret values before evidence serialization', () => {
