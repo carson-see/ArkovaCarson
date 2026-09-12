@@ -4,6 +4,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { totp } from '../../e2e/helpers/totp';
+import { acquireSharedFixtureLock } from './shared-fixture-lock';
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const anonKey = process.env.SUPABASE_ANON_KEY!;
@@ -65,18 +66,45 @@ const service = createClient(supabaseUrl, serviceKey, {
 });
 const disposableUserIds: string[] = [];
 const storageBucket = `uat04-${randomUUID()}`;
+let releasePolicyLock: (() => void) | undefined;
+let previousPolicyEnabledAt: string | null | undefined;
 
 describe('UAT-04 live MFA authority boundary', () => {
-  beforeAll(() => {
-    expect(sql("SELECT current_user <> ''")).toContain('\nt\n');
+  beforeAll(async () => {
+    releasePolicyLock = await acquireSharedFixtureLock('oauth-email-confirmation-policy', dbUrl);
+    try {
+      const snapshot = sqlCommit("SELECT COALESCE(enabled_at::text,'__NULL__') FROM private.oauth_email_confirmation_policy WHERE singleton").trim();
+      previousPolicyEnabledAt = snapshot === '__NULL__' ? null : snapshot;
+      expect(sql("SELECT current_user <> ''")).toContain('\nt\n');
+    } catch (error) {
+      previousPolicyEnabledAt = undefined;
+      releasePolicyLock();
+      releasePolicyLock = undefined;
+      throw error;
+    }
   });
 
   afterAll(async () => {
-    sqlCommit('DROP POLICY IF EXISTS uat04_storage_fixture_select ON storage.objects;');
-    await service.storage.emptyBucket(storageBucket);
-    await service.storage.deleteBucket(storageBucket);
-    sqlCommit("UPDATE private.oauth_email_confirmation_policy SET enabled_at=NULL WHERE singleton;");
-    for (const userId of disposableUserIds) await service.auth.admin.deleteUser(userId);
+    if (!releasePolicyLock) return;
+    const release = releasePolicyLock;
+    try {
+      sqlCommit('DROP POLICY IF EXISTS uat04_storage_fixture_select ON storage.objects;');
+      await service.storage.emptyBucket(storageBucket);
+      await service.storage.deleteBucket(storageBucket);
+      for (const userId of disposableUserIds) await service.auth.admin.deleteUser(userId);
+    } finally {
+      try {
+        if (previousPolicyEnabledAt !== undefined) {
+          const prior = previousPolicyEnabledAt === null
+            ? 'NULL'
+            : `'${previousPolicyEnabledAt.replaceAll("'", "''")}'::timestamptz`;
+          sqlCommit(`UPDATE private.oauth_email_confirmation_policy SET enabled_at=${prior} WHERE singleton;`);
+        }
+      } finally {
+        release();
+        releasePolicyLock = undefined;
+      }
+    }
   });
 
   it('denies legacy AAL1 before a SECURITY DEFINER RPC and preserves an existing pre-request hook', () => {
