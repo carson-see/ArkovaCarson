@@ -38,6 +38,11 @@ import { sendEmail } from '../email/sender.js';
 import { buildAccountVerificationEmail } from '../email/templates.js';
 import { buildLoginUrl } from '../lib/urls.js';
 
+/** Postgres unique_violation. Same local idiom as credentials-ctdl-registry-anchor.ts / credential-sources.ts. */
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === '23505';
+}
+
 export interface InvitationDeps {
   db: SupabaseClient;
   logger: Pick<Logger, 'info' | 'warn' | 'error'>;
@@ -193,6 +198,7 @@ async function provisionMembership(
     .maybeSingle();
   if (membershipLookupError) throw membershipLookupError;
 
+  let membershipCreatedHere = false;
   if (!existingMembership) {
     const { error: memberInsertError } = await db.from('org_members').insert({
       user_id: userId,
@@ -206,7 +212,7 @@ async function provisionMembership(
       // constraint rejects the loser with 23505. That IS the "clean no-op"
       // the comment promises — the membership exists — so continue rather
       // than surfacing a 500 to a user whose join succeeded.
-      if ((memberInsertError as { code?: string }).code === '23505') {
+      if (isUniqueViolation(memberInsertError)) {
         logger.info(
           { userId, orgId: invitation.org_id },
           'Invitation accept: membership already present (concurrent accept) — continuing',
@@ -214,6 +220,8 @@ async function provisionMembership(
       } else {
         throw memberInsertError;
       }
+    } else {
+      membershipCreatedHere = true;
     }
   }
 
@@ -237,6 +245,10 @@ async function provisionMembership(
     .eq('id', invitation.id)
     .eq('status', 'pending');
   if (statusError) throw statusError;
+
+  // The race loser (23505 above) did not create the membership; the winner
+  // already wrote the MEMBER_JOINED row. Do not emit a duplicate.
+  if (!existingMembership && !membershipCreatedHere) return;
 
   const { error: auditError } = await db.from('audit_events').insert({
     event_type: 'MEMBER_JOINED',

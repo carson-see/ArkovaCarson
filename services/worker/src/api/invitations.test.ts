@@ -383,12 +383,14 @@ describe('acceptInvitation — new-account path', () => {
         chain({ data: null, error: null }), // lookup: not yet a member
         chain({ error: { code: '23505', message: 'duplicate key value violates unique constraint' } }), // insert loses the race
       ],
-      audit_events: [chain({ error: null })],
+      // No audit_events queue entry: the race loser must not emit a second
+      // MEMBER_JOINED row (an unconfigured db.from('audit_events') throws).
     });
 
     const result = await acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null });
     expect(result.orgId).toBe('org-1');
     expect(deps.db.auth.admin.deleteUser).not.toHaveBeenCalled();
+    expect(deps.db.from).not.toHaveBeenCalledWith('audit_events');
   });
 
   it('still surfaces a non-23505 org_members insert failure', async () => {

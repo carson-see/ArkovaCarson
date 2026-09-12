@@ -73,14 +73,23 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Fetch extraction manifests for this fingerprint
+    // Fetch extraction manifests for this fingerprint.
+    // SCRUM-4984: manifests are keyed by fingerprint, and two orgs can hold
+    // manifests for the same public document. Select org_id/user_id and keep
+    // only rows the caller may read, so another tenant's extraction never
+    // lands in this report as `latestManifest`.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: manifests } = await (db as any)
+    const { data: rawManifests } = await (db as any)
       .from('extraction_manifests')
-      .select('model_id, model_version, extracted_fields, confidence_scores, manifest_hash, extraction_timestamp, prompt_version')
+      .select('org_id, user_id, model_id, model_version, extracted_fields, confidence_scores, manifest_hash, extraction_timestamp, prompt_version')
       .eq('fingerprint', anchor.fingerprint)
       .order('created_at', { ascending: false })
       .limit(5);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    type ManifestRow = { org_id?: string | null; user_id?: string | null } & Record<string, any>; // NOSONAR — db client is untyped here
+    const manifests = ((rawManifests ?? []) as ManifestRow[]).filter((m) =>
+      callerMayReadRow(m, { userId, orgId }),
+    );
 
     // Fetch audit events (lifecycle + human overrides)
     // eslint-disable-next-line arkova/missing-org-filter -- scoped by target_id, ownership verified upstream

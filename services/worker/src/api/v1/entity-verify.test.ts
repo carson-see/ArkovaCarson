@@ -83,6 +83,22 @@ describe('entity-verify attestation filter (SCRUM-4985)', () => {
     expect(String(ilike?.args[1])).toBe('%AdaLovelace%');
   });
 
+  it('skips the name query once identifier matches have filled the limit', async () => {
+    vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+      const table = (args as unknown as string[])[0];
+      if (table === 'attestations') {
+        return mockChain(table, [{ id: 'a1' }, { id: 'a2' }], log) as never;
+      }
+      return mockChain(table, [], log) as never;
+    });
+    const res = await request(app).get('/').query({ name: 'x', identifier: 'x', limit: 2 });
+    expect(res.status).toBe(200);
+    expect(res.body.total_attestations).toBe(2);
+    const attestationQueries = log.filter((r) => r.table === 'attestations');
+    expect(attestationQueries).toHaveLength(1);
+    expect(attestationQueries[0].calls.some((c) => c.method === 'ilike')).toBe(false);
+  });
+
   it('unions name and identifier results by id and caps at limit', async () => {
     const res = await request(app).get('/').query({ name: 'x', identifier: 'x', limit: 5 });
     expect(res.status).toBe(200);

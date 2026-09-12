@@ -51,10 +51,10 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Build search filter
     if (name) {
-      query = query.ilike('title', `%${name.replace(/[%_]/g, '')}%`);
+      query = query.ilike('title', `%${name.replace(/[%_\\]/g, '')}%`);
     }
     if (domain) {
-      query = query.ilike('source_url', `%${domain.replace(/[%_]/g, '')}%`);
+      query = query.ilike('source_url', `%${domain.replace(/[%_\\]/g, '')}%`);
     }
     if (identifier) {
       query = query.eq('source_id', identifier);
@@ -100,11 +100,15 @@ router.get('/', async (req: Request, res: Response) => {
         }
       };
 
+      // Exact identifier matches take the first claim on `limit`; the fuzzy
+      // name search only runs for whatever budget is left. The old single
+      // .or() query had no defined priority (DB order), so this is a
+      // deterministic narrowing, not a widening.
       if (identifier) {
         const { data } = await attestationQuery().eq('subject_identifier', identifier);
         collect(data);
       }
-      if (name) {
+      if (name && attestationResults.length < limit) {
         const { data } = await attestationQuery().ilike(
           'subject_identifier',
           `%${name.replace(/[%_\\]/g, '')}%`,

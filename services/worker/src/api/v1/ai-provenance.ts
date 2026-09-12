@@ -59,21 +59,14 @@ router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: R
       return;
     }
 
-    if (!manifests || manifests.length === 0) {
-      res.status(404).json({
-        error: 'not_found',
-        message: 'No extraction manifests found for this fingerprint',
-      });
-      return;
-    }
-
     // SCRUM-4984: fail-closed tenant scoping. Two orgs can hold manifests for
     // the same fingerprint (same public document, extracted twice), so the
     // caller sees only the rows in their org or that they own. A caller with
     // no visible rows gets the same 404 as "no manifests" — never a 403 that
     // would confirm another tenant extracted this document.
-    const visibleManifests = manifests.filter((m: { org_id?: string | null; user_id?: string | null }) =>
-      callerMayReadRow(m, { userId, orgId }),
+    // An empty result and a result with nothing visible are the same 404.
+    const visibleManifests = (manifests ?? []).filter(
+      (m: { org_id?: string | null; user_id?: string | null }) => callerMayReadRow(m, { userId, orgId }),
     );
     if (visibleManifests.length === 0) {
       res.status(404).json({

@@ -71,6 +71,8 @@ function mockChain(data: unknown, error: unknown = null) {
 const MOCK_MANIFEST = {
   id: '10000000-1000-4000-8000-000000000010',
   fingerprint: VALID_FINGERPRINT,
+  org_id: TEST_ORG_ID,
+  user_id: OTHER_USER_ID,
   model_id: 'gemini',
   model_version: 'gemini-3-flash-preview',
   extracted_fields: { credentialType: 'DEGREE', issuerName: 'MIT', issuedDate: '2024-06-15' },
@@ -335,6 +337,32 @@ describe('ai-accountability-report endpoint', () => {
       const res = await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
       expect(res.status).toBe(200);
       expect(res.body.provenanceChain.sourceHash).toBe(VALID_FINGERPRINT);
+    });
+
+    it("never surfaces another org's manifest for the same fingerprint as latestManifest", async () => {
+      const otherOrgNewer = {
+        ...MOCK_MANIFEST,
+        id: '10000000-1000-4000-8000-000000000030',
+        org_id: OTHER_ORG_ID,
+        user_id: OTHER_USER_ID,
+        model_id: 'other-tenant-model',
+        extracted_fields: { secret: 'other-tenant-data' },
+        created_at: '2026-04-01T00:00:00.000Z',
+      };
+      const ownOlder = { ...MOCK_MANIFEST, org_id: TEST_ORG_ID, user_id: OTHER_USER_ID };
+      vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+        const table = (args as unknown as string[])[0];
+        if (table === 'profiles') return mockChain({ org_id: TEST_ORG_ID }) as unknown as ReturnType<typeof db.from>;
+        if (table === 'anchors') return mockChain(MOCK_ANCHOR) as unknown as ReturnType<typeof db.from>;
+        if (table === 'extraction_manifests') return mockChain([otherOrgNewer, ownOlder]) as unknown as ReturnType<typeof db.from>;
+        if (table === 'audit_events') return mockChain(MOCK_AUDIT_EVENTS) as unknown as ReturnType<typeof db.from>;
+        return mockChain([]) as unknown as ReturnType<typeof db.from>;
+      });
+
+      const res = await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
+      expect(res.status).toBe(200);
+      expect(res.body.provenanceChain.aiExtraction.modelId).toBe('gemini');
+      expect(JSON.stringify(res.body)).not.toContain('other-tenant');
     });
 
     it('selects org_id and user_id on the anchor so the scope check has data to act on', async () => {
