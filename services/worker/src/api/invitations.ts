@@ -200,7 +200,21 @@ async function provisionMembership(
       role: PROFILE_ROLE_TO_MEMBER_ROLE[invitation.role],
       invited_by: invitation.invited_by,
     });
-    if (memberInsertError) throw memberInsertError;
+    if (memberInsertError) {
+      // SCRUM-4991: the lookup above is not atomic with the insert. Two
+      // concurrent accepts can both pass it; the UNIQUE(user_id, org_id)
+      // constraint rejects the loser with 23505. That IS the "clean no-op"
+      // the comment promises — the membership exists — so continue rather
+      // than surfacing a 500 to a user whose join succeeded.
+      if ((memberInsertError as { code?: string }).code === '23505') {
+        logger.info(
+          { userId, orgId: invitation.org_id },
+          'Invitation accept: membership already present (concurrent accept) — continuing',
+        );
+      } else {
+        throw memberInsertError;
+      }
+    }
   }
 
   // Backfill profiles.org_id/role only when unset — never reassign someone

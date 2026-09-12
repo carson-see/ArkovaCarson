@@ -364,6 +364,48 @@ describe('acceptInvitation — new-account path', () => {
     expect(result.verificationRequired).toBe(true);
   });
 
+  // SCRUM-4991: the org_members lookup and insert are not atomic. A concurrent
+  // accept can win the race between them; the loser's insert fails 23505.
+  // The membership exists, so that is a success, not a 500.
+  it('treats a duplicate org_members row (23505, concurrent accept) as success', async () => {
+    const deps = makeDeps({
+      invitations: [
+        chain({ data: INVITATION_ROW, error: null }),
+        chain({ error: null }),
+      ],
+      organizations: [chain({ data: ORG_ROW, error: null })],
+      profiles: [
+        chain({ data: null, error: null }),
+        chain({ error: null }),
+        chain({ error: null }),
+      ],
+      org_members: [
+        chain({ data: null, error: null }), // lookup: not yet a member
+        chain({ error: { code: '23505', message: 'duplicate key value violates unique constraint' } }), // insert loses the race
+      ],
+      audit_events: [chain({ error: null })],
+    });
+
+    const result = await acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null });
+    expect(result.orgId).toBe('org-1');
+    expect(deps.db.auth.admin.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('still surfaces a non-23505 org_members insert failure', async () => {
+    const deps = makeDeps({
+      invitations: [chain({ data: INVITATION_ROW, error: null })],
+      organizations: [chain({ data: ORG_ROW, error: null })],
+      profiles: [chain({ data: null, error: null }), chain({ error: null })],
+      org_members: [
+        chain({ data: null, error: null }),
+        chain({ error: { code: '23503', message: 'fk violation' } }),
+      ],
+    });
+    await expect(
+      acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null }),
+    ).rejects.toMatchObject({ code: 'internal_error' });
+  });
+
   it('rolls back (deletes) the newly created auth user when provisioning fails after account creation', async () => {
     const deps = makeDeps({
       invitations: [chain({ data: INVITATION_ROW, error: null })],
