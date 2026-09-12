@@ -26,10 +26,15 @@ export interface VideoObjectProps {
 export function VideoObjectSchema(props: VideoObjectProps) {
   const entry: VideoInventoryEntry = props;
   const [schema] = buildVideoObjectsJsonLd([entry]);
+  // SCRUM-4989: escape </script in every string field so a value can never
+  // close the JSON-LD block and start a live script. Same hardening as
+  // OrganizationSchema.tsx and PublicVerification.tsx; the inventory is
+  // static today, the gap was real regardless.
+  const json = JSON.stringify(schema).replace(/<\/script/gi, '<\\/script');
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: json }}
     />
   );
 }
