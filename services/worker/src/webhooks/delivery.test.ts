@@ -1099,6 +1099,36 @@ describe('deliverToEndpoint', () => {
       );
     });
 
+    // CTO review (2026-09-12): `204 No Content` is the most common webhook
+    // acknowledgement. Routing dispatch through createSafeFetchImpl made it
+    // throw `TypeError: Response constructor: Invalid response status code
+    // 204`, which is not a SafeFetchError — so an ACCEPTED delivery was
+    // classified as a transient network error, retried five times and
+    // dead-lettered.
+    it('records a 204 No Content acknowledgement as success, not a retryable network error', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      const resolve = vi.fn(async () => ['203.0.113.10']);
+      const dispatch = vi.fn(async (_pinnedIp: string, url: string) => ({
+        status: 204,
+        headers: new Headers(),
+        url,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }));
+      __setWebhookFetchForTests(createSafeFetchImpl({ resolve, dispatch }));
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'success', response_status: 204 }),
+      );
+      expect(deliveryLogUpdate.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'retrying' }),
+      );
+    });
+
     it('refuses a host that rebinds to the metadata IP between pre-check and dispatch: no socket, no retry, straight to DLQ', async () => {
       deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
       deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
