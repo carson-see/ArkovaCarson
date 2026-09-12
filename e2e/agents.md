@@ -480,3 +480,13 @@ Auth setup removes old fixture factors, performs real TOTP enrollment, and saves
 only same-user `authenticated`/AAL2 sessions. The former 2099 enforcement-date
 override is gone. Browser coverage pins direct `/login` and `/signup` AAL1
 routing to the non-skippable gate for individual and organization users.
+
+## Mandatory MFA and ordinary success fixtures
+
+Billing reuses the real MFA session produced by `auth.setup.ts`. Disposable
+profile flows complete MFA without changing their onboarding/profile state.
+Direct tenant-isolation and entitlement tests borrow setup's AAL2 bearer; their
+positive access checks must pass before a negative isolation result is meaningful.
+The sign-out test uses its own real UI login and MFA enrollment, so signing out
+cannot revoke a later test's saved seed session. Intentional AAL1 rejection tests
+and `loginViaUi` retain their original authentication level.
