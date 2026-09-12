@@ -129,7 +129,11 @@ export async function resolveParentAdminOrg(
   database: Db = defaultDb,
 ): Promise<SubOrgResult<string>> {
   if (requestedOrgId) {
-    const admin = await isCallerOrgAdminResult(userId, requestedOrgId);
+    // `database`, not the module `db`: this function takes an injected client
+    // and honouring it for only one of its three reads is a split brain a test
+    // cannot see (review B7). `preloadedProfile` stays undefined so the shared
+    // helper does its own profile fetch — through the same injected client.
+    const admin = await isCallerOrgAdminResult(userId, requestedOrgId, undefined, database);
     if (admin.error) return fail(503, 'membership_lookup_unavailable');
     if (!admin.value) return fail(403, 'Admin permissions required');
     return succeed(requestedOrgId);
@@ -141,7 +145,10 @@ export async function resolveParentAdminOrg(
     .eq('user_id', userId);
 
   if (error) {
-    logger.error({ err: error.message }, 'suborg_caller_membership_lookup_failed');
+    // Tag unchanged from `orgSubOrgs.ts`'s pre-extraction version on purpose:
+    // it is a string an external alert may already key on, and renaming it
+    // while moving the code would silently retire that alert (review B6).
+    logger.error({ err: error.message }, 'suborg_credit_membership_lookup_failed');
     return fail(503, 'membership_lookup_unavailable');
   }
 
@@ -156,7 +163,7 @@ export async function resolveParentAdminOrg(
 
   if (rows.length === 0) {
     // SCRUM-5031 — see the header of this function.
-    const { value: profile, error: profileError } = await getCallerProfileResult(userId);
+    const { value: profile, error: profileError } = await getCallerProfileResult(userId, database);
     if (profileError) {
       logger.error({ userId }, 'suborg_caller_profile_fallback_lookup_failed');
       return fail(503, 'membership_lookup_unavailable');

@@ -132,7 +132,17 @@ export const API_SCOPE_BADGE_CLASSES: Record<DisplayApiScope, string> = {
 
 // Scopes shown in the "create API key" picker. Legacy scopes are accepted on
 // the wire but not surfaced as choices for new keys.
-export const SELECTABLE_API_SCOPES: ScopeDescriptor[] = API_V2_SCOPES.map((id) => ({
+//
+// `ORG_API_SCOPES` is here, not only in the vocabulary (review U11/SCRUM-3971):
+// the picker is the ONLY way a customer mints a key, so a scope that exists in
+// `API_KEY_SCOPES`, passes the CHECK constraint and gates six live routes but
+// is absent from this array is a feature with no reachable key — the shipped
+// hook with no UI. `LEGACY_API_SCOPES` and `COMPLIANCE_API_SCOPES` stay out
+// deliberately: those are issued by other flows, not chosen here.
+export const SELECTABLE_API_SCOPES: ScopeDescriptor[] = [
+  ...API_V2_SCOPES,
+  ...ORG_API_SCOPES,
+].map((id) => ({
   id,
   label: API_SCOPE_LABELS[id],
   className: API_SCOPE_BADGE_CLASSES[id],
