@@ -112,7 +112,7 @@ async function ensureKey(admin, { orgId, createdBy, name, expiresAt, isActive = 
       key_prefix: raw.slice(0, 12),
       key_hash: randomBytes(32).toString('hex'),
       name,
-      scopes: ['read:search', 'write:anchor'],
+      scopes: ['read:search', 'anchor:write'],
       created_by: createdBy,
       expires_at: expiresAt,
       is_active: isActive,
@@ -186,7 +186,7 @@ async function ensureOrgD(admin, password) {
 
   const { error: me } = await admin
     .from('org_members')
-    .upsert({ user_id: userId, org_id: orgId, role: 'admin', status: 'active' }, { onConflict: 'user_id,org_id' });
+    .upsert({ user_id: userId, org_id: orgId, role: 'admin' }, { onConflict: 'user_id,org_id' });
   if (me) throw new Error(`#2841 org D membership: ${me.message}`);
 
   return { orgId, userId, email };

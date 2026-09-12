@@ -31,6 +31,12 @@ async function ensureUser({ local, role, orgId, isPlatformAdmin = false }) {
   const email = `${local}@staging.invalid.test`;
   const { data: prof } = await admin.from('profiles').select('id').eq('email', email).maybeSingle();
   let userId = prof?.id;
+  if (userId) {
+    // Idempotence: a re-run after a crashed first run holds a new random PASSWORD; make the
+    // existing auth user match state.password so every probe's GoTrue sign-in works.
+    const { error: pwErr } = await admin.auth.admin.updateUserById(userId, { password: PASSWORD });
+    if (pwErr) throw new Error(`password reset ${email}: ${pwErr.message}`);
+  }
   if (!userId) {
     const { data: created, error } = await admin.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true, user_metadata: { full_name: local } });
     if (error || !created.user) throw new Error(`user ${email}: ${error?.message}`);
@@ -40,7 +46,7 @@ async function ensureUser({ local, role, orgId, isPlatformAdmin = false }) {
   if (pe) throw new Error(`profile ${email}: ${pe.message}`);
   if (orgId) {
     const memberRole = role === 'ORG_ADMIN' ? 'admin' : 'member';
-    const { error: me } = await admin.from('org_members').upsert({ user_id: userId, org_id: orgId, role: memberRole, status: 'active' }, { onConflict: 'user_id,org_id' });
+    const { error: me } = await admin.from('org_members').upsert({ user_id: userId, org_id: orgId, role: memberRole }, { onConflict: 'user_id,org_id' });
     if (me) console.warn(`[setup] org_members upsert ${email}: ${me.message} (continuing)`);
   }
   return { userId, email, password: PASSWORD, orgId: orgId ?? null, role };
@@ -48,7 +54,7 @@ async function ensureUser({ local, role, orgId, isPlatformAdmin = false }) {
 async function ensureApiKey(orgId, createdBy) {
   if (state.apiKey?.raw) return state.apiKey;
   const raw = `ak_test_${randomBytes(32).toString('hex')}`;
-  const { data, error } = await admin.from('api_keys').insert({ org_id: orgId, key_prefix: raw.slice(0, 12), key_hash: hashApiKey(raw, API_KEY_HMAC_SECRET), name: `${PREFIX}-machine-key`, scopes: ['read:search', 'write:anchor'], created_by: createdBy }).select('id').single();
+  const { data, error } = await admin.from('api_keys').insert({ org_id: orgId, key_prefix: raw.slice(0, 12), key_hash: hashApiKey(raw, API_KEY_HMAC_SECRET), name: `${PREFIX}-machine-key`, scopes: ['read:search', 'anchor:write', 'anchor:read', 'keys:read'], created_by: createdBy }).select('id').single();
   if (error) throw new Error(`api key: ${error.message}`);
   return { id: data.id, raw, orgId };
 }

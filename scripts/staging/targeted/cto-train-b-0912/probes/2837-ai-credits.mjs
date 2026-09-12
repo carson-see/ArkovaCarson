@@ -166,7 +166,7 @@ export async function seed(admin, state, ctx) {
   if (pe) throw new Error(`#2837 seed profile C: ${pe.message}`);
   const { error: me } = await admin
     .from('org_members')
-    .upsert({ user_id: userId, org_id: orgC, role: 'admin', status: 'active' }, { onConflict: 'user_id,org_id' });
+    .upsert({ user_id: userId, org_id: orgC, role: 'admin' }, { onConflict: 'user_id,org_id' });
   if (me) console.warn(`[setup] #2837 org_members: ${me.message} (continuing)`);
 
   // A real, live org-C API key for the JWT-only rejection probe.
@@ -180,7 +180,7 @@ export async function seed(admin, state, ctx) {
       key_prefix: raw.slice(0, 12),
       key_hash: ctx.hashApiKey(raw, hmacSecret),
       name: 'cto-train-b-0912-2837-org-c-key',
-      scopes: ['read:search', 'write:anchor'],
+      scopes: ['read:search', 'anchor:write'],
       created_by: userId,
     }).select('id').single();
     if (error) throw new Error(`#2837 seed org-C key: ${error.message}`);
