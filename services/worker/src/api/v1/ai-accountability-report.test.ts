@@ -38,6 +38,8 @@ const TEST_USER_ID = '10000000-1000-4000-8000-000000000001';
 const TEST_ORG_ID = '10000000-1000-4000-8000-000000000099';
 const VALID_FINGERPRINT = 'a'.repeat(64);
 const TEST_ANCHOR_ID = '10000000-1000-4000-8000-000000000042';
+const OTHER_ORG_ID = '10000000-1000-4000-8000-0000000000bb';
+const OTHER_USER_ID = '10000000-1000-4000-8000-000000000002';
 
 function createApp() {
   const app = express();
@@ -83,6 +85,8 @@ const MOCK_MANIFEST = {
 const MOCK_ANCHOR = {
   id: TEST_ANCHOR_ID,
   public_id: 'pub_123',
+  org_id: TEST_ORG_ID,
+  user_id: OTHER_USER_ID,
   fingerprint: VALID_FINGERPRINT,
   status: 'SECURED',
   chain_tx_id: 'tx_abc123def',
@@ -289,5 +293,65 @@ describe('ai-accountability-report endpoint', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.provenanceChain.aiExtraction).toBeNull();
+  });
+
+  // SCRUM-4984 — fail-closed tenant scoping. The old check
+  // `anchor.org_id && orgId && anchor.org_id !== orgId` let a caller with no
+  // org, or an orphan anchor, read any org's report by public_id.
+  describe('tenant scoping (SCRUM-4984)', () => {
+    function mockDb(profileOrgId: string | null, anchor: Record<string, unknown>) {
+      vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+        const table = (args as unknown as string[])[0];
+        if (table === 'profiles') return mockChain({ org_id: profileOrgId }) as unknown as ReturnType<typeof db.from>;
+        if (table === 'anchors') return mockChain(anchor) as unknown as ReturnType<typeof db.from>;
+        if (table === 'extraction_manifests') return mockChain([MOCK_MANIFEST]) as unknown as ReturnType<typeof db.from>;
+        if (table === 'audit_events') return mockChain(MOCK_AUDIT_EVENTS) as unknown as ReturnType<typeof db.from>;
+        return mockChain([]) as unknown as ReturnType<typeof db.from>;
+      });
+    }
+
+    it("returns 404 (not 403) for another org's anchor", async () => {
+      mockDb(TEST_ORG_ID, { ...MOCK_ANCHOR, org_id: OTHER_ORG_ID, filename: 'other-tenant.pdf' });
+      const res = await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
+      expect(res.status).toBe(404);
+      expect(JSON.stringify(res.body)).not.toContain('other-tenant.pdf');
+    });
+
+    it('returns 404 when the caller has no org and does not own the anchor (former fail-open path)', async () => {
+      mockDb(null, { ...MOCK_ANCHOR, org_id: OTHER_ORG_ID, filename: 'other-tenant.pdf' });
+      const res = await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
+      expect(res.status).toBe(404);
+      expect(JSON.stringify(res.body)).not.toContain('other-tenant.pdf');
+    });
+
+    it('returns 404 for an orphan anchor (no org, no owner) even to an org caller', async () => {
+      mockDb(TEST_ORG_ID, { ...MOCK_ANCHOR, org_id: null, user_id: null });
+      const res = await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
+      expect(res.status).toBe(404);
+    });
+
+    it('lets an INDIVIDUAL (no org) export a report for an anchor they own', async () => {
+      mockDb(null, { ...MOCK_ANCHOR, org_id: null, user_id: TEST_USER_ID });
+      const res = await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
+      expect(res.status).toBe(200);
+      expect(res.body.provenanceChain.sourceHash).toBe(VALID_FINGERPRINT);
+    });
+
+    it('selects org_id and user_id on the anchor so the scope check has data to act on', async () => {
+      const selectSpy = vi.fn();
+      vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+        const table = (args as unknown as string[])[0];
+        if (table === 'profiles') return mockChain({ org_id: TEST_ORG_ID }) as unknown as ReturnType<typeof db.from>;
+        const chain = mockChain(null);
+        if (table === 'anchors') {
+          chain.select = vi.fn((cols: string) => { selectSpy(cols); return chain; });
+        }
+        return chain as unknown as ReturnType<typeof db.from>;
+      });
+      await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
+      const cols = String(selectSpy.mock.calls[0]?.[0] ?? '');
+      expect(cols).toMatch(/\borg_id\b/);
+      expect(cols).toMatch(/\buser_id\b/);
+    });
   });
 });

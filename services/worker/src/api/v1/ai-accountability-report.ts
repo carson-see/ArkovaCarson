@@ -15,6 +15,7 @@ import { jsPDF } from 'jspdf';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
+import { callerMayReadRow } from './tenantRowAccess.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
   controlsApplyForStatus,
@@ -55,7 +56,7 @@ router.post('/', async (req: Request, res: Response) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: anchor } = await (db as any)
       .from('anchors')
-      .select('id, public_id, fingerprint, filename, credential_type, status, chain_tx_id, chain_block_height, chain_timestamp, metadata, compliance_controls, created_at')
+      .select('id, public_id, org_id, user_id, fingerprint, filename, credential_type, status, chain_tx_id, chain_block_height, chain_timestamp, metadata, compliance_controls, created_at')
       .eq('public_id', anchorId)
       .single();
 
@@ -64,9 +65,11 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Verify org access
-    if (anchor.org_id && orgId && anchor.org_id !== orgId) {
-      res.status(403).json({ error: 'Access denied' });
+    // SCRUM-4984: fail-closed tenant scoping — the anchor must be in the
+    // caller's org or owned by the caller. 404, not 403, so public_id
+    // enumeration cannot confirm which anchors exist in other orgs.
+    if (!callerMayReadRow(anchor, { userId, orgId })) {
+      res.status(404).json({ error: 'Anchor not found' });
       return;
     }
 
