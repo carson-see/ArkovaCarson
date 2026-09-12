@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, utimesSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -61,6 +61,40 @@ describe('shared RLS fixture lock', () => {
     })).rejects.toThrow('fixture failure');
     await expect(withSharedFixtureLock('policy', resource, async () => undefined))
       .resolves.toBeUndefined();
+  });
+
+  it('cancels a pending waiter so it cannot acquire after lifecycle cleanup returns', async () => {
+    const resource = randomUUID();
+    const lockPath = sharedFixtureLockPath('policy', resource);
+    const competingRelease = await acquireSharedFixtureLock('policy', resource);
+    const controller = new AbortController();
+    let lateRelease: (() => void) | undefined;
+    const pending = acquireSharedFixtureLock('policy', resource, {
+      waitTimeoutMs: 1_000,
+      signal: controller.signal,
+    }).then((release) => {
+      lateRelease = release;
+      return release;
+    });
+
+    try {
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'Cancelled while waiting for shared RLS fixture lock: policy',
+      });
+      competingRelease();
+      await new Promise(resolve => setTimeout(resolve, 75));
+
+      expect(lateRelease).toBeUndefined();
+      expect(existsSync(lockPath)).toBe(false);
+      const release = await acquireSharedFixtureLock('policy', resource, { waitTimeoutMs: 75 });
+      release();
+    } finally {
+      controller.abort();
+      competingRelease();
+      lateRelease?.();
+    }
   });
 
   it('maps different credentials and loopback spellings to the same database lock', () => {

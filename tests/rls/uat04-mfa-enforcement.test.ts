@@ -68,10 +68,19 @@ const disposableUserIds: string[] = [];
 const storageBucket = `uat04-${randomUUID()}`;
 let releasePolicyLock: (() => void) | undefined;
 let previousPolicyEnabledAt: string | null | undefined;
+const policyLockAbort = new AbortController();
+const policyLockWaitTimeoutMs = 25_000;
+const policyHookTimeoutMs = 30_000;
+if (policyHookTimeoutMs <= policyLockWaitTimeoutMs) {
+  throw new Error('UAT-04 hook timeout must exceed the shared fixture lock deadline');
+}
 
 describe('UAT-04 live MFA authority boundary', () => {
   beforeAll(async () => {
-    releasePolicyLock = await acquireSharedFixtureLock('oauth-email-confirmation-policy', dbUrl);
+    releasePolicyLock = await acquireSharedFixtureLock('oauth-email-confirmation-policy', dbUrl, {
+      waitTimeoutMs: policyLockWaitTimeoutMs,
+      signal: policyLockAbort.signal,
+    });
     try {
       const snapshot = sqlCommit("SELECT COALESCE(enabled_at::text,'__NULL__') FROM private.oauth_email_confirmation_policy WHERE singleton").trim();
       previousPolicyEnabledAt = snapshot === '__NULL__' ? null : snapshot;
@@ -82,9 +91,13 @@ describe('UAT-04 live MFA authority boundary', () => {
       releasePolicyLock = undefined;
       throw error;
     }
-  });
+  }, policyHookTimeoutMs);
 
   afterAll(async () => {
+    // Vitest does not cancel a timed-out hook's Promise. Cancel a pending lock
+    // waiter before checking ownership so it cannot acquire after this cleanup
+    // returns and leak the global fixture lock.
+    policyLockAbort.abort();
     if (!releasePolicyLock) return;
     const release = releasePolicyLock;
     try {
@@ -105,7 +118,7 @@ describe('UAT-04 live MFA authority boundary', () => {
         releasePolicyLock = undefined;
       }
     }
-  });
+  }, policyHookTimeoutMs);
 
   it('denies legacy AAL1 before a SECURITY DEFINER RPC and preserves an existing pre-request hook', () => {
     expect(() => sql(`SET LOCAL ROLE authenticated;
