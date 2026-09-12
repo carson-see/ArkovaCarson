@@ -104,6 +104,16 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       return;
     }
 
+    // SCRUM-4986: membership alone is not authorization. The revoke_anchor RPC
+    // enforces ORG_ADMIN through auth.uid() when called under a user JWT; this
+    // route calls it under the service_role client, so the role check must
+    // live here too. Same 404 as a non-member so the response does not reveal
+    // membership.
+    if (membership.role !== 'ORG_ADMIN') {
+      res.status(404).json(NOT_FOUND_RESPONSE);
+      return;
+    }
+
     if (anchor.status !== 'SECURED') {
       res.status(409).json({
         error: 'invalid_state',
