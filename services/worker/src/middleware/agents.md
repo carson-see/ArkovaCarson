@@ -444,3 +444,21 @@ Mount order is the contract and is pinned by `__tests__/phiScopeMount.test.ts`: 
 ## PR #2442 release review — 2026-09-05
 
 PR #2442 review: only a literal boolean false debit result may fall through to another payment tier. Null, missing, string and object results return 503; the response does not claim a debit was absent when its outcome is unknown.
+
+## 2026-09-12 SCRUM-4987 — `securityHeaders.ts`: browser-enforced headers on every worker response
+
+Mounted in `index.ts` directly after `correlationIdMiddleware` and **before** `corsMiddleware`, so
+OPTIONS preflights and every 401/404/429/500 carry the set too (same "on every response" contract
+§1.10 imposes on the rate-limit headers). Lives in code, not at the edge, because the prod Cloud Run
+origin answers publicly and bypasses Cloudflare (SCRUM-3888) — verified live 2026-09-12: the Vercel
+hosts were fully hardened, the worker origin and `api.arkova.ai` returned only `x-ratelimit-*`.
+
+Set: HSTS (same value as the Vercel hosts, so the preload entry stays coherent), `nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, a deny-all `Permissions-Policy`, and a CSP.
+The CSP is route-aware: `default-src 'none'` everywhere except under `/api/docs`, where
+swagger-ui-express needs `'self'` + `'unsafe-inline'` (script and style) + Google Fonts; both policies
+carry `frame-ancestors 'none'`. Nothing served by the worker is designed to be framed — the embed
+widget iframes `app.arkova.ai/embed/verify/…` (Vercel), and the badge is consumed as an `<img>`,
+which X-Frame-Options does not touch. `securityHeaders.test.ts` pins the header set on JSON, SVG and
+404 responses and the docs-only CSP; `index.test.ts` pins the mount on `/health` and an unmatched
+route. If you add an HTML surface, extend `isDocsPath` deliberately rather than loosening `API_CSP`.

@@ -382,6 +382,27 @@ describe('worker server', () => {
     mockLogger.debug.mockClear();
   });
 
+  describe('security headers on every response (SCRUM-4987)', () => {
+    it('GET /health carries HSTS, nosniff, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy and the API CSP', async () => {
+      mockDbFrom.mockReturnValue(mockDbChain({ data: [{ id: '1' }], error: null }));
+      const res = await request(app, 'GET', '/health');
+      expect(res.status).toBe(200);
+      expect(res.headers['Strict-Transport-Security']).toBe('max-age=63072000; includeSubDomains; preload');
+      expect(res.headers['X-Content-Type-Options']).toBe('nosniff');
+      expect(res.headers['X-Frame-Options']).toBe('DENY');
+      expect(res.headers['Referrer-Policy']).toBe('no-referrer');
+      expect(res.headers['Permissions-Policy']).toMatch(/camera=\(\)/);
+      expect(res.headers['Content-Security-Policy']).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    });
+
+    it('an unmatched route still carries the headers', async () => {
+      const res = await request(app, 'GET', '/definitely-not-a-route');
+      expect(res.status).toBe(404);
+      expect(res.headers['X-Frame-Options']).toBe('DENY');
+      expect(res.headers['Strict-Transport-Security']).toBeDefined();
+    });
+  });
+
   describe('GET /health', () => {
     it('returns healthy status when Supabase is reachable', async () => {
       mockDbFrom.mockReturnValue(mockDbChain({ data: [{ id: '1' }], error: null }));
