@@ -46,6 +46,19 @@ describe('securityHeaders (SCRUM-4987)', () => {
     }
   });
 
+  it('matches the docs prefix case-insensitively, because Express routing is case-insensitive by default', async () => {
+    // app.use('/api/docs', docsRouter) serves the real swagger HTML for
+    // /API/docs too; the CSP must follow the same rule or that HTML renders
+    // under default-src 'none' and is blank.
+    for (const path of ['/API/docs', '/Api/Docs/swagger-ui-init.js']) {
+      expect(isDocsPath(path), path).toBe(true);
+    }
+  });
+
+  it('allows the swagger favicon host in img-src (docs.ts sets a cross-origin customfavIcon)', () => {
+    expect(DOCS_CSP).toMatch(/img-src 'self' data: https:\/\/app\.arkova\.ai/);
+  });
+
   it('does not let a docs-looking prefix widen the API policy', () => {
     expect(isDocsPath('/api/docs')).toBe(true);
     expect(isDocsPath('/api/docs/')).toBe(true);

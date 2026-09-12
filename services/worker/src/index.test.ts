@@ -395,6 +395,16 @@ describe('worker server', () => {
       expect(res.headers['Content-Security-Policy']).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     });
 
+    it('a CORS preflight (OPTIONS 204) carries the headers — the middleware is mounted before cors', async () => {
+      const res = await request(app, 'OPTIONS', '/api/checkout/session', undefined, {
+        origin: 'http://localhost:5173',
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers['Strict-Transport-Security']).toBe('max-age=63072000; includeSubDomains; preload');
+      expect(res.headers['X-Frame-Options']).toBe('DENY');
+      expect(res.headers['Content-Security-Policy']).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    });
+
     it('an unmatched route still carries the headers', async () => {
       const res = await request(app, 'GET', '/definitely-not-a-route');
       expect(res.status).toBe(404);

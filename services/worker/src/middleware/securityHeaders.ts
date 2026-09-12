@@ -47,7 +47,9 @@ export const DOCS_CSP = [
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
-  "img-src 'self' data:",
+  // docs.ts sets customfavIcon to app.arkova.ai/favicon.svg; without this host
+  // the favicon is a CSP violation on every docs load. Change both together.
+  "img-src 'self' data: https://app.arkova.ai",
   "connect-src 'self'",
   "frame-ancestors 'none'",
   "object-src 'none'",
@@ -60,8 +62,15 @@ export const PERMISSIONS_POLICY =
 
 const DOCS_PREFIX = '/api/docs';
 
+/**
+ * Express routing is case-insensitive by default (`case sensitive routing`
+ * is never enabled in index.ts), so `/API/docs` serves the real swagger HTML.
+ * The CSP decision must follow the same rule or that HTML renders under
+ * `default-src 'none'` and is blank.
+ */
 export function isDocsPath(path: string): boolean {
-  return path === DOCS_PREFIX || path.startsWith(`${DOCS_PREFIX}/`);
+  const lower = path.toLowerCase();
+  return lower === DOCS_PREFIX || lower.startsWith(`${DOCS_PREFIX}/`);
 }
 
 export function securityHeaders(req: Request, res: Response, next: NextFunction): void {

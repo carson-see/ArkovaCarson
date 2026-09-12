@@ -462,3 +462,21 @@ widget iframes `app.arkova.ai/embed/verify/…` (Vercel), and the badge is consu
 which X-Frame-Options does not touch. `securityHeaders.test.ts` pins the header set on JSON, SVG and
 404 responses and the docs-only CSP; `index.test.ts` pins the mount on `/health` and an unmatched
 route. If you add an HTML surface, extend `isDocsPath` deliberately rather than loosening `API_CSP`.
+
+**Review follow-ups (PR #2838, 2026-09-12).** (1) `isDocsPath` is case-insensitive: Express routing is
+case-insensitive by default, so `/API/docs` serves the real swagger HTML and must get `DOCS_CSP`, not
+`default-src 'none'`. (2) `DOCS_CSP` `img-src` allows `https://app.arkova.ai` because `docs.ts`
+sets `customfavIcon` to `https://app.arkova.ai/favicon.svg` (the old `arkova-26.vercel.app/favicon.ico`
+was a 404) — change both together. (3) The values that deliberately differ
+from `vercel.json`: `Referrer-Policy: no-referrer` (Vercel: `strict-origin-when-cross-origin`),
+`X-Frame-Options: DENY` (Vercel: `SAMEORIGIN` — no worker route is framed; the embed widget iframes
+`app.arkova.ai`, not the worker), and `Permissions-Policy` adds `payment=()` and `usb=()`. HSTS is
+byte-identical on purpose (preload coherence). (4) The `nosemgrep` annotations in `ai/gemini.ts` and
+`utils/gcp-auth.ts` sit on the line IMMEDIATELY above the `fetch(` call — Semgrep ignores the
+annotation anywhere else in a comment block; rule id verified against the Sekura `sast_findings.json`
+(`typescript.react.security.react-insecure-request.react-insecure-request`, gemini.ts:1042 /
+gcp-auth.ts:77). (5) This is defense-in-depth, not a substitute: SCRUM-3888 (close the public Cloud
+Run origin) stays open; `edge.arkova.ai` gets the same set under SCRUM-5040 once an edge deploy
+pipeline exists; the R-5 config-drift scaffold (`scripts/ci/check-config-drift.ts`) only snapshots
+the `vercel.json` CSP, so a worker-CSP change has no drift gate today — keep this file and the
+middleware in step by hand.
