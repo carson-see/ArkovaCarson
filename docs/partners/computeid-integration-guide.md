@@ -94,6 +94,7 @@ Register a webhook for `anchor.secured`, `anchor.revoked`, `anchor.expired`, `an
 1. ComputeID issues the AgentPassport, scoped to the agent's capabilities.
 2. The agent obtains its verification receipt from ComputeID: `GET https://api.aicomputeid.com/v1/agents/{passport_id}/verify` → `verification_receipt`.
 3. The agent (or the org's integration on its behalf) presents the passport id and the receipt to Arkova.
+   **A receipt is valid for five minutes** (`issued_at` → `expires_at`, measured on two real receipts on 2026-09-07), so fetch it and admit inside that window; a stale one is rejected with `expired`. Fetch a fresh receipt per admission rather than caching.
 4. Arkova verifies the receipt **offline** against its pinned copy of ComputeID's CA (RSA-SHA256 over the exact `receipt_payload` bytes; key id `ebb276c2f18ed34f`). No call to ComputeID is made on this path, so ComputeID uptime never gates admission.
 5. Arkova binds the passport to a new agent record and issues an agent-scoped key. The key is bound to the agent record, which names the passport and the organization key that admitted it. **Per-record attribution (the acting agent named on each secured record) is planned for the next release (SCRUM-4497) and is NOT asserted today.**
 
@@ -160,6 +161,8 @@ What Arkova does with each event, for every agent bound to that passport:
 | `passport.reinstated` | A suspension **Arkova applied from your event** is lifted and its keys restored. A suspension applied by the organization itself is never lifted by a partner event. Ignored for a revoked agent. |
 
 Ordering: authenticated `passport.revoked` is terminal across organizations and overrides local receipt/event floors. Revocation is recorded even when no agent is bound yet. Suspension and reinstatement follow the signed timestamp, with reinstatement requiring a strictly newer timestamp; a same-time event cannot relax a suspension. Timestamps over five minutes ahead are rejected and recorded for investigation; accepted timestamps are canonicalized and the stored clock is capped at receipt time. Arkova answers `409 conflict_retry` when a bound agent changed concurrently and `5xx` if a transaction fails; please redeliver both. Repeated revocations still enforce every affected agent after partial delivery failures.
+
+Because ComputeID does not retry a failed delivery today, Arkova does not rely on the webhook alone. **Every bound passport is re-checked on a schedule** against `GET /v1/agents/{passport_id}/verify`, and any state that disagrees with Arkova's is reconciled through the same code path a webhook event takes, so a lost or 409'd delivery is caught within the hour rather than never. The re-check only ever reinstates on a receipt whose signature verifies against the pinned CA; a revocation or suspension is acted on either way, because failing safe matters more there. This does not remove the need for redelivery — it bounds the damage when one is impossible.
 
 What Arkova needs from ComputeID for this to be production-grade (tracked as SCRUM-4498): an API key for Arkova; the retry policy for non-2xx; authentication and a delete/rotate path on `/v1/webhooks/register`; one real `passport.revoked` delivery against Arkova's staging endpoint during the soak window.
 

@@ -83,6 +83,27 @@ export const ComputeIdVerificationReceipt = z
   .passthrough();
 export type ComputeIdVerificationReceiptT = z.infer<typeof ComputeIdVerificationReceipt>;
 
+/**
+ * `GET /v1/agents/{id}/verify`. Deliberately lenient (`.passthrough()`, minimal
+ * required set): the scheduled re-check must not turn an undocumented extra
+ * field into "we could not check this passport". Captured shape:
+ * `__fixtures__/real-verify-receipts.json` (2026-09-07).
+ *
+ * `verification_receipt` is optional because we have only ever observed it on
+ * ACTIVE passports — whether ComputeID mints one for a revoked passport is not
+ * something we have seen, so the re-check must cope with its absence rather
+ * than assume it.
+ */
+export const ComputeIdVerifyResponse = z
+  .object({
+    passport_id: passportId,
+    status: z.string().min(1).max(32),
+    revoked_at: z.string().max(64).nullable().optional(),
+    verification_receipt: ComputeIdVerificationReceipt.optional(),
+  })
+  .passthrough();
+export type ComputeIdVerifyResponseT = z.infer<typeof ComputeIdVerifyResponse>;
+
 export const ComputeIdAdmissionRequest = z.object({
   passport_id: passportId,
   verification_receipt: ComputeIdVerificationReceipt,

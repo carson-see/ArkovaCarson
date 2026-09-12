@@ -1876,3 +1876,17 @@ The client-side manual fallback is retired. Five negative controls reproduced re
 ## 2026-09-10 — PR #2570 current-main integration review
 
 The current main merge preserves both the atomic connector publication and uncertain-debit recovery changes, alongside PR #2565 signer backfill and PR #2695 timestamp semantics. The only manual conflict was this documentation file; both complete entries were retained. Migration 0445 is unchanged. Targeted default-adapter, connector, signer and route tests qualify the combined source; production migration and deployment remain separate release prerequisites.
+
+## 2026-09-12 — `computeid-passport-recheck.ts` (SCRUM-4495)
+
+Hourly reconciliation of every ComputeID-bound agent against `GET /v1/agents/{id}/verify`. It exists because ComputeID has **no webhook retry** — a non-2xx from us is swallowed, and our own receiver answers 409 to the loser of a compare-and-set race expecting a redelivery that never comes — so a revocation can be lost outright and a revoked passport's Arkova keys stay live. Carson committed to the partner on 2026-09-07 that a lost delivery is caught within the hour.
+
+Read before changing it:
+
+- **It is not a second lifecycle.** A divergence becomes the `passport.*` event a webhook would have carried and goes through `integrations/computeid/passport-transition.ts`, the same path the receiver uses.
+- **Ordering.** The synthesized event carries the receipt's SIGNED `issued_at`, so `binding.ts`'s floor drops it when a newer webhook already landed. An older observation can never overwrite a newer one.
+- **Steady state writes nothing.** An event is synthesized only when the observed status differs from the agent's own, so a healthy fleet performs zero writes and never advances the ordering floor.
+- **Evidence asymmetry.** Reinstatement needs a signature-verified receipt; suspension and revocation are also accepted on an unsigned status. See `integrations/computeid/agents.md` for why.
+- **Bounds.** `RECHECK_MAX_AGENTS_PER_RUN` / `RECHECK_MAX_VERIFY_CALLS` / `RECHECK_PAGE_SIZE`, with per-passport memoization so N agents on one passport cost one partner call. Termination is an EMPTY page, never a short one (a hosted PostgREST cap can sit below the requested limit).
+- **Triple gate.** Flag off → `{skipped:true, reason:'flag_off'}`; no `COMPUTEID_API_KEY` → `api_key_unconfigured`; unusable CA pin → `ca_pin_unusable`. It never throws the worker over a partner outage — an unreachable partner is `unresolved`, never "the passport is fine".
+- Ports are injected (`RecheckPorts`), so the tests exercise the real decision logic without a live DB or network.
