@@ -11,6 +11,8 @@ _Last updated: 2026-09-12_
 - `pickSocialLinks(raw)` — narrows a stored blob to the four known keys, string values only.
 - `parseSocialLinksForWrite(input)` — the write validator (Zod, Constitution §1.1). Unknown keys are **stripped, not rejected** (`.strip()`): a legacy key the user never touched must not make the form un-saveable. `{ok:false,key}` names the offending field so the caller can show `PROFILE_LABELS.socialLinks.invalid[key]`.
 
+**The write validator is UX, not a security boundary.** There is no CHECK constraint and no RLS predicate on the contents of `profiles.social_links`, so any user can `PATCH` the column directly through PostgREST with a `javascript:` value. `safeSocialHref` / `resolveSocialLinks` on the render path is the actual control — never remove it on the grounds that the write path already validates (CTO ruling, PR #2840 review).
+
 `jsonLd.ts` — `toJsonLd(value)` is the one serializer for every `<script type="application/ld+json">` rendered through `dangerouslySetInnerHTML`. It escapes every `<` — covering `</script`, `<script` and `<!--`, all three of which steer the HTML tokenizer — plus U+2028/U+2029. It deliberately does **not** use `replace(/<\/script/gi, '<\\/script')`: that substitutes a lowercase literal for whatever it matched, so `</ScRiPt>` in a title stops round-tripping. `src/components/verification/PublicVerification.tsx` still carries its own `replace(/<\//g, '<\\/')` — it is a T2 surface, so folding it in is a separate change.
 
 ## PR #2637 MFA assurance identity (2026-09-05)
