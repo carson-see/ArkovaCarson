@@ -3,9 +3,9 @@
 import { createHmac } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-export const RIG_REF = 'xhvasifpunswhsgfsstd';
+export const RIG_REF = process.env.TRAIN_RIG_REF ?? 'xhvasifpunswhsgfsstd';
 export const SUPABASE_URL = `https://${RIG_REF}.supabase.co`;
-export const SERVICE = 'arkova-worker-cto-train-b-0912-staging';
+export const SERVICE = process.env.TRAIN_SERVICE ?? 'arkova-worker-cto-train-b-0912-staging';
 export const REGION = 'us-central1';
 export const TAG_URL = process.env.TRAIN_TAG_URL
   ?? 'https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app';
