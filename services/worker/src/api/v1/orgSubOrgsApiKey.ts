@@ -220,7 +220,15 @@ orgSubOrgsApiRouter.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const rows = (subOrgs ?? []) as {
+    // A successful PostgREST list read is an array. `?? []` here would report
+    // "this organization has no affiliates" on a shape fault — a materially
+    // wrong answer a partner would act on.
+    if (!Array.isArray(subOrgs)) {
+      logger.error({ orgId: caller.orgId }, 'suborg_api_list_shape');
+      res.status(503).json({ error: 'sub_org_list_unavailable' });
+      return;
+    }
+    const rows = subOrgs as {
       id: string;
       public_id: string | null;
       display_name: string;
@@ -269,7 +277,12 @@ orgSubOrgsApiRouter.get('/', async (req: Request, res: Response) => {
         res.status(503).json({ error: 'sub_org_list_unavailable' });
         return;
       }
-      inheritingIds = new Set((markers ?? []).map((m: { org_id: string }) => m.org_id));
+      if (!Array.isArray(markers)) {
+        logger.error({ orgId: caller.orgId }, 'suborg_api_docusign_marker_shape');
+        res.status(503).json({ error: 'sub_org_list_unavailable' });
+        return;
+      }
+      inheritingIds = new Set(markers.map((m: { org_id: string }) => m.org_id));
     }
 
     // A child with no public id cannot be named on this surface, and silently
@@ -397,7 +410,12 @@ orgSubOrgsApiRouter.get('/credits', async (req: Request, res: Response) => {
       return;
     }
 
-    const children = result.rollup.children ?? [];
+    const children = result.rollup.children;
+    if (!Array.isArray(children)) {
+      logger.error({ orgId: caller.orgId }, 'suborg_api_rollup_shape');
+      res.status(503).json({ error: 'rollup_projection_unavailable' });
+      return;
+    }
     // Refuse rather than under-report. A rollup missing a row reads as "that
     // affiliate has no balance", which is a materially wrong answer about
     // money; dropping the row silently is the failure mode this refuses.

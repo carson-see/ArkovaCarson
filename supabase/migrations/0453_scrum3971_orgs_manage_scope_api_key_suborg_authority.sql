@@ -139,11 +139,17 @@ $function$;
 COMMENT ON FUNCTION public.generate_unique_org_public_id() IS
   'SCRUM-3971. Column default for organizations.public_id. SECURITY DEFINER so the uniqueness probe is not RLS-filtered the way the equivalent probe inside auto_generate_org_public_id() is. Returns an identifier that is not in use; discloses nothing about rows that are.';
 
--- Executable by every role that can INSERT an organization: a column default
--- runs as the INSERTING role, so revoking it from `authenticated` would break
--- browser-side organization creation (src/hooks/useOnboarding.ts).
-REVOKE ALL ON FUNCTION public.generate_unique_org_public_id() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.generate_unique_org_public_id() TO anon, authenticated, service_role;
+-- A column default runs as the INSERTING role, so the grant has to cover every
+-- role that can actually INSERT an organization — and today that is service_role
+-- and postgres-owned SECURITY DEFINER routines ONLY. `organizations` has
+-- FORCE ROW LEVEL SECURITY with exactly two policies (`organizations_select_member`,
+-- `organizations_update_admin`, baseline:13117/13121) and NO insert policy, so an
+-- `authenticated` direct INSERT is denied by RLS before a default is ever
+-- evaluated; `anon` has no policy at all. Granting either would be pure attack
+-- surface on a definer function. If an insert policy is ever added, grant the
+-- role then — a missing grant fails loudly, which is the right direction.
+REVOKE ALL ON FUNCTION public.generate_unique_org_public_id() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.generate_unique_org_public_id() TO service_role;
 
 DO $backfill$
 DECLARE

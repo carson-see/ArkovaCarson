@@ -201,7 +201,7 @@ describe('0453 content guard — the SCRUM-4470 reparent property survives', () 
 });
 
 describe('0453 content guard — grants', () => {
-  it.each([...ALL_KEY_FNS, AUTHORIZED_FN])('%s revokes anon and authenticated by name', (fnName) => {
+  it.each([...ALL_KEY_FNS, AUTHORIZED_FN, 'generate_unique_org_public_id'])('%s revokes anon and authenticated by name', (fnName) => {
     const sql = executableSql(migration());
     const revoke = new RegExp(
       `REVOKE ALL ON FUNCTION public\\.${fnName}\\([^)]*\\) FROM PUBLIC, anon, authenticated;`,
@@ -209,7 +209,7 @@ describe('0453 content guard — grants', () => {
     expect(sql).toMatch(revoke);
   });
 
-  it.each([...ALL_KEY_FNS, AUTHORIZED_FN])('%s grants EXECUTE to service_role only', (fnName) => {
+  it.each([...ALL_KEY_FNS, AUTHORIZED_FN, 'generate_unique_org_public_id'])('%s grants EXECUTE to service_role only', (fnName) => {
     const sql = executableSql(migration());
     const grant = new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${fnName}\\([^)]*\\) TO service_role;`);
     expect(sql).toMatch(grant);

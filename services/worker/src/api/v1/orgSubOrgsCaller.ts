@@ -145,7 +145,14 @@ export async function resolveParentAdminOrg(
     return fail(503, 'membership_lookup_unavailable');
   }
 
-  const rows = (memberships ?? []) as { org_id: string; role: string | null }[];
+  // `?? []` would turn a shape fault into "this caller administers nothing",
+  // which is a 403 the operator cannot distinguish from a real refusal. A
+  // successful PostgREST list read is an array; anything else is a fault.
+  if (!Array.isArray(memberships)) {
+    logger.error({ userId }, 'suborg_caller_membership_lookup_shape');
+    return fail(503, 'membership_lookup_unavailable');
+  }
+  const rows = memberships as { org_id: string; role: string | null }[];
 
   if (rows.length === 0) {
     // SCRUM-5031 — see the header of this function.

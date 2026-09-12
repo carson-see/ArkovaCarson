@@ -215,7 +215,14 @@ agentToolsRouter.get(
         return;
       }
 
-      const childRows = (children ?? []) as {
+      // `?? []` would report "this organization has no affiliates" on a shape
+      // fault, which an agent would act on as a fact.
+      if (!Array.isArray(children)) {
+        logger.error({ orgId: req.apiKey.orgId }, 'v2 list_orgs children lookup returned a non-array');
+        next(ProblemError.internalError('Failed to list organizations.'));
+        return;
+      }
+      const childRows = children as {
         public_id: string | null;
         display_name: string;
         parent_approval_status: string | null;
