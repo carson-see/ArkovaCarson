@@ -14,6 +14,29 @@
 
 ## Now
 
+### 2026-09-12T15:55Z → 21:25Z — CTO release session (Claude Fable): soak floors cut to 4 h / 24 h (live on main), all 12 open PRs reviewed and owned, train rig stood up
+
+**Read this block first.** Everything older in `## Now` is superseded where it disagrees, including the 48 h close times in the 13:13Z block below.
+
+#### Rule change — LIVE on `main`
+- Commits `bd62f6ee3` (gate) + `00e8c3b4f` (provisioner floors), T0 direct per §0 rule 8. `TIER_SPECS`: T2 12 h → **4 h**, T3 48 h → **24 h**; new gate field `Post-soak T0 delta: <head SHA>` keeps exact-head evidence across docs/e2e-only commits (ancestry + per-file `isT0OnlyFile`, fails closed); train-by-default (≤6 PRs, one rig, per-PR targeted probes); every probe asserts a DB delta, never a bare 2xx; cycle 1 is the coverage gate. Local verification before push: gate suite 459/459 (+15 red-first), provisioner + admission suites 238/238, `check-doc-pointers` OK, `requiredTierFor` = T0, Mergify queue empty. Spec + pre-mortem: Confluence 146440221; Jira SCRUM-5054 (subtasks 5055/5056) under SCRUM-2334. Evidence behind it (research over every window since 07-01): T3 median 9.1 d open→merge against a 2-day window; ≈30 windows lost to environment/bookkeeping vs 0 to a product defect; every prod escape was scale/prod-data/prod-config/wrong-artifact; the `anti-hollow-soak` CI job has never evaluated a preflight because `docs/staging/soak-preflight/` is empty on `main` — every T2/T3 soak now commits its preflight JSON there.
+
+#### Soaks — RUNNING on the standing rig `fizyjojbebyalirtjjht` (unchanged, do not touch) — close times under the 24 h rule
+- #2825 (T3, identity+uptime monitor from 2026-09-12T11:41:32Z) → closes **2026-09-13T11:41:32Z**. Its changed behaviour (the 0443 repair) already executed and was verified on prod by the 13:13Z session; record that as the `Targeted evidence:` line at seal.
+- #2832 / #2831 (T3, targeted drivers from 2026-09-12T14:07:00Z; 78/78 and 77/77 clean 5-min cycles at 20:37Z per `/Volumes/Extreme/offload/cto-soak-2026-09-12/*/summary.json`) → close **2026-09-13T14:07:00Z**. Sunday close-out procedure in the 13:13Z block still applies (fill `Soak end:`, apply 0451/0452 via MCP with exemptions first, drift gate green, merge, verify deploys).
+
+#### Train B — isolated rig `xhvasifpunswhsgfsstd` (`arkova-soak-cto-train-b-0912`, us-east-2, $10/mo) — stood up 20:37Z–20:50Z, NOT yet soaking
+- Cloud Run `arkova-worker-cto-train-b-0912-staging` (us-central1, rev `00001-vsn`, prod image `sha256:2dc57913…` / source `a8ce57af`, min 1 / max 2, IAM-only); schema replayed from `1172fc282` (149 ledger rows, head 0450, 119 tables all RLS); baseline fixture seeded; preflight **`clean_mirror` 8/8** (artifact `docs/staging/cto-train-b-0912/preflight-*.json`, committed with the train evidence). Secrets `*-cto-train-b-0912-staging` + `supabase-db-password-xhvasifpunswhsgfsstd`. Flags: VERIFICATION_API, OUTBOUND_WEBHOOKS, AI_EXTRACTION, WEBHOOK_HMAC on; COMPUTEID_INTEGRATION, BATCH_ANCHORING off. Driver framework `scripts/staging/targeted/cto-train-b-0912/` (worktree `/Volumes/Extreme/offload/cto-review-2026-09-12/wt-rig`, branch `cto/train-b-2026-09-12-driver`). Rig facts: `/Volumes/Extreme/offload/cto-review-2026-09-12/RIG-cto-train-b-0912.md`. Tear down after the train seals (§7).
+- Composition (T2, 4 h): #2835 #2836 #2838 #2839 #2837 #2834 #2842 (+ #2841, T2, no migration). #2840 is T1 frontend-only (local-preview UAT at 1280/375 committed under `docs/uat/pr-2840/`). Next: fold the last two reviewer stacks (#2838, #2839), cut `rc/train-b-2026-09-12`, build via `Deploy to Staging` onto the rig service with `AI_PROVIDER=gemini` + `AI_EXTRACTION_LATENCY_BUDGET_MS=15000`, run `setup.mjs`, cycle-1 coverage gate, 4 h window, seal with per-PR bodies + RC manifest.
+
+#### The 12 open PRs — reviewed (code-review / debug / simplify / TLA per PR), fixes folded, nothing merged
+- Pushed onto the PR branches 2026-09-12T21:20Z: #2835 `e283b42bf` · #2836 `cfe0a2efc` · #2842 `7f53b79d5` · #2840 `f50dbe5cc` · #2841 `27ec0ca0b` · #2837 `3f7575459` · #2834 `6432ddb67`. Pending fold: #2838 (rebasing onto `f7176d4af`), #2839 (scoped overrides + drop `adm-zip` from the worker). Per-PR reports: `/Volumes/Extreme/offload/cto-review-2026-09-12/report-<PR>.md`.
+- Highest-severity fixes: #2842 a fresh partner receipt could override a `revoked` status and reactivate keys; unsigned evidence wrote the terminal tombstone (now suspend-only); every re-check DLQ row was rejected by 0448's hash CHECK and swallowed. #2836 a `204` webhook ack was retried five times into the DLQ; the new `egress_refused` DLQ kind was rejected by 0338's CHECK. #2841 dedupe ledger failed open (daily duplicate mail); already-lapsed keys were never notified; Extend could shorten. #2839 the shipped worker `adm-zip 0.6.0` was inside the advisory the root override missed. #2837 provisioning ran after the 402 guard; TOCTOU compensated. #2835 anchor revoke is dead in prod (`memberships` empty + service_role `auth.uid()` NULL, SCRUM-5033/5004) — the PR's ORG_ADMIN check is defense-in-depth, currently unreachable.
+- Follow-ups filed: SCRUM-5057, 5061, 5062, 5064, 5065, 5066, 5067, 5068 (+ the Sekura session's 5033/5034/5036/5038/5040).
+- Vercel: previews for commits authored `carson@arkova.ai` are BLOCKED (GitHub cannot map that address; the Sekura session's worktrees used it); merge commits deploy fine. Not a code issue.
+- Prod worker read 20:42Z: `arkova-worker-01047-lzx`, `/health` healthy on `a8ce57af`. Root disk on the Mac mini hit ENOSPC at ~21:05Z (agents' `npm ci` + caches); caches cleared to ~3 GiB free — no soak dir touched.
+
+
 ### 2026-09-12T13:13Z → 14:50Z — CTO session (Claude Fable): three inherited PRs reviewed, prod AI extraction restored, 0443 repair completed, cost/hygiene sweep
 
 **Read this block first.** Everything older in `## Now` is superseded where it disagrees.
@@ -2608,4 +2631,5 @@ _Last refreshed: 2026-09-09 by Claude-Opus-5-CTO-session — claims verified aga
 _Last refreshed: 2026-09-10 by Codex PR #2572 repair session — claims verified against gcloud/MCP/CI output (local test and SQL receipts; hosted CI remains incomplete and no new production application is claimed)._
 _Last refreshed: 2026-09-10 by Codex release review — claims verified against gcloud/MCP/CI output._
 
-_Last refreshed: 2026-09-12 by Claude Fable 5.1 (CTO session) — claims verified against gcloud/MCP/CI output._
+
+_Last refreshed: 2026-09-12 by Claude Fable 5.1 (CTO release session) — claims verified against gcloud/MCP/CI output._

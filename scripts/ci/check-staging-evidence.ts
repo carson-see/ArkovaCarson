@@ -4,8 +4,9 @@
  *
  * Every prod-affecting PR declares a risk tier (T1 / T2 / T3) in its
  * body. T0 docs/tests/CI/tooling-only PRs run CI only. The tier dictates
- * required evidence fields and required soak length (2h / 12h / 48h per
- * CLAUDE.md §1.12). CI fails the PR if:
+ * required evidence fields and required soak length (2h / 4h / 24h per
+ * CLAUDE.md §1.12, CTO decision 2026-09-12 — see TIER_SPECS). CI fails the
+ * PR if:
  *
  *   1. The declared tier is missing.
  *   2. The declared tier is below what the touched files require
@@ -80,7 +81,18 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T2: {
     tier: 'T2',
-    soakHours: 12,
+    // 12h → 4h (CTO decision 2026-09-12, implementing Carson's directive to
+    // make the release process cost-effective and efficient). Duration is no
+    // longer the primary evidence: no soak in this repo's history surfaced a
+    // defect after the first full cycle of the changed behaviour — the windows
+    // that died, died from observers and environment (Cloud Run min-instance
+    // recycles, $TMPDIR sweeps, control-plane 5xx, base refreshes; HANDOFF
+    // 2026-09-08 / 2026-09-09), not from the code under test. 4h is the floor
+    // the slowest real async cycle needs. The TARGETED fields are what actually
+    // grade a T2 now and stay mandatory: `Changed behavior:`, `Targeted
+    // evidence:`, `Load/concurrency evidence:` (changedBehaviorErrors) plus
+    // `Rollback rehearsed:` below.
+    soakHours: 4,
     requiredFields: [
       'Tier:',
       'Staging branch:',
@@ -105,7 +117,14 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T3: {
     tier: 'T3',
-    soakHours: 48,
+    // 48h → 24h (same CTO decision, 2026-09-12). The one duration-dependent
+    // observation a T3 owes is the daily flush at 03:00 UTC, and a 24h window
+    // always contains exactly one of those — 48h bought a second copy of the
+    // same cycle, not a second kind of evidence. The trigger/flush/isolation
+    // fields below stay mandatory and are what the tier is actually graded on;
+    // a FORCED trigger firing (POSTing the scheduled job endpoint on the rig)
+    // is acceptable when the field cites the log line that proves it fired.
+    soakHours: 24,
     requiredFields: [
       'Tier:',
       'Staging branch:',
@@ -2554,6 +2573,13 @@ function shaEvidenceErrors(opts: {
 const BASE_DRIFT_IMPACT_FIELD = 'Base drift impact:';
 const GIT_BIN = '/usr/bin/git';
 
+/**
+ * Changed-file list between two commits. `null` means the question could not be
+ * answered (missing object, shallow clone, git unavailable) and every caller
+ * must treat it as "not covered" — never as "no files changed".
+ */
+export type ChangedFilesProvider = (fromSha: string, toSha: string) => string[] | null;
+
 function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
   try {
     return execFileSync(
@@ -2963,38 +2989,158 @@ function baseShaEvidenceErrors(
   return baseDriftImpactErrors(body, evidenceSha, expected, prFiles, driftFilesOverride);
 }
 
-function stagingIntegrityErrors(
-  body: string,
-  tier: Tier,
-  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[]; files?: string[] } = {},
-): string[] {
-  if (tier === 'T0') return [];
+const POST_SOAK_T0_DELTA_FIELD = 'Post-soak T0 delta:';
 
-  if (tier === 'T1') {
-    return [
-      ...shaEvidenceErrors({
-        body,
-        field: 'PR head SHA:',
-        expectedSha: opts.headSha,
-        currentLabel: 'PR head',
-        staleMessage: 'expedited evidence cannot be copied across commits.',
-      }),
-    ];
+/** Options every `PR head SHA:` evaluation needs, on all four evidence paths. */
+interface HeadShaEvidenceOpts {
+  headSha?: string;
+  ancestryProvider?: AncestryProvider;
+  changedFilesProvider?: ChangedFilesProvider;
+}
+
+/**
+ * The shared `PR head SHA:` evaluation for every evidence path (T1/T2/T3
+ * standard, frontend-T2, unsoakable-T2) — exact-head binding, plus the
+ * post-soak T0-only delta allowance (CTO decision 2026-09-12).
+ *
+ * Before this, ANY commit after the soak invalidated exact-head evidence —
+ * including a commit that only touches `e2e/**` or `docs/**`, files
+ * {@link isT0OnlyFile} already classifies T0 precisely because they cannot
+ * reach prod runtime. That forced a re-soak to re-prove code the soak already
+ * covered, which is the cost this decision removes. It is NOT a general stale-
+ * head waiver: it is opt-in per PR, and every one of its conditions fails
+ * CLOSED, so an unanswerable question keeps the original staleness error.
+ *
+ *   (a) The field's value must name the CURRENT head SHA the gate is grading —
+ *       it cannot be claimed against some other commit.
+ *   (b) The soaked SHA must be an ANCESTOR of the current head: the delta has
+ *       to be an append-only continuation of the tree that was soaked, not a
+ *       rebase/force-push onto a different history. `null` (unknown) rejects.
+ *   (c) The delta file list must be computable and non-empty, and EVERY file in
+ *       it must satisfy `isT0OnlyFile` with default options — no diff-provider
+ *       carve-outs, since those decide T0-ness from a diff against the PR base
+ *       rather than from the post-soak delta. An uncomputable list rejects.
+ *
+ * RC-manifest head binding (`validateHeadBindingMode`) is deliberately out of
+ * scope and unchanged; see the note there.
+ */
+function headShaEvidenceResult(
+  body: string,
+  staleMessage: string,
+  opts: HeadShaEvidenceOpts,
+): { errors: string[]; notes: string[] } {
+  const errors = shaEvidenceErrors({
+    body,
+    field: 'PR head SHA:',
+    expectedSha: opts.headSha,
+    currentLabel: 'PR head',
+    staleMessage,
+  });
+  if (errors.length === 0) return { errors, notes: [] };
+
+  // Field absent → the pre-2026-09-12 behaviour, verbatim.
+  if (extractEvidenceFieldValue(body, POST_SOAK_T0_DELTA_FIELD) === null) {
+    return { errors, notes: [] };
   }
 
-  return [
-    ...evidenceScopeErrors(body),
-    ...preflightResultErrors(body),
-    ...preflightTimestampErrors(body),
-    ...shaEvidenceErrors({
+  const soakedSha = extractShaField(body, 'PR head SHA:');
+  const headSha = normalizeSha(opts.headSha);
+  // No soaked SHA / no current head → nothing to bound the delta with; the
+  // original error (which says exactly that) stands.
+  if (!soakedSha || !headSha) return { errors, notes: [] };
+
+  const deltaSha = extractShaField(body, POST_SOAK_T0_DELTA_FIELD);
+  if (deltaSha !== headSha) {
+    return {
+      errors: [
+        `${POST_SOAK_T0_DELTA_FIELD} must contain the CURRENT 40-character PR head SHA `
+        + `\`${headSha}\`${deltaSha ? ` (found \`${deltaSha}\`)` : ''}; the allowance cannot be `
+        + 'claimed against a commit this gate is not grading.',
+      ],
+      notes: [],
+    };
+  }
+
+  const ancestry = (opts.ancestryProvider ?? gitAncestryProvider())(soakedSha, headSha);
+  if (ancestry !== true) {
+    return {
+      errors: [
+        `${POST_SOAK_T0_DELTA_FIELD} rejected: soaked head \`${soakedSha}\` is `
+        + `${ancestry === false ? 'not an ancestor of' : 'of unresolvable ancestry to'} `
+        + `current head \`${headSha}\`, so the post-soak commits are not an append-only `
+        + 'continuation of the soaked tree. Re-soak on the current head.',
+      ],
+      notes: [],
+    };
+  }
+
+  const delta = (opts.changedFilesProvider ?? changedFilesBetween)(soakedSha, headSha);
+  if (delta === null || delta.length === 0) {
+    return {
+      errors: [
+        `${POST_SOAK_T0_DELTA_FIELD} rejected: the changed-file list between soaked head `
+        + `\`${soakedSha}\` and current head \`${headSha}\` `
+        + `${delta === null ? 'could not be computed' : 'is empty'}; the allowance fails closed.`,
+      ],
+      notes: [],
+    };
+  }
+
+  const firstNonT0 = delta.find((file) => !isT0OnlyFile(file));
+  if (firstNonT0 !== undefined) {
+    return {
+      errors: [
+        `${POST_SOAK_T0_DELTA_FIELD} rejected: \`${firstNonT0}\` is not a T0-classified file. `
+        + 'Post-soak commits may only touch files the tier detector classifies T0 (e2e/, docs/, '
+        + 'tests, CI/tooling); anything else can reach prod runtime, so the soaked evidence no '
+        + 'longer describes this head.',
+      ],
+      notes: [],
+    };
+  }
+
+  return {
+    errors: [],
+    notes: [
+      `post-soak delta accepted: ${delta.length} T0-only file(s) between `
+      + `${soakedSha.slice(0, 7)} and ${headSha.slice(0, 7)}`,
+    ],
+  };
+}
+
+function stagingIntegrityResult(
+  body: string,
+  tier: Tier,
+  opts: {
+    headSha?: string;
+    baseSha?: string;
+    baseDriftFiles?: string[];
+    files?: string[];
+    ancestryProvider?: AncestryProvider;
+    changedFilesProvider?: ChangedFilesProvider;
+  } = {},
+): { errors: string[]; notes: string[] } {
+  if (tier === 'T0') return { errors: [], notes: [] };
+
+  if (tier === 'T1') {
+    return headShaEvidenceResult(
       body,
-      field: 'PR head SHA:',
-      expectedSha: opts.headSha,
-      currentLabel: 'PR head',
-      staleMessage: 'evidence cannot be copied across commits.',
-    }),
-    ...baseShaEvidenceErrors(body, opts.files ?? [], opts.baseSha, opts.baseDriftFiles),
-  ];
+      'expedited evidence cannot be copied across commits.',
+      opts,
+    );
+  }
+
+  const head = headShaEvidenceResult(body, 'evidence cannot be copied across commits.', opts);
+  return {
+    errors: [
+      ...evidenceScopeErrors(body),
+      ...preflightResultErrors(body),
+      ...preflightTimestampErrors(body),
+      ...head.errors,
+      ...baseShaEvidenceErrors(body, opts.files ?? [], opts.baseSha, opts.baseDriftFiles),
+    ],
+    notes: head.notes,
+  };
 }
 
 interface StagingFilesOnlyResult {
@@ -3268,6 +3414,14 @@ interface CheckOptions {
    */
   ancestryProvider?: AncestryProvider;
   /**
+   * Changed-file oracle for the post-soak T0-only delta allowance (CTO decision
+   * 2026-09-12) — the files between the SOAKED head and the CURRENT head.
+   * Defaults to {@link changedFilesBetween}; tests inject a stub. A `null`
+   * answer fails the allowance closed (the stale-head error stands). See
+   * {@link headShaEvidenceResult}.
+   */
+  changedFilesProvider?: ChangedFilesProvider;
+  /**
    * Complete production-source import scan required by CTO ruling 102498305.
    * Missing/incomplete data or any importer voids the offline-T0 carve-out.
    */
@@ -3390,20 +3544,20 @@ function isUnsoakableEvidencePath(declared: Tier, required: Tier, files: string[
     && isOfflinePackageOnlyChange(files);
 }
 
-function frontendT2Result(body: string, headSha?: string): CheckResult {
+function frontendT2Result(body: string, opts: HeadShaEvidenceOpts): CheckResult {
   const result: CheckResult = { ok: true, errors: [], notes: [] };
   const feErrors = frontendT2Errors(body);
   // Exact-head integrity still applies: frontend evidence cannot be copied
-  // across commits any more than worker evidence can.
-  const headShaErrors = shaEvidenceErrors({
+  // across commits any more than worker evidence can — subject to the same
+  // post-soak T0-only delta allowance (see headShaEvidenceResult).
+  const head = headShaEvidenceResult(
     body,
-    field: 'PR head SHA:',
-    expectedSha: headSha,
-    currentLabel: 'PR head',
-    staleMessage: 'frontend evidence cannot be copied across commits.',
-  });
+    'frontend evidence cannot be copied across commits.',
+    opts,
+  );
 
-  addErrors(result, [...feErrors, ...headShaErrors]);
+  addErrors(result, [...feErrors, ...head.errors]);
+  result.notes.push(...head.notes);
   if (result.ok) {
     result.notes.push(
       'frontend-T2 evidence path accepted (frontend-only change; no worker '
@@ -3414,20 +3568,20 @@ function frontendT2Result(body: string, headSha?: string): CheckResult {
   return result;
 }
 
-function unsoakableT2Result(body: string, headSha?: string): CheckResult {
+function unsoakableT2Result(body: string, opts: HeadShaEvidenceOpts): CheckResult {
   const result: CheckResult = { ok: true, errors: [], notes: [] };
   const usErrors = unsoakableT2Errors(body);
   // Exact-head integrity still applies: test evidence cannot be copied across
-  // commits any more than worker or frontend evidence can.
-  const headShaErrors = shaEvidenceErrors({
+  // commits any more than worker or frontend evidence can — subject to the same
+  // post-soak T0-only delta allowance (see headShaEvidenceResult).
+  const head = headShaEvidenceResult(
     body,
-    field: 'PR head SHA:',
-    expectedSha: headSha,
-    currentLabel: 'PR head',
-    staleMessage: 'test/parity evidence cannot be copied across commits.',
-  });
+    'test/parity evidence cannot be copied across commits.',
+    opts,
+  );
 
-  addErrors(result, [...usErrors, ...headShaErrors]);
+  addErrors(result, [...usErrors, ...head.errors]);
+  result.notes.push(...head.notes);
   if (result.ok) {
     result.notes.push(
       'architecturally-unsoakable evidence path accepted (offline package/SDK '
@@ -3446,7 +3600,10 @@ function durationValidation(body: string, declared: Tier): { errors: string[]; n
   if (targetedWaiver.valid) {
     return {
       errors: [],
-      notes: ['T2 soak duration below 12h minimum; RM-approved targeted evidence with async-cycle floor accepted.'],
+      notes: [
+        `T2 soak duration below ${TIER_SPECS.T2.soakHours}h minimum; `
+        + 'RM-approved targeted evidence with async-cycle floor accepted.',
+      ],
     };
   }
   return { errors: targetedWaiver.errors.length > 0 ? targetedWaiver.errors : errors, notes: [] };
@@ -3455,10 +3612,18 @@ function durationValidation(body: string, declared: Tier): { errors: string[]; n
 function standardEvidenceErrors(
   body: string,
   declared: Tier,
-  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[]; files?: string[] },
+  opts: {
+    headSha?: string;
+    baseSha?: string;
+    baseDriftFiles?: string[];
+    files?: string[];
+    ancestryProvider?: AncestryProvider;
+    changedFilesProvider?: ChangedFilesProvider;
+  },
 ): { errors: string[]; notes: string[] } {
   const errors: string[] = [];
   const notes: string[] = [];
+  const integrity = stagingIntegrityResult(body, declared, opts);
 
   const missing = missingFields(body, declared);
   if (missing.length > 0) {
@@ -3474,9 +3639,10 @@ function standardEvidenceErrors(
     ...duration.errors,
     ...requiredValueErrors(body, declared),
     ...(declared === 'T1' ? [] : changedBehaviorErrors(body)),
-    ...stagingIntegrityErrors(body, declared, opts),
+    ...integrity.errors,
     ...futureTimestampErrors(body),
   );
+  notes.push(...integrity.notes);
 
   // Only reachable with zero errors, which already implies the note validated.
   if (errors.length === 0) notes.push(...preflightExceptionNotes(body));
@@ -3774,6 +3940,11 @@ const HEAD_BINDING_ROSTER = 'roster';
  * head binding is always exact. An unrecognized mode — including the removed
  * `roster` — is an error, and is evaluated unconditionally so a manifest whose
  * recorded head happens to still match cannot smuggle one past.
+ *
+ * Deliberately UNCHANGED by the 2026-09-12 post-soak T0-only delta allowance:
+ * that field (`Post-soak T0 delta:`) relaxes per-PR exact-head binding only, on
+ * the standard / frontend-T2 / unsoakable-T2 paths — RC-manifest head binding
+ * stays exact. See {@link headShaEvidenceResult}.
  */
 function validateHeadBindingMode(
   manifest: Record<string, unknown>,
@@ -4311,7 +4482,7 @@ export function check(opts: CheckOptions): CheckResult {
   // changed file is purely frontend. Tier classification is unchanged; this
   // only swaps which evidence T2 accepts for that narrow case.
   if (isFrontendT2EvidencePath(declared, required.tier, files)) {
-    const frontendResult = frontendT2Result(body, opts.headSha);
+    const frontendResult = frontendT2Result(body, opts);
     addErrors(result, frontendResult.errors);
     result.notes.push(...frontendResult.notes);
     return result;
@@ -4323,7 +4494,7 @@ export function check(opts: CheckOptions): CheckResult {
   // Tier classification is unchanged; this only swaps which evidence T2 accepts
   // for a surface that CANNOT be soaked. Unblocks #1411 (verifier-cli + arkova-py).
   if (isUnsoakableEvidencePath(declared, required.tier, files)) {
-    const unsoakableResult = unsoakableT2Result(body, opts.headSha);
+    const unsoakableResult = unsoakableT2Result(body, opts);
     addErrors(result, unsoakableResult.errors);
     result.notes.push(...unsoakableResult.notes);
     return result;
@@ -4380,6 +4551,10 @@ function main(): void {
     prAuthor: process.env.PR_AUTHOR?.trim() || undefined,
     diffProvider: gitFileDiffProvider(baseRef),
     ancestryProvider: gitAncestryProvider(),
+    // Post-soak T0-only delta allowance (CTO decision 2026-09-12). Same
+    // full-history assumption as ancestryProvider: staging-evidence.yml checks
+    // out with `fetch-depth: 0`, so the soaked head is resolvable here.
+    changedFilesProvider: changedFilesBetween,
     s33Lane1ImportScan: gitS33Lane1ImportScan(),
     // Live-threaded from `vars.DEPLOY_WORKER_PAUSED` by
     // .github/workflows/staging-evidence.yml — see CheckOptions.deployWorkerPaused
