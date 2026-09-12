@@ -25,9 +25,15 @@ on:
 # Cancel stale CI runs when a new commit is pushed to the same PR / branch.
 # Saves ~30-50% of Actions minutes on active-dev branches where multiple
 # commits land in quick succession.
+#
+# 2026-09-12 cost-reduction sweep: cancel-in-progress is now FALSE for
+# `main`/`staging`/`develop` push refs and for Mergify `mergify/*` merge-queue
+# branches — cancelling a run there mid-flight would either leave a push to a
+# protected branch unvetted or throw away a whole speculative-batch's CI
+# evidence for nothing. Ordinary PR branches keep cancel-in-progress: true.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/staging' && github.ref != 'refs/heads/develop' && !startsWith(github.head_ref, 'mergify/') }}
 
 env:
   # ARK-SEC-012: Assign to env var to prevent expression injection in run blocks

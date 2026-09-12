@@ -41,7 +41,13 @@ name: Staging Soak Evidence
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+    # 2026-09-12 cost-reduction sweep: dropped `labeled`/`unlabeled` — a
+    # label add/remove is pure metadata with no evidence-relevant change.
+    # `edited` is KEPT: the PR body IS this gate's evidence input, so a
+    # body-only fix (e.g. correcting a Soak start/end typo) must re-run the
+    # gate. The existing job-level `if:` below already skips Mergify's own
+    # speculative status-edit re-writes of that body.
+    types: [opened, edited, synchronize, reopened]
     branches: [main, staging, develop]
     paths-ignore:
       - 'LICENSE'
