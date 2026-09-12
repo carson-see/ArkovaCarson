@@ -9,9 +9,10 @@ name: Revision Drift Alert
 
 on:
   schedule:
-    # Every 10 minutes. GitHub clamps cron precision but ~10-15 min is fine
-    # for the 1-hour drift threshold.
-    - cron: '*/10 * * * *'
+    # Every 30 minutes (widened from 10 min 2026-09-12, cost-reduction sweep:
+    # ~4,200 runs/mo -> ~1,400 runs/mo). GitHub clamps cron precision but
+    # 30 min is still well inside the 1-hour drift threshold below.
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 concurrency:
