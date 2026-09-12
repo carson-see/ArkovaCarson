@@ -9,6 +9,7 @@ import { Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { API_KEY_SCOPES } from '../apiScopes.js';
 import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
+import { MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js';
 
 const router = Router();
 
@@ -434,7 +435,8 @@ export const openApiSpec: Record<string, any> = {
     '/keys/{keyId}': {
       patch: {
         summary: 'Update API key',
-        description: 'Update the name or scopes of an existing API key.',
+        description:
+          'Update the name or scopes of an existing API key, revoke it, or change its expiry. An expiry change cannot be combined with an activation change — send one intent per request.',
         operationId: 'updateApiKey',
         tags: ['Key Management'],
         security: [{ SupabaseJWT: [] }],
@@ -453,6 +455,19 @@ export const openApiSpec: Record<string, any> = {
 	                    items: { type: 'string' },
 	                    'x-arkova-canonical-scopes': API_KEY_SCOPES,
 	                  },
+                  // SCRUM-5023. Expiry is set by DURATION, never by timestamp:
+                  // the server holds the clock, and an accepted client
+                  // timestamp could write an already-past expiry.
+                  expires_in_days: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: MAX_EXPIRES_IN_DAYS,
+                    description: 'Set the expiry this many days from now. Replaces any existing expiry; it does not add to it.',
+                  },
+                  expires_at: {
+                    type: 'null',
+                    description: 'Send null to remove the expiry entirely. No other value is accepted.',
+                  },
                 },
               },
             },
@@ -460,8 +475,12 @@ export const openApiSpec: Record<string, any> = {
         },
         responses: {
           '200': { description: 'Key updated' },
+          '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
           '404': { $ref: '#/components/responses/NotFound' },
+          '409': {
+            description: 'The key was revoked. Revocation is terminal — it cannot be reactivated or extended.',
+          },
         },
       },
       delete: {
@@ -2019,6 +2038,23 @@ export const openApiSpec: Record<string, any> = {
           is_active: { type: 'boolean' },
           last_used_at: { type: 'string', format: 'date-time', nullable: true },
           created_at: { type: 'string', format: 'date-time' },
+          expires_at: { type: 'string', format: 'date-time', nullable: true },
+          // SCRUM-5023, §1.8 additive. `is_active` is a stored column and
+          // stays exactly what it was — it is TRUE on keys the auth middleware
+          // already refuses. `status` is the server's own answer to "is this
+          // key usable?", and is the field a client should render.
+          status: {
+            type: 'string',
+            enum: ['active', 'expiring_soon', 'expired', 'revoked'],
+            description:
+              'Server-derived usability. Prefer this over is_active/expires_at: is_active is a stored flag that stays true on an expired key, while authentication rejects it. expiring_soon means live and expiring within 14 days.',
+          },
+          expires_in_days: {
+            type: 'integer',
+            nullable: true,
+            description:
+              'Whole days until expiry — 0 on the final day, negative once past, null when the key does not expire.',
+          },
         },
       },
       ApiKeyCreated: {

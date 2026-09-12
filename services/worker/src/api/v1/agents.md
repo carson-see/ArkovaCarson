@@ -1,3 +1,34 @@
+## 2026-09-12 — SCRUM-5023: `status` / `expires_in_days` on `/keys`, and expiry is now PATCHable
+
+**Read `keyExpiryStatus.ts` before touching any key-status logic. It is the ONE derivation.**
+`api_keys` stores `is_active`, `revoked_at` and `expires_at` as three independent columns, and every
+consumer used to combine them itself. `middleware/apiKeyAuth.ts` has refused expired keys since it was
+written (`api_key_expired`); GET `/keys` returned the raw columns and left the caller to guess. Prod
+(read-only, 2026-09-12) held 19 keys, **13 of them `is_active = true` with an expiry already past** —
+HakiChain's two among them, created 2026-06-01 with a 30-day expiry and lapsed 2026-07-01. `status`
+(`active` | `expiring_soon` | `expired` | `revoked`) and `expires_in_days` are §1.8-additive; the raw
+columns are byte-unchanged, so `is_active` still reads `true` on an expired key and clients must
+prefer `status`. **DO NOT** re-derive either field anywhere else — `keys.ts`, the expiry-notice cron
+(`jobs/api-key-expiry-notice.ts`) and the dashboard badge all read this one module's answer.
+
+Two judgement calls it encodes, both load-bearing:
+- **`revoked` outranks `expired`** when a row is both. A revoke is a deliberate act and the admin must
+  see it stuck; "expired" would invite an extend on a key PATCH permanently 409s.
+- **An unparseable `expires_at` fails CLOSED to `expired`.** `new Date('x') < now` is `false`, so the
+  naive comparison reports a corrupt row `active`.
+
+`POST /keys` now caps `expires_in_days` at `MAX_EXPIRES_IN_DAYS` (3650). `.positive()` already made a
+past expiry impossible here, so prod's one born-expired row (expiry BEFORE creation) did **not** come
+from this route — it is still unattributed; do not "fix" it by loosening this bound.
+
+`PATCH /keys/:keyId` accepts `{ expires_in_days: n }` or `{ expires_at: null }`. **Expiry is set by
+DURATION, never by timestamp** — an accepted client `expires_at` would trust the caller's clock and
+re-open the past-expiry door, so a non-null value is a 400. The new expiry counts from **now**, never
+from the old one: `old + 30d` on HakiChain's key lands back in the past, an extend that visibly
+succeeds and changes nothing. An expiry change may not be combined with an `is_active` change (one
+intent per request), and a revoked key 409s. Every change writes `api_key.expiry_changed` carrying the
+PERSISTED old/new values. Suites: `keyExpiryStatus.test.ts`, `keys-expiry.test.ts`.
+
 # services/worker/src/api/v1/agents.md
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.

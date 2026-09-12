@@ -18,6 +18,7 @@ import type { TypeSafeTablesUpdate } from '../../types/database-overrides.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { API_KEY_SCOPES, DEFAULT_API_KEY_SCOPES } from '../apiScopes.js';
+import { keyExpiryFields, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js';
 
 const router = Router();
 
@@ -58,7 +59,12 @@ const ApiKeyScopeSchema = z.enum(API_KEY_SCOPES);
 export const CreateKeySchema = z.object({
   name: z.string().min(1).max(100),
   scopes: z.array(ApiKeyScopeSchema).min(1).default(DEFAULT_API_KEY_SCOPES),
-  expires_in_days: z.number().int().positive().optional(),
+  // SCRUM-5023: `.positive()` already forbids 0 and negatives, so this route
+  // cannot write an expiry in the past — prod's one born-expired row (expiry
+  // BEFORE creation) did not come from here. `.max()` is the new half: an
+  // unbounded day count multiplies into a timestamp Postgres cannot store,
+  // and a 100-year "expiry" is a null expiry wearing a costume.
+  expires_in_days: z.number().int().positive().max(MAX_EXPIRES_IN_DAYS).optional(),
   // REG-04: FERPA requester identity verification fields
   ferpa_exception_category: z.enum(FERPA_EXCEPTION_CATEGORIES).optional(),
   institution_type: z.enum(INSTITUTION_TYPES).optional(),
@@ -70,11 +76,39 @@ export const UpdateKeySchema = z.object({
   name: z.string().min(1).max(100).optional(),
   is_active: z.boolean().optional(),
   revocation_reason: z.string().max(500).optional(),
+  /**
+   * SCRUM-5023 — extend or set an expiry, counted from NOW on the server.
+   * Same bounds as creation.
+   */
+  expires_in_days: z.number().int().positive().max(MAX_EXPIRES_IN_DAYS).optional(),
+  /**
+   * Clear the expiry. `null` is the ONLY accepted value: a client-supplied
+   * timestamp would (a) trust the caller's clock and (b) re-open the exact
+   * door this story closes, letting an owner write an already-past expiry
+   * and re-create the silent-lapse defect by hand.
+   */
+  expires_at: z.null().optional(),
 }).refine(
   (d) => d.revocation_reason === undefined || d.is_active === false,
   {
     message: 'revocation_reason is only accepted when is_active is false',
     path: ['revocation_reason'],
+  },
+).refine(
+  (d) => !(d.expires_in_days !== undefined && d.expires_at === null),
+  {
+    message: 'Send either expires_in_days or expires_at: null, not both',
+    path: ['expires_in_days'],
+  },
+).refine(
+  // One intent per request. A body carrying both a revoke and an expiry change
+  // has no correct ordering: revoking makes the key permanently unusable, so
+  // the expiry write would be applied to a corpse and the response would
+  // report an expiry the caller can never use.
+  (d) => !((d.expires_in_days !== undefined || d.expires_at === null) && d.is_active !== undefined),
+  {
+    message: 'An expiry change cannot be combined with an activation change',
+    path: ['expires_in_days'],
   },
 );
 
@@ -179,6 +213,7 @@ router.post('/', async (req, res) => {
     // Return raw key ONCE — Constitution 1.4.
     res.status(201).json({
       ...toPublicKey(inserted),
+      ...keyExpiryFields(inserted),
       key: raw,
       warning: 'Save this key now. It cannot be retrieved again.',
     });
@@ -228,7 +263,13 @@ router.get('/', async (req, res) => {
       return;
     }
 
-    res.json({ keys: (keys ?? []).map(toPublicKey) });
+    // SCRUM-5023: one clock for the whole page, so two rows with the same
+    // `expires_at` can never report different `expires_in_days` because the
+    // loop straddled midnight.
+    const now = new Date();
+    res.json({
+      keys: (keys ?? []).map((row) => ({ ...toPublicKey(row), ...keyExpiryFields(row, now) })),
+    });
   } catch (err) {
     logger.error({ error: err }, 'API key listing failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -275,7 +316,7 @@ router.patch('/:keyId', async (req, res) => {
 
     // Verify key belongs to user's org
     const { data: existing } = await db.from('api_keys')
-      .select('id, org_id, revoked_at')
+      .select('id, org_id, revoked_at, expires_at, is_active')
       .eq('id', keyId)
       .eq('org_id', profile.org_id)
       .single();
@@ -287,6 +328,47 @@ router.patch('/:keyId', async (req, res) => {
 
     const updateData: TypeSafeTablesUpdate<'api_keys'> = {};
     if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
+
+    // ── SCRUM-5023: expiry change (extend / set / clear) ──────────────────
+    // The schema guarantees at most one of these is present and that neither
+    // arrives alongside `is_active`, so this block cannot race the revoke
+    // block below.
+    const wantsExpiryChange =
+      parsed.data.expires_in_days !== undefined || parsed.data.expires_at === null;
+    let expiryChange: { old: string | null; next: string | null } | null = null;
+
+    if (wantsExpiryChange) {
+      // Revocation is terminal (see the 409 below for the is_active path):
+      // validate_api_key never authenticates a key with revoked_at set, so an
+      // extended expiry on a revoked key would be a field the owner can read
+      // and can never use. Refuse LOUDLY rather than write a lie.
+      //
+      // `is_active === false` is checked TOO, not just the stamp. Revocation
+      // used to flip the boolean without stamping `revoked_at` (pre-FD-P7), so
+      // prod holds withdrawn-but-unstamped rows; auth reads `is_active` and
+      // would go on refusing one of those while the owner stared at a freshly
+      // extended expiry — the same contradiction between stored state and
+      // usability that this story exists to remove.
+      if (existing.revoked_at || existing.is_active === false) {
+        res.status(409).json({
+          error: 'api_key_already_revoked',
+          message: 'This API key was revoked and cannot be extended. Create a new key instead.',
+        });
+        return;
+      }
+
+      const next = parsed.data.expires_in_days !== undefined
+        // Counted from NOW, never from the OLD expiry. Stacking onto a stale
+        // base is the failure this story is about: HakiChain's key expired
+        // 2026-07-01, and `old + 30d` would land it in the past again — an
+        // "extend" that visibly succeeds and changes nothing.
+        ? new Date(Date.now() + parsed.data.expires_in_days * 24 * 60 * 60 * 1000).toISOString()
+        : null;
+
+      updateData.expires_at = next;
+      expiryChange = { old: existing.expires_at ?? null, next };
+    }
+
     if (parsed.data.is_active === false) {
       updateData.is_active = false;
       // CC6.8: a revoke stamps the designation, not just the boolean — the
@@ -361,7 +443,26 @@ router.patch('/:keyId', async (req, res) => {
       );
     }
 
-    res.json(toPublicKey(updated));
+    // SCRUM-5023: an expiry change is a security-relevant lifecycle event —
+    // it is how a key that auth had started refusing becomes usable again.
+    // Like the revoke row above, the payload carries the PERSISTED value
+    // (`updated`), never what the request asked for.
+    if (expiryChange) {
+      logAuditEvent(
+        userId,
+        'api_key.expiry_changed',
+        'api_key',
+        keyId,
+        JSON.stringify({
+          key_prefix: updated.key_prefix,
+          old_expires_at: expiryChange.old,
+          new_expires_at: updated.expires_at ?? null,
+        }),
+        profile.org_id,
+      );
+    }
+
+    res.json({ ...toPublicKey(updated), ...keyExpiryFields(updated) });
   } catch (err) {
     logger.error({ error: err }, 'API key update failed');
     res.status(500).json({ error: 'Internal server error' });
