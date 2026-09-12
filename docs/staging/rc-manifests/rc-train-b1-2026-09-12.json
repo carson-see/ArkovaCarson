@@ -15,7 +15,7 @@
   "covered_main_shas": [],
   "staging_branch": "rc/train-b1-2026-09-12",
   "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b1-2026-09-12.json",
-  "preflight_timestamp": null,
+  "preflight_timestamp": "2026-09-12T22:00:04.185Z",
   "included_prs": [
     {
       "number": 2839,
