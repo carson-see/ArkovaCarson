@@ -31,6 +31,13 @@
  *   - `max` sets the platform cap on the caller's own organization; it is an
  *     account setting, not sub-organization management.
  *
+ * ## Which affiliate each route may address
+ *
+ * Per ACTION, not per surface, and stated once: see the lifecycle diagram above
+ * `ChildPredicate` in `orgSubOrgsCaller.ts`. Each route below picks the
+ * resolver that encodes its own transition, which is what makes
+ * offboard→revoke and revoke→offboard both reachable.
+ *
  * ## 404 is the convention here
  *
  * Any organization the caller may not address — absent, another parent's, not
@@ -70,7 +77,8 @@ import { db as _db } from '../../utils/db.js';
 import { PUBLIC_ORG_ID_RE } from '../v2/resourceIdentifiers.js';
 import {
   resolveSubOrgCaller,
-  resolveChildOfCaller,
+  resolveChildForApprove,
+  resolveChildForRevoke,
   resolveApprovedChild,
   resolveOwnedChild,
   type SubOrgCaller,
@@ -319,10 +327,17 @@ orgSubOrgsApiRouter.get('/', async (req: Request, res: Response) => {
 });
 
 // ─── POST /approve, POST /revoke ─────────────────────────────────────────────
+type ChildResolver = (
+  caller: SubOrgCaller,
+  orgPublicId: string,
+  database: unknown,
+) => Promise<SubOrgResult<SubOrgChild>>;
+
 async function handleStatusAction(
   req: Request,
   res: Response,
   action: AffiliateActionSpec,
+  resolveChild: ChildResolver,
 ): Promise<void> {
   try {
     const caller = await requireKeyCaller(req, res);
@@ -331,7 +346,7 @@ async function handleStatusAction(
     const body = parseBody(SelectorSchema, req.body, res);
     if (!body) return;
 
-    const child = unwrapChild(res, await resolveChildOfCaller(caller, body.org_public_id, db));
+    const child = unwrapChild(res, await resolveChild(caller, body.org_public_id, db));
     if (!child) return;
 
     const result = await applyAffiliateStatusAction(
@@ -362,11 +377,11 @@ async function handleStatusAction(
 }
 
 orgSubOrgsApiRouter.post('/approve', requireOrgsManage, async (req: Request, res: Response) => {
-  await handleStatusAction(req, res, APPROVE_AFFILIATE_ACTION);
+  await handleStatusAction(req, res, APPROVE_AFFILIATE_ACTION, resolveChildForApprove);
 });
 
 orgSubOrgsApiRouter.post('/revoke', requireOrgsManage, async (req: Request, res: Response) => {
-  await handleStatusAction(req, res, REVOKE_AFFILIATE_ACTION);
+  await handleStatusAction(req, res, REVOKE_AFFILIATE_ACTION, resolveChildForRevoke);
 });
 
 // ─── POST /credits ───────────────────────────────────────────────────────────

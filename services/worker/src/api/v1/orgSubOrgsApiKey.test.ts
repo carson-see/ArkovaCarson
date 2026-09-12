@@ -139,6 +139,74 @@ function mockDb(opts: {
   });
 }
 
+/**
+ * `organizations` double for the approve/revoke path, dispatched on the FILTERS
+ * a chain applied rather than on a call counter. A counter encodes the current
+ * query ORDER into the test, so adding or removing one read silently re-points
+ * every later stub at the wrong stage (the cap read starts answering the CAS).
+ */
+function mockStatusActionDb(opts: {
+  child: OrgRow;
+  /** Rows the affiliate-cap count sees. */
+  capChildren?: OrgRow[];
+  maxSubOrgs?: number | null;
+  /** null = the compare-and-set matched nothing (affiliation changed). */
+  casResult?: { id: string } | null;
+  auditError?: { message: string } | null;
+}) {
+  const from = db.from as unknown as ReturnType<typeof vi.fn>;
+  const calls: { table: string; filters: Record<string, unknown>; op: string }[] = [];
+  from.mockImplementation((table: string) => {
+    if (table === 'audit_events') {
+      return { insert: () => Promise.resolve({ error: opts.auditError ?? null }) };
+    }
+    if (table === 'org_credits') {
+      const c: Record<string, unknown> = {};
+      c.select = () => c; c.eq = () => c;
+      c.maybeSingle = () => Promise.resolve({ data: { balance: 0 }, error: null });
+      return c;
+    }
+    if (table !== 'organizations') throw new Error(`unexpected table ${table}`);
+
+    const filters: Record<string, unknown> = {};
+    let op = 'select';
+    let columns = '';
+    const chain: Record<string, unknown> = {};
+    chain.select = (cols?: string) => { if (cols) columns = cols; return chain; };
+    chain.update = () => { op = 'update'; return chain; };
+    chain.eq = (col: string, value: unknown) => { filters[col] = value; return chain; };
+    chain.is = (col: string, value: unknown) => { filters[col] = value; return chain; };
+    chain.order = () => {
+      calls.push({ table, filters, op: 'list' });
+      return Promise.resolve({ data: [opts.child], error: null });
+    };
+    // The cap count is awaited directly (no `.maybeSingle()`).
+    chain.then = (resolve: (v: unknown) => unknown) => {
+      calls.push({ table, filters, op: 'cap_count' });
+      return Promise.resolve({ data: opts.capChildren ?? [], error: null }).then(resolve);
+    };
+    chain.maybeSingle = () => {
+      calls.push({ table, filters, op });
+      if (op === 'update') {
+        return Promise.resolve({ data: opts.casResult === undefined ? { id: CHILD } : opts.casResult, error: null });
+      }
+      if (columns.includes('max_sub_orgs')) {
+        return Promise.resolve({ data: { max_sub_orgs: opts.maxSubOrgs ?? 20 }, error: null });
+      }
+      if (filters.public_id !== undefined) {
+        const matches = Object.entries(filters).every(
+          ([k, v]) => (opts.child as unknown as Record<string, unknown>)[k] === v,
+        );
+        return Promise.resolve({ data: matches ? opts.child : null, error: null });
+      }
+      // The acting-organization lookup.
+      return Promise.resolve({ data: ACTING_PARENT, error: null });
+    };
+    return chain;
+  });
+  return calls;
+}
+
 const rpc = () => db.rpc as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -393,6 +461,64 @@ describe('write routes — happy paths', () => {
     const res = await request(buildApp(['read:orgs'])).get('/api/v1/organizations/sub-orgs/credits');
     expect(res.status).toBe(503);
     expect(res.body.error).toBe('rollup_projection_unavailable');
+  });
+});
+
+/**
+ * U1 — the two documented wind-down orders must BOTH be drivable from this
+ * surface. Each case is a route call, not a predicate unit test, because the
+ * defect was in which resolver the route picked.
+ */
+describe('lifecycle on the key surface', () => {
+  function post(path: string, body: Record<string, unknown>) {
+    return request(buildApp(['orgs:manage'])).post(`/api/v1/organizations/sub-orgs${path}`).send(body);
+  }
+
+  it('approves a PENDING affiliate', async () => {
+    mockStatusActionDb({ child: { ...APPROVED_CHILD, parent_approval_status: 'PENDING' } });
+    const res = await post('/approve', { org_public_id: CHILD_PUB });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'APPROVED', public_id: CHILD_PUB });
+  });
+
+  it('404s approve on an already-APPROVED affiliate — approve is the PENDING transition', async () => {
+    mockStatusActionDb({ child: APPROVED_CHILD });
+    const res = await post('/approve', { org_public_id: CHILD_PUB });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('sub_org_not_found');
+  });
+
+  it('offboard then revoke: revoking a suspended affiliate still works', async () => {
+    mockStatusActionDb({ child: { ...APPROVED_CHILD, suspended: true } });
+    rpc().mockResolvedValueOnce({ data: { success: true, already_suspended: false }, error: null });
+    const offboard = await post('/offboard', { org_public_id: CHILD_PUB });
+    expect(offboard.status).toBe(200);
+
+    mockStatusActionDb({ child: { ...APPROVED_CHILD, suspended: true } });
+    const revoke = await post('/revoke', { org_public_id: CHILD_PUB });
+    expect(revoke.status).toBe(200);
+    expect(revoke.body).toEqual({ status: 'REVOKED', public_id: CHILD_PUB });
+  });
+
+  it('revoke then offboard: offboarding a REVOKED affiliate still reclaims and suspends', async () => {
+    mockStatusActionDb({ child: { ...APPROVED_CHILD, parent_approval_status: 'REVOKED' } });
+    rpc().mockResolvedValueOnce({ data: { success: true, already_suspended: false }, error: null });
+    const res = await post('/offboard', { org_public_id: CHILD_PUB, reason: 'ended' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ reclaimed: 0, suspended: true, already_suspended: false });
+  });
+
+  it('404s revoke on an already-REVOKED affiliate', async () => {
+    mockStatusActionDb({ child: { ...APPROVED_CHILD, parent_approval_status: 'REVOKED' } });
+    const res = await post('/revoke', { org_public_id: CHILD_PUB });
+    expect(res.status).toBe(404);
+  });
+
+  it('404s credits on a suspended affiliate — money never moves into a dead affiliation', async () => {
+    mockStatusActionDb({ child: { ...APPROVED_CHILD, suspended: true } });
+    const res = await post('/credits', { org_public_id: CHILD_PUB, amount: 5 });
+    expect(res.status).toBe(404);
+    expect(rpc()).not.toHaveBeenCalled();
   });
 });
 

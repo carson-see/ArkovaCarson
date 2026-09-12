@@ -240,10 +240,65 @@ export async function resolveSubOrgCaller(
   return succeed({ kind: 'user', userId, orgId: org.value });
 }
 
+/**
+ * ## The affiliation lifecycle, and why each action accepts what it accepts
+ *
+ * ```
+ *            request (JWT, child-side)
+ *                    │
+ *                    ▼
+ *   (null) ───────► PENDING ──approve──► APPROVED ──revoke──► REVOKED
+ *                    │                     │                     │
+ *                    │                  offboard             offboard
+ *                    │                (reclaim+suspend)    (reclaim+suspend)
+ *                    │                     │                     │
+ *                    ▼                     ▼                     ▼
+ *                  revoke            APPROVED+suspended    REVOKED+suspended
+ *                    │                     │
+ *                    ▼                  revoke
+ *                 REVOKED                  │
+ *                                          ▼
+ *                                  REVOKED+suspended
+ *
+ *   credits: APPROVED and not suspended, only.
+ * ```
+ *
+ * The first cut of this surface used one predicate for approve and revoke
+ * (`APPROVED`-or-not, suspended never addressable) and `requireApproved` for
+ * offboard. That made two documented orders UNREACHABLE on the key surface: a
+ * parent who offboarded first could never revoke (offboard suspends, and revoke
+ * refused suspended children), and a parent who revoked first could never
+ * offboard (offboard demanded `APPROVED`), so the reclaimed-credits half of the
+ * lifecycle was stranded behind whichever call happened to come first — while
+ * the child kept consuming a slot under the affiliate cap, which counts
+ * `APPROVED` rows.
+ *
+ * So the predicate is per ACTION, not per surface:
+ *
+ *   - **approve** accepts `PENDING` only. Approving is the transition out of
+ *     PENDING; every other status is either already the destination or a
+ *     deliberate end state, and re-approving a REVOKED affiliation is a new
+ *     decision that goes through `request` again.
+ *   - **revoke** accepts `APPROVED` or `PENDING` — revoking a pending request
+ *     is a real parent action ("no"), and revoking after an offboard is the
+ *     documented tail of the wind-down.
+ *   - **offboard** accepts ANY owned child, in any status, suspended or not.
+ *     It is reclaim-then-suspend and therefore idempotent by construction:
+ *     a retry answers `already_suspended: true`, which is a success.
+ *   - **credits** accepts `APPROVED` and not suspended. Money does not move
+ *     into an affiliation that is not live.
+ *
+ * Suspension does NOT gate approve or revoke. Suspension is an operational
+ * state ("this affiliate cannot act"); the approval status is the relationship.
+ * Conflating them is what stranded the lifecycle.
+ */
 interface ChildPredicate {
-  /** Approval statuses the caller's action accepts; `null` accepts any. */
-  requireApproved: boolean;
-  /** Whether a suspended child is still addressable (offboard is idempotent). */
+  /**
+   * Approval statuses this action accepts. `null` accepts EVERY status,
+   * including the SQL NULL the column still admits.
+   */
+  allowedStatuses: readonly string[] | null;
+  /** Whether a suspended child is still addressable. */
   allowSuspended: boolean;
   label: string;
 }
@@ -277,7 +332,10 @@ async function resolveChild(
   };
 
   if (!data) return notFound('no_such_child_of_caller');
-  if (predicate.requireApproved && data.parent_approval_status !== 'APPROVED') {
+  if (
+    predicate.allowedStatuses !== null
+    && !predicate.allowedStatuses.includes(data.parent_approval_status ?? '')
+  ) {
     return notFound(`approval_status_${data.parent_approval_status ?? 'null'}`);
   }
   if (!predicate.allowSuspended && data.suspended === true) return notFound('suspended');
@@ -292,18 +350,33 @@ async function resolveChild(
 }
 
 /**
- * approve / revoke. No approval-status predicate: the status is precisely what
- * the action changes, so requiring `APPROVED` would make approve unreachable.
- * The transition's own preconditions stay where they already are — the
- * "already approved / already revoked" 400 and the compare-and-set 409 in
- * `updateAffiliateStatus`, which is the authority.
+ * approve. `PENDING` is the only status approving can transition out of.
+ * Suspension is irrelevant to the relationship decision, so it does not gate.
  */
-export function resolveChildOfCaller(
+export function resolveChildForApprove(
   caller: SubOrgCaller,
   orgPublicId: string,
   database: Db = defaultDb,
 ): Promise<SubOrgResult<SubOrgChild>> {
-  return resolveChild(caller, orgPublicId, { requireApproved: false, allowSuspended: false, label: 'status_action' }, database);
+  return resolveChild(caller, orgPublicId, { allowedStatuses: ['PENDING'], allowSuspended: true, label: 'approve' }, database);
+}
+
+/**
+ * revoke. `APPROVED` (end a live affiliation) and `PENDING` (refuse a request)
+ * both revoke. Suspended children stay addressable — offboard→revoke is the
+ * documented wind-down order and offboard leaves the child suspended.
+ */
+export function resolveChildForRevoke(
+  caller: SubOrgCaller,
+  orgPublicId: string,
+  database: Db = defaultDb,
+): Promise<SubOrgResult<SubOrgChild>> {
+  return resolveChild(
+    caller,
+    orgPublicId,
+    { allowedStatuses: ['APPROVED', 'PENDING'], allowSuspended: true, label: 'revoke' },
+    database,
+  );
 }
 
 /** Credit allocation. An affiliation that is not live must not move money. */
@@ -312,21 +385,21 @@ export function resolveApprovedChild(
   orgPublicId: string,
   database: Db = defaultDb,
 ): Promise<SubOrgResult<SubOrgChild>> {
-  return resolveChild(caller, orgPublicId, { requireApproved: true, allowSuspended: false, label: 'credits' }, database);
+  return resolveChild(caller, orgPublicId, { allowedStatuses: ['APPROVED'], allowSuspended: false, label: 'credits' }, database);
 }
 
 /**
- * Offboarding. Suspended children stay addressable on purpose: offboard is
- * reclaim-then-suspend, and a run that reclaimed but failed to suspend must be
- * retryable. Refusing an already-suspended child would strand exactly the case
- * the retry exists for.
+ * Offboarding. ANY owned child, in any status, suspended or not: offboard is
+ * reclaim-then-suspend and a run that reclaimed but failed to suspend must be
+ * retryable, and revoke→offboard must work as well as offboard→revoke. The
+ * idempotent answer (`already_suspended: true`) is a success, not a refusal.
  */
 export function resolveOwnedChild(
   caller: SubOrgCaller,
   orgPublicId: string,
   database: Db = defaultDb,
 ): Promise<SubOrgResult<SubOrgChild>> {
-  return resolveChild(caller, orgPublicId, { requireApproved: true, allowSuspended: true, label: 'offboard' }, database);
+  return resolveChild(caller, orgPublicId, { allowedStatuses: null, allowSuspended: true, label: 'offboard' }, database);
 }
 
 /**

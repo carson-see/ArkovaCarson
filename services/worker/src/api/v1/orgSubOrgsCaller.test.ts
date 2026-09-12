@@ -19,7 +19,8 @@ vi.mock('../../config.js', () => ({ config: { frontendUrl: 'https://app.test' } 
 import { db } from '../../utils/db.js';
 import {
   resolveSubOrgCaller,
-  resolveChildOfCaller,
+  resolveChildForApprove,
+  resolveChildForRevoke,
   resolveApprovedChild,
   resolveOwnedChild,
   subOrgAuditActor,
@@ -277,22 +278,88 @@ describe('child resolution — 404 shaping on the key surface', () => {
       .resolves.toMatchObject({ ok: true, value: { id: CHILD, suspended: true } });
   });
 
-  it('resolves a PENDING child for approve/revoke — the status IS the thing being changed', async () => {
-    mockDb({ organizations: [{ ...approvedChild, parent_approval_status: 'PENDING' }] });
-    const result = await resolveChildOfCaller(KEY_CALLER, 'child-pub');
-    expect(result).toMatchObject({ ok: true, value: { parentApprovalStatus: 'PENDING' } });
-  });
-
-  it('404s a suspended child for approve/revoke', async () => {
-    mockDb({ organizations: [{ ...approvedChild, suspended: true }] });
-    const result = await resolveChildOfCaller(KEY_CALLER, 'child-pub');
-    expect(result).toMatchObject({ ok: false, status: 404, error: 'sub_org_not_found' });
-  });
-
   it('503s (never 404s) when the child lookup itself fails — an outage is not an absence', async () => {
     mockDb({ organizationsError: { message: 'boom' } });
     const result = await resolveApprovedChild(KEY_CALLER, 'child-pub');
     expect(result).toMatchObject({ ok: false, status: 503, error: 'sub_org_lookup_unavailable' });
+  });
+});
+
+/**
+ * The lifecycle reachability matrix. Every cell is a transition a parent can
+ * legitimately want; a `false` cell that should be `true` is a stranded
+ * affiliate, which is how the first cut of this surface made offboard→revoke
+ * and revoke→offboard both unreachable.
+ */
+describe('lifecycle reachability — the predicate is per ACTION', () => {
+  const child = (over: Partial<OrgRow> = {}): OrgRow => ({
+    id: CHILD, public_id: 'child-pub', display_name: 'Child A',
+    parent_org_id: PARENT, parent_approval_status: 'APPROVED', suspended: false,
+    ...over,
+  });
+
+  type Resolver = typeof resolveApprovedChild;
+  const RESOLVERS: Record<string, Resolver> = {
+    approve: resolveChildForApprove,
+    revoke: resolveChildForRevoke,
+    credits: resolveApprovedChild,
+    offboard: resolveOwnedChild,
+  };
+
+  // [status, suspended, action, addressable]
+  const MATRIX: [string | null, boolean, keyof typeof RESOLVERS, boolean][] = [
+    // PENDING: approve moves it on, revoke refuses the request, no money, and
+    // offboard is legal (a parent may wind down a request it never approved).
+    ['PENDING', false, 'approve', true],
+    ['PENDING', false, 'revoke', true],
+    ['PENDING', false, 'credits', false],
+    ['PENDING', false, 'offboard', true],
+    // APPROVED: the live relationship. Approve is not a transition from here.
+    ['APPROVED', false, 'approve', false],
+    ['APPROVED', false, 'revoke', true],
+    ['APPROVED', false, 'credits', true],
+    ['APPROVED', false, 'offboard', true],
+    // APPROVED + suspended — the state offboard LEAVES behind. Revoke must
+    // still work or offboard→revoke is unreachable.
+    ['APPROVED', true, 'revoke', true],
+    ['APPROVED', true, 'credits', false],
+    ['APPROVED', true, 'offboard', true],
+    // REVOKED: offboard must still work or revoke→offboard is unreachable and
+    // the affiliate's credits are stranded.
+    ['REVOKED', false, 'offboard', true],
+    ['REVOKED', false, 'approve', false],
+    ['REVOKED', false, 'revoke', false],
+    ['REVOKED', false, 'credits', false],
+    ['REVOKED', true, 'offboard', true],
+    // NULL is a real value in this column, and it is not "approved".
+    [null, false, 'approve', false],
+    [null, false, 'credits', false],
+    [null, false, 'offboard', true],
+  ];
+
+  it.each(MATRIX)(
+    'status=%s suspended=%s action=%s -> addressable=%s',
+    async (status, suspended, action, addressable) => {
+      mockDb({ organizations: [child({ parent_approval_status: status, suspended })] });
+      const result = await RESOLVERS[action](KEY_CALLER, 'child-pub');
+      expect(result.ok).toBe(addressable);
+      if (!result.ok) expect(result).toMatchObject({ status: 404, error: 'sub_org_not_found' });
+    },
+  );
+
+  it('offboard then revoke: the suspended, still-APPROVED child stays revocable', async () => {
+    mockDb({ organizations: [child({ suspended: true })] });
+    await expect(resolveOwnedChild(KEY_CALLER, 'child-pub')).resolves.toMatchObject({ ok: true });
+    mockDb({ organizations: [child({ suspended: true })] });
+    await expect(resolveChildForRevoke(KEY_CALLER, 'child-pub')).resolves.toMatchObject({ ok: true });
+  });
+
+  it('revoke then offboard: the REVOKED child stays offboardable', async () => {
+    mockDb({ organizations: [child({ parent_approval_status: 'REVOKED' })] });
+    await expect(resolveChildForRevoke(KEY_CALLER, 'child-pub'))
+      .resolves.toMatchObject({ ok: false, status: 404 });
+    mockDb({ organizations: [child({ parent_approval_status: 'REVOKED' })] });
+    await expect(resolveOwnedChild(KEY_CALLER, 'child-pub')).resolves.toMatchObject({ ok: true });
   });
 });
 

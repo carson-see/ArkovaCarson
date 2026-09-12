@@ -1288,6 +1288,20 @@ the new affiliate's `org_members` as `owner` and a key has no user to put there
 OWN affiliation and are self-escalation primitives, not parent administration;
 `max` is an account setting. All four stay JWT-only.
 
+**The affiliate predicate is per ACTION, not per surface** (review U1). The
+first cut shared one predicate between approve and revoke (`APPROVED`-or-not,
+suspended never addressable) and required `APPROVED` for offboard. That made
+BOTH documented wind-down orders unreachable: offboard suspends, and revoke
+refused suspended children (offboard→revoke dead); offboard demanded `APPROVED`,
+so a revoked affiliate could never be offboarded (revoke→offboard dead) and its
+credits stayed with it while the row kept consuming a slot under the cap, which
+counts `APPROVED`. Now: approve accepts `PENDING`; revoke accepts `APPROVED` or
+`PENDING`; offboard accepts ANY owned child in any status, suspended or not;
+credits accept `APPROVED` and not suspended. Suspension gates money, never the
+relationship decision. The diagram lives above `ChildPredicate` in
+`orgSubOrgsCaller.ts` and is mirrored in `docs.ts` / `docs/api/openapi.yaml`;
+the reachability matrix is `orgSubOrgsCaller.test.ts`.
+
 **Two places where this surface is deliberately STRICTER than the dashboard**,
 because a partner cannot tell a degraded answer from a real one:
 a failed DocuSign inheritance-marker lookup 503s here (the JWT list degrades to

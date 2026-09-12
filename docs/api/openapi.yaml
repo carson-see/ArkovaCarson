@@ -928,6 +928,25 @@ paths:
   # approved and suspended are deliberately indistinguishable, so the endpoint
   # is not an existence oracle over organization public ids. The dashboard
   # surface at /org/sub-orgs keeps its 403s, which are correct there.
+  #
+  # LIFECYCLE (what each operation accepts; enforced by ChildPredicate in
+  # services/worker/src/api/v1/orgSubOrgsCaller.ts):
+  #
+  #   (null) -> PENDING --approve--> APPROVED --revoke--> REVOKED
+  #                                     |                    |
+  #                                  offboard             offboard
+  #                            (reclaim + suspend)   (reclaim + suspend)
+  #
+  #   approve  : PENDING only. Suspension does not gate it.
+  #   revoke   : APPROVED or PENDING. Suspended affiliates are still revocable.
+  #   offboard : ANY owned affiliate, any status, suspended or not. Idempotent -
+  #              a retry answers already_suspended: true, which is a success.
+  #   credits  : APPROVED and not suspended, only.
+  #
+  # offboard-then-revoke and revoke-then-offboard are BOTH reachable. An earlier
+  # cut gated offboard on APPROVED and refused suspended affiliates on revoke,
+  # which stranded the credit reclaim behind whichever call came first while the
+  # affiliate kept consuming a slot under the cap (the cap counts APPROVED).
   /organizations/sub-orgs:
     get:
       operationId: listSubOrganizations
@@ -972,8 +991,9 @@ paths:
       summary: Approve a pending affiliation
       description: >-
         Approve an organization that has requested affiliation with the calling
-        key's organization. Requires `orgs:manage`. Subject to the platform
-        affiliate cap, which surfaces as 409.
+        key's organization. Requires `orgs:manage`. Accepts a PENDING affiliate
+        only, suspended or not; any other status answers 404. Subject to the
+        platform affiliate cap, which surfaces as 409.
       tags: [Organizations]
       security:
         - apiKey: []
@@ -1015,7 +1035,9 @@ paths:
         Revoke the affiliation of an organization affiliated with the calling
         key's organization. Requires `orgs:manage`. Revocation severs the
         affiliation only — it does not reclaim credits or suspend the
-        organization. Use /organizations/sub-orgs/offboard for that.
+        organization. Use /organizations/sub-orgs/offboard for that. Accepts an
+        APPROVED or PENDING affiliate, suspended or not, so the documented
+        offboard-then-revoke wind-down is reachable.
       tags: [Organizations]
       security:
         - apiKey: []
@@ -1056,8 +1078,9 @@ paths:
       description: >-
         Move credits between the calling key's organization and one of its
         approved affiliates. Positive allocates, negative reclaims. Requires
-        `orgs:manage`. One database transaction that re-verifies the affiliation
-        under a row lock.
+        `orgs:manage`. Accepts an APPROVED, unsuspended affiliate only — money
+        does not move into an affiliation that is not live. One database
+        transaction that re-verifies the affiliation under a row lock.
       tags: [Organizations]
       security:
         - apiKey: []
@@ -1162,7 +1185,10 @@ paths:
         retry-safe: if the suspend fails after a successful reclaim the response
         reports `reclaimed > 0` with `suspended: false`, and a retry finishes the
         job without moving credits twice. The affiliate's anchored records are
-        NOT touched — they stay verifiable after the relationship ends.
+        NOT touched — they stay verifiable after the relationship ends. Accepts
+        ANY affiliate the caller owns, in any approval status, suspended or not:
+        this is the idempotent wind-down and a retry answers
+        `already_suspended: true`.
       tags: [Organizations]
       security:
         - apiKey: []

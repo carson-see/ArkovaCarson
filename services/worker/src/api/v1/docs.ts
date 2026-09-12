@@ -103,6 +103,18 @@ const SUB_ORG_SELECTOR_BODY = {
 const SUB_ORG_MOUNT_NOTE =
   ' Counts against the API key monthly usage quota (no exemption exists for administration routes) and requires the organization payment state to be current.';
 
+/**
+ * The affiliation lifecycle, stated once and referenced from each operation.
+ * The predicate that enforces it is `orgSubOrgsCaller.ts`'s `ChildPredicate`;
+ * this string is the published half of the same rule.
+ */
+const SUB_ORG_LIFECYCLE_NOTE =
+  ' Lifecycle: a child requests affiliation (dashboard) and becomes PENDING; approve moves PENDING to APPROVED;'
+  + ' credits move only while the affiliate is APPROVED and not suspended; offboard reclaims the remaining credits'
+  + ' and suspends the affiliate, in any status; revoke ends the relationship from APPROVED or PENDING.'
+  + ' offboard then revoke and revoke then offboard are both supported - offboard never requires APPROVED and'
+  + ' revoke never refuses a suspended affiliate.';
+
 const CLE_CREDIT_ROW_SCHEMA = {
   type: 'object',
   properties: {
@@ -1524,6 +1536,7 @@ export const openApiSpec: Record<string, any> = {
         summary: 'List affiliated organizations',
         description:
           'List the organizations affiliated with the calling key\'s organization, by public id. Returns the platform cap and the current count alongside.'
+          + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'listSubOrganizations',
         tags: ['Organizations'],
@@ -1554,6 +1567,7 @@ export const openApiSpec: Record<string, any> = {
         summary: 'Approve a pending affiliation',
         description:
           'Approve an organization that has requested affiliation with the calling key\'s organization. Requires the orgs:manage scope. Subject to the platform affiliate cap (409).'
+          + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'approveSubOrganization',
         tags: ['Organizations'],
@@ -1579,6 +1593,7 @@ export const openApiSpec: Record<string, any> = {
         summary: 'Revoke an affiliation',
         description:
           'Revoke the affiliation of an organization affiliated with the calling key\'s organization. Requires the orgs:manage scope. Revocation severs the affiliation; it does not reclaim credits or suspend the organization — use /offboard for that.'
+          + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'revokeSubOrganization',
         tags: ['Organizations'],
@@ -1604,6 +1619,7 @@ export const openApiSpec: Record<string, any> = {
         summary: 'Allocate or reclaim affiliate credits',
         description:
           'Move credits between the calling key\'s organization and one of its approved affiliates. A positive amount allocates, a negative amount reclaims. Requires the orgs:manage scope. The transfer is a single database transaction that re-verifies the affiliation under a row lock.'
+          + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'allocateSubOrganizationCredits',
         tags: ['Organizations'],
@@ -1654,6 +1670,7 @@ export const openApiSpec: Record<string, any> = {
         summary: 'Affiliate credit rollup',
         description:
           'Balances for the calling key\'s organization and each of its affiliates. Balances ONLY: a parent sees what its affiliates spend, never what they secured.'
+          + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'getSubOrganizationCreditRollup',
         tags: ['Organizations'],
@@ -1694,6 +1711,7 @@ export const openApiSpec: Record<string, any> = {
         summary: 'Offboard an affiliate',
         description:
           'Reclaim an affiliate\'s remaining credits to the parent and then suspend it. Requires the orgs:manage scope. The order is deliberate and the operation is retry-safe: if the suspend fails after a successful reclaim, the response reports reclaimed > 0 with suspended false and a retry finishes the job without moving credits twice. The affiliate\'s anchored records are NOT touched — they stay verifiable after the relationship ends.'
+          + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'offboardSubOrganization',
         tags: ['Organizations'],
