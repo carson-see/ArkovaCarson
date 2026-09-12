@@ -74,6 +74,9 @@ async function fetchFromMetadataServer(): Promise<CachedToken> {
   // path auto-selects the bound service account.
   const url =
     'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
+  // GCE metadata server: HTTP-only by design, link-local, literal URL,
+  // Metadata-Flavor set. Sekura Phase 2 H13 / SCRUM-4987 — false positive.
   const res = await fetch(url, { headers: { 'Metadata-Flavor': 'Google' } });
   if (!res.ok) {
     throw new Error(`Metadata server token fetch failed: ${res.status} ${res.statusText}`);
