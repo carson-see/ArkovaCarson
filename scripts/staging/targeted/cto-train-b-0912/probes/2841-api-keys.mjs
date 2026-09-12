@@ -26,12 +26,24 @@
 // that had already written the shortened expiry would pass a status check and
 // fail these.
 //
-// MUTATION AND RESET. This probe mutates its own fixture rows (extend, revoke)
-// and the job writes `api_key.expiry_notice` rows against them. `reset()` at
-// the end of every cycle restores the seeded expiries and deletes the audit
-// rows THIS probe caused on THOSE fixture keys, so each cycle is independent
-// and cycle N+1 re-proves the notice from a clean ledger. Nothing outside the
-// `cto-train-b-0912-2841-` fixture set is touched.
+// MUTATION, AND WHY NOTHING IS DELETED. This probe mutates its own fixture
+// rows (extend, revoke) and the job writes `api_key.expiry_notice` rows
+// against them. `audit_events` is APPEND-ONLY — `reject_audit_modification`
+// raises on UPDATE and DELETE alike ("Audit events are immutable."), which is
+// correct for an audit ledger and is what cycle 1 of this soak established.
+//
+// So cycle isolation is achieved two ways, neither of which writes to the
+// ledger:
+//   1. every audit assertion is scoped to `created_at >= cycleStart`, and
+//   2. the fixture expiries are RE-STAMPED at the start of each cycle, giving
+//      that cycle its own (kind, expires_at) ledger key.
+// (2) is what keeps the dedupe provable for the whole soak rather than only
+// on cycle 1: replaying the seeded timestamps would make every later cycle
+// dedupe against cycle 1's rows, so run 1 would notify nobody and the
+// notify-then-dedupe proof would quietly become a tautology.
+//
+// At cycle end the fixture shape is restored (expiries only). Nothing outside
+// the `cto-train-b-0912-2841-` fixture set is touched.
 import { randomBytes, randomUUID } from 'node:crypto';
 
 export const pr = '#2841';
@@ -290,39 +302,52 @@ async function readKey(admin, keyId) {
   return data;
 }
 
-async function countAuditRows(admin, eventType, keyId) {
-  const { count, error } = await admin
+/**
+ * Audit rows for one key, counted WITHIN THIS CYCLE ONLY.
+ *
+ * `audit_events` is append-only: `reject_audit_modification` raises on UPDATE
+ * and DELETE alike ("Audit events are immutable."), so a probe cannot clear
+ * its own rows between cycles and every count here is cumulative across the
+ * whole soak. Scoping on `created_at` is what makes "this cycle wrote no
+ * expiry-change row" a statement about this cycle rather than about the run.
+ */
+async function countAuditRows(admin, eventType, keyId, since) {
+  let q = admin
     .from('audit_events')
     .select('id', { count: 'exact', head: true })
     .eq('event_type', eventType)
     .eq('target_id', keyId);
+  if (since) q = q.gte('created_at', since);
+  const { count, error } = await q;
   if (error) throw new Error(`#2841 audit count ${eventType}: ${error.message}`);
   return count ?? 0;
 }
 
 /** Poll a fire-and-forget audit write (logAuditEvent floats its promise). */
-async function waitForAuditRow(admin, eventType, keyId, timeoutMs = 6000) {
+async function waitForAuditRow(admin, eventType, keyId, since, timeoutMs = 6000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const n = await countAuditRows(admin, eventType, keyId);
+    const n = await countAuditRows(admin, eventType, keyId, since);
     if (n > 0 || Date.now() >= deadline) return n;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 
-/** Every `api_key.expiry_notice` ledger row for one key, details parsed. */
-async function listNoticeLedger(admin, keyId) {
-  const { data, error } = await admin
+/** `api_key.expiry_notice` ledger rows for one key, this cycle only, parsed. */
+async function listNoticeLedger(admin, keyId, since) {
+  let q = admin
     .from('audit_events')
-    .select('details')
+    .select('details, created_at')
     .eq('event_type', EXPIRY_NOTICE_EVENT)
     .eq('target_type', 'api_key')
     .eq('target_id', keyId);
+  if (since) q = q.gte('created_at', since);
+  const { data, error } = await q;
   if (error) throw new Error(`#2841 ledger read ${keyId}: ${error.message}`);
   return (data ?? []).flatMap((row) => {
     try {
       const parsed = JSON.parse(String(row.details ?? '{}'));
-      return [{ kind: parsed?.kind ?? null, expiresAt: parsed?.expires_at ?? null }];
+      return [{ kind: parsed?.kind ?? null, expiresAt: parsed?.expires_at ?? null, createdAt: row.created_at ?? null }];
     } catch {
       return [];
     }
@@ -330,31 +355,57 @@ async function listNoticeLedger(admin, keyId) {
 }
 
 /**
- * Restore every fixture row this cycle mutated and drop the audit rows this
- * probe caused on those rows. Scoped strictly to the seeded key ids.
+ * The expiry each fixture key must hold at the START of a cycle.
+ *
+ * Recomputed from the cycle's own clock rather than reused from setup, and
+ * that is load-bearing for the notice dedupe rather than cosmetic. The ledger
+ * key is (kind, expires_at) and `audit_events` is APPEND-ONLY —
+ * `reject_audit_modification` raises on DELETE, so cycle 1's ledger rows
+ * cannot be cleared. Replaying the seeded timestamps would therefore make
+ * every cycle after the first dedupe on cycle 1's rows: run 1 would notify
+ * nobody and the whole notify-then-dedupe proof would evaporate after one
+ * cycle. Re-stamping gives each cycle its own expiry VALUE, so each cycle
+ * earns a fresh notice and re-proves the dedupe end to end — which is also
+ * exactly the production behaviour being asserted: change the expiry and the
+ * next approach earns a new warning.
  */
-async function reset(admin, seeded) {
-  const { ids, seededExpiries } = seeded;
-  const restore = [
-    ['expired', { expires_at: seededExpiries.expired, is_active: true, revoked_at: null, revocation_reason: null }],
-    ['soon', { expires_at: seededExpiries.soon, is_active: true, revoked_at: null, revocation_reason: null }],
-    ['long', { expires_at: seededExpiries.long, is_active: true, revoked_at: null, revocation_reason: null }],
+function cycleExpiries(nowMs) {
+  return {
+    expired: new Date(nowMs - 73 * DAY_MS).toISOString(),
+    soon: new Date(nowMs + 5 * DAY_MS).toISOString(),
+    long: new Date(nowMs + 330 * DAY_MS).toISOString(),
+    never: null,
+    deactivated: new Date(nowMs + 60 * DAY_MS).toISOString(),
+    revokeTarget: new Date(nowMs + 120 * DAY_MS).toISOString(),
+    orgD: new Date(nowMs + 3 * DAY_MS).toISOString(),
+  };
+}
+
+/**
+ * Put every fixture key into the exact shape this cycle expects.
+ *
+ * Used BOTH at cycle start (re-stamp) and at cycle end (restore): the same
+ * write undoes whatever the cycle's own PATCHes did — the 90-day extension,
+ * the revocation stamp — and leaves the row ready for the next cycle. Audit
+ * rows are deliberately NOT touched: they are immutable by trigger, and every
+ * assertion above is scoped to `created_at >= cycleStart` instead.
+ */
+async function applyFixtureShape(admin, ids, expiries) {
+  const shape = [
+    ['expired', { expires_at: expiries.expired, is_active: true, revoked_at: null, revocation_reason: null }],
+    ['soon', { expires_at: expiries.soon, is_active: true, revoked_at: null, revocation_reason: null }],
+    ['long', { expires_at: expiries.long, is_active: true, revoked_at: null, revocation_reason: null }],
     ['never', { expires_at: null, is_active: true, revoked_at: null, revocation_reason: null }],
-    ['deactivated', { expires_at: seededExpiries.deactivated, is_active: false, revoked_at: null, revocation_reason: null }],
-    ['revokeTarget', { expires_at: seededExpiries.revokeTarget, is_active: true, revoked_at: null, revocation_reason: null }],
-    ['orgD', { expires_at: seededExpiries.orgD, is_active: true, revoked_at: null, revocation_reason: null }],
+    ['deactivated', { expires_at: expiries.deactivated, is_active: false, revoked_at: null, revocation_reason: null }],
+    ['revokeTarget', { expires_at: expiries.revokeTarget, is_active: true, revoked_at: null, revocation_reason: null }],
+    ['orgD', { expires_at: expiries.orgD, is_active: true, revoked_at: null, revocation_reason: null }],
   ];
   const errors = [];
-  for (const [key, patch] of restore) {
+  for (const [key, patch] of shape) {
     const id = ids[key];
     if (!id) continue;
     const { error } = await admin.from('api_keys').update(patch).eq('id', id);
     if (error) errors.push(`${key}: ${error.message}`);
-  }
-  const keyIds = Object.values(ids).filter(Boolean);
-  for (const eventType of [EXPIRY_NOTICE_EVENT, EXPIRY_CHANGED_EVENT, REVOKED_EVENT]) {
-    const { error } = await admin.from('audit_events').delete().eq('event_type', eventType).in('target_id', keyIds);
-    if (error) errors.push(`${eventType} cleanup: ${error.message}`);
   }
   return errors;
 }
@@ -369,7 +420,21 @@ export async function run(ctx) {
   if (!seeded?.ids?.expired) {
     return [probe('2841_fixtures_present', true, false, { pass: false, detail: 'state["#2841"] missing — setup.mjs did not seed' })];
   }
-  const { ids, seededExpiries, orgD } = seeded;
+  const { ids, orgD } = seeded;
+
+  // THE CYCLE WINDOW. Every audit assertion below is scoped to rows created at
+  // or after this instant, because `audit_events` is append-only and rows from
+  // earlier cycles are still there.
+  //
+  // Backed off by a skew allowance: `created_at` is stamped by Postgres
+  // `now()` on Supabase while this bound is read off the driver's own clock,
+  // so a driver running even slightly fast would place its own rows BEFORE the
+  // bound and fail a probe for a write that did land. The allowance is far
+  // below the 5-minute cycle cadence, so it cannot reach a previous cycle's
+  // rows — and the notice assertions key on this cycle's expiry VALUE as well,
+  // which is exact and needs no clock at all.
+  const CLOCK_SKEW_ALLOWANCE_MS = 60_000;
+  const cycleStart = new Date(Date.now() - CLOCK_SKEW_ALLOWANCE_MS).toISOString();
 
   let jwt;
   try {
@@ -378,6 +443,15 @@ export async function run(ctx) {
     return [probe('2841_org_admin_signin', 'access_token', 'failed', { pass: false, detail: String(e.message ?? e) })];
   }
   out.push(probe('2841_org_admin_signin', true, Boolean(jwt), { detail: { email: state.adminA.email } }));
+
+  // Fresh expiries for THIS cycle — see cycleExpiries() for why they are not
+  // replayed from setup. Applied before anything is read, so the statuses
+  // asserted in (a) and the ledger keys asserted in (f) are this cycle's own.
+  const expiries = cycleExpiries(Date.now());
+  const restampErrors = await applyFixtureShape(admin, ids, expiries);
+  out.push(probe('2841_cycle_fixtures_restamped', 0, restampErrors.length, {
+    detail: { errors: restampErrors, expiries, note: 'Each cycle gets its own expiry values so the (kind, expires_at) dedupe is re-proven rather than inherited.' },
+  }));
 
   try {
     // ── (a) GET /api/v1/keys: derived status, and the renamed field ─────────
@@ -429,10 +503,19 @@ export async function run(ctx) {
     // sweep selects.
     const cronSecret = env.CRON_SECRET ?? '';
     const noticeBefore = {
-      expired: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.expired),
-      soon: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.soon),
-      orgD: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.orgD),
+      expired: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.expired, cycleStart),
+      soon: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.soon, cycleStart),
+      orgD: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.orgD, cycleStart),
     };
+    // Scoping self-check. These counts are cycle-scoped, so they MUST be zero
+    // before the sweep runs — earlier cycles' ledger rows still exist and are
+    // simply out of window. A non-zero here would mean the window is wrong and
+    // every "one new row this cycle" assertion below is measuring the soak
+    // instead of the cycle.
+    out.push(probe('2841f_cycle_window_starts_with_no_notice_rows',
+      JSON.stringify({ expired: 0, soon: 0, orgD: 0 }), JSON.stringify(noticeBefore), {
+        detail: { cycleStart, note: 'audit_events is append-only; the window, not a delete, is what isolates a cycle.' },
+      }));
 
     // Fixture shape, asserted directly — this is what the sweep WOULD select,
     // and it is the half that stays true whether or not the mailer is wired.
@@ -502,9 +585,9 @@ export async function run(ctx) {
       out.push(probe('2841f_skipped_run_notified_zero', 0, run1.body?.notified ?? null, { detail: deliveryNote }));
 
       const after = {
-        expired: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.expired),
-        soon: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.soon),
-        orgD: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.orgD),
+        expired: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.expired, cycleStart),
+        soon: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.soon, cycleStart),
+        orgD: await countAuditRows(admin, EXPIRY_NOTICE_EVENT, ids.orgD, cycleStart),
       };
       out.push(probe('2841f_skipped_run_writes_no_ledger_row', JSON.stringify(noticeBefore), JSON.stringify(after), {
         detail: 'A skipped run must not mark any key notified — otherwise a configured environment finds the warning "already sent".',
@@ -533,26 +616,26 @@ export async function run(ctx) {
 
       // Exactly one ledger row per key per (kind, expires_at) — the assertion
       // the counters alone cannot make.
-      const expiredLedger = await listNoticeLedger(admin, ids.expired);
-      out.push(probe('2841f_lapsed_key_ledger_row_exactly_one', 1, expiredLedger.length - noticeBefore.expired, {
-        detail: { rows: expiredLedger, seededExpiry: seededExpiries.expired },
+      const expiredLedger = await listNoticeLedger(admin, ids.expired, cycleStart);
+      out.push(probe('2841f_lapsed_key_ledger_row_exactly_one', 1, expiredLedger.length, {
+        detail: { rows: expiredLedger, cycleExpiry: expiries.expired, cycleStart, note: 'One row THIS CYCLE — two sweeps ran, so a second row would mean the dedupe missed.' },
       }));
       out.push(probe('2841f_lapsed_key_ledger_keyed_on_kind_and_expiry', true,
-        expiredLedger.some((r) => r.kind === 'expired' && sameInstant(r.expiresAt, seededExpiries.expired)), {
-          detail: { rows: expiredLedger, expected: { kind: 'expired', expires_at: seededExpiries.expired } },
+        expiredLedger.some((r) => r.kind === 'expired' && sameInstant(r.expiresAt, expiries.expired)), {
+          detail: { rows: expiredLedger, expected: { kind: 'expired', expires_at: expiries.expired } },
         }));
 
-      const soonLedger = await listNoticeLedger(admin, ids.soon);
+      const soonLedger = await listNoticeLedger(admin, ids.soon, cycleStart);
       out.push(probe('2841f_expiring_key_ledger_kind_is_expiring', true,
-        soonLedger.some((r) => r.kind === 'expiring' && sameInstant(r.expiresAt, seededExpiries.soon)), {
+        soonLedger.some((r) => r.kind === 'expiring' && sameInstant(r.expiresAt, expiries.soon)), {
           detail: { rows: soonLedger },
         }));
 
       // THE RECIPIENT UNION. Org D's only admin lives in org_members. A
       // profiles-only lookup returns [], the job counts a noRecipients, and
       // this ledger row never appears.
-      const orgDLedger = await listNoticeLedger(admin, ids.orgD);
-      out.push(probe('2841f_org_members_only_admin_was_notified', true, orgDLedger.length > noticeBefore.orgD, {
+      const orgDLedger = await listNoticeLedger(admin, ids.orgD, cycleStart);
+      out.push(probe('2841f_org_members_only_admin_was_notified', true, orgDLedger.length >= 1, {
         detail: {
           rows: orgDLedger, orgId: orgD.orgId, recipientEmail: orgD.email,
           note: 'Zero profiles ORG_ADMINs for this org — proven above. A row here can only come from the org_members half of the union.',
@@ -574,7 +657,7 @@ export async function run(ctx) {
     const extendedRow = await readKey(admin, ids.expired);
     const extendedMs = extendedRow?.expires_at ? new Date(extendedRow.expires_at).getTime() : 0;
     out.push(probe('2841b_stored_expiry_moved_into_the_future', true, extendedMs > Date.now(), {
-      detail: { stored: extendedRow?.expires_at, wasSeededAt: seededExpiries.expired },
+      detail: { stored: extendedRow?.expires_at, wasStampedAt: expiries.expired },
     }));
     // Counted from NOW, never from the old expiry: `old + 90d` on a key that
     // lapsed 73 days ago lands 17 days out, not 90.
@@ -583,7 +666,7 @@ export async function run(ctx) {
       detail: { daysOut, note: 'old + 90d would be ~17 days out for a key 73 days lapsed.' },
     }));
     out.push(probe('2841b_expiry_change_audited', true,
-      (await waitForAuditRow(admin, EXPIRY_CHANGED_EVENT, ids.expired)) >= 1, {
+      (await waitForAuditRow(admin, EXPIRY_CHANGED_EVENT, ids.expired, cycleStart)) >= 1, {
         detail: 'An expiry change is how a key auth had started refusing becomes usable again — it must be on the record.',
       }));
 
@@ -601,10 +684,10 @@ export async function run(ctx) {
     // status check and cut ten months off the key.
     out.push(probe('2841c_stored_expiry_unchanged_by_refused_shorten',
       beforeShorten?.expires_at ?? null, afterShorten?.expires_at ?? null, {
-        detail: { seeded: seededExpiries.long },
+        detail: { cycleExpiry: expiries.long },
       }));
     out.push(probe('2841c_refused_shorten_wrote_no_audit_row', 0,
-      await countAuditRows(admin, EXPIRY_CHANGED_EVENT, ids.long), { detail: null }));
+      await countAuditRows(admin, EXPIRY_CHANGED_EVENT, ids.long, cycleStart), { detail: null }));
 
     // ── (d) the revoked guard, on a withdrawn-but-unstamped row ────────────
     const beforeRevokedPatch = await readKey(admin, ids.deactivated);
@@ -636,21 +719,21 @@ export async function run(ctx) {
     }));
     // The expiry in the same body must be DROPPED, not written: a future
     // timestamp on a key revocation made permanently unusable is a lie.
-    out.push(probe('2841e_expiry_not_written', true, sameInstant(revokedRow?.expires_at, seededExpiries.revokeTarget), {
+    out.push(probe('2841e_expiry_not_written', true, sameInstant(revokedRow?.expires_at, expiries.revokeTarget), {
       detail: {
-        seeded: seededExpiries.revokeTarget,
+        stamped: expiries.revokeTarget,
         stored: revokedRow?.expires_at ?? null,
         note: 'The request carried expires_in_days: 30; the stored expiry must be untouched.',
       },
     }));
     // Positive control FIRST: if audit writing were dark altogether, the
     // "no expiry_changed row" assertion below would pass vacuously.
-    const revokedRows = await waitForAuditRow(admin, REVOKED_EVENT, ids.revokeTarget);
+    const revokedRows = await waitForAuditRow(admin, REVOKED_EVENT, ids.revokeTarget, cycleStart);
     out.push(probe('2841e_revocation_audited_positive_control', true, revokedRows >= 1, {
       detail: 'Proves audit writes land at all, so the zero below is a real absence.',
     }));
     out.push(probe('2841e_no_expiry_changed_audit_row', 0,
-      await countAuditRows(admin, EXPIRY_CHANGED_EVENT, ids.revokeTarget), {
+      await countAuditRows(admin, EXPIRY_CHANGED_EVENT, ids.revokeTarget, cycleStart), {
         detail: 'No expiry was written, so no expiry-change event may be recorded.',
       }));
   } catch (error) {
@@ -662,15 +745,21 @@ export async function run(ctx) {
     }));
   } finally {
     // Always — a probe that threw mid-cycle must not leave a mutated fixture
-    // for the next cycle to misread.
+    // for the next cycle to misread. Restores THIS cycle's stamped shape,
+    // undoing the 90-day extension and the revocation.
+    //
+    // Audit rows are NOT cleaned up and must not be: `reject_audit_modification`
+    // raises on DELETE ("Audit events are immutable."), which is the correct
+    // behaviour for an audit ledger and was what cycle 1 discovered. Cycle
+    // isolation comes from the `created_at` window instead.
     let resetErrors;
     try {
-      resetErrors = await reset(admin, seeded);
+      resetErrors = await applyFixtureShape(admin, ids, expiries);
     } catch (error) {
       resetErrors = [String(error && error.message ? error.message : error)];
     }
     out.push(probe('2841_cycle_reset_clean', 0, resetErrors.length, {
-      detail: { errors: resetErrors, note: 'Seeded expiries restored; this probe\'s own audit rows on its own fixture keys removed so the next cycle re-proves the notice from a clean ledger.' },
+      detail: { errors: resetErrors, note: 'Fixture expiries restored to this cycle\'s stamped values. Audit rows are immutable by trigger and are left alone; per-cycle assertions are scoped by created_at.' },
     }));
   }
 
