@@ -72,22 +72,44 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Also search attestations
+    // Also search attestations.
+    //
+    // SCRUM-4985: this used to hand-build a PostgREST `.or()` string with the
+    // raw `identifier` interpolated (`subject_identifier.eq.${identifier}`).
+    // A comma or operator inside `identifier` appended extra OR clauses and
+    // widened a targeted lookup into enumeration. Each term now goes through
+    // the query builder, which encodes the value, so no filter grammar is ever
+    // assembled from caller input. The two terms are queried separately and
+    // unioned by id, preserving the previous OR semantics.
     const attestationResults: unknown[] = [];
     if (name || identifier) {
-      // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
-      const { data: attestations } = await dbAny
-        .from('attestations')
-        .select('id, public_id, attestation_type, subject_identifier, subject_type, status, attester_name, claims, created_at')
-        .or([
-          name ? `subject_identifier.ilike.%${name.replace(/[%_]/g, '')}%` : null,
-          identifier ? `subject_identifier.eq.${identifier}` : null,
-        ].filter(Boolean).join(','))
-        .eq('status', 'ACTIVE')
-        .limit(limit);
+      const seen = new Set<string>();
+      const attestationQuery = () =>
+        // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
+        dbAny
+          .from('attestations')
+          .select('id, public_id, attestation_type, subject_identifier, subject_type, status, attester_name, claims, created_at')
+          .eq('status', 'ACTIVE')
+          .limit(limit);
+      const collect = (rows: Array<{ id: string }> | null | undefined) => {
+        for (const row of rows ?? []) {
+          if (attestationResults.length >= limit) break;
+          if (seen.has(row.id)) continue;
+          seen.add(row.id);
+          attestationResults.push(row);
+        }
+      };
 
-      if (attestations) {
-        attestationResults.push(...attestations);
+      if (identifier) {
+        const { data } = await attestationQuery().eq('subject_identifier', identifier);
+        collect(data);
+      }
+      if (name) {
+        const { data } = await attestationQuery().ilike(
+          'subject_identifier',
+          `%${name.replace(/[%_\\]/g, '')}%`,
+        );
+        collect(data);
       }
     }
 
