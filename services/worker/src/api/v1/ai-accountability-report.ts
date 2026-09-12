@@ -15,7 +15,7 @@ import { jsPDF } from 'jspdf';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
-import { callerMayReadRow } from './tenantRowAccess.js';
+import { callerMayReadRow, type TenantScopedRow } from './tenantRowAccess.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
   controlsApplyForStatus,
@@ -86,7 +86,7 @@ router.post('/', async (req: Request, res: Response) => {
       .order('created_at', { ascending: false })
       .limit(5);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    type ManifestRow = { org_id?: string | null; user_id?: string | null } & Record<string, any>; // NOSONAR — db client is untyped here
+    type ManifestRow = TenantScopedRow & Record<string, any>; // NOSONAR — db client is untyped here
     const manifests = ((rawManifests ?? []) as ManifestRow[]).filter((m) =>
       callerMayReadRow(m, { userId, orgId }),
     );

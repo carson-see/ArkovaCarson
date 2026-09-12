@@ -16,7 +16,7 @@ import { Router, Request, Response } from 'express';
 import { db } from '../../utils/db.js';
 import { readInChunks } from '../../utils/chunkedRead.js';
 import { logger } from '../../utils/logger.js';
-import { callerMayReadRow } from './tenantRowAccess.js';
+import { callerMayReadRow, type TenantScopedRow } from './tenantRowAccess.js';
 
 const router = Router();
 
@@ -65,8 +65,8 @@ router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: R
     // no visible rows gets the same 404 as "no manifests" — never a 403 that
     // would confirm another tenant extracted this document.
     // An empty result and a result with nothing visible are the same 404.
-    const visibleManifests = (manifests ?? []).filter(
-      (m: { org_id?: string | null; user_id?: string | null }) => callerMayReadRow(m, { userId, orgId }),
+    const visibleManifests = (manifests ?? []).filter((m: TenantScopedRow) =>
+      callerMayReadRow(m, { userId, orgId }),
     );
     if (visibleManifests.length === 0) {
       res.status(404).json({

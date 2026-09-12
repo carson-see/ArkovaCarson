@@ -6,8 +6,11 @@
  *   .or(`subject_identifier.eq.${identifier}`)
  * so an identifier such as `x,attester_name.neq.zzz` appended a second OR
  * clause and turned a targeted lookup into enumeration of every ACTIVE
- * attestation. The test pins the query-builder form: no `.or()` at all, and
- * the raw identifier passed as a builder argument (which supabase-js encodes).
+ * attestation. The tests pin the query-builder form: no `.or()` at all, and
+ * the raw identifier passed as a builder argument so it lands in a position
+ * (`subject_identifier=eq.<value>`) where a comma is not grammar. The last
+ * test proves that at the wire level — percent-encoding alone never closed
+ * this, because PostgREST decodes a parameter value before parsing it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
@@ -97,6 +100,39 @@ describe('entity-verify attestation filter (SCRUM-4985)', () => {
     const attestationQueries = log.filter((r) => r.table === 'attestations');
     expect(attestationQueries).toHaveLength(1);
     expect(attestationQueries[0].calls.some((c) => c.method === 'ilike')).toBe(false);
+  });
+
+  // CTO review: the three tests above pin the *call shape* (no `.or()`), which
+  // is only meaningful if the builder form is actually injection-proof. This
+  // one proves that at the wire level against the real postgrest-js, and shows
+  // why "the builder encodes the value" is NOT the reason: the old `.or()`
+  // payload was percent-encoded too, and PostgREST decodes a query-parameter
+  // value before parsing it, so the comma was still read as an OR separator.
+  it('emits the injected identifier as one literal eq value, where a comma carries no grammar', async () => {
+    const { PostgrestClient } = await import('@supabase/postgrest-js');
+    const client = new PostgrestClient('http://postgrest.invalid');
+    const injected = 'x,attester_name.neq.zzz';
+
+    const urlOf = (b: unknown) => String((b as { url: URL }).url);
+
+    const fixed = urlOf(client
+      .from('attestations')
+      .select('id')
+      .eq('status', 'ACTIVE')
+      .eq('subject_identifier', injected));
+    // One filter param; the comma lives inside the value, so PostgREST reads
+    // `x,attester_name.neq.zzz` as the literal string to match.
+    expect(fixed).toContain('subject_identifier=eq.x%2Cattester_name.neq.zzz');
+    expect(fixed).not.toContain('or=');
+
+    const vulnerable = urlOf(client
+      .from('attestations')
+      .select('id')
+      .eq('status', 'ACTIVE')
+      .or(`subject_identifier.eq.${injected}`));
+    // Same percent-encoding — and still a second OR term after the decode.
+    expect(vulnerable).toContain('%2Cattester_name.neq.zzz');
+    expect(decodeURIComponent(vulnerable)).toContain('or=(subject_identifier.eq.x,attester_name.neq.zzz)');
   });
 
   it('unions name and identifier results by id and caps at limit', async () => {

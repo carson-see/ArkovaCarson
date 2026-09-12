@@ -21,6 +21,17 @@ const dbAny = db as any;
 
 const router = Router();
 
+/**
+ * SCRUM-4985: strip the LIKE metacharacters before a caller-supplied term is
+ * wrapped in `%...%`. `%` and `_` are LIKE wildcards; `\` is LIKE's escape
+ * character, so leaving it in lets a caller neutralise the surrounding
+ * wildcards. Three call sites shared this expression by copy — one helper so a
+ * later edit cannot fix one copy and miss the others.
+ */
+function stripLikeWildcards(term: string): string {
+  return term.replace(/[%_\\]/g, '');
+}
+
 const EntityVerifySchema = z.object({
   name: z.string().min(1).max(200).optional(),
   domain: z.string().min(1).max(200).optional(),
@@ -51,10 +62,10 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Build search filter
     if (name) {
-      query = query.ilike('title', `%${name.replace(/[%_\\]/g, '')}%`);
+      query = query.ilike('title', `%${stripLikeWildcards(name)}%`);
     }
     if (domain) {
-      query = query.ilike('source_url', `%${domain.replace(/[%_\\]/g, '')}%`);
+      query = query.ilike('source_url', `%${stripLikeWildcards(domain)}%`);
     }
     if (identifier) {
       query = query.eq('source_id', identifier);
@@ -78,9 +89,19 @@ router.get('/', async (req: Request, res: Response) => {
     // raw `identifier` interpolated (`subject_identifier.eq.${identifier}`).
     // A comma or operator inside `identifier` appended extra OR clauses and
     // widened a targeted lookup into enumeration. Each term now goes through
-    // the query builder, which encodes the value, so no filter grammar is ever
+    // the query builder as its own filter, so no filter grammar is ever
     // assembled from caller input. The two terms are queried separately and
     // unioned by id, preserving the previous OR semantics.
+    //
+    // Percent-encoding is NOT what closes this, and a future edit must not
+    // assume it is: postgrest-js encoded the `.or()` payload too
+    // (`or=%28subject_identifier.eq.x%2Cattester_name.neq.zzz%29`), and
+    // PostgREST decodes a query-parameter value before parsing it, so the
+    // comma was still read as an OR separator. What closes it is the
+    // *position*: in `subject_identifier=eq.<value>` everything after `eq.`
+    // is a literal value and commas carry no grammar. Never interpolate
+    // caller input into `.or()` / `.and()` / `.in()` payloads — encoded or
+    // not. Pinned by entity-verify.test.ts.
     const attestationResults: unknown[] = [];
     if (name || identifier) {
       const seen = new Set<string>();
@@ -111,7 +132,7 @@ router.get('/', async (req: Request, res: Response) => {
       if (name && attestationResults.length < limit) {
         const { data } = await attestationQuery().ilike(
           'subject_identifier',
-          `%${name.replace(/[%_\\]/g, '')}%`,
+          `%${stripLikeWildcards(name)}%`,
         );
         collect(data);
       }
