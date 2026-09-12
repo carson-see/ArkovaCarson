@@ -156,3 +156,9 @@ IDs and temporary policies suite-owned, and retain the old-token negative contro
 All other RLS positive clients use a shared, process-locked TOTP factor through
 `elevateRlsClientToAal2()`; keep that real GoTrue elevation instead of weakening
 the production MFA gate or substituting a locally signed token.
+
+SCRUM-4887: committed changes to the singleton OAuth confirmation policy use
+`shared-fixture-lock.ts` across Vitest workers and restore the exact prior
+timestamp in a separate `finally` path. The lock times out instead of evicting
+an apparently stale owner. Keep file parallelism enabled so unrelated fixture
+collisions remain visible.
