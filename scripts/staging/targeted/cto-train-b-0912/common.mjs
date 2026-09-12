@@ -1,100 +1,56 @@
-// Shared helpers for the CTO 0912 targeted soak drivers (PR #2832 / #2831).
-// Self-contained on purpose (no cross-repo relative imports) so these scripts
-// stay usable if the repo checkout moves; only @supabase/supabase-js is an
-// external dependency (already installed at repo root).
+// Shared helpers for the cto-train-b-0912 targeted train driver.
+// Self-contained on purpose; only @supabase/supabase-js is external (repo root).
 import { createHmac } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
-export const RIG_REF = 'fizyjojbebyalirtjjht';
-export const SUPABASE_URL = 'https://fizyjojbebyalirtjjht.supabase.co';
-export const SERVICE = 'arkova-worker-staging';
+export const RIG_REF = 'xhvasifpunswhsgfsstd';
+export const SUPABASE_URL = `https://${RIG_REF}.supabase.co`;
+export const SERVICE = 'arkova-worker-cto-train-b-0912-staging';
 export const REGION = 'us-central1';
-export const CANDIDATE_SHA = '133474d30653bce3bdb285c87b4877638bd9a6b6';
-export const TAG_URL = 'https://arkova-worker-staging-kvojbeutfa-uc.a.run.app';
+export const TAG_URL = process.env.TRAIN_TAG_URL
+  ?? 'https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app';
+// The soaked head. Set by supervisor.sh from the admitted candidate; never hardcode.
+export const CANDIDATE_SHA = process.env.TRAIN_CANDIDATE_SHA ?? '';
+export const PREFIX = 'cto-train-b-0912';
 
-const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-
-function stripPad(v) {
-  let end = v.length;
-  while (end > 0 && v[end - 1] === '=') end -= 1;
-  return v.slice(0, end);
-}
-
-export function base32Decode(input) {
-  const clean = stripPad(input.toUpperCase()).replace(/[^A-Z2-7]/g, '');
-  let bits = 0, value = 0;
-  const bytes = [];
-  for (const char of clean) {
-    value = (value << 5) | BASE32_ALPHABET.indexOf(char);
-    bits += 5;
-    if (bits >= 8) {
-      bytes.push((value >>> (bits - 8)) & 0xff);
-      bits -= 8;
-    }
-  }
-  return Buffer.from(bytes);
-}
-
-// Dependency-free RFC 6238 TOTP (SHA-1, 6 digits, 30s step) — ported from the
-// same proven implementation as e2e/helpers/totp.ts (verified against the
-// RFC 6238 Appendix B test vectors there); duplicated here so this soak
-// tooling has no cross-directory import onto the app's e2e helpers.
-export function totp(secretBase32, { now = Date.now(), step = 30, digits = 6 } = {}) {
-  const counter = Math.floor(now / 1000 / step);
-  const counterBuffer = Buffer.alloc(8);
-  counterBuffer.writeBigUInt64BE(BigInt(counter));
-  const hmac = createHmac('sha1', base32Decode(secretBase32)).update(counterBuffer).digest();
-  const offset = hmac[hmac.length - 1] & 0x0f;
-  const binaryCode =
-    ((hmac[offset] & 0x7f) << 24) |
-    (hmac[offset + 1] << 16) |
-    (hmac[offset + 2] << 8) |
-    hmac[offset + 3];
-  const code = binaryCode % 10 ** digits;
-  return String(code).padStart(digits, '0');
-}
-
-// Nudge forward one step if within 3s of a boundary, same rationale as
-// e2e/helpers/mfa.ts's computeTotpAvoidingBoundary — avoids a code going
-// stale mid-request against real GoTrue.
-export function totpNow(secret) {
-  const STEP_MS = 30_000;
-  const now = Date.now();
-  const msIntoStep = now % STEP_MS;
-  const effectiveNow = STEP_MS - msIntoStep < 3_000 ? now + STEP_MS : now;
-  return totp(secret, { now: effectiveNow });
-}
-
-export function hashApiKey(rawKey, hmacSecret) {
-  return createHmac('sha256', hmacSecret).update(rawKey).digest('hex');
-}
-
-export async function getIamToken() {
-  const { execFileSync } = await import('node:child_process');
+export function iamToken() {
   return execFileSync('gcloud', ['auth', 'print-identity-token'], { encoding: 'utf8' }).trim();
 }
 
-export async function fireJson(url, opts = {}) {
-  const started = Date.now();
-  let status = 0, body = null, ok = false, transportError = null;
-  try {
-    const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(opts.timeoutMs ?? 15000) });
-    status = res.status;
-    const raw = await res.text();
-    try { body = raw ? JSON.parse(raw) : null; } catch { body = raw.slice(0, 500); }
-    ok = true;
-  } catch (err) {
-    transportError = err instanceof Error ? err.message : String(err);
-  }
-  return { status, body, latencyMs: Date.now() - started, transportError, ok };
+// Mirrors services/worker/src/auth/apiKeys.ts: HMAC-SHA256(rawKey) hex under API_KEY_HMAC_SECRET.
+export function hashApiKey(rawKey, secret) {
+  return createHmac('sha256', secret).update(rawKey).digest('hex');
 }
 
-export function probe(name, expected, observedStatus, extra = {}) {
-  const expectedArr = Array.isArray(expected) ? expected : [expected];
-  return {
-    name,
-    expected: expectedArr,
-    observed: observedStatus,
-    pass: expectedArr.includes(observedStatus),
-    ...extra,
-  };
+/** probe(name, expected, actual, {detail, pass}) -> {name, expected, actual, pass, detail} */
+export function probe(name, expected, actual, opts = {}) {
+  const exp = Array.isArray(expected) ? expected : [expected];
+  const pass = opts.pass ?? exp.includes(actual);
+  return { name, expected: exp.length === 1 ? exp[0] : exp, actual, pass, detail: opts.detail ?? null };
+}
+
+export async function workerFetch(path, { method = 'GET', headers = {}, body, apiKeyRaw, jwt } = {}) {
+  const h = { 'X-Serverless-Authorization': `Bearer ${iamToken()}`, ...headers };
+  if (apiKeyRaw) h.Authorization = `Bearer ${apiKeyRaw}`;
+  if (jwt) h.Authorization = `Bearer ${jwt}`;
+  if (body !== undefined) h['Content-Type'] = 'application/json';
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 30_000);
+  try {
+    const r = await fetch(`${TAG_URL}${path}`, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), signal: ctl.signal });
+    const text = await r.text();
+    let json = null; try { json = JSON.parse(text); } catch { /* non-JSON body */ }
+    return { status: r.status, headers: Object.fromEntries(r.headers.entries()), body: json, text };
+  } catch (e) {
+    return { status: 0, headers: {}, body: null, text: String(e) };
+  } finally { clearTimeout(t); }
+}
+
+export async function restFetch(path, { apikey, jwt, method = 'GET', body, headers = {} } = {}) {
+  const h = { apikey, Authorization: `Bearer ${jwt ?? apikey}`, ...headers };
+  if (body !== undefined) h['Content-Type'] = 'application/json';
+  const r = await fetch(`${SUPABASE_URL}/rest/v1${path}`, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await r.text();
+  let json = null; try { json = JSON.parse(text); } catch { /* */ }
+  return { status: r.status, body: json, text };
 }
