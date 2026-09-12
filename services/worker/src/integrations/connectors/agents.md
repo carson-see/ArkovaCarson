@@ -2,6 +2,46 @@
 
 _Last updated: 2026-08-30 (`adobe-sign-token-store.ts` added for the Adobe Sign connect flow)._
 
+
+## 2026-09-12 — SCRUM-4507: the Drive link-back mapping lives in the PRODUCER, not the drain
+
+`connector-artifact-drain.ts` spreads a `connector_artifact` row's own `metadata` onto
+`anchors.metadata` wholesale. That makes the drain look like the natural place to add Drive
+provenance keys — and it is the wrong place. The drain is T3 (`check-staging-evidence.ts`
+"anchor-creating feeder / anchor pipeline", SCRUM-3802): a change there needs a 24h isolated
+soak and puts every connector's anchor creation in the blast radius, to add four keys that only
+one connector produces. The mapping therefore lands where the raw Drive change is actually in
+hand, and every later hop just carries the values:
+
+| Hop | File | What it gained |
+|---|---|---|
+| 1. classify | `drive-changes-processor.ts` | `ChangeDescriptor` gained `sharedDriveId` / `folderId` / `revisionKind`; `resolveRevisionId` became `resolveRevision`, returning the id AND which fallback produced it |
+| 2. enqueue | `drive-changes-processor.ts` | `enqueueFileChangedJob` payload gained `shared_drive_id` / `folder_id` / `folder_path` / `revision_kind` |
+| 3. adapt | `drive-changes-runner.ts` | the four fields cross the `null` -> `undefined` boundary with the existing ones |
+| 4. schema | `drive-artifact-producer.ts` | the four as `.optional()`, plus the `DRIVE_REVISION_KINDS` vocabulary |
+| 5. write | `jobs/drive-file-changed.ts` | `p_metadata` gained `_drive_shared_drive_id` / `_drive_folder_id` / `_drive_folder_path` / `_drive_revision_kind` |
+
+**`shared_drive_id` was already on the wire.** `listChanges`' field mask has always requested
+`driveId` and the Zod entry has always parsed it — nothing read it. No new Drive API call, no new
+scope, no extra round-trip: `folder_path` reuses the value PHASE 2 already resolved for that file.
+
+**Why `revision_kind` exists.** `revision_id` is not always a Drive revision. Workspace-native
+files expose no `headRevisionId`, so `resolveRevision` falls back to `mtime:<modifiedTime>`, and a
+change with neither falls back again to `evt:<time>:<fileId>`. Those prefixes are part of the 0343
+`connector_artifact` dedupe key and MUST NOT change — altering them re-anchors every Doc. But a
+surface that renders the value has to know which of the three it holds, or it labels a modification
+time as a document revision (§1.5). Downstream must switch on `_drive_revision_kind`, never parse
+the id's prefix.
+
+**The four fields are `.optional()` and that is load-bearing.** Jobs enqueued before this change are
+already in `job_queue` without them; a required field would fail `parse` on every one of those rows'
+next attempt and stall the pipeline behind a backlog it could never drain.
+
+**Never add an owner or account label.** Drive's `account_label` IS the connected Google account's
+email (`drive-account-label.ts`), and the change's `actor_email` is the last modifying user's. Neither
+exists on `DriveFileChangedJobPayload`, and `drive-artifact-producer.test.ts` pins the whole payload
+key set as a ratchet so a new field has to be added deliberately.
+
 ## 2026-08-30 — `adobe-sign-token-store.ts` reuses the DocuSign Secret Manager client on purpose
 
 Adobe Sign uses the same token split as DocuSign: short-lived ACCESS token KMS-encrypted into

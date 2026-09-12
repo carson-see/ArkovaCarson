@@ -228,6 +228,27 @@ export function makeDriveFileChangedJobDeps(
           mime_type: input.mimeType,
           export_mime_type: input.exportMimeType,
           content_type: input.contentType,
+          // ── SCRUM-4507 source link-back ────────────────────────────────
+          // Underscore-prefixed on purpose. `connector-artifact-drain.ts`
+          // spreads this whole blob onto `anchors.metadata`, and the record
+          // page's generic metadata dump hides `_`-prefixed keys
+          // (BUG-2026-07-17-010) — so these render through the dedicated
+          // Drive source block, with labels and a §1.5 note, instead of as
+          // raw "drive shared drive id:" rows nobody can act on.
+          //
+          // `?? null` never `?? undefined`: a JSON undefined would drop the
+          // key entirely, making "this record predates the link-back" and
+          // "Drive had no shared drive for this file" indistinguishable.
+          //
+          // §1.4 / §1.6A: none of these can carry PII. They are opaque Drive
+          // ids plus a folder path. The connected Google account's EMAIL lives
+          // in `account_label` (drive-account-label.ts) and is deliberately
+          // NOT carried here, nor is the change's `actor_email` — neither
+          // field exists on the job payload at all.
+          _drive_shared_drive_id: input.sharedDriveId ?? null,
+          _drive_folder_id: input.folderId ?? null,
+          _drive_folder_path: input.folderPath ?? null,
+          _drive_revision_kind: input.revisionKind ?? null,
         },
       });
 
