@@ -6,18 +6,20 @@ import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 
 const email = 'uat03-browser@example.invalid';
-function session(role = 'arkova_email_pending') {
+type AssuranceLevel = 'aal1' | 'aal2';
+
+function session(role = 'arkova_email_pending', aal: AssuranceLevel = 'aal1') {
   const now = Math.floor(Date.now() / 1000);
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return {
-    access_token: `${encode({ alg: 'HS256' })}.${encode({ sub: '53bd5736-d4b0-4cde-ac7d-f8df655c9248', role, aud: 'authenticated', exp: now + 3600, iat: now })}.${Buffer.alloc(32).toString('base64url')}`,
+    access_token: `${encode({ alg: 'HS256' })}.${encode({ sub: '53bd5736-d4b0-4cde-ac7d-f8df655c9248', session_id: 'uat03-browser-session', role, aal, aud: 'authenticated', exp: now + 3600, iat: now })}.${Buffer.alloc(32).toString('base64url')}`,
     refresh_token: 'owned-browser-fixture-refresh', token_type: 'bearer', expires_at: now + 3600, expires_in: 3600,
     user: { id: '53bd5736-d4b0-4cde-ac7d-f8df655c9248', email, role: 'authenticated', aud: 'authenticated', app_metadata: { provider: 'google' }, user_metadata: {}, email_confirmed_at: new Date().toISOString(), created_at: new Date().toISOString() },
   };
 }
-async function setup(page: Page, options: { failSend?: boolean; withUser?: boolean; initialRole?: string; completeSession?: boolean } = {}) {
+async function setup(page: Page, options: { failSend?: boolean; withUser?: boolean; initialRole?: string; initialAal?: AssuranceLevel; completeSession?: boolean } = {}) {
   page.on('pageerror', (error) => console.error('UAT03 browser error:', error.message));
-  let current = session(options.initialRole);
+  let current = session(options.initialRole, options.initialAal);
   if (options.withUser !== false) await page.addInitScript((value) => {
     // Seed once: a hard sign-out navigation must not resurrect this fixture.
     if (!sessionStorage.getItem('uat03-seeded')) {
@@ -50,7 +52,7 @@ async function setup(page: Page, options: { failSend?: boolean; withUser?: boole
     }
     if (url.endsWith('/complete')) {
       completes++;
-      if (options.completeSession) current = session('authenticated');
+      if (options.completeSession) current = session('authenticated', 'aal1');
       return route.fulfill({ headers, json: { complete: true, session: options.completeSession ? current : null } });
     }
     if (url.includes('/api/auth/email-confirmation')) return route.fulfill({ headers, json: { required: true, sent, retryAfterSeconds: sent ? 90 : 0 } });
@@ -113,8 +115,8 @@ test('using another account signs out locally and leaves the proof screen', asyn
 });
 
 for (const path of ['/signup', '/login']) {
-  test(`normal authenticated ${path} still reaches onboarding`, async ({ page }) => {
-    const calls = await setup(page, { initialRole: 'authenticated' });
+  test(`post-MFA authenticated ${path} still reaches onboarding`, async ({ page }) => {
+    const calls = await setup(page, { initialRole: 'authenticated', initialAal: 'aal2' });
     await page.goto(path);
     await expect(page).toHaveURL(/\/onboarding\/role$/);
     await expect(page.getByRole('heading', { name: 'Welcome to Arkova', level: 3 })).toBeVisible();
@@ -123,13 +125,14 @@ for (const path of ['/signup', '/login']) {
   });
 }
 
-test('confirmed token resumes profile loading and existing onboarding', async ({ page }) => {
+test('confirmed AAL1 token reaches mandatory MFA without reading a profile', async ({ page }) => {
   const calls = await setup(page, { completeSession: true });
   await page.goto('/signup#token=browser-mailbox-proof&type=oauth_confirmation');
   await expect(page.getByRole('button', { name: 'Confirm email and continue' })).toBeVisible();
   expect(calls.profileReads()).toBe(0);
   await page.getByRole('button', { name: 'Confirm email and continue' }).click();
-  await expect(page).toHaveURL(/\/onboarding\/role$/);
-  await expect(page.getByRole('heading', { name: 'Welcome to Arkova', level: 3 })).toBeVisible();
-  expect(calls.profileReads()).toBeGreaterThan(0);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByTestId('mfa-enrollment-required')).toBeVisible();
+  await expect(page.locator('#main-content')).toBeHidden();
+  expect(calls.profileReads()).toBe(0);
 });
