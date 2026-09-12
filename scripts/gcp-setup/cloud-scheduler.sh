@@ -208,6 +208,14 @@ JOBS=(
   # only) — the retention policy had no executor. First run deletes 0 rows
   # (oldest audit row 2026-03-21); it becomes load-bearing gradually.
   "cleanup-retention|30 5 * * *|/jobs/cleanup-retention|30s,120s,2"
+  # SCRUM-5023: API-key expiry notice. Key expiry was entirely silent — prod
+  # held 13 active-flagged keys whose expiry had already passed, and HakiChain
+  # learned theirs had lapsed from their own 401s. Daily at 13:00 UTC (09:00
+  # America/Detroit) so a partner reads the warning during a working day, and
+  # off the :00-of-hour herd that produces the /jobs/* per-IP 429s. Retries are
+  # SAFE: the job dedupes on an api_key.expiry_notice audit row per key per
+  # kind per 7 days, so a re-drive re-sends nothing.
+  "api-key-expiry-notice|0 13 * * *|/jobs/api-key-expiry-notice|30s,120s,2"
   # ── Imported from live prod 2026-08-10 (SCRUM-2900 reconciliation) ─────────
   # These jobs were created out of band and existed only in GCP; schedules are
   # copied verbatim from `gcloud scheduler jobs list`. RETRY=DEFAULT keeps a

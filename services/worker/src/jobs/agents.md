@@ -1,3 +1,30 @@
+## 2026-09-12 — SCRUM-5023: `api-key-expiry-notice` dedupes on `audit_events`, by design
+
+Key expiry was entirely silent — no warning before, no notice after. This daily job emails an org's
+ORG_ADMINs at T-7 and once within 24h of a lapse.
+
+**The dedupe ledger is `audit_events`, not a column, and that is deliberate.** A notice writes
+`api_key.expiry_notice` (target_id = key id, `details.kind`) and a key carrying a matching row inside
+7 days is skipped. This story adds no migration, but the ledger is also the right shape: the job can
+run more than once a day in two independent ways — Cloud Scheduler retrying a 500, and the in-process
+backup schedule, which on Cloud Run fires on EVERY warm instance (prod `minScale = 2`, so an
+in-process cron double-runs by default). Without it the first partner to reach T-7 gets a fortnight of
+daily duplicates. **DO NOT** collapse the dedupe across kinds: `expiring` and `expired` are different
+events with different asks, and folding them swallows the one that matters most.
+
+**A ledger row is written ONLY after a successful send.** Recording on failure would mark the key
+notified for 7 days and permanently swallow the one warning it had coming — the same silence, now
+with an audit row asserting otherwise. Equally, the dedupe lookup THROWS on a query error rather than
+reading "no prior notice": a failed lookup that defaults to sending re-mails on every run for as long
+as the error lasts.
+
+Unconfigured mailer ⇒ the whole run no-ops (`skipped: true`, `reason: 'email_not_configured'`) before
+touching the database. No ledger row, so a configured environment still delivers tomorrow. The route
+answers 200 on a partly-failed sweep (`failed` is a per-key count in the body) — a 500 would make
+Scheduler re-drive the whole window and re-mail every key that already succeeded.
+
+Constitution 1.4: the notice carries the key PREFIX and NAME only. Never the key, never the hash.
+
 ## 2026-09-10 — PR #2570 unknown debit response recovery
 
 A lost/malformed debit RPC response can follow a committed charge. The default

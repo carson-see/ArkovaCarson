@@ -1,3 +1,15 @@
+## 2026-09-12 — SCRUM-5023: `POST /jobs/api-key-expiry-notice`
+
+Daily API-key expiry notice (job in `jobs/api-key-expiry-notice.ts`, scheduler entry in
+`scripts/gcp-setup/cloud-scheduler.sh`). Flag-free but safe unconfigured: with no email provider the
+job returns `skipped: true` without touching the database or the audit ledger, so an unconfigured
+environment does not consume a key's one warning.
+
+**Answers 200 on a partly-failed sweep.** `failed` is a per-key count the body carries. A 500 would
+make Cloud Scheduler re-drive the whole window for the sake of one bad row, re-mailing every key that
+already succeeded — the audit-row dedupe would catch those duplicates, but relying on it to clean up
+after an avoidable retry is the wrong order of defences.
+
 # services/worker/src/routes/agents.md
 
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
