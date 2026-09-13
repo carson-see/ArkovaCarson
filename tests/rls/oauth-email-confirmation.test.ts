@@ -4,6 +4,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { withSharedFixtureLock } from './shared-fixture-lock';
 
 const execFileAsync = promisify(execFile);
 // Role-corruption fixtures need the local bootstrap administrator. Supabase's
@@ -188,23 +189,29 @@ describe('SCRUM-4035 OAuth confirmation SQL boundary', () => {
     expect(output).toContain('\nf\n');
   });
   it('serializes competing claims and completion attempts against the same identity', async () => {
-    const id = randomUUID(); const digest = 'e'.repeat(64);
-    const committed = (body: string) => execFileSync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', body], { encoding: 'utf8' });
-    const call = async (body: string) => (await execFileAsync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', body])).stdout;
-    const previousEnabledAt = committed("SELECT COALESCE(enabled_at::text,'') FROM private.oauth_email_confirmation_policy WHERE singleton").trim();
-    const restoreEnabledAt = previousEnabledAt ? `'${previousEnabledAt.replaceAll("'", "''")}'::timestamptz` : 'NULL';
-    try {
-      committed(`${enable}; ${user(id)}`);
-      const claims = await Promise.all(Array.from({ length: 4 }, () => call(`SELECT public.manage_oauth_email_confirmation('claim','${id}')`)));
-      expect(claims.filter((value) => value.includes('attemptId'))).toHaveLength(1);
-      expect(claims.filter((value) => value.includes('cooldown'))).toHaveLength(3);
-      committed(`SELECT public.manage_oauth_email_confirmation('register','${id}','${id}@example.invalid','${digest}',(SELECT attempt_id FROM private.oauth_email_confirmations WHERE user_id='${id}'))`);
-      const completions = await Promise.all(Array.from({ length: 4 }, () => call(`SELECT public.manage_oauth_email_confirmation('complete','${id}','${id}@example.invalid','${digest}')`)));
-      expect(completions.filter((value) => value.includes('false'))).toHaveLength(1);
-      expect(completions.filter((value) => value.includes('invalid_link'))).toHaveLength(3);
-    } finally {
-      committed(`DELETE FROM auth.users WHERE id='${id}'; DELETE FROM public.profiles WHERE id='${id}'; UPDATE private.oauth_email_confirmation_policy SET enabled_at=${restoreEnabledAt} WHERE singleton`);
-    }
+    await withSharedFixtureLock('oauth-email-confirmation-policy', dbUrl, async () => {
+      const id = randomUUID(); const digest = 'e'.repeat(64);
+      const committed = (body: string) => execFileSync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', body], { encoding: 'utf8' });
+      const call = async (body: string) => (await execFileAsync('psql', ['-X', dbUrl, '-v', 'ON_ERROR_STOP=1', '-At', '-c', body])).stdout;
+      const previousEnabledAt = committed("SELECT COALESCE(enabled_at::text,'') FROM private.oauth_email_confirmation_policy WHERE singleton").trim();
+      const restoreEnabledAt = previousEnabledAt ? `'${previousEnabledAt.replaceAll("'", "''")}'::timestamptz` : 'NULL';
+      try {
+        committed(`${enable}; ${user(id)}`);
+        const claims = await Promise.all(Array.from({ length: 4 }, () => call(`SELECT public.manage_oauth_email_confirmation('claim','${id}')`)));
+        expect(claims.filter((value) => value.includes('attemptId'))).toHaveLength(1);
+        expect(claims.filter((value) => value.includes('cooldown'))).toHaveLength(3);
+        committed(`SELECT public.manage_oauth_email_confirmation('register','${id}','${id}@example.invalid','${digest}',(SELECT attempt_id FROM private.oauth_email_confirmations WHERE user_id='${id}'))`);
+        const completions = await Promise.all(Array.from({ length: 4 }, () => call(`SELECT public.manage_oauth_email_confirmation('complete','${id}','${id}@example.invalid','${digest}')`)));
+        expect(completions.filter((value) => value.includes('false'))).toHaveLength(1);
+        expect(completions.filter((value) => value.includes('invalid_link'))).toHaveLength(3);
+      } finally {
+        try {
+          committed(`DELETE FROM auth.users WHERE id='${id}'; DELETE FROM public.profiles WHERE id='${id}'`);
+        } finally {
+          committed(`UPDATE private.oauth_email_confirmation_policy SET enabled_at=${restoreEnabledAt} WHERE singleton`);
+        }
+      }
+    });
   });
   it('refuses proof for a changed email', () => {
     const id = randomUUID(); const digest = 'b'.repeat(64);

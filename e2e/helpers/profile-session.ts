@@ -7,6 +7,7 @@ import {
   supabaseAuthStorageKey,
 } from './supabase-storage-key';
 import { uniqueTestId } from './unique';
+import { totp } from './totp';
 
 export interface TestProfileOptions {
   role: 'INDIVIDUAL' | 'ORG_ADMIN' | null;
@@ -84,34 +85,75 @@ export async function createProfileSession(
     throw new Error(`Failed to sign in profile session user: ${signInError?.message}`);
   }
 
-  const context = await browser.newContext({
-    storageState: {
-      cookies: [],
-      origins: [{
-        // Playwright matches storageState origins by ORIGIN, so this has to be
-        // the origin the browser actually visits — the dev server locally,
-        // E2E_BASE_URL on a rig.
-        origin: resolveE2EFrontendOrigin(),
-        localStorage: [{
-          name: supabaseAuthStorageKey(supabaseUrl),
-          value: JSON.stringify(sessionData.session),
-        }],
-      }],
-    },
-  });
-  const page = await context.newPage();
+  // Ordinary profile/role tests require a real AAL2 session. Keep the owned
+  // profile's onboarding state intact; only complete this user's MFA factor.
+  let context: BrowserContext | null = null;
+  try {
+    const { data: factor, error: enrollError } = await userClient.auth.mfa.enroll({
+      factorType: 'totp',
+      friendlyName: 'E2E profile session',
+    });
+    if (enrollError || !factor) throw new Error('Failed to enroll profile session MFA');
+    const { error: verifyError } = await userClient.auth.mfa.challengeAndVerify({
+      factorId: factor.id,
+      code: totp(factor.totp.secret),
+    });
+    if (verifyError) throw new Error('Failed to verify profile session MFA');
+    const { data: current, error: sessionError } = await userClient.auth.getSession();
+    const { data: assurance, error: assuranceError } =
+      await userClient.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (sessionError || assuranceError || current.session?.user.id !== userId ||
+        assurance?.currentLevel !== 'aal2') {
+      throw new Error('Profile session MFA did not produce a same-user AAL2 session');
+    }
 
-  return { page, context, userId };
+    context = await browser.newContext({
+      storageState: {
+        cookies: [],
+        origins: [{
+          // Playwright matches storageState origins by ORIGIN, so this has to be
+          // the origin the browser actually visits — the dev server locally,
+          // E2E_BASE_URL on a rig.
+          origin: resolveE2EFrontendOrigin(),
+          localStorage: [{
+            name: supabaseAuthStorageKey(supabaseUrl),
+            value: JSON.stringify(current.session),
+          }],
+        }],
+      },
+    });
+    const page = await context.newPage();
+
+    return { page, context, userId };
+  } catch (error) {
+    await disposeProfileSession(serviceClient, context, userId, { error });
+    throw error;
+  }
 }
 
 export async function disposeProfileSession(
   serviceClient: SupabaseClient,
   context: BrowserContext | null,
   userId: string | null,
+  originalFailure?: { error: unknown },
 ) {
-  await context?.close();
+  const failures: unknown[] = originalFailure ? [originalFailure.error] : [];
+  try {
+    await context?.close();
+  } catch {
+    failures.push(new Error('Failed to close owned profile browser context'));
+  }
   if (userId) {
-    await serviceClient.auth.admin.deleteUser(userId);
+    try {
+      const { error } = await serviceClient.auth.admin.deleteUser(userId);
+      if (error) throw error;
+    } catch {
+      failures.push(new Error('Failed to delete owned profile session user'));
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, 'Profile session operation and cleanup failed');
   }
 }
 
@@ -123,13 +165,16 @@ export async function withProfileSession(
 ) {
   let context: BrowserContext | null = null;
   let userId: string | null = null;
+  let originalFailure: { error: unknown } | undefined;
 
   try {
     const session = await createProfileSession(browser, serviceClient, options);
     context = session.context;
     userId = session.userId;
     await run(session);
+  } catch (error) {
+    originalFailure = { error };
   } finally {
-    await disposeProfileSession(serviceClient, context, userId);
+    await disposeProfileSession(serviceClient, context, userId, originalFailure);
   }
 }

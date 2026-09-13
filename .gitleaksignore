@@ -39,3 +39,13 @@ a13572d8a18bf9c3075578bdc5e6bf3cd19ee292:HANDOFF.md:generic-api-key:214
 # verifier with ComputeID's real signer (body + header captured from a live
 # delivery). Scoped to the exact commit/path/rule/line per SEC-015.
 c3b00d31cf73a804c877fe4de532d250f49c4e3d:services/worker/src/integrations/computeid/__fixtures__/golden-test-delivery.json:generic-api-key:6
+
+# SCRUM-5094 (PR #2903) — `drive-subscription-renewal.test.ts`'s "a POPULATED
+# cursor is never included in the update" case seeds a fixture row with
+# `last_page_token: 'live-cursor-42'` to prove the renewal sweep leaves an
+# existing Drive changes-feed cursor untouched. `generic-api-key` fires on the
+# string's entropy; it is a hand-written placeholder cursor value asserted
+# NOT to appear in the update payload, not a credential — nothing in this
+# repo authenticates with it. Scoped to the exact commit/path/rule/line per
+# SEC-015.
+8100b6015ef51a2e5103eefd20d4361f63da4d7c:services/worker/src/integrations/connectors/drive-subscription-renewal.test.ts:generic-api-key:535
