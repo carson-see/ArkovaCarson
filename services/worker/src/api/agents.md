@@ -50,6 +50,21 @@ live handshake. A wrong secret, or an account tier that does not grant `webhook_
 real status attached), not on this dashboard. Tests:
 `describe('resolveConnectorKind — adobe_sign')` in `connector-health.test.ts` pins both directions
 plus the whitespace-only-credential case.
+
+## 2026-09-11 — UAT-22 selected-org platform invitations
+
+`admin-invitations.ts` closes the gap between `OrgProfilePage` and the tenant-scoped
+`invite_member` RPC. After a platform-admin check, it loads the selected organization and actor
+display name from trusted rows, rejects an existing target-org member, and inserts the invitation
+with the client UUID as its primary key. A `23505` replay is accepted only when the committed row
+matches actor, org, normalized email, role, pending status, future expiry, and a nonempty UUID
+token. The provider key `invitation/<id>` deduplicates matching Resend payloads for Resend's
+documented 24-hour window; outside that window this handler does not promise exactly-once email.
+Invitation acceptance still owns membership creation: ORG_ADMIN maps to `org_members.admin`,
+INDIVIDUAL maps to `member`, and an existing account's home profile org is preserved.
+`admin-lists.ts` now provides the exact selected-org detail read used by that page; it validates
+the org UUID, rechecks platform-admin authority, and returns 404 rather than a generic empty row.
+
 ## 2026-08-23 — `queue-resolution.ts`: `GET /api/queue/pending` had NO role gate (SCRUM-3569, SEC)
 
 Any authenticated member of an org could list every PENDING_RESOLUTION anchor in that org — `public_id`, **`filename`** and **`fingerprint`** for each. Not cross-tenant (the query was org-scoped), but a rank-and-file member enumerating what their coworkers uploaded is exactly the disclosure this surface was documented not to allow.

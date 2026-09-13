@@ -1124,6 +1124,23 @@ jobs:
           ls -lh services/worker/circuits/artifacts/extraction-proof_final.zkey
           ls -lh services/worker/circuits/artifacts/verification_key.json
 
+      - name: Run UAT22 local invitation integration
+        id: uat22-local-integration
+        if: always() && steps.worker-deps.outcome == 'success' && steps.db-reset.outcome == 'success'
+        working-directory: services/worker
+        run: node_modules/.bin/vitest run --config vitest.config.uat22-local.ts
+        env:
+          UAT22_LOCAL_INTEGRATION: '1'
+          NODE_ENV: test
+          SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
+          SUPABASE_ANON_KEY: ${{ steps.supabase-keys.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-keys.outputs.service_role_key }}
+          SUPABASE_JWT_SECRET: ${{ steps.supabase-keys.outputs.jwt_secret }}
+          SUPABASE_DB_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
+          FRONTEND_URL: http://127.0.0.1:5173
+          STRIPE_SECRET_KEY: sk_test_uat22
+          STRIPE_WEBHOOK_SECRET: whsec_uat22
+
       - name: Run worker tests with coverage
         id: worker-coverage
         if: always() && steps.worker-deps.outcome == 'success'
@@ -1193,12 +1210,13 @@ jobs:
             [build-zk-circuit]="${{ steps.build-zk-circuit.outcome }}"
             [verify-zk-artifacts]="${{ steps.verify-zk-artifacts.outcome }}"
             [worker-coverage]="${{ steps.worker-coverage.outcome }}"
+            [uat22-local-integration]="${{ steps.uat22-local-integration.outcome }}"
             [edge-deps]="${{ steps.edge-deps.outcome }}"
             [edge-tests]="${{ steps.edge-tests.outcome }}"
           )
           failed=0
           echo "== Test suite step outcomes =="
-          for name in db-reset root-coverage sdk-tests rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage edge-deps edge-tests; do
+          for name in db-reset root-coverage sdk-tests rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage uat22-local-integration edge-deps edge-tests; do
             outcome="${results[$name]}"
             echo "  ${name}: ${outcome}"
             if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
