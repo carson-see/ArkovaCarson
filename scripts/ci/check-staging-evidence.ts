@@ -2580,7 +2580,14 @@ const GIT_BIN = '/usr/bin/git';
  */
 export type ChangedFilesProvider = (fromSha: string, toSha: string) => string[] | null;
 
-function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
+/**
+ * Exported for reuse by scripts/ci/check-evidence-identity.ts, whose
+ * `checkHeadShaIdentity` evaluates the SAME `Post-soak T0 delta:` field
+ * against the SAME PR head — a single git-shelling implementation for both
+ * gates avoids the two drifting the way `POST_SOAK_T0_DELTA_FIELD` itself
+ * once did (SCRUM-5054).
+ */
+export function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
   try {
     return execFileSync(
       GIT_BIN,
@@ -2626,7 +2633,8 @@ function gitFileDiffProvider(baseSha: string): DiffProvider {
  * Exit 0 → ancestor, exit 1 → definitively not an ancestor, anything else
  * (128 = bad/unknown object, spawn failure) → `null` so callers fail closed.
  */
-function gitAncestryProvider(): AncestryProvider {
+/** Exported for reuse by check-evidence-identity.ts — see {@link changedFilesBetween}. */
+export function gitAncestryProvider(): AncestryProvider {
   return (ancestorSha: string, descendantSha: string): boolean | null => {
     if (ancestorSha === descendantSha) return true;
     try {
@@ -3250,6 +3258,17 @@ const STAGING_TOOLING_ALLOW = [
   // scripts/ci/check-*.ts gates above. Its exemptions file already rides the
   // scripts/ci/snapshots/ entry.
   /^scripts\/ci\/check-doc-pointers(\.test)?\.ts$/,
+  // job_queue producer/consumer parity guard: the worker has no central job
+  // dispatcher, so an enqueued type with no consumer (or vice versa) produces
+  // NO error — the row sits `pending` forever. Runs only in the ci.yml
+  // Dependency Scanning job (`npm run ci:job-queue-parity`); verified no
+  // importer exists under src/, services/worker/src/, packages/, integrations/,
+  // or e2e/ — the only repo hits outside scripts/ci/ are two agents.md doc
+  // mentions (services/worker/src/api/v1/agents.md,
+  // services/worker/src/jobs/agents.md), which are already T0 via the
+  // agents.md rule below. No prod runtime to soak → T0 tooling, same class as
+  // the other scripts/ci/check-*.ts gates above.
+  /^scripts\/ci\/check-job-queue-parity(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   // SCRUM-1253 (R0-7): memory feedback-rules CI gates. Per-rule scripts under
   // scripts/ci/feedback-rules/ + the check-feedback-rules.ts orchestrator run
