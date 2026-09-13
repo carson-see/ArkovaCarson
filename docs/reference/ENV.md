@@ -558,6 +558,19 @@ COMPUTEID_WEBHOOK_SECRET=
 # fetched at runtime — rotation = partner's 30-day notice → update → redeploy.
 COMPUTEID_CA_CERT_PEM=
 
+# Base origin for the ONE outbound ComputeID call we make: the hourly passport
+# re-check's GET /v1/agents/{id}/verify (SCRUM-4495). Config-sourced so no
+# request or row can steer it (SSRF). Admission stays fully offline.
+COMPUTEID_API_BASE_URL=https://api.aicomputeid.com
+
+# Arkova's ComputeID partner API key (sent as X-API-Key), used ONLY by that
+# re-check. Optional so the flag can be flipped before the key is provisioned —
+# but while it is unset the re-check reports skipped and raises a Sentry error,
+# because the re-check is the ONLY safety net for a revocation whose webhook
+# was lost (ComputeID has no webhook retry). Provision it in the same motion as
+# the flag flip: docs/partners/computeid-activation-runbook.md.
+COMPUTEID_API_KEY=
+
 # ─── SCRUM-1099 / SCRUM-1100 — Google Drive connector + rule binding ───
 # See docs/runbooks/integrations/drive.md for GCP OAuth app setup.
 # OAuth refresh tokens live in Secret Manager; Postgres stores connection

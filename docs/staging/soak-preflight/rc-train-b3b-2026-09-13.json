@@ -1,0 +1,1080 @@
+{
+  "schedulerJob": null,
+  "treasury": null,
+  "notApplicable": {
+    "schedulerJob": "Train changes no anchoring/scheduler path; no forced-flush job exists on this rig (mock profile)",
+    "treasury": "USE_MOCKS=true rig; no chain path in the train"
+  },
+  "changedPaths": [
+    "pr-2841-api-keys",
+    "pr-2842-computeid",
+    "pr-2843-webhook-payload",
+    "pr-2845-webhooks-scope"
+  ],
+  "drainLog": [
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T07-17-41-404Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T07-17-41-404Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T07-17-41-404Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T07-17-41-404Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T07-23-39-545Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T07-23-39-545Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T07-23-39-545Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T07-23-39-545Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T07-29-37-139Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T07-29-37-139Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T07-29-37-139Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T07-29-37-139Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T07-35-36-901Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T07-35-36-901Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T07-35-36-901Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T07-35-36-901Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T07-41-32-004Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T07-41-32-004Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T07-41-32-004Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T07-41-32-004Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T07-47-28-598Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T07-47-28-598Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T07-47-28-598Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T07-47-28-598Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T07-53-24-669Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T07-53-24-669Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T07-53-24-669Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T07-53-24-669Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T07-59-21-303Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T07-59-21-303Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T07-59-21-303Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T07-59-21-303Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-05-20-090Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-05-20-090Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-05-20-090Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-05-20-090Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-11-16-985Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-11-16-985Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-11-16-985Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-11-16-985Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-17-16-566Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-17-16-566Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-17-16-566Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-17-16-566Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-23-15-223Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-23-15-223Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-23-15-223Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-23-15-223Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-29-13-632Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-29-13-632Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-29-13-632Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-29-13-632Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-35-12-953Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-35-12-953Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-35-12-953Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-35-12-953Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-41-08-262Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-41-08-262Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-41-08-262Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-41-08-262Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-47-05-162Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-47-05-162Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-47-05-162Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-47-05-162Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-53-03-466Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-53-03-466Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-53-03-466Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-53-03-466Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T08-58-56-251Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T08-58-56-251Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T08-58-56-251Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T08-58-56-251Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-04-47-047Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-04-47-047Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-04-47-047Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-04-47-047Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-10-38-169Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-10-38-169Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-10-38-169Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-10-38-169Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-16-31-082Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-16-31-082Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-16-31-082Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-16-31-082Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-22-22-515Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-22-22-515Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-22-22-515Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-22-22-515Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-28-16-704Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-28-16-704Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-28-16-704Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-28-16-704Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-34-10-848Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-34-10-848Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-34-10-848Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-34-10-848Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-40-03-234Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-40-03-234Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-40-03-234Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-40-03-234Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-45-56-336Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-45-56-336Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-45-56-336Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-45-56-336Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-51-47-658Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-51-47-658Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-51-47-658Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-51-47-658Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T09-57-39-059Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T09-57-39-059Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T09-57-39-059Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T09-57-39-059Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-03-29-996Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-03-29-996Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-03-29-996Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-03-29-996Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-09-25-500Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-09-25-500Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-09-25-500Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-09-25-500Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-15-19-110Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-15-19-110Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-15-19-110Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-15-19-110Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-21-25-467Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-21-25-467Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-21-25-467Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-21-25-467Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-27-17-324Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-27-17-324Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-27-17-324Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-27-17-324Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-33-10-313Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-33-10-313Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-33-10-313Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-33-10-313Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-39-01-791Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-39-01-791Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-39-01-791Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-39-01-791Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-44-54-331Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-44-54-331Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-44-54-331Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-44-54-331Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-50-45-811Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-50-45-811Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-50-45-811Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-50-45-811Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T10-56-38-147Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T10-56-38-147Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T10-56-38-147Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T10-56-38-147Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T11-02-32-154Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T11-02-32-154Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T11-02-32-154Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T11-02-32-154Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T11-08-23-946Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T11-08-23-946Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T11-08-23-946Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T11-08-23-946Z: 15/15 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T11-14-17-057Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T11-14-17-057Z: 88/88 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-13T11-14-17-057Z: 43/43 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2842-computeid",
+      "reason": "cycle 2026-09-13T11-14-17-057Z: 15/15 probes passed"
+    }
+  ],
+  "deployProvenance": {
+    "deployLogRows": [
+      {
+        "head_sha": "f2b95a412bcabbbb4930bad1b425909363b016d7",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-12T21:43:53.733041+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00005-z58"
+      },
+      {
+        "head_sha": "6cb68f88ef27eb3e460bc85d5ce8ec3de15c35f0",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-12T21:55:03.156884+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00007-lis"
+      },
+      {
+        "head_sha": "89dba6baafa1f73311e6885bcb85698d7f3d709d",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-12T22:27:33.475788+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00009-qof"
+      },
+      {
+        "head_sha": "e6bd4a1672626b7b0f924725b855a4edde52a2aa",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-13T02:46:50.337457+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00014-car"
+      },
+      {
+        "head_sha": "143d58d68caf372c237f6fe52da1af7941d59a60",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-13T07:16:10.03493+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00018-ruw"
+      }
+    ],
+    "prHeadSha": "143d58d68caf372c237f6fe52da1af7941d59a60",
+    "service": "arkova-worker-cto-train-b-0912-staging"
+  },
+  "base": {
+    "baseRefName": "main"
+  },
+  "_meta": {
+    "decision": "CTO 2026-09-12 — Confluence 146440221 / SCRUM-5054",
+    "generator": "scripts/staging/targeted/cto-train-b-0912/preflight-from-window.mjs",
+    "generated_at": "2026-09-13T11:19:18.209Z",
+    "rc_id": "RC-2026-09-13-TRAIN-B3B",
+    "manifest": "/Volumes/Extreme/offload/cto-review-2026-09-12/wt-gate/docs/staging/rc-manifests/rc-train-b3b-2026-09-13.json",
+    "window": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b3b/window1",
+    "cycle_files": 41,
+    "cycles_with_per_pr": 41,
+    "cycles_passed": 41,
+    "errored_cycles": [],
+    "per_pr_totals": {
+      "#2843": {
+        "path": "pr-2843-webhook-payload",
+        "cycles": 41,
+        "probes": 1107,
+        "passed": 1107
+      },
+      "#2845": {
+        "path": "pr-2845-webhooks-scope",
+        "cycles": 41,
+        "probes": 3608,
+        "passed": 3608
+      },
+      "#2841": {
+        "path": "pr-2841-api-keys",
+        "cycles": 41,
+        "probes": 1763,
+        "passed": 1763
+      },
+      "#2842": {
+        "path": "pr-2842-computeid",
+        "cycles": 41,
+        "probes": 615,
+        "passed": 615
+      }
+    },
+    "deploy_log_source": "exported staging_deploy_log rows: /Volumes/Extreme/offload/cto-review-2026-09-12/deploy-log-rig1.json",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "preflight_result": "environment_type=clean_mirror"
+  }
+}
