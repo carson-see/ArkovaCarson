@@ -79,11 +79,11 @@
     "staging_api_base": "https://arkova-worker-cto-train-b1-0912-staging-270018525501.us-central1.run.app",
     "staging_url": "https://arkova-worker-cto-train-b1-0912-staging-270018525501.us-central1.run.app",
     "cloud_run_service": "arkova-worker-cto-train-b1-0912-staging",
-    "revision": "",
-    "deploy_tag": "train-b1",
-    "image_digest": "",
+    "revision": "arkova-worker-cto-train-b1-0912-staging-00002-bev",
+    "deploy_tag": "train-1",
+    "image_digest": "sha256:6390913acf5a678c5c869abefc582c5a8510fe50acd6a93e32dafbca16219b76",
     "supabase_project_ref": "pdgfbbnrqhojiihtxycd",
-    "deploy_log_id": "",
+    "deploy_log_id": "1",
     "preflight_result": "environment_type=clean_mirror"
   },
   "soak": {
