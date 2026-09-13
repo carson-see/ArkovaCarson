@@ -1,3 +1,44 @@
+## 2026-09-13 — SCRUM-5106 pipeline-anchor credential-template projection (new `publicRecordTemplate.ts`)
+
+New pure module `publicRecordTemplate.ts` exports `projectPublicRecordToTemplate(source, { title, metadata, source_id? })`, called from `buildPipelineAnchorInsert` (this file's `publicRecordAnchor.ts`, ~L613) and spread into the anchor insert's `metadata` object BEFORE the four existing linkage keys (`pipeline_source`/`source_id`/`source_url`/`record_type`) — spread order, not naming, is what guarantees linkage always wins if a future source's projection ever collides. RULED DESIGN (CTO, 2026-09-13): author/inventor names go to a distinct `authors: Array<{name, orcid?}>` key, capped at 20, **never** to `recipientIdentifier` (hashed-never-raw-PII by contract, `ai/types.ts:29`). The platform template-ROW re-key is a separate PR with its own migration — this one only changes what NEW pipeline anchors write; no backfill.
+
+**RPC column-list contract** (context added mid-review, worth restating here): the primary insert path is `batch_insert_anchors(jsonb)` (`callBatchInsertAnchorsOnce`, ~L768+), whose SQL INSERT column list is `user_id, org_id, fingerprint, filename, credential_type, status, metadata` — `description` is NOT in that list and is silently dropped on this path (a known gap, fixed by a separate migration, not touched here). Only a key living INSIDE `metadata` is guaranteed to persist through the RPC path; a new top-level field on `PipelineAnchorInsert` would round-trip through the serial-insert fallback (a real `.insert()`, no column allowlist) but vanish on the RPC path. This is why the template projection is spread into `metadata`, never added as a sibling insert field.
+
+**Scope: every pipeline source, not a subset** (amended same day, founder directive). `SOURCE_FIELD_TABLE` in `publicRecordTemplate.ts` is the audit surface — source → `{ templateKey: sourceField }` — covering all 20 sources this job currently anchors:
+
+| Source | issuerName | issuedDate | licenseNumber | fieldOfStudy | authors | category |
+|---|---|---|---|---|---|---|
+| `openalex` | `journal` | `publication_date` | `doi` (URL-stripped) | `$title` | openalex authors (orcid URL-stripped, cap 20) | publication |
+| `edgar` | `entity_name` | `filing_date` | `$sourceId` (accession) | `form_type` | — | filing |
+| `edgar_form_adv` | `registry` | `last_filing_date` | `crd_number` | — | — | registry |
+| `sec_iapd` | `registry` | — | `crd_number` | — | — | registry |
+| `federal_register` | `agencies[0]` | `publication_date` | `document_number` | `$title` | — | document |
+| `openstates` | `chamber` | `latest_action_date` | `identifier` (bill id) | `$title` | — (sponsors excluded) | legislation |
+| `courtlistener` | `court_name` | `date_filed` | `docket_id` | `$title` (case caption) | — (judges excluded) | legal |
+| `uspto` | const `'USPTO'` | `patent_date` | `patent_id` | `$title` | inventors builder (inert — no `inventors` key in metadata today) | legal |
+| `australia_law` / `kenya_law` | — | — | `statute_id` | `$title` | — | document (jurisdictionFetcher statute family) |
+| `australia_caselaw` / `kenya_caselaw` | `court` | — | `$sourceId` | `$title` | — | legal (jurisdictionFetcher case-law family) |
+| `npi` | — | `enumeration_date` | `npi_number` | — | — | registry |
+| `finra` | `registry` | `industry_start_date` | `crd_number` | — | — | registry |
+| `calbar` | `registry` | `admission_date` | `bar_number` | — | — | registry |
+| `dapip` | — | — | `ope_id` ⟶ fallback `dapip_id` | — | — | registry |
+| `acnc` | `registry` | `registration_date` | `abn` | — | — | registry |
+| `acra_sg` | `registry` | `registration_date` | `uen` | — | — | registry |
+| `cnpj_br` | `registry` | `data_inicio_atividade` | `cnpj_formatted` | — | — | registry |
+| `moh_sg` | `registry` | `effective_date` | `licence_no` | — | — | registry |
+
+Registry sources reuse each fetcher's own `metadata.registry` field (the regulating body's name — present on 8 of the 10 registry sources; `npi` and `dapip` have none, so `issuerName` is honestly omitted rather than backfilled from the entity's own name, which is already the anchor filename via `buildAnchorFilename`). Never emitted regardless of source: full address lines (not even city), email/phone/DOB/SSN-shaped keys, `abstract`/`description`/`summary`/`recipientIdentifier`, judge lists, bill sponsors, or any raw nested object other than the `authors` shape — enforced both by never referencing those metadata keys in `SOURCE_FIELD_TABLE` AND by a runtime strip pass over the built projection (defense in depth), tested as a property test seeding every source's fixture metadata with a forbidden-key set.
+
+**`sec_adv_bulk`, named in the scope note, does not exist in this codebase** (`grep -rn sec_adv_bulk services/worker/src` — zero hits). The two real SEC investment-adviser sources are `edgar_form_adv` (`edgarFormAdvFetcher.ts`) and `sec_iapd` (`secIapdFetcher.ts`), both covered above under their actual names — flagged rather than silently guessed at.
+
+**Bounds**: every string truncated at 500 UTF-16 units via the existing `truncateUtf16Safe` (surrogate-safe — see the 2026-08-17 poison-record entry below). Total serialized projection ≤ 4,096 bytes; `openalex` is the only source with realistic risk of exceeding it and has an explicit, tested drop order (concepts, then authors beyond 5, then cited_by_count); every other source falls back to a generic default order (declared extras, least-important-first, then authors trimmed/dropped) as an untested backstop, since no other source's worst case approaches the bound.
+
+**Zod schema deviation from the original single-source design**: `ProjectedTemplateSchema` uses `.object({...5 known keys}).catchall(ScalarValueSchema)` rather than a literal `.strict()` — once ~20 sources each declare their own small "extras" set, the output is legitimately dynamic-keyed, and a fixed `.strict()` object can't express "these five keys plus whichever extras this source declares." `.catchall()` still rejects anything that isn't one of the five typed keys or a scalar/string-array/author-array value; nothing gets a `.passthrough()`-style free pass. A `superRefine` separately rejects any key matching `/email|phone|ssn|dob|address/i` or the literal banned names, which `.strict()` could never express anyway (it's a shape check, not a name check).
+
+**Probe**: `scripts/staging/probe-pipeline-template-keys.ts` (root `scripts/`, not this package — see that file's header for why it can't import `SOURCE_FIELD_TABLE` directly and instead carries a literal mirror, `PIPELINE_TEMPLATE_SOURCES`, that must be kept in sync by hand). Read-only T2-soak check: newest `anchors` row with a `pipeline_source` key (bounded by `created_at > now() - interval '1 day'` first so the query stays index-backed), asserting `issuerName`/`licenseNumber`/`authors` present for a covered source. `--help` prints usage with zero network calls.
+
+Tests: `publicRecordTemplate.test.ts` (56 cases — full openalex mapping against `__fixtures__/public-record-openalex.json`, every other source against the combined `__fixtures__/public-record-sources.json` map, the 4 KB drop-order test, forbidden-key property test across all 20 sources, Zod-schema tests). `__tests__/publicRecordAnchor.test.ts` gained two cases: the RPC-argument-capture test (template keys land inside `p_anchors[i].metadata` alongside unchanged linkage keys) and the unmapped-source (`fcc`) case (exactly the four pre-existing linkage keys, byte-identical to pre-SCRUM-5106 behavior). `scripts/staging/probe-pipeline-template-keys.test.ts` (9 cases, pure logic, no network).
+
 ## 2026-09-10 — PR #2570 unknown debit response recovery
 
 A lost/malformed debit RPC response can follow a committed charge. The default

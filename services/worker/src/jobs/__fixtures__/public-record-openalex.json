@@ -1,0 +1,25 @@
+{
+  "_comment": "Realistic public_records row as written by openalexFetcher.ts (source='openalex', see the insert block around line 258). A sibling fixture exists on the frontend for SCRUM-5105 at src/lib/__fixtures__/public-record-openalex.json — the two must stay shape-identical; a follow-up unifies them into one shared fixture.",
+  "id": "00000000-0000-0000-0000-000000000001",
+  "source": "openalex",
+  "source_id": "W2741809807",
+  "source_url": "https://doi.org/10.1234/example.5678",
+  "record_type": "article",
+  "title": "Deep Learning Approaches to Verifiable Credential Anchoring",
+  "content_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9",
+  "metadata": {
+    "doi": "https://doi.org/10.1234/example.5678",
+    "publication_date": "2026-03-15",
+    "publication_year": 2026,
+    "cited_by_count": 42,
+    "is_retracted": false,
+    "authors": [
+      { "name": "Dr. Ada Lovelace", "orcid": "https://orcid.org/0000-0001-2345-6789", "institutions": ["Analytical Engine Institute"] },
+      { "name": "Grace Hopper", "orcid": null, "institutions": ["Naval Research Lab"] }
+    ],
+    "concepts": ["Machine learning", "Cryptography", "Distributed ledger"],
+    "journal": "Journal of Verifiable Computing",
+    "is_open_access": true,
+    "abstract": "This paper explores deep learning approaches to anchoring verifiable credentials on distributed ledgers, with an emphasis on scalability and privacy-preserving techniques for large-scale document verification pipelines."
+  }
+}

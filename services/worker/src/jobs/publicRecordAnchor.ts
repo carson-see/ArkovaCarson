@@ -38,6 +38,7 @@ import {
 import type { ChainReceipt } from '../chain/types.js';
 import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
 import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
+import { projectPublicRecordToTemplate } from './publicRecordTemplate.js';
 import {
   ANCHOR_INSERT_QUARANTINE_FILTER_COLUMN,
   pipelineSourceKey,
@@ -109,7 +110,13 @@ interface PipelineAnchorInsert {
   credential_type: string;
   status: 'PENDING';
   description?: string;
-  metadata: {
+  // SCRUM-5106: the leading spread is the credential-template projection
+  // (issuerName/issuedDate/licenseNumber/fieldOfStudy/authors/…extras — see
+  // publicRecordTemplate.ts), never a fixed shape. The four named linkage
+  // keys below are typed explicitly because `buildPipelineAnchorInsert`
+  // spreads the projection FIRST and these four LAST, so a source whose
+  // template happened to produce a same-named key can never shadow linkage.
+  metadata: Record<string, unknown> & {
     pipeline_source: string;
     source_id: string;
     source_url: string | null;
@@ -603,6 +610,19 @@ export function publicRecordDescription(record: PipelinePublicRecord): string | 
   return raw !== null ? truncateUtf16Safe(raw, 500) : null;
 }
 
+/**
+ * SCRUM-5106 RPC column-list contract: `batch_insert_anchors(jsonb)`
+ * (this file's `callBatchInsertAnchorsOnce`, ~L768) is the primary insert
+ * path, and its INSERT column list is user_id, org_id, fingerprint,
+ * filename, credential_type, status, metadata — NOT `description` (that is
+ * silently dropped by the RPC today; a separate migration fixes it, not
+ * this PR). Only a key that lives INSIDE `metadata` is guaranteed to
+ * persist through this path — a sibling top-level field on
+ * `PipelineAnchorInsert` would round-trip through the per-row serial-insert
+ * fallback (a real `.insert()`, no column allowlist) but silently vanish on
+ * the batch RPC path, which is why the credential-template projection below
+ * is spread INTO `metadata`, never added as a new top-level insert field.
+ */
 function buildPipelineAnchorInsert(record: PipelinePublicRecord, owner: PipelineOwner): PipelineAnchorInsert {
   const description = publicRecordDescription(record);
   return {
@@ -614,6 +634,13 @@ function buildPipelineAnchorInsert(record: PipelinePublicRecord, owner: Pipeline
     status: 'PENDING',
     ...(description ? { description } : {}),
     metadata: {
+      // Template projection FIRST, linkage keys LAST — the linkage keys
+      // must always win if a source's template ever produced a same-named
+      // key (none does today; SOURCE_FIELD_TABLE's output keys are
+      // deliberately disjoint from pipeline_source/source_id/source_url/
+      // record_type, but spread order is the actual guarantee, not naming
+      // discipline alone).
+      ...projectPublicRecordToTemplate(record.source, { title: record.title, metadata: record.metadata, source_id: record.source_id }),
       pipeline_source: record.source,
       source_id: record.source_id,
       source_url: record.source_url,

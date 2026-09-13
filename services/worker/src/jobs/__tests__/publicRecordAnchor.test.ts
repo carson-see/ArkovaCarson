@@ -351,6 +351,101 @@ describe('publicRecordAnchor', () => {
     expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
   });
 
+  it('SCRUM-5106: spreads the credential-template projection into metadata on the batch_insert_anchors RPC call, with linkage keys unchanged', async () => {
+    const records = [{
+      id: 'record-oa-0',
+      content_hash: 'ab'.repeat(32),
+      metadata: {
+        doi: 'https://doi.org/10.9999/test',
+        publication_date: '2026-01-01',
+        journal: 'Journal of Testing',
+        authors: [{ name: 'Ada Lovelace', orcid: 'https://orcid.org/0000-0001-2345-6789' }],
+      },
+      source: 'openalex',
+      source_id: 'W123456',
+      source_url: 'https://doi.org/10.9999/test',
+      record_type: 'article',
+      title: 'A Test Paper',
+    }];
+
+    mockRpc
+      .mockResolvedValueOnce({ data: true }) // get_flag
+      .mockResolvedValueOnce({ data: [{ id: 'anchor-uuid-0', fingerprint: records[0].content_hash }] }) // batch_insert_anchors
+      .mockResolvedValueOnce({ data: { records_updated: 1, anchors_updated: 1 } }); // finalize
+
+    const { client: mockSupa } = makeMock(records);
+    mockSubmitFingerprint.mockResolvedValue({
+      receiptId: 'tx_mock_template',
+      blockHeight: 0,
+      blockTimestamp: new Date().toISOString(),
+      confirmations: 0,
+    });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    await processPublicRecordAnchoring(mockSupa);
+
+    const batchInsertCall = mockRpc.mock.calls.find(([name]) => name === 'batch_insert_anchors');
+    expect(batchInsertCall).toBeDefined();
+    const [, { p_anchors }] = batchInsertCall as [string, { p_anchors: Array<{ metadata: Record<string, unknown> }> }];
+    // NOTE: `makeMock()`'s `.range()` stub returns the same fixture rows
+    // regardless of the `.eq('source', ...)` filter applied, and
+    // `fetchUnanchoredPublicRecords` fans out across all `PRIORITY_SOURCES`
+    // plus a non-priority query — so a single-record fixture for a
+    // non-priority source (openalex) is returned multiple times here. Every
+    // element is a projection of the SAME source record, so asserting on
+    // element 0 is sufficient; this is a pre-existing mock-fidelity gap
+    // (also present for every other source in this file), not new behavior.
+    expect(p_anchors.length).toBeGreaterThanOrEqual(1);
+
+    const meta = p_anchors[0].metadata;
+    // Template keys present.
+    expect(meta.issuerName).toBe('Journal of Testing');
+    expect(meta.issuedDate).toBe('2026-01-01');
+    expect(meta.licenseNumber).toBe('10.9999/test');
+    expect(meta.fieldOfStudy).toBe('A Test Paper');
+    expect(meta.authors).toEqual([{ name: 'Ada Lovelace', orcid: '0000-0001-2345-6789' }]);
+    // Linkage keys unchanged.
+    expect(meta.pipeline_source).toBe('openalex');
+    expect(meta.source_id).toBe('W123456');
+    expect(meta.source_url).toBe('https://doi.org/10.9999/test');
+    expect(meta.record_type).toBe('article');
+  });
+
+  it('SCRUM-5106: a source with no SOURCE_FIELD_TABLE entry produces exactly the four pre-existing linkage keys', async () => {
+    const records = [{
+      id: 'record-fcc-0',
+      content_hash: 'cd'.repeat(32),
+      metadata: { some_fcc_field: 'value' },
+      source: 'fcc',
+      source_id: 'FCC-001',
+      source_url: 'https://fcc.gov/license/001',
+      record_type: 'license',
+      title: 'FCC License Record',
+    }];
+
+    mockRpc
+      .mockResolvedValueOnce({ data: true })
+      .mockResolvedValueOnce({ data: [{ id: 'anchor-uuid-0', fingerprint: records[0].content_hash }] })
+      .mockResolvedValueOnce({ data: { records_updated: 1, anchors_updated: 1 } });
+
+    const { client: mockSupa } = makeMock(records);
+    mockSubmitFingerprint.mockResolvedValue({
+      receiptId: 'tx_mock_fcc',
+      blockHeight: 0,
+      blockTimestamp: new Date().toISOString(),
+      confirmations: 0,
+    });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    await processPublicRecordAnchoring(mockSupa);
+
+    const batchInsertCall = mockRpc.mock.calls.find(([name]) => name === 'batch_insert_anchors');
+    const [, { p_anchors }] = batchInsertCall as [string, { p_anchors: Array<{ metadata: Record<string, unknown> }> }];
+    expect(Object.keys(p_anchors[0].metadata).sort()).toEqual(
+      ['pipeline_source', 'record_type', 'source_id', 'source_url'].sort(),
+    );
+  });
+
   it('falls back to serial inserts AND alerts Sentry when batch_insert_anchors RPC fails', async () => {
     const records = Array.from({ length: 2 }, (_, i) => ({
       id: `record-${i}`,
