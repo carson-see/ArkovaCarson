@@ -44,6 +44,34 @@ this change: it is a non-`e2e/` config edit, and the tier detector
 future edit ever adds `projects` to `uat-pr2840.config.ts`, give it an empty-string project
 name (or update this guard) — do not let the name collide with a shared-config project name.
 
+## 2026-09-13 — `uat-suborg-ux.spec.ts` (sub-organisation UAT capture)
+
+Same shape and the same boundary as `uat-pr2840.spec.ts`: its own
+`uat-suborg-ux.config.ts` with **no `projects` array**, so its one implicit project has an empty
+name, and a file-level `test.beforeEach` skips whenever `testInfo.project.name !== ''`. That is what
+stops the shared `playwright.config.ts` glob (`testDir: './e2e'`, no `testMatch`) from running it
+against `.env.test` and a real rig.
+
+Differences from the 2840 capture worth knowing:
+
+- it drives `npm run dev` on **:5173**, not `vite preview` on :4173 — there is no build step, so the
+  loop is fast enough to re-shoot after each fix;
+- it stubs **both** Supabase and the worker (`page.route` on `http://localhost:3001/**`), because the
+  panel under test is worker-backed, not PostgREST-backed;
+- it is parameterised so ONE spec reproduces both sides of the change:
+  `SUBORG_UAT_OUT` picks the output directory (default `after`) and `SUBORG_UAT_TAB` picks the tab
+  the panel is expected on (default `affiliates`, `settings` for a pre-fix checkout).
+
+It also writes `discoverability-<width>.json` — the measured pixel offset of the panel heading
+inside AppShell's scrolling column. That number, not a screenshot, is the evidence for the founder's
+"clunky" complaint, and it is worth re-measuring rather than re-arguing whenever someone proposes
+moving the panel again.
+
+**There is still no CI-suite e2e coverage of the sub-org flow.** There never was; adding it needs a
+real Supabase project with a seeded parent/child pair and an affiliation row, which a UAT capture
+deliberately does not touch. Do not mistake this file for that gate.
+
+
 ## 2026-09-12 SCRUM-4989 — `uat-pr2840.spec.ts` runs OUTSIDE the CI suite
 
 `uat-pr2840.spec.ts` + `uat-pr2840.config.ts` are a one-off T1 UAT capture for PR #2840,
