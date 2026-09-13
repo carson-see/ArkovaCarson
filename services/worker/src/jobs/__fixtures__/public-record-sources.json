@@ -1,5 +1,25 @@
 {
-  "_comment": "One representative public_records row per remaining pipeline source (openalex has its own dedicated fixture, public-record-openalex.json). Each row's `metadata` shape is copied from that source's fetcher insert block in services/worker/src/jobs/ — see publicRecordTemplate.ts's SOURCE_FIELD_TABLE header comment for the exact file/line refs used to build these.",
+  "_comment": "One representative public_records row per pipeline source, used by the SCRUM-5105/5106 cross-package parity test (this file + public-record-projections.expected.json are byte-identical copies on both the worker and frontend sides — no cross-package imports). openalex ALSO keeps its own pre-existing dedicated fixture (public-record-openalex.json) for the original, more detailed per-field test suite on each side; the entry here is additional, parity-test-only coverage, not a replacement. Each row's `metadata` shape is copied from that source's fetcher insert block in services/worker/src/jobs/ — see publicRecordTemplate.ts's SOURCE_FIELD_TABLE header comment for the exact file/line refs used to build these.",
+
+  "openalex": {
+    "title": "Federated Anchoring of Verifiable Records at Scale",
+    "source_id": "W3001122334",
+    "metadata": {
+      "doi": "https://doi.org/10.1234/arkova.parity.0001",
+      "publication_date": "2026-04-10",
+      "publication_year": 2026,
+      "cited_by_count": 17,
+      "is_retracted": false,
+      "authors": [
+        { "name": "Dr. Parity Author", "orcid": "https://orcid.org/0000-0002-1111-2222", "institutions": ["Arkova Research"] },
+        { "name": "No Orcid Author", "orcid": null, "institutions": [] }
+      ],
+      "concepts": ["Distributed systems", "Verifiable credentials"],
+      "journal": "Journal of Parity Testing",
+      "is_open_access": false,
+      "abstract": "This abstract must never appear in any projected output."
+    }
+  },
 
   "edgar": {
     "title": "Acme Corp 10-K Annual Report",
@@ -163,7 +183,11 @@
       "primary_taxonomy_code": "207R00000X",
       "taxonomies": [
         { "code": "207R00000X", "desc": "Internal Medicine", "primary": true, "state": "NY", "license": "123456" }
-      ]
+      ],
+      "pipeline_source": "npi",
+      "registry": "NPPES NPI Registry (CMS)",
+      "jurisdiction": "US",
+      "license_type": "healthcare_provider"
     }
   },
 
@@ -185,7 +209,7 @@
       "disclosure_count": 0,
       "industry_start_date": "2012-08-15",
       "exams": [{ "examCode": "S7" }],
-      "registrations": [{ "state": "NY" }],
+      "registrations": ["NY", "NJ"],
       "pipeline_source": "finra",
       "registry": "FINRA BrokerCheck",
       "jurisdiction": "US",

@@ -12,6 +12,7 @@ import {
 } from './publicRecordTemplate.js';
 import openalexFixture from './__fixtures__/public-record-openalex.json' with { type: 'json' };
 import sourceFixtures from './__fixtures__/public-record-sources.json' with { type: 'json' };
+import expectedProjections from './__fixtures__/public-record-projections.expected.json' with { type: 'json' };
 
 type Fixture = { title: string; source_id: string; metadata: Record<string, unknown> };
 
@@ -295,6 +296,33 @@ describe('projectPublicRecordToTemplate — forbidden keys never emitted (proper
       expect(key).not.toMatch(/email|phone|ssn|dob|address/i);
     }
     expect(() => ProjectedTemplateSchema.parse(out)).not.toThrow();
+  });
+});
+
+describe('projectPublicRecordToTemplate — cross-package parity (SCRUM-5105/5106)', () => {
+  // public-record-sources.json and public-record-projections.expected.json
+  // are BYTE-IDENTICAL copies of the files under src/lib/__fixtures__/ on
+  // the frontend side (no cross-package imports — this is the parity
+  // proof). If this test and the frontend's equivalent both pass against
+  // the same two files, the worker SOURCE_FIELD_TABLE and the frontend
+  // SOURCE_FIELD_ALLOW_LIST project every shared source identically.
+  const expected = expectedProjections as Record<string, unknown>;
+  const parityCases = Object.keys(sourceFixtures).filter((k) => k !== '_comment');
+
+  it('covers every source in the fixture with an expected projection', () => {
+    for (const source of parityCases) {
+      expect(expected, `missing expected projection for ${source}`).toHaveProperty(source);
+    }
+  });
+
+  it.each(parityCases)('projects %s identically to the shared expected output', (source) => {
+    const fixture = fixtureFor(source);
+    const out = projectPublicRecordToTemplate(source, {
+      title: fixture.title,
+      metadata: fixture.metadata,
+      source_id: fixture.source_id,
+    });
+    expect(out).toEqual(expected[source]);
   });
 });
 

@@ -223,6 +223,7 @@ const EDGAR_FORM_ADV_SPEC: SourceSpec = {
     { key: 'licenseType', ref: meta('license_type') },
     { key: 'state', ref: meta('state') },
     { key: 'registrationStatus', ref: meta('registration_status') },
+    { key: 'jurisdiction', ref: meta('jurisdiction') },
   ],
 };
 
@@ -254,6 +255,9 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
     extras: [
       { key: 'periodOfReport', ref: meta('period_of_report') },
       { key: 'tickers', ref: meta('tickers') },
+      { key: 'ciks', ref: meta('ciks') },
+      { key: 'primaryDocument', ref: meta('primary_document') },
+      { key: 'fileDescription', ref: metaFallback('file_description', 'primary_doc_description') },
     ],
   },
 
@@ -271,6 +275,10 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
       { key: 'licenseType', ref: meta('license_type') },
       { key: 'state', ref: meta('state') },
       { key: 'registrationStatus', ref: meta('registration_status') },
+      { key: 'secNumber', ref: meta('sec_number') },
+      { key: 'disclosureCount', ref: meta('disclosure_count') },
+      { key: 'jurisdiction', ref: meta('jurisdiction') },
+      { key: 'jurisdictions', ref: meta('jurisdictions') },
     ],
   },
 
@@ -284,6 +292,8 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
     extras: [
       { key: 'citation', ref: meta('citation') },
       { key: 'documentType', ref: meta('type') },
+      { key: 'pdfUrl', ref: meta('pdf_url') },
+      { key: 'agencies', ref: meta('agencies') },
     ],
   },
 
@@ -293,12 +303,17 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
     issuerName: meta('chamber'),
     issuedDate: meta('latest_action_date'),
     licenseNumber: meta('identifier'), // bill id, e.g. "HB123"
-    fieldOfStudy: title,
+    // fieldOfStudy intentionally unset: record.title bakes in the
+    // identifier + session ("HB123: Title (State session)"), which would
+    // just duplicate licenseNumber/extras.session/issuerName content.
     extras: [
       { key: 'latestAction', ref: meta('latest_action') },
       { key: 'classification', ref: meta('classification') },
       { key: 'state', ref: meta('state') },
       { key: 'session', ref: meta('session') },
+      { key: 'subjects', ref: meta('subjects') },
+      { key: 'jurisdiction', ref: meta('jurisdiction') },
+      { key: 'stateName', ref: meta('state_name') },
     ],
   },
 
@@ -307,13 +322,16 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
     category: 'legal',
     issuerName: meta('court_name'),
     issuedDate: meta('date_filed'),
-    licenseNumber: meta('docket_id'),
-    fieldOfStudy: title, // case caption; see header note on titles vs. party-name fields
+    licenseNumber: meta('docket_id'), // numeric on the fetcher; stringified below
+    fieldOfStudy: meta('case_name'), // case caption; see header note on titles vs. party-name fields
     extras: [
       { key: 'citations', ref: meta('citations') }, // string[], capped
       { key: 'citationCount', ref: meta('citation_count') },
       { key: 'natureOfSuit', ref: meta('nature_of_suit') },
       { key: 'precedentialStatus', ref: meta('precedential_status') },
+      { key: 'opinionCount', ref: meta('opinion_count') },
+      { key: 'courtId', ref: meta('court_id') },
+      { key: 'dateFiledIsApproximate', ref: meta('date_filed_is_approximate') },
     ],
   },
 
@@ -338,18 +356,25 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
   // ---- Jurisdiction compliance: statutes (document) ---------------------
   australia_law: {
     category: 'document',
-    fieldOfStudy: title,
-    licenseNumber: meta('statute_id'),
+    // The record's OWN primary identifier is section_id (one row per
+    // statute SECTION) — statute_id is shared by every section of the same
+    // statute and is not this record's own id.
+    issuerName: meta('jurisdiction'), // plain country name, e.g. "Australia"
+    licenseNumber: meta('section_id'),
+    fieldOfStudy: meta('section_title'),
     extras: [
+      { key: 'statuteName', ref: meta('statute_name') },
       { key: 'jurisdictionCode', ref: meta('jurisdiction_code') },
       { key: 'part', ref: meta('part') },
     ],
   },
   kenya_law: {
     category: 'document',
-    fieldOfStudy: title,
-    licenseNumber: meta('statute_id'),
+    issuerName: meta('jurisdiction'),
+    licenseNumber: meta('section_id'),
+    fieldOfStudy: meta('section_title'),
     extras: [
+      { key: 'statuteName', ref: meta('statute_name') },
       { key: 'jurisdictionCode', ref: meta('jurisdiction_code') },
       { key: 'part', ref: meta('part') },
     ],
@@ -359,8 +384,8 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
   australia_caselaw: {
     category: 'legal',
     issuerName: meta('court'),
-    licenseNumber: sourceId,
-    fieldOfStudy: title,
+    licenseNumber: sourceId, // no docket/case number in metadata; the pipeline's own source_id is this record's identifier
+    fieldOfStudy: meta('case_title'),
     extras: [
       { key: 'jurisdictionCode', ref: meta('jurisdiction_code') },
     ],
@@ -369,7 +394,7 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
     category: 'legal',
     issuerName: meta('court'),
     licenseNumber: sourceId,
-    fieldOfStudy: title,
+    fieldOfStudy: meta('case_title'),
     extras: [
       { key: 'jurisdictionCode', ref: meta('jurisdiction_code') },
     ],
@@ -378,13 +403,16 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
   // ---- Registry / person sources — registry-level fields only. ----------
   npi: {
     category: 'registry',
+    issuerName: meta('registry'),
     licenseNumber: meta('npi_number'),
     issuedDate: meta('enumeration_date'),
+    fieldOfStudy: meta('primary_specialty'),
     extras: [
       { key: 'enumerationType', ref: meta('enumeration_type') },
       { key: 'primaryTaxonomyCode', ref: meta('primary_taxonomy_code') },
-      { key: 'primarySpecialty', ref: meta('primary_specialty') },
       { key: 'status', ref: meta('status') },
+      { key: 'credential', ref: meta('credential') },
+      { key: 'licenseType', ref: meta('license_type') },
     ],
   },
   finra: {
@@ -398,6 +426,7 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
       { key: 'currentFirmCrd', ref: meta('current_firm_crd') },
       { key: 'disclosureCount', ref: meta('disclosure_count') },
       { key: 'currentFirm', ref: meta('current_firm') },
+      { key: 'registrations', ref: meta('registrations') },
     ],
   },
   calbar: {
@@ -434,6 +463,10 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
       { key: 'country', ref: meta('country') },
       { key: 'state', ref: meta('state') },
       { key: 'charitySize', ref: meta('charity_size') },
+      { key: 'dateEstablished', ref: meta('date_established') },
+      { key: 'purposes', ref: meta('purposes') },
+      { key: 'operatingCountries', ref: meta('operating_countries') },
+      { key: 'responsiblePersonsCount', ref: meta('responsible_persons') },
     ],
   },
   acra_sg: {
@@ -445,6 +478,8 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
       { key: 'jurisdiction', ref: meta('jurisdiction') },
       { key: 'primarySsicCode', ref: meta('primary_ssic_code') },
       { key: 'primarySsicDescription', ref: meta('primary_ssic_description') },
+      { key: 'secondarySsicCode', ref: meta('secondary_ssic_code') },
+      { key: 'secondarySsicDescription', ref: meta('secondary_ssic_description') },
       { key: 'companyType', ref: meta('company_type') },
       { key: 'uenStatus', ref: meta('uen_status') },
       { key: 'entityType', ref: meta('entity_type') },
@@ -461,6 +496,8 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
       { key: 'naturezaJuridica', ref: meta('natureza_juridica') },
       { key: 'uf', ref: meta('uf') },
       { key: 'status', ref: meta('situacao_cadastral') },
+      { key: 'cnaeFiscal', ref: meta('cnae_fiscal') },
+      { key: 'cnaeDescricao', ref: meta('cnae_descricao') },
     ],
   },
   moh_sg: {
@@ -658,7 +695,11 @@ export function projectPublicRecordToTemplate(
       const val = coerceScalar(stripped);
       if (typeof val === 'string') out.licenseNumber = val;
     } else if (typeof raw === 'number') {
-      out.licenseNumber = raw;
+      // Stringify: only two sources carry a numeric id (courtlistener's
+      // docket_id, dapip's dapip_id) — every other licenseNumber source is
+      // already a string. Stringifying keeps the shared parity fixture's
+      // expected output identical across both packages' resolvers.
+      out.licenseNumber = String(raw);
     }
   }
   if (spec.fieldOfStudy) {
