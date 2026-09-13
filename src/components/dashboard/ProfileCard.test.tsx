@@ -54,4 +54,50 @@ describe('ProfileCard', () => {
 
     expect(screen.getByText('Verified')).toBeInTheDocument();
   });
+
+  // SCRUM-4989: the write-path validator only protects rows written after it
+  // shipped. `profiles.social_links` was unvalidated jsonb for its whole
+  // history, so the render path must default safely for what is already there.
+  it.each([
+    'javascript:alert(document.cookie)',
+    'JaVaScRiPt:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    '//evil.example/x',
+    'https://linkedin.com@evil.example/',
+  ])('renders no link for a pre-existing %s value', (hostile) => {
+    const { container } = render(
+      <MemoryRouter>
+        <ProfileCard
+          profile={{ ...baseProfile, social_links: { linkedin: hostile, twitter: hostile } }}
+          organization={{ id: 'org-1', display_name: 'Verified Org' }}
+          onTogglePrivacy={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    const hrefs = Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href') ?? '');
+    expect(hrefs).not.toContain(hostile);
+    expect(hrefs.some((h) => /^(javascript|data|vbscript):/i.test(h) || h.startsWith('//') || h.includes('@evil.example'))).toBe(false);
+    expect(container.querySelector('a[aria-label="LinkedIn profile"]')).toBeNull();
+    expect(container.querySelector('a[aria-label="Twitter profile"]')).toBeNull();
+  });
+
+  it('still renders safe linkedin and twitter links', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <ProfileCard
+          profile={{ ...baseProfile, social_links: { linkedin: 'https://linkedin.com/in/ada', twitter: '@ada_l' } }}
+          organization={{ id: 'org-1', display_name: 'Verified Org' }}
+          onTogglePrivacy={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(container.querySelector('a[aria-label="LinkedIn profile"]')?.getAttribute('href')).toBe(
+      'https://linkedin.com/in/ada',
+    );
+    expect(container.querySelector('a[aria-label="Twitter profile"]')?.getAttribute('href')).toBe(
+      'https://x.com/ada_l',
+    );
+  });
 });

@@ -3142,6 +3142,12 @@ export const PROFILE_LABELS = {
     twitter: { label: 'X (Twitter)', placeholder: '@yourhandle' },
     github: { label: 'GitHub', placeholder: 'https://github.com/yourprofile' },
     website: { label: 'Website', placeholder: 'https://yourwebsite.com' },
+    invalid: {
+      linkedin: 'LinkedIn must be a link starting with https://.',
+      twitter: 'X (Twitter) must be an @handle or a link starting with https://.',
+      github: 'GitHub must be a link starting with https://.',
+      website: 'Website must be a link starting with https://.',
+    },
   },
 } as const;
 

@@ -5,6 +5,7 @@
  * with FAQ section. Includes FAQPage JSON-LD schema for SEO.
  */
 
+import { toJsonLd } from '@/lib/jsonLd';
 import { Link } from 'react-router-dom';
 import {
   Building2,
@@ -87,7 +88,7 @@ function FAQSchema() {
     <script
       type="application/ld+json"
       dangerouslySetInnerHTML={{
-        __html: JSON.stringify({
+        __html: toJsonLd({
           '@context': 'https://schema.org',
           '@type': 'FAQPage',
           mainEntity: FAQS.map((faq) => ({
