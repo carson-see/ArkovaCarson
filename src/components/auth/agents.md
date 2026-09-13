@@ -225,3 +225,10 @@ plain `render()` helper cannot see this class of defect at all.
 ## 2026-09-10 — MFA visibility retry test synchronization
 
 The retry screen can reach the DOM before its passive polling effect registers the visibility listener. The former test dispatched its synthetic event after observing DOM alone; instrumentation reproduced two missed events in 200 runs, with zero listeners at dispatch and one afterward. Await async `act` around the initial render and visibility event so the test exercises the registered listener and settled factor read. Assertions require exactly two factor reads and no access-grant callback. Disabling automatic retry fails the corrected test; the component and polling-hook runtime remain unchanged.
+
+## 2026-09-11 — UAT-04 mandatory MFA
+
+`AuthGuard` now gates every confirmed human account by the signed same-user
+`authenticated`/AAL2 token. Profile role, grace dates, capability cooldowns, and
+local completion callbacks cannot grant protected content. Enrollment and
+challenge errors stay closed with retry/sign-out.

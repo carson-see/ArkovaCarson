@@ -523,6 +523,9 @@ function applyRunStubbed(
     NODE_ENV: 'production',
     ENABLE_AI_FRAUD: 'false',
     ENABLE_AI_REPORTS: 'false',
+    // Mirrors the prod deploy so an extraction soak runs the budget prod runs
+    // (BASE_ENV_VARS in provision-isolated-rig.sh).
+    AI_EXTRACTION_LATENCY_BUDGET_MS: '15000',
     CORS_ALLOWED_ORIGINS: 'https://app.arkova.ai',
     FRONTEND_URL: options.env?.STAGING_FRONTEND_URL ?? 'https://app.arkova.ai',
     USE_MOCKS: profile === 'chain' ? 'false' : 'true',
@@ -695,6 +698,8 @@ exit 0
   writeFileSync(
     join(stubDir, 'npx'),
     `#!/usr/bin/env bash
+# "npx --no-install <pkg>" is the S6505-safe spelling; record it as the bare call.
+if [[ "$1" == "--no-install" ]]; then shift; fi
 set -euo pipefail
 printf '%s\\n' "$*" >> "${npxLogFile}"
 printf 'npx %s\\n' "$*" >> "${orderLogFile}"

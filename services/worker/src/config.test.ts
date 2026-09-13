@@ -497,6 +497,45 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     it('rejects a bare public-key pin in production (only an X.509 CA certificate is acceptable there)', async () => {
       await expectConfigToReject({ NODE_ENV: 'production', ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: 's1', COMPUTEID_CA_CERT_PEM: SPKI_PEM });
     });
+
+    // SCRUM-4495 review: the pin is now in `--set-secrets` while the flag is
+    // still false, so a malformed or rotated PEM sits in prod unexercised and
+    // is first parsed by the ACTIVATION deploy. Warn then, do not fail: a dark
+    // integration must never be able to stop the worker booting.
+    it('warns but still boots when the CA pin is unusable and the flag is OFF', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await withConfig(
+        { ENABLE_COMPUTEID_INTEGRATION: 'false', COMPUTEID_CA_CERT_PEM: 'not a pem' },
+        (mod) => { expect(mod.config.enableComputeidIntegration).toBe(false); },
+      );
+      expect(warn.mock.calls.flat().join(' ')).toContain('COMPUTEID_CA_CERT_PEM');
+      warn.mockRestore();
+    });
+
+    it('says nothing when the dark pin is well-formed', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await withConfig(
+        { ENABLE_COMPUTEID_INTEGRATION: 'false', COMPUTEID_CA_CERT_PEM: SPKI_PEM },
+        (mod) => { expect(mod.config.enableComputeidIntegration).toBe(false); },
+      );
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('COMPUTEID_CA_CERT_PEM');
+      warn.mockRestore();
+    });
+
+    // W7 review decision, pinned so it cannot drift back silently: the partner
+    // API key is deliberately NOT required by the flag-on refine. The re-check
+    // reports itself skipped (loudly — logger.error + Sentry) rather than
+    // blocking activation on a key Carson provisions separately.
+    it('does NOT require COMPUTEID_API_KEY when the flag is on — the re-check alerts instead of blocking the boot', async () => {
+      await withConfig(
+        { ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: 's1', COMPUTEID_CA_CERT_PEM: SPKI_PEM, COMPUTEID_API_KEY: undefined },
+        (mod) => {
+          expect(mod.config.enableComputeidIntegration).toBe(true);
+          expect(mod.config.computeidApiKey).toBeUndefined();
+          expect(mod.config.computeidApiBaseUrl).toBe('https://api.aicomputeid.com');
+        },
+      );
+    });
   });
 
   it('rejects when ENABLE_VEREMARK_WEBHOOK=true but VEREMARK_WEBHOOK_SECRET is missing', async () => {
@@ -862,6 +901,38 @@ describe('SCRUM-1258 aiBatchRowLatencyBudgetMs (typed config, clamped)', () => {
       expect(mod.config.aiBatchRowLatencyBudgetMs).toBe(8_000);
     });
   });
+});
+
+/**
+ * SCRUM-4939 / SCRUM-1258 — AI_CREDITS_MONTHLY_ALLOCATION is the allocation
+ * stamped on an `ai_credits` period row auto-provisioned by
+ * `ensureAICreditsPeriod()`. It is typed config, not an ad-hoc process.env read
+ * (the Dependency Scanning `check-worker-env-adhoc` gate enforces that).
+ * Unlike the clamped budgets above, an out-of-band value falls back to the
+ * default rather than being clamped to a boundary — a clamp would silently
+ * provision the wrong entitlement instead of the known-safe one.
+ */
+describe('SCRUM-4939 aiCreditsMonthlyAllocation (typed config)', () => {
+  it('defaults to 100 when AI_CREDITS_MONTHLY_ALLOCATION is unset', async () => {
+    await withConfig({ AI_CREDITS_MONTHLY_ALLOCATION: undefined }, (mod) => {
+      expect(mod.config.aiCreditsMonthlyAllocation).toBe(100);
+    });
+  });
+
+  it('passes through a positive integer', async () => {
+    await withConfig({ AI_CREDITS_MONTHLY_ALLOCATION: '250' }, (mod) => {
+      expect(mod.config.aiCreditsMonthlyAllocation).toBe(250);
+    });
+  });
+
+  it.each(['', '   ', '0', '-5', '1.5', 'abc', 'NaN', 'Infinity'])(
+    'falls back to 100 for the out-of-band value %j',
+    async (value) => {
+      await withConfig({ AI_CREDITS_MONTHLY_ALLOCATION: value }, (mod) => {
+        expect(mod.config.aiCreditsMonthlyAllocation).toBe(100);
+      });
+    },
+  );
 });
 
 describe('S3-P0 / DISC-03 — bitcoinUtxoProvider default', () => {

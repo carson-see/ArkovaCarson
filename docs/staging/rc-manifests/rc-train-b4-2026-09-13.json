@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-13-TRAIN-B4",
+  "created_at": "2026-09-13T02:05:00Z",
+  "created_by": "carson@arkova.io (CTO release session, Claude Fable 5.1)",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": "",
+  "approval_time": "",
+  "train_launch_sha": "5c2adbc79ae598c6990b8671554a0f2642425f83",
+  "target_main_sha": "c1aca470fde0b593c69abcba69074de62a346bde",
+  "allowed_base_shas": [
+    "c1aca470fde0b593c69abcba69074de62a346bde"
+  ],
+  "covered_main_shas": [],
+  "staging_branch": "rc/train-b4-2026-09-13",
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b4-2026-09-13.json",
+  "preflight_timestamp": "2026-09-13T01:56:37.244Z",
+  "included_prs": [
+    {
+      "number": 2844,
+      "branch": "feat/scrum-3971-suborg-api-key-parity",
+      "head_sha": "f31153a905e656e615adefb73bf2dd49033be3ff",
+      "base_sha": "c1aca470fde0b593c69abcba69074de62a346bde",
+      "risk_tier": "T3",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Required checks green on head after the CTO review fold except Supabase Preview (repo-wide CONCURRENTLY failure, SCRUM-5076) and the soak gate pending this manifest.",
+      "rollback_note": "Code first (git revert; JWT mount untouched), then the 0453 header ROLLBACK block verbatim \u2014 rehearsed on rig 3 2026-09-13T01:57Z (docs/staging/cto-train-b4-0913/rollback-rehearsal-0453.json): functions 5\u21920\u21925, scope CHECKs revert to NOT VALID without orgs:manage and back, public_id NOT NULL dropped and restored.",
+      "migration_files": [
+        "supabase/migrations/0453_scrum3971_orgs_manage_scope_api_key_suborg_authority.sql"
+      ]
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://arkova-worker-cto-train-b4-0913-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-cto-train-b4-0913-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-cto-train-b4-0913-staging",
+    "revision": "arkova-worker-cto-train-b4-0913-staging-00002-sok",
+    "deploy_tag": "train-4",
+    "image_digest": "sha256:b8444d14f04fd3ee798018c17d2d543a4288e17d5f8082bcd0aa623edfe11329",
+    "supabase_project_ref": "dlfcwhljvkomeouykcwk",
+    "deploy_log_id": "1",
+    "preflight_result": "environment_type=clean_mirror"
+  },
+  "soak": {
+    "start": "2026-09-13T02:01:56Z",
+    "end": "",
+    "duration_hours": 24,
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@62661f518",
+    "result": "",
+    "evidence_links": [],
+    "expires_at": ""
+  },
+  "migration_plan": {
+    "order": [
+      "0453_scrum3971_orgs_manage_scope_api_key_suborg_authority.sql"
+    ],
+    "rollback_proof": "docs/staging/cto-train-b4-0913/rollback-rehearsal-0453.json \u2014 rollback block run verbatim on rig 3, state verified before/after, forward file re-applied, ledger row 0453 retained.",
+    "reapply_proof": "same artifact: after reapply fns=5, keys_ck_valid=true, orgs:manage present, public_id NOT NULL, 0 null public_ids.",
+    "stop_conditions": [
+      "SHA mismatch",
+      "dirty preflight",
+      "cycle failure not attributable to environment",
+      "prod apply without the 0453 ledger exemption (\u00a70 rule 10)"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "T3 anchoring fields (Trigger A/B, daily flush) do not apply to this PR's changed behaviour (sub-org authority RPCs + scope CHECK); the rig's 03:00Z daily flush fires with ENABLE_BATCH_ANCHORING=false and is recorded as observed-with-zero-work, not as evidence for anchoring.",
+    "Not exercisable synthetically: api_key_principal_unresolved (503) and the unmapped-code 502 path; account-export GDPR shape; prod AEL queue depth; free-tier 429."
+  ]
+}

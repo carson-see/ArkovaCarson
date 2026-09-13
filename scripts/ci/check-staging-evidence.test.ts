@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,9 @@ import {
   S33_LANE1_OFFLINE_EVIDENCE_FILES,
   baseDriftImpactErrors,
   formatBaseDriftDiagnostics,
+  changedFilesBetween,
   check,
+  gitAncestryProvider,
   hasBaseDriftResidualRiskNote,
   extractDeclaredTier,
   findS33RuntimeImporters,
@@ -373,6 +376,20 @@ describe('check-staging-evidence', () => {
           'scripts/ci/check-feedback-rules.ts',
           'memory/README.md',
         ]).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for the job_queue producer/consumer parity guard', () => {
+      // scripts/ci/check-job-queue-parity.ts runs only in the ci.yml
+      // Dependency Scanning job (`npm run ci:job-queue-parity`) and is never
+      // imported by src/, services/worker/src/, packages/, integrations/, or
+      // e2e/ — no prod runtime to soak, same class as the other
+      // scripts/ci/check-*.ts gates above.
+      expect(
+        requiredTierFor(['scripts/ci/check-job-queue-parity.ts']).tier,
+      ).toBe('T0');
+      expect(
+        requiredTierFor(['scripts/ci/check-job-queue-parity.test.ts']).tier,
       ).toBe('T0');
     });
 
@@ -5401,5 +5418,134 @@ ${deltaLine}
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/not a T0-classified file/i);
     });
+  });
+});
+
+// ── gitAncestryProvider / changedFilesBetween — shallow-clone deepening ─────
+// SCRUM-5054 / PR #2841 run 34737600583: the Evidence-identity gate checks
+// out a PR merge ref with actions/checkout's default fetch-depth (1). In that
+// shallow clone `git merge-base --is-ancestor` and `git diff` can't resolve a
+// soaked head SHA that predates the shallow boundary, and the gate failed
+// closed with "of unresolvable ancestry" even though the soak was real. These
+// tests build two real, disposable git repos — a full "origin" (A) and a
+// shallow clone of it (B, missing the oldest commit) — and verify the
+// providers deepen B before giving up. The fetch hook is a spy that shells
+// out to the SAME local `origin` (the clone already points there), so this
+// never touches the network.
+describe('gitAncestryProvider / changedFilesBetween — shallow-clone deepening', () => {
+  function git(args: string[], cwd: string): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  }
+
+  /**
+   * Repo A: three commits c1 -> c2 -> c3, each adding one file. Repo B is a
+   * TRUE shallow clone of A (file:// transport — a bare local-path clone
+   * silently ignores --depth) so only c3 is present in B; c1 (and its file)
+   * is missing until something deepens it.
+   */
+  function buildShallowFixture(): { dirA: string; dirB: string; c1: string; c2: string; c3: string; cleanup: () => void } {
+    const root = mkdtempSync(join(tmpdir(), 'arkova-shallow-fixture-'));
+    const dirA = join(root, 'A');
+    const dirB = join(root, 'B');
+    mkdirSync(dirA, { recursive: true });
+
+    git(['init', '-q'], dirA);
+    git(['config', 'user.email', 'test@arkova.test'], dirA);
+    git(['config', 'user.name', 'Arkova Test'], dirA);
+
+    writeFileSync(join(dirA, 'f1.txt'), 'c1\n');
+    git(['add', 'f1.txt'], dirA);
+    git(['commit', '-q', '-m', 'c1'], dirA);
+    const c1 = git(['rev-parse', 'HEAD'], dirA);
+
+    writeFileSync(join(dirA, 'f2.txt'), 'c2\n');
+    git(['add', 'f2.txt'], dirA);
+    git(['commit', '-q', '-m', 'c2'], dirA);
+    const c2 = git(['rev-parse', 'HEAD'], dirA);
+
+    writeFileSync(join(dirA, 'f3.txt'), 'c3\n');
+    git(['add', 'f3.txt'], dirA);
+    git(['commit', '-q', '-m', 'c3'], dirA);
+    const c3 = git(['rev-parse', 'HEAD'], dirA);
+
+    git(['clone', '-q', '--depth', '1', `file://${dirA}`, dirB], root);
+
+    return {
+      dirA,
+      dirB,
+      c1,
+      c2,
+      c3,
+      cleanup: () => rmSync(root, { recursive: true, force: true }),
+    };
+  }
+
+  it('resolves ancestry (c1, c3) after deepening a shallow clone missing c1', () => {
+    const fx = buildShallowFixture();
+    try {
+      expect(() => git(['cat-file', '-e', `${fx.c1}^{commit}`], fx.dirB)).toThrow();
+
+      const fetch = vi.fn((args: string[], cwd: string) => {
+        execFileSync('git', args, { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
+      });
+      const provider = gitAncestryProvider({ cwd: fx.dirB, fetch });
+
+      expect(provider(fx.c1, fx.c3)).toBe(true);
+      expect(fetch).toHaveBeenCalled();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('resolves the reverse direction (c3, c1) to false after deepening', () => {
+    const fx = buildShallowFixture();
+    try {
+      const fetch = vi.fn((args: string[], cwd: string) => {
+        execFileSync('git', args, { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
+      });
+      const provider = gitAncestryProvider({ cwd: fx.dirB, fetch });
+
+      expect(provider(fx.c3, fx.c1)).toBe(false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('changedFilesBetween(c1, c3) lists the files after deepening', () => {
+    const fx = buildShallowFixture();
+    try {
+      const fetch = vi.fn((args: string[], cwd: string) => {
+        execFileSync('git', args, { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
+      });
+
+      const files = changedFilesBetween(fx.c1, fx.c3, { cwd: fx.dirB, fetch });
+
+      expect(files).not.toBeNull();
+      expect(files).toEqual(expect.arrayContaining(['f2.txt', 'f3.txt']));
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('never fetches when both SHAs are already present locally', () => {
+    const fx = buildShallowFixture();
+    try {
+      // dirA has full history — c1 and c3 are both present, nothing to deepen.
+      const fetch = vi.fn((args: string[], cwd: string) => {
+        execFileSync('git', args, { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
+      });
+      const provider = gitAncestryProvider({ cwd: fx.dirA, fetch });
+
+      expect(provider(fx.c1, fx.c3)).toBe(true);
+      expect(fetch).not.toHaveBeenCalled();
+
+      fetch.mockClear();
+      expect(changedFilesBetween(fx.c1, fx.c3, { cwd: fx.dirA, fetch })).toEqual(
+        expect.arrayContaining(['f2.txt', 'f3.txt']),
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      fx.cleanup();
+    }
   });
 });

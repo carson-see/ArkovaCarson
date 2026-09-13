@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-12-TRAIN-B1",
+  "created_at": "2026-09-12T22:20:00Z",
+  "created_by": "carson@arkova.io (CTO release session, Claude Fable 5.1)",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": "",
+  "approval_time": "",
+  "train_launch_sha": "dfd337ba1dcd9ddf839604bd2a5b9fcf1213021d",
+  "target_main_sha": "5510cd694f8278e58639c3fa7199e84764972c86",
+  "allowed_base_shas": [
+    "5510cd694f8278e58639c3fa7199e84764972c86"
+  ],
+  "covered_main_shas": [],
+  "staging_branch": "rc/train-b1-2026-09-12",
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b1-2026-09-12.json",
+  "preflight_timestamp": "2026-09-12T22:00:04.185Z",
+  "included_prs": [
+    {
+      "number": 2835,
+      "branch": "fix/sekura-p2-authz",
+      "head_sha": "f8894103ad53baae20734184596d5f91e91b2b97",
+      "base_sha": "5510cd694f8278e58639c3fa7199e84764972c86",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Required checks green on head after the CTO review fold (soak gate pending this manifest).",
+      "rollback_note": "Redeploy the prior Cloud Run revision; the change only narrows reads and adds a select column.",
+      "migration_files": []
+    },
+    {
+      "number": 2836,
+      "branch": "fix/sekura-p2-webhook-pinned-egress",
+      "head_sha": "cfe0a2efc193933bc9ba82f17cbb0b1cc7a8cb26",
+      "base_sha": "5510cd694f8278e58639c3fa7199e84764972c86",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Required checks green on head after the CTO review fold (soak gate pending this manifest).",
+      "rollback_note": "Redeploy the prior revision; nothing to unwind (retry ladder is idempotent).",
+      "migration_files": []
+    },
+    {
+      "number": 2838,
+      "branch": "fix/sekura-p2-security-headers",
+      "head_sha": "d593f6579b7cbf33e52376c10ee3393d13277856",
+      "base_sha": "5510cd694f8278e58639c3fa7199e84764972c86",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Required checks green on head after the CTO review fold (soak gate pending this manifest).",
+      "rollback_note": "Redeploy the prior revision: one app.use + one file, no state.",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [
+    {
+      "number": 2839,
+      "branch": "fix/sekura-p2-deps",
+      "head_sha": "70ee1275825961c150225955dd0851cc2a9d801c",
+      "base_sha": "5510cd694f8278e58639c3fa7199e84764972c86",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Required checks green on head after the CTO review fold (soak gate pending this manifest).",
+      "rollback_note": "Revert the range; npm ci in root/worker/zapier restores the pins; redeploy the previous revision.",
+      "migration_files": [],
+      "reason": "T1 dependency bump: no worker probe module — evidence is the image boot on the train revision (45 clean cycles hitting 145 probes across the worker) recorded in the PR body on the standard T1 path"
+    },
+    {
+      "number": 2840,
+      "branch": "fix/sekura-p2-frontend",
+      "head_sha": "f50dbe5cc901a5c38453907e77e8696316879020",
+      "base_sha": "5510cd694f8278e58639c3fa7199e84764972c86",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Required checks green on head after the CTO review fold (soak gate pending this manifest).",
+      "rollback_note": "Revert the commits; stored values untouched, unsafe ones simply stop rendering as links (Vercel frontend; T1 evidence = local-preview UAT in docs/uat/pr-2840/).",
+      "migration_files": [],
+      "reason": "T1 frontend-only: evidence is the committed local UAT (1280/375 px) recorded in the PR body on the standard path; rode the train for the worker-side notices only"
+    }
+  ],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://arkova-worker-cto-train-b1-0912-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-cto-train-b1-0912-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-cto-train-b1-0912-staging",
+    "revision": "arkova-worker-cto-train-b1-0912-staging-00004-lib",
+    "deploy_tag": "train-1",
+    "image_digest": "sha256:99168463ef3d5da0422560dc526110bb482293cfcc49d518d4371c3a0c590155",
+    "supabase_project_ref": "pdgfbbnrqhojiihtxycd",
+    "deploy_log_id": "2",
+    "preflight_result": "environment_type=clean_mirror"
+  },
+  "soak": {
+    "start": "2026-09-13T01:55:09.624Z",
+    "end": "2026-09-13T05:56:36Z",
+    "duration_hours": 4,
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@7cc125cf8",
+    "result": "green",
+    "evidence_links": [
+      "docs/staging/cto-train-b1-0912/train-b1-window1/summary.json",
+      "docs/staging/cto-train-b1-0912/train-b1-window1/cycles.sha256",
+      "docs/staging/cto-train-b1-0912/train-b1-window1/rollback-rehearsal.json",
+      "docs/staging/soak-preflight/rc-train-b1-2026-09-12.json",
+      "docs/staging/cto-train-b-0912/CLOSEOUT.md"
+    ],
+    "expires_at": ""
+  },
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "No migration in this train.",
+    "reapply_proof": "n/a",
+    "stop_conditions": [
+      "SHA mismatch",
+      "dirty preflight",
+      "cycle failure not attributable to environment"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "#2836 pinned-layer refusal (egress_refused: private_target + DLQ row) not exercisable without a TTL-0 rebind zone; covered by delivery.test.ts + machines/webhookEgressRefusal.machine.ts.",
+    "#2839 has no behavioural probe: image boots on the new dependency tree (identity probe) and adm-zip is absent from the worker image.",
+    "#2840 is frontend-only (Vercel): T1 evidence is the committed local-preview UAT; it rides the train for the integration build only.",
+    "Pre-window deploys on rig 2 (rev 00002-bev, head 85059176c, deploy-log 1) were coverage-gate runs only; the gate found a real duplicate-MEMBER_JOINED defect in #2835 (fixed f8894103a), so the train head moved to dfd337ba1.",
+    "Window 1: 45 cycles, 45 pass, 0 fail, 145 probes/cycle (#2835 43, #2836 22, #2838 79; #2839 covered by the image boot/in-image check, #2840 by committed local UAT), 0 retries; single revision 00004-lib across all cycles.",
+    "Rollback rehearsed 2026-09-13T05:57Z: traffic re-promoted to rev 00002-bev (/health git_sha 85059176c, healthy) then restored to 00004-lib (/health git_sha dfd337ba1, healthy); artifact rollback-rehearsal.json."
+  ]
+}

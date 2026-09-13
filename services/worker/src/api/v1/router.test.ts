@@ -33,9 +33,11 @@ describe('api v1 router attestation batch routes', () => {
   it('mounts webhook self-service before the broad API-key webhook router so diagnostics are not double rate-limited', () => {
     const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
 
-    expect(routerSource.indexOf("router.use('/webhooks/self-service'")).toBeLessThan(
-      routerSource.indexOf("router.use('/webhooks', batchRateLimiter, webhooksRouter)"),
-    );
+    // SCRUM-3981 added `requireScope('webhooks:manage')` to the broad mount;
+    // the ordering property this test owns is unchanged.
+    const broadMount = routerSource.indexOf("router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter)");
+    expect(broadMount).toBeGreaterThan(-1);
+    expect(routerSource.indexOf("router.use('/webhooks/self-service'")).toBeLessThan(broadMount);
   });
 
   it('rate-limits webhook self-service by authenticated user instead of shared API-key batch IP bucket', () => {

@@ -1,5 +1,83 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-13 (CTO review, PR #2911) — `admin-webhook-dlq.ts` resolve now validates `ids` as UUIDs
+
+`isValidIdsArray` checked `typeof v === 'string' && v.length > 0` only — no shape check.
+`webhook_dlq.id` is a `uuid` column, so a non-UUID string in `ids` reached Postgres as a raw
+`.in('id', uniqueIds)` filter value, which Postgres 22P02-errors on an invalid uuid literal; the
+handler's generic `catch` then reported that as an undifferentiated `500` instead of the `400`
+every other malformed-input case in this handler gets. Fixed with a `UUID_RE` shape check ahead
+of the DB call, TDD (`admin-webhook-dlq.test.ts`'s "rejects a non-UUID id with 400" — red before,
+green after). All fixture ids across `admin-webhook-dlq.test.ts` and
+`routes/admin-webhook-dlq-route.test.ts` were non-UUID placeholders (`'r1'`, `'id-0'`, ...) and
+passed only because the old check accepted any non-empty string; they are now valid-format UUIDs
+so the suite still exercises real behavior instead of accidentally relying on the gap it was
+supposed to catch.
+
+## 2026-09-13 — SCRUM-4514: `admin-webhook-dlq.ts` — inbound webhook DLQ visibility + resolve (CTO-revised same day)
+
+Shipped twice in one day. First cut: `handleWebhookDlqList` (GET) + `handleWebhookDlqReplay`
+(POST `/replay`, claimed rows and always reported `not_replayable`, since none of the four
+writers persist a raw body — see `api/v1/webhooks/agents.md`). CTO decision closed the open
+question that first cut raised: Arkova does not retain raw partner webhook bodies for replay
+(§1.6A; DocuSign/Adobe bodies carry signer emails), so a "replay" endpoint that can never
+replay anything is misleading surface. Current shape:
+
+- `handleWebhookDlqList` — `GET /api/admin/webhook-dlq` — counts by provider + oldest age, plus
+  per-row `id`/`external_id`/`reason` (never `payload_hash` — there is no body to return). The
+  `external_id`/`reason` fields exist so an operator can go find the matching delivery in the
+  partner's own console.
+- `handleWebhookDlqResolve` — `POST /api/admin/webhook-dlq/resolve` — body
+  `{ ids: string[] (1-100), note: string (<=500) }`. Atomically resolves whichever of `ids` are
+  still unresolved (`UPDATE ... WHERE id = ANY($ids) AND resolved_at IS NULL RETURNING id`) and
+  reports `{ resolved, already_resolved }`. Idempotent by construction: calling it twice with the
+  same ids resolves them once, then reports the rest as `already_resolved` — never an error,
+  never a double count. `note` is validated (bounded, required) but persisted nowhere — no
+  `resolved_note` column exists and adding one is a migration, deliberately not done (see below)
+  — and never logged, on the same discipline as `reason`/`payload_hash`.
+
+Both routes are session-auth + `isPlatformAdmin` only, mounted on `adminRouter` in
+`routes/admin.ts` next to `treasury`/`rules`/`queue` — never API-key auth. Deliberately not added
+to `api/v1/docs.ts` / `docs/api/openapi.yaml` / `docs.routeParity.test.ts`, matching every other
+`adminRouter` endpoint.
+
+No `claimed_at` / `attempt_count` / `resolved_note` column exists on `webhook_dlq` — adding one
+is a migration, deliberately not done here (T3 boundary this SCRUM-4514 change stays under; the
+path detector's `requiredTierFor()` returns T2 for this change's full file set). `resolved_at`
+is the only state column this module writes.
+
+Redelivery, when it happens, happens entirely outside this module — at the partner, via each
+provider's own console (DocuSign Connect "Resend", Adobe Sign retry/re-send, Checkr webhook-logs
+re-send, ComputeID asked to re-emit). `/resolve` only acknowledges that already happened; it
+never itself re-invokes a handler or contacts a partner. See the SCRUM-4514 Confluence page's
+partner redelivery matrix for the operator runbook.
+
+## 2026-09-12 — `apiScopeEnforcementCensus.test.ts`: a grantable scope must gate something (SCRUM-3981)
+
+`apiScopes.ts` is the vocabulary; it was never a claim that any of it is enforced.
+`webhooks:manage` shipped in `API_KEY_SCOPES`, in `docs/api/README.md`, and in the dashboard's
+scope picker, and no route required it — an operator who withheld it from a key withheld nothing.
+The failure mode is structural, not a one-off: a scope is added to the vocabulary in one PR and
+wired to a mount in another, and nothing notices when the second PR never lands.
+
+The census test closes it in both directions. Every `API_KEY_SCOPES` entry must be the argument of
+a `requireScope` / `requireScopeAnyAuth` / `requireScopeV2` call somewhere under
+`services/worker/src`, OR carry a one-line entry in `KNOWN_UNENFORCED` saying what is actually
+true. A new scope therefore arrives with a mount or with an admission; and once a scope IS
+enforced, its `KNOWN_UNENFORCED` entry has to be deleted or the test fails.
+
+Nine scopes are listed as unenforced today, and the list is worth reading rather than trusting:
+`write:anchors` is a grant-side alias of `anchor:write`, `attestations:write` is a genuine gap
+(the `/attestations` mount carries no scope guard), `keys:read` is required by nobody and granted
+by nobody, and the rest are either pre-GA or exist only as the `required` side of a back-compat
+branch in `scopeSatisfies` that no mount reaches.
+
+Honest limits, so nobody over-reads a green run: the scan is lexical. It counts guard call sites;
+it does not prove the guard is reachable, that the router it guards is mounted, or that a handler
+does not bypass it. Lines beginning `//` or `*` are skipped so a scope named in prose does not
+read as enforcement. Reachability is `docs.routeParity.test.ts`, `phiScopeMount.test.ts` and
+`api/v1/webhooks-scope.test.ts`, each for its own surface.
+
 ## 2026-08-30 — `connector-health.ts`: the `adobe_sign` kind is DERIVED, never asserted
 
 PR #2519 corrected `adobe_sign` from a hardcoded `kind: 'live'` to `'gated'`: the connector had no

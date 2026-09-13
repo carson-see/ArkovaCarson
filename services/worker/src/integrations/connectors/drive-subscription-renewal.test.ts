@@ -23,6 +23,10 @@ function dueRow(over: Record<string, unknown> = {}) {
     subscription_expires_at: '2026-08-03T06:00:00.000Z', // 6h out → within 24h horizon
     account_label: JSON.stringify({ email: 'admin@example.com', channel_token: 'old-token', resource_id: 'res-old' }),
     watch_renewal_failure_count: 0,
+    // POPULATED by default: the overwhelming majority of rows have a live
+    // cursor, and the renewal invariant for those is "never overwrite it".
+    // The null-cursor bootstrap case is opted into explicitly per test.
+    last_page_token: 'cursor-live',
     ...over,
   };
 }
@@ -31,7 +35,13 @@ function makeClient(over: Partial<DriveSubscriptionRenewalClient> = {}): DriveSu
   return {
     getAccessToken: vi.fn(async () => ({ accessToken: 'at', revoked: false })),
     stopChannel: vi.fn(async () => {}),
-    createChannel: vi.fn(async () => ({ resourceId: 'res-new', expiration: '2026-08-10T00:00:00.000Z' })),
+    createChannel: vi.fn(async () => ({
+      resourceId: 'res-new',
+      expiration: '2026-08-10T00:00:00.000Z',
+      // createChangesWatch() ALWAYS resolves a startPageToken (it throws
+      // otherwise), so the realistic default carries one.
+      startPageToken: 'stp-from-watch',
+    })),
     ...over,
   };
 }
@@ -99,14 +109,18 @@ describe('renewDriveSubscriptions (GH #1835)', () => {
     expect(alert).not.toHaveBeenCalled();
   });
 
-  // CRITICAL invariant — see the module doc comment. A renewal that touches
-  // last_page_token would silently drop unprocessed changes.
-  it('NEVER writes last_page_token on a successful renewal', async () => {
+  // CRITICAL invariant — see the module doc comment. A renewal that
+  // OVERWRITES a populated last_page_token would silently drop every
+  // unprocessed change between the last advance and the renewal. (The
+  // null-cursor bootstrap carve-out is the describe block at the bottom of
+  // this file; it cannot reach a populated cursor.)
+  it('NEVER writes last_page_token on a successful renewal of a populated cursor', async () => {
     const { db, updates } = makeDb([dueRow()]);
     const client = makeClient();
     await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW });
     const update = updates[0] as Record<string, unknown>;
     expect('last_page_token' in update).toBe(false);
+    expect('last_token_advanced_at' in update).toBe(false);
   });
 
   it('registers a channel for a connection whose subscription was never bootstrapped (subscription_id null)', async () => {
@@ -439,6 +453,151 @@ describe('renewDriveSubscriptions (GH #1835)', () => {
       const summary = await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW, concurrency: 3 });
       expect(summary.renewed).toBe(10);
       expect(maxInFlight).toBeLessThanOrEqual(3);
+    });
+  });
+  // BUG 2026-09-13 (prod): `org_integrations.last_page_token` has been NULL on
+  // the Arkova org's google_drive row since it connected in April. Every
+  // Google push notification therefore ends in
+  // `drive webhook: changes processed {result:{skipped:'no_page_token'}}` —
+  // 63 notifications over 36h, zero artifacts, ever. The runner skipped and
+  // deferred to "the watch-renewal monitor will re-bootstrap on next renewal
+  // pass", while renewal's own doc comment swore it NEVER touches
+  // last_page_token and deliberately discarded the startPageToken. Nothing
+  // bootstrapped a null cursor, so a null cursor stayed null forever.
+  //
+  // The refined invariant: renewal never OVERWRITES a populated cursor (the
+  // original reasoning — dropping unprocessed changes — is only true of a
+  // populated one); it BOOTSTRAPS a null one, atomically with the channel
+  // swap it is already persisting.
+  describe('null-cursor bootstrap (BUG 2026-09-13)', () => {
+    it('last_page_token IS NULL → the successful-renewal update persists the watch startPageToken + last_token_advanced_at', async () => {
+      const { db, updates } = makeDb([dueRow({ last_page_token: null })]);
+      const client = makeClient();
+      const summary = await renewDriveSubscriptions({
+        db, client, alert: vi.fn(), now: () => NOW, channelIdFactory: () => 'chan-new-id',
+      });
+
+      expect(summary).toEqual({ scanned: 1, renewed: 1, degraded: 0, failed: 0 });
+      const update = updates[0] as Record<string, unknown>;
+      expect(update.last_page_token).toBe('stp-from-watch');
+      // One clock per decision: the SAME `now` the rest of the update uses.
+      expect(update.last_token_advanced_at).toBe(NOW.toISOString());
+      expect(update.last_renewal_at).toBe(NOW.toISOString());
+      // Atomic with the channel swap — one write, not a follow-up.
+      expect(updates).toHaveLength(1);
+      expect(update.subscription_id).toBe('chan-new-id');
+    });
+
+    it('an empty-string cursor counts as null (bootstrapped, not treated as live)', async () => {
+      const { db, updates } = makeDb([dueRow({ last_page_token: '' })]);
+      await renewDriveSubscriptions({ db, client: makeClient(), alert: vi.fn(), now: () => NOW });
+      expect((updates[0] as Record<string, unknown>).last_page_token).toBe('stp-from-watch');
+    });
+
+    it('emits ONE bounded info line naming the integration/org, with bootstrapped:true', async () => {
+      const { db } = makeDb([dueRow({ last_page_token: null })]);
+      const info = vi.fn();
+      await renewDriveSubscriptions({
+        db, client: makeClient(), alert: vi.fn(), now: () => NOW, logger: { info, error: vi.fn() },
+      });
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenCalledWith(
+        { integrationId: 'int-1', orgId: 'org-1', bootstrapped: true },
+        expect.any(String),
+      );
+    });
+
+    it('never logs the token value, the account email, or any label content', async () => {
+      const { db } = makeDb([dueRow({ last_page_token: null })]);
+      const info = vi.fn();
+      const error = vi.fn();
+      await renewDriveSubscriptions({
+        db,
+        client: makeClient({
+          createChannel: vi.fn(async () => ({
+            resourceId: 'res-new',
+            expiration: '2026-08-10T00:00:00.000Z',
+            startPageToken: 'SECRET-CURSOR-VALUE',
+          })),
+        }),
+        alert: vi.fn(),
+        now: () => NOW,
+        logger: { info, error },
+      });
+      const serialized = JSON.stringify([...info.mock.calls, ...error.mock.calls]);
+      expect(serialized).not.toContain('SECRET-CURSOR-VALUE');
+      expect(serialized).not.toContain('admin@example.com');
+      expect(serialized).not.toContain('old-token');
+      expect(serialized).not.toContain('res-old');
+    });
+
+    it('a POPULATED cursor is never included in the update — even though the watch returned a fresh startPageToken', async () => {
+      const { db, updates } = makeDb([dueRow({ last_page_token: 'live-cursor-42' })]);
+      const info = vi.fn();
+      await renewDriveSubscriptions({
+        db, client: makeClient(), alert: vi.fn(), now: () => NOW, logger: { info, error: vi.fn() },
+      });
+      const update = updates[0] as Record<string, unknown>;
+      // Key ABSENT, not merely equal to the old value: an update carrying the
+      // key at all is one refactor away from carrying the wrong value.
+      expect('last_page_token' in update).toBe(false);
+      expect('last_token_advanced_at' in update).toBe(false);
+      expect(info).not.toHaveBeenCalled();
+    });
+
+    it('null cursor + a watch that returned NO startPageToken → no bootstrap, no throw, counters unchanged, logged at error level', async () => {
+      const { db, updates } = makeDb([dueRow({ last_page_token: null })]);
+      const error = vi.fn();
+      const summary = await renewDriveSubscriptions({
+        db,
+        client: makeClient({
+          createChannel: vi.fn(async () => ({ resourceId: 'res-new', expiration: '2026-08-10T00:00:00.000Z' })),
+        }),
+        alert: vi.fn(),
+        now: () => NOW,
+        logger: { info: vi.fn(), error },
+      });
+
+      expect(summary).toEqual({ scanned: 1, renewed: 1, degraded: 0, failed: 0 });
+      const update = updates[0] as Record<string, unknown>;
+      expect('last_page_token' in update).toBe(false);
+      // Not a silent skip: the connection stays dead until the next sweep, so
+      // it is reported, with the reason, at error level.
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(
+        { integrationId: 'int-1', orgId: 'org-1', bootstrapped: false },
+        expect.stringContaining('startPageToken'),
+      );
+    });
+
+    it('does NOT claim a bootstrap when the DB write failed', async () => {
+      const { db } = makeDb([dueRow({ last_page_token: null })], {
+        updateConnection: vi.fn(async () => ({ error: true })),
+      });
+      const info = vi.fn();
+      const summary = await renewDriveSubscriptions({
+        db, client: makeClient(), alert: vi.fn(), now: () => NOW, logger: { info, error: vi.fn() },
+      });
+      expect(summary).toEqual({ scanned: 1, renewed: 0, degraded: 0, failed: 1 });
+      expect(info).not.toHaveBeenCalled();
+    });
+
+    it('a setback path (revoked grant) never bootstraps the cursor', async () => {
+      const { db, updates } = makeDb([dueRow({ last_page_token: null })]);
+      await renewDriveSubscriptions({
+        db,
+        client: makeClient({ getAccessToken: vi.fn(async () => ({ accessToken: null, revoked: true })) }),
+        alert: vi.fn(),
+        now: () => NOW,
+      });
+      expect('last_page_token' in (updates[0] as Record<string, unknown>)).toBe(false);
+    });
+
+    it('works with no logger injected at all (logging is optional, bootstrap is not)', async () => {
+      const { db, updates } = makeDb([dueRow({ last_page_token: null })]);
+      const summary = await renewDriveSubscriptions({ db, client: makeClient(), alert: vi.fn(), now: () => NOW });
+      expect(summary.renewed).toBe(1);
+      expect((updates[0] as Record<string, unknown>).last_page_token).toBe('stp-from-watch');
     });
   });
 });

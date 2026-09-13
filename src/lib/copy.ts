@@ -660,6 +660,12 @@ export const WEBHOOK_LABELS = {
   // §1.5 / §1.13 R-7 honesty: states what payloads DO and DO NOT contain.
   CATALOG_REDACTION_NOTE:
     'Event payloads carry public record identifiers and status details only. They never include document contents, document fingerprints, personal information, or internal account identifiers.',
+  // CTO ruling Z5 (2026-09-12): the subscription picker's suffix for an event
+  // that is subscribable but not yet sent. It used to be typed into individual
+  // AVAILABLE_EVENTS labels, so it could disagree with the catalog's
+  // "Not yet active" badge — and did. Both now read the same liveness table
+  // (src/components/webhooks/webhookEventLiveness.ts).
+  EVENT_NOT_YET_ACTIVE_SUFFIX: ' (not yet active)',
 } as const;
 
 // Per-event catalog descriptions (WH-01). Keyed by the same event ids as
@@ -679,6 +685,13 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
   'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
+  // CTO ruling Z5 (2026-09-12), §1.13 R-7: scoped to the single-create route.
+  // POST /api/v1/attestations dispatches this event; the bulk route
+  // POST /api/v1/attestations/batch-create does not dispatch anything, so a
+  // bulk caller receives no notification. Do not widen this back to "an
+  // attestation was created" until batch-create emits.
+  'attestation.created': 'A single attestation was created and is awaiting securing. Bulk creation does not send this notification.',
+  'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
 };
 
 // =============================================================================
@@ -3077,7 +3090,105 @@ export const SUB_ORG_LABELS = {
   REQUEST_FAILED: 'Failed to send affiliation request.',
   CANCEL_REQUEST: 'Cancel Request',
   CANCEL_SUCCESS: 'Affiliation request cancelled.',
+  // Cancelling used to fail in total silence: the handler toasted only on
+  // `response.ok` and swallowed every other outcome in an empty `catch`, so a
+  // 500, a 403 or a dropped connection left the button looking inert and the
+  // request still pending. Shown whenever the worker's reply is not a
+  // recognised code (`translateWorkerError` maps the ones that are).
+  CANCEL_FAILED: 'Could not cancel your affiliation request. Please try again.',
   NO_RESULTS: 'No verified organizations found.',
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Founder feedback 2026-09-13 — "when I try and use sub orgs it's clunky and
+  // confusing". The measured cause (docs/uat/suborg-ux/FINDINGS.md) was not a
+  // missing capability: every parent-side action already existed. It was that
+  // the panel lived at the bottom of the Settings tab — 2,396 px of scrolling
+  // at 1280 px, 2,996 px at 375 px — and that several labels named the
+  // mechanism rather than its consequence.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** Org-profile tab label. Short on purpose: four tabs share one row at 375 px. */
+  TAB_LABEL: 'Affiliates',
+  /** Accessible name for the count chip on that tab. */
+  TAB_PENDING_BADGE_LABEL: 'affiliation requests awaiting your approval',
+
+  /** Singular of COUNT_LABEL — "1 affiliated organizations" read as a defect. */
+  COUNT_LABEL_ONE: 'affiliated organization',
+  PENDING_COUNT_ONE: 'request awaiting your approval',
+  PENDING_COUNT_MANY: 'requests awaiting your approval',
+
+  // The create form used to sit ABOVE the list, so the job an admin arrives to
+  // do (approve a waiting request) was below four fields they did not come to
+  // fill in. It is now a disclosure under the list.
+  ADD_AFFILIATE_OPEN: 'Add an organization',
+  ADD_AFFILIATE_CLOSE: 'Cancel',
+  ADD_AFFILIATE_HELP:
+    'The admin you name here is emailed an invitation to activate the new organization.',
+
+  // Empty state. The previous single sentence said what was absent and nothing
+  // about what the feature is or how one arrives.
+  EMPTY_STATE_TITLE: 'No affiliated organizations yet',
+  EMPTY_STATE_BODY:
+    'An affiliated organization is a separate organization you manage — a client, a subsidiary or a branch. Two things bring one here: you add it yourself, or it asks to affiliate with you and you approve the request on this page.',
+
+  /** Was a bare number floated to the row edge with no label. */
+  CHILD_BALANCE_LABEL: 'Their balance',
+
+  // Revoke fired immediately while the gentler Offboard beside it confirmed.
+  // The copy states only what revoking is verified to do — sever the
+  // affiliation — and explicitly does NOT claim it stops them securing
+  // documents, which is what Offboard does (§1.5 measured vs asserted).
+  REVOKE_TITLE: 'End the affiliation with {name}?',
+  REVOKE_BODY:
+    'They stop being an affiliated organization of yours: you can no longer allocate credits to them or share a signing connection with them, and they no longer appear under your organization. Credits they already hold stay with them and their secured documents stay verifiable. To take the credits back and suspend them instead, use Offboard.',
+  REVOKE_CONFIRM: 'End Affiliation',
+  REVOKE_CANCEL: 'Keep Affiliation',
+
+  /** Offboard confirmation now names the organization — at 375 px the row name truncates. */
+  OFFBOARD_TITLE_NAMED: 'Offboard {name}?',
+
+  // Load-error state, promoted from the local SUB_ORG_STATE_COPY constant in
+  // ManageSubOrgs.tsx per the note left there when copy.ts was locked.
+  LOAD_ERROR_TITLE: "Couldn't load affiliated organizations",
+  LOAD_ERROR_DESC:
+    'Something went wrong while loading affiliated organizations. Please try again.',
+  LOAD_ERROR_RETRY: 'Try Again',
+
+  // Worker replies were echoed straight into a toast, so an operator could be
+  // shown `sub_org_limit_reached` or `membership_lookup_unavailable`. Known
+  // replies map to these; anything unrecognised falls back to the generic
+  // failure copy and is logged rather than displayed.
+  ERROR_LIMIT_REACHED:
+    'Your organization has reached its limit on affiliated organizations. Contact support to raise it.',
+  ERROR_CAP_CHECK_UNAVAILABLE:
+    'We could not check your limit on affiliated organizations just now. Please try again.',
+  ERROR_ADMIN_NOT_FOUND:
+    'We could not find an account for that admin email. Check the address and try again.',
+  ERROR_NOT_ADMIN: 'You need admin permissions on this organization to do that.',
+  ERROR_TEMPORARILY_UNAVAILABLE: 'That service is temporarily unavailable. Please try again.',
+  ERROR_ALREADY_AFFILIATED:
+    'Your organization already has an active or pending affiliation request.',
+  ERROR_SELF_AFFILIATION: 'An organization cannot affiliate with itself.',
+  ERROR_PARENT_NOT_VERIFIED: 'You can only request affiliation with a verified organization.',
+  ERROR_PARENT_NOT_FOUND: 'We could not find that organization.',
+  ERROR_PARENT_IS_CHILD:
+    'That organization is already affiliated with another one, so it cannot take on affiliates.',
+  // The cancel endpoint's own replies. Left unmapped these fell through to the
+  // generic "please try again", which is wrong for the first one — the request
+  // is gone, so retrying can never succeed — and noisy for the rest, since
+  // translateWorkerError logs every unmapped reply.
+  ERROR_REQUEST_NO_LONGER_PENDING:
+    'That affiliation request is no longer pending. It may have just been approved or declined. Reload the page to see where it stands.',
+  ERROR_SIGNED_OUT: 'Your session has expired. Sign in again and retry.',
+
+  // A child whose affiliation was revoked kept `parent_org_id`, so the
+  // "Request Affiliation" control (gated on "not a child") disappeared and the
+  // organization had no way back.
+  REQUEST_AGAIN: 'Request Affiliation Again',
+  REVOKED_EXPLAINER:
+    'Your organization is on its own again. It keeps its records and can still secure documents. You can request affiliation with another organization below.',
+  PENDING_EXPLAINER:
+    'They have not answered yet. You can cancel the request and ask a different organization instead.',
 } as const;
 
 // =============================================================================
@@ -3143,6 +3254,12 @@ export const PROFILE_LABELS = {
     twitter: { label: 'X (Twitter)', placeholder: '@yourhandle' },
     github: { label: 'GitHub', placeholder: 'https://github.com/yourprofile' },
     website: { label: 'Website', placeholder: 'https://yourwebsite.com' },
+    invalid: {
+      linkedin: 'LinkedIn must be a link starting with https://.',
+      twitter: 'X (Twitter) must be an @handle or a link starting with https://.',
+      github: 'GitHub must be a link starting with https://.',
+      website: 'Website must be a link starting with https://.',
+    },
   },
 } as const;
 
@@ -4702,18 +4819,7 @@ export const OAUTH_EMAIL_CONFIRMATION_LABELS = {
   WORKING: 'Please wait…',
 } as const;
 
-// ── MFA enforcement (SCRUM-3167) ──
-//
-// Phase 1, role-based only (CTO ruling A4-3 — org-level enforcement is
-// dropped for now, see src/hooks/useMfaEnrollmentRequirement.ts). Four
-// blocks, one per surface AuthGuard can render in place of protected
-// children: the every-login challenge for anyone with a verified factor,
-// the non-skippable forced-enrollment screen for ORG_ADMIN/platform-admin
-// once enforcement is active, the fail-open capability-unavailable notice
-// (a platform misconfiguration must never wall anyone out — see
-// AuthGuard.tsx), and the dismissible grace-period nudge shown before the
-// enforcement date. §1.3-clean: no Wallet/Gas/Hash/Block/Transaction/
-// Crypto/Blockchain/Bitcoin/Testnet/Mainnet/UTXO/Broadcast/token.
+// ── MFA enforcement ──
 
 // R5 (PR #2637 review round 2): MFA_CHALLENGE_LABELS.GENERIC_ERROR and
 // MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR were byte-identical strings
@@ -4739,7 +4845,7 @@ export const MFA_CHALLENGE_LABELS = {
 
 export const MFA_ENROLLMENT_REQUIRED_LABELS = {
   TITLE: 'Two-factor authentication required',
-  DESCRIPTION: 'Your role has elevated access to organization data, so two-factor authentication is required before you can continue. Scan the QR code below with an authenticator app, then enter the 6-digit code it generates.',
+  DESCRIPTION: 'Two-factor authentication is required before you can continue. Scan the QR code below with an authenticator app, then enter the 6-digit code it generates.',
   SCAN_INSTRUCTION: 'Scan this QR code with your authenticator app',
   QR_ALT: 'QR code for authenticator app',
   MANUAL_ENTRY_LABEL: 'Manual entry code',
@@ -4748,6 +4854,7 @@ export const MFA_ENROLLMENT_REQUIRED_LABELS = {
   SUBMIT: 'Verify & continue',
   VERIFYING: 'Verifying...',
   SIGN_OUT: 'Sign out',
+  RETRY: 'Try again',
   GENERIC_ERROR: MFA_GENERIC_VERIFY_ERROR,
 } as const;
 

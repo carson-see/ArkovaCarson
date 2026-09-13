@@ -89,10 +89,6 @@ export const RAW_FETCH_ALLOWLIST: string[] = [
   // Fixed vendor hosts
   'integrations/grc/adapters.ts',
   'integrations/indexnow.ts',
-  // Already guarded by isPrivateUrlResolved (original SSRF defense; migration to
-  // safeFetch tracked separately, out of scope for this pass)
-  'webhooks/delivery.ts',
-  'api/v1/webhooks.ts',
 ];
 
 export type RawFetchKind = 'fetch' | 'undici';

@@ -164,6 +164,75 @@ function checkTimes(
   return { expiresAt, issuedAt };
 }
 
+export type SignedStatusVerdict =
+  | {
+      ok: true;
+      passportId: string;
+      /** The status ComputeID SIGNED — `active`, `revoked`, `suspended`, or anything else they mint. */
+      status: string;
+      issuedAt: Date | null;
+      expiresAt: Date;
+      /** The CA's attestation about the passport's own signatures; `null` when not attested. */
+      passportSignatureValid: boolean | null;
+    }
+  | { ok: false; reason: ReceiptFailure };
+
+/**
+ * Signature-verified view of a receipt's SIGNED status, whatever that status is.
+ *
+ * `verifyComputeIdReceipt` is the ADMISSION decision: it refuses anything that
+ * is not `active`, which is right for minting a key but useless to the
+ * scheduled passport re-check (SCRUM-4495), whose whole job is to notice that
+ * a passport has become `revoked` or `suspended` when the webhook telling us so
+ * was lost. That caller needs the same cryptographic assurance for a NEGATIVE
+ * status, so it goes through the identical pin → signature → payload →
+ * field-agreement → passport-id sequence here. There is exactly one signature
+ * implementation in this file and both entry points use it.
+ *
+ * Expiry is enforced (an expired receipt is not a statement about current
+ * state). The admission-only policy — status must be `active`, issue-time skew,
+ * the 24-hour Arkova validity ceiling — deliberately lives in
+ * `verifyComputeIdReceipt` and is NOT applied here; the caller decides what a
+ * given signed status entitles it to do.
+ */
+export function readSignedReceiptStatus(args: VerifyArgs): SignedStatusVerdict {
+  const { receipt, ca } = args;
+  const now = args.now ?? new Date();
+
+  const pin = checkPin(receipt, ca, now);
+  if (pin) return { ok: false, reason: pin };
+  const signature = checkSignature(receipt, ca);
+  if (signature) return { ok: false, reason: signature };
+  const signed = parseSignedPayload(receipt);
+  if (typeof signed === 'string') return { ok: false, reason: signed };
+  const agreement = checkFieldAgreement(receipt, signed);
+  if (agreement) return { ok: false, reason: agreement };
+  if (signed.passportId.toLowerCase() !== args.expectedPassportId.toLowerCase()) {
+    return { ok: false, reason: 'passport_id_mismatch' };
+  }
+
+  const expiresAt = new Date(signed.expiresAt);
+  if (Number.isNaN(expiresAt.getTime())) return { ok: false, reason: 'malformed_payload' };
+  if (now.getTime() >= expiresAt.getTime()) return { ok: false, reason: 'expired' };
+  let issuedAt: Date | null = null;
+  if (signed.issuedAt !== undefined) {
+    issuedAt = new Date(signed.issuedAt);
+    if (Number.isNaN(issuedAt.getTime())) return { ok: false, reason: 'malformed_payload' };
+  }
+
+  const { signature_valid: sigValid, pq_signature_valid: pqValid } = signed.raw;
+  const attested = [sigValid, pqValid].filter((v) => typeof v === 'boolean') as boolean[];
+
+  return {
+    ok: true,
+    passportId: signed.passportId.toLowerCase(),
+    status: signed.status,
+    issuedAt,
+    expiresAt,
+    passportSignatureValid: attested.length === 0 ? null : attested.every(Boolean),
+  };
+}
+
 export function verifyComputeIdReceipt(args: VerifyArgs): ReceiptVerdict {
   const { receipt, ca } = args;
   const now = args.now ?? new Date();

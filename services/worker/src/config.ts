@@ -25,6 +25,17 @@ const positiveNumberWithFallback = (def: number) => z.preprocess((v) => {
 // `Math.min(Math.max(min, Number.parseInt(...) || def), max)` idiom in the worker so
 // ad-hoc reads can migrate into config.ts (SCRUM-1258) with identical runtime
 // behavior: parseInt-style leading-int parse, NaN/0 → def, then clamp (not reject).
+// Positive-integer env with a default. Unlike clampedIntWithFallback this does
+// not clamp — an out-of-band value (blank, non-numeric, fractional, zero,
+// negative, Infinity) falls back to `def` rather than being silently coerced to
+// a boundary, because the value it guards (a monthly credit allocation) has no
+// honest ceiling to clamp to (SCRUM-1258 / SCRUM-4939).
+const positiveIntWithFallback = (def: number) => z.preprocess((v) => {
+  if (v === undefined || v === null || v === '') return def;
+  const parsed = Number(v);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : def;
+}, z.number().int().positive());
+
 const clampedIntWithFallback = (def: number, min: number, max: number) =>
   z.preprocess((v) => {
     const parsed = Number.parseInt(String(v ?? ''), 10) || def;
@@ -187,6 +198,16 @@ const ConfigSchema = z.object({
    * the default is higher. Clamped to [1000, 30000] (SCRUM-1258: typed, not ad-hoc).
    */
   aiBatchRowLatencyBudgetMs: clampedIntWithFallback(8_000, 1_000, 30_000),
+  /**
+   * SCRUM-4939 — monthly credit allocation stamped onto an `ai_credits` period
+   * row that `ensureAICreditsPeriod()` auto-provisions for an org that has none.
+   * Default 100 matches the allocation on every operator-seeded prod row
+   * (verified against prod 2026-09-12: 16/16 current-period rows at 100), so
+   * auto-provisioning cannot silently change an existing org's entitlement.
+   * Anything that is not a positive integer falls back to the default
+   * (SCRUM-1258: typed config, never an ad-hoc process.env read).
+   */
+  aiCreditsMonthlyAllocation: positiveIntWithFallback(100),
 
   // Cron job authentication (AUTH-01)
   /** Shared secret for cron job endpoints — alternative to OIDC when Cloud Scheduler is not used */
@@ -417,6 +438,20 @@ const ConfigSchema = z.object({
   computeidWebhookSecret: z.string().optional(),
   /** Pinned ComputeID CA — X.509 certificate PEM (prod) or bare SPKI public-key PEM (staging/tests). Never fetched at runtime. */
   computeidCaCertPem: z.string().optional(),
+  /**
+   * Base origin for the ONE outbound ComputeID call we make: the scheduled
+   * passport re-check's `GET /v1/agents/{id}/verify` (SCRUM-4495). It lives in
+   * config, never in request or row data, so no caller can steer the request
+   * (SSRF). Admission stays fully offline — it never calls the partner.
+   */
+  computeidApiBaseUrl: z.string().url().default('https://api.aicomputeid.com'),
+  /**
+   * Arkova's ComputeID partner API key (`X-API-Key`), used ONLY by the
+   * scheduled re-check. Optional on purpose: the re-check reports itself
+   * skipped rather than failing the worker, so the key can be provisioned
+   * after the integration is otherwise live.
+   */
+  computeidApiKey: z.string().optional(),
   /** Microsoft Graph subscription clientState. Required when ENABLE_MICROSOFT_GRAPH_WEBHOOK=true. */
   microsoftGraphClientState: z.string().optional(),
   enableMicrosoftGraphWebhook: boolFlag(false),
@@ -856,6 +891,22 @@ const ConfigSchema = z.object({
         });
       }
     }
+  } else if (cfg.computeidCaCertPem?.trim()) {
+    // VALIDATE-IF-PRESENT (SCRUM-4495 review). Since 2026-09-12 the pin is
+    // wired into deploy-worker.yml `--set-secrets` while the flag is still
+    // false, so a malformed or rotated PEM now sits in prod completely
+    // unexercised — and is first parsed by the activation deploy, i.e. the one
+    // moment nobody wants a surprise. Warn (never `addIssue`) while the flag is
+    // off: a dark integration must not be able to fail the worker's boot.
+    try {
+      loadPinnedCa(cfg.computeidCaCertPem);
+    } catch (err) {
+      console.warn(
+        '[config] COMPUTEID_CA_CERT_PEM is set but is NOT a usable CA pin '
+        + `(${err instanceof Error ? err.message : String(err)}). The ComputeID integration is dark, so this is not fatal — `
+        + 'but flipping ENABLE_COMPUTEID_INTEGRATION=true will fail the boot until it is fixed.',
+      );
+    }
   }
 
   // Veremark: when the webhook is enabled, the HMAC secret must be set.
@@ -1037,6 +1088,7 @@ function loadConfig(): Config {
     aiProvider: process.env.AI_PROVIDER,
     nessieModel: process.env.NESSIE_MODEL,
     aiBatchRowLatencyBudgetMs: process.env.AI_BATCH_ROW_LATENCY_BUDGET_MS,
+    aiCreditsMonthlyAllocation: process.env.AI_CREDITS_MONTHLY_ALLOCATION,
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     healthDetailToken: process.env.HEALTH_DETAIL_TOKEN,
@@ -1088,6 +1140,8 @@ function loadConfig(): Config {
     enableComputeidIntegration: process.env.ENABLE_COMPUTEID_INTEGRATION,
     computeidWebhookSecret: process.env.COMPUTEID_WEBHOOK_SECRET,
     computeidCaCertPem: process.env.COMPUTEID_CA_CERT_PEM,
+    computeidApiBaseUrl: process.env.COMPUTEID_API_BASE_URL,
+    computeidApiKey: process.env.COMPUTEID_API_KEY,
     microsoftGraphClientState: process.env.MICROSOFT_GRAPH_CLIENT_STATE,
     enableMicrosoftGraphWebhook: process.env.ENABLE_MICROSOFT_GRAPH_WEBHOOK,
     middeskApiKey: process.env.MIDDESK_API_KEY,

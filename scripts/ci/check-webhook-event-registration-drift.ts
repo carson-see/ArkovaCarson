@@ -95,7 +95,11 @@ export const MIRROR_SURFACES: SurfaceSpec[] = [
     ordered: true,
   },
   {
-    file: 'src/components/webhooks/WebhookEventCatalog.tsx',
+    // CTO ruling Z5 (2026-09-12): CATALOG_DATA moved out of
+    // WebhookEventCatalog.tsx into its own module so the subscription picker
+    // reads the SAME liveness flags the catalog badge does. The gate follows
+    // the table, not the file it used to live in.
+    file: 'src/components/webhooks/webhookEventLiveness.ts',
     description: 'Event catalog payload/live data (CATALOG_DATA)',
     region: /const CATALOG_DATA[^=]*=\s*\{([\s\S]*?)\n\};/,
     style: 'quoted',

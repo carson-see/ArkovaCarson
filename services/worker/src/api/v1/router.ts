@@ -498,7 +498,22 @@ router.use('/webhooks/self-service', requireAuth, webhooksSelfServiceRateLimiter
 // ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
 // INT-09: CRUD routes are mutating/sensitive — apply batch tier rate limit
 // (10 req/min per key) per Constitution 1.10 and the webhook docs contract.
-router.use('/webhooks', batchRateLimiter, webhooksRouter);
+//
+// SCRUM-3981: `webhooks:manage` is enforced HERE, at the mount. Until this
+// guard existed the scope was grantable, documented, offered in the dashboard
+// picker — and checked by nothing: the handlers verify that *an* API key is
+// present (`requireApiKey`) and the five ORG_ADMIN routes additionally verify
+// ORG_ADMIN, but no layer looked at scopes. A key minted with the default
+// `['read:search']` could list, read, test, replay and DLQ-manage an org's
+// endpoints.
+//
+// Order is the contract (pinned by `webhooks-scope.test.ts`): limiter, then
+// scope, then the router's own key + ORG_ADMIN checks. The limiter stays
+// first so an unscoped flood is rejected cheaply. Keep the handler-level
+// `requireApiKey` — `requireScope` opens with
+// `if (!req.apiKey) { next(); return; }`, so it is the handler check, not this
+// guard, that turns an anonymous request into a 401 instead of a 200.
+router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter);
 
 // ─── Agent Identity & Delegation — Phase II Agentic Layer (PH2-AGENT-05) ───
 // JWT auth required — agents are org-managed resources

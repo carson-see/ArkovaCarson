@@ -23,6 +23,14 @@ import {
   PRIVATE_IP_PATTERNS,
   isPrivateIp,
 } from '../lib/ssrf-guard.js';
+import { formatEgressFailure, webhookFetch } from './egress.js';
+
+// ─── SCRUM-4983: every outbound socket is IP-pinned — see ./egress.ts ────────
+// `isPrivateUrlResolved()` above is a pre-check, not a connection guard. Both
+// dispatch sites below go through `webhookFetch` (resolve → validate → connect
+// to the pinned IP). The pre-check stays: it is cheap, it logs a clear
+// "blocked" line before any delivery_log row is written, and the two layers
+// fail independently.
 
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
@@ -571,7 +579,8 @@ async function deliverToEndpoint(
   }
 
   try {
-    const response = await fetch(endpoint.url, {
+    // SCRUM-4983: pinned egress — see webhookFetch() above.
+    const response = await webhookFetch(endpoint.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -644,9 +653,12 @@ async function deliverToEndpoint(
       return false;
     }
   } catch (error) {
-    // Network error
-    const shouldRetry = attempt < MAX_RETRIES;
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    // Network error — unless the pinned egress layer refused the destination
+    // itself (SCRUM-4983), which is permanent: same URL, same answer.
+    const egress = formatEgressFailure(error);
+    const egressRefused = egress.permanent;
+    const shouldRetry = !egressRefused && attempt < MAX_RETRIES;
+    const errorMessage = egress.message;
 
     await db
       .from('webhook_delivery_logs')
@@ -664,13 +676,22 @@ async function deliverToEndpoint(
 
     // DH-12: Move to dead letter queue if permanently failed
     if (!shouldRetry) {
+      // `errorMessage` already carries `egress_refused: <code>` for a pinned-layer
+      // refusal; `failure_kind` must stay inside migration 0338's CHECK.
       await moveToDeadLetterQueue(endpoint, payload, errorMessage, attempt, 'http_delivery');
     }
 
-    logger.error(
-      { endpointId: endpoint.id, eventId: payload.event_id, error, attempt },
-      'Webhook delivery error'
-    );
+    if (egressRefused) {
+      logger.warn(
+        { endpointId: endpoint.id, eventId: payload.event_id, code: egress.code, attempt },
+        'Blocked webhook delivery at dispatch (pinned egress refused the resolved target)',
+      );
+    } else {
+      logger.error(
+        { endpointId: endpoint.id, eventId: payload.event_id, error, attempt },
+        'Webhook delivery error'
+      );
+    }
 
     return false;
   }
@@ -755,6 +776,112 @@ export function deriveResourceKey(
     return `${family}:${pid}`;
   }
   return null;
+}
+
+// ─── Payload refusal (SCRUM-3982, CTO review rulings Z1 + Z6) ─────────
+//
+// A refusal is usually PERMANENT: the stored payload carries a banned key, or
+// its event type has no schema. A cron sweep that re-reads the same rows would
+// then emit one error per row per sweep, forever — a standing alert that says
+// the same thing thousands of times and trains everyone to ignore it. So the
+// first refusal for a given (event type, reason) logs at error level, and
+// repeats inside the window are counted and folded into the next one.
+const REFUSAL_LOG_WINDOW_MS = 60_000;
+const refusalLogState = new Map<string, { lastLoggedAt: number; suppressed: number }>();
+
+/** Test seam — the window is process-lifetime state. */
+export function __resetRefusalLogStateForTest(): void {
+  refusalLogState.clear();
+}
+
+/**
+ * True if `payload.data` still validates for `payload.event_type`. On false the
+ * caller must NOT sign or deliver: it logs (rate-limited), breadcrumbs to
+ * Sentry, and leaves the caller to record the refusal durably.
+ */
+function assertPayloadDeliverable(
+  payload: WebhookPayload,
+  context: { deliveryId?: string; endpointId?: string; path: 'replay' | 'retry' },
+): { ok: true } | { ok: false; reason: string } {
+  const validation = validateWebhookPayload(payload.event_type, payload.data);
+  if (validation.ok) return { ok: true };
+
+  const issues = validation.error.issues.map((i) => ({
+    path: i.path.join('.'),
+    message: i.message,
+    code: i.code,
+  }));
+
+  // ─── What a STORED payload is refused for, and what it is not ──────────
+  //
+  // These two call sites replay rows written by a past version of this code,
+  // so "fails today's validation" and "is a leak" are not the same statement.
+  // A schema can tighten for reasons that have nothing to do with privacy —
+  // PR #567 made `anchor.secured`'s chain fields non-nullable, SCRUM-1743
+  // added a cross-field refine. Refusing on those would silently make every
+  // pre-change delivery log un-replayable, which is an availability
+  // regression dressed up as a security control.
+  //
+  // The leak class is precisely: A FIELD WE DID NOT DECLARE. That is
+  // `unrecognized_keys` (what `.strict()` raises, and what the banned-key scan
+  // raises for the legacy unregistered types) and `custom` (an unregistered
+  // event type, which has no declared shape at all). Those are refused.
+  // Everything else — a missing required field, a malformed timestamp, a
+  // failed refine — is shape drift on fields we already publish: logged, and
+  // delivered.
+  const REFUSABLE_CODES = new Set(['unrecognized_keys', 'custom']);
+  const leakIssues = issues.filter((i) => REFUSABLE_CODES.has(String(i.code)));
+  if (leakIssues.length === 0) {
+    logger.warn(
+      {
+        eventType: payload.event_type,
+        eventId: payload.event_id,
+        deliveryId: context.deliveryId,
+        path: context.path,
+        issues: issues.map((i) => ({ path: i.path, code: i.code })),
+      },
+      'Stored webhook payload no longer matches its current schema (shape drift, no undeclared field) — delivering',
+    );
+    return { ok: true };
+  }
+  const key = `${payload.event_type}:${context.path}:${leakIssues.map((i) => i.path).join(',')}`;
+  const now = Date.now();
+  const state = refusalLogState.get(key);
+
+  if (!state || now - state.lastLoggedAt >= REFUSAL_LOG_WINDOW_MS) {
+    logger.error(
+      {
+        eventType: payload.event_type,
+        eventId: payload.event_id,
+        deliveryId: context.deliveryId,
+        endpointId: context.endpointId,
+        path: context.path,
+        issues: leakIssues,
+        suppressedSinceLastLog: state?.suppressed ?? 0,
+      },
+      'Stored webhook payload refused before signing — not delivered (CLAUDE.md §6 + §1.6)',
+    );
+    refusalLogState.set(key, { lastLoggedAt: now, suppressed: 0 });
+  } else {
+    state.suppressed++;
+  }
+
+  // Breadcrumb rather than captureException: the refusal is the system working,
+  // and it carries the event type and the key PATHS — never the values, which
+  // are exactly the fingerprint/UUID being withheld.
+  Sentry.addBreadcrumb?.({
+    category: 'webhook.payload_refused',
+    level: 'warning',
+    message: `${payload.event_type} refused on ${context.path}`,
+    data: { issues: leakIssues.map((i) => i.path) },
+  });
+
+  // Key PATHS only — the values are the fingerprint/UUID being withheld, and
+  // this string is persisted to `webhook_delivery_logs.error_message`.
+  return {
+    ok: false,
+    reason: leakIssues.map((i) => i.message).join('; '),
+  };
 }
 
 /**
@@ -858,6 +985,19 @@ export async function dispatchWebhookEvent(
  * (endpoint_id, event_type, event_id, failure_kind) so re-DLQ of the SAME
  * failure mode is a no-op, while the two distinct modes can each keep one row.
  */
+// `failure_kind` is NOT free text. Migration 0338 ships
+//   CHECK (failure_kind IN ('http_delivery', 'log_write'))
+// and that constraint is live on prod. A third value is rejected with 23514 —
+// and because the upsert below is a PostgREST call, a rejection comes back as
+// `{ error }` rather than a throw, so an out-of-CHECK value loses the DLQ row
+// SILENTLY while the "Moved to dead letter queue" info line still fires.
+//
+// SCRUM-4983 therefore records a pinned-egress refusal as a normal
+// `http_delivery` DLQ row and carries the distinction in `error_message`
+// (`egress_refused: <code>`) plus the structured warn log, so support can still
+// tell "your hostname resolves to a private address" from "your server is
+// down". Adding a genuine `egress_refused` kind needs a migration widening the
+// CHECK, which makes the change T3.
 type DlqFailureKind = 'http_delivery' | 'log_write';
 
 /**
@@ -878,7 +1018,7 @@ async function moveToDeadLetterQueue(
 ): Promise<void> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (db as any)
+    const dlqResult = (await (db as any)
       .from('webhook_dead_letter_queue')
       .upsert(
         {
@@ -900,7 +1040,23 @@ async function moveToDeadLetterQueue(
           onConflict: 'endpoint_id,event_type,event_id,failure_kind',
           ignoreDuplicates: true,
         },
+      )) as { error?: { message?: string } | null } | null;
+
+    // PostgREST reports a rejected write (CHECK violation, RLS, bad column) in
+    // `{ error }` — it does NOT throw — so without this the catch below never
+    // runs and the success line below claims a row that was never written.
+    if (dlqResult?.error) {
+      logger.error(
+        {
+          endpointId: endpoint.id,
+          eventId: payload.event_id,
+          failureKind,
+          error: dlqResult.error,
+        },
+        'Failed to write to dead letter queue (rejected by the database)',
       );
+      return;
+    }
 
     logger.info(
       { endpointId: endpoint.id, eventId: payload.event_id, lastAttempt, failureKind },
@@ -999,6 +1155,14 @@ export type ReplayError =
   | 'cross_org'
   | 'endpoint_inactive'
   | 'ssrf_blocked'
+  /**
+   * SCRUM-3982 (CTO review ruling Z1): the stored payload does not pass
+   * `validateWebhookPayload` — it carries a banned key, fails its schema, or is
+   * an event type that is no longer allowed to dispatch unvalidated. Rows
+   * written before the ratchet landed can contain `fingerprint` / `anchor_id`;
+   * replay must not be a way to deliver them.
+   */
+  | 'payload_refused'
   | 'delivery_failed';
 
 export interface ReplayResult {
@@ -1047,6 +1211,22 @@ export async function replayDelivery(
   }
 
   const payload = row.payload as WebhookPayload;
+
+  // SCRUM-3982 (CTO review ruling Z1) — re-validate BEFORE signing.
+  //
+  // The banned-field ratchet lives in `dispatchWebhookEvent`, which only sees
+  // an event's FIRST dispatch. Replay reads `webhook_delivery_logs.payload`
+  // verbatim and re-signs it, so every row persisted before the ratchet landed
+  // — including any carrying `fingerprint` or `anchor_id` — stayed one API call
+  // away from the wire. The ratchet is worth exactly as much as its weakest
+  // path out of the process, so it binds here too.
+  const replayable = assertPayloadDeliverable(payload, {
+    deliveryId,
+    endpointId: endpoint.id,
+    path: 'replay',
+  });
+  if (!replayable.ok) return { ok: false, error: 'payload_refused' };
+
   const payloadString = JSON.stringify(payload);
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
@@ -1074,7 +1254,8 @@ export async function replayDelivery(
   }
 
   try {
-    const response = await fetch(endpoint.url, {
+    // SCRUM-4983: pinned egress — see webhookFetch() above.
+    const response = await webhookFetch(endpoint.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1106,11 +1287,17 @@ export async function replayDelivery(
 
     return { ok: isSuccess, status_code: response.status, new_delivery_id: newLog.id };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'unknown';
+    const egress = formatEgressFailure(err);
+    const egressRefused = egress.permanent;
+    const msg = egress.message;
     await dbAny
       .from('webhook_delivery_logs')
       .update({ status: 'failed', error_message: truncateUtf16Safe(msg, 500) })
       .eq('id', newLog.id);
+    if (egressRefused) {
+      logger.warn({ endpointId: endpoint.id, deliveryId, code: egress.code }, 'Replay blocked at dispatch — pinned egress refused the resolved target');
+      return { ok: false, error: 'ssrf_blocked', new_delivery_id: newLog.id };
+    }
     return { ok: false, error: 'delivery_failed', new_delivery_id: newLog.id };
   }
 }
@@ -1239,8 +1426,53 @@ export async function processWebhookRetries(): Promise<number> {
   // liveness/ordering trade-off: strict per-resource order while the head is
   // live, fail-forward (drop the dead head, deliver the rest in order) once it
   // is dead-lettered.
+  // SCRUM-3982 (CTO review ruling Z1) — re-validate each head row BEFORE
+  // handing it to deliverToEndpoint, which signs whatever it is given.
+  //
+  // A refused row is terminated rather than left in `retrying`: it would
+  // otherwise match this query on every sweep forever AND, because it is the
+  // head of its resource group, head-of-line-block every newer event for that
+  // resource permanently. Terminating it preserves the fail-forward contract
+  // documented above — the dead head leaves `retrying`, the next event for the
+  // resource becomes the head on the following sweep.
+  //
+  // It is NOT moved to the dead-letter queue: `webhook_dead_letter_queue`'s
+  // `failure_kind` CHECK admits only 'http_delivery' | 'log_write' (migration
+  // 0338), and neither is true here. Recording it as an HTTP failure would be a
+  // false audit fact. The `failed` delivery-log row carries the real reason in
+  // `error_message`; extending failure_kind with 'payload_refused' needs a
+  // migration and belongs with the rest of SCRUM-5063.
+  const deliverable: RetryRow[] = [];
+  for (const row of headRows) {
+    const check = assertPayloadDeliverable(row.payload, {
+      deliveryId: row.id,
+      endpointId: (row.webhook_endpoints as WebhookEndpoint | null)?.id,
+      path: 'retry',
+    });
+    if (check.ok) {
+      deliverable.push(row);
+      continue;
+    }
+    const { error: terminateError } = await db
+      .from('webhook_delivery_logs')
+      .update({
+        status: 'failed',
+        error_message: truncateUtf16Safe(
+          `SCRUM-3982: payload refused before signing — ${check.reason}`,
+          500,
+        ),
+      })
+      .eq('id', row.id);
+    if (terminateError) {
+      logger.error(
+        { error: terminateError, deliveryId: row.id },
+        'Failed to terminate a refused webhook delivery row — it will be re-evaluated next sweep',
+      );
+    }
+  }
+
   await Promise.allSettled(
-    headRows.map((row) =>
+    deliverable.map((row) =>
       deliverToEndpoint(
         row.webhook_endpoints as WebhookEndpoint,
         row.payload,
@@ -1249,6 +1481,6 @@ export async function processWebhookRetries(): Promise<number> {
     ),
   );
 
-  // Count of resource head-rows attempted this sweep.
+  // Count of resource head-rows handled this sweep (delivered or refused).
   return headRows.length;
 }

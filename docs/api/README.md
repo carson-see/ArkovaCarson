@@ -37,7 +37,7 @@ The rich v1 verification response includes shipped API-RICH-02 fields `descripti
 |---|---|---|---|
 | Verification | `GET /verify/{publicId}`, `POST /verify/batch` | Optional API key (rate-limit boost) | [OpenAPI](./openapi.yaml) |
 | Anchoring | `POST /anchor` | API key | [OpenAPI](./openapi.yaml) |
-| Webhooks | `POST/GET/PATCH/DELETE /webhooks`, `POST /webhooks/test`, `GET /webhooks/deliveries` | API key | [Webhooks guide](./webhooks.md) |
+| Webhooks | `POST/GET/PATCH/DELETE /webhooks`, `GET /webhooks/{id}`, `POST /webhooks/test`, `GET /webhooks/deliveries`, `POST /webhooks/deliveries/{id}/replay`, `GET /webhooks/dlq`, `POST /webhooks/dlq/{id}/resolve` | API key with the `webhooks:manage` scope (all ten routes). Registering, updating, deleting, and both DLQ routes additionally require the key's actor to be an ORG_ADMIN | [Webhooks guide](./webhooks.md) |
 | API key management | `POST/GET/PATCH/DELETE /keys` | Supabase JWT | [OpenAPI](./openapi.yaml) |
 | Nessie RAG — **DISABLED** (R-1) | `POST /nessie/query` | n/a — returns 503 `nessie_disabled` | [OpenAPI](./openapi.yaml) |
 | CLE compliance | `GET /cle/verify`, `GET /cle/credits`, `POST /cle/submit` | API key + x402 gate at `/api/v1/cle` | [OpenAPI](./openapi.yaml) |
@@ -72,6 +72,10 @@ Search endpoints return `public_id` values that can be passed directly to the ma
 | Sub-organization listing (`GET /organizations/sub-orgs`) | `read:orgs` |
 
 `POST /api/v1/anchor` accepts either `anchor:write` or `write:anchors`. `GET /api/v1/usage` requires `usage:read`; read/search scopes do not include usage analytics. A key holding `orgs:manage` also satisfies `read:orgs` — the sub-organization write grant contains the read grant, so a parent key that can act on its affiliates can always list them; the implication does not run the other way. The credit rollup (`GET /organizations/sub-orgs/credits`) is the one GET on that surface that requires `orgs:manage` rather than `read:orgs`: balances are money data, and the function behind it requires that grant in SQL.
+
+Every route of the webhook **management** API — the ten listed in the surface matrix above — requires `webhooks:manage` (SCRUM-3981); no other scope implies it, including the default `read:search` a new key is minted with, and (per the previous paragraph) `orgs:manage` does not imply it either — sub-organization management and webhook management are separate grants. Three other mounted paths also begin `/api/v1/webhooks` and are **not** scope-gated, because they are not API-key surfaces at all: `/webhooks/self-service/*` (the dashboard, Supabase JWT + ORG_ADMIN), `/webhooks/drive` (Google push, channel-token verified) and `/webhooks/ats/{provider}/{integrationId}` (inbound ATS, HMAC-signed). Each is mounted ahead of the management router with its own auth.
+
+A scope in this table is grantable; it is not automatically enforced. `services/worker/src/api/apiScopeEnforcementCensus.test.ts` is the inventory of which of these are required by a route guard today and which are not, with a reason per unenforced entry, so a scope cannot quietly re-enter the "documented but inert" state `webhooks:manage` was in before SCRUM-3981. The census now also carries the two `orgs:manage` sub-organization routes this PR adds.
 
 ### 3. TypeScript SDK — `arkova`
 

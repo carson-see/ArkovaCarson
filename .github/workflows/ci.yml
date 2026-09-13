@@ -367,7 +367,7 @@ jobs:
         # step is skipped entirely (see "Skip Sonatype Lifecycle notice"
         # below). When secrets ARE set, real findings should fail the PR.
         if: env.SONATYPE_LIFECYCLE_URL != '' && env.SONATYPE_LIFECYCLE_USERNAME != '' && env.SONATYPE_LIFECYCLE_PASSWORD != '' && env.SONATYPE_LIFECYCLE_APPLICATION_ID != ''
-        uses: sonatype/actions/evaluate@18335e91b476ad0f0a7c68bec3f1445e70d8f5fc # v1
+        uses: sonatype/actions/evaluate@b1c823a70e98d3c67478cd72c0128712623455b9 # v1
         with:
           iq-server-url: ${{ env.SONATYPE_LIFECYCLE_URL }}
           username: ${{ env.SONATYPE_LIFECYCLE_USERNAME }}
@@ -930,9 +930,16 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
-          version: 1.123.0
+          # UAT-04 exercises the custom access token hook. CLI 1.123.0 ignores
+          # both [auth.mfa] and [auth.hook.custom_access_token], so its GoTrue
+          # runtime minted ordinary authenticated tokens for AAL1 users.
+          version: 2.98.2
 
       - name: Start Supabase
+        env:
+          # CLI 2.x pipelines migrations; rewrite concurrent index DDL only in
+          # this throwaway checkout (see scripts/ci-supabase-start.sh).
+          CI_SUPABASE_STRIP_CONCURRENTLY: '1'
         run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
@@ -941,23 +948,37 @@ jobs:
           SUPABASE_URL=$(supabase status --output json | jq -r '.API_URL')
           SUPABASE_ANON_KEY=$(supabase status --output json | jq -r '.ANON_KEY')
           SUPABASE_SERVICE_ROLE_KEY=$(supabase status --output json | jq -r '.SERVICE_ROLE_KEY')
+          SUPABASE_JWT_SECRET=$(supabase status --output json | jq -r '.JWT_SECRET')
           # SQL role-corruption tests need the local bootstrap administrator and
           # the actual free port selected by ci-supabase-start.sh (instead of the default port 54322).
           RLS_DATABASE_URL=$(supabase status --output json | jq -r '.DB_URL')
           UAT03_DATABASE_URL=$(printf '%s' "$RLS_DATABASE_URL" | sed 's#://postgres:#://supabase_admin:#')
           echo "::add-mask::$SUPABASE_ANON_KEY"
           echo "::add-mask::$SUPABASE_SERVICE_ROLE_KEY"
+          echo "::add-mask::$SUPABASE_JWT_SECRET"
           echo "::add-mask::$RLS_DATABASE_URL"
           echo "::add-mask::$UAT03_DATABASE_URL"
           echo "url=$SUPABASE_URL" >> "$GITHUB_OUTPUT"
           echo "anon_key=$SUPABASE_ANON_KEY" >> "$GITHUB_OUTPUT"
           echo "service_role_key=$SUPABASE_SERVICE_ROLE_KEY" >> "$GITHUB_OUTPUT"
+          echo "jwt_secret=$SUPABASE_JWT_SECRET" >> "$GITHUB_OUTPUT"
           echo "database_url=$RLS_DATABASE_URL" >> "$GITHUB_OUTPUT"
           echo "uat03_database_url=$UAT03_DATABASE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Run database reset
         id: db-reset
         run: supabase db reset
+
+      - name: Restore committed migration sources
+        # CLI 2.x needs the CI-only CONCURRENTLY rewrite for both start and reset.
+        # Restore the checkout before source-contract tests inspect production DDL.
+        if: always()
+        run: |
+          test "${CI:-}" = "true"
+          git restore --source=HEAD --worktree -- supabase/migrations
+          git clean -fd -- supabase/migrations
+          git diff --exit-code -- supabase/migrations
+          test -z "$(git ls-files --others --exclude-standard -- supabase/migrations)"
 
       # CI-worker-test-skip fix — this step (root frontend/scripts suite) and
       # everything below it through "Run worker tests with coverage" are
@@ -1016,9 +1037,11 @@ jobs:
           SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
           SUPABASE_ANON_KEY: ${{ steps.supabase-keys.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-keys.outputs.service_role_key }}
+          SUPABASE_JWT_SECRET: ${{ steps.supabase-keys.outputs.jwt_secret }}
           RLS_TEST_PASSWORD: Arkova2026!
           RLS_DATABASE_URL: ${{ steps.supabase-keys.outputs.database_url }}
           UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
+          UAT04_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
 
       - name: Install worker dependencies
         id: worker-deps
@@ -1392,7 +1415,7 @@ jobs:
 
       - name: Set up Java (for TLC model checker)
         if: steps.tla-changed.outputs.changed == 'true'
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '17'
