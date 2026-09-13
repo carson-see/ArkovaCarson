@@ -16,6 +16,25 @@ The enum is the runtime recognised-marker set from
 not editing this file. `source` carries the provider label and NOTHING else — no identifier, no deep
 link — because this endpoint answers anonymously; see `services/worker/src/api/v1/agents.md` for the
 full reasoning, which lives there and is not restated here.
+## 2026-09-12 — documenting `webhooks:manage` enforcement, and why openapi.yaml was not the place (SCRUM-3981)
+
+`/api/v1/webhooks*` now requires the `webhooks:manage` scope. Three documentation surfaces changed
+and one deliberately did not:
+
+- **`README.md`** — the Webhooks row of the surface matrix now lists all ten routes and names the
+  scope, and the paragraph under the canonical scope table says plainly that a scope being listed
+  there is not a claim that it is enforced, pointing at the census test that says which are.
+- **`webhooks.md`** — Authentication section states the scope requirement, the ORG_ADMIN overlay on
+  the five mutating routes, and that a cross-org read is 404 rather than 403; both error tables gain
+  the two 403 rows.
+- **`services/worker/src/api/v1/docs.ts`** — the served spec: `x-arkova-required-scopes` plus a 403
+  on each of the ten operations, pinned by `docs.test.ts`.
+- **`openapi.yaml` — untouched, on purpose.** It documents no `/webhooks` path at all, so "add the
+  403" would have meant authoring ten operations into a file `canonical-sources.md` demoted on
+  2026-07-28 for having drifted 12+ routes behind the runtime spec. Writing a fresh, second
+  description of this surface there would recreate the drift the demotion was meant to end. It is
+  still parse-checked by `scripts/ci/check-api-scope-vocabulary.ts` for scope VOCABULARY parity, and
+  the vocabulary did not change here — no scope was added, renamed, or removed.
 
 ## 2026-09-05 — the `arkova_` rename vs §1.8: what moved and what did not (SCRUM-4465 / BUG-2026-09-02-001)
 
@@ -156,3 +175,19 @@ it (`anchor.superseded` sits under Anchor Lifecycle, not Compliance).
 When wording a row, keep "subscribable since <story>" honest: the CRUD allowlist is derived from the
 worker schema map, so an event is API-subscribable from the moment its schema is registered, which
 may be long before any UI or SDK lists it.
+
+## 2026-09-12 — Attestation Lifecycle section added to webhooks.md (SCRUM-3982)
+
+`docs/api/webhooks.md` gained an "Attestation Lifecycle" table for
+`attestation.created` and `attestation.revoked`, plus their payload field
+lists. This file is one of the six mirrors that
+`scripts/ci/check-webhook-event-registration-drift.ts` compares against the
+worker's `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`; it is read as a SET (order-insensitive)
+and only the FIRST cell of a markdown table row counts as a listing, so an
+event merely mentioned in prose does not satisfy the gate.
+
+Honesty note (§1.13 R-7): `attestation.revoked`'s Status cell says the emit
+point is not yet reachable in production, because it is not — the revoke
+handler's dispatch is guarded on an org id its ownership query never selects.
+The contract is published so subscriptions can be registered ahead of the fix,
+the same shape as `credential.verified`.

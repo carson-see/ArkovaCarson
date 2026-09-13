@@ -1,0 +1,881 @@
+{
+  "schedulerJob": null,
+  "treasury": null,
+  "notApplicable": {
+    "schedulerJob": "Train changes no anchoring/scheduler path; no forced-flush job exists on this rig (mock profile)",
+    "treasury": "USE_MOCKS=true rig; no chain path in the train"
+  },
+  "changedPaths": [
+    "pr-2835-authz",
+    "pr-2836-webhooks",
+    "pr-2838-headers"
+  ],
+  "drainLog": [
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T01-55-09-624Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T01-55-09-624Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T01-55-09-624Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-00-37-030Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-00-37-030Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-00-37-030Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-06-05-713Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-06-05-713Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-06-05-713Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-11-36-040Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-11-36-040Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-11-36-040Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-17-06-067Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-17-06-067Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-17-06-067Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-22-36-319Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-22-36-319Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-22-36-319Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-28-05-990Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-28-05-990Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-28-05-990Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-33-36-244Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-33-36-244Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-33-36-244Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-39-04-820Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-39-04-820Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-39-04-820Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-44-34-721Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-44-34-721Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-44-34-721Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-50-06-338Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-50-06-338Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-50-06-338Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T02-55-37-226Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T02-55-37-226Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T02-55-37-226Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-01-04-818Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-01-04-818Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-01-04-818Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-06-32-104Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-06-32-104Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-06-32-104Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-12-00-256Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-12-00-256Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-12-00-256Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-17-28-795Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-17-28-795Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-17-28-795Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-22-57-363Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-22-57-363Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-22-57-363Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-28-25-657Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-28-25-657Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-28-25-657Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-33-53-877Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-33-53-877Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-33-53-877Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-39-23-074Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-39-23-074Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-39-23-074Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-44-52-230Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-44-52-230Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-44-52-230Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-50-21-378Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-50-21-378Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-50-21-378Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T03-55-50-339Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T03-55-50-339Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T03-55-50-339Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-01-19-276Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-01-19-276Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-01-19-276Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-06-47-923Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-06-47-923Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-06-47-923Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-12-17-372Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-12-17-372Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-12-17-372Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-17-46-002Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-17-46-002Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-17-46-002Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-23-14-902Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-23-14-902Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-23-14-902Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-28-42-931Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-28-42-931Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-28-42-931Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-34-11-981Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-34-11-981Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-34-11-981Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-39-39-930Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-39-39-930Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-39-39-930Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-45-08-249Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-45-08-249Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-45-08-249Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-50-34-922Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-50-34-922Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-50-34-922Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T04-56-03-141Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T04-56-03-141Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T04-56-03-141Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-01-31-476Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-01-31-476Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-01-31-476Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-06-59-172Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-06-59-172Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-06-59-172Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-12-27-056Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-12-27-056Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-12-27-056Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-17-55-173Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-17-55-173Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-17-55-173Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-23-21-990Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-23-21-990Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-23-21-990Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-28-50-079Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-28-50-079Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-28-50-079Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-34-17-734Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-34-17-734Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-34-17-734Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-39-44-387Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-39-44-387Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-39-44-387Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-45-14-597Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-45-14-597Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-45-14-597Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-50-42-245Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-50-42-245Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-50-42-245Z: 79/79 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2835-authz",
+      "reason": "cycle 2026-09-13T05-56-09-992Z: 43/43 probes passed"
+    },
+    {
+      "processed": 22,
+      "skipped": false,
+      "path": "pr-2836-webhooks",
+      "reason": "cycle 2026-09-13T05-56-09-992Z: 22/22 probes passed"
+    },
+    {
+      "processed": 79,
+      "skipped": false,
+      "path": "pr-2838-headers",
+      "reason": "cycle 2026-09-13T05-56-09-992Z: 79/79 probes passed"
+    }
+  ],
+  "deployProvenance": {
+    "deployLogRows": [
+      {
+        "head_sha": "85059176c3894bdc6c2501c987c1f2cb9437f7ed",
+        "service": "arkova-worker-cto-train-b1-0912-staging",
+        "at": "2026-09-13T01:35:20.426376+00:00",
+        "revision_name": "arkova-worker-cto-train-b1-0912-staging-00002-bev"
+      },
+      {
+        "head_sha": "dfd337ba1dcd9ddf839604bd2a5b9fcf1213021d",
+        "service": "arkova-worker-cto-train-b1-0912-staging",
+        "at": "2026-09-13T01:54:10.460414+00:00",
+        "revision_name": "arkova-worker-cto-train-b1-0912-staging-00004-lib"
+      }
+    ],
+    "prHeadSha": "dfd337ba1dcd9ddf839604bd2a5b9fcf1213021d",
+    "service": "arkova-worker-cto-train-b1-0912-staging"
+  },
+  "base": {
+    "baseRefName": "main"
+  },
+  "_meta": {
+    "decision": "CTO 2026-09-12 — Confluence 146440221 / SCRUM-5054",
+    "generator": "scripts/staging/targeted/cto-train-b-0912/preflight-from-window.mjs",
+    "generated_at": "2026-09-13T05:59:16.636Z",
+    "rc_id": "RC-2026-09-12-TRAIN-B1",
+    "manifest": "/Volumes/Extreme/offload/cto-review-2026-09-12/wt-gate/docs/staging/rc-manifests/rc-train-b1-2026-09-12.json",
+    "window": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b1/window1",
+    "cycle_files": 45,
+    "cycles_with_per_pr": 45,
+    "cycles_passed": 45,
+    "errored_cycles": [],
+    "per_pr_totals": {
+      "#2835": {
+        "path": "pr-2835-authz",
+        "cycles": 45,
+        "probes": 1935,
+        "passed": 1935
+      },
+      "#2836": {
+        "path": "pr-2836-webhooks",
+        "cycles": 45,
+        "probes": 990,
+        "passed": 990
+      },
+      "#2838": {
+        "path": "pr-2838-headers",
+        "cycles": 45,
+        "probes": 3555,
+        "passed": 3555
+      }
+    },
+    "deploy_log_source": "exported staging_deploy_log rows: /Volumes/Extreme/offload/cto-review-2026-09-12/deploy-log-rig2.json",
+    "supabase_project_ref": "pdgfbbnrqhojiihtxycd",
+    "preflight_result": "environment_type=clean_mirror"
+  }
+}

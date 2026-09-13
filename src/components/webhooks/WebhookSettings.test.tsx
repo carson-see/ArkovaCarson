@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { WebhookSettings, AVAILABLE_EVENTS } from './WebhookSettings';
+import { CATALOG_DATA } from './webhookEventLiveness';
 import { WEBHOOK_LABELS } from '@/lib/copy';
 
 // Mock navigator.clipboard
@@ -572,9 +573,66 @@ describe('WebhookSettings', () => {
         // BUG-002: registered in the worker allowlist so the expiry-alert cron's
         // dispatch can actually reach a subscriber.
         'compliance.document_expiring',
+        // SCRUM-3982: both were dispatched from
+        // services/worker/src/api/v1/attestations.ts while unregistered, so no
+        // endpoint could subscribe AND the payload skipped schema validation
+        // (attestation.created was shipping the document fingerprint, §1.6).
+        'attestation.created',
+        'attestation.revoked',
       ];
       const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
       expect(actualIds).toEqual(EXPECTED_EVENT_IDS);
+    });
+  });
+
+  /**
+   * CTO ruling Z5 (2026-09-12) — §1.13 R-7.
+   *
+   * The picker used to bake a literal "(coming soon)" into two AVAILABLE_EVENTS
+   * labels. That suffix was hand-maintained and derived from nothing, so it
+   * could (and did) disagree with WebhookEventCatalog's `live` flag: the
+   * catalog badged `anchor.batch_secured` Active while no worker call site ever
+   * dispatched it, and the picker said nothing at all. The suffix is now
+   * computed from CATALOG_DATA[id].live, the single liveness source both
+   * surfaces read, so the two can no longer drift apart.
+   */
+  describe('event picker liveness suffix (CTO ruling Z5)', () => {
+    it('never hardcodes a liveness suffix in an AVAILABLE_EVENTS label', () => {
+      for (const event of AVAILABLE_EVENTS) {
+        expect(event.label, event.id).not.toMatch(/coming soon/i);
+        expect(event.label, event.id).not.toMatch(
+          new RegExp(WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+        );
+      }
+    });
+
+    it('suffixes exactly the events CATALOG_DATA marks not live', async () => {
+      render(<WebhookSettings {...defaultProps} />);
+      await userEvent.click(screen.getByText('Add Endpoint'));
+
+      for (const event of AVAILABLE_EVENTS) {
+        const checkbox = screen.getByLabelText(
+          new RegExp(event.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+        );
+        const text = checkbox.closest('label')?.textContent ?? '';
+        if (CATALOG_DATA[event.id]?.live) {
+          expect(text, event.id).not.toContain(WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX);
+        } else {
+          expect(text, event.id).toContain(WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX);
+        }
+      }
+    });
+
+    it('marks anchor.batch_secured not yet active in the picker', async () => {
+      // The event a subscriber was most likely to be misled by: registered and
+      // selectable, but no worker dispatch site emits it.
+      render(<WebhookSettings {...defaultProps} />);
+      await userEvent.click(screen.getByText('Add Endpoint'));
+
+      const checkbox = screen.getByLabelText(/Anchor Batch Secured/i);
+      expect(checkbox.closest('label')?.textContent).toContain(
+        WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX,
+      );
     });
   });
 });

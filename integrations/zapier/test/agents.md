@@ -36,3 +36,17 @@ The §1.3 guard immediately below it (`action display copy has no "credential" w
 test file's own `describe` strings, which is why this one survived. The remaining `credential_type`
 strings in `src/` are the frozen API field name, deliberately kept — see the P10 note in
 `../src/agents.md`.
+
+## 2026-09-12 — VALID_EVENTS pin extended (SCRUM-3982)
+
+The `mirrors the worker allowlist exactly (drift guard)` case now expects
+`attestation.created` and `attestation.revoked` at the end of the array. The pin
+is order-sensitive (`toEqual`), and the worker appends new events rather than
+inserting them, so a new event goes at the tail.
+
+Unchanged caveat, worth restating: this pin is a hardcoded array in a workspace
+that cannot import the worker constant, and no workflow runs this package's
+suite on a pull request. It fires only when someone edits `VALID_EVENTS` and
+forgets this list. The gate that keys off the source of truth is
+`scripts/ci/check-webhook-event-registration-drift.ts`, inside the required root
+`Tests` job.

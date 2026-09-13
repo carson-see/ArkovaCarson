@@ -56,6 +56,9 @@ import {
   getDeadLetterEntries,
   resolveDlqEntry,
 } from './delivery.js';
+import { __setWebhookFetchForTests } from './egress.js';
+// SCRUM-4983: pinned dispatch bypasses the global fetch stub — route it back.
+__setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
 
 // ---- Test fixtures ----
 

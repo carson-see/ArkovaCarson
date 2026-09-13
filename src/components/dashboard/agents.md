@@ -1,5 +1,9 @@
 # agents.md — components/dashboard
-_Last updated: 2026-05-16_
+_Last updated: 2026-09-12_
+
+## 2026-09-12 SCRUM-4989 — `ProfileCard.tsx` social links go through `resolveSocialLinks`
+
+`parseSocialLinks` used to cast `profile.social_links` to `Record<string,string>` and put the raw value straight into `href`, so a stored `javascript:` value was a clickable link (self-XSS — this card renders the viewer's own profile, from `DashboardPage`). It now resolves through `resolveSocialLinks` in `src/lib/socialLinks.ts`; anything unsafe is absent and renders as no link. `linkedin` + `twitter` are the only keys this card has ever rendered (`github`/`website` appear on the public profile page) — pre-existing scope, not a regression. `ProfileCard.test.tsx` pins the no-link outcome for pre-existing hostile values; keep that matrix if you touch the card.
 
 ## What This Folder Contains
 Main dashboard widgets: stats, profile card, credit usage, empty states, and batch AI processing status.

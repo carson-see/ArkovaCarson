@@ -1,6 +1,19 @@
 # agents.md — lib
 
-_Last updated: 2026-09-03_
+_Last updated: 2026-09-12_
+
+## 2026-09-12 SCRUM-4989 — `socialLinks.ts`, `jsonLd.ts` (new, PR #2840)
+
+`socialLinks.ts` is the single source of truth for `profiles.social_links`, on BOTH sides. The column was unvalidated `jsonb` for its whole history, so the read side is not optional — it is what protects rows written before the validator existed.
+
+- `safeSocialHref(key, raw)` — resolves one stored value, or `null` when it must not become an `href` (the caller then renders no `<a>` at all). Accepted: an http(s) URL, a bare domain (prefixed `https://`), or an `@handle` for `twitter` only. Rejected: every other scheme; protocol-relative `//` and `/\`-style authorities; any control character or whitespace **anywhere** in the value (browsers strip several of those before parsing, which is how `java<TAB>script:` becomes a live scheme — the `\s` class also covers NBSP, BOM and U+2028/2029); a host with no dot; >200 chars; and **userinfo** — `https://linkedin.com@evil.example/` has hostname `evil.example`, so the recognisable part is not the host.
+- `resolveSocialLinks(raw)` — the render-path entry point: every known key resolved, unsafe ones absent. Use this, not a hand-rolled `Object.entries` loop, in any new render path.
+- `pickSocialLinks(raw)` — narrows a stored blob to the four known keys, string values only.
+- `parseSocialLinksForWrite(input)` — the write validator (Zod, Constitution §1.1). Unknown keys are **stripped, not rejected** (`.strip()`): a legacy key the user never touched must not make the form un-saveable. `{ok:false,key}` names the offending field so the caller can show `PROFILE_LABELS.socialLinks.invalid[key]`.
+
+**The write validator is UX, not a security boundary.** There is no CHECK constraint and no RLS predicate on the contents of `profiles.social_links`, so any user can `PATCH` the column directly through PostgREST with a `javascript:` value. `safeSocialHref` / `resolveSocialLinks` on the render path is the actual control — never remove it on the grounds that the write path already validates (CTO ruling, PR #2840 review).
+
+`jsonLd.ts` — `toJsonLd(value)` is the one serializer for every `<script type="application/ld+json">` rendered through `dangerouslySetInnerHTML`. It escapes every `<` — covering `</script`, `<script` and `<!--`, all three of which steer the HTML tokenizer — plus U+2028/U+2029. It deliberately does **not** use `replace(/<\/script/gi, '<\\/script')`: that substitutes a lowercase literal for whatever it matched, so `</ScRiPt>` in a title stops round-tripping. `src/components/verification/PublicVerification.tsx` still carries its own `replace(/<\//g, '<\\/')` — it is a T2 surface, so folding it in is a separate change.
 
 
 ## SCRUM-4507 — `driveLinks.ts` validates a CHARACTER CLASS, not a shape (2026-09-12)
@@ -698,3 +711,29 @@ Field, section and proof-line helpers reserve page space before painting. Wrappe
 ## PR #2782 — bind certificate metadata to one block
 
 `proofBlockMetadata.ts` is shared by the database proof reader and certificate builder. Confirmed anchor height/time can replace proof metadata only after matching both block hashes. A known mismatch withholds the packet; an unknown identity retains only the proof row's existing metadata and does not establish a fresh measurement. Height values must be nonnegative safe integers. RecordDetailPage supplies the anchor hash to both readers. Regression tests cover mismatches, absent identities, case-normalized matches and the actual page callback. The finite TLA model and interpreter contract cover selection semantics; they do not prove Bitcoin consensus, stored-data accuracy or snapshot freshness.
+
+## 2026-09-12 — WEBHOOK_EVENT_DESCRIPTIONS gained the attestation events (SCRUM-3982)
+
+`attestation.created` and `attestation.revoked` were appended after
+`compliance.document_expiring`. This map is one of the six ordered mirrors that
+`scripts/ci/check-webhook-event-registration-drift.ts` compares against the
+worker's `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, so the key order here is not
+cosmetic — it is `toEqual`-compared against the worker declaration order.
+
+Copy is §1.3-clean (`npm run lint:copy`): "attestation" is not a banned term,
+and neither description reaches for a chain word. Note the descriptions state
+what the event means, not whether it is delivered — liveness lives in
+`WebhookEventCatalog.tsx` `CATALOG_DATA`, and `attestation.revoked` is not live
+(its worker producer is unreachable today).
+
+## CTO ruling Z5 (2026-09-12) — webhook event copy
+
+- `WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX` is the ONE place the
+  subscribable-but-not-emitted suffix is spelled. It used to be typed inline in
+  `AVAILABLE_EVENTS` labels, where it could disagree with the catalog badge.
+  Anything that needs it reads `CATALOG_DATA[id].live` from
+  `src/components/webhooks/webhookEventLiveness.ts` and appends this string.
+- `WEBHOOK_EVENT_DESCRIPTIONS['attestation.created']` is deliberately scoped to
+  single creation: `POST /api/v1/attestations` dispatches the event,
+  `POST /api/v1/attestations/batch-create` does not. Do not generalise the
+  wording back without making batch-create emit (§1.13 R-7).

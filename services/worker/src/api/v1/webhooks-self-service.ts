@@ -36,6 +36,7 @@ import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
+import { formatEgressFailure, webhookFetch } from '../../webhooks/egress.js';
 import {
   getDeadLetterEntries,
   isPrivateUrlResolved,
@@ -153,7 +154,8 @@ router.post('/:id/test', async (req, res) => {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
 
-    const response = await fetch(endpoint.url, {
+    // SCRUM-4983: IP-pinned dispatch (see webhooks/egress.ts).
+    const response = await webhookFetch(endpoint.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -194,6 +196,12 @@ router.post('/:id/test', async (req, res) => {
       event_id: eventId,
     });
   } catch (err) {
+    const egress = formatEgressFailure(err);
+    if (egress.permanent) {
+      logger.warn({ id, code: egress.code }, 'webhook self-service: test ping blocked at dispatch (pinned egress refused the resolved target)');
+      errorResponse(res, 400, 'invalid_url', 'Webhook URL targets a private or internal network address');
+      return;
+    }
     logger.error({ error: err, id }, 'webhook self-service: test ping failed');
     errorResponse(
       res,
@@ -229,6 +237,18 @@ router.post('/deliveries/:id/replay', async (req, res) => {
     }
     if (result.error === 'ssrf_blocked') {
       errorResponse(res, 403, 'ssrf_blocked', 'Endpoint URL targets a private network');
+      return;
+    }
+    if (result.error === 'payload_refused') {
+      // SCRUM-3982: the stored payload carries a field that may never leave
+      // Arkova (or its event type has no schema). 422 rather than 500 — the
+      // request is well-formed, the stored resource is not replayable.
+      errorResponse(
+        res,
+        422,
+        'payload_refused',
+        'Stored payload contains a field that cannot be delivered; contact support to have this event re-issued',
+      );
       return;
     }
     if (result.error === 'delivery_failed' && !result.new_delivery_id) {

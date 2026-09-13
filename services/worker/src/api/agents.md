@@ -1,5 +1,31 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-12 — `apiScopeEnforcementCensus.test.ts`: a grantable scope must gate something (SCRUM-3981)
+
+`apiScopes.ts` is the vocabulary; it was never a claim that any of it is enforced.
+`webhooks:manage` shipped in `API_KEY_SCOPES`, in `docs/api/README.md`, and in the dashboard's
+scope picker, and no route required it — an operator who withheld it from a key withheld nothing.
+The failure mode is structural, not a one-off: a scope is added to the vocabulary in one PR and
+wired to a mount in another, and nothing notices when the second PR never lands.
+
+The census test closes it in both directions. Every `API_KEY_SCOPES` entry must be the argument of
+a `requireScope` / `requireScopeAnyAuth` / `requireScopeV2` call somewhere under
+`services/worker/src`, OR carry a one-line entry in `KNOWN_UNENFORCED` saying what is actually
+true. A new scope therefore arrives with a mount or with an admission; and once a scope IS
+enforced, its `KNOWN_UNENFORCED` entry has to be deleted or the test fails.
+
+Nine scopes are listed as unenforced today, and the list is worth reading rather than trusting:
+`write:anchors` is a grant-side alias of `anchor:write`, `attestations:write` is a genuine gap
+(the `/attestations` mount carries no scope guard), `keys:read` is required by nobody and granted
+by nobody, and the rest are either pre-GA or exist only as the `required` side of a back-compat
+branch in `scopeSatisfies` that no mount reaches.
+
+Honest limits, so nobody over-reads a green run: the scan is lexical. It counts guard call sites;
+it does not prove the guard is reachable, that the router it guards is mounted, or that a handler
+does not bypass it. Lines beginning `//` or `*` are skipped so a scope named in prose does not
+read as enforcement. Reachability is `docs.routeParity.test.ts`, `phiScopeMount.test.ts` and
+`api/v1/webhooks-scope.test.ts`, each for its own surface.
+
 ## 2026-08-30 — `connector-health.ts`: the `adobe_sign` kind is DERIVED, never asserted
 
 PR #2519 corrected `adobe_sign` from a hardcoded `kind: 'live'` to `'gated'`: the connector had no
@@ -446,3 +472,16 @@ PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-
 ## PR #2695 — timestamp helper simplification (2026-09-10)
 
 The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.
+
+## 2026-09-12 SCRUM-4986 / SCRUM-4991 — revoke requires ORG_ADMIN in the worker; invitation double-accept is a no-op
+
+- **`anchor-revoke.ts`** selected `memberships.role` and never read it, so any ORG_MEMBER could call
+  `POST /api/anchor/:id/revoke`. The `revoke_anchor` RPC does enforce ORG_ADMIN — but through
+  `auth.uid()`, which is NULL under the service_role client this route uses — so the worker is the
+  only place the role check can actually run for this path. Non-admins get the same 404 as
+  non-members (no membership oracle) and the RPC is never reached. Whether the service_role RPC call
+  succeeds at all is an open [Verify] on SCRUM-4986; do not "fix" it by widening the RPC's grants.
+- **`invitations.ts` `provisionMembership`** is check-then-insert on `org_members`. Its comment
+  promised a concurrent double accept was "a clean no-op"; the code threw the loser's 23505 as a 500.
+  23505 on that insert is now treated as success (the membership exists). Any other insert error
+  still throws and triggers the new-account rollback.
