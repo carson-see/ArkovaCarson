@@ -25,6 +25,7 @@
 import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { isPermanentSafeFetchError, SafeFetchError as SafeFetchErrorClass } from './safe-fetch.js';
 import {
   safeFetch,
   safeFetchSingleHop,
@@ -302,6 +303,32 @@ describe('createSafeFetchImpl (fetch-shaped adapter)', () => {
     expect(Buffer.from(await res.arrayBuffer()).toString('utf8')).toBe('{"ok":true}');
   });
 
+  // CTO review (2026-09-12): a 204/205/304 response carries a zero-length body,
+  // and `new Response(<ArrayBuffer>, { status: 204 })` throws
+  // `TypeError: Response constructor: Invalid response status code 204`.
+  // That TypeError is NOT a SafeFetchError, so a webhook receiver answering
+  // 204 (the most common "accepted, nothing to say" webhook reply) was
+  // classified transient, burned the whole retry ladder and dead-lettered a
+  // delivery the receiver had already accepted.
+  it.each([204, 205, 304])('returns a null-body Response for HTTP %i instead of throwing', async (status) => {
+    const resolve = vi.fn().mockResolvedValue(['203.0.113.10']);
+    const dispatch = vi.fn(async () =>
+      stubResponse({
+        status,
+        headers: new Headers(),
+        async arrayBuffer() {
+          return new ArrayBuffer(0);
+        },
+      }),
+    );
+    const impl = createSafeFetchImpl({ resolve, dispatch });
+
+    const res = await impl('https://public.example.com/hook', { method: 'POST' });
+    expect(res.status).toBe(status);
+    expect(res.body).toBeNull();
+    await expect(res.text()).resolves.toBe('');
+  });
+
   it('surfaces a 3xx Response with a null body so the caller can follow it', async () => {
     const resolve = vi.fn().mockResolvedValue(['203.0.113.10']);
     const dispatch = vi.fn(async () =>
@@ -400,5 +427,24 @@ describe('defaultSafeFetchDeps().dispatch (real undici Agent pin)', () => {
     expect(res.status).toBe(200);
     const parsed = JSON.parse(Buffer.from(await res.arrayBuffer()).toString('utf8'));
     expect(parsed.ok).toBe(true);
+  });
+});
+
+describe('isPermanentSafeFetchError (SCRUM-4983 review)', () => {
+  it('classifies destination-caused refusals as permanent', () => {
+    for (const code of ['private_target', 'unresolvable', 'scheme_not_allowed', 'invalid_url', 'redirect_invalid'] as const) {
+      expect(isPermanentSafeFetchError(new SafeFetchErrorClass(code, code))).toBe(true);
+    }
+  });
+
+  it('leaves transient / receiver-caused codes retryable', () => {
+    for (const code of ['request_failed', 'deadline_exceeded', 'too_many_redirects', 'response_too_large'] as const) {
+      expect(isPermanentSafeFetchError(new SafeFetchErrorClass(code, code))).toBe(false);
+    }
+  });
+
+  it('is false for non-SafeFetchError values', () => {
+    expect(isPermanentSafeFetchError(new Error('private_target'))).toBe(false);
+    expect(isPermanentSafeFetchError(null)).toBe(false);
   });
 });

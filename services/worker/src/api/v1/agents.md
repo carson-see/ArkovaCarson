@@ -1250,3 +1250,49 @@ ComputeID admission now uses service-only `admit_computeid_agent`: one passport 
 `resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+## 2026-09-12 — attestation webhook payloads are public-ids-only (SCRUM-3982)
+
+`attestations.ts` dispatched `attestation.created` with the attestation
+`fingerprint` in the payload. The event type was not registered in
+`services/worker/src/webhooks/payload-schemas.ts`, so `validateWebhookPayload`
+took its `bypassed: true` branch and nothing inspected what left the process —
+a CLAUDE.md §1.6 document-derived hash one subscription away from the wire.
+`fingerprint` is gone from that payload, both attestation events now have
+registered `.strict()` schemas, and `validateWebhookPayload` refuses the banned
+key set on every event type including unregistered ones.
+
+Two things measured while doing it, neither changed here:
+
+- **`attestation.revoked` has never fired.** Its dispatch is guarded on
+  `attestation.attester_org_id`, and the ownership query above it selects
+  `id, status, attester_user_id` only, so the guard is always false. Making it
+  fire means adding `attester_org_id` to that select — a new outbound delivery
+  path that needs its own soak, not a drive-by in a validation ratchet. Every
+  registration surface marks the event not-yet-active meanwhile.
+- **The revoke handler sampled three different clocks.** The row, the webhook
+  payload and the API response each called `new Date().toISOString()`
+  separately, so a subscriber could never reconcile the delivered `revoked_at`
+  against the stored one. Now one `revokedAt` feeds all three.
+
+Payload keys at both dispatch sites are pinned in `attestations.test.ts` by
+reading this file's own source — a spy would only cover the path the test
+drives, and the thing being ratcheted is the literal key set at the call site.
+
+## SCRUM-3982 CTO review (2026-09-12) — replay refusal + fire-and-forget dispatch
+
+- `replayDelivery` can now return `payload_refused`. Both replay routes
+  (`webhooks.ts` API-key route and `webhooks-self-service.ts` session route) map
+  it to **HTTP 422** with code `payload_refused` — the request is well-formed,
+  the stored resource is not deliverable. Additive per CLAUDE.md §1.8; no
+  existing status code changed. Keep the two routes' error ladders identical:
+  they delegate to the same `replayDelivery` and any divergence is a bug.
+- `batch.ts` dispatched `job.completed` as `void dispatchWebhookEvent(...)` with
+  no `.catch()`. That was survivable only while dispatch could not reject for
+  that event; it can now (an unregistered type or a banned field rejects), and
+  an unhandled rejection in a fire-and-forget call takes the process down rather
+  than the job. Both call sites now `.catch()` into a warn. **Any new
+  `void dispatchWebhookEvent(...)` must carry a `.catch()`.**
+- `attestations.ts` `fingerprint` selects at `:428` / `:816` feed the published
+  201 response bodies (`:489`, `:851`) and are part of the frozen v1 contract.
+  Do not strip them as dead reads — they are banned from webhook payloads only.

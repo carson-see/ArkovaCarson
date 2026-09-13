@@ -308,3 +308,35 @@ The current `agentKeyAuthority.machine.ts` removes the retired compensating-clea
 - **The tree is NOT one level deep, and a draft invariant that claimed so was disproved by TLC** in three steps (`affiliate(o2,o1)` then `affiliate(o1,o3)`): an org that already has children can itself become a sub-org. That is correct — `check_sub_org_depth` permits a chain to depth 3, and the code rule is only that a sub-org may not *create* affiliates. The consequence is load-bearing: because chains are real, `0429` prunes `get_org_subtree` at the RECURSIVE term so a confidential org hides the branch beneath it, not just itself.
 - Authorization (who may sign which half) is **out of scope** — actor identity is not in this state. It is proven empirically instead, checks 5 and 9 of `docs/staging/hakichain-suborgs-2026-09/verify-0429.sql`.
 - Documentation-only, like `partnerProvisioning` and `calibrationWorkflow`: no `runtimeAdapter`. The consent columns live on `organizations`, which this machine does not own, so the adapter subset does not fit. Runtime enforcement is the `protect_org_tenancy_fields()` trigger; this spec proves that trigger's reset rule is sufficient.
+
+## webhookPayloadRefusal (SCRUM-3982, CTO review ruling Z1)
+
+Models the two properties the banned-field ratchet has to hold at once, because
+they pull against each other:
+
+- `bannedFieldNeverDelivered` — a payload carrying a banned key is never
+  DELIVERED by any path (first dispatch, replay, retry sweep).
+- `refusalIsTerminal` — an evaluated refused delivery is never still RETRYING.
+
+The second is the one worth having. A refusal is permanent (the stored bytes do
+not change), so "log it and return false" leaves the row in `retrying` where the
+sweep re-reads it every cycle AND, because the sweep advances only the
+lowest-`sequence` row per resource, it head-of-line-blocks every newer event for
+that resource forever. Deleting the `status='failed'` write from
+`processWebhookRetries` reproduces exactly that: TLC finds it at depth 4
+(`enqueueClean(d1)` → `enqueueLegacyLeaky(d2)` → legacy refuse → `d2` still
+RETRYING with `evaluated` true).
+
+`pr` tier: 3 deliveries, 451 states / 125 distinct, depth 7. No attempt counter
+— a refusal does not consume an attempt, it ends the row, so the count is
+irrelevant to both properties and only costs state space.
+
+`npm run verify:machines` globs `machines/*.machine.ts`, so this machine is in
+CI automatically; no workflow edit was needed.
+## webhookEgressRefusal.machine.ts (SCRUM-4983)
+
+- Models the webhook delivery lifecycle once the outbound socket is IP-pinned (`services/worker/src/webhooks/egress.ts`). The lifecycle had no machine before this; PR #2836 adds a genuinely new terminal edge — a refusal from the pinned layer is PERMANENT (`private_target`, `unresolvable`, `scheme_not_allowed`, `invalid_url`, `redirect_invalid`), so it must skip the retry ladder, open no socket and dead-letter in one attempt, while receiver 5xx / timeout / reset stay on the ladder.
+- Verified 2026-09-12: `proofPassed: true`, `equivalent: true`, 121 distinct states, depth 7. Invariants `refusalIsTerminal`, `refusalNeverOpensASocket`, `terminalFailureIsAlwaysDeadLettered`, `acceptedDeliveryIsNeverDeadLettered`, `dlqKindSatisfiesMigration0338Check`.
+- **`dlqKind` can represent a value the database cannot store, on purpose.** Migration `0338` ships `CHECK (failure_kind IN ('http_delivery', 'log_write'))` and that constraint is live on prod. Because the DLQ write is a PostgREST upsert, a rejection arrives in `{ error }` rather than as a throw, so a third value loses the audit row silently while the "Moved to dead letter queue" info line still fires. `dlqKindSatisfiesMigration0338Check` is the ratchet: the negative control (set `EGRESS_REFUSED` in `refuseAtPinnedLayer`) violates it in two steps. Widening the CHECK needs a migration, which makes any such change T3.
+- The A1/A2/AMAX ladder stands in for `MAX_RETRIES = 5`: the model proves the SHAPE of the ladder, not its depth. Circuit breaker, per-resource head-of-line ordering (SCRUM-2250) and idempotency-key dedupe are **out of scope** — they are covered by `webhooks/delivery.test.ts`.
+- `SUCCESS` and `FAILED` are terminal by design, so `checks: { deadlock: false }` — same resolution as `partnerProvisioning` and `drainRunAccounting`. Documentation-only: no `runtimeAdapter`; the rows live on `webhook_delivery_logs` / `webhook_dead_letter_queue`, which this machine does not own.
