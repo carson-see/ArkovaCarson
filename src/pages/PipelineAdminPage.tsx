@@ -108,6 +108,26 @@ interface PipelineJobControl {
   icon: React.ReactNode;
   description?: string;
   disabledReason?: string;
+  /**
+   * SCRUM-5043 (UI half): the worker route for this job runs past the
+   * frontend/proxy request timeout. A 504 from a longRunning control is
+   * "started, still running" — not a failure — see triggerJob below.
+   */
+  longRunning?: boolean;
+  /**
+   * SCRUM-5044: the public_records.source value(s) this control writes.
+   * Drives the "Last: … · n rows / 30d" freshness caption. Omitted for
+   * controls that write no source-tagged rows (certifications, sos).
+   */
+  sourceKey?: string | string[];
+}
+
+/** SCRUM-5044: per-source freshness, read directly off public_records. */
+interface SourceFreshnessEntry {
+  lastInsertAt: string | null;
+  rows30d: number | null;
+  /** Set when the read for this source failed — rendered as "unavailable", never as "No records yet". */
+  error?: string;
 }
 
 // SCRUM-2006: the records browser spans 120K+ pages at the default size, so a
@@ -275,6 +295,86 @@ const BATCH_ANCHORS_CONTROL_DESCRIPTION =
   'Runs the normal batch path; it may no-op unless size, age, and fee triggers allow a batch.';
 const WORKER_ROUTE_NOT_WIRED = 'Worker route is not wired in this release.';
 
+// SCRUM-5045: honest disabledReason strings for controls being retired or
+// known-broken. Shared verbatim across every control they apply to so the
+// wording can't drift between, say, fetch-cle and fetch-sos.
+const REASON_NO_SOURCE_IMPLEMENTED = 'Placeholder — no data source is implemented (SCRUM-5045).';
+const REASON_NEVER_PRODUCED_RECORD = 'Source has never produced a record; retired pending re-source (SCRUM-5045).';
+const REASON_NO_USPTO_CREDENTIAL = 'No USPTO credential — source unavailable (SCRUM-5041).';
+const REASON_SAM_KEY_INVALID = 'SAM.gov API key invalid — awaiting re-issue (SCRUM-5037).';
+const REASON_COURTLISTENER_BLOCKED = 'CourtListener account blocked — awaiting new credential (SCRUM-5039).';
+const REASON_UPSTREAM_403 = 'Upstream returns 403 (bot protection) (SCRUM-5046).';
+const REASON_UPSTREAM_MOVED_404 = 'Upstream endpoint moved (404) (SCRUM-5046).';
+const REASON_CODE_DEFECT_502 = 'Job fails (502) — code-side defect (SCRUM-5046).';
+const REASON_DATE_BUG_ZERO_ROWS = 'Returns 200 with zero rows — date bug (SCRUM-5042).';
+
+// New UI strings for the SCRUM-5044/5043 pipeline-control work. src/lib/copy.ts
+// is owned by other in-flight PRs this sprint (see the PAGINATION_LABELS note
+// above) — none of these contain §1.3 banned terms. lint:copy scans src/pages/**.
+const PIPELINE_CONTROL_LABELS = {
+  RUNS_IN_BACKGROUND: 'Runs in background',
+  LONG_RUNNING_DESCRIPTION: 'Runs in background past the request timeout.',
+  LONG_RUNNING_TIMEOUT_MESSAGE:
+    'Started; runs in the background past the request timeout. Check source volume for completion.',
+  NO_RECORDS_YET: 'No records yet',
+  FRESHNESS_UNAVAILABLE: 'Freshness unavailable',
+  freshnessSummary: (relativeAge: string, rows30d: number) =>
+    `Last: ${relativeAge} · ${rows30d.toLocaleString()} rows / 30d`,
+} as const;
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+/** SCRUM-5044 (coordinator follow-up): throttle for the per-source freshness fetch — "a timestamp guard around the fetch, not a second interval." */
+const SOURCE_FRESHNESS_TTL_MS = 5 * 60 * 1000;
+
+/** "3m ago" / "2h ago" / "5d ago" — coarser than formatCacheFreshness (which only handles minutes). */
+function formatRelativeAge(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return 'unknown';
+  const diffMs = Math.max(Date.now() - then, 0);
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/**
+ * Combines the per-source freshness map with a control's sourceKey(s).
+ * Returns null when the control has no sourceKey (nothing to render) or the
+ * source(s) haven't resolved yet (still loading — render nothing rather than
+ * a misleading "No records yet").
+ */
+function aggregateSourceFreshness(
+  freshnessBySource: Readonly<Record<string, SourceFreshnessEntry>>,
+  sourceKey: string | string[] | undefined,
+): SourceFreshnessEntry | null {
+  if (!sourceKey) return null;
+  const keys = Array.isArray(sourceKey) ? sourceKey : [sourceKey];
+  const entries = keys.map((k) => freshnessBySource[k]).filter((e): e is SourceFreshnessEntry => Boolean(e));
+  if (entries.length === 0) return null;
+  if (entries.some((e) => e.error)) {
+    return { lastInsertAt: null, rows30d: null, error: 'unavailable' };
+  }
+  const lastInsertAt = entries.reduce<string | null>((max, e) => {
+    if (!e.lastInsertAt) return max;
+    if (!max) return e.lastInsertAt;
+    return new Date(e.lastInsertAt).getTime() > new Date(max).getTime() ? e.lastInsertAt : max;
+  }, null);
+  const rows30d = entries.every((e) => e.rows30d !== null)
+    ? entries.reduce((sum, e) => sum + (e.rows30d ?? 0), 0)
+    : null;
+  return { lastInsertAt, rows30d };
+}
+
+function formatFreshnessCaption(entry: SourceFreshnessEntry | null): string | null {
+  if (!entry) return null;
+  if (entry.error) return PIPELINE_CONTROL_LABELS.FRESHNESS_UNAVAILABLE;
+  if (!entry.lastInsertAt) return PIPELINE_CONTROL_LABELS.NO_RECORDS_YET;
+  return PIPELINE_CONTROL_LABELS.freshnessSummary(formatRelativeAge(entry.lastInsertAt), entry.rows30d ?? 0);
+}
+
 function formatJobCompletionMessage(processed: number | null): string {
   if (processed === null) {
     return 'Completed';
@@ -287,27 +387,99 @@ function formatJobCompletionMessage(processed: number | null): string {
 
 const INTERNATIONAL_JOB_GROUPS: Array<{ heading: string; jobs: PipelineJobControl[] }> = [
   { heading: '🇦🇺 Australia', jobs: [
-    { path: 'fetch-australia', label: 'AU Compliance (AHPRA/TEQSA/ASIC)', icon: <Globe className={ICON_4} /> },
-    { path: 'fetch-acnc', label: 'ACNC Charities', icon: <Heart className={ICON_4} /> },
+    { path: 'fetch-australia', label: 'AU Compliance (AHPRA/TEQSA/ASIC)', icon: <Globe className={ICON_4} />, sourceKey: 'australia_law' },
+    { path: 'fetch-acnc', label: 'ACNC Charities', icon: <Heart className={ICON_4} />, sourceKey: 'acnc' },
   ]},
   { heading: '🇰🇪 Kenya', jobs: [
-    { path: 'fetch-kenya', label: 'KE Compliance (KNEC/LSK/ODPC)', icon: <Globe className={ICON_4} /> },
+    { path: 'fetch-kenya', label: 'KE Compliance (KNEC/LSK/ODPC)', icon: <Globe className={ICON_4} />, sourceKey: 'kenya_law' },
   ]},
   { heading: '🇪🇺 European Union', jobs: [
+    // Pre-existing "not wired" disabled reason — unchanged by SCRUM-5045.
     { path: 'fetch-eurlex', label: 'EUR-Lex Legislation (needs key)', icon: <ScrollText className={ICON_4} />, disabledReason: WORKER_ROUTE_NOT_WIRED },
   ]},
   { heading: '🇬🇧 United Kingdom', jobs: [
+    // Pre-existing "not wired" disabled reasons — unchanged by SCRUM-5045.
     { path: 'fetch-fca-uk', label: 'FCA Register (needs key)', icon: <TrendingUp className={ICON_4} />, disabledReason: WORKER_ROUTE_NOT_WIRED },
     { path: 'fetch-companies-house', label: 'Companies House (needs key)', icon: <Building2 className={ICON_4} />, disabledReason: WORKER_ROUTE_NOT_WIRED },
   ]},
   { heading: '🇸🇬 Southeast Asia', jobs: [
-    { path: 'fetch-acra-sg', label: 'ACRA Singapore Companies', icon: <Building2 className={ICON_4} /> },
-    { path: 'fetch-moh-sg', label: 'MOH Singapore Healthcare', icon: <Stethoscope className={ICON_4} /> },
+    { path: 'fetch-acra-sg', label: 'ACRA Singapore Companies', icon: <Building2 className={ICON_4} />, sourceKey: 'acra_sg' },
+    { path: 'fetch-moh-sg', label: 'MOH Singapore Healthcare', icon: <Stethoscope className={ICON_4} />, disabledReason: REASON_UPSTREAM_MOVED_404, sourceKey: 'moh_sg' },
   ]},
   { heading: '🇧🇷 Latin America', jobs: [
-    { path: 'fetch-cnpj-br', label: 'CNPJ Brazil Companies', icon: <Building2 className={ICON_4} /> },
+    { path: 'fetch-cnpj-br', label: 'CNPJ Brazil Companies', icon: <Building2 className={ICON_4} />, sourceKey: 'cnpj_br' },
   ]},
 ];
+
+// SCRUM-5044/5045: the five previously-hardcoded JobButton groups, now the
+// same data-driven PipelineJobControl[] shape INTERNATIONAL_JOB_GROUPS already
+// used. Every path/label/icon/description is preserved exactly from the prior
+// JSX; only disabledReason/longRunning/sourceKey are new.
+const PROCESSING_JOB_CONTROLS: PipelineJobControl[] = [
+  { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className={ICON_4} /> },
+  { path: 'anchor-public-records', label: 'Run Anchoring', icon: <ArkovaIcon className={ICON_4} /> },
+  { path: 'batch-anchors', label: 'Run Batch Anchoring', icon: <Layers className={ICON_4} />, description: BATCH_ANCHORS_CONTROL_DESCRIPTION },
+];
+
+const FEDERAL_COMPLIANCE_JOB_CONTROLS: PipelineJobControl[] = [
+  { path: 'fetch-edgar', label: 'SEC EDGAR', icon: <FileText className={ICON_4} />, sourceKey: 'edgar' },
+  { path: 'fetch-federal-register', label: 'Federal Register', icon: <BookOpen className={ICON_4} />, sourceKey: 'federal_register' },
+  { path: 'fetch-courtlistener', label: 'CourtListener', icon: <Gavel className={ICON_4} />, disabledReason: REASON_COURTLISTENER_BLOCKED, sourceKey: 'courtlistener' },
+  { path: 'fetch-all-state-bills', label: 'State Bills (CA/NY/TX)', icon: <FileText className={ICON_4} />, longRunning: true, sourceKey: 'openstates' },
+  { path: 'fetch-sam-entities', label: 'SAM.gov', icon: <ShieldCheck className={ICON_4} />, disabledReason: REASON_SAM_KEY_INVALID, sourceKey: 'sam_gov' },
+  { path: 'fetch-ecfr', label: 'eCFR Regulations', icon: <ScrollText className={ICON_4} />, disabledReason: REASON_DATE_BUG_ZERO_ROWS, sourceKey: 'ecfr' },
+  { path: 'fetch-enforcement', label: 'HHS Enforcement', icon: <Shield className={ICON_4} />, disabledReason: REASON_DATE_BUG_ZERO_ROWS, sourceKey: 'hhs_breach' },
+  { path: 'fetch-continuing-education', label: 'NASBA/ACCME CE', icon: <Award className={ICON_4} />, disabledReason: REASON_UPSTREAM_MOVED_404, sourceKey: ['nasba_cpe', 'accme'] },
+];
+
+const PROFESSIONAL_LICENSING_JOB_CONTROLS: PipelineJobControl[] = [
+  { path: 'fetch-npi', label: 'NPI Medical', icon: <Stethoscope className={ICON_4} />, longRunning: true, sourceKey: 'npi' },
+  { path: 'fetch-finra', label: 'FINRA BrokerCheck', icon: <TrendingUp className={ICON_4} />, longRunning: true, sourceKey: 'finra' },
+  { path: 'fetch-calbar', label: 'CA State Bar', icon: <Scale className={ICON_4} />, longRunning: true, sourceKey: 'calbar' },
+  { path: 'fetch-sec-iapd', label: 'SEC IAPD', icon: <TrendingUp className={ICON_4} />, disabledReason: REASON_UPSTREAM_403, sourceKey: 'sec_iapd' },
+  { path: 'fetch-fcc', label: 'FCC Licenses', icon: <Radio className={ICON_4} />, disabledReason: REASON_UPSTREAM_403, sourceKey: 'fcc' },
+  { path: 'fetch-licensing-board', label: 'Licensing Boards', icon: <Stethoscope className={ICON_4} />, disabledReason: REASON_NEVER_PRODUCED_RECORD, sourceKey: 'license_ca_nursing' },
+  { path: 'fetch-insurance-licenses', label: 'Insurance (CDI)', icon: <ShieldCheck className={ICON_4} />, disabledReason: REASON_NEVER_PRODUCED_RECORD, sourceKey: 'insurance_ca_cdi' },
+  { path: 'fetch-cle', label: 'CLE Credits', icon: <Scale className={ICON_4} />, disabledReason: REASON_NEVER_PRODUCED_RECORD, sourceKey: 'cle_ny' },
+  { path: 'fetch-certifications', label: 'Certifications', icon: <TrendingUp className={ICON_4} />, disabledReason: REASON_NO_SOURCE_IMPLEMENTED },
+];
+
+const ACADEMIC_EDUCATION_JOB_CONTROLS: PipelineJobControl[] = [
+  { path: 'fetch-openalex', label: 'OpenAlex', icon: <GraduationCap className={ICON_4} />, sourceKey: 'openalex' },
+  { path: 'fetch-uspto', label: 'USPTO Patents', icon: <Scale className={ICON_4} />, disabledReason: REASON_NO_USPTO_CREDENTIAL, sourceKey: 'uspto' },
+  { path: 'fetch-dapip', label: 'DAPIP Accreditation', icon: <Building2 className={ICON_4} />, sourceKey: 'dapip' },
+  { path: 'fetch-ipeds', label: 'IPEDS Education', icon: <GraduationCap className={ICON_4} />, disabledReason: REASON_CODE_DEFECT_502, sourceKey: 'ipeds' },
+];
+
+const BUSINESS_ENTITIES_JOB_CONTROLS: PipelineJobControl[] = [
+  { path: 'fetch-sos', label: 'State SOS Entities', icon: <Building2 className={ICON_4} />, disabledReason: REASON_NEVER_PRODUCED_RECORD },
+];
+
+// Single source of truth for every rendered control group — Pipeline Controls
+// below maps over this instead of five hand-written <div> blocks.
+const PIPELINE_JOB_GROUPS: Array<{ heading: string; jobs: PipelineJobControl[] }> = [
+  { heading: 'Processing', jobs: PROCESSING_JOB_CONTROLS },
+  { heading: '🇺🇸 Federal & Compliance', jobs: FEDERAL_COMPLIANCE_JOB_CONTROLS },
+  { heading: 'Professional Licensing', jobs: PROFESSIONAL_LICENSING_JOB_CONTROLS },
+  { heading: 'Academic & Education', jobs: ACADEMIC_EDUCATION_JOB_CONTROLS },
+  { heading: '🏢 Business Entities', jobs: BUSINESS_ENTITIES_JOB_CONTROLS },
+  ...INTERNATIONAL_JOB_GROUPS,
+];
+
+const ALL_PIPELINE_JOB_CONTROLS: PipelineJobControl[] = PIPELINE_JOB_GROUPS.flatMap((g) => g.jobs);
+
+/** SCRUM-5043: 504 from one of these is "started, still running," not a failure. */
+const LONG_RUNNING_JOB_PATHS: ReadonlySet<string> = new Set(
+  ALL_PIPELINE_JOB_CONTROLS.filter((j) => j.longRunning).map((j) => j.path),
+);
+
+/** SCRUM-5044: every distinct public_records.source value any control writes. */
+const DISTINCT_SOURCE_KEYS: readonly string[] = Array.from(new Set(
+  ALL_PIPELINE_JOB_CONTROLS.flatMap((j) => {
+    if (!j.sourceKey) return [];
+    return Array.isArray(j.sourceKey) ? j.sourceKey : [j.sourceKey];
+  }),
+));
 
 export function PipelineAdminPage() {
   const navigate = useNavigate();
@@ -492,15 +664,105 @@ export function PipelineAdminPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // SCRUM-5044 (coordinator follow-up): per-source freshness ("Last: … · n
+  // rows / 30d" under each Pipeline Controls entry) is gated on the section
+  // actually being open — nobody sees these captions while it's collapsed
+  // (it defaults closed), so there is no reason to run ~26 sources × 2
+  // indexed queries every 30s poll cycle for a closed panel. Decoupled from
+  // `stats`/fetchStats: its own state, its own timestamp-guarded fetch,
+  // invoked (a) once immediately when the section expands, (b)
+  // opportunistically from the same 30s visible-tab poll and the manual
+  // Refresh button below — both throttled to at most once per
+  // SOURCE_FRESHNESS_TTL_MS unless `force` is passed. Refresh is an explicit
+  // user action and may bypass the throttle, but never the "must be open"
+  // gate — a collapsed section still can't show the result.
+  const [sourceFreshness, setSourceFreshness] = useState<Record<string, SourceFreshnessEntry>>({});
+  const [pipelineControlsOpen, setPipelineControlsOpen] = useState(false);
+  const sourceFreshnessFetchedAtRef = useRef(0);
+
+  // `pipelineControlsOpen` is a dependency (not a ref read at call time) —
+  // reading a ref's `.current` during render is disallowed (react-hooks/refs);
+  // closing over the state value via the dependency array gets the same
+  // "no-op while collapsed" behavior without that anti-pattern. This callback
+  // is only ever invoked from event handlers/effects (never during render),
+  // so a fresh identity on every `pipelineControlsOpen` change is cheap and
+  // safe — `useVisibilityPolling`'s cb-ref discipline means pollFetchStats's
+  // resulting identity churn never restarts that hook's interval/listener.
+  const fetchSourceFreshness = useCallback(async (opts?: { force?: boolean }) => {
+    if (!isAdmin || !pipelineControlsOpen) return;
+    const age = Date.now() - sourceFreshnessFetchedAtRef.current;
+    if (!opts?.force && sourceFreshnessFetchedAtRef.current !== 0 && age < SOURCE_FRESHNESS_TTL_MS) return;
+
+    // SCRUM-5044: count_public_records_by_source (used for `bySource` in
+    // fetchStats) is a periodically-refreshed cache of TOTAL counts only —
+    // no last-insert timestamp, no 30-day window — and there is no existing
+    // RPC for either, so per the spec this reads public_records directly
+    // rather than adding a migration or worker route. Both queries are
+    // backed by idx_public_records_source_created (source, created_at DESC)
+    // — a per-source head-count with a date filter and a per-source
+    // order-by-created_at-desc limit-1 — NOT the unindexed full-table scan
+    // that was previously ruled out for this table (see the "Fallback
+    // removed — direct public_records query times out on 1.4M rows" comment
+    // on the records-browser fallback below). Isolated per-source: one
+    // source's failed query renders "Freshness unavailable" for just that
+    // source rather than failing the whole page (byCredentialType pattern).
+    sourceFreshnessFetchedAtRef.current = Date.now();
+    try {
+      const cutoffIso = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
+      const results = await Promise.allSettled(DISTINCT_SOURCE_KEYS.map(async (key) => {
+        const [countRes, lastRes] = await Promise.all([
+          dbAny.from('public_records').select('id', { count: 'exact', head: true }).eq('source', key).gte('created_at', cutoffIso),
+          dbAny.from('public_records').select('created_at').eq('source', key).order('created_at', { ascending: false }).limit(1),
+        ]);
+        if (countRes?.error || lastRes?.error) {
+          throw new Error(countRes?.error?.message || lastRes?.error?.message || 'freshness query failed');
+        }
+        const lastInsertAt = Array.isArray(lastRes?.data) && lastRes.data[0]?.created_at
+          ? lastRes.data[0].created_at as string
+          : null;
+        const rows30d = typeof countRes?.count === 'number' ? countRes.count : null;
+        return { lastInsertAt, rows30d };
+      }));
+      const next: Record<string, SourceFreshnessEntry> = {};
+      results.forEach((r, i) => {
+        const key = DISTINCT_SOURCE_KEYS[i];
+        next[key] = r.status === 'fulfilled'
+          ? { lastInsertAt: r.value.lastInsertAt, rows30d: r.value.rows30d }
+          : { lastInsertAt: null, rows30d: null, error: r.reason instanceof Error ? r.reason.message : 'freshness query failed' };
+      });
+      setSourceFreshness(next);
+    } catch {
+      // Non-critical — the per-source isolation above already degrades
+      // individual sources to "Freshness unavailable"; a failure out here
+      // (e.g. Promise.allSettled itself throwing) just leaves the last-known
+      // (or empty) map in place rather than failing the whole page.
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- dbAny is a same-render `supabase as any` cast (stable underlying singleton), same convention as fetchStats's own empty-deps useCallback above.
+  }, [isAdmin, pipelineControlsOpen]);
+
+  // "once immediately on expand if the cached map is empty or older than 5
+  // minutes" — the empty/stale check lives inside fetchSourceFreshness
+  // itself (the timestamp guard), so expanding just asks it to try.
+  useEffect(() => {
+    if (isAdmin && pipelineControlsOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- deliberate: expanding the section is exactly the "external signal" fetchSourceFreshness's own throttle/open guard is designed to answer; it no-ops instantly when collapsed or still fresh.
+      fetchSourceFreshness();
+    }
+  }, [isAdmin, pipelineControlsOpen, fetchSourceFreshness]);
+
   // SCRUM-1260 (R1-6): visibility-aware polling so backgrounded admin tabs
   // don't hammer the worker /api/admin/pipeline-stats route on a 30s clock.
   // Centralised in useVisibilityPolling — see the hook for the contract.
   // We pass a no-op when !isAdmin so the hook's mount-time fire is harmless;
   // the `loading=false` for non-admins is set in a separate effect below.
+  // The unforced fetchSourceFreshness() riding along here is the "b)
+  // opportunistic" trigger described above — a no-op whenever the section is
+  // collapsed or the 5-minute throttle hasn't elapsed.
   const pollFetchStats = useCallback(async () => {
     if (!isAdmin) return;
     await fetchStats();
-  }, [isAdmin, fetchStats]);
+    fetchSourceFreshness();
+  }, [isAdmin, fetchStats, fetchSourceFreshness]);
   useVisibilityPolling(pollFetchStats, 30_000);
 
   useEffect(() => {
@@ -510,8 +772,11 @@ export function PipelineAdminPage() {
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchStats().finally(() => setRefreshing(false));
-  }, [fetchStats]);
+    // Manual refresh is an explicit user action: bypass the 5-minute
+    // freshness throttle (force: true) — but fetchSourceFreshness still
+    // no-ops when the section is collapsed, since nobody could see the result.
+    Promise.all([fetchStats(), fetchSourceFreshness({ force: true })]).finally(() => setRefreshing(false));
+  }, [fetchStats, fetchSourceFreshness]);
 
   const [triggerStatus, setTriggerStatus] = useState<Record<string, JobRunStatus>>({});
   const [triggerMessages, setTriggerMessages] = useState<Record<string, string>>({});
@@ -569,6 +834,25 @@ export function PipelineAdminPage() {
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'done' }));
         setTriggerMessages((prev) => ({ ...prev, [jobPath]: message }));
         // Refresh stats after a job completes — immediate, 3s, and 8s for DB propagation
+        fetchStats();
+        scheduleTriggerUpdate(jobPath, () => fetchStats(), 3000);
+        scheduleTriggerUpdate(jobPath, () => {
+          fetchStats();
+          setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
+          setTriggerMessages((prev) => {
+            const next = { ...prev };
+            delete next[jobPath];
+            return next;
+          });
+        }, 8000);
+      } else if (response.status === 504 && LONG_RUNNING_JOB_PATHS.has(jobPath)) {
+        // SCRUM-5043 (UI half): a longRunning control's worker route can run
+        // past the request timeout while the job keeps going server-side. A
+        // 504 here is "started, still running" — not a failure — so this
+        // takes the same 'done' + refresh cadence as the success branch above
+        // instead of the destructive 'error' Badge.
+        setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'done' }));
+        setTriggerMessages((prev) => ({ ...prev, [jobPath]: PIPELINE_CONTROL_LABELS.LONG_RUNNING_TIMEOUT_MESSAGE }));
         fetchStats();
         scheduleTriggerUpdate(jobPath, () => fetchStats(), 3000);
         scheduleTriggerUpdate(jobPath, () => {
@@ -1126,76 +1410,22 @@ export function PipelineAdminPage() {
             )}
         </CollapsibleSection>
 
-        {/* Pipeline Controls — grouped by category */}
-        <CollapsibleSection title="Pipeline Controls" defaultOpen={false}>
+        {/* Pipeline Controls — grouped by category, fully data-driven (SCRUM-5044/5045) */}
+        <CollapsibleSection title="Pipeline Controls" defaultOpen={false} open={pipelineControlsOpen} onOpenChange={setPipelineControlsOpen}>
           <div className="space-y-5">
-            {/* Processing */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Processing</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="embed-public-records" label="Run Embedder" icon={<Cpu className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="anchor-public-records" label="Run Anchoring" icon={<ArkovaIcon className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="batch-anchors" label="Run Batch Anchoring" icon={<Layers className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} description={BATCH_ANCHORS_CONTROL_DESCRIPTION} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* 🇺🇸 Federal / Compliance Sources */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇺🇸 Federal &amp; Compliance</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-edgar" label="SEC EDGAR" icon={<FileText className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-federal-register" label="Federal Register" icon={<BookOpen className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-courtlistener" label="CourtListener" icon={<Gavel className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-all-state-bills" label="State Bills (CA/NY/TX)" icon={<FileText className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-sam-entities" label="SAM.gov" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-ecfr" label="eCFR Regulations" icon={<ScrollText className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-enforcement" label="HHS Enforcement" icon={<Shield className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-continuing-education" label="NASBA/ACCME CE" icon={<Award className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* Professional Licensing */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Professional Licensing</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-npi" label="NPI Medical" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-finra" label="FINRA BrokerCheck" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-calbar" label="CA State Bar" icon={<Scale className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-sec-iapd" label="SEC IAPD" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-fcc" label="FCC Licenses" icon={<Radio className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-licensing-board" label="Licensing Boards" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-insurance-licenses" label="Insurance (CDI)" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-cle" label="CLE Credits" icon={<Scale className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-certifications" label="Certifications" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* Academic & Education */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Academic &amp; Education</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-openalex" label="OpenAlex" icon={<GraduationCap className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-uspto" label="USPTO Patents" icon={<Scale className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-dapip" label="DAPIP Accreditation" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-                <JobButton path="fetch-ipeds" label="IPEDS Education" icon={<GraduationCap className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* Business Entities */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🏢 Business Entities</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-sos" label="State SOS Entities" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* International region groups — data-driven */}
-            {INTERNATIONAL_JOB_GROUPS.map(({ heading, jobs }) => (
+            {PIPELINE_JOB_GROUPS.map(({ heading, jobs }) => (
               <div key={heading}>
                 <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">{heading}</h4>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {jobs.map(j => (
-                    <JobButton key={j.path} path={j.path} label={j.label} icon={j.icon} status={triggerStatus} messages={triggerMessages} description={j.description} disabledReason={j.disabledReason} onTrigger={triggerJob} />
+                  {jobs.map((job) => (
+                    <JobControlTile
+                      key={job.path}
+                      job={job}
+                      status={triggerStatus}
+                      messages={triggerMessages}
+                      onTrigger={triggerJob}
+                      freshness={aggregateSourceFreshness(sourceFreshness, job.sourceKey)}
+                    />
                   ))}
                 </div>
               </div>
@@ -1730,19 +1960,34 @@ export function PipelineAdminPage() {
   );
 }
 
-function CollapsibleSection({ title, icon, defaultOpen = false, badge, children }: {
+function CollapsibleSection({ title, icon, defaultOpen = false, badge, children, open: openProp, onOpenChange }: {
   title: string;
   icon?: React.ReactNode;
   defaultOpen?: boolean;
   badge?: string;
   children: React.ReactNode;
+  /**
+   * Optional controlled open state (coordinator follow-up to SCRUM-5044): the
+   * Pipeline Controls instance lifts its open state to the parent so the
+   * per-source freshness fetch can be gated on it. Every other
+   * CollapsibleSection usage omits these props and stays fully uncontrolled,
+   * exactly as before.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = openProp ?? internalOpen;
+  const toggle = () => {
+    const next = !open;
+    if (openProp === undefined) setInternalOpen(next);
+    onOpenChange?.(next);
+  };
   return (
     <Card className="border-[#00d4ff]/10 bg-transparent">
       <CardHeader
         className="cursor-pointer select-none hover:bg-[#00d4ff]/5 transition-colors"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
       >
         <CardTitle className="text-base flex items-center gap-2">
           {icon}
@@ -1908,5 +2153,67 @@ function JobButton({
       {s === 'done' && <Badge variant="secondary" className="ml-auto text-emerald-400 text-[10px]">Done</Badge>}
       {s === 'error' && <Badge variant="destructive" className="ml-auto text-[10px]">Error</Badge>}
     </Button>
+  );
+}
+
+/**
+ * SCRUM-5043/5044: wraps a JobButton with the two new pieces of per-control
+ * state — a "Runs in background" hint for longRunning controls and a
+ * "Last: … · n rows / 30d" freshness caption for controls with a sourceKey.
+ * The JobButton itself is unchanged (testid/disabled/title stay on the
+ * <button> element) so existing assertions keep working unmodified.
+ */
+function JobControlTile({
+  job,
+  status,
+  messages,
+  onTrigger,
+  freshness,
+}: Readonly<{
+  job: PipelineJobControl;
+  status: Readonly<Record<string, JobRunStatus>>;
+  messages: Readonly<Record<string, string>>;
+  onTrigger: (path: string) => void;
+  freshness: SourceFreshnessEntry | null;
+}>) {
+  const description = job.longRunning && !job.description
+    ? PIPELINE_CONTROL_LABELS.LONG_RUNNING_DESCRIPTION
+    : job.description;
+  const freshnessCaption = formatFreshnessCaption(freshness);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <JobButton
+        path={job.path}
+        label={job.label}
+        icon={job.icon}
+        status={status}
+        messages={messages}
+        description={description}
+        disabledReason={job.disabledReason}
+        onTrigger={onTrigger}
+      />
+      {job.disabledReason && (
+        // UAT: button.tsx applies disabled:pointer-events-none, so a disabled
+        // control never receives hover and its title tooltip never reaches a
+        // mouse user — the reason must exist as visible text too, not only in
+        // title/aria-label. break-words so a long reason wraps instead of
+        // overflowing the card at 375px. Placed before the freshness caption
+        // when both exist (several disabled controls still carry a sourceKey).
+        <p className="text-[10px] text-muted-foreground pl-1 break-words" data-testid={`pipeline-job-reason-${job.path}`}>
+          {job.disabledReason}
+        </p>
+      )}
+      {job.longRunning && (
+        <p className="text-[10px] text-muted-foreground pl-1" data-testid={`pipeline-job-hint-${job.path}`}>
+          {PIPELINE_CONTROL_LABELS.RUNS_IN_BACKGROUND}
+        </p>
+      )}
+      {freshnessCaption && (
+        <p className="text-[10px] text-muted-foreground pl-1 break-words" data-testid={`pipeline-job-freshness-${job.path}`}>
+          {freshnessCaption}
+        </p>
+      )}
+    </div>
   );
 }
