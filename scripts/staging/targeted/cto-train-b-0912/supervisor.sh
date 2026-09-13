@@ -28,6 +28,27 @@ export API_KEY_HMAC_SECRET="${API_KEY_HMAC_SECRET:-$(gcloud secrets versions acc
 # webhook_endpoints.url CHECK requires https://; a literal private IP is refused before any socket.
 export TRAIN_2836_PRIVATE_URL="${TRAIN_2836_PRIVATE_URL:-https://169.254.169.254/}"
 export FIXTURE_STATE="${FIXTURE_STATE:-/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b/state/fixtures.json}"
+# #2904's own header says TRAIN_FANOUT_FLAG exists because "this driver runs
+# as a separate Node process from the worker and cannot read the worker's own
+# env" -- but nothing here ever set it, so a launcher that forgets to pass it
+# silently defaults to "off" and #2904 asserts the WRONG branch (dark-contract
+# "descendant must receive zero copies") against a revision that actually has
+# ENABLE_SUBORG_WEBHOOK_FANOUT=true. That is exactly what happened against the
+# standing rig 2026-09-13 (train-c): once ENABLE_OUTBOUND_WEBHOOKS was fixed
+# and deliveries started landing, 2904_dark_flag_off_zero_descendant_copies
+# failed because a real descendant copy arrived. Derive it FROM the deployed
+# revision instead of trusting a manual pass-through; still honour an explicit
+# override from the launcher first.
+export TRAIN_FANOUT_FLAG="${TRAIN_FANOUT_FLAG:-$(gcloud run services describe "$TRAIN_SERVICE" --region us-central1 --project=arkova1 --format=json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    envs = d['spec']['template']['spec']['containers'][0].get('env', [])
+    v = next((e.get('value') for e in envs if e.get('name') == 'ENABLE_SUBORG_WEBHOOK_FANOUT'), None)
+    print('true' if str(v).lower() == 'true' else 'false')
+except Exception:
+    print('false')
+")}"
 wait_for_healthy() {
   local deadline=$((SECONDS + 180))
   while [ $SECONDS -lt $deadline ]; do

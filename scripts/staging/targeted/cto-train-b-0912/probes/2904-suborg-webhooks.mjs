@@ -530,14 +530,40 @@ async function checkSubOrgLifecycle(ctx, seeded) {
   const { data: afterChild } = await admin.from('organizations').select('parent_approval_status, suspended').eq('id', child.id).maybeSingle();
   out.push(probe('2904_suborg_child_suspended_after_offboard', true, afterChild?.suspended === true, { detail: afterChild }));
 
+  // /offboard's three trailing events (credits_reclaimed, suspended, offboarded
+  // — orgSubOrgs.ts ~1483/1529/1536) are `void emitSubOrgEvent(...)`, fired
+  // immediately before res.json() with NO subsequent request round-trip to
+  // complete behind (unlike approve/credits/revoke, each followed by the next
+  // workerFetch call, which gives their own void-dispatch time to land).
+  // Confirmed via direct query + worker logs 2026-09-13: delivery genuinely
+  // succeeds (status=success, response_status=200) but the delivery_logs INSERT
+  // lands ~300-450ms after the HTTP response, so reading immediately after
+  // `offboard` resolves is a real race, not a missing emission. Poll briefly
+  // instead of reading once, the same shape as pollBatchJob's bounded wait.
+  async function pollDeliveryTypes(endpointId, eventTypes) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const { data, error } = await admin
+        .from('webhook_delivery_logs')
+        .select('event_type')
+        .eq('endpoint_id', endpointId)
+        .gte('created_at', cycleStart)
+        .in('event_type', eventTypes);
+      const seen = new Set((data ?? []).map((r) => r.event_type));
+      if (error || seen.size >= eventTypes.length) return { data, error, seen };
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    const { data, error } = await admin
+      .from('webhook_delivery_logs')
+      .select('event_type')
+      .eq('endpoint_id', endpointId)
+      .gte('created_at', cycleStart)
+      .in('event_type', eventTypes);
+    return { data, error, seen: new Set((data ?? []).map((r) => r.event_type)) };
+  }
+
   // Parent-side: six fresh event types this cycle (created is asserted separately, below, as a persisted fact).
-  const { data: parentDeliveries, error: parentErr } = await admin
-    .from('webhook_delivery_logs')
-    .select('event_type')
-    .eq('endpoint_id', seeded.fanoutEndpointId)
-    .gte('created_at', cycleStart)
-    .in('event_type', ['suborg.approved', 'suborg.revoked', 'suborg.credits_allocated', 'suborg.credits_reclaimed', 'suborg.suspended', 'suborg.offboarded']);
-  const parentTypesFresh = new Set((parentDeliveries ?? []).map((r) => r.event_type));
+  const parentExpectedTypes = ['suborg.approved', 'suborg.revoked', 'suborg.credits_allocated', 'suborg.credits_reclaimed', 'suborg.suspended', 'suborg.offboarded'];
+  const { error: parentErr, seen: parentTypesFresh } = await pollDeliveryTypes(seeded.fanoutEndpointId, parentExpectedTypes);
   const expectedFresh = ['suborg.approved', 'suborg.revoked', 'suborg.credits_allocated', 'suborg.credits_reclaimed', 'suborg.suspended', 'suborg.offboarded'];
   out.push(probe('2904_suborg_parent_six_fresh_types_this_cycle', expectedFresh.length, parentTypesFresh.size, {
     detail: { error: parentErr?.message ?? null, seen: [...parentTypesFresh], missing: expectedFresh.filter((t) => !parentTypesFresh.has(t)) },
@@ -554,13 +580,10 @@ async function checkSubOrgLifecycle(ctx, seeded) {
   }));
 
   // Child-side: the four events the affiliate is also told about, fresh this cycle.
-  const { data: childDeliveries, error: childErr } = await admin
-    .from('webhook_delivery_logs')
-    .select('event_type')
-    .eq('endpoint_id', seeded.lifecycleChildEndpointId)
-    .gte('created_at', cycleStart)
-    .in('event_type', ['suborg.credits_allocated', 'suborg.credits_reclaimed', 'suborg.suspended', 'suborg.offboarded']);
-  const childTypesFresh = new Set((childDeliveries ?? []).map((r) => r.event_type));
+  const { error: childErr, seen: childTypesFresh } = await pollDeliveryTypes(
+    seeded.lifecycleChildEndpointId,
+    ['suborg.credits_allocated', 'suborg.credits_reclaimed', 'suborg.suspended', 'suborg.offboarded'],
+  );
   out.push(probe('2904_suborg_child_four_fresh_types_this_cycle', 4, childTypesFresh.size, {
     detail: { error: childErr?.message ?? null, seen: [...childTypesFresh] },
   }));
