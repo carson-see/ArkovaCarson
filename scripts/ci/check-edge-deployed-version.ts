@@ -21,6 +21,9 @@
  * Modes:
  *   npx tsx scripts/ci/check-edge-deployed-version.ts             -> warn-only, always exit 0
  *   npx tsx scripts/ci/check-edge-deployed-version.ts --strict     -> exit 1 on any drift finding
+ *   --url=<health URL>        point at a soak rig instead of production (default https://edge.arkova.ai/health)
+ *   --expected-sha=<40-hex>   compare against this SHA instead of `origin/main` (rig standups deploy a PR head)
+ * Defaults are unchanged; without --url a local run reads PRODUCTION's /health (read-only GET).
  *
  * Wired into ci.yml as a `continue-on-error: true` job (warn-only doubly —
  * belt-and-suspenders with the default no-`--strict` exit-0 behavior above)
@@ -142,16 +145,46 @@ export async function fetchEdgeHealth(
   }
 }
 
+export interface CliOptions {
+  strict: boolean;
+  url: string;
+  /** 40-hex SHA to compare against; null means resolve `origin/main`. */
+  expectedSha: string | null;
+}
+
+/**
+ * Parse `--strict`, `--url=<...>` and `--expected-sha=<40-hex>`. Unknown flags
+ * are ignored (CI passes none today). A malformed --expected-sha throws so a
+ * typo can never silently compare against origin/main instead of the rig head.
+ */
+export function parseArgs(argv: readonly string[]): CliOptions {
+  const opts: CliOptions = { strict: false, url: 'https://edge.arkova.ai/health', expectedSha: null };
+  for (const arg of argv) {
+    if (arg === '--strict') opts.strict = true;
+    else if (arg.startsWith('--url=')) {
+      const url = arg.slice('--url='.length);
+      if (!/^https?:\/\//.test(url)) throw new Error(`--url must be an http(s) URL, got: ${url}`);
+      opts.url = url;
+    } else if (arg.startsWith('--expected-sha=')) {
+      const sha = arg.slice('--expected-sha='.length).toLowerCase();
+      if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('--expected-sha must be a 40-character hex SHA');
+      opts.expectedSha = sha;
+    }
+  }
+  return opts;
+}
+
 async function main(): Promise<void> {
-  const strict = process.argv.includes('--strict');
-  const mainSha = resolveMainSha();
-  const { health, error } = await fetchEdgeHealth();
+  const { strict, url, expectedSha } = parseArgs(process.argv.slice(2));
+  const ref = expectedSha ?? 'origin/main';
+  const mainSha = expectedSha ?? resolveMainSha();
+  const { health, error } = await fetchEdgeHealth(url);
   const drift = classifyDrift({
     health,
     fetchError: error,
     mainSha,
-    isAncestor: (sha) => gitIsAncestor(sha),
-    commitsBehind: (sha) => gitCommitsBehind(sha),
+    isAncestor: (sha) => gitIsAncestor(sha, ref),
+    commitsBehind: (sha) => gitCommitsBehind(sha, ref),
   });
   const { message, isDrift } = formatReport(drift);
   console.log(message);

@@ -4,7 +4,7 @@
  * All git/network I/O is injected or mocked — no real repo/network access.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classifyDrift, formatReport, fetchEdgeHealth, type HealthResponse } from './check-edge-deployed-version.js';
+import { classifyDrift, formatReport, fetchEdgeHealth, parseArgs, type HealthResponse } from './check-edge-deployed-version.js';
 
 const MAIN = 'a'.repeat(40);
 
@@ -115,5 +115,33 @@ describe('fetchEdgeHealth', () => {
     const { health, error } = await fetchEdgeHealth('https://example.invalid/health');
     expect(health).toBeNull();
     expect(error).toBe('network unreachable');
+  });
+});
+
+describe('parseArgs (rig support — release session fold on #2908)', () => {
+  it('defaults to production /health, origin/main and warn-only', () => {
+    expect(parseArgs([])).toEqual({ strict: false, url: 'https://edge.arkova.ai/health', expectedSha: null });
+  });
+
+  it('accepts --strict, --url and --expected-sha together', () => {
+    const sha = 'b'.repeat(40);
+    expect(parseArgs(['--strict', `--url=https://pr-1---arkova-edge.example.workers.dev/health`, `--expected-sha=${sha}`])).toEqual({
+      strict: true,
+      url: 'https://pr-1---arkova-edge.example.workers.dev/health',
+      expectedSha: sha,
+    });
+  });
+
+  it('lower-cases and validates --expected-sha so a typo cannot silently fall back to origin/main', () => {
+    expect(parseArgs([`--expected-sha=${'C'.repeat(40)}`]).expectedSha).toBe('c'.repeat(40));
+    expect(() => parseArgs(['--expected-sha=abc123'])).toThrow(/40-character/);
+  });
+
+  it('rejects a non-http --url', () => {
+    expect(() => parseArgs(['--url=edge.arkova.ai/health'])).toThrow(/http\(s\)/);
+  });
+
+  it('ignores unknown flags (CI passes none today)', () => {
+    expect(parseArgs(['--verbose']).strict).toBe(false);
   });
 });
