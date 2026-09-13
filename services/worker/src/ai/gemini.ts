@@ -1038,7 +1038,13 @@ export class GeminiProvider implements IAIProvider {
     // local dev uses gcloud auth
     let accessToken: string;
     try {
-      // Try GCP metadata server first (Cloud Run / GCE)
+      // Try GCP metadata server first (Cloud Run / GCE).
+      // The GCE metadata server is HTTP-only by design, link-local (never
+      // internet-routable), the URL is a literal, and Metadata-Flavor is set.
+      // Sekura Phase 2 H7 / SCRUM-4987 — dispositioned as a false positive.
+      // Semgrep only honours nosemgrep on the match line or the line directly
+      // above it, so this comment must stay immediately before the fetch.
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       const metaRes = await fetch(
         'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
         { headers: { 'Metadata-Flavor': 'Google' }, signal: AbortSignal.timeout(2000) },
