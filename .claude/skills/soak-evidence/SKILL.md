@@ -46,14 +46,15 @@ T0 is **computed from changed files, not asserted**. A PR that declares T0 but t
 
 **T1** (2 h soak): tier, exact PR head SHA, staging tag URL (or an explicit N/A explanation), health/smoke result, soak start + end, CI/E2E green, rollback plan, risk rationale, human approver.
 
-**T2** (12 h soak + rollback rehearsal): everything in T1 plus exact base SHA, clean preflight result, deploy log id, E2E result, and the rollback rehearsal record.
+**T2** (4 h soak + rollback rehearsal): everything in T1 plus exact base SHA, clean preflight result, deploy log id, E2E result, and the rollback rehearsal record.
 
-**T3** (48 h soak, multiple trigger cycles, clean-mirror or isolated rig): everything in T2 plus Trigger A fired, Trigger B fired, daily flush observation, and a per-org isolation check.
+**T3** (24 h soak, multiple trigger cycles, clean-mirror or isolated rig): everything in T2 plus Trigger A fired, Trigger B fired, daily flush observation, and a per-org isolation check.
 
 ## Non-negotiables
 
 - **The soak must exercise the changed behavior.** Generic synthetic load is worker-health evidence only. If it does not cover the changed path, add targeted staging/E2E evidence or an explicit Carson-approved residual-risk note.
 - **Exact head SHA.** A new commit after the soak invalidates the body's head SHA. Re-run or add a residual-risk note — do not silently reuse.
+- **Post-soak T0-only delta** (CTO 2026-09-12). If every commit added after the soak touches only T0-classified files (`e2e/`, `docs/`, tests, CI/tooling), add `Post-soak T0 delta: <current 40-char head SHA>` and the gate keeps the evidence. It fails closed on all four conditions: the field must name the CURRENT head, the soaked SHA must be an ancestor of it (no rebase/force-push), the delta must be computable and non-empty, and every file in it must classify T0. One non-T0 file — named in the error — and you re-soak. RC-manifest head binding is unaffected.
 - **Preflight must be clean.** Run `scripts/ci/staging-honesty-preflight.ts` against the exact project ref the worker will use. Shared staging (`ujtlwnoqfhtitcmsnrpq`) is merge-grade only when it reports `environment_type=clean_mirror`.
 - **Never soak on a dirty project**, and never write to a rig that is mid-soak for another PR.
 - **Soak clock = Cloud Run worker uptime**, not a probe loop (probe loops die on restart).

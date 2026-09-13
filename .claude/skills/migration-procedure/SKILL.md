@@ -5,7 +5,7 @@ description: End-to-end Supabase migration procedure for Arkova — picking the 
 
 # Migration procedure
 
-Migrations are **always T3** (CLAUDE.md §1.12): 48 h soak, multiple trigger cycles, and clean-mirror or isolated staging. Load the `soak-evidence` skill alongside this one.
+Migrations are **always T3** (CLAUDE.md §1.12): 24 h soak (48 h→24 h, CTO decision 2026-09-12), multiple trigger cycles, and clean-mirror or isolated staging. Load the `soak-evidence` skill alongside this one.
 
 ## 1. Pick the number
 
