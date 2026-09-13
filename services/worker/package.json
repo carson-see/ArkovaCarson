@@ -41,7 +41,7 @@
     "@sentry/profiling-node": "10.73.0",
     "@supabase/supabase-js": "2.115.0",
     "asn1js": "3.0.10",
-    "bitcoinjs-lib": "6.1.7",
+    "bitcoinjs-lib": "7.0.2",
     "cheerio": "1.2.0",
     "compression": "1.8.1",
     "dotenv": "17.4.2",
