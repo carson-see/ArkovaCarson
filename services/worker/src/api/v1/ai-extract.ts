@@ -13,7 +13,12 @@
 import { Router, Request, Response } from 'express';
 import { ExtractionRequestSchema } from '../../ai/schemas.js';
 import { createExtractionProvider } from '../../ai/factory.js';
-import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
+import {
+  checkAICredits,
+  deductAICredits,
+  ensureAICreditsPeriod,
+  logAIUsageEvent,
+} from '../../ai/cost-tracker.js';
 import { captureCreditRpcFailureAlert } from '../../utils/sentry.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
@@ -230,6 +235,21 @@ router.post('/', async (req: Request, res: Response) => {
         creditsRemaining: null,
       });
       return;
+    }
+
+    // SCRUM-4939: nothing has ever provisioned an `ai_credits` row for an
+    // org (no trigger/cron/code path did it), so a first-ever extraction for
+    // a brand-new org hit the fail-closed 503 below unconditionally.
+    // Provision the current period BEFORE the up-front check, not just before
+    // the debit: `check_ai_credits`'s WHERE clause is `A OR B AND C AND D`,
+    // which parses as `A OR (B AND C AND D)` — with an org id it matches ANY
+    // row for that org regardless of period (LIMIT 1, no ORDER BY). An org
+    // whose only row is an exhausted PRIOR period would otherwise 402 here and
+    // return before ever reaching provisioning. `ai-extract-batch.ts` already
+    // provisions before its own `checkAICredits` for the same reason.
+    // Non-fatal on its own failure — `deductAICredits` remains the real gate.
+    if (orgId) {
+      await ensureAICreditsPeriod(orgId);
     }
 
     // RISK-6: Synchronous credit check and deduction.

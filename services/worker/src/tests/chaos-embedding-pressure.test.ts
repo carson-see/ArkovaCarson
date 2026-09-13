@@ -10,6 +10,14 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
+// This suite exercises buildEmbeddingText/rate-limit/idempotency store sizing
+// and never touches worker config, but it imports embeddings.js -> cost-tracker.js,
+// and cost-tracker.ts now reads `config.aiCreditsMonthlyAllocation` for
+// ensureAICreditsPeriod() (SCRUM-4939). That module-scope `import { config }`
+// reaches the real `loadConfig()` singleton unless config.js is mocked here
+// too — matching the pattern in cost-tracker.test.ts / ai-extract-batch.test.ts.
+vi.mock('../config.js', () => ({ config: { aiCreditsMonthlyAllocation: 50 } }));
+
 vi.mock('../utils/db.js', () => ({
   db: {
     from: vi.fn().mockReturnValue({
