@@ -16,15 +16,10 @@
 //      manifests by fingerprint. The seed puts an org-B manifest that is NEWER
 //      on the same fingerprint as org A's, so a regression to `manifests[0]`
 //      surfaces B's `manifest_hash` to A and is caught by name, not by count.
-//   2. SCRUM-4985 — the injected identifier `x,attester_name.neq.zzz` matches
-//      every ACTIVE attestation through the old `.or()` payload. The seed
-//      guarantees at least one such row exists AND asserts that it does
-//      (`..._injection_is_discriminating`), so "total 0" can never pass because
-//      the table happened to be empty.
-//   3. The `anchor_id` select fix — `anchor_proof` was `null` on every row of a
-//      paid endpoint; probed against the DB row it must mirror, plus a
-//      NULL-anchor row so the fix cannot pass by populating unconditionally.
-//   4. SCRUM-4991 — two genuinely concurrent accepts of one token.
+//   2. SCRUM-4991 — two genuinely concurrent accepts of one token, driven down
+//      the EXISTING-USER path, which is the path whose `org_members` 23505 the
+//      PR actually fixed. See section 6 for why the no-session path measures a
+//      different, pre-existing race.
 //
 // NOT PROVEN HERE, and no probe below pretends otherwise:
 //   - SCRUM-4986's ORG_ADMIN check is UNREACHABLE IN PROD. It reads
@@ -46,8 +41,23 @@
 //     holds either way (200 iff REVOKED + audit row; anything else iff still
 //     SECURED + no audit row) rather than pinning a status the repair will
 //     legitimately change.
+//   - SCRUM-4985's injection fix and the folded `anchor_id` select fix. BOTH
+//     ARE CORRECT AND BOTH SHIP ON AN UNREACHABLE ROUTE: router.ts mounts the
+//     generic `/verify` three times (:323, :326, :332) before `/verify/entity`
+//     (:575), so `verify.ts`'s `GET /:publicId` answers with publicId="entity"
+//     and the endpoint 404s `{verified:false, error:"Record not found"}`.
+//     Cycle 1 on rig 2 is the evidence; pre-fix it read as 403
+//     insufficient_scope, which hid it. PRE-EXISTING — #2835 does not touch
+//     router.ts, and un-shadowing would ACTIVATE a dormant public endpoint.
+//     Section 3+4 asserts the shadowing itself and gates the behavioural
+//     assertions on TRAIN_ENTITY_PATH; their evidence today is
+//     entity-verify.test.ts.
 //   - The x402 payment path on /verify/entity. Those probes carry org A's API
 //     key, which bypasses the gate by design (x402PaymentGate.ts:507).
+//   - The no-session concurrent accept. Both callers hit
+//     `auth.admin.createUser` before the membership insert, so the loser's 500
+//     comes from GoTrue, not from the 23505 this PR handles. Section 6(b)
+//     records it and asserts the invariants that must hold anyway.
 //
 // Every probe pairs its HTTP result with a ctx.admin read-back; no probe
 // asserts a bare status. Audit assertions are scoped by `target_id` — the
@@ -62,19 +72,22 @@ export const changedBehavior = [
   'their org or rows they own, an INDIVIDUAL owner still sees their own, and a',
   'cross-tenant miss is 404 (never 403) so neither endpoint is an existence',
   'oracle; on a fingerprint two orgs share, each caller gets their OWN manifest',
-  "even when the other org's row is newer. (2) GET /api/v1/verify/entity builds",
-  'attestation filters with the query builder, so an identifier carrying',
-  'PostgREST filter grammar returns exact matches only instead of enumerating',
-  'every ACTIVE attestation. (3) The same endpoint now selects anchor_id, so',
-  'anchor_proof carries the real anchor for a record that has one and stays null',
-  'for one that does not. (4) A concurrent invitation accept is an idempotent',
-  'no-op: one org_members row, one MEMBER_JOINED audit row, no 500.',
-  'NOT proven here: that anchor revoke works. Its ORG_ADMIN check is defence in',
-  'depth and unreachable in prod (public.memberships is empty; the service_role',
-  'RPC raises Profile not found regardless) — the rig seeds memberships rows so',
-  'the role branch is reachable at all, and SCRUM-5004 owns the repair onto',
-  'org_members. Also not proven: the x402 payment path (probes carry an API key,',
-  'which bypasses the gate by design).',
+  "even when the other org's row is newer. (2) Two concurrent accepts of one",
+  'invitation on the existing-user path — the path whose org_members 23505 this',
+  'PR fixes — are an idempotent no-op: both 2xx, one org_members row, one',
+  'MEMBER_JOINED audit row, no 500.',
+  'NOT proven here. (a) That anchor revoke works: its ORG_ADMIN check is defence',
+  'in depth and unreachable in prod (public.memberships is empty; the',
+  'service_role RPC raises Profile not found regardless) — the rig seeds',
+  'memberships rows so the role branch is reachable at all, and SCRUM-5004 owns',
+  'the repair onto org_members. (b) The /verify/entity injection and anchor_proof',
+  'fixes: correct, but the route is SHADOWED by the generic /verify mounts ahead',
+  'of it in router.ts, so it answers 404 Record not found and no caller can reach',
+  'it — pre-existing, asserted here as the observable contract, behavioural',
+  'assertions gated on TRAIN_ENTITY_PATH. (c) The x402 payment path (probes carry',
+  'an API key, which bypasses the gate by design). (d) The no-session concurrent',
+  "accept, whose loser dies in GoTrue's createUser before reaching the 23505 —",
+  'a separate pre-existing gap, recorded with its invariants asserted.',
 ].join(' ');
 
 // Deterministic, prefix-derived fixtures so a re-run finds its own rows.
@@ -268,7 +281,13 @@ export async function run(ctx) {
   if (!tokens.adminA || !tokens.adminB || !tokens.individual || !tokens.memberA) return out;
 
   const provenance = (fp, jwt) => workerFetch(`/api/v1/ai/provenance/${fp}`, { jwt });
-  const hashesOf = (res) => (res.body?.provenanceChain ?? []).map((c) => c.manifestHash ?? c.manifest_hash ?? null);
+  // The hash lives at provenanceChain[].extraction.manifestHash (ai-provenance.ts
+  // builds a nested `extraction` object), NOT at the top of the chain entry.
+  // Cycle 1 on rig 2 read the wrong field and got [null] while manifestCount was
+  // already correctly 1 — a probe that would have passed a real leak, because
+  // `[null] !== [HASH_B]` too. Read the real field, and assert separately that
+  // the field is present at all so a shape change cannot revive that blind spot.
+  const hashesOf = (res) => (res.body?.provenanceChain ?? []).map((c) => c?.extraction?.manifestHash ?? null);
 
   // ── 1. SCRUM-4984, provenance ────────────────────────────────────────────
   // Org B against a fingerprint only org A holds. Pre-fix: 200 with A's
@@ -290,6 +309,11 @@ export async function run(ctx) {
   // is newer and would be manifests[0].
   const sharedA = await provenance(FP_SHARED, tokens.adminA);
   const sharedB = await provenance(FP_SHARED, tokens.adminB);
+  // Guard the field itself: [null] must never be mistaken for "no leak".
+  out.push(probe('2835_provenance_manifest_hash_field_present', true,
+    hashesOf(sharedA).every((h) => typeof h === 'string' && h.length === 64), {
+      detail: { hashes: hashesOf(sharedA), path: 'provenanceChain[].extraction.manifestHash' },
+    }));
   out.push(probe('2835_provenance_shared_fp_org_a_sees_only_own', JSON.stringify([HASH_A]), JSON.stringify(hashesOf(sharedA)), {
     detail: { status: sharedA.status, manifestCount: sharedA.body?.manifestCount, note: "org B's row is NEWER; pre-fix it was manifests[0]" },
   }));
@@ -338,56 +362,115 @@ export async function run(ctx) {
     detail: 'The two seeded manifests on the shared fingerprint, unchanged by two report exports.',
   }));
 
-  // ── 3. SCRUM-4985, filter injection (public endpoint; API key bypasses x402) ─
-  const entity = (qs) => workerFetch(`/api/v1/verify/entity?${qs}`, { apiKeyRaw: state.apiKey.raw });
-  const injected = await entity(`identifier=${encodeURIComponent(INJECTED_IDENTIFIER)}`);
-  out.push(probe('2835_entity_injection_status_200', 200, injected.status, { detail: { body: injected.body } }));
-  out.push(probe('2835_entity_injection_returns_no_attestations', 0, injected.body?.total_attestations ?? null, {
-    detail: { injected: INJECTED_IDENTIFIER, note: 'Pre-fix the appended OR clause matched every ACTIVE attestation.' },
-  }));
+  // ── 3+4. /api/v1/verify/entity — THE ROUTE IS SHADOWED AND UNREACHABLE ────
+  //
+  // Cycle 1 on rig 2 answered 404 `{verified:false, error:"Record not found"}`
+  // for every seeded identifier. That is not entity-verify's response shape at
+  // all (it returns `{entity, total_records, records, attestations}` and has no
+  // `verified` field) — it is `verify.ts`'s `GET /:publicId` answering with
+  // publicId = the literal string "entity".
+  //
+  // router.ts mounts the generic `/verify` THREE times (provenanceRouter :323,
+  // verifyProofRouter :326, and `requireScope('verify')` + verifyRouter :332)
+  // BEFORE `/verify/entity` at :575. Express matches mounts in order, so
+  // `/api/v1/verify/entity` never reaches entityVerifyRouter. The same file
+  // carries the comment "MUST be before /verify to avoid route shadowing" on
+  // `/verify/search`, `/verify/attestation` and `/verify/batch` — `entity` was
+  // placed after. Pre-fix this read as 403 insufficient_scope, which hid the
+  // shadowing; granting the org-A key the `verify` scope revealed it.
+  //
+  // Consequences, stated plainly: SCRUM-4985's injection fix and the folded
+  // anchor_id select fix are both correct AND both ship on a route no caller
+  // can reach, and the endpoint's documented $0.005/request contract resolves
+  // to a 404 rather than to a payload with null proofs. PRE-EXISTING: PR #2835
+  // does not touch router.ts, and un-shadowing it would ACTIVATE a dormant
+  // public endpoint — a behaviour change with its own soak, not something to
+  // fold into an authz PR. Reported, not fixed.
+  //
+  // So the observable contract is asserted (the shadowing itself), the fixture
+  // preconditions are asserted against the DB, and the behavioural assertions
+  // activate with no code change the moment a reachable path exists: set
+  // TRAIN_ENTITY_PATH (e.g. '/api/v1/entity-verify' after an un-shadowing fix)
+  // and the full set below runs. Same escape-hatch pattern as 2836's
+  // TRAIN_REBIND_HOST.
+  const entityBase = (ctx.env ?? process.env).TRAIN_ENTITY_PATH ?? '/api/v1/verify/entity';
+  const entity = (qs) => workerFetch(`${entityBase}?${qs}`, { apiKeyRaw: state.apiKey.raw });
+  const routeReachable = Boolean((ctx.env ?? process.env).TRAIN_ENTITY_PATH);
+
+  // Fixture preconditions — real ctx.admin read-backs, so the probes below are
+  // never vacuous and the seed cannot silently rot.
   const { count: activeAttestations } = await admin.from('attestations').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE');
   out.push(probe('2835_entity_injection_is_discriminating', true, (activeAttestations ?? 0) > 0, {
-    detail: { activeAttestations, note: '`attester_name.neq.zzz` matches all of these; total 0 must be a denial, not an empty table.' },
+    detail: { activeAttestations, note: '`attester_name.neq.zzz` matches all of these; a "total 0" result must be a denial, not an empty table.' },
   }));
-  const exact = await entity(`identifier=${encodeURIComponent(seeded.attestation.subjectIdentifier)}`);
-  const exactRows = exact.body?.attestations ?? [];
-  out.push(probe('2835_entity_exact_identifier_still_matches', true, exactRows.length >= 1, {
-    detail: { total: exact.body?.total_attestations, note: 'The fix must narrow, not break, the legitimate lookup.' },
-  }));
-  out.push(probe('2835_entity_exact_match_only', true,
-    exactRows.length > 0 && exactRows.every((a) => a.subject_identifier === seeded.attestation.subjectIdentifier), {
-      detail: { identifiers: exactRows.map((a) => a.subject_identifier) },
-    }));
-
-  // ── 4. anchor_proof (the CTO-folded select fix) ──────────────────────────
   const { data: proofAnchorRow } = await admin.from('anchors')
     .select('id, status, chain_tx_id, chain_block_height').eq('id', seeded.proofAnchor.id).maybeSingle();
-  const anchored = await entity(`identifier=${encodeURIComponent(seeded.recordWithAnchor.sourceId)}`);
-  const anchoredRecord = (anchored.body?.records ?? [])[0] ?? null;
-  out.push(probe('2835_entity_anchored_record_returned', 1, anchored.body?.total_records ?? null, {
-    detail: { sourceId: seeded.recordWithAnchor.sourceId },
-  }));
-  out.push(probe('2835_entity_anchor_proof_matches_db_row',
-    JSON.stringify({ status: proofAnchorRow?.status ?? null, chain_tx_id: proofAnchorRow?.chain_tx_id ?? null, block_height: proofAnchorRow?.chain_block_height ?? null }),
-    JSON.stringify({
-      status: anchoredRecord?.anchor_proof?.status ?? null,
-      chain_tx_id: anchoredRecord?.anchor_proof?.chain_tx_id ?? null,
-      block_height: anchoredRecord?.anchor_proof?.block_height ?? null,
-    }), {
-      detail: 'Pre-fix anchor_id was never selected, so this was null on every row of a $0.005/request endpoint.',
+  const { data: recAnchored } = await admin.from('public_records').select('id, anchor_id').eq('source_id', seeded.recordWithAnchor.sourceId).maybeSingle();
+  const { data: recPlain } = await admin.from('public_records').select('id, anchor_id').eq('source_id', seeded.recordWithoutAnchor.sourceId).maybeSingle();
+  out.push(probe('2835_entity_fixture_rows_shaped_for_anchor_proof', 'anchored=SECURED,plain=null',
+    `anchored=${recAnchored?.anchor_id === seeded.proofAnchor.id ? (proofAnchorRow?.status ?? 'NO_ANCHOR') : 'UNLINKED'},plain=${recPlain ? String(recPlain.anchor_id) : 'MISSING'}`, {
+      detail: { anchoredRecord: recAnchored, plainRecord: recPlain, anchor: proofAnchorRow },
     }));
-  out.push(probe('2835_entity_anchor_id_absent_from_payload', false,
-    anchoredRecord ? Object.prototype.hasOwnProperty.call(anchoredRecord, 'anchor_id') : null, {
-      detail: 'anchor_id is an internal id; only the derived anchor_proof may be public (Constitution §6).',
+
+  if (!routeReachable) {
+    // Assert the defect rather than skipping: this is the observable contract
+    // today and it must not drift silently.
+    const shadowed = await entity(`identifier=${encodeURIComponent(seeded.attestation.subjectIdentifier)}`);
+    out.push(probe('2835_entity_route_shadowed_by_verify_publicId', 404, shadowed.status, {
+      detail: {
+        body: shadowed.body,
+        note: 'router.ts mounts /verify (:323,:326,:332) before /verify/entity (:575); verify.ts GET /:publicId answers with publicId="entity". Pre-existing, NOT introduced by #2835.',
+      },
     }));
-  const unanchored = await entity(`identifier=${encodeURIComponent(seeded.recordWithoutAnchor.sourceId)}`);
-  const unanchoredRecord = (unanchored.body?.records ?? [])[0] ?? null;
-  // `?? 'MISSING_RECORD'` would be wrong here: a null anchor_proof is the PASS
-  // condition, and `??` fires on it. The absent record is a distinct failure.
-  const unanchoredProof = unanchoredRecord === null ? 'MISSING_RECORD' : unanchoredRecord.anchor_proof;
-  out.push(probe('2835_entity_anchor_proof_null_without_anchor', null, unanchoredProof, {
-    detail: { total_records: unanchored.body?.total_records, note: 'The fix must not populate anchor_proof unconditionally.' },
-  }));
+    out.push(probe('2835_entity_shadowing_signature', 'Record not found', shadowed.body?.error ?? null, {
+      detail: 'entity-verify has no `verified`/`error` fields at all — this body proves which handler answered.',
+    }));
+    out.push(probe('2835_entity_behaviour_not_exercisable_while_shadowed', true, true, {
+      detail: 'Injection + anchor_proof assertions are gated on TRAIN_ENTITY_PATH. Their evidence today is entity-verify.test.ts (5 tests, incl. the wire-level postgrest URL proof and the red-first anchor_proof pair).',
+    }));
+  } else {
+    const injected = await entity(`identifier=${encodeURIComponent(INJECTED_IDENTIFIER)}`);
+    out.push(probe('2835_entity_injection_status_200', 200, injected.status, { detail: { body: injected.body } }));
+    out.push(probe('2835_entity_injection_returns_no_attestations', 0, injected.body?.total_attestations ?? null, {
+      detail: { injected: INJECTED_IDENTIFIER, note: 'Pre-fix the appended OR clause matched every ACTIVE attestation.' },
+    }));
+    const exact = await entity(`identifier=${encodeURIComponent(seeded.attestation.subjectIdentifier)}`);
+    const exactRows = exact.body?.attestations ?? [];
+    out.push(probe('2835_entity_exact_identifier_still_matches', true, exactRows.length >= 1, {
+      detail: { total: exact.body?.total_attestations, note: 'The fix must narrow, not break, the legitimate lookup.' },
+    }));
+    out.push(probe('2835_entity_exact_match_only', true,
+      exactRows.length > 0 && exactRows.every((a) => a.subject_identifier === seeded.attestation.subjectIdentifier), {
+        detail: { identifiers: exactRows.map((a) => a.subject_identifier) },
+      }));
+
+    const anchored = await entity(`identifier=${encodeURIComponent(seeded.recordWithAnchor.sourceId)}`);
+    const anchoredRecord = (anchored.body?.records ?? [])[0] ?? null;
+    out.push(probe('2835_entity_anchored_record_returned', 1, anchored.body?.total_records ?? null, {
+      detail: { sourceId: seeded.recordWithAnchor.sourceId },
+    }));
+    out.push(probe('2835_entity_anchor_proof_matches_db_row',
+      JSON.stringify({ status: proofAnchorRow?.status ?? null, chain_tx_id: proofAnchorRow?.chain_tx_id ?? null, block_height: proofAnchorRow?.chain_block_height ?? null }),
+      JSON.stringify({
+        status: anchoredRecord?.anchor_proof?.status ?? null,
+        chain_tx_id: anchoredRecord?.anchor_proof?.chain_tx_id ?? null,
+        block_height: anchoredRecord?.anchor_proof?.block_height ?? null,
+      }), {
+        detail: 'Pre-fix anchor_id was never selected, so this was null on every row.',
+      }));
+    out.push(probe('2835_entity_anchor_id_absent_from_payload', false,
+      anchoredRecord ? Object.prototype.hasOwnProperty.call(anchoredRecord, 'anchor_id') : null, {
+        detail: 'anchor_id is an internal id; only the derived anchor_proof may be public (Constitution §6).',
+      }));
+    const unanchored = await entity(`identifier=${encodeURIComponent(seeded.recordWithoutAnchor.sourceId)}`);
+    const unanchoredRecord = (unanchored.body?.records ?? [])[0] ?? null;
+    // `?? 'MISSING_RECORD'` would be wrong here: a null anchor_proof is the PASS
+    // condition, and `??` fires on it. The absent record is a distinct failure.
+    const unanchoredProof = unanchoredRecord === null ? 'MISSING_RECORD' : unanchoredRecord.anchor_proof;
+    out.push(probe('2835_entity_anchor_proof_null_without_anchor', null, unanchoredProof, {
+      detail: { total_records: unanchored.body?.total_records, note: 'The fix must not populate anchor_proof unconditionally.' },
+    }));
+  }
 
   // ── 5. SCRUM-4986, revoke role check (defence in depth — see header) ─────
   const revokeAnchorId = seeded.revokeAnchor.id;
@@ -439,40 +522,110 @@ export async function run(ctx) {
   }));
 
   // ── 6. SCRUM-4991, concurrent invitation accept ──────────────────────────
-  // A FRESH invitation per cycle: accepting consumes it. The account this
-  // creates is removed at the end so the fixture does not drift over a 48h
-  // soak — audit_events are immutable and are never touched.
-  const inviteLocal = `${seeded.prefix}-invitee-${cycleId}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-  const invitation = await ensurePendingInvitation(admin, state, inviteLocal);
-  const acceptStart = new Date().toISOString();
-  const accept = () => workerFetch('/api/invitations/accept', { method: 'POST', body: { token: invitation.token, password: state.password, fullName: inviteLocal } });
-  const [r1, r2] = await Promise.all([accept(), accept()]);
-  const statuses = [r1.status, r2.status].sort((a, b) => a - b);
+  //
+  // The PR fixes the `org_members` 23505 inside `provisionMembership`. Cycle 1
+  // drove the NO-SESSION path, where both accepts call
+  // `auth.admin.createUser` for the same address FIRST — so the loser died in
+  // GoTrue ('Failed to create your account', internal_error -> 500) and never
+  // reached the membership insert. That 500 is a DIFFERENT, PRE-EXISTING race
+  // that #2835 makes no claim about (see the report finding); driving it and
+  // calling the result a #2835 failure would be measuring the wrong thing.
+  //
+  // The fixed path is the EXISTING-USER path: `callerId` set + caller email ==
+  // invitation email goes straight to `provisionMembership`
+  // (invitations.ts:442-461). Two concurrent authenticated accepts therefore
+  // both pass the membership lookup and one takes the 23505 — exactly the code
+  // the PR changed. That is what the headline probes below drive.
+  //
+  // A FRESH invitation per cycle: accepting consumes it. Both accounts are
+  // removed at the end so the fixture does not drift over a 48h soak —
+  // audit_events are immutable and are never touched.
+  const cleanup = [];
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
-  out.push(probe('2835_invite_concurrent_accept_no_500', true, r1.status !== 500 && r2.status !== 500, {
-    detail: { statuses, bodies: [r1.body, r2.body], note: "Pre-fix the race loser's 23505 surfaced as a 500 to a user whose join succeeded." },
+  // (a) HEADLINE — the org_members 23505 path the PR fixed.
+  const existingLocal = slug(`${seeded.prefix}-invitee-existing-${cycleId}`);
+  const existingEmail = `${existingLocal}@staging.invalid.test`;
+  const { data: created, error: createErr } = await admin.auth.admin.createUser({
+    email: existingEmail, password: state.password, email_confirm: true, user_metadata: { full_name: existingLocal },
+  });
+  const existingUserId = created?.user?.id ?? null;
+  out.push(probe('2835_invite_existing_account_created', true, Boolean(existingUserId), {
+    detail: { email: existingEmail, error: createErr?.message ?? null },
   }));
-  const { data: newProfile } = await admin.from('profiles').select('id').eq('email', invitation.email).maybeSingle();
-  out.push(probe('2835_invite_account_provisioned', true, Boolean(newProfile?.id), { detail: { email: invitation.email } }));
-  const { count: memberRowCount } = await admin.from('org_members').select('id', { count: 'exact', head: true })
+  if (existingUserId) {
+    cleanup.push(existingUserId);
+    await admin.from('profiles').upsert({
+      id: existingUserId, email: existingEmail, full_name: existingLocal, role: 'INDIVIDUAL',
+      org_id: null, is_public_profile: false, disclaimer_accepted_at: new Date().toISOString(),
+    });
+    const invitation = await ensurePendingInvitation(admin, state, existingLocal);
+    const { token: inviteeJwt, status: inviteeAuth, error: inviteeAuthErr } = await signIn(SUPABASE_URL, ANON_KEY, existingEmail, state.password);
+    out.push(probe('2835_invite_existing_account_jwt', true, Boolean(inviteeJwt), { detail: { status: inviteeAuth, error: inviteeAuthErr } }));
+
+    if (inviteeJwt) {
+      const acceptStart = new Date().toISOString();
+      const accept = () => workerFetch('/api/invitations/accept', { method: 'POST', jwt: inviteeJwt, body: { token: invitation.token } });
+      const [r1, r2] = await Promise.all([accept(), accept()]);
+      const statuses = [r1.status, r2.status].sort((a, b) => a - b);
+
+      out.push(probe('2835_invite_concurrent_accept_no_500', true, r1.status !== 500 && r2.status !== 500, {
+        detail: { statuses, bodies: [r1.body, r2.body], path: 'existing-user (callerId set) -> provisionMembership', note: "Pre-fix the race loser's 23505 surfaced as a 500 to a user whose join succeeded." },
+      }));
+      out.push(probe('2835_invite_concurrent_accept_both_2xx', true, r1.status < 300 && r2.status < 300, {
+        detail: { statuses, note: 'An idempotent no-op means the loser also succeeds, not merely that it avoids a 500.' },
+      }));
+      const { count: memberRowCount } = await admin.from('org_members').select('id', { count: 'exact', head: true })
+        .eq('org_id', state.orgA).eq('user_id', existingUserId);
+      out.push(probe('2835_invite_exactly_one_org_members_row', 1, memberRowCount ?? null, {
+        detail: 'UNIQUE(user_id, org_id) makes >1 impossible; 0 would mean both accepts failed.',
+      }));
+      const { count: joinedAudit } = await admin.from('audit_events').select('id', { count: 'exact', head: true })
+        .eq('event_type', 'MEMBER_JOINED').eq('target_id', invitation.id).gte('created_at', acceptStart);
+      out.push(probe('2835_invite_exactly_one_member_joined_audit', 1, joinedAudit ?? null, {
+        detail: { scopedBy: { target_id: invitation.id, since: acceptStart }, note: 'The race loser must not emit a second MEMBER_JOINED.' },
+      }));
+      const { data: invAfter } = await admin.from('invitations').select('status, accepted_at').eq('id', invitation.id).maybeSingle();
+      out.push(probe('2835_invite_marked_accepted', true, invAfter?.status === 'accepted' || Boolean(invAfter?.accepted_at), {
+        detail: { status: invAfter?.status ?? null, accepted_at: invAfter?.accepted_at ?? null },
+      }));
+    }
+  }
+
+  // (b) The NO-SESSION path — a known pre-existing gap, asserted as the
+  // invariant that must hold regardless of which caller sees an error. The
+  // status pair is RECORDED, not asserted, because [200,500] is today's
+  // documented behaviour and #2835 does not claim to change it. What must
+  // never happen is a half-applied join: two accounts, two memberships, or two
+  // MEMBER_JOINED rows.
+  const newLocal = slug(`${seeded.prefix}-invitee-new-${cycleId}`);
+  const newInvitation = await ensurePendingInvitation(admin, state, newLocal);
+  const newStart = new Date().toISOString();
+  const acceptAnon = () => workerFetch('/api/invitations/accept', { method: 'POST', body: { token: newInvitation.token, password: state.password, fullName: newLocal } });
+  const [n1, n2] = await Promise.all([acceptAnon(), acceptAnon()]);
+  const { data: newProfile } = await admin.from('profiles').select('id').eq('email', newInvitation.email).maybeSingle();
+  if (newProfile?.id) cleanup.push(newProfile.id);
+  out.push(probe('2835_invite_new_account_path_provisioned_once', true, Boolean(newProfile?.id), {
+    detail: {
+      statuses: [n1.status, n2.status].sort((a, b) => a - b),
+      note: 'KNOWN GAP (pre-existing, not #2835): both accepts call auth.admin.createUser, so the loser dies in GoTrue with "Failed to create your account" (500) before reaching the membership insert the PR fixed. One account must still exist.',
+    },
+  }));
+  const { count: newMemberRows } = await admin.from('org_members').select('id', { count: 'exact', head: true })
     .eq('org_id', state.orgA).eq('user_id', newProfile?.id ?? '00000000-0000-0000-0000-000000000000');
-  out.push(probe('2835_invite_exactly_one_org_members_row', 1, memberRowCount ?? null, {
-    detail: 'UNIQUE(user_id, org_id) makes >1 impossible; 0 would mean both accepts failed.',
+  out.push(probe('2835_invite_new_account_exactly_one_membership', 1, newMemberRows ?? null, {
+    detail: 'The createUser race must not leave a user without the membership their 200 promised.',
   }));
-  const { count: joinedAudit } = await admin.from('audit_events').select('id', { count: 'exact', head: true })
-    .eq('event_type', 'MEMBER_JOINED').eq('target_id', invitation.id).gte('created_at', acceptStart);
-  out.push(probe('2835_invite_exactly_one_member_joined_audit', 1, joinedAudit ?? null, {
-    detail: { scopedBy: { target_id: invitation.id, since: acceptStart }, note: 'The race loser must not emit a second MEMBER_JOINED.' },
-  }));
-  const { data: invAfter } = await admin.from('invitations').select('status, accepted_at').eq('id', invitation.id).maybeSingle();
-  out.push(probe('2835_invite_marked_accepted', true, invAfter?.status === 'accepted' || Boolean(invAfter?.accepted_at), {
-    detail: { status: invAfter?.status ?? null, accepted_at: invAfter?.accepted_at ?? null },
+  const { count: newJoinedAudit } = await admin.from('audit_events').select('id', { count: 'exact', head: true })
+    .eq('event_type', 'MEMBER_JOINED').eq('target_id', newInvitation.id).gte('created_at', newStart);
+  out.push(probe('2835_invite_new_account_exactly_one_member_joined_audit', 1, newJoinedAudit ?? null, {
+    detail: { scopedBy: { target_id: newInvitation.id, since: newStart } },
   }));
 
-  // Per-cycle cleanup: our own invitee only. Never audit_events.
-  if (newProfile?.id) {
-    await admin.from('org_members').delete().eq('user_id', newProfile.id).eq('org_id', state.orgA);
-    await admin.auth.admin.deleteUser(newProfile.id).catch(() => {});
+  // Per-cycle cleanup: our own invitees only. Never audit_events.
+  for (const userId of cleanup) {
+    await admin.from('org_members').delete().eq('user_id', userId).eq('org_id', state.orgA);
+    await admin.auth.admin.deleteUser(userId).catch(() => {});
   }
 
   return out;
