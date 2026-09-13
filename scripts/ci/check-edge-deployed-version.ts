@@ -168,8 +168,23 @@ export function resolveMainSha(): string {
   return execFileSync(GIT_BIN, ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim();
 }
 
+// Defense-in-depth (tssecurity:S6350 -- command argument tampering): these
+// two functions are EXPORTED and take a bare `sha: string`, so Sonar's
+// dataflow analysis cannot see (and a future caller might not preserve) the
+// `HEX_SHA_RE` validation already applied to `health.git_sha` in
+// classifyDrift() before it reaches them via the injected `isAncestor`/
+// `commitsBehind` callbacks. Re-validating at this boundary closes the sink
+// itself rather than relying solely on the caller: a value that is not a
+// real hex SHA can never reach `execFileSync`'s argv, regardless of caller.
+function assertHexSha(sha: string, fnName: string): void {
+  if (!HEX_SHA_RE.test(sha)) {
+    throw new Error(`${fnName}: refusing non-hex-SHA argument (got ${JSON.stringify(sha)})`);
+  }
+}
+
 export function gitIsAncestor(sha: string, of = 'origin/main'): boolean {
   try {
+    assertHexSha(sha, 'gitIsAncestor');
     execFileSync(GIT_BIN, ['merge-base', '--is-ancestor', sha, of], { stdio: 'ignore' });
     return true;
   } catch {
@@ -178,6 +193,7 @@ export function gitIsAncestor(sha: string, of = 'origin/main'): boolean {
 }
 
 export function gitCommitsBehind(sha: string, of = 'origin/main'): number {
+  assertHexSha(sha, 'gitCommitsBehind');
   const out = execFileSync(GIT_BIN, ['rev-list', '--count', `${sha}..${of}`], { encoding: 'utf8' }).trim();
   const n = Number(out);
   return Number.isFinite(n) ? n : 0;
