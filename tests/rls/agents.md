@@ -146,3 +146,19 @@ needed), which reuses the 2026-08-15 e2e sign-out guard's detector:
 The fingerprint index-plan suite now creates its own organization and required profiles row after auth.users. A complete committed Supabase replay exposed anchors_user_id_fkey during the old setup, before any of the seven plan checks executed. Teardown deletes only this run’s user/org fixture, including partial setup. An overlong fingerprint negative case also pins the unconstrained bpchar cast against accidental character(64) truncation. Migration 0441 remains immutable.
 
 The same full-schema run showed a second fixture defect: enable_seqscan=off still permits the planner to choose another index. With only one SECURED row it legitimately chose the status index. The suite now seeds 2,048 owned SECURED background rows so the fingerprint is selective, still asserting Index Cond and the uncast negative control without a latency threshold.
+
+## 2026-09-11 — UAT-04 mandatory MFA boundary
+
+`uat04-mfa-enforcement.test.ts` exercises real GoTrue tokens and PostgREST for the
+email-before-MFA transition, AAL1 denial, AAL2 access, private Storage, service
+credentials, and preservation of an existing pre-request hook. Keep its fixture
+IDs and temporary policies suite-owned, and retain the old-token negative controls.
+All other RLS positive clients use a shared, process-locked TOTP factor through
+`elevateRlsClientToAal2()`; keep that real GoTrue elevation instead of weakening
+the production MFA gate or substituting a locally signed token.
+
+SCRUM-4887: committed changes to the singleton OAuth confirmation policy use
+`shared-fixture-lock.ts` across Vitest workers and restore the exact prior
+timestamp in a separate `finally` path. The lock times out instead of evicting
+an apparently stale owner. Keep file parallelism enabled so unrelated fixture
+collisions remain visible.

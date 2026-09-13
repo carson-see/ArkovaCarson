@@ -1264,6 +1264,44 @@ is unchanged. Regression reproduced before the fix; local validation is not soak
 Migration `0448` checks every active agent-key INSERT/reactivation against the agent row under a parent share lock, including the existing administrator mint path. A concurrent provider revoke either waits and deactivates the committed key, or wins and causes the late key write to fail. The terminal-state trigger checks the actual UPDATE row, so a stale PATCH receives 409 after revocation. Failed ComputeID admission calls service-only `cleanup_computeid_empty_admission`; it deletes only the unchanged active agent with no keys while holding the same parent lock. It preserves a later revocation and a key whose INSERT committed despite a lost reply, avoiding `ON DELETE SET NULL` detachment. SQL errors return no raw key. Signed receipt HTTP tests cover those boundary responses; the owned PostgreSQL harness proves the lock interleavings and rollback behavior.
 
 
+## 2026-09-12 — `/webhooks` mount order: limiter -> scope -> handler key + ORG_ADMIN (SCRUM-3981)
+
+`router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter)`.
+Read the chain left to right, because each layer answers a different question and none of them
+is redundant:
+
+1. **`batchRateLimiter`** (10 req/min, `scope: 'batch'`) — cheapest, so it is first. An unscoped
+   flood is rejected before anything reads a key.
+2. **`requireScope('webhooks:manage')`** — the capability gate, added by SCRUM-3981. Before it,
+   the mount carried the limiter alone: handlers checked that *an* API key was present and the
+   five ORG_ADMIN routes (create, patch, delete, both DLQ) checked the actor's role, but nothing
+   read `scopes`. `webhooks:manage` was in
+   `apiScopes.ts`, in `docs/api/README.md`, and in the dashboard's scope picker, and gated
+   nothing — so a key minted with the default `['read:search']` could list, read, test-ping,
+   replay and DLQ-manage an org's endpoints.
+3. **`requireApiKey` inside `webhooks.ts`** — still there, and it is load-bearing.
+   `requireScope` opens with `if (!req.apiKey) { next(); return; }` (`middleware/apiKeyAuth.ts`),
+   i.e. it does NOT authenticate: it narrows a caller that is already authenticated. On this
+   mount nothing upstream requires a key, so the guard falls through for an anonymous request
+   and the handler-level check is the only thing between that request and a 200. Delete
+   `requireApiKey` "because the mount is guarded now" and every route becomes anonymous.
+   `webhooks-scope.test.ts` pins exactly that: no key -> 401 `authentication_required`, and the
+   marker middleware records that the scope guard did pass control on.
+
+Scope is capability, not ownership: each handler still filters `.eq('org_id', req.apiKey.orgId)`,
+so an org-B key holding `webhooks:manage` gets **404** on an org-A endpoint id, never 403.
+
+Route coverage is read off `webhooksRouter.stack`, not transcribed — all ten routes today. The
+served spec (`docs.ts`, canonical per `docs/api/canonical-sources.md`) declares
+`x-arkova-required-scopes: ['webhooks:manage']` and a 403 on each of them.
+
+Deliberately NOT changed: the PHI/FERPA mounts at the bottom of `router.ts`. `requireAuth` runs
+first there and rejects any caller whose Authorization header is absent or starts with
+`Bearer ak_`, so an API key never reaches `requireScopeAnyAuth('compliance:read')` — fail-closed
+today. Whether a key SHOULD be able to reach those routes is a product decision, filed as
+SCRUM-5070 rather than decided in a webhooks PR.
+
+
 ## 2026-09-10 — ComputeID historical review closure
 
 ComputeID admission now uses service-only `admit_computeid_agent`: one passport sentinel lock, global terminal-revocation check, agent, hashed key and both audit events in a single transaction. The prior `agent-keys.ts` helper and compensation deletion are removed. An unknown reply returns an error while preserving any committed agent/key; retries report the existing binding. Raw keys never reach the RPC. The OpenAPI surface documents org-key authority and admission errors. SCRUM-4570 covers cross-organization replay; durable tenant binding ownership remains SCRUM-4497.

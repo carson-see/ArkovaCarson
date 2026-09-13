@@ -9,9 +9,7 @@
  * @created 2026-03-27
  */
 
-import { test, expect, SEED_USERS } from './fixtures';
-
-test.use({ storageState: { cookies: [], origins: [] } });
+import { test, expect } from './fixtures';
 
 const mockBillingInfo = {
   plan: {
@@ -150,24 +148,10 @@ function userMenuButton(page: import('@playwright/test').Page) {
   return page.locator('header').getByRole('button', { name: /Jamie Demo.*User/i });
 }
 
-async function signInAsIndividual(page: import('@playwright/test').Page) {
-  await page.goto('/login');
-
-  if (page.url().includes('/login')) {
-    await expect(page.getByLabel('Email address')).toBeVisible({ timeout: 10000 });
-    await page.getByLabel('Email address').fill(SEED_USERS.individual.email);
-    await page.getByLabel('Password').fill(SEED_USERS.individual.password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
-  }
-
-  await page.waitForURL(/\/dashboard/, { timeout: 15000 });
-  await expect(userMenuButton(page))
-    .toBeVisible({ timeout: 10000 });
-}
-
 async function openAsIndividual(page: import('@playwright/test').Page, path: string) {
-  await signInAsIndividual(page);
+  // auth.setup.ts already completed real MFA for this saved individual session.
   await page.goto(path);
+  await expect(userMenuButton(page)).toBeVisible({ timeout: 10000 });
 }
 
 test.describe('Billing', () => {

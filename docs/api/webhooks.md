@@ -51,7 +51,11 @@ All webhook management endpoints require an Arkova API key. Pass it as either:
 - **Header:** `X-API-Key: ak_live_...`
 - **Bearer:** `Authorization: Bearer ak_live_...`
 
-API keys are scoped to a single organization. All webhook operations are automatically scoped to your org — you cannot register, read, or modify another org's webhooks.
+**The key must hold the `webhooks:manage` scope** (SCRUM-3981). Every route on this page is covered, reads included, and no other scope implies it — a key minted with only the default `read:search` gets `403 insufficient_scope`. Mint or re-issue the key with `webhooks:manage` selected; see the [scope vocabulary](./README.md#canonical-api-key-scope-vocabulary).
+
+Registering, updating and deleting an endpoint, and both dead-letter-queue routes, additionally require the key's actor to be an ORG_ADMIN — also a `403`.
+
+API keys are scoped to a single organization. All webhook operations are automatically scoped to your org — you cannot register, read, or modify another org's webhooks. Asking for another org's endpoint by id returns `404`, not `403`: holding `webhooks:manage` is a capability, not authority over someone else's data.
 
 ---
 
@@ -217,6 +221,8 @@ curl -X POST https://arkova-worker-270018525501.us-central1.run.app/api/v1/webho
 | 400 | `invalid_url` | URL targets a private/internal/cloud-metadata IP (SSRF blocked) |
 | 400 | `verification_failed` | `verify: true` was passed but the verification ping failed |
 | 401 | `authentication_required` | Missing or invalid API key |
+| 403 | `insufficient_scope` | The API key does not hold the `webhooks:manage` scope |
+| 403 | `forbidden` | The key holds `webhooks:manage` but its actor is not an ORG_ADMIN |
 | 429 | (rate limit) | Exceeded 10 req/min on webhook management |
 
 ---
@@ -605,6 +611,8 @@ All errors follow the same envelope:
 | 400 | `invalid_url` | URL targets a private/internal IP |
 | 400 | `verification_failed` | Verification ping (`verify: true`) didn't succeed |
 | 401 | `authentication_required` | Missing or invalid API key |
+| 403 | `insufficient_scope` | The API key does not hold the `webhooks:manage` scope |
+| 403 | `forbidden` | ORG_ADMIN required for this route (register / update / delete / DLQ) |
 | 404 | `not_found` | Endpoint ID doesn't exist or belongs to another org |
 | 429 | (rate limit) | Exceeded 10 req/min |
 | 500 | `internal_error` | Server-side failure — retry with exponential backoff |
