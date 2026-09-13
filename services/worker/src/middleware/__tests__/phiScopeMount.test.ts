@@ -63,6 +63,41 @@ describe('PHI / student-PII mounts carry a scope guard that cannot no-op', () =>
     expect(mount).not.toMatch(/\brequireScope\(/);
   });
 
+  // SCRUM-3981 — recorded here because it is the reason the webhooks fix does
+  // NOT extend to these four mounts. `router.ts`'s own `requireAuth` rejects
+  // any caller whose Authorization header is missing or starts with
+  // `Bearer ak_`, and an `X-API-Key` header is never read by it. So an API key
+  // alone — with or without `compliance:read` — gets a 401 before
+  // `requireScopeAnyAuth` runs. That is FAIL-CLOSED, so this PR changes
+  // nothing here; whether an API key SHOULD be able to reach a PHI/FERPA
+  // route at all is a product decision, filed as SCRUM-5070. This is a
+  // source-level pin in the style of the rest of this file: it reads the
+  // guard, it does not execute it (`requireAuth` is a module-local function
+  // in router.ts and is not exported).
+  it('router.ts requireAuth rejects an API-key caller before the scope guard can run', () => {
+    const start = routerSource.indexOf('async function requireAuth(');
+    expect(start, 'requireAuth is no longer declared in router.ts').toBeGreaterThan(-1);
+    // The end delimiter is a decorative banner. If it is reworded or moved,
+    // indexOf returns -1 and slice(start, -1) would silently widen `body` to
+    // (almost) the whole file — which DOES contain `req.apiKey` and
+    // `X-API-Key`, so the negative assertions below would fail claiming
+    // requireAuth accepts API keys when requireAuth never changed.
+    const end = routerSource.indexOf('// ─── Batch rate limiter', start);
+    expect(end, 'the banner that delimits requireAuth moved — re-anchor this slice').toBeGreaterThan(
+      start,
+    );
+    const body = routerSource.slice(start, end);
+
+    // No Authorization header, or one carrying an API key, is a 401.
+    expect(body).toContain("!authHeader?.startsWith('Bearer ')");
+    expect(body).toContain("authHeader.startsWith('Bearer ak_')");
+    expect(body).toMatch(/res\.status\(401\)/);
+    // It never consults the API-key header, so `X-API-Key: ak_...` alone
+    // cannot authenticate a PHI/FERPA request.
+    expect(body.toLowerCase()).not.toContain('x-api-key');
+    expect(body).not.toContain('req.apiKey');
+  });
+
   it('imports the dual-mode guard from the middleware module', () => {
     expect(routerSource).toMatch(
       /import \{ requireScopeAnyAuth \} from '\.\.\/\.\.\/middleware\/requireScopeAnyAuth\.js';/,

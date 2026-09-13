@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-13-TRAIN-B2B",
+  "created_at": "2026-09-13T06:07:09Z",
+  "created_by": "carson@arkova.io (CTO release session, Claude Fable 5.1)",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": "",
+  "approval_time": "",
+  "train_launch_sha": "f1a16ac3242937bdf68372f8dd79a274f41999fc",
+  "target_main_sha": "1f471113b25e2291ac84c8feff7ebbe8bb96fe6a",
+  "allowed_base_shas": [
+    "1f471113b25e2291ac84c8feff7ebbe8bb96fe6a"
+  ],
+  "covered_main_shas": [],
+  "included_prs": [
+    {
+      "number": 2842,
+      "head_sha": "f1a16ac3242937bdf68372f8dd79a274f41999fc",
+      "base_sha": "1f471113b25e2291ac84c8feff7ebbe8bb96fe6a",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Re-soak of the merged head (main after #2834 landed the deploy-worker.yml env line this PR also edits); Train B2 evidence on aeddccc4b superseded.",
+      "rollback_note": "ENABLE_COMPUTEID_INTEGRATION=false + deploy: both surfaces 503, job skipped; only artifact is an inert job_queue cursor row.",
+      "migration_files": [],
+      "branch": "feat/scrum-4495-computeid-activation-readiness"
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://arkova-worker-cto-train-b1-0912-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://arkova-worker-cto-train-b1-0912-staging-kvojbeutfa-uc.a.run.app",
+    "cloud_run_service": "arkova-worker-cto-train-b1-0912-staging",
+    "revision": "arkova-worker-cto-train-b1-0912-staging-00008-quh",
+    "deploy_tag": "train-2",
+    "image_digest": "sha256:9a10c4a8cbd7e409dc57748237e3dcd7ae688870b25c7bb61b2c52179ca1e468",
+    "supabase_project_ref": "pdgfbbnrqhojiihtxycd",
+    "deploy_log_id": "3",
+    "preflight_result": "environment_type=clean_mirror"
+  },
+  "soak": {
+    "start": "2026-09-13T06:05:40.874Z",
+    "end": "",
+    "duration_hours": 4,
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@7cc125cf8",
+    "result": "",
+    "evidence_links": [],
+    "expires_at": "2026-09-20T06:03:20Z"
+  },
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "No migration in this train.",
+    "reapply_proof": "n/a",
+    "stop_conditions": [
+      "SHA mismatch",
+      "dirty preflight",
+      "cycle failure not attributable to environment"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "post_merge_step": "Create computeid-webhook-secret + computeid-ca-cert-pem in Secret Manager from local partner material and grant roles/secretmanager.viewer to github-actions-deploy before the deploy that carries this PR; ENABLE_COMPUTEID_INTEGRATION stays false."
+  },
+  "exceptions": [
+    "#2842 lit reconciliation path not exercised (flag off = prod state); offline golden receipt test + 38 unit tests.",
+    "Rig 2 reused after Train B1: honesty preflight re-run 2026-09-13T06:03:20Z reports clean_mirror (docs/staging/cto-train-b1-0912/preflight-b2b-20260913T060320Z.json)."
+  ],
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b2b-2026-09-13.json",
+  "staging_branch": "feat/scrum-4495-computeid-activation-readiness",
+  "preflight_timestamp": "2026-09-13T06:03:20Z"
+}

@@ -243,9 +243,16 @@ import {
   deriveResourceKey,
   __resetSequenceForTest,
   __resetWebhookFlagCacheForTest,
+  __resetRefusalLogStateForTest,
   resetCircuitBreakers,
   resolveDlqEntry,
 } from './delivery.js';
+import { __setWebhookFetchForTests } from './egress.js';
+
+// SCRUM-4983: production dispatch is IP-pinned through undici's own fetch, which
+// vi.stubGlobal('fetch') cannot intercept. Route the module's dispatch back to
+// the (stubbed) global so every assertion on mockFetch below still holds.
+__setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
 
 // WH-4: the ENABLE_OUTBOUND_WEBHOOKS flag read is now cached in-process for 30s.
 // Reset it before every test so a cached value from a prior case (tests run with
@@ -256,6 +263,7 @@ beforeEach(() => {
 
 // We also need direct access for HMAC verification — import crypto
 import crypto from 'node:crypto';
+import { createSafeFetchImpl } from '../lib/safe-fetch.js';
 
 // ---- Test fixtures ----
 
@@ -1049,6 +1057,132 @@ describe('deliverToEndpoint', () => {
         delivered_at: expect.any(String),
       }),
     );
+  });
+
+  // SCRUM-4983 — the socket must go to the IP that was validated. Before this
+  // fix the pre-check (isPrivateUrlResolved) and the dispatch (plain fetch)
+  // each resolved DNS independently, so a TTL-0 rebind between them reached
+  // the GCE metadata server despite redirect: 'manual'.
+  describe('IP-pinned egress (SCRUM-4983)', () => {
+    afterEach(() => {
+      __setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
+    });
+
+    function pinnedStub(resolved: string[]) {
+      const resolve = vi.fn(async () => resolved);
+      const dispatch = vi.fn(async (_pinnedIp: string, url: string, _init?: RequestInit) => ({
+        status: 200,
+        headers: new Headers(),
+        url,
+        arrayBuffer: async () => new TextEncoder().encode('OK').buffer as ArrayBuffer,
+      }));
+      __setWebhookFetchForTests(createSafeFetchImpl({ resolve, dispatch }));
+      return { resolve, dispatch };
+    }
+
+    it('connects to the IP it validated, with the original URL and signed headers, never via global fetch', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      const { dispatch } = pinnedStub(['203.0.113.10']);
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      const [pinnedIp, url, init] = dispatch.mock.calls[0] as unknown as [string, string, RequestInit];
+      expect(pinnedIp).toBe('203.0.113.10');
+      expect(url).toBe('https://hooks.example.com/callback');
+      expect(init).toEqual(expect.objectContaining({ method: 'POST', redirect: 'manual' }));
+      expect((init.headers as Record<string, string>)['X-Arkova-Signature']).toMatch(/^[a-f0-9]{64}$/);
+      expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'success', response_status: 200 }),
+      );
+    });
+
+    // CTO review (2026-09-12): `204 No Content` is the most common webhook
+    // acknowledgement. Routing dispatch through createSafeFetchImpl made it
+    // throw `TypeError: Response constructor: Invalid response status code
+    // 204`, which is not a SafeFetchError — so an ACCEPTED delivery was
+    // classified as a transient network error, retried five times and
+    // dead-lettered.
+    it('records a 204 No Content acknowledgement as success, not a retryable network error', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      const resolve = vi.fn(async () => ['203.0.113.10']);
+      const dispatch = vi.fn(async (_pinnedIp: string, url: string) => ({
+        status: 204,
+        headers: new Headers(),
+        url,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }));
+      __setWebhookFetchForTests(createSafeFetchImpl({ resolve, dispatch }));
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'success', response_status: 204 }),
+      );
+      expect(deliveryLogUpdate.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'retrying' }),
+      );
+    });
+
+    it('refuses a host that rebinds to the metadata IP between pre-check and dispatch: no socket, no retry, straight to DLQ', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      dlqUpsert.mockResolvedValue({ data: null, error: null });
+      // The node:dns mock (the pre-check) answers 203.0.113.10, so the guard
+      // passes. The pinned resolver — the second lookup, which is what a
+      // TTL-0 rebind flips — answers the GCE metadata IP.
+      const { dispatch } = pinnedStub(['169.254.169.254']);
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'failed',
+          next_retry_at: null,
+          error_message: expect.stringMatching(/^egress_refused: private_target/),
+        }),
+      );
+      expect(dlqUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ error_message: expect.stringMatching(/private_target/) }),
+        expect.anything(),
+      );
+    });
+
+    // CTO review (2026-09-12): migration 0338 constrains the column —
+    // CHECK (failure_kind IN ('http_delivery', 'log_write')) — verified live on
+    // prod. A row with failure_kind = 'egress_refused' is rejected with 23514,
+    // and the DLQ upsert never checks its PostgREST `{ error }`, so the row is
+    // lost silently while the "Moved to dead letter queue" info line still
+    // fires. The refusal reason belongs in error_message until a migration
+    // widens the CHECK.
+    it('dead-letters a refused delivery with a failure_kind the 0338 CHECK accepts', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      dlqUpsert.mockClear();
+      dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-1' }, error: null }));
+      pinnedStub(['169.254.169.254']);
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(dlqUpsert).toHaveBeenCalledTimes(1);
+      const dlqRow = dlqUpsert.mock.calls[0][0] as unknown as {
+        failure_kind: string;
+        error_message: string;
+      };
+      // The ONLY two values migration 0338's CHECK constraint permits.
+      expect(['http_delivery', 'log_write']).toContain(dlqRow.failure_kind);
+      expect(dlqRow.error_message).toMatch(/^egress_refused: private_target/);
+    });
   });
 
   it('sets status to retrying with next_retry_at on HTTP 500 (attempt 1)', async () => {
@@ -1925,5 +2059,143 @@ describe('resolveDlqEntry (ARK-SEC-026 org-ownership check)', () => {
 
     expect(result).toBe(false);
     expect(updateEq).not.toHaveBeenCalled();
+  });
+});
+
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * SCRUM-3982 (CTO review ruling Z1) — the retry sweep is the third way out.
+ *
+ * `processWebhookRetries` re-reads `webhook_delivery_logs.payload` and hands it
+ * straight to `deliverToEndpoint`, which signs whatever it is given. A row
+ * written before the ratchet landed would therefore keep being retried, banned
+ * field and all, until it exhausted its attempts — the ratchet stopping the
+ * first dispatch and the retry sweep delivering it anyway.
+ * ──────────────────────────────────────────────────────────────────────────── */
+describe('processWebhookRetries refuses stored payloads with banned fields (SCRUM-3982)', () => {
+  const RETRY_ENDPOINT = { ...MOCK_ENDPOINT, url: 'https://198.51.100.1/cb' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetSequenceForTest();
+    __resetRefusalLogStateForTest();
+    resetCircuitBreakers();
+  });
+
+  function row(id: string, eventType: string, data: Record<string, unknown>) {
+    return {
+      id,
+      attempt_number: 1,
+      payload: {
+        event_type: eventType,
+        event_id: id,
+        timestamp: '2026-03-10T11:55:00Z',
+        data,
+        resource_key: `anchor:${id}`,
+        sequence: 100,
+      },
+      webhook_endpoints: RETRY_ENDPOINT,
+    };
+  }
+
+  function routeRetry(rows: unknown[]) {
+    retryLogsSelect.limit.mockResolvedValue({ data: rows, error: null });
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-retry' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_delivery_logs') {
+        return {
+          select: (...args: string[]) =>
+            args[0]?.includes('webhook_endpoints')
+              ? { eq: retryLogsSelect.eq }
+              : { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) },
+          insert: deliveryLogInsert.insert,
+          update: deliveryLogUpdate.update,
+        };
+      }
+      return {};
+    });
+  }
+
+  it('does not sign or send a retrying row that carries fingerprint', async () => {
+    routeRetry([
+      row('evt-leak', 'attestation.active', {
+        public_id: 'ATT-1',
+        status: 'ACTIVE',
+        fingerprint: 'a'.repeat(64),
+      }),
+    ]);
+
+    await processWebhookRetries();
+
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('records the refusal durably on the delivery row instead of dropping it silently', async () => {
+    // Assert the EFFECT: the row is terminated with a reason, so the refusal is
+    // auditable in `webhook_delivery_logs` and not only in a log line that ages
+    // out. It must also leave `retrying` — a refusal is permanent, and a row
+    // that stays `retrying` is re-read every sweep AND head-of-line-blocks
+    // every newer event for the same resource, forever.
+    routeRetry([
+      row('evt-leak', 'anchor.revocation_anchored', {
+        public_id: 'ARK-1',
+        anchor_id: 'internal-uuid',
+        fingerprint: 'b'.repeat(64),
+      }),
+    ]);
+
+    await processWebhookRetries();
+
+    expect(deliveryLogUpdate.update).toHaveBeenCalled();
+    const patch = (deliveryLogUpdate.update.mock.calls.at(-1) as unknown[])[0] as {
+      status: string;
+      error_message: string;
+    };
+    expect(patch.status).toBe('failed');
+    expect(patch.error_message).toContain('SCRUM-3982');
+    expect(patch.error_message).toContain('anchor_id');
+    // Never the value.
+    expect(patch.error_message).not.toContain('internal-uuid');
+    expect(patch.error_message).not.toContain('b'.repeat(64));
+  });
+
+  it('still delivers a clean row in the same sweep as a refused one', async () => {
+    routeRetry([
+      row('evt-leak', 'attestation.active', { public_id: 'ATT-1', fingerprint: 'c'.repeat(64) }),
+      row('evt-clean', 'anchor.secured', {
+        public_id: 'ARK-2',
+        chain_tx_id: 'tx-1',
+        chain_block_height: 850000,
+        status: 'SECURED',
+        chain_timestamp: '2026-03-10T11:00:00Z',
+        secured_at: '2026-03-10T11:00:01Z',
+      }),
+    ]);
+
+    await processWebhookRetries();
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).event_id).toBe('evt-clean');
+  });
+
+  it('rate-limits the refusal log so a permanent refusal is not a per-row error burst', async () => {
+    routeRetry(
+      Array.from({ length: 5 }, (_, i) =>
+        row(`evt-${i}`, 'attestation.active', {
+          public_id: `ATT-${i}`,
+          fingerprint: 'd'.repeat(64),
+        }),
+      ),
+    );
+
+    await processWebhookRetries();
+
+    const refusalLogs = mockLogger.error.mock.calls.filter((c) =>
+      String(c[1]).includes('refused before signing'),
+    );
+    expect(refusalLogs).toHaveLength(1);
   });
 });

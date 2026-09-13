@@ -246,9 +246,24 @@ async function provisionMembership(
     .eq('status', 'pending');
   if (statusError) throw statusError;
 
-  // The race loser (23505 above) did not create the membership; the winner
-  // already wrote the MEMBER_JOINED row. Do not emit a duplicate.
-  if (!existingMembership && !membershipCreatedHere) return;
+  // MEMBER_JOINED is emitted by the accept that CREATED the membership, and
+  // only by that one. A join happened once, so it is recorded once.
+  //
+  // The narrower `!existingMembership && !membershipCreatedHere` guard this
+  // replaces covered only one of the two race interleavings — the one where
+  // both accepts pass the lookup and the loser's INSERT takes the 23505. The
+  // commoner interleaving is that the winner's insert COMMITS BEFORE the
+  // loser's lookup runs: the loser then finds `existingMembership`, skips the
+  // insert, and fell through to write a second MEMBER_JOINED. The train-b
+  // staging probe caught exactly that (cycle 2026-09-13T01-43-26Z: both
+  // accepts 2xx, one org_members row, TWO audit rows). `origin/main` emits in
+  // both interleavings; this closes both.
+  //
+  // It also drops the audit row for an ordinary idempotent replay — a user who
+  // is already a member re-opening an invitation link. That is the correct
+  // record: they did not join again, and a MEMBER_JOINED saying they did is a
+  // false entry in an auditor-facing log (§1.5).
+  if (!membershipCreatedHere) return;
 
   const { error: auditError } = await db.from('audit_events').insert({
     event_type: 'MEMBER_JOINED',

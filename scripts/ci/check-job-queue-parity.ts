@@ -102,6 +102,11 @@ export const QUEUE_INTERNALS_ALLOWLIST: readonly string[] = [
   // Resumable proof-job checkpoints. Read back by their owning job's scope
   // key, never drained as work.
   'services/worker/src/jobs/proofJobCheckpoint.ts',
+  // ComputeID passport re-check cursor (SCRUM-4495). One fixed-id row with
+  // status 'completed' holds the resumable pass cursor in its payload; it is
+  // read/upserted by id, never enqueued via submitJob and never claimable
+  // as work (claim_next_job only drains 'pending' rows).
+  'services/worker/src/jobs/computeid-passport-recheck.ts',
   // Platform-health-digest cron wiring (feat/platform-admin-daily-health-digest).
   // readJobQueueMetrics() does a single read-only `.select('created_at').eq
   // ('status','pending')` for a depth/oldest-age monitoring metric — it never

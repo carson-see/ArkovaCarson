@@ -656,6 +656,11 @@ BASE_ENV_VARS=(
   "NODE_ENV=production"
   "ENABLE_AI_FRAUD=false"
   "ENABLE_AI_REPORTS=false"
+  # Mirrors the prod deploy (deploy-worker.yml --set-env-vars). The worker's
+  # code default is 4500ms and prod runs 15000; --set-env-vars is authoritative
+  # here, so without this line a rig soaks /api/v1/ai/extract at a budget prod
+  # does not use and the extraction evidence describes the wrong system.
+  "AI_EXTRACTION_LATENCY_BUDGET_MS=15000"
   "CORS_ALLOWED_ORIGINS=https://app.arkova.ai"
   "FRONTEND_URL=${FRONTEND_URL_VALUE}"
 )
@@ -1850,7 +1855,7 @@ replay_schema() {
   while (( attempt <= LINK_MAX_ATTEMPTS )); do
     echo "executing (attempt ${attempt}/${LINK_MAX_ATTEMPTS}): npx supabase db push --linked" >&2
     set +e
-    out="$(npx supabase db push --linked 2>&1)"; rc=$?
+    out="$(npx --no-install supabase db push --linked 2>&1)"; rc=$?
     set -e
     printf '%s\n' "$out"
     if (( rc == 0 )); then

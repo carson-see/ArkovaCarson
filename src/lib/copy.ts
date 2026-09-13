@@ -660,6 +660,12 @@ export const WEBHOOK_LABELS = {
   // §1.5 / §1.13 R-7 honesty: states what payloads DO and DO NOT contain.
   CATALOG_REDACTION_NOTE:
     'Event payloads carry public record identifiers and status details only. They never include document contents, document fingerprints, personal information, or internal account identifiers.',
+  // CTO ruling Z5 (2026-09-12): the subscription picker's suffix for an event
+  // that is subscribable but not yet sent. It used to be typed into individual
+  // AVAILABLE_EVENTS labels, so it could disagree with the catalog's
+  // "Not yet active" badge — and did. Both now read the same liveness table
+  // (src/components/webhooks/webhookEventLiveness.ts).
+  EVENT_NOT_YET_ACTIVE_SUFFIX: ' (not yet active)',
 } as const;
 
 // Per-event catalog descriptions (WH-01). Keyed by the same event ids as
@@ -679,6 +685,13 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
   'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
+  // CTO ruling Z5 (2026-09-12), §1.13 R-7: scoped to the single-create route.
+  // POST /api/v1/attestations dispatches this event; the bulk route
+  // POST /api/v1/attestations/batch-create does not dispatch anything, so a
+  // bulk caller receives no notification. Do not widen this back to "an
+  // attestation was created" until batch-create emits.
+  'attestation.created': 'A single attestation was created and is awaiting securing. Bulk creation does not send this notification.',
+  'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
 };
 
 // =============================================================================
@@ -3171,6 +3184,12 @@ export const PROFILE_LABELS = {
     twitter: { label: 'X (Twitter)', placeholder: '@yourhandle' },
     github: { label: 'GitHub', placeholder: 'https://github.com/yourprofile' },
     website: { label: 'Website', placeholder: 'https://yourwebsite.com' },
+    invalid: {
+      linkedin: 'LinkedIn must be a link starting with https://.',
+      twitter: 'X (Twitter) must be an @handle or a link starting with https://.',
+      github: 'GitHub must be a link starting with https://.',
+      website: 'Website must be a link starting with https://.',
+    },
   },
 } as const;
 

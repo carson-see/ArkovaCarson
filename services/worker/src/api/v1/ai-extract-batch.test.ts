@@ -39,6 +39,7 @@ vi.mock('../../ai/cost-tracker.js', () => ({
     hasCredits: true,
   }),
   deductAICredits: vi.fn().mockResolvedValue(true),
+  ensureAICreditsPeriod: vi.fn().mockResolvedValue(true),
   logAIUsageEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -109,7 +110,7 @@ vi.mock('../../ai/eval/calibration.js', () => ({
 
 import { aiBatchExtractRouter, BATCH_ROW_LATENCY_BUDGET_MS } from './ai-extract-batch.js';
 import { db } from '../../utils/db.js';
-import { checkAICredits, deductAICredits } from '../../ai/cost-tracker.js';
+import { checkAICredits, deductAICredits, ensureAICreditsPeriod } from '../../ai/cost-tracker.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { submitJob } from '../../utils/jobQueue.js';
 
@@ -163,6 +164,7 @@ describe('POST /api/v1/ai/extract-batch', () => {
       hasCredits: true,
     });
     vi.mocked(deductAICredits).mockResolvedValue(true);
+    vi.mocked(ensureAICreditsPeriod).mockResolvedValue(true);
     vi.mocked(submitJob).mockResolvedValue('job-1');
   });
 
@@ -233,6 +235,59 @@ describe('POST /api/v1/ai/extract-batch', () => {
     expect(res.body.error).toBe('insufficient_credits');
     // No extraction work should have happened.
     expect(mockExtractionProvider.extractMetadata).not.toHaveBeenCalled();
+  });
+
+  // SCRUM-4939: nothing ever provisioned an `ai_credits` row for a new org,
+  // so `checkAICredits`/`deductAICredits` failed closed on every first-ever
+  // batch for that org. `hasFiniteCredits` is latched ONCE from `checkAICredits`
+  // and reused for every row, so provisioning must happen before that call,
+  // not per-row before each debit.
+  describe('SCRUM-4939 — ai_credits auto-provisioning', () => {
+    it('provisions the current ai_credits period before checking credits, when orgId is present', async () => {
+      const app = createApp();
+      await request(app)
+        .post('/')
+        .send({ rows: [{ text: 'row 1', credentialType: 'DEGREE' }] });
+
+      expect(ensureAICreditsPeriod).toHaveBeenCalledWith('org-1');
+      const ensureOrder = vi.mocked(ensureAICreditsPeriod).mock.invocationCallOrder[0];
+      const checkOrder = vi.mocked(checkAICredits).mock.invocationCallOrder[0];
+      expect(ensureOrder).toBeLessThan(checkOrder);
+    });
+
+    it('does not call ensureAICreditsPeriod when orgId is undefined', async () => {
+      vi.mocked(db.from).mockImplementation((table: string) => {
+        if (table === 'ai_usage_events') return makeUsageEventsCacheQuery([]) as never;
+        return makeProfileQuery(null) as never;
+      });
+
+      const app = createApp();
+      await request(app)
+        .post('/')
+        .send({ rows: [{ text: 'row 1', credentialType: 'DEGREE' }] });
+
+      expect(ensureAICreditsPeriod).not.toHaveBeenCalled();
+    });
+
+    // Provisioning is not a substitute for the real credit gate: a genuine
+    // "no credits" read must still 402 the whole batch up-front, same as before.
+    it('still returns 402 up-front when checkAICredits reports no credits, even after provisioning', async () => {
+      vi.mocked(ensureAICreditsPeriod).mockResolvedValue(true);
+      vi.mocked(checkAICredits).mockResolvedValue({
+        monthlyAllocation: 50,
+        usedThisMonth: 50,
+        remaining: 0,
+        hasCredits: false,
+      });
+
+      const app = createApp();
+      const res = await request(app)
+        .post('/')
+        .send({ rows: [{ text: 'row 1', credentialType: 'DEGREE' }] });
+
+      expect(res.status).toBe(402);
+      expect(mockExtractionProvider.extractMetadata).not.toHaveBeenCalled();
+    });
   });
 
   it('allows batch extraction even with low (but non-zero) credits', async () => {
