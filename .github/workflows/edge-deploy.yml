@@ -89,7 +89,7 @@ jobs:
           cache-dependency-path: services/edge/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Typecheck
         run: npm run typecheck
@@ -128,13 +128,20 @@ jobs:
           cache-dependency-path: services/edge/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate build-info (dry run — not written back to git)
         run: node scripts/generate-build-info.mjs "${{ github.event.pull_request.head.sha }}"
 
+      # SonarCloud githubactions:S6505/S8543 -- `--no-install` refuses to
+        # fall back to an on-demand fetch-and-run if the local copy is ever
+        # missing (closing the "npx can install and run arbitrary lifecycle
+        # scripts" path), and the pinned `@4.130.0` (must match the
+        # `wrangler` devDependency in package.json) satisfies "define exact
+        # package version" instead of resolving whatever `wrangler` means at
+        # run time.
       - name: wrangler deploy --dry-run
-        run: npx wrangler deploy --dry-run
+        run: npx --no-install wrangler@4.130.0 deploy --dry-run
 
   # push-to-main / workflow_dispatch only — evaluates the pause gate BEFORE
   # any deploy work runs. Mirrors deploy-worker.yml's `deploy-gate` job:
@@ -206,7 +213,7 @@ jobs:
           cache-dependency-path: services/edge/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
@@ -281,10 +288,13 @@ jobs:
             echo "Pre-deploy edge.arkova.ai/health reports git_sha=${PRE_SHA}"
           fi
 
+      # SonarCloud githubactions:S6505/S8543 -- see the `--dry-run` step's
+        # comment above; same fix, same pinned version (keep in sync with
+        # package.json's `wrangler` devDependency).
       - name: wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
-        run: npx wrangler deploy
+        run: npx --no-install wrangler@4.130.0 deploy
 
       # Deployed-version parity check (SCRUM-3907's actual "never again"
       # mechanism): a `wrangler deploy` exit 0 only proves the Cloudflare API

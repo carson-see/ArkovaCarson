@@ -65,9 +65,33 @@ describe('classifyDrift', () => {
     const result = classify({ health: null });
     expect(result.kind).toBe('missing-field');
   });
+
+  it('reports missing-field for a git_sha shaped as a command-line flag instead of a hex SHA (tssecurity:S6350 -- never let untrusted input reach a git argv position)', () => {
+    const result = classify({ health: { git_sha: '--upload-pack=/bin/sh' } });
+    expect(result.kind).toBe('missing-field');
+  });
+
+  it('reports missing-field for a short/non-hex git_sha (untrusted-input shape guard)', () => {
+    const result = classify({ health: { git_sha: 'not-a-real-sha' } });
+    expect(result.kind).toBe('missing-field');
+  });
+
+  it('normalizes a valid but mixed-case git_sha before it reaches isAncestor/commitsBehind', () => {
+    const mixedCase = 'B'.repeat(20) + 'b'.repeat(20);
+    const result = classify({ health: { git_sha: mixedCase }, isAncestor: true, commitsBehind: 3 });
+    expect(result).toEqual({ kind: 'behind', deployedSha: mixedCase.toLowerCase(), mainSha: MAIN, commitsBehind: 3 });
+  });
 });
 
 describe('formatReport', () => {
+  it('strips control characters from a fetch-error message before logging it (tssecurity:S5145 -- log/workflow-command injection)', () => {
+    const injected = 'HTTP 503\n::error::forged workflow command\r\x1b[31mred';
+    const { message } = formatReport({ kind: 'fetch-error', error: injected });
+    expect(message).not.toMatch(/[\r\n\x1b]/);
+    expect(message).toContain('HTTP 503');
+    expect(message).toContain('::error::forged workflow command');
+  });
+
   it('is not drift for a match', () => {
     expect(formatReport({ kind: 'match', sha: MAIN }).isDrift).toBe(false);
   });

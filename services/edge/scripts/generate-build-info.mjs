@@ -24,6 +24,15 @@ import { execFileSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Resolve `git` to a FIXED absolute path instead of a bare command name that
+// the OS looks up on `$PATH` (Sonar javascript:S4036 -- a writable/attacker-
+// controlled PATH entry could shadow the real binary). Mirrors the `GIT_BIN`
+// convention already used by `scripts/ci/lib/ciContext.ts` and
+// `scripts/ci/check-edge-deployed-version.ts`: `/usr/bin/git` is the
+// GitHub-hosted Ubuntu runner path, `GIT_BIN` overrides for self-hosted
+// runners and local dev (e.g. Homebrew's `/opt/homebrew/bin/git`).
+const GIT_BIN = process.env.GIT_BIN ?? '/usr/bin/git';
+
 const HEX_SHA_RE = /^[0-9a-f]{7,40}$/i;
 
 /**
@@ -40,7 +49,7 @@ export function resolveGitSha(explicit) {
     console.warn(`::warning::generate-build-info: ignoring non-hex SHA candidate ${JSON.stringify(candidate)}`);
   }
   try {
-    const fromGit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const fromGit = execFileSync(GIT_BIN, ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     if (HEX_SHA_RE.test(fromGit)) return fromGit.toLowerCase();
   } catch {
     // No .git available (e.g. a tarball build) — fall through to 'unknown'.

@@ -33,6 +33,29 @@
 
 import { execFileSync } from 'node:child_process';
 
+// Resolve `git` to a FIXED absolute path instead of a bare command name that
+// the OS looks up on `$PATH` (Sonar typescript:S4036 -- a writable/attacker-
+// controlled PATH entry could shadow the real binary). Mirrors the `GIT_BIN`
+// convention already used by `scripts/ci/lib/ciContext.ts`: `/usr/bin/git` is
+// the GitHub-hosted Ubuntu runner path, `GIT_BIN` overrides for self-hosted
+// runners and local dev (e.g. Homebrew's `/opt/homebrew/bin/git`).
+const GIT_BIN = process.env.GIT_BIN ?? '/usr/bin/git';
+
+// `health.git_sha` is a value this script's caller does NOT control -- it is
+// read verbatim from a live HTTP response body (`fetchEdgeHealth`), i.e. it
+// is externally-influenced input by the time it reaches `classifyDrift`.
+// Before this shape check existed it flowed unvalidated into
+// `execFileSync(GIT_BIN, ['merge-base', '--is-ancestor', sha, ...])` /
+// `['rev-list', '--count', `${sha}..${of}`]` (tssecurity:S6350 -- command
+// argument tampering: a value starting with `-` could be parsed as a git
+// option instead of a revision) and into a `console.log` template literal
+// (tssecurity:S5145 -- log injection: an embedded CR/LF could forge a fake
+// `::error::`/`::set-output::` GitHub Actions workflow command in the run
+// log). Validating the shape here, before the value is trusted anywhere
+// downstream, closes both: a non-hex-40 value is treated the same as the
+// already-handled 'local-dev'/'unknown' sentinels -- unusable, not dangerous.
+const HEX_SHA_RE = /^[0-9a-f]{40}$/i;
+
 export interface HealthResponse {
   status?: string;
   service?: string;
@@ -61,18 +84,46 @@ export function classifyDrift(params: {
   if (params.fetchError) return { kind: 'fetch-error', error: params.fetchError };
 
   const deployedSha = params.health?.git_sha;
-  if (!deployedSha || typeof deployedSha !== 'string' || deployedSha === 'local-dev' || deployedSha === 'unknown') {
+  if (
+    !deployedSha
+    || typeof deployedSha !== 'string'
+    || deployedSha === 'local-dev'
+    || deployedSha === 'unknown'
+    || !HEX_SHA_RE.test(deployedSha)
+  ) {
     // 'local-dev' / 'unknown' are the checked-in placeholder / unresolvable-SHA
     // sentinels from build-info.ts — a prod edge reporting either one was
     // never run through the generator, i.e. exactly the historical
-    // pre-pipeline state (SCRUM-3797). Treat identically to a missing field.
+    // pre-pipeline state (SCRUM-3797). A value that is present but NOT a real
+    // 40-hex SHA (`HEX_SHA_RE`) is untrusted-input-shaped, not a git ref —
+    // never pass it to git or the log; treat it identically to a missing field.
     return { kind: 'missing-field', rawHealth: params.health };
   }
-  if (deployedSha === params.mainSha) return { kind: 'match', sha: deployedSha };
-  if (!params.isAncestor(deployedSha)) {
-    return { kind: 'diverged', deployedSha, mainSha: params.mainSha };
+  const normalizedDeployedSha = deployedSha.toLowerCase();
+  if (normalizedDeployedSha === params.mainSha.toLowerCase()) return { kind: 'match', sha: normalizedDeployedSha };
+  if (!params.isAncestor(normalizedDeployedSha)) {
+    return { kind: 'diverged', deployedSha: normalizedDeployedSha, mainSha: params.mainSha };
   }
-  return { kind: 'behind', deployedSha, mainSha: params.mainSha, commitsBehind: params.commitsBehind(deployedSha) };
+  return {
+    kind: 'behind',
+    deployedSha: normalizedDeployedSha,
+    mainSha: params.mainSha,
+    commitsBehind: params.commitsBehind(normalizedDeployedSha),
+  };
+}
+
+// `drift.error` (fetch-error case) is a message string this script's caller
+// does NOT control -- it comes from a network/fetch failure against a public
+// endpoint (a thrown error's `.message`, or an upstream HTTP status line),
+// and is interpolated into a `console.log`/`console.error` line further
+// down. Strip CR/LF and other control characters before it reaches a log
+// line (tssecurity:S5145 -- log injection: an embedded newline could forge a
+// fake `::error::`/`::set-output::` GitHub Actions workflow command in the
+// run log). Non-destructive for the ordinary case -- a normal error message
+// has no control characters and round-trips unchanged.
+function sanitizeForLog(value: string): string {
+  // eslint-disable-next-line no-control-regex -- deliberately matching control chars to strip them
+  return value.replace(/[\x00-\x1f\x7f]+/g, ' ').trim();
 }
 
 /** Human/CI-readable report. `isDrift` decides `--strict` exit behavior. */
@@ -107,19 +158,19 @@ export function formatReport(drift: DriftStatus): { message: string; isDrift: bo
       };
     case 'fetch-error':
       return {
-        message: `::warning::could not reach https://edge.arkova.ai/health: ${drift.error}. Drift status unknown.`,
+        message: `::warning::could not reach https://edge.arkova.ai/health: ${sanitizeForLog(drift.error)}. Drift status unknown.`,
         isDrift: true,
       };
   }
 }
 
 export function resolveMainSha(): string {
-  return execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim();
+  return execFileSync(GIT_BIN, ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim();
 }
 
 export function gitIsAncestor(sha: string, of = 'origin/main'): boolean {
   try {
-    execFileSync('git', ['merge-base', '--is-ancestor', sha, of], { stdio: 'ignore' });
+    execFileSync(GIT_BIN, ['merge-base', '--is-ancestor', sha, of], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -127,7 +178,7 @@ export function gitIsAncestor(sha: string, of = 'origin/main'): boolean {
 }
 
 export function gitCommitsBehind(sha: string, of = 'origin/main'): number {
-  const out = execFileSync('git', ['rev-list', '--count', `${sha}..${of}`], { encoding: 'utf8' }).trim();
+  const out = execFileSync(GIT_BIN, ['rev-list', '--count', `${sha}..${of}`], { encoding: 'utf8' }).trim();
   const n = Number(out);
   return Number.isFinite(n) ? n : 0;
 }
