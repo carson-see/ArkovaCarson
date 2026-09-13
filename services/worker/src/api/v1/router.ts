@@ -723,17 +723,24 @@ router.use('/compliance/audit', requireAuth, batchRateLimiter, complianceAuditRo
 // one DB read is a single indexed `profiles` PK lookup, and the router-level
 // anon/keyed limiter (100 req/min) has already run above, so putting it ahead of
 // the tighter per-route limiter is not a meaningful amplification vector.
+router.use('/ferpa', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, ferpaDisclosuresRouter);
+router.use('/directory-opt-out', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, directoryOptOutRouter);
+router.use('/hipaa/audit', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, hipaaAuditRouter);
+router.use('/emergency-access', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, emergencyAccessRouter);
+
 // ─── Partner referrals — SCRUM-5024 ───
 // `requireScope` is a capability gate, NOT authentication: it passes an
 // anonymous caller straight through (apiKeyAuth.ts). The 401 is enforced in the
 // handler, which also derives the organization from `req.apiKey.orgId` rather
 // than from anything the caller supplies. `read:orgs` already exists in
 // apiScopes.ts — no scope-vocabulary change.
+//
+// Mounted AFTER the FERPA/HIPAA block, not inside it: the long comment above
+// those four lines documents THEIR `requireScopeAnyAuth` ordering contract, and
+// a mount wedged between that comment and the lines it describes reads as if
+// the contract applied here. Still far from `/organizations/sub-orgs`
+// (SCRUM-3971, mounted ~line 510), so the merge surface between the two is
+// unchanged.
 router.use('/referrals', requireScope('read:orgs'), referralsRouter);
-
-router.use('/ferpa', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, ferpaDisclosuresRouter);
-router.use('/directory-opt-out', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, directoryOptOutRouter);
-router.use('/hipaa/audit', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, hipaaAuditRouter);
-router.use('/emergency-access', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, emergencyAccessRouter);
 
 export { router as apiV1Router };
