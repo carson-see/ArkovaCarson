@@ -31,7 +31,25 @@
  * exit 0 and emit `::warning::` instead of `::error::`; it is NOT what CI runs,
  * and `soak-integrity-gates-failclosed.test.ts` fails if it reappears in the
  * workflow invocation.
+ *
+ * Post-soak T0 delta allowance (CTO decision 2026-09-12, Confluence 146440221
+ * / SCRUM-5054): `check-staging-evidence.ts` accepts a `Post-soak T0 delta:`
+ * body field that relaxes exact-head binding when every commit after the
+ * soaked `PR head SHA:` touches only T0-classified files. This gate's check A
+ * (`checkHeadShaIdentity`) was not taught the same rule and failed every PR
+ * legitimately using it — this file closes that gap by evaluating the SAME
+ * field with the SAME semantics, reusing `requiredTierFor` /
+ * `changedFilesBetween` / `gitAncestryProvider` from `check-staging-evidence.ts`
+ * so the two gates cannot drift apart on this rule the way they just did.
  */
+
+import {
+  requiredTierFor,
+  changedFilesBetween,
+  gitAncestryProvider,
+  type AncestryProvider,
+  type ChangedFilesProvider,
+} from './check-staging-evidence.js';
 
 export type Tier = 'T0' | 'T1' | 'T2' | 'T3';
 
@@ -50,12 +68,23 @@ export interface EvidenceIdentityInput {
   isDraft: boolean;
   /** Declared tier override; if omitted it is parsed from the body's `Tier:`. */
   declaredTier?: Tier | null;
+  /**
+   * Injection points for the Post-soak T0 delta allowance's git-facing
+   * questions (ancestry + changed-file list between the soaked `PR head SHA:`
+   * and `actualHeadSha`). Tests inject stubs so this module never shells out;
+   * omitted in production, where `checkHeadShaIdentity` falls back to real git
+   * via {@link gitAncestryProvider} / {@link changedFilesBetween}.
+   */
+  ancestryProvider?: AncestryProvider;
+  changedFilesProvider?: ChangedFilesProvider;
 }
 
 export interface EvidenceIdentityResult {
   skipped: boolean;
   skipReason: string | null;
   findings: Finding[];
+  /** Informational lines — e.g. an accepted Post-soak T0 delta — that do not fail the gate. */
+  notes: string[];
   ok: boolean;
 }
 
@@ -108,43 +137,174 @@ function shaMatches(a: string, b: string): boolean {
 // Check A — head-sha-identity
 // ---------------------------------------------------------------------------
 
-export function checkHeadShaIdentity(
+const POST_SOAK_T0_DELTA_FIELD = 'Post-soak T0 delta:';
+
+/** Injectable git access for the Post-soak T0 delta allowance. See {@link EvidenceIdentityInput}. */
+export interface HeadShaIdentityOpts {
+  ancestryProvider?: AncestryProvider;
+  changedFilesProvider?: ChangedFilesProvider;
+}
+
+interface HeadShaIdentityEvaluation {
+  finding: Finding | null;
+  /** Set only on an accepted Post-soak T0 delta — informational, never fails the gate. */
+  note: string | null;
+}
+
+/**
+ * Core `head-sha-identity` evaluation, including the Post-soak T0 delta
+ * allowance (CTO decision 2026-09-12, Confluence 146440221 / SCRUM-5054).
+ * `checkHeadShaIdentity` is a thin wrapper returning only `.finding`, unchanged
+ * in shape for existing callers; `runEvidenceIdentity` also reads `.note` so an
+ * accepted delta surfaces as an info line instead of vanishing silently.
+ *
+ * This mirrors `check-staging-evidence.ts`'s `headShaEvidenceResult()` for the
+ * SAME field, reusing its `requiredTierFor` / `changedFilesBetween` /
+ * `gitAncestryProvider` rather than re-implementing the git-facing questions:
+ *
+ *   (a) The field's value must name the CURRENT head SHA this gate is
+ *       grading (`actualHeadSha`) — it cannot be claimed against another
+ *       commit.
+ *   (b) The soaked SHA (declared `PR head SHA:`) must be an ANCESTOR of the
+ *       actual head: the delta is an append-only continuation of the soaked
+ *       tree, not a rebase/force-push onto different history. Unresolvable
+ *       ancestry (`null`) rejects.
+ *   (c) The changed-file list between soaked and actual head must be
+ *       computable and non-empty, and `requiredTierFor` of that list must
+ *       return `'T0'` — no diff-provider carve-outs, since those decide
+ *       T0-ness from a diff against the PR base rather than the post-soak
+ *       delta. An uncomputable list rejects.
+ *
+ * Every condition fails CLOSED to the original stale-head finding: this is
+ * opt-in per PR, not a general stale-head waiver.
+ */
+function evaluateHeadShaIdentity(
   body: string,
   actualHeadSha: string,
-): Finding | null {
+  opts: HeadShaIdentityOpts = {},
+): HeadShaIdentityEvaluation {
   const name = 'head-sha-identity';
   const declared = extractShaFromField(body, 'PR head SHA:');
 
   if (declared === null) {
     return {
-      name,
-      message:
-        'Evidence block declares no `PR head SHA:` value. Soak evidence must ' +
-        'bind to the exact commit under test.',
+      finding: {
+        name,
+        message:
+          'Evidence block declares no `PR head SHA:` value. Soak evidence must ' +
+          'bind to the exact commit under test.',
+      },
+      note: null,
     };
   }
 
   if (!actualHeadSha) {
     return {
-      name,
-      message:
-        'No actual PR head SHA available in CI context to compare against the ' +
-        'declared `PR head SHA:`.',
+      finding: {
+        name,
+        message:
+          'No actual PR head SHA available in CI context to compare against the ' +
+          'declared `PR head SHA:`.',
+      },
+      note: null,
     };
   }
 
-  if (!shaMatches(declared, actualHeadSha)) {
+  if (shaMatches(declared, actualHeadSha)) {
+    return { finding: null, note: null };
+  }
+
+  const staleFinding: Finding = {
+    name,
+    message:
+      `Declared \`PR head SHA:\` ${declared} does not match the actual PR ` +
+      `head ${actualHeadSha.toLowerCase()}. A commit pushed after the ` +
+      `evidence was captured invalidates the exact-head soak; re-soak or ` +
+      `bump the evidence head via \`gh pr edit\`.`,
+  };
+
+  // Post-soak T0-only delta allowance. Field absent → the pre-2026-09-12
+  // behaviour, verbatim (the original stale-head finding stands).
+  if (extractField(body, POST_SOAK_T0_DELTA_FIELD) === null) {
+    return { finding: staleFinding, note: null };
+  }
+
+  const deltaSha = extractShaFromField(body, POST_SOAK_T0_DELTA_FIELD);
+  if (deltaSha === null || !shaMatches(deltaSha, actualHeadSha)) {
     return {
-      name,
-      message:
-        `Declared \`PR head SHA:\` ${declared} does not match the actual PR ` +
-        `head ${actualHeadSha.toLowerCase()}. A commit pushed after the ` +
-        `evidence was captured invalidates the exact-head soak; re-soak or ` +
-        `bump the evidence head via \`gh pr edit\`.`,
+      finding: {
+        name,
+        message:
+          `${POST_SOAK_T0_DELTA_FIELD} must contain the CURRENT PR head SHA ` +
+          `${actualHeadSha.toLowerCase()}${deltaSha ? ` (found ${deltaSha})` : ''}; the ` +
+          'allowance cannot be claimed against a commit this gate is not grading, and ' +
+          `the declared \`PR head SHA:\` ${declared} does not match the actual head either.`,
+      },
+      note: null,
     };
   }
 
-  return null;
+  const ancestryProvider = opts.ancestryProvider ?? gitAncestryProvider();
+  const ancestry = ancestryProvider(declared, actualHeadSha);
+  if (ancestry !== true) {
+    return {
+      finding: {
+        name,
+        message:
+          `${POST_SOAK_T0_DELTA_FIELD} rejected: soaked head \`${declared}\` is ` +
+          `${ancestry === false ? 'not an ancestor of' : 'of unresolvable ancestry to'} ` +
+          `current head \`${actualHeadSha.toLowerCase()}\`, so the post-soak commits are not ` +
+          'an append-only continuation of the soaked tree. Re-soak on the current head.',
+      },
+      note: null,
+    };
+  }
+
+  const changedFilesProvider = opts.changedFilesProvider ?? changedFilesBetween;
+  const delta = changedFilesProvider(declared, actualHeadSha);
+  if (delta === null || delta.length === 0) {
+    return {
+      finding: {
+        name,
+        message:
+          `${POST_SOAK_T0_DELTA_FIELD} rejected: the changed-file list between soaked head ` +
+          `\`${declared}\` and current head \`${actualHeadSha.toLowerCase()}\` ` +
+          `${delta === null ? 'could not be computed' : 'is empty'}; the allowance fails closed.`,
+      },
+      note: null,
+    };
+  }
+
+  const deltaTier = requiredTierFor(delta).tier;
+  if (deltaTier !== 'T0') {
+    return {
+      finding: {
+        name,
+        message:
+          `${POST_SOAK_T0_DELTA_FIELD} rejected: the post-soak delta between \`${declared}\` ` +
+          `and \`${actualHeadSha.toLowerCase()}\` (${delta.length} file(s)) classifies ` +
+          `${deltaTier}, not T0. Post-soak commits may only touch files the tier detector ` +
+          'classifies T0 (e2e/, docs/, tests, CI/tooling); anything else can reach prod ' +
+          'runtime, so the soaked evidence no longer describes this head.',
+      },
+      note: null,
+    };
+  }
+
+  return {
+    finding: null,
+    note:
+      `head moved ${declared.slice(0, 9)} → ${actualHeadSha.slice(0, 9).toLowerCase()}; ` +
+      `${delta.length} post-soak file(s), all T0 (${POST_SOAK_T0_DELTA_FIELD} accepted).`,
+  };
+}
+
+export function checkHeadShaIdentity(
+  body: string,
+  actualHeadSha: string,
+  opts: HeadShaIdentityOpts = {},
+): Finding | null {
+  return evaluateHeadShaIdentity(body, actualHeadSha, opts).finding;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +401,7 @@ export function runEvidenceIdentity(
       skipped: true,
       skipReason: 'PR is a Draft — evidence-identity applies at mark-ready.',
       findings: [],
+      notes: [],
       ok: true,
     };
   }
@@ -261,6 +422,7 @@ export function runEvidenceIdentity(
       skipReason:
         'PR declares Tier: T0 — no staging soak evidence required (CLAUDE.md §1.12).',
       findings: [],
+      notes: [],
       ok: true,
     };
   }
@@ -271,13 +433,19 @@ export function runEvidenceIdentity(
       skipReason:
         'No soak-tier Staging Soak Evidence block (T0 / CI-only / no-evidence PR).',
       findings: [],
+      notes: [],
       ok: true,
     };
   }
 
   const findings: Finding[] = [];
-  const headFinding = checkHeadShaIdentity(body, actualHeadSha);
-  if (headFinding) findings.push(headFinding);
+  const notes: string[] = [];
+  const headEvaluation = evaluateHeadShaIdentity(body, actualHeadSha, {
+    ancestryProvider: input.ancestryProvider,
+    changedFilesProvider: input.changedFilesProvider,
+  });
+  if (headEvaluation.finding) findings.push(headEvaluation.finding);
+  if (headEvaluation.note) notes.push(headEvaluation.note);
 
   const declaredHead = extractShaFromField(body, 'PR head SHA:');
   findings.push(...checkCleanPreflightIdentity(body, declaredHead, tier));
@@ -286,6 +454,7 @@ export function runEvidenceIdentity(
     skipped: false,
     skipReason: null,
     findings,
+    notes,
     ok: findings.length === 0,
   };
 }
@@ -306,6 +475,10 @@ export function formatReport(
   if (result.skipped) {
     lines.push(`  ⏭️  Skipped: ${result.skipReason}`);
     return lines.join('\n');
+  }
+
+  for (const note of result.notes) {
+    lines.push(`  ℹ️  ${note}`);
   }
 
   if (result.ok) {
