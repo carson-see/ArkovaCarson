@@ -32,6 +32,7 @@ vi.mock('../../ai/gemini.js', () => ({
 vi.mock('../../ai/cost-tracker.js', () => ({
   checkAICredits: vi.fn(),
   deductAICredits: vi.fn(),
+  ensureAICreditsPeriod: vi.fn().mockResolvedValue(true),
   logAIUsageEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -41,7 +42,7 @@ vi.mock('../../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
 import { db } from '../../utils/db.js';
 import { createExtractionProvider } from '../../ai/factory.js';
 import { GeminiProvider } from '../../ai/gemini.js';
-import { checkAICredits, deductAICredits } from '../../ai/cost-tracker.js';
+import { checkAICredits, deductAICredits, ensureAICreditsPeriod } from '../../ai/cost-tracker.js';
 import { Request, Response } from 'express';
 import {
   AI_EXTRACTION_LATENCY_BUDGET_MS,
@@ -181,6 +182,135 @@ describe('AI Extraction Endpoint', () => {
         error: 'insufficient_credits',
       }),
     );
+  });
+
+  // SCRUM-4939: nothing ever provisioned an `ai_credits` row for a new org,
+  // so the fail-closed path below unconditionally 503'd a first-ever
+  // extraction. `ensureAICreditsPeriod` must run for the org on every request
+  // before the debit, and its own failure must not block the debit attempt.
+  describe('SCRUM-4939 — ai_credits auto-provisioning', () => {
+    it('provisions the current ai_credits period before deducting, when orgId is present', async () => {
+      const handler = getPostHandler();
+      const { req, res } = createMockReqRes(validBody, 'user-123');
+
+      mockExtractionDatabase();
+
+      (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+        monthlyAllocation: 100,
+        usedThisMonth: 0,
+        remaining: 100,
+        hasCredits: true,
+      });
+      (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+        extractMetadata: vi.fn().mockResolvedValue({
+          fields: { credentialType: 'DEGREE' },
+          confidence: 0.9,
+          provider: 'gemini',
+          tokensUsed: 100,
+        }),
+      });
+
+      await handler!(req, res);
+
+      expect(ensureAICreditsPeriod).toHaveBeenCalledWith('org-456');
+      // Provisioning must happen before the debit it exists to unblock.
+      const ensureOrder = (ensureAICreditsPeriod as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0];
+      const deductOrder = (deductAICredits as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0];
+      expect(ensureOrder).toBeLessThan(deductOrder);
+    });
+
+    /**
+     * `check_ai_credits` has an operator-precedence bug in its WHERE clause
+     * (`A OR B AND C AND D` parses as `A OR (B AND C AND D)`), so with an org
+     * id it matches ANY row for that org regardless of period, `LIMIT 1` with
+     * no ORDER BY. An org whose only row is an exhausted PRIOR period therefore
+     * gets a 402 from this guard and returns before provisioning ever runs —
+     * the exact "org is stuck and cannot extract" failure this PR exists to
+     * fix. Provisioning must precede the check, not sit between it and the
+     * debit (this is also what ai-extract-batch.ts already does).
+     */
+    it('provisions the period BEFORE the up-front credit check, so a stale exhausted row cannot 402 first', async () => {
+      const handler = getPostHandler();
+      const { req, res } = createMockReqRes(validBody, 'user-123');
+
+      mockExtractionDatabase();
+
+      // What check_ai_credits returns for an org whose only row is a spent
+      // prior period.
+      (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+        monthlyAllocation: 100,
+        usedThisMonth: 100,
+        remaining: 0,
+        hasCredits: false,
+      });
+      (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+      await handler!(req, res);
+
+      expect(ensureAICreditsPeriod).toHaveBeenCalledWith('org-456');
+      const ensureOrder = (ensureAICreditsPeriod as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0];
+      const checkOrder = (checkAICredits as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0];
+      expect(ensureOrder).toBeLessThan(checkOrder);
+    });
+
+    it('does not call ensureAICreditsPeriod when orgId is undefined', async () => {
+      const handler = getPostHandler();
+      const { req, res } = createMockReqRes(validBody, 'user-123');
+
+      // No org on the profile — orgId resolves to undefined.
+      (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+        if (table === 'ai_usage_events') return mockUsageEventsTable();
+        if (table === 'extraction_manifests') return mockManifestTable();
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: { org_id: null }, error: null }),
+        };
+      });
+
+      (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+      await handler!(req, res);
+
+      expect(ensureAICreditsPeriod).not.toHaveBeenCalled();
+    });
+
+    // A genuine deduction failure (insufficient credits / RPC error) must
+    // still fail CLOSED with 503, even though the period was successfully
+    // provisioned — provisioning only fixes the "no row at all" case, it is
+    // not a substitute for the credit check itself.
+    it('still returns 503 when deduct_ai_credits genuinely fails after successful provisioning', async () => {
+      const handler = getPostHandler();
+      const { req, res } = createMockReqRes(validBody, 'user-123');
+
+      mockExtractionDatabase();
+
+      (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+        monthlyAllocation: 100,
+        usedThisMonth: 100,
+        remaining: 0,
+        hasCredits: true, // stale/racy read — the debit itself is what fails
+      });
+      (ensureAICreditsPeriod as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+      const extractMetadata = vi.fn();
+      (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({ extractMetadata });
+
+      await handler!(req, res);
+
+      expect(extractMetadata).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'credit_system_unavailable' }),
+      );
+    });
   });
 
   it('returns extracted fields on success', async () => {
