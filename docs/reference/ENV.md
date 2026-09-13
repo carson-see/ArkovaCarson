@@ -726,6 +726,20 @@ fail closed (default false) per CLAUDE.md §0 rule 2.
 
 ```bash
 ENABLE_AI_EXTRACTION=false          # /api/v1/ai/extract — server-side OCR/structuring (CLAUDE.md §1.6 — gated)
+AI_EXTRACTION_LATENCY_BUDGET_MS=15000 # single-extraction latency budget before falling back to the
+                                    # heuristic `fast-fallback` stub (services/worker/src/api/v1/ai-extract.ts).
+                                    # Code default 4500; prod Cloud Run is live at 15000 — verified directly
+                                    # via `gcloud run services describe arkova-worker` on rev
+                                    # arkova-worker-01047-lzx (2026-09-12, 100% traffic). Every extraction
+                                    # since July hit the 4500ms default and degraded to fast-fallback; real
+                                    # Gemini calls measured 3.7-10.2s. The prod value was set directly on
+                                    # the Cloud Run service (not yet in deploy-worker.yml), so it resets to
+                                    # 4500 on the next worker deploy unless deploy-worker.yml's
+                                    # --set-env-vars list carries 15000 too — which it now does.
+                                    # Staging parity: scripts/staging/deploy.sh and
+                                    # scripts/staging/provision-isolated-rig.sh also set 15000, so a
+                                    # soak of the extraction path exercises the budget prod actually
+                                    # runs rather than the 4500 code default.
 ENABLE_SEMANTIC_SEARCH=false        # /api/v1/ai/search semantic embeddings
 ENABLE_AI_FRAUD=false               # /api/v1/ai/integrity, /ai/review (text-based fraud signals)
 ENABLE_FRAUD_DETECTION=false        # Browser-only deterministic fraud Web Worker; sends structured findings only
