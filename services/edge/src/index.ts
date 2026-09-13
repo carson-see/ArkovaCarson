@@ -60,7 +60,7 @@ export default {
     // SCRUM-3907 / SCRUM-3797: `git_sha` + `built_at` come from `build-info.ts`
     // (generated at deploy time by `scripts/generate-build-info.mjs`, run as
     // `npm run build:info` immediately before `wrangler deploy` in
-    // `.github/workflows/deploy-edge.yml`). The deploy workflow's own parity
+    // `.github/workflows/edge-deploy.yml`). The deploy workflow's own parity
     // check curls this endpoint and fails the job if `git_sha` does not match
     // the commit it just deployed — this is the mechanism that stops an edge
     // fix from sitting merged-but-undeployed the way PR #2589's ES256
