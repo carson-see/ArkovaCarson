@@ -91,6 +91,17 @@ export const changedBehavior = [
 const NAME_PREFIX = 'cto-train-b-0912-2845';
 const SINK_URL = 'https://cft-webhook-sink-kvojbeutfa-uc.a.run.app/';
 const EVENT_TYPE = 'anchor.secured';
+// Stored payloads are re-validated on replay against the strict anchor.secured
+// schema (#2843 gates replay + retry before signPayload), so the fixture row
+// must carry a schema-valid `data` -- a synthetic {probe} blob is refused 422.
+const replaySourceData = (eventId) => ({
+  public_id: `CTOB0912-2845-${eventId.slice(0, 8).toUpperCase()}`,
+  chain_tx_id: `cto-train-b-0912-2845-synthetic-${eventId}`,
+  chain_block_height: 900000,
+  status: 'SECURED',
+  chain_timestamp: new Date().toISOString(),
+  secured_at: new Date().toISOString(),
+});
 
 /**
  * The ten routes `webhooks.ts` registers, transcribed with method + path from
@@ -174,7 +185,14 @@ async function ensureKey(admin, { orgId, createdBy, name, scopes, hashApiKey, se
 }
 
 /** One active https endpoint per org, looked up by its stable description. */
-async function ensureEndpoint(admin, { orgId, createdBy, description }) {
+async function ensureEndpoint(admin, { orgId, createdBy, description, existingId }) {
+  // The 4b PATCH probe renames the endpoint every cycle, so a description
+  // lookup alone would mint a fresh endpoint on every setup re-run and strand
+  // deliveryA on the old one. Prefer the id persisted in state when it still exists.
+  if (existingId) {
+    const { data: byId } = await admin.from('webhook_endpoints').select('id').eq('id', existingId).eq('org_id', orgId).maybeSingle();
+    if (byId) return byId.id;
+  }
   const { data: existing, error: findErr } = await admin
     .from('webhook_endpoints')
     .select('id, url, is_active')
@@ -244,15 +262,20 @@ export async function seed(admin, state, ctx) {
     limiter: await ensureKey(admin, { orgId: state.orgA, createdBy: adminA, name: `${NAME_PREFIX}-limiter`, scopes: ['read:search', 'webhooks:manage'], hashApiKey, secret }),
   };
 
-  const endpointA = await ensureEndpoint(admin, { orgId: state.orgA, createdBy: adminA, description: `${NAME_PREFIX}-endpoint-a` });
-  const endpointB = await ensureEndpoint(admin, { orgId: state.orgB, createdBy: adminB, description: `${NAME_PREFIX}-endpoint-b` });
+  const endpointA = await ensureEndpoint(admin, { orgId: state.orgA, createdBy: adminA, description: `${NAME_PREFIX}-endpoint-a`, existingId: state['#2845']?.endpointA });
+  const endpointB = await ensureEndpoint(admin, { orgId: state.orgB, createdBy: adminB, description: `${NAME_PREFIX}-endpoint-b`, existingId: state['#2845']?.endpointB });
 
   // A delivery-log row on org A's endpoint, so replay has something to re-fire
   // and the insert it performs is a countable delta.
   let deliveryA = state['#2845']?.deliveryA ?? null;
   if (deliveryA) {
-    const { data } = await admin.from('webhook_delivery_logs').select('id').eq('id', deliveryA).maybeSingle();
+    const { data } = await admin.from('webhook_delivery_logs').select('id, endpoint_id').eq('id', deliveryA).maybeSingle();
     if (!data) deliveryA = null;
+    else if (data.endpoint_id !== endpointA) {
+      // Re-home the replay source onto the current endpointA (net-zero fixture, never a second row).
+      const { error: rehomeErr } = await admin.from('webhook_delivery_logs').update({ endpoint_id: endpointA }).eq('id', deliveryA);
+      if (rehomeErr) throw new Error(`#2845 re-home deliveryA: ${rehomeErr.message}`);
+    }
   }
   if (!deliveryA) {
     const eventId = randomUUID();
@@ -262,7 +285,7 @@ export async function seed(admin, state, ctx) {
         endpoint_id: endpointA,
         event_type: EVENT_TYPE,
         event_id: eventId,
-        payload: { event_type: EVENT_TYPE, event_id: eventId, timestamp: new Date().toISOString(), data: { probe: `${NAME_PREFIX}-replay-source` } },
+        payload: { event_type: EVENT_TYPE, event_id: eventId, timestamp: new Date().toISOString(), data: replaySourceData(eventId) },
         attempt_number: 1,
         status: 'success',
         response_status: 200,
@@ -475,6 +498,8 @@ export async function run(ctx) {
   const { data: patchedRow } = await admin.from('webhook_endpoints').select('description').eq('id', s.endpointA).maybeSingle();
   out.push(probe('2845_scoped_patch_updated_row', patchDesc, patchedRow?.description ?? null,
     { detail: { status: patched.status, endpointId: s.endpointA } }));
+  // Net-zero: put the seed's description back so the fixture stays addressable by name.
+  await admin.from('webhook_endpoints').update({ description: `${NAME_PREFIX}-endpoint-a` }).eq('id', s.endpointA);
 
   // 4c. replay -> a NEW webhook_delivery_logs row. This is the delivery-log
   // advance; the test-ping route cannot serve it (it writes no log row).
