@@ -212,7 +212,7 @@ function logWebhookAudit(
 }
 
 /** Columns selected for every response; DB schema === JSON schema. */
-const ENDPOINT_SELECT = 'id, url, events, is_active, description, created_at, updated_at';
+const ENDPOINT_SELECT = 'id, url, events, is_active, description, scope, created_at, updated_at';
 
 interface WebhookEndpointResponse {
   id: string;
@@ -220,6 +220,8 @@ interface WebhookEndpointResponse {
   events: string[];
   is_active: boolean;
   description: string | null;
+  /** SCRUM-3972: 'self' | 'self_and_descendants'. Always present (NOT NULL, default 'self'). */
+  scope: string;
   created_at: string;
   updated_at: string;
 }
@@ -250,7 +252,7 @@ async function handleWebhookRegistration(req: Request, res: Response): Promise<v
     return;
   }
 
-  const { url, events, description, verify } = parsed.data;
+  const { url, events, description, verify, scope } = parsed.data;
 
   if (await isPrivateUrlResolved(url)) {
     errorResponse(res, 400, 'invalid_url', 'Webhook URL targets a private, internal, or cloud-metadata address');
@@ -272,6 +274,7 @@ async function handleWebhookRegistration(req: Request, res: Response): Promise<v
         events,
         is_active: !verify,
         description: description ?? null,
+        scope,
       })
       .select(ENDPOINT_SELECT)
       .single();
@@ -319,6 +322,7 @@ async function handleWebhookRegistration(req: Request, res: Response): Promise<v
     logWebhookAudit(apiKey.orgId, apiKey.userId, 'WEBHOOK_ENDPOINT_CREATED', inserted.id, {
       url,
       events,
+      scope,
       verified: Boolean(verify),
     });
 
@@ -741,6 +745,7 @@ router.patch('/:id', async (req, res) => {
   if (parsed.data.events !== undefined) updateData.events = parsed.data.events;
   if (parsed.data.description !== undefined) updateData.description = parsed.data.description;
   if (parsed.data.is_active !== undefined) updateData.is_active = parsed.data.is_active;
+  if (parsed.data.scope !== undefined) updateData.scope = parsed.data.scope;
 
   try {
     const { data: updated, error } = await db
