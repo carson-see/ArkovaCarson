@@ -4,6 +4,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// This suite only exercises the router's aggregation logic and never touches
+// worker config, but it imports ai-usage.js -> cost-tracker.js, and
+// cost-tracker.ts now reads `config.aiCreditsMonthlyAllocation` for
+// ensureAICreditsPeriod() (SCRUM-4939). That module-scope `import { config }`
+// reaches the real `loadConfig()` singleton unless config.js is mocked here
+// too — matching the pattern in cost-tracker.test.ts / ai-extract-batch.test.ts.
+vi.mock('../../config.js', () => ({ config: { aiCreditsMonthlyAllocation: 50 } }));
+
 vi.mock('../../utils/db.js', () => ({
   db: {
     from: vi.fn(),

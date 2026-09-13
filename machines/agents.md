@@ -33,6 +33,18 @@ Certificate (tier `pr`, 1 key): proofPassed true; invariants `revocationRemainsT
 
 # machines/agents.md
 
+## 2026-09-12 — `aiCreditsPeriodProvision.machine.ts` (SCRUM-4939 / PR #2837): the `ai_credits` provisioning race
+
+New machine for `ensureAICreditsPeriod` in `services/worker/src/ai/cost-tracker.ts`. `public.ai_credits` has no unique constraint on `(org_id, period_start)` — PK on `id` only, three non-unique indexes — so provisioning cannot be an upsert and is a select-then-insert with a genuine TOCTOU window. Adding the constraint is DDL on a table read by every extraction: its own migration, its own lock-timeout review (CLAUDE.md §1.2), a T3 PR. The window is closed in application code instead, and this machine is what checks that protocol: insert → re-read → the racer whose row is not the keeper (lowest `(created_at, id)`) deletes **only the row it itself inserted**, by id.
+
+**Why the direction of failure matters more than the race.** `deduct_ai_credits`'s `UPDATE` has no row limit and `ai_credits.reconcile_refund` refunds through the same RPC, so a surviving duplicate double-debits and double-refunds for the rest of the month. But a compensation that could remove the *last* row would put the org straight back on the hard 503 the PR exists to remove — strictly worse. `neverZeroRowsOnceProvisioned` is unconditional and is the invariant that earns the machine.
+
+Modeled deliberately narrowly: one domain element = one concurrent request for one org's one period; `firstInserter` stands in for the `(created_at, id)` total order; a re-read is assumed to see every already-committed insert (each PostgREST statement is its own read-committed transaction). A stale re-read that misses the keeper's row is NOT modeled — its outcome is a surviving duplicate, identical to the modeled `deleteOwnFails`, never a zero-row state. Credit arithmetic is out of scope (the DSL has no arithmetic).
+
+Certificate (tier `pr`, 2 racers): proofPassed true; invariants `neverZeroRowsOnceProvisioned`, `keeperRowNeverDeleted`, `settledConvergesToOneRow`; graph equivalence true (24/24 states, 34/34 edges); TLC 35 generated / 24 distinct, depth 7; deadlock check off (an all-DONE world is the correct terminal state of a race, same resolution as `agentPassport` / `partnerProvisioning` / `drainRunAccounting`). `nightly` tier runs 3 racers. Picked up automatically by `npm run verify:machines` / the `tla-verify` CI job (the script globs `machines/*.machine.ts`).
+
+Owed follow-up: a unique `(org_id, period_start)` index is still the correct permanent fix and would make `deleteOwn` / `deleteOwnFails` unreachable. It is a separate T3 migration.
+
 ## 2026-09-10 — PR #2570 models independent broadcaster publication
 
 The DocuSign model now includes anchor publication and an independently schedulable broadcaster claim. `broadcastRequiresFreshLinkedAnchor` prevents a broadcaster claiming an unlinked or superseded anchor. Atomic minting publishes and links together; a separate inserted-anchor action is a negative control. The model checks the concurrency design; SQL tests separately check full metadata equality, tenant scope, permissions, and real row locks. It does not model unknown external calls or replace staging qualification.
