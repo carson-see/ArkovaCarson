@@ -42,6 +42,7 @@ import {
 import { verifyUrl } from '@/lib/routes';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
+import { formatAuthorsDisplay } from '@/lib/publicRecordTemplate';
 
 /** Inline copy button for values */
 function CopyButton({ value }: { value: string }) {
@@ -146,6 +147,18 @@ interface AssetDetailViewProps {
 }
 
 type VerificationState = 'idle' | 'verifying' | 'match' | 'mismatch';
+
+/**
+ * SCRUM-5105: a pipeline-anchored public record (OpenAlex, EDGAR, etc.) has
+ * no uploaded file — `anchors.file_size` is never set for it, so it always
+ * reads as 0. "0 B" reads as an empty/corrupt file rather than what it
+ * actually is: a record with no file by design. Local to this file per the
+ * task's copy placement — `src/lib/copy.ts` is shared and not the right
+ * home for a single-surface label.
+ */
+const PIPELINE_FILE_SIZE_LABELS = {
+  NO_FILE_METADATA_ONLY: 'No file — metadata-only record',
+} as const;
 
 function metadataString(metadata: Record<string, unknown> | null | undefined, key: string): string | null {
   const value = metadata?.[key];
@@ -448,9 +461,17 @@ interface MetadataRowProps {
  * falls back to the pre-existing plain-text render byte-for-byte — this can
  * only ever ADD a link, never change what already renders.
  */
+
 function MetadataRow({ metaKey, value, isDocusign, docusignEnv }: Readonly<MetadataRowProps>) {
   const href = isDocusign ? buildDocusignMetadataHref(metaKey, value, docusignEnv) : null;
   const testId = metaKey === 'account_id' ? 'docusign-account-link' : 'docusign-envelope-link';
+  // SCRUM-5105 (CTO ruling): `publicRecordTemplate.ts` projects `authors` as
+  // an array of `{ name, orcid? }` objects (never bare strings), so this
+  // dump's default JSON.stringify would render a raw object array for this
+  // ONE key. `formatAuthorsDisplay` is the shared narrow formatter (also
+  // used by CredentialRenderer's own generic dump) — every other key keeps
+  // the pre-existing JSON.stringify/String fallback untouched.
+  const authorsDisplay = metaKey === 'authors' ? formatAuthorsDisplay(value) : null;
   return (
     <div className="flex gap-4">
       <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{metaKey.replace(/_/g, ' ')}:</span>
@@ -458,6 +479,8 @@ function MetadataRow({ metaKey, value, isDocusign, docusignEnv }: Readonly<Metad
         <DocusignLinkChip href={href} testId={testId}>
           {String(value)}
         </DocusignLinkChip>
+      ) : authorsDisplay !== null ? (
+        <span className="text-xs break-words" data-testid="metadata-authors-value">{authorsDisplay}</span>
       ) : (
         <span className="text-xs font-mono break-all">
           {typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}
@@ -597,6 +620,11 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   // gated strictly on connector_source === 'docusign' — a non-DocuSign
   // anchor never sees a link, regardless of what its metadata contains.
   const isDocusignAnchor = metadataString(anchor.metadata, 'connector_source') === 'docusign';
+  // SCRUM-5105: a pipeline-anchored public record has no uploaded file —
+  // file_size is always 0/absent for it by design, not because anything is
+  // missing or corrupt. Gated strictly on metadata.pipeline_source, same as
+  // buildAnchorSourceProvenance's source_provider fallback above.
+  const isPipelineAnchor = metadataString(anchor.metadata, 'pipeline_source') !== null;
   const docusignEnv = resolveDocusignEnv(anchor.metadata?._docusign_env);
   // CPE-R1 (SCRUM-1847): the CPE section is gated on the credential_source_import
   // entitlement, resolved by the parent page and passed via hasImportEntitlement.
@@ -817,7 +845,9 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 </div>
               )}
               <p className="text-sm text-muted-foreground">
-                {formatFileSize(anchor.fileSize)}
+                {isPipelineAnchor && !anchor.fileSize
+                  ? PIPELINE_FILE_SIZE_LABELS.NO_FILE_METADATA_ONLY
+                  : formatFileSize(anchor.fileSize)}
                 {anchor.fileMime && ` • ${anchor.fileMime}`}
                 {anchor.credentialType && ` • ${CREDENTIAL_TYPE_LABELS[anchor.credentialType as keyof typeof CREDENTIAL_TYPE_LABELS] ?? anchor.credentialType}`}
               </p>

@@ -1,0 +1,19 @@
+{
+  "title": "Scaling Laws for Neural Language Models",
+  "source": "openalex",
+  "metadata": {
+    "doi": "https://doi.org/10.1234/arkova.example.5105",
+    "publication_date": "2026-02-14",
+    "publication_year": 2026,
+    "cited_by_count": 482,
+    "is_retracted": false,
+    "authors": [
+      { "name": "Jane Q. Researcher", "orcid": "https://orcid.org/0000-0001-2345-6789", "institutions": ["Example University"] },
+      { "name": "Alex Chen", "orcid": null, "institutions": [] }
+    ],
+    "concepts": ["Machine learning", "Natural language processing", "Neural network", "Computer science", "Scaling law"],
+    "journal": "Journal of Open Machine Learning Research",
+    "is_open_access": true,
+    "abstract": "This paper studies empirical scaling laws for language model performance on the cross-entropy loss."
+  }
+}

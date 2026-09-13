@@ -38,6 +38,7 @@ import type { TemplateDisplayData } from '@/hooks/useCredentialTemplate';
 import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import { CpeMetadataSection, type CpeMetadataView } from './CpeMetadataSection';
 import { CleMetadataSection, type CleMetadataView } from './CleMetadataSection';
+import { formatAuthorsDisplay } from '@/lib/publicRecordTemplate';
 
 /** Status badge color mapping */
 const STATUS_COLORS: Record<string, string> = {
@@ -388,7 +389,13 @@ export function CredentialRenderer({
     for (const field of template.fields) {
       if (shouldSkipMetadataField(field.key, canonicalSubTypeLabel)) continue;
       const raw = metadata[field.key];
-      const formatted = formatFieldValue(raw, field.type);
+      // SCRUM-5105: `authors` (when a template happens to declare that key)
+      // is a `{ name, orcid? }[]` from publicRecordTemplate.ts — narrow
+      // override so it never falls through to the generic
+      // JSON.stringify(object) branch in formatFieldValue. A malformed/
+      // legacy value (formatAuthorsDisplay returns null) still falls
+      // through to the default formatter, same as every other key.
+      const formatted = (field.key === 'authors' ? formatAuthorsDisplay(raw) : null) ?? formatFieldValue(raw, field.type);
       if (formatted) {
         displayFields.push({ label: field.label, value: formatted });
       }
@@ -396,9 +403,16 @@ export function CredentialRenderer({
   } else if (hasMetadata) {
     for (const [key, value] of Object.entries(metadata)) {
       if (shouldSkipMetadataField(key, canonicalSubTypeLabel)) continue;
-      const formatted = isSubTypeKey(key) && typeof value === 'string'
-        ? formatSubTypeOrNull(value)
-        : formatFieldValue(value);
+      // SCRUM-5105 (CTO ruling): `authors` is an array of `{ name, orcid? }`
+      // objects — this is the ONE narrow key override in this generic dump;
+      // every other key's formatting is untouched. A malformed/legacy
+      // `authors` value (formatAuthorsDisplay returns null) still falls
+      // through to the default formatter below.
+      const formatted = (key === 'authors' ? formatAuthorsDisplay(value) : null) ?? (
+        isSubTypeKey(key) && typeof value === 'string'
+          ? formatSubTypeOrNull(value)
+          : formatFieldValue(value)
+      );
       if (formatted) {
         displayFields.push({ label: formatFieldLabel(key), value: formatted });
       }

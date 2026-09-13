@@ -123,7 +123,7 @@ export function useCredentialTemplate(
             setTemplate(null);
           }
         } else {
-          // Authenticated context: direct query
+          // Authenticated context: direct query, org-scoped first.
           const { data, error: queryError } = await supabase
             .from('credential_templates')
             .select('name, default_metadata')
@@ -136,10 +136,42 @@ export function useCredentialTemplate(
 
           if (queryError) {
             if (!cancelled) setError(queryError.message);
-          } else if (data && !cancelled) {
+            return;
+          }
+
+          if (data) {
+            if (!cancelled) {
+              setTemplate({
+                name: data.name,
+                fields: parseTemplateFields(data.default_metadata),
+              });
+            }
+            return;
+          }
+
+          // SCRUM-5105: no org-scoped template — fall back to the
+          // PLATFORM-level row (org_id IS NULL). Pipeline anchors (OpenAlex,
+          // EDGAR, etc.) carry the pipeline owner's org_id, so the org-scoped
+          // query above never finds a row for them even though a platform
+          // template exists (e.g. credential_type='PUBLICATION',
+          // org_id IS NULL) — this was previously unreachable, since the hook
+          // only ever queried `.eq('org_id', oid)`.
+          const { data: platformData, error: platformError } = await supabase
+            .from('credential_templates')
+            .select('name, default_metadata')
+            .is('org_id', null)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .eq('credential_type', ct as any)
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+
+          if (platformError) {
+            if (!cancelled) setError(platformError.message);
+          } else if (platformData && !cancelled) {
             setTemplate({
-              name: data.name,
-              fields: parseTemplateFields(data.default_metadata),
+              name: platformData.name,
+              fields: parseTemplateFields(platformData.default_metadata),
             });
           } else if (!cancelled) {
             setTemplate(null);

@@ -24,6 +24,44 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ROUTES } from '@/lib/routes';
 import { RECORD_DETAIL_LABELS } from '@/lib/copy';
 import { sourceProofInput } from '@/lib/sourceProofInput';
+import { projectPublicRecordToTemplate, type ProjectedTemplate } from '@/lib/publicRecordTemplate';
+
+const DESCRIPTION_FALLBACK_MAX_CODE_POINTS = 500;
+
+/**
+ * Truncates by Unicode CODE POINT (never UTF-16 code unit), so a truncation
+ * boundary landing inside an astral-plane character (surrogate pair) keeps
+ * the character whole instead of splitting it into a lone, invalid
+ * surrogate — the exact 2026-08-17 `publicRecordDescription` poison-record
+ * class in services/worker/src/jobs/publicRecordAnchor.ts, reproduced here
+ * on the read side. `Array.from` iterates by code point.
+ */
+export function truncateCodePointSafe(value: string, maxCodePoints = DESCRIPTION_FALLBACK_MAX_CODE_POINTS): string {
+  const codePoints = Array.from(value);
+  if (codePoints.length <= maxCodePoints) return value;
+  return codePoints.slice(0, maxCodePoints).join('');
+}
+
+/**
+ * A pipeline anchor's OWN `description` always wins when present. Only when
+ * it is null/empty do we fall back to the linked public_records row's
+ * metadata — abstract, then description, then summary, in that priority
+ * order — truncated code-point-safely. Returns null when neither the
+ * anchor nor the record has anything to show (degrades to today's
+ * behavior).
+ */
+export function pipelineDescriptionFallback(
+  record: { metadata: Record<string, unknown> } | null,
+): string | null {
+  if (!record) return null;
+  const raw = (typeof record.metadata.abstract === 'string' ? record.metadata.abstract : null)
+    ?? (typeof record.metadata.description === 'string' ? record.metadata.description : null)
+    ?? (typeof record.metadata.summary === 'string' ? record.metadata.summary : null);
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return truncateCodePointSafe(trimmed);
+}
 
 export function RecordDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -40,6 +78,72 @@ export function RecordDetailPage() {
   // section stays hidden. See useHasCredentialImportEntitlement for the
   // org-wide grant semantics.
   const hasImportEntitlement = useHasCredentialImportEntitlement();
+
+  // SCRUM-5105: pipeline-anchored public records (OpenAlex, EDGAR, etc.)
+  // carry only {pipeline_source, source_id, source_url, record_type} plus
+  // merkle keys on anchors.metadata — the rich record (title, doi,
+  // publication_date, authors, ...) lives on the linked public_records row
+  // (public_records.anchor_id, btree-indexed). Fetch it once for a pipeline
+  // anchor and project it onto template display keys so AssetDetailView /
+  // CredentialRenderer can render labelled fields instead of the bare
+  // pipeline stub. Never fetched for a non-pipeline (client-uploaded or
+  // org-issued) anchor.
+  const [pipelineTemplateMetadata, setPipelineTemplateMetadata] = useState<ProjectedTemplate>({});
+  // Prod evidence (Sept sample): 293/400 recent pipeline anchors have
+  // anchors.description NULL while public_records.metadata->>'abstract' is
+  // present — early anchors wrote the abstract into description directly.
+  // This is the read-side fix for legacy/current rows; the write side is
+  // tracked separately. Only ever used when the anchor's OWN description is
+  // null/empty (see pipelineDescriptionFallback above).
+  const [pipelineDescription, setPipelineDescription] = useState<string | null>(null);
+  useEffect(() => {
+    const pipelineSource = (anchor?.metadata as Record<string, unknown> | null)?.pipeline_source;
+    if (!anchor || typeof pipelineSource !== 'string') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear projected metadata for a non-pipeline anchor
+      setPipelineTemplateMetadata({});
+      setPipelineDescription(null);
+      return;
+    }
+
+    let cancelled = false;
+    async function fetchPublicRecord() {
+      try {
+        const { data, error: fetchError } = await supabase
+          .from('public_records')
+          .select('title, source, metadata')
+          .eq('anchor_id', anchor!.id)
+          .limit(1)
+          .maybeSingle();
+
+        if (cancelled) return;
+        if (fetchError || !data) {
+          // Degrade silently to today's behavior — never surface a fetch
+          // failure for this enrichment as user-facing error state.
+          setPipelineTemplateMetadata({});
+          setPipelineDescription(null);
+          return;
+        }
+
+        const recordMetadata = (data.metadata as Record<string, unknown> | null) ?? {};
+        const projected = projectPublicRecordToTemplate(data.source, {
+          title: data.title,
+          metadata: recordMetadata,
+        });
+        setPipelineTemplateMetadata(projected);
+        setPipelineDescription(pipelineDescriptionFallback({ metadata: recordMetadata }));
+      } catch {
+        if (!cancelled) {
+          setPipelineTemplateMetadata({});
+          setPipelineDescription(null);
+        }
+      }
+    }
+    fetchPublicRecord();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [anchor]);
 
   // Fetch version lineage when anchor has parent or version > 1
   const [lineage, setLineage] = useState<{ id: string; versionNumber: number; status: string; createdAt: string; filename: string }[]>([]);
@@ -222,7 +326,18 @@ export function RecordDetailPage() {
           credentialType: anchor.credential_type ?? undefined,
           chainTxId: anchor.chain_tx_id ?? undefined,
           chainBlockHeight: anchor.chain_block_height ?? undefined,
-          metadata: anchor.metadata as Record<string, unknown> | null ?? undefined,
+          // SCRUM-5105: project the linked public_records row's rich
+          // metadata onto template display keys for pipeline anchors — the
+          // anchor's own metadata keys win on collision (spread order).
+          // When there is nothing projected (non-pipeline anchor, or the
+          // fetch hasn't resolved / found nothing yet), this is byte-for-byte
+          // the pre-existing `anchor.metadata ?? undefined` — an empty `{}`
+          // here would otherwise make `credentialType || credentialMetadata`
+          // truthy in AssetDetailView for every anchor, which is a behavior
+          // change this PR must not make.
+          metadata: Object.keys(pipelineTemplateMetadata).length > 0
+            ? { ...pipelineTemplateMetadata, ...(anchor.metadata as Record<string, unknown> | null ?? {}) }
+            : anchor.metadata as Record<string, unknown> | null ?? undefined,
           // CPE-R1 (SCRUM-1847): pass the structured CPE blob through so
           // AssetDetailView can render the (entitlement-gated) CPE section.
           // `cpe_metadata` is selected by useAnchor (select('*')).
@@ -233,7 +348,13 @@ export function RecordDetailPage() {
           // record. Same `select('*')` source and same entitlement gate as CPE
           // — keep the two lines together so neither is dropped alone.
           cleMetadata: anchor.cle_metadata as Record<string, unknown> | null ?? undefined,
-          description: anchor.description ?? undefined,
+          // The anchor's own description always wins when present (non-null,
+          // non-empty). Only then does a pipeline anchor fall back to the
+          // linked public_records row's abstract/description/summary — see
+          // pipelineDescriptionFallback above.
+          description: (anchor.description && anchor.description.trim())
+            ? anchor.description
+            : pipelineDescription ?? undefined,
           orgId: anchor.org_id ?? undefined,
           issuerName: (() => {
             const meta = anchor.metadata as Record<string, unknown> | null;

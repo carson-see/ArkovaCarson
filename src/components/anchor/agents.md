@@ -1,5 +1,13 @@
 # agents.md — components/anchor
 
+## 2026-09-13 SCRUM-5105 — pipeline-record file-size label + `authors` metadata formatting
+
+Two narrow `AssetDetailView.tsx` additions for pipeline-anchored public records (`metadata.pipeline_source` present):
+
+- **File size.** A pipeline anchor has no uploaded file, so `fileSize` is always 0/absent by design — "0 B" read as an empty/corrupt file. When `isPipelineAnchor && !anchor.fileSize`, the header line now shows a local `PIPELINE_FILE_SIZE_LABELS.NO_FILE_METADATA_ONLY` ("No file — metadata-only record") instead of `formatFileSize(anchor.fileSize)`. Local to this file per the task's copy placement — `src/lib/copy.ts` is shared, not the right home for a single-surface label. A pipeline anchor that DOES have a nonzero file size (e.g. a future connector-fetched variant) still gets the real formatted size.
+- **`authors` metadata row.** `@/lib/publicRecordTemplate`'s projector emits `authors` as `{ name, orcid? }[]` (CTO ruling, see `src/lib/agents.md`), so `MetadataRow`'s default `JSON.stringify(object)` would dump a raw object array for this ONE key. `formatAuthorsDisplay` (imported from `publicRecordTemplate.ts` — the single shared implementation, also used by `CredentialRenderer.tsx`'s generic dump, see `src/components/credentials/agents.md`) renders it as joined names with "+N more" past 10 (`data-testid="metadata-authors-value"`). Every other metadata key's formatting is byte-for-byte unchanged. A malformed/legacy `authors` value (formatter returns `null`) falls through to the pre-existing default render.
+- Tests: `AssetDetailView.pipelineRecord.test.tsx` (file-size label for pipeline/non-pipeline/nonzero-size anchors; authors joined-names render + cap; every other metadata key's formatting unaffected).
+
 ## SCRUM-4448 — securing dialog layout
 
 `SecureDocumentDialog` keeps a 16px viewport gutter and a dynamic viewport height limit. Its single grid column and body can shrink below intrinsic text widths; long references wrap, and the whole dialog scrolls vertically. Mobile success actions stack. Attestation labels sit above wrapping values on mobile and never shrink beside values on desktop. `TemplateSelector` cards explicitly shrink within the picker. Keep these constraints local to the securing flow; global dialog primitives are unchanged. Real browser geometry and actionability are covered by `e2e/secure-dialog-layout.spec.ts` across desktop, phone and reduced heights. No securing state, request, capability or authorization changes.

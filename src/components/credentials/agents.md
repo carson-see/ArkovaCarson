@@ -1,5 +1,9 @@
 # agents.md — credentials
-_Last updated: 2026-07-28_
+_Last updated: 2026-09-13 (SCRUM-5105 — authors metadata formatting)_
+
+## 2026-09-13 SCRUM-5105 — `authors` display formatting in both generic-dump branches
+
+`@/lib/publicRecordTemplate`'s projector emits an `authors` field as `{ name, orcid? }[]` for pipeline-anchored public records. `CredentialRenderer.tsx`'s two generic key-value dump branches (`hasTemplate && hasMetadata` looping `template.fields`, and `else if (hasMetadata)` looping every metadata key) both used `formatFieldValue`, whose object case is a bare `JSON.stringify` — a raw object array for this one key. Both branches now special-case `key === 'authors'` (or `field.key === 'authors'`) to call the shared `formatAuthorsDisplay` from `publicRecordTemplate.ts` first, falling back to the original formatter when it returns `null` (malformed/legacy value) — no other key's formatting changed. `AssetDetailView.tsx`'s own generic metadata dump (`MetadataRow`, a separate render path from this component) uses the SAME imported `formatAuthorsDisplay` rather than a duplicate implementation — see `src/components/anchor/agents.md`. Do not add a second formatter for this key; extend `formatAuthorsDisplay` itself if the display rule needs to change.
 
 ## What This Folder Contains
 Credential display components. `CredentialRenderer` is the core component that renders a credential using template field schema + anchor metadata. `CredentialTemplatesManager` handles CRUD for credential templates. `CpeMetadataSection` + `NasbaStatusBadge` render CPE (Continuing Professional Education) compliance metadata; `CleMetadataSection` + `CleProviderBadge` render CLE (Continuing Legal Education) compliance metadata.

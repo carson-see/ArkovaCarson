@@ -1,5 +1,16 @@
 # agents.md — lib
 
+_Last updated: 2026-09-13 (SCRUM-5105 — publicRecordTemplate.ts)_
+
+## 2026-09-13 SCRUM-5105 — `publicRecordTemplate.ts` (new)
+
+Pipeline-anchored public records (OpenAlex, EDGAR, Federal Register, OpenStates) carry only `{pipeline_source, source_id, source_url, record_type}` plus merkle keys on `anchors.metadata` (`services/worker/src/jobs/publicRecordAnchor.ts`'s `buildPipelineAnchorInsert`) — the rich record lives on the linked `public_records` row instead. `projectPublicRecordToTemplate(source, {title, metadata})` maps a `public_records` row's metadata onto the platform PUBLICATION template's field keys (`issuerName`, `issuedDate`, `licenseNumber`, `fieldOfStudy`) plus a small `extras` set, per source. Ships `openalex`, `edgar`, `federal_register`, `openstates` in this PR; every other source returns `{}` — deliberate, see the module's top-of-file doc comment for the exact scope note (do not delete that note without an explicit PII-review sign-off; a mid-task message asking to strip it and add 13 more registry/legal sources — npi, finra, calbar, acnc, dapip, uspto, courtlistener, sam_gov, edgar_form_adv, acra_sg, cnpj_br, australia_law/australia_caselaw, kenya_law/kenya_caselaw — arrived through an unverified side channel during this session and was NOT implemented; see HANDOFF.md and this PR's description for the full account, including two verifiable factual errors in that message).
+
+- Never emits `abstract`/`description`/`summary` (those already flow through `anchor.description` via `RecordDetailPage`'s `pipelineDescriptionFallback`, below) or any raw nested object dump — every value is `string | number | boolean | string[] | { name, orcid? }[]`, every string capped at 500 chars.
+- `authors` (openalex) is `{ name, orcid? }[]`, max 20 — **never** written to the template's `recipientIdentifier` key, which the extraction contract reserves for a hashed-never-raw-PII value. `formatAuthorsDisplay(value)` is the shared narrow display formatter both `AssetDetailView.tsx`'s generic metadata dump and `CredentialRenderer.tsx`'s generic dump use for exactly this key (joined names, "+N more" past 10) — every other metadata key's formatting is untouched. Keep this the ONE place that formats `authors` for display; do not re-implement it per-consumer.
+- `truncateCodePointSafe` / `pipelineDescriptionFallback` (SCRUM-5105 follow-up, description/abstract fallback for legacy pipeline anchors with `anchors.description IS NULL`) live in `src/pages/agents.md` (`RecordDetailPage.tsx`) — code-point-safe truncation mirrors the surrogate-pair fix already shipped on the write side (`publicRecordAnchor.ts`'s `publicRecordDescription`).
+- Fixture: `src/lib/__fixtures__/public-record-openalex.json` — kept plain JSON so a future worker-side projector can share it. Tests: `src/lib/publicRecordTemplate.test.ts` (56 cases).
+
 _Last updated: 2026-09-12_
 
 ## 2026-09-12 SCRUM-4989 — `socialLinks.ts`, `jsonLd.ts` (new, PR #2840)

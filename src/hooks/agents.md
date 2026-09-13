@@ -1,5 +1,9 @@
 # agents.md — hooks
-_Last updated: 2026-09-03_
+_Last updated: 2026-09-13 (SCRUM-5105 — useCredentialTemplate platform-template fallback)_
+
+## 2026-09-13 SCRUM-5105 — `useCredentialTemplate.ts` authenticated-branch platform-template fallback
+
+The authenticated branch queried ONLY `.eq('org_id', oid)`, so prod's PLATFORM-level template rows (`credential_templates` with `org_id IS NULL`, e.g. `credential_type='PUBLICATION'`) were unreachable — pipeline anchors (OpenAlex, EDGAR, etc.) carry the pipeline OWNER's `org_id` (never null), so the org-scoped query always missed even though a platform template existed. Now: org-scoped lookup first; only when it returns no row (not on error — an error still surfaces via `setError` as before) does a second query run with `.is('org_id', null)` in place of the `org_id` filter, same `credential_type`/`is_active` filters. Org template still wins whenever one exists — this is pure fallback, not an override. The `!credentialType || !orgId` early-return and the public/RPC branch are unchanged. Tests: `useCredentialTemplate.test.ts` (org wins / platform fallback used / null when neither — self-referencing chain-object mock pattern, reusable for any hook that runs two sequential `.from(...).select(...)` queries with different filters and needs order-only control over resolution).
 
 ## PR #2637 refresh without remounting MFA setup (2026-09-05)
 
