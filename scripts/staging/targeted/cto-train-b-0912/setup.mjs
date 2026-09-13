@@ -23,7 +23,7 @@ const PASSWORD = state.password ?? `Soak-${randomUUID()}-Aa1!`;
 async function ensureOrg(name) {
   const { data: existing } = await admin.from('organizations').select('id').eq('display_name', name).maybeSingle();
   if (existing) return existing.id;
-  const { data, error } = await admin.from('organizations').insert({ display_name: name, legal_name: name, org_prefix: `Z${randomUUID().replace(/-/g, '').slice(0, 11).toUpperCase()}` }).select('id').single();
+  const { data, error } = await admin.from('organizations').insert({ display_name: name, legal_name: name, tier: 'ENTERPRISE', org_prefix: `Z${randomUUID().replace(/-/g, '').slice(0, 11).toUpperCase()}` }).select('id').single();
   if (error) throw new Error(`org ${name}: ${error.message}`);
   return data.id;
 }
@@ -54,7 +54,7 @@ async function ensureUser({ local, role, orgId, isPlatformAdmin = false }) {
 async function ensureApiKey(orgId, createdBy) {
   if (state.apiKey?.raw) return state.apiKey;
   const raw = `ak_test_${randomBytes(32).toString('hex')}`;
-  const { data, error } = await admin.from('api_keys').insert({ org_id: orgId, key_prefix: raw.slice(0, 12), key_hash: hashApiKey(raw, API_KEY_HMAC_SECRET), name: `${PREFIX}-machine-key`, scopes: ['read:search', 'anchor:write', 'anchor:read', 'keys:read', 'verify', 'verify:batch'], created_by: createdBy }).select('id').single();
+  const { data, error } = await admin.from('api_keys').insert({ org_id: orgId, key_prefix: raw.slice(0, 12), key_hash: hashApiKey(raw, API_KEY_HMAC_SECRET), name: `${PREFIX}-machine-key`, scopes: ['read:search', 'anchor:write', 'anchor:read', 'keys:read', 'webhooks:manage', 'verify', 'verify:batch'], created_by: createdBy }).select('id').single();
   if (error) throw new Error(`api key: ${error.message}`);
   return { id: data.id, raw, orgId };
 }
