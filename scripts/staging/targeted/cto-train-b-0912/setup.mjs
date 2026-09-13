@@ -82,7 +82,7 @@ async function main() {
   const selected = (process.env.TRAIN_PROBES ?? '').split(',').map((s) => s.trim()).filter(Boolean).map(Number);
   for (const f of readdirSync(new URL('./probes/', import.meta.url)).filter((x) => x.endsWith('.mjs')).sort()) {
     const mod = await import(new URL(`./probes/${f}`, import.meta.url));
-    if (selected.length > 0 && !selected.includes(Number(mod.pr))) { console.log(`[setup] ${mod.pr}: not in TRAIN_PROBES, skipped`); continue; }
+    if (selected.length > 0 && !selected.includes(Number(String(mod.pr).replace(/^#/, '')))) { console.log(`[setup] ${mod.pr}: not in TRAIN_PROBES, skipped`); continue; }
     if (typeof mod.seed !== 'function') { console.log(`[setup] ${mod.pr}: no seed()`); continue; }
     console.log(`[setup] seeding ${mod.pr}`);
     state[mod.pr] = await mod.seed(admin, state, ctx);
