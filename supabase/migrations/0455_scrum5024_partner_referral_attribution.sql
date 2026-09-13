@@ -208,9 +208,7 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.generate_referral_code() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.generate_referral_code() FROM anon;
-REVOKE ALL ON FUNCTION public.generate_referral_code() FROM authenticated;
+REVOKE ALL ON FUNCTION public.generate_referral_code() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.generate_referral_code() TO service_role;
 
 COMMENT ON FUNCTION public.generate_referral_code() IS
@@ -301,8 +299,7 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.ensure_org_referral_code(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.ensure_org_referral_code(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.ensure_org_referral_code(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.ensure_org_referral_code(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.ensure_org_referral_code(uuid) TO service_role;
 
@@ -420,8 +417,7 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.record_org_referral(uuid, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.record_org_referral(uuid, text, text) FROM anon;
+REVOKE ALL ON FUNCTION public.record_org_referral(uuid, text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.record_org_referral(uuid, text, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.record_org_referral(uuid, text, text) TO service_role;
 
@@ -476,8 +472,7 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.get_org_referrals(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.get_org_referrals(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.get_org_referrals(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_org_referrals(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_org_referrals(uuid) TO service_role;
 
