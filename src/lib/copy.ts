@@ -4871,6 +4871,7 @@ export const TWO_FACTOR_SETUP_LABELS = {
 export const REFERRAL_LABELS = {
   PAGE_TITLE: 'Referrals',
   PAGE_DESCRIPTION: 'Invite other organizations to Arkova and see which ones joined through your link.',
+  LOADING: 'Loading your referrals…',
 
   CODE_CARD_TITLE: 'Your referral code',
   CODE_CARD_DESCRIPTION: 'Share the link below. Organizations that sign up through it are recorded against your account.',

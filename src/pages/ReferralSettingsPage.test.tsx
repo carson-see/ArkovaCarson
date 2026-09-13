@@ -67,4 +67,15 @@ describe('ReferralSettingsPage', () => {
     expect(screen.getByRole('heading', { name: REFERRAL_LABELS.PAGE_TITLE })).toBeInTheDocument();
     expect(screen.getByText(REFERRAL_LABELS.PAGE_DESCRIPTION)).toBeInTheDocument();
   });
+
+  it('shows a distinct loading message beside the spinner while the org resolves, not a second page title', () => {
+    mockUseActiveOrg.mockReturnValue({ orgId: null, loading: true });
+    render(<ReferralSettingsPage />);
+
+    // The H1 heading is still the page title; the spinner row next to it must
+    // not repeat that same string as if it were a loading message.
+    expect(screen.getByRole('heading', { name: REFERRAL_LABELS.PAGE_TITLE })).toBeInTheDocument();
+    expect(screen.getByText(REFERRAL_LABELS.LOADING)).toBeInTheDocument();
+    expect(screen.getAllByText(REFERRAL_LABELS.PAGE_TITLE)).toHaveLength(1);
+  });
 });

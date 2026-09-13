@@ -7583,10 +7583,7 @@ export type Database = {
         Returns: string
       }
       generate_public_id: { Args: never; Returns: string }
-      generate_referral_code: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
+      generate_referral_code: { Args: never; Returns: string }
       get_agents_for_user: {
         Args: { p_user_id: string }
         Returns: {

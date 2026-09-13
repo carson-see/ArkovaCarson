@@ -48,6 +48,15 @@ const ROWS = [
 describe('ReferralPanel', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('shows a distinct loading message, not a repeat of the page title, while referrals load', () => {
+    mockUseReferrals.mockReturnValue(hookState({ loading: true }));
+
+    render(<ReferralPanel orgId="org-1" canManage />);
+
+    expect(screen.getByText(REFERRAL_LABELS.LOADING)).toBeInTheDocument();
+    expect(screen.queryByText(REFERRAL_LABELS.PAGE_TITLE)).not.toBeInTheDocument();
+  });
+
   it('never mints on load — the button is the only path', () => {
     const state = hookState();
     mockUseReferrals.mockReturnValue(state);
