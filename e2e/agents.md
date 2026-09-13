@@ -494,7 +494,9 @@ Historical change log: [./agents-changelog.md](./agents-changelog.md)
 
 ## 2026-09-05 — SCRUM-4035 OAuth confirmation routing
 
-`oauth-email-confirmation.spec.ts` runs via `playwright.uat03.config.ts` in CI before hosted-stack setup. Its seven real-app browser cases mock only external Auth/worker boundaries and verify pending routing without profile reads, delivery/retry, explicit proof confirmation, account switching/recovery, normal authenticated routing, and profile loading after confirmation. The default config excludes this separately executed fixture; no tests are conditionally skipped. Screenshots at 1280/375 are uploaded. This does not prove hosted Google consent or real mailbox receipt.
+`oauth-email-confirmation.spec.ts` runs via `playwright.uat03.config.ts` in CI before hosted-stack setup. Its seven real-app browser cases mock only external Auth/worker boundaries and verify pending routing without profile reads, delivery/retry, explicit proof confirmation, account switching/recovery, post-MFA authenticated routing, and mandatory MFA after confirmation. The default config excludes this separately executed fixture; no tests are conditionally skipped. Screenshots at 1280/375 are uploaded. This does not prove hosted Google consent or real mailbox receipt.
+
+The synthetic session JWT must include an explicit `aal`. Post-MFA onboarding controls use `authenticated`/`aal2`; completing mailbox confirmation yields `authenticated`/`aal1` and must stop at mandatory MFA without reading `profiles`. A role-only `authenticated` fixture is not proof of product authority.
 ## PR #2637 soak closeout timing correction (2026-09-05)
 
 The 12h UI window contained three failures and is preserved as failed evidence.
@@ -512,3 +514,20 @@ foreign-private-profile denials. Enrollment screenshots mask QR and secret data.
 At375px the header account button is named by initials, because the full name
 is hidden. MFA sign-out probes use the banner's menu trigger across widths;
 they still click the real Sign out action and require a new-login challenge.
+
+## 2026-09-11 — UAT-04 all-user MFA
+
+Auth setup removes old fixture factors, performs real TOTP enrollment, and saves
+only same-user `authenticated`/AAL2 sessions. The former 2099 enforcement-date
+override is gone. Browser coverage pins direct `/login` and `/signup` AAL1
+routing to the non-skippable gate for individual and organization users.
+
+## Mandatory MFA and ordinary success fixtures
+
+Billing reuses the real MFA session produced by `auth.setup.ts`. Disposable
+profile flows complete MFA without changing their onboarding/profile state.
+Direct tenant-isolation and entitlement tests borrow setup's AAL2 bearer; their
+positive access checks must pass before a negative isolation result is meaningful.
+The sign-out test uses its own real UI login and MFA enrollment, so signing out
+cannot revoke a later test's saved seed session. Intentional AAL1 rejection tests
+and `loginViaUi` retain their original authentication level.
