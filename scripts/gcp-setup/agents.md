@@ -122,3 +122,7 @@ disappears entirely at scale-to-zero. Two consequences for this folder:
 - BigQuery location is `US` (multi-region), not `us-central1`.
 - VPC Service Controls and SCC are documented but NOT auto-provisioned.
 - Do not hardcode notification channel IDs or Slack/PagerDuty secrets in repo. Pass channel resource names via environment variables.
+
+## 2026-09-12 — `/jobs/computeid-passport-recheck` added to `NOT_SCHEDULED` (SCRUM-4495)
+
+Flag-coupled dormant route: `ENABLE_COMPUTEID_INTEGRATION=false` and `COMPUTEID_API_KEY` is not in Secret Manager, so the endpoint answers `200 {skipped:true}` and a binding would only burn scheduler quota. The reason string carries the schedule to use — `17 * * * *`, deliberately NOT `0 * * * *`: every `/jobs/*` route shares one per-IP burst guard, so spreading hourly jobs off `:00` keeps one job's burst from eating another's headroom. SCRUM-4475 replaced the global bucket, so `:00` is no longer actively costing other jobs 429s — this is prevention, not a live incident. Unlike most entries here, this one is a safety net rather than a feature (ComputeID has no webhook retry), so bind it in the same motion as the flag flip rather than "on rollout, sometime".

@@ -783,3 +783,11 @@ resolve evidence live. Existing per-step queue identity checks are unchanged.
 SCRUM-4565 records the reproducible GitHub expression-engine event matrix and
 negative controls. The staging live-input and step-identity contracts remain in
 `scripts/ci/staging-evidence-workflow-contract.test.ts`.
+
+## 2026-09-12 — `deploy-worker.yml`: a Secret Manager existence preflight (SCRUM-4495)
+
+`--set-secrets` names Secret Manager secrets by id, and Cloud Run rejects the entire revision if one does not exist — after the image build, the Trivy scan and the push, with an error that reads as a Cloud Run problem rather than "nobody created the secret". The new **Preflight required Secret Manager entries** step runs `gcloud secrets describe` immediately after Cloud SDK setup and fails in seconds with the exact `gcloud secrets create` command.
+
+It checks EXISTENCE only — never a value, never a version payload, nothing printed. It lists only NEWLY-introduced names: the pre-existing ones are already proven by every green deploy on `main`. **Add a name to that list in the same commit that adds it to `--set-secrets`.** A name in `--set-secrets` that is neither covered by a green deploy nor listed in the preflight is precisely the hole this step closes.
+
+Also added dark: `ENABLE_COMPUTEID_INTEGRATION=false` in `--set-env-vars`. It was already false by `config.ts` default; stating it makes the activation flip one reviewable line instead of an invisible default, and it fails SAFE if the code default ever changes.
