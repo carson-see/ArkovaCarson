@@ -110,7 +110,7 @@ export function RecordDetailPage() {
       try {
         const { data, error: fetchError } = await supabase
           .from('public_records')
-          .select('title, source, metadata')
+          .select('title, source, metadata, source_id')
           .eq('anchor_id', anchor!.id)
           .limit(1)
           .maybeSingle();
@@ -128,6 +128,7 @@ export function RecordDetailPage() {
         const projected = projectPublicRecordToTemplate(data.source, {
           title: data.title,
           metadata: recordMetadata,
+          source_id: data.source_id,
         });
         setPipelineTemplateMetadata(projected);
         setPipelineDescription(pipelineDescriptionFallback({ metadata: recordMetadata }));

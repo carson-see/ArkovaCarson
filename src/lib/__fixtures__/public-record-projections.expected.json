@@ -1,0 +1,254 @@
+{
+  "_comment": "Expected projectPublicRecordToTemplate output for every row in public-record-sources.json, generated from the worker canonical implementation (SCRUM-5106) and verified byte-identical against the frontend implementation (SCRUM-5105). This file is copied VERBATIM to both services/worker/src/jobs/__fixtures__/ and src/lib/__fixtures__/ -- the parity test on each side projects every fixture row and asserts deep equality against this file, with no cross-package imports. Regenerate by re-running the projector against public-record-sources.json on either side (they must agree) after any SOURCE_FIELD_TABLE / SOURCE_FIELD_ALLOW_LIST change.",
+  "openalex": {
+    "issuerName": "Journal of Parity Testing",
+    "issuedDate": "2026-04-10",
+    "licenseNumber": "10.1234/arkova.parity.0001",
+    "fieldOfStudy": "Federated Anchoring of Verifiable Records at Scale",
+    "authors": [
+      {
+        "name": "Dr. Parity Author",
+        "orcid": "0000-0002-1111-2222"
+      },
+      {
+        "name": "No Orcid Author"
+      }
+    ],
+    "isOpenAccess": false,
+    "isRetracted": false,
+    "publicationYear": 2026,
+    "citedByCount": 17,
+    "concepts": [
+      "Distributed systems",
+      "Verifiable credentials"
+    ]
+  },
+  "edgar": {
+    "issuerName": "Acme Corp",
+    "issuedDate": "2026-02-14",
+    "licenseNumber": "0000320193-26-000012",
+    "fieldOfStudy": "10-K",
+    "periodOfReport": "2025-12-31",
+    "tickers": [
+      "ACME"
+    ],
+    "ciks": [
+      "0000320193"
+    ],
+    "fileDescription": "Annual report"
+  },
+  "edgar_form_adv": {
+    "issuerName": "SEC EDGAR Form ADV",
+    "issuedDate": "2026-01-10",
+    "licenseNumber": "170392",
+    "secNumber": "801-70392",
+    "country": "US",
+    "licenseType": "investment_adviser",
+    "state": "CO",
+    "registrationStatus": "APPROVED",
+    "jurisdiction": "US"
+  },
+  "sec_adv_bulk": {
+    "issuerName": "SEC EDGAR Form ADV",
+    "issuedDate": "2026-01-10",
+    "licenseNumber": "170392",
+    "secNumber": "801-70392",
+    "country": "US",
+    "licenseType": "investment_adviser",
+    "state": "CO",
+    "registrationStatus": "APPROVED",
+    "jurisdiction": "US"
+  },
+  "sec_iapd": {
+    "issuerName": "SEC Investment Adviser Public Disclosure",
+    "licenseNumber": "104822",
+    "totalAssets": 812000000,
+    "numberOfAccounts": 340,
+    "country": "US",
+    "licenseType": "investment_adviser",
+    "state": "MA",
+    "registrationStatus": "APPROVED",
+    "secNumber": "801-45822",
+    "disclosureCount": 0,
+    "jurisdiction": "US",
+    "jurisdictions": [
+      "MA",
+      "NY"
+    ]
+  },
+  "federal_register": {
+    "issuerName": "Securities and Exchange Commission",
+    "issuedDate": "2026-03-02",
+    "licenseNumber": "2026-04821",
+    "fieldOfStudy": "Amendment to Recordkeeping Requirements for Broker-Dealers",
+    "citation": "91 FR 12345",
+    "documentType": "Rule",
+    "pdfUrl": "https://www.federalregister.gov/documents/2026/03/02/2026-04821.pdf",
+    "agencies": [
+      "Securities and Exchange Commission"
+    ]
+  },
+  "openstates": {
+    "issuerName": "House",
+    "issuedDate": "2026-04-01",
+    "licenseNumber": "HB123",
+    "latestAction": "Signed by Governor",
+    "classification": [
+      "bill"
+    ],
+    "state": "CO",
+    "session": "2026 Regular Session",
+    "subjects": [
+      "privacy",
+      "technology"
+    ],
+    "jurisdiction": "US-CO",
+    "stateName": "Colorado"
+  },
+  "courtlistener": {
+    "issuerName": "Supreme Court of the United States",
+    "issuedDate": "2026-05-01",
+    "licenseNumber": "5544332",
+    "fieldOfStudy": "Smith v. Jones",
+    "citations": [
+      "512 U.S. 100"
+    ],
+    "citationCount": 12,
+    "natureOfSuit": "Civil Rights",
+    "precedentialStatus": "Published",
+    "opinionCount": 1,
+    "courtId": "scotus",
+    "dateFiledIsApproximate": false
+  },
+  "uspto": {
+    "issuedDate": "2026-01-20",
+    "licenseNumber": "US11234567B2",
+    "fieldOfStudy": "Method and Apparatus for Distributed Ledger Anchoring",
+    "patentType": "utility"
+  },
+  "npi": {
+    "issuerName": "NPPES NPI Registry (CMS)",
+    "issuedDate": "2010-06-01",
+    "licenseNumber": "1234567890",
+    "fieldOfStudy": "Internal Medicine",
+    "enumerationType": "NPI-1",
+    "primaryTaxonomyCode": "207R00000X",
+    "status": "A",
+    "credential": "MD",
+    "licenseType": "healthcare_provider"
+  },
+  "finra": {
+    "issuerName": "FINRA BrokerCheck",
+    "issuedDate": "2012-08-15",
+    "licenseNumber": "2233445",
+    "jurisdiction": "US",
+    "licenseType": "registered_representative",
+    "currentFirmCrd": "998877",
+    "disclosureCount": 0,
+    "currentFirm": "Meridian Securities LLC",
+    "registrations": [
+      "NY",
+      "NJ"
+    ]
+  },
+  "calbar": {
+    "issuerName": "State Bar of California",
+    "issuedDate": "2005-12-01",
+    "licenseNumber": "345678",
+    "jurisdiction": "US-CA",
+    "licenseType": "attorney",
+    "advancedSpecializations": [
+      "Appellate Law"
+    ],
+    "sections": [
+      "Litigation"
+    ],
+    "state": "CA",
+    "status": "Active"
+  },
+  "dapip": {
+    "licenseNumber": "00445500",
+    "state": "CA",
+    "activeStatus": "Active",
+    "institutionType": "Public 4-year"
+  },
+  "acnc": {
+    "issuerName": "Australian Charities and Not-for-profits Commission",
+    "issuedDate": "2015-03-10",
+    "licenseNumber": "51234567890",
+    "jurisdiction": "AU",
+    "pbi": true,
+    "country": "Australia",
+    "state": "VIC",
+    "charitySize": "Medium",
+    "dateEstablished": "2014-11-01",
+    "purposes": [
+      "Advancing social welfare"
+    ],
+    "operatingCountries": [
+      "Australia"
+    ],
+    "responsiblePersonsCount": 5
+  },
+  "acra_sg": {
+    "issuerName": "Accounting and Corporate Regulatory Authority (ACRA)",
+    "issuedDate": "2015-07-22",
+    "licenseNumber": "201512345A",
+    "jurisdiction": "SG",
+    "primarySsicCode": "46900",
+    "primarySsicDescription": "Wholesale trade",
+    "companyType": "Local Company",
+    "uenStatus": "Live",
+    "entityType": "Private Company Limited by Shares"
+  },
+  "cnpj_br": {
+    "issuerName": "Receita Federal (CNPJ)",
+    "issuedDate": "2010-04-05",
+    "licenseNumber": "12.345.678/0001-90",
+    "jurisdiction": "BR",
+    "porte": "ME",
+    "naturezaJuridica": "Sociedade Empresaria Limitada",
+    "uf": "SP",
+    "status": "ATIVA",
+    "cnaeFiscal": "4711302",
+    "cnaeDescricao": "Comercio varejista"
+  },
+  "moh_sg": {
+    "issuerName": "Ministry of Health Singapore",
+    "issuedDate": "2020-01-01",
+    "licenseNumber": "L12345A",
+    "jurisdiction": "SG",
+    "expiryDate": "2027-01-01",
+    "hciCode": "HCI0098765",
+    "licenceStatus": "Active",
+    "licenceType": "Clinic"
+  },
+  "australia_law": {
+    "issuerName": "Australia",
+    "licenseNumber": "AU-PA-1988-S26WA",
+    "fieldOfStudy": "Notifiable Data Breaches scheme",
+    "statuteName": "Privacy Act 1988 (Cth)",
+    "jurisdictionCode": "AU",
+    "part": "Part IIIC"
+  },
+  "kenya_law": {
+    "issuerName": "Kenya",
+    "licenseNumber": "KE-DPA-2019-S18",
+    "fieldOfStudy": "Registration of data controllers",
+    "statuteName": "Data Protection Act 2019",
+    "jurisdictionCode": "KE",
+    "part": "Part IV"
+  },
+  "australia_caselaw": {
+    "issuerName": "Federal Court of Australia",
+    "licenseNumber": "AU-CASE-cgi-bin-viewdoc-au-cases-cth-FCA-2026-100",
+    "fieldOfStudy": "Commissioner v Example Pty Ltd",
+    "jurisdictionCode": "AU"
+  },
+  "kenya_caselaw": {
+    "issuerName": "High Court of Kenya",
+    "licenseNumber": "KE-CASE-example-2026-050",
+    "fieldOfStudy": "ODPC v Example Data Ltd",
+    "jurisdictionCode": "KE"
+  }
+}

@@ -75,6 +75,16 @@ export type ProjectedTemplate = Record<string, ProjectedFieldValue>;
 export interface ProjectablePublicRecord {
   title: string | null;
   metadata: Record<string, unknown>;
+  /**
+   * Optional — most sources carry their own primary identifier inside
+   * `metadata`, but a handful don't: edgar's accession number and the
+   * jurisdiction case-law scraper's synthetic id live only on the pipeline
+   * row's own `source_id` column. Absent, those sources' `licenseNumber`
+   * resolves to undefined rather than throwing. Mirrors the worker
+   * projector's `PublicRecordForTemplate.source_id` (SCRUM-5106) so both
+   * packages resolve the same canonical field for the same template key.
+   */
+  source_id?: string | null;
 }
 
 /**
@@ -91,22 +101,28 @@ export const SOURCE_FIELD_ALLOW_LIST: Readonly<Record<string, Readonly<Record<st
   openalex: {
     fieldOfStudy: 'title', issuerName: 'journal', issuedDate: 'publication_date',
     licenseNumber: 'doi (https://doi.org/ prefix stripped)', authors: 'authors ({name, orcid?}, max 20)',
-    concepts: 'concepts (max 10)', publication_year: 'publication_year', cited_by_count: 'cited_by_count',
-    is_retracted: 'is_retracted', is_open_access: 'is_open_access',
+    concepts: 'concepts (max 10)', publicationYear: 'publication_year', citedByCount: 'cited_by_count',
+    isRetracted: 'is_retracted', isOpenAccess: 'is_open_access',
   },
   edgar: {
-    issuerName: 'entity_name', issuedDate: 'filing_date', licenseNumber: 'ciks[0]', ciks: 'ciks',
-    formType: 'form_type', periodOfReport: 'period_of_report', tickers: 'tickers',
-    primaryDocument: 'primary_document', fileDescription: 'file_description | primary_doc_description',
+    issuerName: 'entity_name', issuedDate: 'filing_date',
+    // licenseNumber is the record's OWN identifier — for a filing that's the
+    // accession number (pipeline source_id column), never a CIK (the FILER's
+    // id, shared across every filing that company ever makes).
+    licenseNumber: '$sourceId (accession)', fieldOfStudy: 'form_type', ciks: 'ciks',
+    periodOfReport: 'period_of_report', tickers: 'tickers', primaryDocument: 'primary_document',
+    fileDescription: 'file_description | primary_doc_description',
   },
   federal_register: {
     fieldOfStudy: 'title', licenseNumber: 'document_number', issuedDate: 'publication_date',
     issuerName: 'agencies[0]', agencies: 'agencies', documentType: 'type', citation: 'citation', pdfUrl: 'pdf_url',
   },
   openstates: {
-    licenseNumber: 'identifier', issuerName: 'state_name', issuedDate: 'latest_action_date',
-    session: 'session', classification: 'classification', subjects: 'subjects', chamber: 'chamber',
-    jurisdiction: 'jurisdiction', latestAction: 'latest_action',
+    licenseNumber: 'identifier', issuerName: 'chamber', issuedDate: 'latest_action_date',
+    // fieldOfStudy intentionally unset — record.title bakes in the
+    // identifier + session, duplicating licenseNumber/extras.session.
+    session: 'session', classification: 'classification', subjects: 'subjects', stateName: 'state_name',
+    state: 'state', jurisdiction: 'jurisdiction', latestAction: 'latest_action',
   },
   npi: {
     licenseNumber: 'npi_number', issuerName: 'registry', issuedDate: 'enumeration_date',
@@ -115,23 +131,25 @@ export const SOURCE_FIELD_ALLOW_LIST: Readonly<Record<string, Readonly<Record<st
   },
   finra: {
     licenseNumber: 'crd_number', issuerName: 'registry', issuedDate: 'industry_start_date',
-    currentFirm: 'current_firm', disclosureCount: 'disclosure_count', registrations: 'registrations',
-    licenseType: 'license_type',
+    currentFirm: 'current_firm', currentFirmCrd: 'current_firm_crd', disclosureCount: 'disclosure_count',
+    registrations: 'registrations', licenseType: 'license_type', jurisdiction: 'jurisdiction',
   },
   calbar: {
     licenseNumber: 'bar_number', issuerName: 'registry', issuedDate: 'admission_date', status: 'status',
     state: 'state', advancedSpecializations: 'advanced_specializations', sections: 'sections',
-    licenseType: 'license_type',
+    licenseType: 'license_type', jurisdiction: 'jurisdiction',
   },
   dapip: {
-    issuerName: 'institution_name', licenseNumber: 'ope_id | dapip_id', institutionType: 'institution_type',
+    // No `registry` field exists for this source — issuerName has nothing
+    // to bind to (institution_name is the record's OWN entity name, OUT).
+    licenseNumber: 'ope_id | dapip_id', institutionType: 'institution_type',
     state: 'state', activeStatus: 'active_status',
   },
   acnc: {
     licenseNumber: 'abn', issuerName: 'registry', issuedDate: 'registration_date',
     charitySize: 'charity_size', pbi: 'pbi', country: 'country', state: 'state',
     dateEstablished: 'date_established', purposes: 'purposes', operatingCountries: 'operating_countries',
-    responsiblePersonsCount: 'responsible_persons',
+    responsiblePersonsCount: 'responsible_persons', jurisdiction: 'jurisdiction',
   },
   uspto: {
     licenseNumber: 'patent_id', issuedDate: 'patent_date', fieldOfStudy: 'title (public_records.title)',
@@ -140,27 +158,32 @@ export const SOURCE_FIELD_ALLOW_LIST: Readonly<Record<string, Readonly<Record<st
   courtlistener: {
     issuerName: 'court_name', licenseNumber: 'docket_id', issuedDate: 'date_filed',
     fieldOfStudy: 'case_name', precedentialStatus: 'precedential_status', citationCount: 'citation_count',
-    natureOfSuit: 'nature_of_suit', opinionCount: 'opinion_count', courtId: 'court_id',
-    dateFiledIsApproximate: 'date_filed_is_approximate',
+    citations: 'citations', natureOfSuit: 'nature_of_suit', opinionCount: 'opinion_count',
+    courtId: 'court_id', dateFiledIsApproximate: 'date_filed_is_approximate',
   },
   edgar_form_adv: {
     licenseNumber: 'crd_number', issuerName: 'registry', issuedDate: 'last_filing_date',
     secNumber: 'sec_number', state: 'state', country: 'country', registrationStatus: 'registration_status',
-    licenseType: 'license_type',
+    licenseType: 'license_type', jurisdiction: 'jurisdiction',
   },
   sec_adv_bulk: { '(alias)': 'same projector + fields as edgar_form_adv' },
   sec_iapd: {
     licenseNumber: 'crd_number', issuerName: 'registry', registrationStatus: 'registration_status',
     totalAssets: 'total_assets', numberOfAccounts: 'number_of_accounts', licenseType: 'license_type',
+    secNumber: 'sec_number', country: 'country', state: 'state', disclosureCount: 'disclosure_count',
+    jurisdiction: 'jurisdiction', jurisdictions: 'jurisdictions',
   },
   acra_sg: {
     licenseNumber: 'uen', issuerName: 'registry', issuedDate: 'registration_date',
     entityType: 'entity_type', uenStatus: 'uen_status', primarySsicCode: 'primary_ssic_code',
-    primarySsicDescription: 'primary_ssic_description', companyType: 'company_type',
+    primarySsicDescription: 'primary_ssic_description', secondarySsicCode: 'secondary_ssic_code',
+    secondarySsicDescription: 'secondary_ssic_description', companyType: 'company_type',
+    jurisdiction: 'jurisdiction',
   },
   cnpj_br: {
     licenseNumber: 'cnpj_formatted', issuerName: 'registry', issuedDate: 'data_inicio_atividade',
     status: 'situacao_cadastral', naturezaJuridica: 'natureza_juridica', porte: 'porte', uf: 'uf',
+    cnaeFiscal: 'cnae_fiscal', cnaeDescricao: 'cnae_descricao', jurisdiction: 'jurisdiction',
   },
   australia_law: {
     licenseNumber: 'section_id', issuerName: 'jurisdiction', fieldOfStudy: 'section_title',
@@ -168,14 +191,17 @@ export const SOURCE_FIELD_ALLOW_LIST: Readonly<Record<string, Readonly<Record<st
   },
   kenya_law: { '(same shape)': 'same projector + fields as australia_law' },
   australia_caselaw: {
-    issuerName: 'court', fieldOfStudy: 'case_title', jurisdictionCode: 'jurisdiction_code',
-    searchTerm: 'search_term',
+    // No docket/case number field exists in metadata — the record's own
+    // identifier is the pipeline source_id column (a synthetic id built by
+    // the case-law scraper), same rule as edgar's accession number.
+    issuerName: 'court', licenseNumber: '$sourceId', fieldOfStudy: 'case_title',
+    jurisdictionCode: 'jurisdiction_code',
   },
   kenya_caselaw: { '(same shape)': 'same projector + fields as australia_caselaw' },
   moh_sg: {
     licenseNumber: 'licence_no', issuerName: 'registry', issuedDate: 'effective_date',
     licenceType: 'licence_type', licenceStatus: 'licence_status', expiryDate: 'expiry_date',
-    hciCode: 'hci_code',
+    hciCode: 'hci_code', jurisdiction: 'jurisdiction',
   },
 };
 
@@ -288,7 +314,8 @@ function conceptDisplayName(entry: unknown): string | null {
  *                                        hashed-never-raw-PII value)
  *   metadata.concepts                 -> concepts (max 10)
  *   metadata.publication_year / cited_by_count / is_retracted /
- *   is_open_access                    -> extras, passed through as-is
+ *   is_open_access                    -> extras (camelCased: publicationYear,
+ *                                        citedByCount, isRetracted, isOpenAccess)
  * Never emitted: metadata.abstract.
  */
 function projectOpenAlex(record: ProjectablePublicRecord): ProjectedTemplate {
@@ -328,16 +355,16 @@ function projectOpenAlex(record: ProjectablePublicRecord): ProjectedTemplate {
   }
 
   const publicationYear = capNumber(meta.publication_year);
-  if (publicationYear !== null) out.publication_year = publicationYear;
+  if (publicationYear !== null) out.publicationYear = publicationYear;
 
   const citedByCount = capNumber(meta.cited_by_count);
-  if (citedByCount !== null) out.cited_by_count = citedByCount;
+  if (citedByCount !== null) out.citedByCount = citedByCount;
 
   const isRetracted = capBoolean(meta.is_retracted);
-  if (isRetracted !== null) out.is_retracted = isRetracted;
+  if (isRetracted !== null) out.isRetracted = isRetracted;
 
   const isOpenAccess = capBoolean(meta.is_open_access);
-  if (isOpenAccess !== null) out.is_open_access = isOpenAccess;
+  if (isOpenAccess !== null) out.isOpenAccess = isOpenAccess;
 
   return out;
 }
@@ -348,8 +375,13 @@ function projectOpenAlex(record: ProjectablePublicRecord): ProjectedTemplate {
  * names): ~L279-286, ~L578-585, ~L954-961.
  *   entity_name        -> issuerName        (filing entity / company name)
  *   filing_date        -> issuedDate
- *   ciks                -> licenseNumber (first CIK) + extras.ciks
- *   form_type          -> extras.formType
+ *   $sourceId          -> licenseNumber (the row's own source_id column —
+ *                         the accession number, this record's OWN primary
+ *                         identifier; a CIK is the FILER's id and is shared
+ *                         across every filing that company makes, so it
+ *                         belongs in extras.ciks, not licenseNumber)
+ *   form_type          -> fieldOfStudy
+ *   ciks               -> extras.ciks
  *   period_of_report   -> extras.periodOfReport
  *   tickers            -> extras.tickers
  *   primary_document   -> extras.primaryDocument   (only the ~L584 variant)
@@ -358,9 +390,6 @@ function projectOpenAlex(record: ProjectablePublicRecord): ProjectedTemplate {
  * (beneficial-ownership filings) can carry an individual filer's name in
  * this array; `entity_name` already gives a vetted document-level name, so
  * display_names is dropped rather than passed through.
- * fieldOfStudy is left unset: `record.title` here is a constructed
- * "Entity — Form (Date)" string that only duplicates issuerName/issuedDate,
- * not a natural subject line.
  */
 function projectEdgar(record: ProjectablePublicRecord): ProjectedTemplate {
   const meta = record.metadata;
@@ -372,14 +401,14 @@ function projectEdgar(record: ProjectablePublicRecord): ProjectedTemplate {
   const issuedDate = capString(meta.filing_date);
   if (issuedDate) out.issuedDate = issuedDate;
 
-  const ciks = capStringArray(meta.ciks, 20);
-  if (ciks.length > 0) {
-    out.licenseNumber = ciks[0];
-    out.ciks = ciks;
-  }
+  const licenseNumber = capString(record.source_id);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
 
-  const formType = capString(meta.form_type);
-  if (formType) out.formType = formType;
+  const fieldOfStudy = capString(meta.form_type);
+  if (fieldOfStudy) out.fieldOfStudy = fieldOfStudy;
+
+  const ciks = capStringArray(meta.ciks, 20);
+  if (ciks.length > 0) out.ciks = ciks;
 
   const periodOfReport = capString(meta.period_of_report);
   if (periodOfReport) out.periodOfReport = periodOfReport;
@@ -446,12 +475,15 @@ function projectFederalRegister(record: ProjectablePublicRecord): ProjectedTempl
  * `openstates` — allow-list derived from the single insert site in
  * services/worker/src/jobs/openStatesFetcher.ts ~L254-266.
  *   identifier          -> licenseNumber   (bill identifier, e.g. "HB123")
- *   state_name          -> issuerName      (issuing legislature)
+ *   chamber             -> issuerName      (the issuing legislative body —
+ *                          rule text explicitly names "chamber" as a valid
+ *                          issuerName source, alongside registry/court/agency)
  *   latest_action_date  -> issuedDate
  *   session             -> extras.session
  *   classification      -> extras.classification
  *   subjects            -> extras.subjects
- *   chamber             -> extras.chamber
+ *   state               -> extras.state
+ *   state_name          -> extras.stateName
  *   jurisdiction        -> extras.jurisdiction
  *   latest_action       -> extras.latestAction
  * EXCLUDED: primary_sponsors (~L261) — sponsor names are person data, not
@@ -467,7 +499,7 @@ function projectOpenStates(record: ProjectablePublicRecord): ProjectedTemplate {
   const identifier = capString(meta.identifier);
   if (identifier) out.licenseNumber = identifier;
 
-  const issuerName = capString(meta.state_name);
+  const issuerName = capString(meta.chamber);
   if (issuerName) out.issuerName = issuerName;
 
   const issuedDate = capString(meta.latest_action_date);
@@ -482,8 +514,11 @@ function projectOpenStates(record: ProjectablePublicRecord): ProjectedTemplate {
   const subjects = capStringArray(meta.subjects, 20);
   if (subjects.length > 0) out.subjects = subjects;
 
-  const chamber = capString(meta.chamber);
-  if (chamber) out.chamber = chamber;
+  const state = capString(meta.state);
+  if (state) out.state = state;
+
+  const stateName = capString(meta.state_name);
+  if (stateName) out.stateName = stateName;
 
   const jurisdiction = capString(meta.jurisdiction);
   if (jurisdiction) out.jurisdiction = jurisdiction;
@@ -543,12 +578,16 @@ function projectFinra(record: ProjectablePublicRecord): ProjectedTemplate {
   if (issuedDate) out.issuedDate = issuedDate;
   const currentFirm = capString(meta.current_firm);
   if (currentFirm) out.currentFirm = currentFirm;
+  const currentFirmCrd = capString(meta.current_firm_crd);
+  if (currentFirmCrd) out.currentFirmCrd = currentFirmCrd;
   const disclosureCount = capNumber(meta.disclosure_count);
   if (disclosureCount !== null) out.disclosureCount = disclosureCount;
   const registrations = capStringArray(meta.registrations, 10);
   if (registrations.length > 0) out.registrations = registrations;
   const licenseType = capString(meta.license_type);
   if (licenseType) out.licenseType = licenseType;
+  const jurisdiction = capString(meta.jurisdiction);
+  if (jurisdiction) out.jurisdiction = jurisdiction;
   return out;
 }
 
@@ -577,18 +616,20 @@ function projectCalbar(record: ProjectablePublicRecord): ProjectedTemplate {
   if (sections.length > 0) out.sections = sections;
   const licenseType = capString(meta.license_type);
   if (licenseType) out.licenseType = licenseType;
+  const jurisdiction = capString(meta.jurisdiction);
+  if (jurisdiction) out.jurisdiction = jurisdiction;
   return out;
 }
 
 /**
  * `dapip` — services/worker/src/jobs/dapipFetcher.ts ~L108-114. Excludes
- * `address` entirely (explicit ban).
+ * `address` entirely (explicit ban). No `registry` field exists for this
+ * source, so issuerName is left unset — `institution_name` is the record's
+ * OWN entity name (OUT), never a stand-in for the issuing body.
  */
 function projectDapip(record: ProjectablePublicRecord): ProjectedTemplate {
   const meta = record.metadata;
   const out: ProjectedTemplate = {};
-  const issuerName = capString(meta.institution_name);
-  if (issuerName) out.issuerName = issuerName;
   const opeId = capString(meta.ope_id);
   const dapipId = typeof meta.dapip_id === 'number' ? String(meta.dapip_id) : capString(meta.dapip_id);
   const licenseNumber = opeId ?? dapipId;
@@ -632,6 +673,8 @@ function projectAcnc(record: ProjectablePublicRecord): ProjectedTemplate {
   if (operatingCountries.length > 0) out.operatingCountries = operatingCountries;
   const responsiblePersonsCount = capNumber(meta.responsible_persons);
   if (responsiblePersonsCount !== null) out.responsiblePersonsCount = responsiblePersonsCount;
+  const jurisdiction = capString(meta.jurisdiction);
+  if (jurisdiction) out.jurisdiction = jurisdiction;
   return out;
 }
 
@@ -658,8 +701,10 @@ function projectUspto(record: ProjectablePublicRecord): ProjectedTemplate {
 /**
  * `courtlistener` — services/worker/src/jobs/courtlistenerFetcher.ts
  * ~L366-380. Excludes `judges` (explicit "no judge names"), `syllabus`
- * (free-text summary, banned category), `case_name_full`/`citations`
- * (redundant/complex, skipped for minimalism), `cluster_id` (internal id).
+ * (free-text summary, banned category), `case_name_full` (redundant with
+ * `case_name`), `cluster_id` (internal id). `citations` IS present on the
+ * fetcher (`cluster.citations.map(formatCitation)`, a string[] of reporter
+ * citations like "512 U.S. 100") and is kept — it is not party-name data.
  * `case_name` is the case's own official caption — allowed as "title", the
  * same allowance used for `fieldOfStudy` elsewhere, not a "party names"
  * list.
@@ -675,6 +720,8 @@ function projectCourtlistener(record: ProjectablePublicRecord): ProjectedTemplat
   if (issuedDate) out.issuedDate = issuedDate;
   const fieldOfStudy = capString(meta.case_name);
   if (fieldOfStudy) out.fieldOfStudy = fieldOfStudy;
+  const citations = capStringArray(meta.citations, 10);
+  if (citations.length > 0) out.citations = citations;
   const precedentialStatus = capString(meta.precedential_status);
   if (precedentialStatus) out.precedentialStatus = precedentialStatus;
   const citationCount = capNumber(meta.citation_count);
@@ -716,13 +763,16 @@ function projectEdgarFormAdv(record: ProjectablePublicRecord): ProjectedTemplate
   if (registrationStatus) out.registrationStatus = registrationStatus;
   const licenseType = capString(meta.license_type);
   if (licenseType) out.licenseType = licenseType;
+  const jurisdiction = capString(meta.jurisdiction);
+  if (jurisdiction) out.jurisdiction = jurisdiction;
   return out;
 }
 
 /**
  * `sec_iapd` — services/worker/src/jobs/secIapdFetcher.ts ~L138-160.
  * Registry-level firm data only — no address/person fields present in this
- * fetcher's metadata block to begin with.
+ * fetcher's metadata block to begin with. No date field exists, so
+ * issuedDate is left unset.
  */
 function projectSecIapd(record: ProjectablePublicRecord): ProjectedTemplate {
   const meta = record.metadata;
@@ -739,6 +789,18 @@ function projectSecIapd(record: ProjectablePublicRecord): ProjectedTemplate {
   if (numberOfAccounts !== null) out.numberOfAccounts = numberOfAccounts;
   const licenseType = capString(meta.license_type);
   if (licenseType) out.licenseType = licenseType;
+  const secNumber = capString(meta.sec_number);
+  if (secNumber) out.secNumber = secNumber;
+  const country = capString(meta.country);
+  if (country) out.country = country;
+  const state = capString(meta.state);
+  if (state) out.state = state;
+  const disclosureCount = capNumber(meta.disclosure_count);
+  if (disclosureCount !== null) out.disclosureCount = disclosureCount;
+  const jurisdiction = capString(meta.jurisdiction);
+  if (jurisdiction) out.jurisdiction = jurisdiction;
+  const jurisdictions = capStringArray(meta.jurisdictions, 20);
+  if (jurisdictions.length > 0) out.jurisdictions = jurisdictions;
   return out;
 }
 
@@ -763,8 +825,14 @@ function projectAcraSg(record: ProjectablePublicRecord): ProjectedTemplate {
   if (primarySsicCode) out.primarySsicCode = primarySsicCode;
   const primarySsicDescription = capString(meta.primary_ssic_description);
   if (primarySsicDescription) out.primarySsicDescription = primarySsicDescription;
+  const secondarySsicCode = capString(meta.secondary_ssic_code);
+  if (secondarySsicCode) out.secondarySsicCode = secondarySsicCode;
+  const secondarySsicDescription = capString(meta.secondary_ssic_description);
+  if (secondarySsicDescription) out.secondarySsicDescription = secondarySsicDescription;
   const companyType = capString(meta.company_type);
   if (companyType) out.companyType = companyType;
+  const jurisdiction = capString(meta.jurisdiction);
+  if (jurisdiction) out.jurisdiction = jurisdiction;
   return out;
 }
 
@@ -791,6 +859,12 @@ function projectCnpjBr(record: ProjectablePublicRecord): ProjectedTemplate {
   if (porte) out.porte = porte;
   const uf = capString(meta.uf);
   if (uf) out.uf = uf;
+  const cnaeFiscal = capString(meta.cnae_fiscal);
+  if (cnaeFiscal) out.cnaeFiscal = cnaeFiscal;
+  const cnaeDescricao = capString(meta.cnae_descricao);
+  if (cnaeDescricao) out.cnaeDescricao = cnaeDescricao;
+  const jurisdiction = capString(meta.jurisdiction);
+  if (jurisdiction) out.jurisdiction = jurisdiction;
   return out;
 }
 
@@ -836,6 +910,10 @@ function projectJurisdictionCaseLaw(record: ProjectablePublicRecord): ProjectedT
   const out: ProjectedTemplate = {};
   const issuerName = capString(meta.court);
   if (issuerName) out.issuerName = issuerName;
+  // No docket/case number in metadata — the record's OWN identifier is the
+  // pipeline source_id column (a synthetic id the case-law scraper builds).
+  const licenseNumber = capString(record.source_id);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
   const fieldOfStudy = capString(meta.case_title);
   if (fieldOfStudy) out.fieldOfStudy = fieldOfStudy;
   const jurisdictionCode = capString(meta.jurisdiction_code);
@@ -867,6 +945,8 @@ function projectMohSg(record: ProjectablePublicRecord): ProjectedTemplate {
   if (expiryDate) out.expiryDate = expiryDate;
   const hciCode = capString(meta.hci_code);
   if (hciCode) out.hciCode = hciCode;
+  const jurisdiction = capString(meta.jurisdiction);
+  if (jurisdiction) out.jurisdiction = jurisdiction;
   return out;
 }
 

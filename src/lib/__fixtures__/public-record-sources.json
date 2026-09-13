@@ -1,0 +1,402 @@
+{
+  "_comment": "One representative public_records row per pipeline source, used by the SCRUM-5105/5106 cross-package parity test (this file + public-record-projections.expected.json are byte-identical copies on both the worker and frontend sides — no cross-package imports). openalex ALSO keeps its own pre-existing dedicated fixture (public-record-openalex.json) for the original, more detailed per-field test suite on each side; the entry here is additional, parity-test-only coverage, not a replacement. Each row's `metadata` shape is copied from that source's fetcher insert block in services/worker/src/jobs/ — see publicRecordTemplate.ts's SOURCE_FIELD_TABLE header comment for the exact file/line refs used to build these.",
+
+  "openalex": {
+    "title": "Federated Anchoring of Verifiable Records at Scale",
+    "source_id": "W3001122334",
+    "metadata": {
+      "doi": "https://doi.org/10.1234/arkova.parity.0001",
+      "publication_date": "2026-04-10",
+      "publication_year": 2026,
+      "cited_by_count": 17,
+      "is_retracted": false,
+      "authors": [
+        { "name": "Dr. Parity Author", "orcid": "https://orcid.org/0000-0002-1111-2222", "institutions": ["Arkova Research"] },
+        { "name": "No Orcid Author", "orcid": null, "institutions": [] }
+      ],
+      "concepts": ["Distributed systems", "Verifiable credentials"],
+      "journal": "Journal of Parity Testing",
+      "is_open_access": false,
+      "abstract": "This abstract must never appear in any projected output."
+    }
+  },
+
+  "edgar": {
+    "title": "Acme Corp 10-K Annual Report",
+    "source_id": "0000320193-26-000012",
+    "metadata": {
+      "form_type": "10-K",
+      "entity_name": "Acme Corp",
+      "filing_date": "2026-02-14",
+      "period_of_report": "2025-12-31",
+      "tickers": ["ACME"],
+      "ciks": ["0000320193"],
+      "display_names": ["ACME CORP (Filer)"],
+      "file_description": "Annual report"
+    }
+  },
+
+  "edgar_form_adv": {
+    "title": "Summit Capital Advisers LLC",
+    "source_id": "edgar-form-adv-0001789012",
+    "metadata": {
+      "crd_number": "170392",
+      "sec_number": "801-70392",
+      "organization_name": "Summit Capital Advisers LLC",
+      "city": "Denver",
+      "state": "CO",
+      "country": "US",
+      "registration_status": "APPROVED",
+      "last_filing_date": "2026-01-10",
+      "pipeline_source": "edgar_form_adv",
+      "registry": "SEC EDGAR Form ADV",
+      "jurisdiction": "US",
+      "license_type": "investment_adviser"
+    }
+  },
+
+  "sec_adv_bulk": {
+    "_comment": "Pre-rename alias of edgar_form_adv — the April 2026 bulk Form ADV load ran before edgarFormAdvFetcher.ts's source string became 'edgar_form_adv'. Same fetcher shape, different source tag. See publicRecordTemplate.ts's SOURCE_FIELD_TABLE header note.",
+    "title": "Pinnacle Advisory Partners LLC",
+    "source_id": "sec-adv-bulk-0002233445",
+    "metadata": {
+      "crd_number": "170392",
+      "sec_number": "801-70392",
+      "organization_name": "Pinnacle Advisory Partners LLC",
+      "city": "Denver",
+      "state": "CO",
+      "country": "US",
+      "registration_status": "APPROVED",
+      "last_filing_date": "2026-01-10",
+      "pipeline_source": "sec_adv_bulk",
+      "registry": "SEC EDGAR Form ADV",
+      "jurisdiction": "US",
+      "license_type": "investment_adviser"
+    }
+  },
+
+  "sec_iapd": {
+    "title": "Harborview Wealth Management",
+    "source_id": "sec-iapd-104822",
+    "metadata": {
+      "crd_number": "104822",
+      "sec_number": "801-45822",
+      "organization_name": "Harborview Wealth Management",
+      "city": "Boston",
+      "state": "MA",
+      "country": "US",
+      "registration_status": "APPROVED",
+      "total_assets": 812000000,
+      "website": "https://harborviewwm.example",
+      "number_of_accounts": 340,
+      "disclosure_count": 0,
+      "jurisdictions": ["MA", "NY"],
+      "pipeline_source": "sec_iapd",
+      "registry": "SEC Investment Adviser Public Disclosure",
+      "jurisdiction": "US",
+      "license_type": "investment_adviser"
+    }
+  },
+
+  "federal_register": {
+    "title": "Amendment to Recordkeeping Requirements for Broker-Dealers",
+    "source_id": "2026-04821",
+    "metadata": {
+      "document_number": "2026-04821",
+      "type": "Rule",
+      "publication_date": "2026-03-02",
+      "agencies": ["Securities and Exchange Commission"],
+      "citation": "91 FR 12345",
+      "abstract": "This rule amends recordkeeping requirements applicable to registered broker-dealers.",
+      "pdf_url": "https://www.federalregister.gov/documents/2026/03/02/2026-04821.pdf"
+    }
+  },
+
+  "openstates": {
+    "title": "HB123: Data Privacy Modernization Act (Colorado 2026 Regular Session)",
+    "source_id": "os-co-hb123-2026-regular",
+    "metadata": {
+      "bill_id": "ocd-bill/11111111-2222-3333-4444-555555555555",
+      "identifier": "HB123",
+      "session": "2026 Regular Session",
+      "state": "CO",
+      "state_name": "Colorado",
+      "classification": ["bill"],
+      "subjects": ["privacy", "technology"],
+      "primary_sponsors": ["Rep. Jane Doe"],
+      "latest_action_date": "2026-04-01",
+      "latest_action": "Signed by Governor",
+      "abstract": "A bill concerning data privacy protections for Colorado residents.",
+      "chamber": "House",
+      "jurisdiction": "US-CO"
+    }
+  },
+
+  "courtlistener": {
+    "title": "Smith v. Jones — 512 U.S. 100 (2026-05-01)",
+    "source_id": "cl-cluster-9988776",
+    "metadata": {
+      "cluster_id": 9988776,
+      "docket_id": 5544332,
+      "case_name": "Smith v. Jones",
+      "case_name_full": "John Smith v. Robert Jones",
+      "date_filed": "2026-05-01",
+      "date_filed_is_approximate": false,
+      "court_id": "scotus",
+      "court_name": "Supreme Court of the United States",
+      "judges": "Roberts, C.J.",
+      "nature_of_suit": "Civil Rights",
+      "precedential_status": "Published",
+      "citation_count": 12,
+      "citations": ["512 U.S. 100"],
+      "syllabus": "The Court held that...",
+      "opinion_count": 1
+    }
+  },
+
+  "uspto": {
+    "title": "Method and Apparatus for Distributed Ledger Anchoring",
+    "source_id": "US11234567B2",
+    "metadata": {
+      "patent_id": "US11234567B2",
+      "patent_type": "utility",
+      "patent_date": "2026-01-20",
+      "abstract": "A method for anchoring document fingerprints to a distributed ledger."
+    }
+  },
+
+  "npi": {
+    "title": "Dr. Jane Smith, MD",
+    "source_id": "1234567890",
+    "metadata": {
+      "npi_number": "1234567890",
+      "provider_name": "Dr. Jane Smith, MD",
+      "enumeration_type": "NPI-1",
+      "is_organization": false,
+      "credential": "MD",
+      "gender": "F",
+      "sole_proprietor": false,
+      "enumeration_date": "2010-06-01",
+      "last_updated": "2026-02-01",
+      "status": "A",
+      "primary_specialty": "Internal Medicine",
+      "primary_taxonomy_code": "207R00000X",
+      "taxonomies": [
+        { "code": "207R00000X", "desc": "Internal Medicine", "primary": true, "state": "NY", "license": "123456" }
+      ],
+      "pipeline_source": "npi",
+      "registry": "NPPES NPI Registry (CMS)",
+      "jurisdiction": "US",
+      "license_type": "healthcare_provider"
+    }
+  },
+
+  "finra": {
+    "title": "John Q. Broker",
+    "source_id": "finra-crd-2233445",
+    "metadata": {
+      "crd_number": "2233445",
+      "full_name": "John Q. Broker",
+      "first_name": "John",
+      "last_name": "Broker",
+      "middle_name": "Q.",
+      "other_names": [],
+      "current_firm": "Meridian Securities LLC",
+      "current_firm_crd": "998877",
+      "current_location": "New York, NY",
+      "current_employments": [{ "firmCrdNumber": "998877", "branchAddress": "123 Wall St" }],
+      "previous_employments": [],
+      "disclosure_count": 0,
+      "industry_start_date": "2012-08-15",
+      "exams": [{ "examCode": "S7" }],
+      "registrations": ["NY", "NJ"],
+      "pipeline_source": "finra",
+      "registry": "FINRA BrokerCheck",
+      "jurisdiction": "US",
+      "license_type": "registered_representative"
+    }
+  },
+
+  "calbar": {
+    "title": "Attorney Maria Garcia",
+    "source_id": "calbar-345678",
+    "metadata": {
+      "bar_number": "345678",
+      "full_name": "Maria Garcia",
+      "status": "Active",
+      "city": "Los Angeles",
+      "state": "CA",
+      "admission_date": "2005-12-01",
+      "sections": ["Litigation"],
+      "advanced_specializations": ["Appellate Law"],
+      "discipline_history": null,
+      "pipeline_source": "calbar",
+      "registry": "State Bar of California",
+      "jurisdiction": "US-CA",
+      "license_type": "attorney"
+    }
+  },
+
+  "dapip": {
+    "title": "Riverside State University",
+    "source_id": "dapip-004455",
+    "metadata": {
+      "institution_name": "Riverside State University",
+      "institution_type": "Public 4-year",
+      "address": "500 University Ave, Riverside, CA 92501",
+      "state": "CA",
+      "ope_id": "00445500",
+      "active_status": "Active",
+      "dapip_id": 4455,
+      "pipeline_source": "dapip"
+    }
+  },
+
+  "acnc": {
+    "title": "Helping Hands Charity Ltd",
+    "source_id": "acnc-51234567890",
+    "metadata": {
+      "abn": "51234567890",
+      "charity_legal_name": "Helping Hands Charity Ltd",
+      "other_names": null,
+      "address": "10 Collins St, Melbourne VIC 3000",
+      "state": "VIC",
+      "postcode": "3000",
+      "country": "Australia",
+      "website": "https://helpinghands.example",
+      "registration_date": "2015-03-10",
+      "date_established": "2014-11-01",
+      "charity_size": "Medium",
+      "responsible_persons": 5,
+      "pbi": true,
+      "purposes": ["Advancing social welfare"],
+      "operating_countries": ["Australia"],
+      "pipeline_source": "acnc",
+      "registry": "Australian Charities and Not-for-profits Commission",
+      "jurisdiction": "AU"
+    }
+  },
+
+  "acra_sg": {
+    "title": "Lion City Trading Pte Ltd",
+    "source_id": "acra-201512345A",
+    "metadata": {
+      "uen": "201512345A",
+      "entity_name": "Lion City Trading Pte Ltd",
+      "entity_type": "Private Company Limited by Shares",
+      "registration_date": "2015-07-22",
+      "uen_status": "Live",
+      "primary_ssic_code": "46900",
+      "primary_ssic_description": "Wholesale trade",
+      "secondary_ssic_code": null,
+      "secondary_ssic_description": null,
+      "company_type": "Local Company",
+      "pipeline_source": "acra_sg",
+      "registry": "Accounting and Corporate Regulatory Authority (ACRA)",
+      "jurisdiction": "SG"
+    }
+  },
+
+  "cnpj_br": {
+    "title": "Comercio Exemplo LTDA",
+    "source_id": "cnpj-12345678000190",
+    "metadata": {
+      "cnpj": "12345678000190",
+      "cnpj_formatted": "12.345.678/0001-90",
+      "razao_social": "Comercio Exemplo LTDA",
+      "nome_fantasia": "Exemplo Store",
+      "situacao_cadastral": "ATIVA",
+      "data_inicio_atividade": "2010-04-05",
+      "cnae_fiscal": "4711302",
+      "cnae_descricao": "Comercio varejista",
+      "address": "Rua Exemplo 123, Sao Paulo, SP",
+      "municipio": "SAO PAULO",
+      "uf": "SP",
+      "cep": "01000-000",
+      "natureza_juridica": "Sociedade Empresaria Limitada",
+      "porte": "ME",
+      "capital_social": 100000,
+      "pipeline_source": "cnpj_br",
+      "registry": "Receita Federal (CNPJ)",
+      "jurisdiction": "BR"
+    }
+  },
+
+  "moh_sg": {
+    "title": "Sunrise Medical Clinic",
+    "source_id": "moh-sg-L12345A",
+    "metadata": {
+      "licence_no": "L12345A",
+      "hci_name": "Sunrise Medical Clinic",
+      "hci_code": "HCI0098765",
+      "premises_address": "88 Orchard Rd, Singapore 238839",
+      "postal_code": "238839",
+      "licence_type": "Clinic",
+      "licence_status": "Active",
+      "licensee_name": "Dr. Tan Wei Ming",
+      "effective_date": "2020-01-01",
+      "expiry_date": "2027-01-01",
+      "pipeline_source": "moh_sg",
+      "registry": "Ministry of Health Singapore",
+      "jurisdiction": "SG"
+    }
+  },
+
+  "australia_law": {
+    "title": "Privacy Act 1988 (Cth) — Notifiable Data Breaches scheme",
+    "source_id": "AU-PA-1988-S26WA",
+    "metadata": {
+      "statute_name": "Privacy Act 1988 (Cth)",
+      "statute_id": "AU-PA-1988",
+      "section_id": "AU-PA-1988-S26WA",
+      "section_title": "Notifiable Data Breaches scheme",
+      "part": "Part IIIC",
+      "jurisdiction": "Australia",
+      "jurisdiction_code": "AU",
+      "pipeline_source": "australia_law"
+    }
+  },
+
+  "kenya_law": {
+    "title": "Data Protection Act 2019 — Registration of data controllers",
+    "source_id": "KE-DPA-2019-S18",
+    "metadata": {
+      "statute_name": "Data Protection Act 2019",
+      "statute_id": "KE-DPA-2019",
+      "section_id": "KE-DPA-2019-S18",
+      "section_title": "Registration of data controllers",
+      "part": "Part IV",
+      "jurisdiction": "Kenya",
+      "jurisdiction_code": "KE",
+      "pipeline_source": "kenya_law"
+    }
+  },
+
+  "australia_caselaw": {
+    "title": "Commissioner v Example Pty Ltd",
+    "source_id": "AU-CASE-cgi-bin-viewdoc-au-cases-cth-FCA-2026-100",
+    "metadata": {
+      "case_title": "Commissioner v Example Pty Ltd",
+      "court": "Federal Court of Australia",
+      "summary": "The Court considered whether the respondent's data handling practices breached the Australian Privacy Principles.",
+      "search_term": "Australian Privacy Principle",
+      "jurisdiction": "Australia",
+      "jurisdiction_code": "AU",
+      "pipeline_source": "australia_caselaw"
+    }
+  },
+
+  "kenya_caselaw": {
+    "title": "ODPC v Example Data Ltd",
+    "source_id": "KE-CASE-example-2026-050",
+    "metadata": {
+      "case_title": "ODPC v Example Data Ltd",
+      "court": "High Court of Kenya",
+      "summary": "The Court considered the registration obligations of data controllers under the Data Protection Act.",
+      "search_term": "data controller registration",
+      "jurisdiction": "Kenya",
+      "jurisdiction_code": "KE",
+      "pipeline_source": "kenya_caselaw"
+    }
+  }
+}
