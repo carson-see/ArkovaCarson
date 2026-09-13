@@ -2,12 +2,27 @@
  * ManageSubOrgs Component (IDT-11)
  *
  * Displays and manages affiliated sub-organizations for a parent org.
- * Parent org admins can create, approve, and revoke affiliate organizations.
+ * Parent org admins can create, approve, revoke, fund and offboard affiliates.
+ *
+ * Founder feedback 2026-09-13 ("when I try and use sub orgs it's clunky and
+ * confusing") produced docs/uat/suborg-ux/FINDINGS.md. Nothing there was a
+ * missing capability — every parent-side action already existed — so this
+ * component gained no endpoint. What changed is the order things appear in,
+ * what the destructive actions ask before firing, and what the copy says:
+ *
+ *   - the list comes first; the four-field create form is a disclosure beneath
+ *     it, because an admin arrives to approve a waiting request, not to type;
+ *   - Revoke confirms, like Offboard beside it already did, and both name the
+ *     organization (at 375 px the row name truncates to ~8 characters);
+ *   - worker replies are translated, never echoed — the shipped build could
+ *     show an operator the literal text `sub_org_limit_reached`;
+ *   - the pending count is stated and reported upward, so the parent page can
+ *     badge its tab and the queue is visible without opening the panel.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Building2, Check, X, Loader2, Link2, Plus, Users2, AlertTriangle, RefreshCw,
+  Building2, Check, X, Loader2, Link2, Plus, Users2, AlertTriangle, RefreshCw, Coins,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -36,6 +51,12 @@ interface SubOrg {
   docusignInherited?: boolean;
 }
 
+/** What the panel knows about its own list, reported to the page for the tab badge. */
+export interface SubOrgCounts {
+  pending: number;
+  approved: number;
+}
+
 /**
  * SCRUM-3865 — the two directions of a credit transfer. A negative amount is a
  * reclaim, so both rows drive the same endpoint and the same handler.
@@ -47,20 +68,52 @@ const CREDIT_ACTIONS = [
 
 interface ManageSubOrgsProps {
   orgId: string;
+  /**
+   * Called after every list load with the counts, or with `null` when the list
+   * could not be loaded. Never called with zeroes on failure: a tab badge that
+   * reads "nothing waiting" because a fetch failed is worse than no badge.
+   */
+  onCountsChange?: (counts: SubOrgCounts | null) => void;
 }
 
 /**
- * SCRUM-1999 sibling — local copy constants for the sub-orgs load-error state.
- * `src/lib/copy.ts` (the canonical home for UI strings, CLAUDE.md §1.3) is locked
- * under a concurrent PR for this change, so these strings live here and stay free
- * of banned terms (`npm run lint:copy` clean). Promote into `SUB_ORG_LABELS` when
- * that file is next touched.
+ * Worker replies, translated.
+ *
+ * `toast.error(data.error ?? FALLBACK)` echoed whatever the worker sent. Some of
+ * those replies are machine codes (`sub_org_limit_reached`,
+ * `credit_allocation_unavailable`) and the rest are engineer-facing sentences,
+ * so the shipped build could and did put both in front of an operator
+ * (docs/uat/suborg-ux/step8-create-error-toast-1280.png).
+ *
+ * Unrecognised replies are NOT silently generalised away: `translateWorkerError`
+ * logs the raw value before returning the caller's fallback, so a new worker
+ * code shows up in the console rather than vanishing.
  */
-const SUB_ORG_STATE_COPY = {
-  LOAD_ERROR_TITLE: "Couldn't load affiliated organizations",
-  LOAD_ERROR_DESC: 'Something went wrong while loading affiliated organizations. Please try again.',
-  RETRY: 'Try Again',
-} as const;
+const WORKER_ERROR_COPY: Record<string, string> = {
+  sub_org_limit_reached: SUB_ORG_LABELS.ERROR_LIMIT_REACHED,
+  cap_check_unavailable: SUB_ORG_LABELS.ERROR_CAP_CHECK_UNAVAILABLE,
+  credit_allocation_unavailable: SUB_ORG_LABELS.ERROR_TEMPORARILY_UNAVAILABLE,
+  credit_rollup_unavailable: SUB_ORG_LABELS.ERROR_TEMPORARILY_UNAVAILABLE,
+  balance_lookup_unavailable: SUB_ORG_LABELS.ERROR_TEMPORARILY_UNAVAILABLE,
+  insufficient_parent_balance: SUB_ORG_LABELS.CREDITS_INSUFFICIENT_PARENT,
+  insufficient_child_balance: SUB_ORG_LABELS.CREDITS_INSUFFICIENT_CHILD,
+  'Admin permissions required': SUB_ORG_LABELS.ERROR_NOT_ADMIN,
+  'Your organization already has an active or pending affiliation':
+    SUB_ORG_LABELS.ERROR_ALREADY_AFFILIATED,
+  'Cannot affiliate with yourself': SUB_ORG_LABELS.ERROR_SELF_AFFILIATION,
+  'Can only affiliate with verified organizations': SUB_ORG_LABELS.ERROR_PARENT_NOT_VERIFIED,
+  'Parent organization not found': SUB_ORG_LABELS.ERROR_PARENT_NOT_FOUND,
+  'Cannot affiliate with a sub-organization': SUB_ORG_LABELS.ERROR_PARENT_IS_CHILD,
+  'Invalid affiliate organization details': SUB_ORG_LABELS.CREATE_MISSING_FIELDS,
+};
+
+export function translateWorkerError(raw: unknown, fallback: string): string {
+  if (typeof raw !== 'string' || raw.trim() === '') return fallback;
+  const mapped = WORKER_ERROR_COPY[raw];
+  if (mapped) return mapped;
+  console.error('[sub-orgs] unmapped worker error', raw);
+  return fallback;
+}
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const { data: { session } } = await supabase.auth.getSession();
@@ -71,12 +124,13 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   };
 }
 
-export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
+export function ManageSubOrgs({ orgId, onCountsChange }: ManageSubOrgsProps) {
   const [subOrgs, setSubOrgs] = useState<SubOrg[]>([]);
   const [affiliateName, setAffiliateName] = useState('');
   const [affiliateLegalName, setAffiliateLegalName] = useState('');
   const [affiliateDomain, setAffiliateDomain] = useState('');
   const [affiliateAdminEmail, setAffiliateAdminEmail] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -91,6 +145,26 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   // SCRUM-3868 — the sub-org awaiting an offboard confirmation, if any.
   const [offboarding, setOffboarding] = useState<SubOrg | null>(null);
   const [offboardBusy, setOffboardBusy] = useState(false);
+  // The sub-org awaiting a REVOKE confirmation. Revoke used to fire on the
+  // first click while the gentler Offboard beside it confirmed, so the two
+  // red buttons in a row behaved differently for no reason a user could see.
+  const [revoking, setRevoking] = useState<SubOrg | null>(null);
+
+  // Held in a ref so a parent passing an inline lambda cannot retrigger the
+  // fetch effect on every render.
+  const onCountsChangeRef = useRef(onCountsChange);
+  useEffect(() => { onCountsChangeRef.current = onCountsChange; }, [onCountsChange]);
+
+  const reportCounts = useCallback((rows: SubOrg[] | null) => {
+    if (rows === null) {
+      onCountsChangeRef.current?.(null);
+      return;
+    }
+    onCountsChangeRef.current?.({
+      pending: rows.filter((s) => s.parent_approval_status === 'PENDING').length,
+      approved: rows.filter((s) => s.parent_approval_status === 'APPROVED').length,
+    });
+  }, []);
 
   // `isInitialLoad` gates the full-panel error state to the mount fetch and the
   // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
@@ -108,23 +182,26 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
         if (isInitialLoad) {
           setLoadError(true);
           setSubOrgs([]);
+          reportCounts(null);
         }
         return;
       }
       const data = await response.json() as { subOrgs: SubOrg[] };
       setLoadError(false);
       setSubOrgs(data.subOrgs);
+      reportCounts(data.subOrgs);
     } catch {
       // Network/parse failure on the load — show the explicit error state only
       // for the initial load / Retry; action refetches keep using toast.
       if (isInitialLoad) {
         setLoadError(true);
         setSubOrgs([]);
+        reportCounts(null);
       }
     } finally {
       setLoading(false);
     }
-  }, [orgId]);
+  }, [orgId, reportCounts]);
 
   /**
    * SCRUM-3865 — parent + per-sub-org credit balances.
@@ -271,11 +348,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       };
 
       if (!response.ok) {
-        const message =
-          data.error === 'insufficient_parent_balance' ? SUB_ORG_LABELS.CREDITS_INSUFFICIENT_PARENT
-          : data.error === 'insufficient_child_balance' ? SUB_ORG_LABELS.CREDITS_INSUFFICIENT_CHILD
-          : SUB_ORG_LABELS.CREDITS_FAILED;
-        toast.error(message);
+        toast.error(translateWorkerError(data.error, SUB_ORG_LABELS.CREDITS_FAILED));
         return;
       }
 
@@ -318,7 +391,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) {
-        toast.error(data.error ?? SUB_ORG_LABELS.CREATE_FAILED);
+        toast.error(translateWorkerError(data.error, SUB_ORG_LABELS.CREATE_FAILED));
         return;
       }
       toast.success(SUB_ORG_LABELS.CREATE_SUCCESS);
@@ -326,6 +399,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       setAffiliateLegalName('');
       setAffiliateDomain('');
       setAffiliateAdminEmail('');
+      setShowCreate(false);
       await fetchSubOrgs(false);
     } catch {
       toast.error(SUB_ORG_LABELS.CREATE_FAILED);
@@ -345,7 +419,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) {
-        toast.error(data.error ?? SUB_ORG_LABELS.APPROVE_FAILED);
+        toast.error(translateWorkerError(data.error, SUB_ORG_LABELS.APPROVE_FAILED));
         return;
       }
       toast.success(SUB_ORG_LABELS.APPROVE_SUCCESS);
@@ -368,9 +442,10 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) {
-        toast.error(data.error ?? SUB_ORG_LABELS.REVOKE_FAILED);
+        toast.error(translateWorkerError(data.error, SUB_ORG_LABELS.REVOKE_FAILED));
         return;
       }
+      setRevoking(null);
       toast.success(SUB_ORG_LABELS.REVOKE_SUCCESS);
       await fetchSubOrgs(false);
     } catch {
@@ -381,6 +456,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   }, [fetchSubOrgs, orgId]);
 
   const approvedCount = subOrgs.filter((s) => s.parent_approval_status === 'APPROVED').length;
+  const pendingCount = subOrgs.filter((s) => s.parent_approval_status === 'PENDING').length;
 
   function getStatusBadge(status: string) {
     switch (status) {
@@ -393,6 +469,70 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       default:
         return null;
     }
+  }
+
+  /**
+   * The create form. Rendered under the list behind a disclosure, and from the
+   * empty state, so the same markup serves both without duplicating field ids.
+   */
+  function renderCreateForm() {
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">{SUB_ORG_LABELS.ADD_AFFILIATE_HELP}</p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="affiliate-name">{SUB_ORG_LABELS.AFFILIATE_NAME_LABEL}</Label>
+            <Input
+              id="affiliate-name"
+              value={affiliateName}
+              onChange={(e) => setAffiliateName(e.target.value)}
+              maxLength={255}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="affiliate-admin-email">{SUB_ORG_LABELS.AFFILIATE_ADMIN_EMAIL_LABEL}</Label>
+            <Input
+              id="affiliate-admin-email"
+              type="email"
+              value={affiliateAdminEmail}
+              onChange={(e) => setAffiliateAdminEmail(e.target.value)}
+              autoComplete="email"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="affiliate-legal-name">{SUB_ORG_LABELS.AFFILIATE_LEGAL_NAME_LABEL}</Label>
+            <Input
+              id="affiliate-legal-name"
+              value={affiliateLegalName}
+              onChange={(e) => setAffiliateLegalName(e.target.value)}
+              maxLength={255}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="affiliate-domain">{SUB_ORG_LABELS.AFFILIATE_DOMAIN_LABEL}</Label>
+            <Input
+              id="affiliate-domain"
+              value={affiliateDomain}
+              onChange={(e) => setAffiliateDomain(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+        </div>
+        <Button
+          size="sm"
+          className="w-full sm:w-auto"
+          onClick={handleCreateAffiliate}
+          disabled={creating}
+        >
+          {creating ? (
+            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+          ) : (
+            <Plus className="mr-1 h-4 w-4" />
+          )}
+          {SUB_ORG_LABELS.CREATE_AFFILIATE}
+        </Button>
+      </div>
+    );
   }
 
   if (loading) {
@@ -416,19 +556,36 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       </CardHeader>
 
       <CardContent className="space-y-6">
-        {/* Count display */}
+        {/*
+          Counts. `approvedCount` used to render with a hardcoded plural noun
+          ("1 affiliated organizations") and the pending ones — the number an
+          admin is actually here for — were not stated at all.
+        */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span className="flex items-center gap-2">
             <Link2 className="h-4 w-4" />
             <span>
               <strong className="text-foreground">{approvedCount}</strong>
-              {' '}{SUB_ORG_LABELS.COUNT_LABEL}
+              {' '}
+              {approvedCount === 1 ? SUB_ORG_LABELS.COUNT_LABEL_ONE : SUB_ORG_LABELS.COUNT_LABEL}
             </span>
           </span>
+          {pendingCount > 0 && (
+            <span className="flex items-center gap-2 text-amber-400">
+              <AlertTriangle className="h-4 w-4" />
+              <span>
+                <strong>{pendingCount}</strong>
+                {' '}
+                {pendingCount === 1
+                  ? SUB_ORG_LABELS.PENDING_COUNT_ONE
+                  : SUB_ORG_LABELS.PENDING_COUNT_MANY}
+              </span>
+            </span>
+          )}
           {/* SCRUM-3865: the pool every allocation below draws from. */}
           {parentBalance !== null && (
             <span className="flex items-center gap-2">
-              <Users2 className="h-4 w-4" />
+              <Coins className="h-4 w-4" />
               <span>
                 <strong className="text-foreground">{parentBalance}</strong>
                 {' '}{SUB_ORG_LABELS.CREDITS_AVAILABLE}
@@ -437,66 +594,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
           )}
         </div>
 
-        {/* Affiliate create form */}
-        <div className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="affiliate-name">{SUB_ORG_LABELS.AFFILIATE_NAME_LABEL}</Label>
-              <Input
-                id="affiliate-name"
-                value={affiliateName}
-                onChange={(e) => setAffiliateName(e.target.value)}
-                maxLength={255}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="affiliate-admin-email">{SUB_ORG_LABELS.AFFILIATE_ADMIN_EMAIL_LABEL}</Label>
-              <Input
-                id="affiliate-admin-email"
-                type="email"
-                value={affiliateAdminEmail}
-                onChange={(e) => setAffiliateAdminEmail(e.target.value)}
-                autoComplete="email"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="affiliate-legal-name">{SUB_ORG_LABELS.AFFILIATE_LEGAL_NAME_LABEL}</Label>
-              <Input
-                id="affiliate-legal-name"
-                value={affiliateLegalName}
-                onChange={(e) => setAffiliateLegalName(e.target.value)}
-                maxLength={255}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="affiliate-domain">{SUB_ORG_LABELS.AFFILIATE_DOMAIN_LABEL}</Label>
-              <Input
-                id="affiliate-domain"
-                value={affiliateDomain}
-                onChange={(e) => setAffiliateDomain(e.target.value)}
-                autoComplete="off"
-              />
-            </div>
-          </div>
-          <div>
-            <Button
-              size="sm"
-              onClick={handleCreateAffiliate}
-              disabled={creating}
-            >
-              {creating ? (
-                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="mr-1 h-4 w-4" />
-              )}
-              {SUB_ORG_LABELS.CREATE_AFFILIATE}
-            </Button>
-          </div>
-        </div>
-
-        <Separator />
-
-        {/* Sub-org list */}
+        {/* Sub-org list — first, because approving a waiting request is the job. */}
         {loadError ? (
           <div
             role="alert"
@@ -506,18 +604,36 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
               <AlertTriangle className="h-6 w-6 text-amber-500" />
             </div>
             <div className="space-y-1">
-              <p className="text-sm font-semibold text-foreground">{SUB_ORG_STATE_COPY.LOAD_ERROR_TITLE}</p>
-              <p className="text-sm text-muted-foreground max-w-sm">{SUB_ORG_STATE_COPY.LOAD_ERROR_DESC}</p>
+              <p className="text-sm font-semibold text-foreground">{SUB_ORG_LABELS.LOAD_ERROR_TITLE}</p>
+              <p className="text-sm text-muted-foreground max-w-sm">{SUB_ORG_LABELS.LOAD_ERROR_DESC}</p>
             </div>
             <Button variant="outline" size="sm" onClick={() => { void handleRetry(); }} disabled={retrying}>
               <RefreshCw className={`mr-2 h-4 w-4 ${retrying ? 'animate-spin' : ''}`} />
-              {SUB_ORG_STATE_COPY.RETRY}
+              {SUB_ORG_LABELS.LOAD_ERROR_RETRY}
             </Button>
           </div>
         ) : subOrgs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center">
-            <Building2 className="h-10 w-10 text-muted-foreground mb-3" />
-            <p className="text-sm text-muted-foreground">{SUB_ORG_LABELS.EMPTY_STATE}</p>
+          /*
+            The empty state used to be one sentence naming what was absent. A
+            first-time admin could not tell what an affiliated organization is,
+            that another org can request one, or where to start.
+          */
+          <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+            <Building2 className="h-10 w-10 text-muted-foreground" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-foreground">
+                {SUB_ORG_LABELS.EMPTY_STATE_TITLE}
+              </p>
+              <p className="text-sm text-muted-foreground max-w-md">
+                {SUB_ORG_LABELS.EMPTY_STATE_BODY}
+              </p>
+            </div>
+            {!showCreate && (
+              <Button size="sm" onClick={() => setShowCreate(true)}>
+                <Plus className="mr-1 h-4 w-4" />
+                {SUB_ORG_LABELS.ADD_AFFILIATE_OPEN}
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
@@ -528,11 +644,14 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                 className="p-3 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
               >
                 {/*
-                  Wraps at narrow widths: with the actions pinned on the same
-                  line the name truncated to a single character at 375px.
+                  Stacks below `sm`. The previous row pinned the actions on the
+                  same line, which truncated "Fabrikam Compliance" to
+                  "Fabrikam C…" at 375 px — the org was identified worse than
+                  its own status chip
+                  (docs/uat/suborg-ux/step6a-approved-row-actions-375.png).
                 */}
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-3 min-w-0">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3 min-w-0">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
                       {sub.logo_url ? (
                         <img src={sub.logo_url} alt={`${sub.display_name} organization logo`} className="h-full w-full object-cover rounded-md" loading="lazy" decoding="async" width={40} height={40} />
@@ -540,24 +659,24 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                         <Building2 className="h-5 w-5 text-muted-foreground" />
                       )}
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium truncate">{sub.display_name}</p>
+                    <div className="min-w-0 space-y-1">
+                      <p className="text-sm font-medium break-words">{sub.display_name}</p>
+                      <div className="flex flex-wrap items-center gap-2">
                         {getStatusBadge(sub.parent_approval_status)}
+                        {sub.domain && (
+                          <span className="text-xs text-muted-foreground break-all">{sub.domain}</span>
+                        )}
                       </div>
-                      {sub.domain && (
-                        <p className="text-xs text-muted-foreground truncate">{sub.domain}</p>
-                      )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 ml-2">
+                  <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                     {sub.parent_approval_status === 'PENDING' && (
                       <>
                         <Button
                           size="sm"
                           variant="outline"
-                          className="text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/10"
+                          className="flex-1 sm:flex-none text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/10"
                           onClick={() => handleApprove(sub.id)}
                           disabled={actionLoading === sub.id}
                         >
@@ -573,8 +692,8 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                         <Button
                           size="sm"
                           variant="outline"
-                          className="text-red-400 border-red-500/20 hover:bg-red-500/10"
-                          onClick={() => handleRevoke(sub.id)}
+                          className="flex-1 sm:flex-none text-red-400 border-red-500/20 hover:bg-red-500/10"
+                          onClick={() => setRevoking(sub)}
                           disabled={actionLoading === sub.id}
                         >
                           <X className="mr-1 h-4 w-4" />
@@ -585,35 +704,36 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                     {/*
                       SCRUM-3868 — Offboard is the real end-of-relationship
                       action: it returns unspent credits and suspends. Revoke,
-                      beside it, only severs the affiliation edge.
+                      beside it, only severs the affiliation edge. Both now
+                      confirm, and both name the organization.
                     */}
                     {sub.parent_approval_status === 'APPROVED' && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-red-400 border-red-500/20 hover:bg-red-500/10"
-                        onClick={() => setOffboarding(sub)}
-                      >
-                        {SUB_ORG_LABELS.OFFBOARD}
-                      </Button>
-                    )}
-                    {sub.parent_approval_status === 'APPROVED' && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-red-400 border-red-500/20 hover:bg-red-500/10"
-                        onClick={() => handleRevoke(sub.id)}
-                        disabled={actionLoading === sub.id}
-                      >
-                        {actionLoading === sub.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            <X className="mr-1 h-4 w-4" />
-                            {SUB_ORG_LABELS.REVOKE}
-                          </>
-                        )}
-                      </Button>
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 sm:flex-none text-red-400 border-red-500/20 hover:bg-red-500/10"
+                          onClick={() => setOffboarding(sub)}
+                        >
+                          {SUB_ORG_LABELS.OFFBOARD}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 sm:flex-none text-red-400 border-red-500/20 hover:bg-red-500/10"
+                          onClick={() => setRevoking(sub)}
+                          disabled={actionLoading === sub.id}
+                        >
+                          {actionLoading === sub.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <X className="mr-1 h-4 w-4" />
+                              {SUB_ORG_LABELS.REVOKE}
+                            </>
+                          )}
+                        </Button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -626,85 +746,117 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                   negative amount, which is also the offboarding lever.
                 */}
                 {sub.parent_approval_status === 'APPROVED' && (
-                  <div className="mt-3 pt-3 border-t border-border/40 flex flex-wrap items-end gap-2">
-                    <div className="w-28 shrink-0">
-                      <Label
-                        htmlFor={`credits-${sub.id}`}
-                        className="text-xs text-muted-foreground"
-                      >
-                        {SUB_ORG_LABELS.CREDITS_AMOUNT_LABEL}
-                      </Label>
-                      <Input
-                        id={`credits-${sub.id}`}
-                        type="number"
-                        min={1}
-                        step={1}
-                        inputMode="numeric"
-                        className="h-9"
-                        value={creditAmounts[sub.id] ?? ''}
-                        onChange={(e) =>
-                          setCreditAmounts((prev) => ({ ...prev, [sub.id]: e.target.value }))
-                        }
-                      />
-                    </div>
-                    {/*
-                      Both directions are one control driven from one list. Hand-
-                      written as two blocks they had already drifted: only the Add
-                      button showed a spinner while a transfer was in flight.
-                    */}
-                    {CREDIT_ACTIONS.map(({ dir, labelKey, variant }) => {
-                      const busy = creditBusy?.id === sub.id;
-                      return (
-                        <Button
-                          key={labelKey}
-                          size="sm"
-                          variant={variant}
-                          className="h-9"
-                          onClick={() => { void handleMoveCredits(sub.id, dir); }}
-                          disabled={busy}
-                        >
-                          {busy && creditBusy?.dir === dir
-                            ? <Loader2 className="h-4 w-4 animate-spin" />
-                            : SUB_ORG_LABELS[labelKey]}
-                        </Button>
-                      );
-                    })}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-9"
-                      onClick={() => { void handleToggleInheritance(sub.id, sub.docusignInherited === true); }}
-                      disabled={connectorBusy === sub.id}
-                    >
-                      {connectorBusy === sub.id
-                        ? <Loader2 className="h-4 w-4 animate-spin" />
-                        : sub.docusignInherited
-                          ? SUB_ORG_LABELS.DOCUSIGN_STOP_SHARING
-                          : SUB_ORG_LABELS.DOCUSIGN_SHARE}
-                    </Button>
+                  <div className="mt-3 pt-3 border-t border-border/40 space-y-2">
+                    {/* The balance was a bare number floated to the row edge. */}
                     {typeof childBalances[sub.id] === 'number' && (
-                      <span className="text-xs text-muted-foreground ml-auto self-center">
-                        {childBalances[sub.id]} {SUB_ORG_LABELS.CREDITS_BALANCE_SUFFIX}
-                      </span>
+                      <p className="text-xs text-muted-foreground">
+                        <span>{SUB_ORG_LABELS.CHILD_BALANCE_LABEL}</span>:{' '}
+                        <strong className="text-foreground">
+                          {childBalances[sub.id]} {SUB_ORG_LABELS.CREDITS_BALANCE_SUFFIX}
+                        </strong>
+                      </p>
                     )}
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div className="w-28 shrink-0">
+                        <Label
+                          htmlFor={`credits-${sub.id}`}
+                          className="text-xs text-muted-foreground"
+                        >
+                          {SUB_ORG_LABELS.CREDITS_AMOUNT_LABEL}
+                        </Label>
+                        <Input
+                          id={`credits-${sub.id}`}
+                          type="number"
+                          min={1}
+                          step={1}
+                          inputMode="numeric"
+                          className="h-9"
+                          value={creditAmounts[sub.id] ?? ''}
+                          onChange={(e) =>
+                            setCreditAmounts((prev) => ({ ...prev, [sub.id]: e.target.value }))
+                          }
+                        />
+                      </div>
+                      {/*
+                        Both directions are one control driven from one list. Hand-
+                        written as two blocks they had already drifted: only the Add
+                        button showed a spinner while a transfer was in flight.
+                      */}
+                      {CREDIT_ACTIONS.map(({ dir, labelKey, variant }) => {
+                        const busy = creditBusy?.id === sub.id;
+                        return (
+                          <Button
+                            key={labelKey}
+                            size="sm"
+                            variant={variant}
+                            className="h-9"
+                            onClick={() => { void handleMoveCredits(sub.id, dir); }}
+                            disabled={busy}
+                          >
+                            {busy && creditBusy?.dir === dir
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : SUB_ORG_LABELS[labelKey]}
+                          </Button>
+                        );
+                      })}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-9"
+                        onClick={() => { void handleToggleInheritance(sub.id, sub.docusignInherited === true); }}
+                        disabled={connectorBusy === sub.id}
+                      >
+                        {connectorBusy === sub.id
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : sub.docusignInherited
+                            ? SUB_ORG_LABELS.DOCUSIGN_STOP_SHARING
+                            : SUB_ORG_LABELS.DOCUSIGN_SHARE}
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
             ))}
           </div>
         )}
+
+        {/*
+          Create form. Below the list and collapsed by default: the shipped
+          build put these four fields between the panel header and the rows, so
+          the pending request an admin came to approve was under a form they had
+          no intention of filling in.
+        */}
+        {subOrgs.length > 0 && <Separator />}
+        {showCreate ? (
+          <div className="space-y-3">
+            {renderCreateForm()}
+            <Button variant="ghost" size="sm" onClick={() => setShowCreate(false)}>
+              {SUB_ORG_LABELS.ADD_AFFILIATE_CLOSE}
+            </Button>
+          </div>
+        ) : subOrgs.length > 0 ? (
+          // The empty state renders its own copy of this trigger, inline with
+          // the explanation, so it is not repeated here.
+          <Button variant="outline" size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="mr-1 h-4 w-4" />
+            {SUB_ORG_LABELS.ADD_AFFILIATE_OPEN}
+          </Button>
+        ) : null}
       </CardContent>
 
       {/*
         SCRUM-3868 — offboarding moves money and suspends an organization, so it
         confirms. The copy states what is NOT done as well as what is: the
         sub-org's already-secured documents stay verifiable, which is the thing
-        an operator most needs to be sure of before clicking.
+        an operator most needs to be sure of before clicking. The title names
+        the organization because at 375 px the row name is truncated.
       */}
       <AlertDialog open={offboarding !== null} onOpenChange={(open) => { if (!open) setOffboarding(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{SUB_ORG_LABELS.OFFBOARD_TITLE}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {SUB_ORG_LABELS.OFFBOARD_TITLE_NAMED.replace('{name}', offboarding?.display_name ?? '')}
+            </AlertDialogTitle>
             <AlertDialogDescription>{SUB_ORG_LABELS.OFFBOARD_BODY}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -713,6 +865,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
             </AlertDialogCancel>
             <AlertDialogAction
               disabled={offboardBusy}
+              className="bg-red-600 text-white hover:bg-red-700"
               onClick={(e) => {
                 e.preventDefault();
                 if (offboarding) void handleOffboard(offboarding);
@@ -721,6 +874,40 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
               {offboardBusy
                 ? <Loader2 className="h-4 w-4 animate-spin" />
                 : SUB_ORG_LABELS.OFFBOARD_CONFIRM}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/*
+        Revoke confirmation. The body says only what revoking is verified to do
+        — sever the affiliation — and explicitly points at Offboard for the
+        stronger action, because the two red buttons sat side by side with
+        nothing distinguishing them (§1.5: measured vs asserted vs NOT asserted).
+      */}
+      <AlertDialog open={revoking !== null} onOpenChange={(open) => { if (!open) setRevoking(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {SUB_ORG_LABELS.REVOKE_TITLE.replace('{name}', revoking?.display_name ?? '')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{SUB_ORG_LABELS.REVOKE_BODY}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionLoading !== null}>
+              {SUB_ORG_LABELS.REVOKE_CANCEL}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={actionLoading !== null}
+              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={(e) => {
+                e.preventDefault();
+                if (revoking) void handleRevoke(revoking.id);
+              }}
+            >
+              {actionLoading !== null
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : SUB_ORG_LABELS.REVOKE_CONFIRM}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
