@@ -61,7 +61,14 @@ vi.mock('../../webhooks/delivery.js', () => ({
   dispatchWebhookEvent: vi.fn(),
 }));
 
-import { verifyRouter, type AnchorByPublicId, type PublicIdLookup } from './verify.js';
+import {
+  verifyRouter,
+  mapAnchorRow,
+  buildVerificationResult,
+  type AnchorByPublicId,
+  type AnchorSelectRow,
+  type PublicIdLookup,
+} from './verify.js';
 import { buildTestAnchor } from './__test-helpers__/build-anchor.js';
 
 // ---------------------------------------------------------------------------
@@ -496,5 +503,114 @@ describe('SCRUM-4507: a Drive-sourced record leaks no identifier through this su
     const [, cached] = mockSetCached.mock.calls[0] as [string, Record<string, unknown>];
     expect(cached.source).toEqual({ provider: 'google_drive' });
     expect(JSON.stringify(cached)).not.toContain('_drive_');
+  });
+});
+
+/**
+ * SCRUM-4507 — the assertion above proves the RESPONSE carries no Drive id,
+ * but it can only prove it about a fixture that never held one:
+ * `buildTestAnchor` produces an already-mapped `AnchorByPublicId`, a shape
+ * with no `metadata` field at all, so the Drive identifiers are structurally
+ * absent before the projection is even asked the question.
+ *
+ * The identifiers live on `anchors.metadata`, and the ONE place they could
+ * escape to an anonymous caller is `mapAnchorRow` — the row -> public-shape
+ * boundary. So this exercises that boundary directly: a raw row carrying every
+ * Drive key the producer writes, through the real mapper and the real
+ * response builder, asserting the provider word survives and nothing else
+ * does. Without this, widening `mapAnchorRow` to pass `metadata` through would
+ * leak Drive ids to an unauthenticated caller and every test above would
+ * still pass.
+ */
+describe('SCRUM-4507: Drive identifiers on anchors.metadata never cross mapAnchorRow', () => {
+  const DRIVE_FILE_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_FOLDER_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const DRIVE_SHARED_DRIVE_ID = '0AOaBcDeFgHiJkLmNoP';
+  const DRIVE_FOLDER_PATH = '/HR/Terminations/2026';
+  const DRIVE_REVISION_ID = '0B3mVs0XRA5nFMdKvBdBZjgm';
+
+  /** A row exactly as the Drive producer + artifact drain leave it. */
+  function driveRow(): AnchorSelectRow {
+    return {
+      public_id: 'ARK-2026-DRIVEROW-001',
+      fingerprint: 'a'.repeat(64),
+      status: 'SECURED',
+      chain_tx_id: 'b'.repeat(64),
+      chain_block_height: 900000,
+      chain_timestamp: '2026-04-01T00:00:00Z',
+      created_at: '2026-03-30T00:00:00Z',
+      credential_type: 'CONTRACT_POSTSIGNING',
+      sub_type: null,
+      issued_at: null,
+      expires_at: null,
+      description: null,
+      directory_info_opt_out: false,
+      compliance_controls: null,
+      chain_confirmations: 6,
+      version_number: 1,
+      revocation_tx_id: null,
+      revocation_block_height: null,
+      file_mime: 'application/pdf',
+      file_size: 1024,
+      org_id: '11111111-2222-3333-4444-555555555555',
+      fingerprint_source: 'connector_fetch',
+      metadata: {
+        connector_source: 'google_drive',
+        file_id: DRIVE_FILE_ID,
+        revision_id: DRIVE_REVISION_ID,
+        _drive_folder_id: DRIVE_FOLDER_ID,
+        _drive_folder_path: DRIVE_FOLDER_PATH,
+        _drive_shared_drive_id: DRIVE_SHARED_DRIVE_ID,
+        _drive_revision_kind: 'head_revision',
+        account_label: 'records-bot@example.com',
+      },
+      organization: { display_name: 'Example Org' },
+      parent: null,
+      anchor_proofs: null,
+      extraction_manifests: [],
+    };
+  }
+
+  it('emits source.provider and nothing else from the Drive metadata blob', () => {
+    const body = buildVerificationResult(mapAnchorRow(driveRow()));
+    const serialized = JSON.stringify(body);
+
+    expect(body.source).toEqual({ provider: 'google_drive' });
+
+    for (const secret of [
+      DRIVE_FILE_ID,
+      DRIVE_FOLDER_ID,
+      DRIVE_SHARED_DRIVE_ID,
+      DRIVE_FOLDER_PATH,
+      DRIVE_REVISION_ID,
+    ]) {
+      expect(serialized, `Drive identifier reached the anonymous body: ${secret}`)
+        .not.toContain(secret);
+    }
+    // The connected Google account's label IS its email (drive-account-label.ts).
+    expect(serialized).not.toContain('records-bot@example.com');
+    expect(serialized).not.toContain('_drive_');
+    expect(serialized).not.toContain('drive.google.com');
+    // The org's own id is on the row and must not ride along either (§6).
+    expect(serialized).not.toContain('11111111-2222-3333-4444-555555555555');
+  });
+
+  it('omits `source` entirely — never null, never {} — for a plain uploaded record', () => {
+    const row = driveRow();
+    row.metadata = { some_other_key: 'value' };
+
+    const body = buildVerificationResult(mapAnchorRow(row));
+
+    expect(body).not.toHaveProperty('source');
+    expect(JSON.stringify(body)).not.toContain('"source"');
+  });
+
+  it('refuses a free-text marker an org could have written on a pre-0423 row', () => {
+    const row = driveRow();
+    row.metadata = { ...row.metadata, connector_source: 'google_drive_totally_real' };
+
+    const body = buildVerificationResult(mapAnchorRow(row));
+
+    expect(body).not.toHaveProperty('source');
   });
 });
