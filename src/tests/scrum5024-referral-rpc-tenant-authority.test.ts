@@ -102,6 +102,20 @@ describe('SCRUM-5024 — record_org_referral tenant authority', () => {
     // verdict that never raises.
     expect(body).toMatch(/left\(v_code,\s*\d+\)/);
   });
+
+  it('restricts non-service callers to p_source = signup', () => {
+    // A non-service caller can only ever be recording their OWN signup — the
+    // service role is what actually runs admin provisioning or the public API.
+    // Without this guard, an ordinary authenticated user could call this RPC
+    // asserting `p_source = 'admin_provisioning'` or `'api'`, misrepresenting
+    // how the referral was recorded to anyone reading `source` off the audit
+    // trail or partner analytics. This is an authority failure, not a verdict,
+    // so it RAISES (with the same ERRCODE as the other authority checks in this
+    // function) instead of returning a jsonb reason.
+    const guardIdx = body.indexOf("IF NOT v_is_service AND p_source <> 'signup' THEN");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(body.slice(guardIdx, guardIdx + 200)).toMatch(/insufficient_privilege/);
+  });
 });
 
 describe('SCRUM-5024 — audit disclosure boundary', () => {

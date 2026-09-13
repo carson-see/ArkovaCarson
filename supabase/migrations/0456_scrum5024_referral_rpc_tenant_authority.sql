@@ -55,9 +55,20 @@
 --    cannot make it reachable, and so the new guard in (1) is not copied from a
 --    fail-open template.
 --
--- Behaviour is otherwise byte-for-byte the `0455` contract: the same TOTAL
--- verdict set (no_code / unknown_code / self_referral / already_attributed /
--- recorded), the same disclosure projection, the same four returned columns.
+-- 5. CALLER-ASSERTED `p_source` WAS UNCHECKED. Any authenticated caller could
+--    pass `p_source = 'admin_provisioning'` or `'api'` for their own signup,
+--    misrepresenting how a referral was recorded to anyone reading `source`
+--    off the audit trail or partner analytics. A non-service caller may now
+--    only assert `p_source = 'signup'`; any other value from a non-service
+--    role raises `insufficient_privilege`, joining the other authority checks
+--    in this function. service_role (admin provisioning, the public API) is
+--    unaffected.
+--
+-- Behaviour is otherwise byte-for-byte the `0455` contract for a call that
+-- passes: the same TOTAL verdict set (no_code / unknown_code / self_referral /
+-- already_attributed / recorded), the same disclosure projection, the same
+-- four returned columns. Fix (5) narrows who is *authorized* to call with a
+-- given `p_source`, which is an authority failure (RAISE), not a verdict.
 --
 -- ROLLBACK: this migration replaces two function BODIES and changes no state,
 -- so there is nothing to undo. To revert the FEATURE, run `0455`'s rollback
@@ -110,6 +121,19 @@ BEGIN
   IF NOT v_is_service
      AND NOT EXISTS (SELECT 1 FROM public.get_user_org_ids() g WHERE g = p_org_id) THEN
     RAISE EXCEPTION 'Not authorized to record a referral for this organization'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- CALLER-ASSERTED SOURCE. A non-service caller can only ever be recording
+  -- their OWN signup; service_role is what actually runs admin provisioning
+  -- or the public API. Without this guard an ordinary authenticated user could
+  -- call this RPC asserting p_source = 'admin_provisioning' or 'api',
+  -- misrepresenting how the referral was recorded to anyone reading `source`
+  -- off the audit trail or partner analytics. This is an authority failure,
+  -- not a verdict, so it RAISES like the tenant-membership check above it
+  -- rather than returning a jsonb reason.
+  IF NOT v_is_service AND p_source <> 'signup' THEN
+    RAISE EXCEPTION 'Only service_role may record a referral with p_source other than signup'
       USING ERRCODE = 'insufficient_privilege';
   END IF;
 

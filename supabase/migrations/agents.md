@@ -1383,7 +1383,8 @@ audit table. The row now carries a NULL actor and stays keyed to the referrer's
 `audit_events_details_length` CHECKs `<= 10000`, so an oversized `p_code` made a
 function contracted never to raise, raise. (4) Both membership tests use a
 NULL-safe `NOT EXISTS` rather than `NOT IN (SELECT ...)`, which evaluates to
-NULL — and therefore fails OPEN — if the set ever contains one.
+NULL — and therefore fails OPEN — if the set ever contains one. (5) A
+non-service caller may only assert `p_source = 'signup'` — see below.
 
 **Two corrections to `0455`'s own header, recorded here because that file is
 immutable.**
@@ -1406,13 +1407,14 @@ immutable.**
   that audit row is reachable only by a `service_role` export filtered on
   `org_id`.
 
-**Still open after `0456`, deliberately not fixed here** (a third prefix for one
-feature is worse than the residual): `p_source` is caller-asserted. With the
-membership guard in place a browser caller can still label its own
-organization's attribution `admin_provisioning` or `api`, so `source` is
-evidence of what the caller claimed, not of which surface observed it. The fix
-is four lines in `record_org_referral` — `IF NOT v_is_service AND p_source <>
-'signup' THEN RAISE ... insufficient_privilege` — and should be folded into
-`0456` before it is applied anywhere, not chained as `0457`.
+**(5) Caller-asserted `p_source` — closed, folded into `0456` (not chained as
+`0457`, per CTO decision).** A non-service caller could otherwise label its own
+organization's attribution `admin_provisioning` or `api`, so `source` was
+evidence of what the caller claimed, not of which surface observed it. A
+non-service caller may now only assert `p_source = 'signup'`; any other value
+from a non-service role raises `insufficient_privilege`, joining the other
+authority checks in `record_org_referral`. Ratcheted by
+`src/tests/scrum5024-referral-rpc-tenant-authority.test.ts` ("restricts
+non-service callers to p_source = signup").
 
 **Next author claims `0457` — re-derive, do not trust this line.**
