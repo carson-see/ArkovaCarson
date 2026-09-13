@@ -177,7 +177,7 @@ function DriveConnectorSection({ orgId }: DriveConnectorSectionProps) {
         <Card>
           <CardContent className="flex items-center justify-between gap-3 p-4">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary">Managed in Rules</Badge>
+              <Badge variant="secondary">{CONNECTORS_LABELS.CONNECTOR_MANAGED_BADGE}</Badge>
               <p className="text-sm text-muted-foreground">{CONNECTORS_LABELS.CONNECTOR_MANAGED_IN_RULES}</p>
             </div>
             <RulesLink />
@@ -245,11 +245,10 @@ function DocusignConnectorSection({ orgId }: DocusignConnectorSectionProps) {
       {connected && !isManaged && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Envelopes</CardTitle>
-            <CardDescription>All completed envelopes from this account.</CardDescription>
+            <CardTitle className="text-base">{CONNECTORS_LABELS.DOCUSIGN_ENVELOPES_HEADING}</CardTitle>
+            <CardDescription>{CONNECTORS_LABELS.DOCUSIGN_ENVELOPES_DESC}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Badge variant="outline">docusign</Badge>
             <ConnectorActionChoice value={actionValue} onChange={setDraftAction} name="docusign-action" />
             {saveError && <p className="text-sm text-destructive">{saveError}</p>}
             <Button onClick={() => void handleSave()} disabled={!dirty || saving}>
@@ -263,7 +262,7 @@ function DocusignConnectorSection({ orgId }: DocusignConnectorSectionProps) {
         <Card>
           <CardContent className="flex items-center justify-between gap-3 p-4">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary">Managed in Rules</Badge>
+              <Badge variant="secondary">{CONNECTORS_LABELS.CONNECTOR_MANAGED_BADGE}</Badge>
               <p className="text-sm text-muted-foreground">{CONNECTORS_LABELS.CONNECTOR_MANAGED_IN_RULES}</p>
             </div>
             <RulesLink />
@@ -290,9 +289,9 @@ export function ConnectorsPage() {
     const docusignError = searchParams.get('docusign_error');
 
     if (driveResult === 'connected') {
-      toast.success('Google Drive connected.');
+      toast.success(CONNECTORS_LABELS.DRIVE_TOAST_CONNECTED);
     } else if (driveError) {
-      toast.error('Google Drive connection was not completed.');
+      toast.error(CONNECTORS_LABELS.DRIVE_TOAST_ERROR);
     }
 
     if (docusignResult === 'connected') {

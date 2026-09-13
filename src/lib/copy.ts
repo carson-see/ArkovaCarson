@@ -1896,6 +1896,16 @@ export const CONNECTORS_LABELS = {
   SETTINGS_CONNECTORS_LINK_TITLE: 'Connectors',
   SETTINGS_CONNECTORS_LINK_DESC: 'Google Drive, DocuSign — manage connectors',
   SETTINGS_CONNECTORS_LINK_BUTTON: 'Manage connectors',
+
+  // OAuth return-trip toasts (Drive leg — DocuSign reuses CONNECTIONS_LABELS'
+  // TOAST_CONNECTED / TOAST_ERROR_PREFIX, which are DocuSign-worded).
+  DRIVE_TOAST_CONNECTED: 'Google Drive connected. New files will now trigger rules.',
+  DRIVE_TOAST_ERROR: 'Google Drive connection was not completed.',
+
+  // Connector card badges/sections (§1.3 — every string here, none inline in JSX).
+  CONNECTOR_MANAGED_BADGE: 'Managed in Rules',
+  DOCUSIGN_ENVELOPES_HEADING: 'Envelopes',
+  DOCUSIGN_ENVELOPES_DESC: 'All completed envelopes from this account.',
 } as const;
 
 // =============================================================================
