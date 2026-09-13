@@ -230,12 +230,21 @@ When mocking Supabase rows in this suite, use columns the table actually has.
 - `anchor.status = 'SECURED'` is worker-only via service_role.
 
 
-## 2026-09-10 — ComputeID historical review closure
-
-The current ComputeID mount is gate → per-IP limiter → shared `computeidWebhookBody` → receiver. The shared parser rejects suffix paths before buffering and maps oversize payloads to 413. Tests use this production middleware; disabled requests still return 503 before parsing. This supersedes the original global-bucket note above.
-
 ## 2026-09-11 — UAT-04 human bearer tokens
 
 `verifyAuthToken` rejects verified human JWTs below AAL2 and both Arkova pending
 roles before route authorization. Service OIDC, webhook credentials, and API-key
 paths remain separate.
+
+## 2026-09-10 — ComputeID historical review closure
+
+The current ComputeID mount is gate → per-IP limiter → shared `computeidWebhookBody` → receiver. The shared parser rejects suffix paths before buffering and maps oversize payloads to 413. Tests use this production middleware; disabled requests still return 503 before parsing. This supersedes the original global-bucket note above.
+
+## 2026-09-12 — `config.ts`: ComputeID egress config + validate-if-present for the dark CA pin (SCRUM-4495)
+
+Two new typed config entries, both read through `config` and never `process.env` (the SCRUM-1258 ratchet):
+
+- `computeidApiBaseUrl` (`COMPUTEID_API_BASE_URL`, default `https://api.aicomputeid.com`) — the origin for the ONE outbound ComputeID call, the hourly re-check's `GET /v1/agents/{id}/verify`. It lives in config precisely so no request or row can steer it. That is necessary but **not sufficient**: config is env-tunable and the hostname is resolved by DNS we do not control, so `verify-client.ts` also goes through `createSafeFetchImpl()` (IP-pinned, private/metadata targets refused, redirects surfaced rather than followed). Admission stays fully offline and calls nothing.
+- `computeidApiKey` (`COMPUTEID_API_KEY`) — optional **by decision**, pinned by a test in `config.test.ts`. The flag-on refine deliberately does NOT require it: the re-check reports itself skipped rather than blocking activation on a key provisioned separately. The silence that decision used to buy is gone — the job logs ERROR and raises a Sentry event when the flag is on and the key is missing.
+
+**Validate-if-present for `COMPUTEID_CA_CERT_PEM` (W11b).** The refine block validated the pin only inside `if (cfg.enableComputeidIntegration)`. Since the pin is now in `deploy-worker.yml --set-secrets` while the flag is still false, a malformed or rotated PEM sits in prod entirely unexercised and is first parsed by the *activation* deploy — the one moment nobody wants a surprise. It is now parsed whenever it is present, and a failure while the flag is OFF is a `console.warn`, never an `addIssue`: a dark integration must not be able to stop the worker booting. Flag ON keeps the hard failure, including the production "must be an X.509 certificate, not a bare SPKI pin" rule.
