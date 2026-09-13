@@ -74,11 +74,17 @@
   },
   "soak": {
     "start": "2026-09-12T22:28:58Z",
-    "end": "",
+    "end": "2026-09-13T02:29:52Z",
     "duration_hours": 4,
     "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@45549ba9d",
-    "result": "",
-    "evidence_links": [],
+    "result": "green",
+    "evidence_links": [
+      "docs/staging/cto-train-b-0912/train-b2-window2/summary.json",
+      "docs/staging/cto-train-b-0912/train-b2-window2/cycles.sha256",
+      "docs/staging/cto-train-b-0912/train-b2-window2/rollback-rehearsal.json",
+      "docs/staging/soak-preflight/rc-train-b2-2026-09-12.json",
+      "docs/staging/cto-train-b-0912/CLOSEOUT.md"
+    ],
     "expires_at": "2026-09-19T21:56:48Z"
   },
   "migration_plan": {
@@ -103,7 +109,9 @@
     "#2841 email delivery not exercised on the rig (no Resend key by decision); template pinned by unit tests.",
     "#2842 lit reconciliation path not exercised (flag off = prod state); offline golden receipt test + 38 unit tests.",
     "Post-soak T0 delta: none expected.",
-    "Window 1 (head 6cb68f88e, rev 00007-lis, 21:56:48Z\u2192) superseded: #2841/#2842 gap fixes (492260d03, aeddccc4b) changed the train head; window 2 runs on 89dba6baa."
+    "Window 1 (head 6cb68f88e, rev 00007-lis, 21:56:48Z→) superseded: #2841/#2842 gap fixes (492260d03, aeddccc4b) changed the train head; window 2 runs on 89dba6baa.",
+    "Rollback rehearsed 2026-09-13T02:30:45Z–02:31:47Z: traffic re-promoted to rev 00007-lis (/health git_sha 6cb68f88e, healthy) then restored to 00009-qof (/health git_sha 89dba6baa, healthy); artifact rollback-rehearsal.json.",
+    "Window 2: 41 cycles, 41 pass, 0 fail, 98 probes/cycle, 1 health-gated retry; first cycle 2026-09-12T22:29:00Z, last finished 2026-09-13T02:29:52Z; single revision 00009-qof across all cycles."
   ],
   "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b2-2026-09-12.json",
   "staging_branch": "rc/train-b2-2026-09-12",
