@@ -50,6 +50,8 @@ const SettingsPage = lazyWithRetry(() => import('@/pages/SettingsPage').then(m =
 const HelpPage = lazyWithRetry(() => import('@/pages/HelpPage').then(m => ({ default: m.HelpPage })));
 const PublicVerifyPage = lazyWithRetry(() => import('@/components/public/PublicVerifyPage').then(m => ({ default: m.PublicVerifyPage })));
 const WebhookSettingsPage = lazyWithRetry(() => import('@/pages/WebhookSettingsPage').then(m => ({ default: m.WebhookSettingsPage })));
+// SCRUM-5024 — partner referral code + attributed organizations.
+const ReferralSettingsPage = lazyWithRetry(() => import('@/pages/ReferralSettingsPage').then(m => ({ default: m.ReferralSettingsPage })));
 const CredentialTemplatesPage = lazyWithRetry(() => import('@/pages/CredentialTemplatesPage').then(m => ({ default: m.CredentialTemplatesPage })));
 const BillingPage = lazyWithRetry(() => import('@/pages/BillingPage').then(m => ({ default: m.BillingPage })));
 const PricingPage = lazyWithRetry(() => import('@/pages/PricingPage').then(m => ({ default: m.PricingPage })));
@@ -293,6 +295,7 @@ export function App() {
           <Route path={ROUTES.SETTINGS_API_KEYS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ApiKeys"><ApiKeySettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS_WEBHOOKS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Webhooks"><WebhookSettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.CREDENTIAL_TEMPLATES} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="CredentialTemplates"><CredentialTemplatesPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.SETTINGS_REFERRALS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Referrals"><ReferralSettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.HELP} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><HelpPage /></RouteGuard></AuthGuard>} />
 
           {/* AI Intelligence routes */}

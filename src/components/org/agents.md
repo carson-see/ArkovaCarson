@@ -31,3 +31,21 @@ OrgVerification verified-badge helper text scrubbed ("shown on all your records"
 - Copy lives in `SUB_ORG_LABELS` (§1.3). The older local `SUB_ORG_STATE_COPY` block in this file is a leftover from when `copy.ts` was locked under a concurrent PR — new strings go in `copy.ts`.
 - The row header is `flex-wrap`: with the actions pinned on one line the org name truncated to a single character at 375px.
 - UAT: `uat-harness/` renders this component with stubbed supabase/worker modules, so the visual pass needs no local Supabase — the local stack is shared across worktrees and a concurrent `stop` would wipe the run. Screenshots at 1280 and 375 in `docs/staging/hakichain-suborgs-2026-09/`.
+
+## 2026-09-12 SCRUM-5024 — `ReferralPanel.tsx` (new)
+
+The organization's referral code, the share link, and the organizations that
+joined through it. Three pinned behaviours (`ReferralPanel.test.tsx`):
+
+- **No auto-mint on load** — the create button is the only path to a code.
+- **A failed load renders an error + retry, never an empty table.** "You referred
+  nobody" and "we could not find out" are different facts and the partner must be
+  able to tell them apart.
+- **`REFERRAL_LABELS.NOT_ASSERTED` is rendered unconditionally.** It is the §1.5
+  measured / not-asserted boundary extended by the R-7 claims gate, not a
+  footnote: the page states which organizations entered the code and when, and
+  explicitly does not represent a commission, discount or payment. Do not soften
+  it into marketing language.
+
+Row keys fall back to `(displayName, referredAt)` when an organization has no
+public id — never to an internal identifier, because none is fetched.
