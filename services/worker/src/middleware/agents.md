@@ -441,10 +441,6 @@ Mount order is the contract and is pinned by `__tests__/phiScopeMount.test.ts`: 
 `requireScopeAnyAuth` → rate limiter → router.
 
 
-## PR #2442 release review — 2026-09-05
-
-PR #2442 review: only a literal boolean false debit result may fall through to another payment tier. Null, missing, string and object results return 503; the response does not claim a debit was absent when its outcome is unknown.
-
 ## 2026-09-12 — `requireScopeAnyAuth` gained an `orgs:manage` ⊇ `read:orgs` case (SCRUM-3971)
 
 No change to the middleware itself — the implication lives in
@@ -460,3 +456,48 @@ derives scopes from `ADMIN_JWT_SCOPES` / `MEMBER_JWT_SCOPES`, which contain only
 why the sub-organization key mount runs no `requireAuth` and is API-key-only by
 construction, and why its caller abstraction refuses a request carrying both
 credentials rather than picking one.
+
+## PR #2442 release review — 2026-09-05
+
+PR #2442 review: only a literal boolean false debit result may fall through to another payment tier. Null, missing, string and object results return 503; the response does not claim a debit was absent when its outcome is unknown.
+
+## 2026-09-12 SCRUM-4987 — `securityHeaders.ts`: browser-enforced headers on every worker response
+
+Mounted in `index.ts` directly after `correlationIdMiddleware` and **before** `corsMiddleware`, so
+OPTIONS preflights and every 401/404/429/500 carry the set too (same "on every response" contract
+§1.10 imposes on the rate-limit headers). Lives in code, not at the edge, because the prod Cloud Run
+origin answers publicly and bypasses Cloudflare (SCRUM-3888) — verified live 2026-09-12: the Vercel
+hosts were fully hardened, the worker origin and `api.arkova.ai` returned only `x-ratelimit-*`.
+
+Set: HSTS (same value as the Vercel hosts, so the preload entry stays coherent), `nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, a deny-all `Permissions-Policy`, and a CSP.
+The CSP is route-aware: `default-src 'none'` everywhere except under `/api/docs`, where
+swagger-ui-express needs `'self'` + `'unsafe-inline'` (script and style); both policies
+carry `frame-ancestors 'none'`. Nothing served by the worker is designed to be framed — the embed
+widget iframes `app.arkova.ai/embed/verify/…` (Vercel), and the badge is consumed as an `<img>`,
+which X-Frame-Options does not touch. `securityHeaders.test.ts` pins the header set on JSON, SVG and
+404 responses and the docs-only CSP; `index.test.ts` pins the mount on `/health` and an unmatched
+route. If you add an HTML surface, extend `isDocsPath` deliberately rather than loosening `API_CSP`.
+
+**Review follow-ups (PR #2838, 2026-09-12).** (1) `isDocsPath` is case-insensitive: Express routing is
+case-insensitive by default, so `/API/docs` serves the real swagger HTML and must get `DOCS_CSP`, not
+`default-src 'none'`. (2) `DOCS_CSP` `img-src` allows `https://app.arkova.ai` because `docs.ts`
+sets `customfavIcon` to `https://app.arkova.ai/favicon.svg` (the old `arkova-26.vercel.app/favicon.ico`
+was a 404) — change both together, and it is the ONLY third-party origin in `DOCS_CSP` (a test pins
+that). The earlier `fonts.googleapis.com` / `fonts.gstatic.com` allowances were removed: swagger-ui-dist
+ships CSS, JS and images same-origin (images as `data:` URIs) and `nordicVaultCss` only names font
+families with system fallbacks, so nothing ever loaded a webfont. (3) The values that deliberately differ
+from `vercel.json`: `Referrer-Policy: no-referrer` (Vercel: `strict-origin-when-cross-origin`),
+`X-Frame-Options: DENY` (Vercel: `SAMEORIGIN` — no worker route is framed; the embed widget iframes
+`app.arkova.ai`, not the worker), and `Permissions-Policy` adds `payment=()` and `usb=()`. HSTS is
+byte-identical on purpose (preload coherence). (4) The `nosemgrep` annotations in `ai/gemini.ts` and
+`utils/gcp-auth.ts` sit on the line IMMEDIATELY above the `fetch(` call — Semgrep ignores the
+annotation anywhere else in a comment block; rule id verified against the Sekura `sast_findings.json`
+(`typescript.react.security.react-insecure-request.react-insecure-request`) — grep for `nosemgrep:`
+in `ai/gemini.ts` and `utils/gcp-auth.ts` rather than trusting a line number, which the Sekura report
+pinned at gemini.ts:1042 / gcp-auth.ts:77 and which moves with every edit above the call.
+(5) This is defense-in-depth, not a substitute: SCRUM-3888 (close the public Cloud
+Run origin) stays open; `edge.arkova.ai` gets the same set under SCRUM-5040 once an edge deploy
+pipeline exists; the R-5 config-drift scaffold (`scripts/ci/check-config-drift.ts`) only snapshots
+the `vercel.json` CSP, so a worker-CSP change has no drift gate today — keep this file and the
+middleware in step by hand.
