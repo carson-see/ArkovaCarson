@@ -2,6 +2,29 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
+
+Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI
+extraction for a brand-new org no longer 503s: since PR #2442, `deduct_ai_credits` fails CLOSED when
+no `ai_credits` row covers the current period, and nothing ever provisioned that row. Read
+`ai/agents.md`'s 2026-09-12 entry for the full mechanism (no unique constraint on the table, why the
+lookup window matches `deduct_ai_credits`'s own, race handling).
+
+Both routes provision BEFORE their up-front `checkAICredits` guard, not between that guard and the
+debit. `check_ai_credits`'s WHERE clause is `A OR B AND C AND D`, which Postgres parses as
+`A OR (B AND C AND D)` — given an org id it matches ANY row for that org regardless of period, with
+`LIMIT 1` and no `ORDER BY`. An org whose only row is an exhausted PRIOR period would otherwise get a
+402 from that guard and return before provisioning ever ran, which is the same "stuck org" outcome
+this fix exists to remove. (The precedence bug itself is pre-existing and needs its own migration to
+fix; ordering the calls this way makes it non-blocking.) `ai-extract-batch.ts` additionally must call
+it once before `checkAICredits`, not before
+each per-row `deductAICredits` inside `parallelMap` — the batch route latches `hasFiniteCredits` from
+that one `checkAICredits` result and reuses it for every row, so provisioning has to land before that
+read or the whole batch would treat a freshly-created org as still-unmetered. Both skip the call when
+`orgId` is undefined. A genuine deduction failure (insufficient credits / RPC error) still fails CLOSED
+with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
+check itself.
+
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
 `router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.
