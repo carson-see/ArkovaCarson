@@ -75,7 +75,7 @@ describe('audit_events silent-write class', () => {
     };
     insert.mockImplementationOnce(() => throwing as never);
 
-    await expect(recordAuditEvent(ROW)).resolves.toBeUndefined();
+    await expect(recordAuditEvent(ROW)).resolves.toEqual({ ok: false });
     expect(loggerError).toHaveBeenCalledTimes(1);
   });
 
@@ -102,7 +102,7 @@ describe('audit_events silent-write class', () => {
       throw new Error('client not initialised');
     });
 
-    await expect(recordAuditEvent(ROW)).resolves.toBeUndefined();
+    await expect(recordAuditEvent(ROW)).resolves.toEqual({ ok: false });
     expect(loggerError).toHaveBeenCalledTimes(1);
     const [ctx] = loggerError.mock.calls[0] as [Record<string, unknown>];
     expect(ctx.eventType).toBe('VERIFICATION_QUERIED');
@@ -112,7 +112,7 @@ describe('audit_events silent-write class', () => {
     // No `.then` anywhere on the returned object — `.then()` is a TypeError.
     insert.mockImplementationOnce(() => ({ select: () => ({}) }) as never);
 
-    await expect(recordAuditEvent(ROW)).resolves.toBeUndefined();
+    await expect(recordAuditEvent(ROW)).resolves.toEqual({ ok: false });
     expect(loggerError).toHaveBeenCalledTimes(1);
     const [ctx] = loggerError.mock.calls[0] as [Record<string, unknown>];
     expect(ctx.eventType).toBe('VERIFICATION_QUERIED');
@@ -127,5 +127,34 @@ describe('audit_events silent-write class', () => {
 
     const [, msg] = loggerError.mock.calls[0] as [Record<string, unknown>, string];
     expect(msg).toMatch(/audit trail incomplete/);
+  });
+});
+
+describe('reports whether the row actually landed (SCRUM-5023)', () => {
+  it('resolves { ok: true } on a successful insert', async () => {
+    insert.mockReturnValue(Promise.resolve({ error: null }));
+
+    await expect(recordAuditEvent({ event_type: 'api_key.expiry_notice' })).resolves.toEqual({ ok: true });
+  });
+
+  it('resolves { ok: false } when the insert returns an error', async () => {
+    // It still does not REJECT — `void recordAuditEvent(...)` call sites must
+    // never produce an unhandled rejection. Callers that depend on the row
+    // landing (the expiry-notice dedupe ledger) read `ok` instead.
+    insert.mockReturnValue(Promise.resolve({ error: { message: 'permission denied' } }));
+
+    await expect(recordAuditEvent({ event_type: 'api_key.expiry_notice' })).resolves.toEqual({ ok: false });
+  });
+
+  it('resolves { ok: false } when the insert rejects', async () => {
+    insert.mockReturnValue(Promise.reject(new Error('socket hang up')));
+
+    await expect(recordAuditEvent({ event_type: 'api_key.expiry_notice' })).resolves.toEqual({ ok: false });
+  });
+
+  it('resolves { ok: false } when the builder throws synchronously', async () => {
+    insert.mockImplementation(() => { throw new Error('builder exploded'); });
+
+    await expect(recordAuditEvent({ event_type: 'api_key.expiry_notice' })).resolves.toEqual({ ok: false });
   });
 });

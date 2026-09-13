@@ -1,3 +1,11 @@
+## 2026-09-12 — SCRUM-5023: `api-key-expiry-notice` added to `JOBS`
+
+Daily at `0 13 * * *` (09:00 America/Detroit) so a partner reads the warning during a working day.
+Retry policy `30s,120s,2`, NOT `NO_RETRY`: the job dedupes on an `api_key.expiry_notice` audit row per
+key per kind per EXPIRY VALUE, so a re-drive re-sends nothing. Not added to `services/worker/src/jobs/scheduler-manifest.ts` — that
+manifest is the CRITICAL-set dead-man registry (anchoring pipeline + money/integrity), and a missed
+notice run is recoverable on the next tick.
+
 # scripts/gcp-setup/agents.md
 
 One-shot GCP infrastructure provisioning scripts. Idempotent; safe to re-run.

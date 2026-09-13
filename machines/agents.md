@@ -1,3 +1,36 @@
+## 2026-09-12 — `apiKeyExpiry.machine.ts` (SCRUM-5023, PR #2841 CTO review): revocation survives the PATCH read/write gap
+
+New machine for the owner-controlled expiry that `PATCH /api/v1/keys/:keyId` now exposes. `expiry` is
+an ORDER, not a clock — `PAST < SOON < FAR < NONE` (NONE = no expiry = infinity) — so every property
+is about remaining life rather than arithmetic the DSL does not have.
+
+**The one thing TLC adds, and it is an interleaving.** `keys.ts` reads the row
+(`select id, org_id, revoked_at, expires_at, is_active`), decides, then UPDATEs by id **with no
+`revoked_at IS NULL` predicate on the UPDATE**. A revoke committing between those two statements
+leaves a row that is revoked AND carries a fresh future expiry (`applyStalePatch`). That is a real
+reachable state in prod today. It is benign — but only because the stale write touches `expires_at`
+ALONE and `deriveKeyStatus` ranks `revoked` above every expiry state, so nothing reports the key
+usable. `revocationRemainsTerminal` is where that ranking stops being a style preference: reverse it,
+or widen the stale UPDATE to touch `is_active`, and the invariant fails with the exact trace.
+
+**What it deliberately does NOT claim.** The no-silent-shortening rule (409
+`api_key_expiry_would_shorten` unless `allow_shorten`) is a single-statement PRECONDITION on one
+handler — no interleaving makes it true or false, so a model checker can only hand the guard back.
+`keys-expiry.test.ts` pins it instead. The guards are still transcribed faithfully into the actions
+(`setFar` shortens only from NONE; `setSoon` from NONE and FAR; neither from PAST, which is exempt by
+design because every forward move rescues an already-refusing key) — a state graph admitting
+transitions the route refuses would make the terminal-revocation result a proof about a different
+program. Also not modelled: the notice job's dedupe ledger (state lives in `audit_events`, not the key
+row), org scoping, authorization.
+
+No adapter metadata — this machine documents and checks an existing handler, it does not own a table,
+so `check` is the whole contract and `build` is deliberately not run.
+
+Certificate (tier `pr`, 1 key): proofPassed true; invariants `revocationRemainsTerminal`,
+`revokedOnlyByRevocation`; graph equivalence true (32/32 states, 138/138 edges); TLC 149 generated /
+32 distinct, depth 6; deadlock check off (no terminal-state requirement). Picked up automatically by
+`npm run verify:machines` / the `tla-verify` CI job (the script globs).
+
 # machines/agents.md
 
 ## 2026-09-12 — `aiCreditsPeriodProvision.machine.ts` (SCRUM-4939 / PR #2837): the `ai_credits` provisioning race
