@@ -22,11 +22,18 @@
 --      Insert field required when the column is NOT NULL *and* has no default,
 --      so NOT NULL alone makes `public_id` mandatory in
 --      `Database['public']['Tables']['organizations']['Insert']` — which reds
---      `src/hooks/useOnboarding.ts:161` and `:217`, the real browser path that
---      creates an organization and (correctly) does not supply a server-minted
---      identifier. Measured, not predicted: `npm run typecheck` failed with
---      TS2345 "Property 'public_id' is missing" on both lines before the
---      default was added, and passes after.
+--      `src/hooks/useOnboarding.ts:161` and `:217`. Measured, not predicted:
+--      `npm run typecheck` failed with TS2345 "Property 'public_id' is missing"
+--      on both lines before the default was added, and passes after.
+--
+--      Be precise about what those two lines ARE, because the grants below
+--      depend on it: they are FALLBACK direct inserts, taken only when the
+--      SECURITY DEFINER onboarding RPC fails, and `organizations` has no INSERT
+--      policy for `authenticated` at all (baseline:13117/13121 are SELECT and
+--      UPDATE), so RLS denies them before any default is evaluated. They are
+--      live code for the TYPE CHECKER and dead code at runtime. The DEFAULT is
+--      therefore required for the typecheck reason alone, and the definer
+--      function still needs no grant to `authenticated`.
 --
 --      `generate_unique_org_public_id()` is the default, not the bare
 --      `generate_public_id()`, so the re-draw-on-collision loop the trigger
