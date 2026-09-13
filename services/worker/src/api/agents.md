@@ -457,8 +457,21 @@ never the not_anchored sentinel reserved for a successful empty lookup.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
 
+The real invitation integration suite runs through `vitest.config.uat22-local.ts`, separately from unit coverage, and is required by the CI Tests aggregate. It has explicit loopback/opt-in guards and never skips conditionally. Cleanup deletes Auth users through GoTrue so factor/identity cascades remain intact.
+
 ## PR #2695 — timestamp helper simplification (2026-09-10)
 
 The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.
 
-The real invitation integration suite runs through `vitest.config.uat22-local.ts`, separately from unit coverage, and is required by the CI Tests aggregate. It has explicit loopback/opt-in guards and never skips conditionally. Cleanup deletes Auth users through GoTrue so factor/identity cascades remain intact.
+## 2026-09-12 SCRUM-4986 / SCRUM-4991 — revoke requires ORG_ADMIN in the worker; invitation double-accept is a no-op
+
+- **`anchor-revoke.ts`** selected `memberships.role` and never read it, so any ORG_MEMBER could call
+  `POST /api/anchor/:id/revoke`. The `revoke_anchor` RPC does enforce ORG_ADMIN — but through
+  `auth.uid()`, which is NULL under the service_role client this route uses — so the worker is the
+  only place the role check can actually run for this path. Non-admins get the same 404 as
+  non-members (no membership oracle) and the RPC is never reached. Whether the service_role RPC call
+  succeeds at all is an open [Verify] on SCRUM-4986; do not "fix" it by widening the RPC's grants.
+- **`invitations.ts` `provisionMembership`** is check-then-insert on `org_members`. Its comment
+  promised a concurrent double accept was "a clean no-op"; the code threw the loser's 23505 as a 500.
+  23505 on that insert is now treated as success (the membership exists). Any other insert error
+  still throws and triggers the new-account rollback.
