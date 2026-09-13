@@ -2,6 +2,31 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-09-13",
+      "author": "CTO release session (Claude Fable 5.1) — correction",
+      "note": "RE-ADDED 0443 four hours after removing it: the exemption was not only suppressing the stale-exemption hygiene warning, it was also what kept the prod ledger's duplicate timestamp-style row 20260912143110 for 0443_backfill_anchor_proof_block_height (left behind when the 09-12 out-of-band repair inserted the numeric row by hand) from erroring as ledger-nonnumeric-version + ledger-duplicate-name. Without it every migration-touching PR (first hit: #2831 on 4bc404c2c, run 34772201027) is blocked. Stays until the operator deletes the duplicate row (a §1.11A ledger write that needs Carson's explicit approval; requested 2026-09-13T17:45Z), then this entry is removed for good."
+    },
+    {
+      "date": "2026-09-13",
+      "author": "CTO release session (Claude Fable 5.1) — post-#2825 hygiene",
+      "note": "REMOVED 0443: PR #2825 merged 2026-09-13T13:23:51Z (a07ffc208) so 0443_backfill_anchor_proof_block_height.sql is on main AND its numeric row is in the prod ledger (list_migrations MCP tool re-read 15:22Z). The Full-ledger numeric-integrity audit was warning ledger-stale-exemption on every PR run. The duplicate timestamp-style prod row 20260912143110 for the same migration is NOT touched here: deleting a ledger row is a §1.11A operator write and stays with Carson."
+    },
+    {
+      "date": "2026-09-13",
+      "author": "CTO release session (Claude Fable 5.1) — standing-rig close",
+      "note": "ADDED 0451 (0451_uat04_mandatory_mfa, PR #2832, SCRUM-4832/UAT-04) and 0452 (0452_scrum4888_provision_org_quota_enforcement, PR #2831, SCRUM-4888/UAT-22) immediately ahead of applying both to prod vzwyaatejekddvltxyye via MCP apply_migration at the 24 h T3 window close (2026-09-13T14:07Z, standing rig fizyjojbebyalirtjjht; targeted drivers 256/256 MFA and 254/254 invite cycles; common identity/uptime monitor 24 h clean). Per CLAUDE.md §0 rule 10 the apply and this exemption land in the same motion; each ledger row is reconciled to its numeric version in-session and list_migrations re-read before either PR merges."
+    },
+    {
+      "date": "2026-09-12",
+      "author": "CTO session — founder-authorized 0443 historical proof repair (PR #2825)",
+      "note": "ADDED 0443 (0443_backfill_anchor_proof_block_height, PR #2825, SCRUM-4879) immediately ahead of applying it to prod vzwyaatejekddvltxyye via MCP apply_migration. Preconditions verified in-session: the corrected producer (#2782) is in the deployed prod build a8ce57af, so no new disagreeing rows are being written and the migration's closing assertion cannot be raced by live traffic; 0443 is already applied on the standing staging rig fizyjojbebyalirtjjht (§1.11). CORRECTION 14:40Z: apply_migration could NOT complete — the connector cancels at ~120 s and the file does two full scans of the 2 GB anchor_proofs table. The body was executed out-of-band in committed TID-window batches (575,783 -> 0 disagreeing rows, verified by three windowed counts), and the ledger row 0443 was INSERTED by hand with the exact file SQL as its statement (0425 precedent). list_migrations confirms 0443. Not a DDL migration (data UPDATE on anchor_proofs; anchors read-only via JOIN), so the hot-table DDL grep does not apply — the lock_timeout guards row-lock waits against the proof-enrichment writer instead. REMOVE when #2825 merges and the .sql lands on main."
+    },
+    {
+      "date": "2026-09-11",
+      "author": "CTO release closeout — founder-authorized PR backlog drain",
+      "note": "REMOVED all 27 reconciled exemptions after independent verification against main 649cfce0edf0a062c3d32e84d72499f4384901e4 and the current 149-row production migration ledger: 0415, 0420, 0421, 0422, 0423, 0424, 0425, 0426, 0427, 0429, 0430, 0431, 0432, 0433, 0434, 0435, 0438, 0439, 0441, 0442, 0444, 0445, 0446, 0447, 0448, 0449, 0450. Every listed numeric version is present in production and has exactly one source SQL file on main. Historical admission records are preserved. 0443 remains unapplied and is not exempted; its held PR #2825 still requires protected historical repair, actual immutable migration application and numeric ledger reconciliation. This removes stale audit suppressions without changing gate logic, database state, source SQL, or the existing soak exception."
+    },
+    {
       "date": "2026-09-10",
       "author": "CTO release admission — founder-authorized backlog drain",
       "note": "Admission immediately before the reviewed finite production application: 0429–0432, 0444, 0446, 0447 and 0450 (#2572); 0445 (#2570); 0448 (#2668); 0449 (#2693). 0443 is excluded pending separate protected backfill/performance qualification. This entry does not assert application or completed soak. The operator must record actual per-file application, conditional timestamp-to-canonical reconciliation, independent catalog/ACL/ledger readback and remove any unapplied admission in the same operation if stopped. Successful exemptions are removed when their SQL lands on main. Earlier history and stale-prefix cleanup are unchanged."
@@ -208,32 +233,8 @@
     }
   ],
   "exemptPrefixes": [
-    "0415",
-    "0420",
-    "0421",
-    "0422",
-    "0423",
-    "0424",
-    "0425",
-    "0426",
-    "0427",
-    "0429",
-    "0430",
-    "0431",
-    "0432",
-    "0433",
-    "0434",
-    "0435",
-    "0438",
-    "0439",
-    "0441",
-    "0442",
-    "0444",
-    "0445",
-    "0446",
-    "0447",
-    "0448",
-    "0449",
-    "0450"
+    "0443",
+    "0451",
+    "0452"
   ]
 }

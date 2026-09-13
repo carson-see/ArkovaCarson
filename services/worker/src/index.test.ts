@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { Express } from 'express';
 import supertest from 'supertest';
+import { DOCS_CSP } from './middleware/securityHeaders.js';
 
 // ---- Hoisted mocks ----
 
@@ -380,6 +381,47 @@ describe('worker server', () => {
     mockLogger.warn.mockClear();
     mockLogger.error.mockClear();
     mockLogger.debug.mockClear();
+  });
+
+  describe('security headers on every response (SCRUM-4987)', () => {
+    it('GET /health carries HSTS, nosniff, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy and the API CSP', async () => {
+      mockDbFrom.mockReturnValue(mockDbChain({ data: [{ id: '1' }], error: null }));
+      const res = await request(app, 'GET', '/health');
+      expect(res.status).toBe(200);
+      expect(res.headers['Strict-Transport-Security']).toBe('max-age=63072000; includeSubDomains; preload');
+      expect(res.headers['X-Content-Type-Options']).toBe('nosniff');
+      expect(res.headers['X-Frame-Options']).toBe('DENY');
+      expect(res.headers['Referrer-Policy']).toBe('no-referrer');
+      expect(res.headers['Permissions-Policy']).toMatch(/camera=\(\)/);
+      expect(res.headers['Content-Security-Policy']).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    });
+
+    it('a CORS preflight (OPTIONS 204) carries the headers — the middleware is mounted before cors', async () => {
+      const res = await request(app, 'OPTIONS', '/api/checkout/session', undefined, {
+        origin: 'http://localhost:5173',
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers['Strict-Transport-Security']).toBe('max-age=63072000; includeSubDomains; preload');
+      expect(res.headers['X-Frame-Options']).toBe('DENY');
+      expect(res.headers['Content-Security-Policy']).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    });
+
+    it('the REAL docs mount gets the swagger-compatible CSP, not default-src none', async () => {
+      // securityHeaders.test.ts proves the policy choice against a hand-built
+      // app; this proves it against the actual `app.use('/api/docs', docsRouter)`
+      // mount, so the two cannot drift.
+      const res = await request(app, 'GET', '/api/docs/spec.json');
+      expect(res.status).toBe(200);
+      expect(res.headers['Content-Security-Policy']).toBe(DOCS_CSP);
+      expect(res.headers['X-Frame-Options']).toBe('DENY');
+    });
+
+    it('an unmatched route still carries the headers', async () => {
+      const res = await request(app, 'GET', '/definitely-not-a-route');
+      expect(res.status).toBe(404);
+      expect(res.headers['X-Frame-Options']).toBe('DENY');
+      expect(res.headers['Strict-Transport-Security']).toBeDefined();
+    });
   });
 
   describe('GET /health', () => {

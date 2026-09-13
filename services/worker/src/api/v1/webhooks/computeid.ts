@@ -29,8 +29,6 @@
 import crypto from 'node:crypto';
 import express, { Router, type Request, type Response, type RequestHandler } from 'express';
 import { config } from '../../../config.js';
-import { db } from '../../../utils/db.js';
-import type { Json } from '../../../types/database.types.js';
 import { truncateUtf16Safe } from '../../../utils/utf16-truncate.js';
 import { logger } from '../../../utils/logger.js';
 import { verifyHmacSha256Hex } from '../../../integrations/oauth/hmac.js';
@@ -41,7 +39,15 @@ import {
   ComputeIdWebhookEnvelope,
   type ComputeIdPassportEvent,
 } from '../../../integrations/computeid/schemas.js';
-import { applyPassportEvent, MAX_PROVIDER_EVENT_CLOCK_SKEW_MS, type AgentStatus, type KeyEnforcement } from '../../../integrations/computeid/binding.js';
+import { MAX_PROVIDER_EVENT_CLOCK_SKEW_MS } from '../../../integrations/computeid/binding.js';
+import {
+  applyPassportEventToAgent,
+  findBoundAgents,
+  recordPassportFailure,
+  recordPassportRevocationAuthority,
+  type BoundAgentRow,
+  type PassportDelivery,
+} from '../../../integrations/computeid/passport-transition.js';
 import { parseSecretList } from '../../../integrations/computeid/secrets.js';
 
 export const computeidWebhookRouter = Router();
@@ -69,14 +75,6 @@ export const computeidWebhookBody: RequestHandler = (req, res, next) => {
   });
 };
 
-interface BoundAgentRow {
-  id: string;
-  org_id: string;
-  name: string;
-  status: AgentStatus;
-  metadata: unknown;
-}
-
 function getRawBody(req: Request): Buffer | null {
   const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody ?? req.body;
   return Buffer.isBuffer(rawBody) ? rawBody : null;
@@ -99,42 +97,7 @@ function isPassportEvent(event: string): event is ComputeIdPassportEvent {
   return (COMPUTEID_PASSPORT_EVENTS as readonly string[]).includes(event);
 }
 
-async function dlqInsert(args: { reason: string; externalId: string | null; payloadHash: string }): Promise<void> {
-  try {
-    const { error } = await db.rpc('enqueue_computeid_failure', {
-      p_reason: truncateUtf16Safe(args.reason, 500),
-      p_payload_hash: args.payloadHash,
-      ...(args.externalId !== null ? { p_external_id: args.externalId } : {}),
-    });
-    if (error) logger.warn({ error }, 'ComputeID webhook: DLQ insert failed (non-fatal)');
-  } catch (err) {
-    logger.warn({ error: err }, 'ComputeID webhook: DLQ insert threw (non-fatal)');
-  }
-}
-
-async function* findBoundAgents(passportId: string): AsyncGenerator<BoundAgentRow> {
-  // Stream bounded pages in stable primary-key order. Do not infer completion
-  // from a short page: a hosted PostgREST cap may be below our requested limit.
-  let cursor: string | undefined;
-  for (;;) {
-    // Cross-org by contract; every mutation rechecks the agent's organization.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query = (db as any).from('agents')
-      .select('id, org_id, name, status, metadata')
-      .contains('metadata', { computeid: { passport_id: passportId } })
-      .order('id', { ascending: true })
-      .limit(200);
-    if (cursor) query = query.gt('id', cursor);
-    const { data, error } = await query;
-    if (error) throw new Error('agent_lookup_failed');
-    const rows = (data as BoundAgentRow[] | null) ?? [];
-    if (rows.length === 0) return;
-    const next = rows[rows.length - 1].id;
-    if (cursor && next <= cursor) throw new Error('agent_lookup_cursor_not_advanced');
-    for (const row of rows) yield row;
-    cursor = next;
-  }
-}
+const dlqInsert = recordPassportFailure;
 
 interface Reply {
   status: number;
@@ -180,13 +143,6 @@ function authenticateDelivery(req: Request): { ok: true; rawBody: Buffer } | { o
     return { ok: false, reply: reply(401, { error: { code: 'invalid_signature' } }) };
   }
   return { ok: true, rawBody };
-}
-
-interface PassportDelivery {
-  event: ComputeIdPassportEvent;
-  passportId: string;
-  timestamp: string;
-  payloadHash: string;
 }
 
 type ParsedDelivery = { kind: 'reply'; reply: Reply } | { kind: 'passport'; delivery: PassportDelivery };
@@ -236,53 +192,24 @@ async function parseDelivery(rawBody: Buffer, payloadHash: string): Promise<Pars
   };
 }
 
-/** Commit the complete agent/key transition, or leave both unchanged. */
-async function commitAgentTransition(
-  agent: BoundAgentRow,
-  update: Record<string, unknown>,
-  keyEnforcement: KeyEnforcement,
-  d: PassportDelivery,
-): Promise<Reply | null> {
-  try {
-    const { data: applied, error } = await db.rpc('apply_computeid_agent_transition', {
-      p_org_id: agent.org_id,
-      p_agent_id: agent.id,
-      p_passport_id: d.passportId,
-      p_expected_status: agent.status,
-      p_expected_metadata: agent.metadata as Json,
-      p_update: update as Json,
-      p_key_enforcement: keyEnforcement,
-      p_event: d.event,
-      p_event_at: d.timestamp,
-    });
-    if (error) throw error;
-    if (applied === true) return null;
-    if (applied !== false) throw new Error('invalid_agent_transition_result');
-    logger.warn({ agentId: agent.id, event: d.event }, 'ComputeID webhook: agent row changed underneath us — asking for redelivery');
-    await dlqInsert({ reason: `agent_update_conflict:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
-    return reply(409, { error: { code: 'conflict_retry', message: 'Agent state changed concurrently; redeliver.' } });
-  } catch (error) {
-    logger.error({ error, agentId: agent.id, event: d.event }, 'ComputeID webhook: atomic agent/key transition failed');
-    await dlqInsert({ reason: `agent_transition_failed:${d.event}`, externalId: d.passportId, payloadHash: d.payloadHash });
-    return reply(500, PROCESSING_FAILED);
-  }
-}
-
 type AgentOutcome = { outcome: 'applied' | 'skipped' } | { outcome: 'failed'; reply: Reply };
 
-/** One bound agent: decide → atomic locked agent/key transaction → audit. */
+/**
+ * One bound agent, through the SHARED transition path
+ * (`integrations/computeid/passport-transition.ts`) that the scheduled
+ * re-check also uses. Only the HTTP mapping lives here: a lost compare-and-set
+ * race answers 409 so ComputeID redelivers against fresh state.
+ */
 async function processBoundAgent(agent: BoundAgentRow, d: PassportDelivery): Promise<AgentOutcome> {
-  const { decision, update, keyEnforcement } = applyPassportEvent(
-    { status: agent.status, metadata: agent.metadata },
-    { event: d.event, timestamp: d.timestamp },
-  );
-  if (!update) return { outcome: 'skipped' };
-
-  const failed = await commitAgentTransition(agent, update, keyEnforcement, d);
-  if (failed) return { outcome: 'failed', reply: failed };
-  if (decision.action === 'noop') return { outcome: 'skipped' };
-
-  return { outcome: 'applied' };
+  const result = await applyPassportEventToAgent(agent, d);
+  switch (result.outcome) {
+    case 'conflict':
+      return { outcome: 'failed', reply: reply(409, { error: { code: 'conflict_retry', message: 'Agent state changed concurrently; redeliver.' } }) };
+    case 'failed':
+      return { outcome: 'failed', reply: reply(500, PROCESSING_FAILED) };
+    default:
+      return { outcome: result.outcome };
+  }
 }
 
 computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
@@ -299,20 +226,9 @@ computeidWebhookRouter.post('/', async (req: Request, res: Response) => {
   }
   const d = parsed.delivery;
 
-  if (d.event === 'passport.revoked') {
-    try {
-      const { data, error } = await db.rpc('record_computeid_passport_revocation', {
-        p_passport_id: d.passportId, p_event_at: d.timestamp,
-      });
-      if (error || data !== true) throw error ?? new Error('invalid_revocation_authority_result');
-      // Never skip per-agent enforcement on an existing tombstone: a prior
-      // request may have failed part-way through the cross-organization loop.
-    } catch (error) {
-      logger.error({ error, passportId: d.passportId }, 'ComputeID webhook: revocation authority write failed');
-      await dlqInsert({ reason: 'revocation_authority_failed', externalId: d.passportId, payloadHash });
-      send(res, reply(500, PROCESSING_FAILED));
-      return;
-    }
+  if (d.event === 'passport.revoked' && !(await recordPassportRevocationAuthority(d))) {
+    send(res, reply(500, PROCESSING_FAILED));
+    return;
   }
 
   let applied = 0;

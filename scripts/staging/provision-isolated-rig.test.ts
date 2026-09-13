@@ -67,7 +67,7 @@ const TEAM1_ADMISSION_PROVENANCE_RULE =
 // .test.ts's prefix/per-section hashes and ordered heading list. Any edit here
 // must recompute BOTH, exactly the way each test computes them.
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  'bd3df8b0b247110bf6ec0bd19a0ac6fd86092457cd6e4991a383447a84225a39';
+  '0aae81dea30c3d12000aaaa8afda4451d5c51adad67dbfe85f873bcac85339af';
 
 // A wedged synchronous child must be killed with a diagnosable ETIMEDOUT
 // instead of hanging the suite — but this deadline is a HANG detector, not a
@@ -523,6 +523,9 @@ function applyRunStubbed(
     NODE_ENV: 'production',
     ENABLE_AI_FRAUD: 'false',
     ENABLE_AI_REPORTS: 'false',
+    // Mirrors the prod deploy so an extraction soak runs the budget prod runs
+    // (BASE_ENV_VARS in provision-isolated-rig.sh).
+    AI_EXTRACTION_LATENCY_BUDGET_MS: '15000',
     CORS_ALLOWED_ORIGINS: 'https://app.arkova.ai',
     FRONTEND_URL: options.env?.STAGING_FRONTEND_URL ?? 'https://app.arkova.ai',
     USE_MOCKS: profile === 'chain' ? 'false' : 'true',
@@ -695,6 +698,8 @@ exit 0
   writeFileSync(
     join(stubDir, 'npx'),
     `#!/usr/bin/env bash
+# "npx --no-install <pkg>" is the S6505-safe spelling; record it as the bare call.
+if [[ "$1" == "--no-install" ]]; then shift; fi
 set -euo pipefail
 printf '%s\\n' "$*" >> "${npxLogFile}"
 printf 'npx %s\\n' "$*" >> "${orderLogFile}"
@@ -1527,10 +1532,12 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
   it.each([
     ['T0', '2880', REPO_BASE, /tier|T0/i],
     ['T1', '119', REPO_BASE, /duration|120|minimum/i],
-    ['T2', '719', REPO_BASE, /duration|720|minimum/i],
-    ['T3', '0', REPO_BASE, /duration|2880|positive/i],
-    ['T3', '2879', REPO_BASE, /duration|2880|minimum/i],
-    ['T3', '02880', REPO_BASE, /duration|integer|canonical/i],
+    // Floors follow TIER_SPECS in scripts/ci/check-staging-evidence.ts
+    // (CTO decision 2026-09-12: T2 12h→4h = 240 min, T3 48h→24h = 1440 min).
+    ['T2', '239', REPO_BASE, /duration|240|minimum/i],
+    ['T3', '0', REPO_BASE, /duration|1440|positive/i],
+    ['T3', '1439', REPO_BASE, /duration|1440|minimum/i],
+    ['T3', '01440', REPO_BASE, /duration|integer|canonical/i],
     ['T3', '2880', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', /base|commit|merge-base/i],
     ['T3', '2880', REPO_NON_BASE_ANCESTOR, /base|merge-base|ancestor/i],
   ])(

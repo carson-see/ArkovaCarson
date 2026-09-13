@@ -9,7 +9,7 @@
  * deliveries listing, replay) has no truncate-then-emit site.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -42,7 +42,13 @@ vi.mock('../../webhooks/delivery.js', async () => {
   };
 });
 
-import { webhooksRouter } from './webhooks.js';
+import { webhooksRouter, sendVerificationPing } from './webhooks.js';
+import { __setWebhookFetchForTests } from '../../webhooks/egress.js';
+import { createSafeFetchImpl } from '../../lib/safe-fetch.js';
+
+// The pinned dispatch bypasses globalThis.fetch — route it back so the
+// vi.stubGlobal('fetch') assertions below keep working.
+__setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
 import { db } from '../../utils/db.js';
 import { poisonAt, isWellFormedUtf16 } from '../../tests/utf16-poison.js';
 
@@ -132,5 +138,59 @@ describe('POST /webhooks/test — response_body surrogate safety', () => {
     expect(res.body.response_body).toBe('ok 😀');
 
     vi.unstubAllGlobals();
+  });
+});
+
+describe('POST /webhooks/test — pinned egress (SCRUM-4983)', () => {
+  afterEach(() => __setWebhookFetchForTests((url, init) => globalThis.fetch(url, init)));
+
+  it('refuses a host that passes the pre-check but rebinds to the metadata IP at dispatch', async () => {
+    (db.from as ReturnType<typeof vi.fn>).mockReturnValueOnce(endpointQuery({ data: ENDPOINT_ROW }));
+    const dispatch = vi.fn();
+    __setWebhookFetchForTests(
+      createSafeFetchImpl({ resolve: async () => ['169.254.169.254'], dispatch }),
+    );
+
+    const res = await request(createApp()).post('/webhooks/test').send({ endpoint_id: 'ep-1' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_url');
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendVerificationPing — pinned egress (SCRUM-4983)', () => {
+  afterEach(() => __setWebhookFetchForTests((url, init) => globalThis.fetch(url, init)));
+
+  it('reports the refusal and never dispatches when the host rebinds at ping time', async () => {
+    const dispatch = vi.fn();
+    __setWebhookFetchForTests(
+      createSafeFetchImpl({ resolve: async () => ['169.254.169.254'], dispatch }),
+    );
+
+    const result = await sendVerificationPing('https://hooks.example.com/in', 'wh_secret');
+
+    expect(result).toBe('verification ping failed: egress_refused: private_target');
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('dispatches to the validated IP with the original URL when the host is public', async () => {
+    const dispatch = vi.fn().mockImplementation(async (_ip: string, _url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { challenge: string };
+      return {
+        status: 200,
+        headers: new Headers(),
+        url: 'https://hooks.example.com/in',
+        arrayBuffer: async () => new TextEncoder().encode(`echo ${body.challenge}`).buffer,
+      };
+    });
+    __setWebhookFetchForTests(createSafeFetchImpl({ resolve: async () => ['203.0.113.10'], dispatch }));
+
+    const result = await sendVerificationPing('https://hooks.example.com/in', 'wh_secret');
+
+    expect(result).toBeNull();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0]).toBe('203.0.113.10');
+    expect(dispatch.mock.calls[0][1]).toBe('https://hooks.example.com/in');
   });
 });

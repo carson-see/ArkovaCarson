@@ -211,6 +211,8 @@ describe('Constants', () => {
       'credential.verified',
       'credential.status_changed',
       'compliance.document_expiring',
+      'attestation.created',
+      'attestation.revoked',
     ]);
   });
 });

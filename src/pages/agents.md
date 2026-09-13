@@ -1,5 +1,86 @@
 # agents.md — pages
 _Last updated: 2026-09-12_
+_Last updated: 2026-09-13_
+
+## 2026-09-13 — "Cancel Request" failed in total silence (pre-existing, fixed on top of PR #2907)
+
+The child-side cancel handler in `OrgProfilePage.tsx` toasted only on `response.ok` and ended in
+`catch { // Handle silently }`. A 500 from `POST /api/v1/org/sub-orgs/cancel`, a 403 for a
+non-admin, the 400 the worker returns when the parent already approved the request in another tab,
+and a dropped connection all produced no toast, no console output and no state change: the button
+looked inert while the request stayed pending. The founder-feedback pass in #2907 relocated this
+block from Settings to the Affiliates tab without changing its logic, so the silence predates it.
+
+DO route the reply through `translateWorkerError(data.error, SUB_ORG_LABELS.CANCEL_FAILED)` — the
+same shape `ManageSubOrgs.tsx`'s own handlers use, so a machine code (`sub_org_limit_reached`) or an
+engineer-facing sentence never reaches an operator, and an unmapped reply is `console.error`-logged
+rather than swallowed. DON'T let `await response.json()` be the only body read on an error path: a
+5xx can answer with an HTML error page, and a throw there is indistinguishable from a network drop —
+`.catch(() => ({}))` keeps it on the generic-failure path.
+
+`translateWorkerError` is exported from `@/components/org/ManageSubOrgs`, which
+`OrgProfilePageAffiliates.test.tsx` also `vi.mock`s for the panel component. That factory MUST
+spread `await importOriginal()`; a factory that only returns `ManageSubOrgs` leaves the import
+`undefined`, the handler throws into its catch, and every mapped worker code silently degrades to
+the generic fallback — which is the exact distinction those tests exist to pin.
+
+## 2026-09-13 CTO review (PR #2907) — `fetchParentOrgName` is RLS-blocked in the common case
+
+Verified, not assumed: `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` gives
+`organizations` exactly one SELECT policy, `organizations_select_member`, scoped to
+`get_user_org_ids()` (the CALLER's own `org_members` rows). A child org's members are never added
+to the parent's `org_members` — only the reverse happens, when a parent creates a new affiliate
+(`buildAffiliateMembershipRows`, `services/worker/src/api/v1/orgSubOrgs.ts`). So for a child that
+requested affiliation into an existing parent (the common path, as opposed to being created BY that
+parent), `OrgProfilePage.tsx`'s direct `.from('organizations').select('display_name').eq('id',
+parentOrgId).single()` is RLS-denied: PostgREST returns zero rows, no thrown error, `data: null`.
+
+This is **not a leak** — RLS is doing its job — but it does mean the "pending/revoked children see
+the parent's real name" behaviour below does not reach most real users: it silently falls back to
+the generic `SUB_ORG_LABELS.PARENT_ORGANIZATION` ("parent organization") label, same as before this
+PR. The two mocked-success tests in `OrgProfilePageAffiliates.test.tsx` ("names the parent
+organization for a REVOKED/PENDING child…") are a fair test of the render logic given data, but they
+resolve the Supabase mock unconditionally and so prove nothing about whether the data ever arrives —
+the `docs/uat/suborg-ux` E2E capture has the same gap (Supabase is stubbed via `page.route`, not run
+against real RLS). Added `describe('when the parent-name read is RLS-blocked (the common real
+case)')` in that file, using the shape PostgREST actually returns, to pin the graceful-fallback
+behaviour and stop the existing tests from reading as proof of something they do not cover.
+
+Fixing this for real needs a child-scoped SECURITY DEFINER RPC (narrower than
+`search_organizations_public`, which searches by name/domain, not by id) returning only
+`display_name` for the caller's own `parent_org_id` — a backend/DB change, out of scope for this
+frontend-only T1 PR. Flagged as a follow-up rather than fixed here.
+
+## 2026-09-13 founder feedback — `OrgProfilePage` gained an **Affiliates** tab
+
+Founder: "when I try and use sub orgs it's clunky and confusing". Full walk and evidence:
+`docs/uat/suborg-ux/FINDINGS.md`.
+
+`ManageSubOrgs` and the child-side affiliation status used to be the last block inside the
+**Settings** `TabsContent`, below fifteen profile fields, the verification card and four connector
+cards. Measured on an empty org, its heading sat **2,396 px** down the scrolling column at 1280 px
+and **2,996 px** at 375 px (`docs/uat/suborg-ux/before/discoverability-*.json`) — and the tab row
+said only Home / People / Settings, so a parent admin with a request waiting had nothing anywhere
+telling them so. It is now its own `TabsContent value="affiliates"`, 476 px / 490 px down.
+
+- **`?tab=` accepts `affiliates` as well as `settings`.** Anything else falls back to `home`. The
+  connector-card specs (`integrations-*.spec.ts`) still deep-link `?tab=settings` — the connector
+  cards did NOT move, only the sub-org block did.
+- **The tab badge comes from the panel.** `ManageSubOrgs` reports `{ pending, approved }` through
+  `onCountsChange`, or `null` when its load failed. Render the badge only for a known, non-zero
+  pending count: a "0" after a failed fetch claims there is nothing waiting when we do not know.
+- **`TAB_TRIGGER_CLASS`** is the shared trigger styling. Four copies of that 160-character class
+  string had already begun to drift; the row is `overflow-x-auto` with `whitespace-nowrap` labels
+  because four tabs no longer fit one 375 px row.
+- **Request Affiliation is gated on `!isChildOrg || parentApprovalStatus === 'REVOKED'`.** A revoked
+  child KEEPS its `parent_org_id`, so the old `!isChildOrg` gate hid the control from the one
+  organization that needed it — a permanent dead end. Do not "simplify" this back.
+- **`fetchParentOrgName` runs for any child with a parent**, not only APPROVED ones. Gated on
+  APPROVED, the PENDING and REVOKED screens rendered the literal fallback string, i.e. "Affiliation
+  revoked by parent organization".
+
+Tests: `OrgProfilePageAffiliates.test.tsx` (13 cases as of the 2026-09-13 CTO review above — 10
+original + a PENDING-cannot-re-request gate test + 2 RLS-blocked fallback tests).
 
 ## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
 
@@ -9,6 +90,102 @@ _Last updated: 2026-09-12_
 - `PublicProfilePage` renders `resolveSocialLinks(links)`. Its old `normalizeUrl` prefixed `https://` onto scheme-less values, which happened to defang `javascript:` into an unparseable `https://javascript:alert(1)` — accidental, not a guarantee, and it did nothing for protocol-relative `//evil.example`. Do not reintroduce a prefix-only normaliser here.
 
 `AboutPage`, `EnterprisePage`, `HowItWorksPage`, `IndependentVerifyPage` and `UseCasesPage` each emit a JSON-LD block via `dangerouslySetInnerHTML` and had **no** escape at all; all five now use `toJsonLd` from `src/lib/jsonLd.ts`. Their payloads are static constants today — use the helper anyway in any new one.
+
+## 2026-09-13 SCRUM-5044/5045/5043 — `PipelineAdminPage.tsx` Pipeline Controls is now fully data-driven
+
+All five previously-hardcoded JobButton groups (Processing, Federal & Compliance,
+Professional Licensing, Academic & Education, Business Entities) are now
+`PipelineJobControl[]` arrays in the same shape `INTERNATIONAL_JOB_GROUPS`
+already used — `PROCESSING_JOB_CONTROLS`, `FEDERAL_COMPLIANCE_JOB_CONTROLS`,
+`PROFESSIONAL_LICENSING_JOB_CONTROLS`, `ACADEMIC_EDUCATION_JOB_CONTROLS`,
+`BUSINESS_ENTITIES_JOB_CONTROLS`. `PIPELINE_JOB_GROUPS` concatenates all of
+them with `INTERNATIONAL_JOB_GROUPS` and is the single thing the "Pipeline
+Controls" JSX maps over now — adding, disabling, or re-sourcing a control is a
+one-line data change, not a JSX edit in five different places.
+
+**`disabledReason` is now honest, not aspirational** (SCRUM-5045): controls
+whose source has never produced a record, or that hit a real upstream/code
+defect (403 bot-protection, 404 moved endpoint, 502 code defect, a date-filter
+bug returning 200/zero-rows), carry a `disabledReason` naming the actual Jira
+ticket instead of running against a route that quietly never worked.
+
+**`longRunning: true`** (fetch-finra, fetch-npi, fetch-calbar,
+fetch-all-state-bills) does two things (SCRUM-5043 UI half):
+1. Renders a "Runs in background" caption/description under the control.
+2. In `triggerJob`, a `504` from a longRunning control's route sets status
+   `'done'` (not `'error'`) with a message telling the operator to check
+   source volume instead of assuming the job failed. **Only** applies when
+   `LONG_RUNNING_JOB_PATHS.has(jobPath)` — a 504 from any other control is
+   still a hard error, unchanged.
+
+**`sourceKey`** maps a control to the `public_records.source` value(s) it
+writes (array for controls that fan into more than one source, e.g.
+`fetch-continuing-education` → `['nasba_cpe', 'accme']`). Controls with no
+source-tagged output (`fetch-certifications`, `fetch-sos`) omit it and render
+no freshness caption.
+
+**Per-source freshness (SCRUM-5044)** reads `public_records` directly —
+`fetchSourceFreshness` runs one `Promise.allSettled` over
+`DISTINCT_SOURCE_KEYS`, two lightweight queries per source (a `head:true`
+count filtered to the last 30 days, and an `order(created_at desc).limit(1)`),
+both backed by `idx_public_records_source_created (source, created_at DESC)`.
+**This is deliberately NOT the unindexed full-table query already ruled out**
+for this table (see the "direct public_records query times out on 1.4M rows"
+comment a few hundred lines below in the records-browser fallback) —
+per-source + per-index-key scoping is what makes it safe. `count_public_records_by_source`
+(→ `bySource`) is a periodically-refreshed cache of **total** counts only, no
+last-insert timestamp and no 30-day window, and no existing RPC covers either
+— per the spec this reads the table directly rather than adding a migration
+or worker route. A single source's failed query renders "Freshness
+unavailable" for just that control (isolated try/catch, same pattern as the
+existing `byCredentialType` fetch); it never gets rendered as "No records
+yet" — that phrase means the query succeeded and found zero rows, not that
+the query failed.
+
+**Freshness is gated behind the section's own open state, not fired
+unconditionally on every poll** (2026-09-13 coordinator follow-up, same
+ticket). It is deliberately decoupled from `fetchStats`/`stats` into its own
+state (`sourceFreshness`) and its own callback (`fetchSourceFreshness`):
+- `PipelineJobControl`s' `CollapsibleSection` for "Pipeline Controls" is the
+  one instance in this file with a controlled `open`/`onOpenChange` pair
+  (`pipelineControlsOpen` lifted to the page component); every other
+  `CollapsibleSection` call stays fully uncontrolled — `open`/`onOpenChange`
+  are optional props that default to the section's own internal `useState`.
+- `fetchSourceFreshness(opts?: { force?: boolean })` no-ops immediately
+  (before issuing any query) unless `pipelineControlsOpen` is true — this is
+  the hard "never fetch while collapsed" rule, and it applies even to the
+  manual Refresh button.
+- A `sourceFreshnessFetchedAtRef` timestamp throttles re-fetches to at most
+  once per `SOURCE_FRESHNESS_TTL_MS` (5 minutes) — "a timestamp guard around
+  the fetch, not a second interval." Three things call it: an effect that
+  fires once when the section transitions to open (satisfies "fetch
+  immediately on expand if empty/stale" — the emptiness/staleness check lives
+  in the guard itself, not in the effect), the same 30s `pollFetchStats` tick
+  that already drives `fetchStats` (a no-op whenever collapsed or still
+  fresh), and `handleRefresh` with `{ force: true }` (bypasses the 5-minute
+  throttle only — not the collapsed gate, since a collapsed section still
+  can't show the result).
+- `pipelineControlsOpen` is read via closure (in `fetchSourceFreshness`'s own
+  `useCallback` deps), not via a ref's `.current` read during render — the
+  latter trips the `react-hooks/refs` lint rule now. `useVisibilityPolling`'s
+  cb-ref discipline (see that hook's own doc) means `pollFetchStats` picking
+  up a new `fetchSourceFreshness` identity on every toggle never restarts its
+  interval/listener.
+
+**UAT catch (2026-09-13, same ticket): `title`/`aria-label` alone is not
+enough for a disabled control.** `src/components/ui/button.tsx` applies
+`disabled:pointer-events-none`, so a disabled `<button>` never receives
+`:hover` and its `title` tooltip never renders for a mouse user — a
+`disabledReason` that only exists in `title`/`aria-label` is invisible in
+practice, defeating the point of SCRUM-5045. `JobControlTile` now also
+renders `job.disabledReason` as a visible `break-words` caption (same style
+as the freshness/longRunning captions, `pipeline-job-reason-<path>` testid),
+placed first when a control also has a freshness caption (several disabled
+controls still carry a `sourceKey`). `title`/`aria-label` are unchanged —
+this is additive, not a replacement. `button.tsx` itself is untouched; fixing
+`disabled:pointer-events-none` there is a bigger, cross-page decision (it
+affects every disabled button in the app) that was out of scope here.
+
 
 ## 2026-08-31 — `IndependentVerifyPage` told readers to run a file that does not exist
 

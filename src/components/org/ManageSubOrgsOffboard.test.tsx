@@ -76,7 +76,9 @@ describe('ManageSubOrgs offboarding (SCRUM-3868)', () => {
 
     await user.click(await offboardButton());
 
-    expect(await screen.findByText(/offboard this organization\?/i)).toBeInTheDocument();
+    // Founder feedback 2026-09-13: the confirmation now names the organization,
+    // because at 375 px the row it was launched from truncates the name.
+    expect(await screen.findByText('Offboard Nairobi Firm A?')).toBeInTheDocument();
     expect(calls.some((c) => c.url.includes('/offboard'))).toBe(false);
   });
 

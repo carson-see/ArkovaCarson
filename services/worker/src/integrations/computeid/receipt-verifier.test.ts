@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { loadPinnedCa, type PinnedCa } from './ca-cert.js';
 import { ComputeIdVerificationReceipt } from './schemas.js';
-import { verifyComputeIdReceipt, type ComputeIdReceiptInput } from './receipt-verifier.js';
+import { verifyComputeIdReceipt, readSignedReceiptStatus, type ComputeIdReceiptInput } from './receipt-verifier.js';
 
 const NOW = new Date('2026-09-07T12:00:00Z');
 const PASSPORT = '0d8f7c1e-2a1b-4c3d-9e8f-1a2b3c4d5e6f';
@@ -198,4 +198,87 @@ it('verifies a newline-wrapped base64 signature over unchanged signed payload by
   const receipt = receiptFor(privateKey, ca);
   receipt.receipt_signature = receipt.receipt_signature.match(/.{1,64}/g)!.join('\n');
   expect(verifyComputeIdReceipt({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }).ok).toBe(true);
+});
+
+
+/**
+ * `readSignedReceiptStatus` is the scheduled re-check's entry point
+ * (SCRUM-4495). It exists because `verifyComputeIdReceipt` refuses anything
+ * but `active` — correct for admission, useless for noticing a revocation.
+ * Both share one signature implementation; these tests pin that the signature
+ * is still the gate and that admission policy has NOT leaked into it.
+ */
+describe('readSignedReceiptStatus', () => {
+  const { publicKey, privateKey } = rsa();
+  const ca = pin(publicKey);
+
+  it('returns a SIGNED non-active status that verifyComputeIdReceipt refuses outright', () => {
+    const receipt = receiptFor(privateKey, ca, {
+      payloadOverride: { status: 'revoked' },
+      outerOverride: { status: 'revoked' },
+    });
+    expect(verifyComputeIdReceipt({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }))
+      .toEqual({ ok: false, reason: 'status_not_active' });
+    expect(readSignedReceiptStatus({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }))
+      .toMatchObject({ ok: true, status: 'revoked', passportId: PASSPORT });
+  });
+
+  it('SIGNATURE IS STILL THE GATE: a revoked receipt signed by another key is rejected as a signature failure', () => {
+    const rogue = rsa();
+    const receipt = receiptFor(rogue.privateKey, ca, {
+      payloadOverride: { status: 'revoked' },
+      outerOverride: { status: 'revoked' },
+    });
+    expect(readSignedReceiptStatus({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }))
+      .toEqual({ ok: false, reason: 'invalid_signature' });
+  });
+
+  it('rejects a receipt whose unsigned outer status disagrees with the signed one', () => {
+    const receipt = receiptFor(privateKey, ca, {
+      payloadOverride: { status: 'revoked' },
+      outerOverride: { status: 'active' },
+      skipSchemaValidation: true,
+    });
+    expect(readSignedReceiptStatus({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }))
+      .toEqual({ ok: false, reason: 'payload_field_mismatch' });
+  });
+
+  it('still enforces expiry — a stale receipt is not a statement about current state', () => {
+    const receipt = receiptFor(privateKey, ca, {
+      payloadOverride: { status: 'suspended' },
+      outerOverride: { status: 'suspended' },
+    });
+    const afterExpiry = new Date('2026-09-07T12:30:00.000Z');
+    expect(readSignedReceiptStatus({ receipt, ca, expectedPassportId: PASSPORT, now: afterExpiry }))
+      .toEqual({ ok: false, reason: 'expired' });
+  });
+
+  it('rejects a receipt presented for a different passport', () => {
+    const receipt = receiptFor(privateKey, ca);
+    expect(readSignedReceiptStatus({ receipt, ca, expectedPassportId: 'ffffffff-0000-4000-8000-000000000000', now: NOW }))
+      .toEqual({ ok: false, reason: 'passport_id_mismatch' });
+  });
+
+  it('reports the CA attestation about the passport own signatures, and null when unattested', () => {
+    const attested = receiptFor(privateKey, ca, { payloadOverride: { signature_valid: true, pq_signature_valid: false } });
+    expect(readSignedReceiptStatus({ receipt: attested, ca, expectedPassportId: PASSPORT, now: NOW }))
+      .toMatchObject({ ok: true, passportSignatureValid: false });
+
+    const silent = receiptFor(privateKey, ca, {
+      rawPayload: JSON.stringify({ passport_id: PASSPORT, status: 'active', issued_at: '2026-09-07T11:59:00.000Z', expires_at: '2026-09-07T12:30:00.000Z', key_id: ca.keyId }),
+      outerOverride: { signature_valid: null },
+      skipSchemaValidation: true,
+    });
+    expect(readSignedReceiptStatus({ receipt: silent, ca, expectedPassportId: PASSPORT, now: NOW }))
+      .toMatchObject({ ok: true, passportSignatureValid: null });
+  });
+
+  it('does NOT apply the admission-only 24h validity ceiling — that policy stays in verifyComputeIdReceipt', () => {
+    const receipt = receiptFor(privateKey, ca, {
+      payloadOverride: { status: 'suspended', issued_at: '2026-09-05T00:00:00.000Z', expires_at: '2026-09-09T00:00:00.000Z' },
+      outerOverride: { status: 'suspended', issued_at: '2026-09-05T00:00:00.000Z', expires_at: '2026-09-09T00:00:00.000Z' },
+    });
+    expect(readSignedReceiptStatus({ receipt, ca, expectedPassportId: PASSPORT, now: NOW }))
+      .toMatchObject({ ok: true, status: 'suspended' });
+  });
 });

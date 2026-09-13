@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "rc_id": "rc-train-c-2026-09-13",
+  "created_at": "2026-09-13T18:14:54Z",
+  "created_by": "CTO release session (Claude Fable 5.1) for carson@arkova.io",
+  "release_owner": "CTO release session",
+  "approval_status": "pending_seal",
+  "approval_actor": "",
+  "approval_time": "",
+  "train_launch_sha": "5f1c6756004e8c2586bd8cc5ad9add367cf2d674",
+  "target_main_sha": "772fb221bbceb199e30a0eeaad37e197dc0a3cb6",
+  "allowed_base_shas": [
+    "772fb221bbceb199e30a0eeaad37e197dc0a3cb6"
+  ],
+  "covered_main_shas": [
+    "772fb221bbceb199e30a0eeaad37e197dc0a3cb6"
+  ],
+  "included_prs": [
+    {
+      "pr": 2831,
+      "head_sha": "4bc404c2c",
+      "base_sha": "772fb221bbceb199e30a0eeaad37e197dc0a3cb6",
+      "tier": "T3",
+      "ticket": "SCRUM-4889",
+      "migrations": [
+        "0452"
+      ]
+    },
+    {
+      "pr": 2904,
+      "head_sha": "93ef43d3b",
+      "base_sha": "772fb221bbceb199e30a0eeaad37e197dc0a3cb6",
+      "tier": "T3",
+      "ticket": "SCRUM-3972",
+      "migrations": [
+        "0454"
+      ]
+    },
+    {
+      "pr": 2905,
+      "head_sha": "5aa943994",
+      "base_sha": "772fb221bbceb199e30a0eeaad37e197dc0a3cb6",
+      "tier": "T3",
+      "ticket": "SCRUM-5024",
+      "migrations": [
+        "0455",
+        "0456"
+      ]
+    }
+  ],
+  "excluded_prs": [
+    {
+      "pr": 2844,
+      "reason": "already sealing on Train B4 (rig 3)"
+    }
+  ],
+  "environment": {
+    "evidence_scope": "merge-grade standing rig (clean mirror of prod before the train's own migrations)",
+    "staging_api_base": "https://arkova-worker-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://arkova-worker-staging-kvojbeutfa-uc.a.run.app",
+    "cloud_run_service": "arkova-worker-staging",
+    "revision": "",
+    "deploy_tag": "train-c",
+    "image_digest": "",
+    "supabase_project_ref": "fizyjojbebyalirtjjht",
+    "deploy_log_id": "46 (first cut a0975586b); re-deploy pending for 5f1c67560",
+    "preflight_result": "environment_type=clean_mirror from the train checkout (docs/staging/cto-train-b1-0912/preflight-train-c-20260913T180450Z.json); soak_artifact from an origin/main checkout because the train's own 0454-0456 are applied",
+    "fanout_flag": "ENABLE_SUBORG_WEBHOOK_FANOUT=true on the rig"
+  },
+  "soak": {
+    "tier": "T3 (24 h floor, CLAUDE.md §1.12 as of bd62f6ee3)",
+    "start": "",
+    "end": "",
+    "cycles": 0,
+    "failures": 0,
+    "evidence_dir": "",
+    "notes": ""
+  },
+  "migration_plan": {
+    "migrations": [
+      "0452 (already on prod, reconciled 14:13Z)",
+      "0454",
+      "0455",
+      "0456"
+    ],
+    "rig_apply": "0454/0455/0456 applied 18:00Z; rollback + reapply rehearsed for 0455/0456 (18:12Z, after the REVOKE-form fix) and 0454 (18:18Z) — docs in /Volumes/Extreme/offload/cto-soak-2026-09-12/train-c/rollback-rehearsal.json",
+    "prod_apply": "at seal, §0 rule 10: exemption + MCP apply_migration + numeric reconcile + list_migrations readback, then prod-tables.json refresh for referral_codes/organization_referrals"
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "pre_deploy_step": ""
+  },
+  "exceptions": [],
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-c-2026-09-13.json",
+  "staging_branch": "rc/train-c-2026-09-13",
+  "preflight_timestamp": ""
+}

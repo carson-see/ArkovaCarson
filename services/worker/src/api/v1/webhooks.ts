@@ -47,6 +47,7 @@ import {
 export { CreateWebhookSchema, UpdateWebhookSchema, ListWebhooksQuerySchema, VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
 import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
 import { chunkForInFilter } from '../../utils/postgrest-filter.js';
+import { formatEgressFailure, webhookFetch } from '../../webhooks/egress.js';
 
 const router = Router();
 // Keep VALID_WEBHOOK_EVENTS in scope for runtime reference elsewhere if needed.
@@ -139,14 +140,17 @@ function generateWebhookSecret(): string {
  * must respond 2xx and echo the challenge in the body. Returns null on
  * success, or an error message on failure. Timeout: 5 seconds.
  */
-async function sendVerificationPing(url: string, secret: string): Promise<string | null> {
+export async function sendVerificationPing(url: string, secret: string): Promise<string | null> {
   const challenge = crypto.randomBytes(16).toString('hex');
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const payload = JSON.stringify({ event_type: 'webhook.verification', challenge, timestamp });
   const signature = signPayload(`${timestamp}.${payload}`, secret);
 
   try {
-    const response = await fetch(url, {
+    // SCRUM-4983: IP-pinned — the socket can only reach the address that was
+    // validated, so a host rebinding between the pre-check and this ping is
+    // refused here rather than reaching the metadata server.
+    const response = await webhookFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -165,7 +169,7 @@ async function sendVerificationPing(url: string, secret: string): Promise<string
     if (!body.includes(challenge)) return 'verification endpoint did not echo challenge token';
     return null;
   } catch (err) {
-    return err instanceof Error ? `verification ping failed: ${err.message}` : 'verification ping failed';
+    return `verification ping failed: ${formatEgressFailure(err).message}`;
   }
 }
 
@@ -430,7 +434,8 @@ router.post('/test', async (req, res) => {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
 
-    const response = await fetch(endpoint.url, {
+    // SCRUM-4983: IP-pinned dispatch (see webhooks/egress.ts).
+    const response = await webhookFetch(endpoint.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -452,6 +457,12 @@ router.post('/test', async (req, res) => {
       event_id: testPayload.event_id,
     });
   } catch (err) {
+    const egress = formatEgressFailure(err);
+    if (egress.permanent) {
+      logger.warn({ endpoint_id, code: egress.code }, 'Test webhook blocked at dispatch (pinned egress refused the resolved target)');
+      errorResponse(res, 400, 'invalid_url', 'Webhook URL targets a private or internal network address');
+      return;
+    }
     logger.error({ error: err, endpoint_id }, 'Test webhook delivery failed');
     errorResponse(
       res,
@@ -589,6 +600,18 @@ router.post('/deliveries/:id/replay', async (req, res) => {
     }
     if (result.error === 'ssrf_blocked') {
       errorResponse(res, 403, 'ssrf_blocked', 'Endpoint URL targets a private network');
+      return;
+    }
+    if (result.error === 'payload_refused') {
+      // SCRUM-3982: the stored payload carries a field that may never leave
+      // Arkova (or its event type has no schema). 422 rather than 500 — the
+      // request is well-formed, the stored resource is not replayable.
+      errorResponse(
+        res,
+        422,
+        'payload_refused',
+        'Stored payload contains a field that cannot be delivered; contact support to have this event re-issued',
+      );
       return;
     }
     if (result.error === 'delivery_failed' && !result.new_delivery_id) {

@@ -81,6 +81,8 @@ async function signSupabaseTestJwt(
     sub: 'user-123',
     aud: 'authenticated',
     iss: `${env.SUPABASE_URL}/auth/v1`,
+    role: 'authenticated',
+    aal: 'aal2',
     exp: 4_102_444_800,
     iat: 1_767_804_000,
     ...payloadOverrides,

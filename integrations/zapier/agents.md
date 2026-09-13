@@ -22,3 +22,14 @@ Node 22 `npm ci` failed before any test could run. The reconciled lock resolves
 existing native `libc` constraints are preserved. Clean installation, all 24
 tests, and the package build pass. Keep the lock installable with `npm ci`;
 an existing dependency directory is not evidence that a fresh install works.
+
+## 2026-09-12 — attestation events mirrored (SCRUM-3982)
+
+`VALID_EVENTS` gained `attestation.created` and `attestation.revoked`, appended
+after `compliance.document_expiring` to match the worker's declaration order
+(`test/zapier.test.ts` pins the array with `toEqual`). This constant is the
+mirror of the worker allowlist; nothing in this app reads it, and no packaged
+trigger subscribes to either event, so listing them does not by itself give a
+Zap author a way to pick them. `attestation.revoked` in particular has a
+registered schema but no reachable producer yet — see
+`services/worker/src/webhooks/agents.md`.

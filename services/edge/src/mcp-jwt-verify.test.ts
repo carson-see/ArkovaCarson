@@ -33,7 +33,7 @@ async function mintHS256(secret: string, payload: Record<string, unknown>) {
   return `${h}.${p}.${b64u(sig)}`;
 }
 const now = Math.floor(Date.now() / 1000);
-const claims = { sub: 'user-1', aud: 'authenticated', iss: `${SUPABASE_URL}/auth/v1`, exp: now + 600, iat: now - 5, role: 'authenticated' };
+const claims = { sub: 'user-1', aud: 'authenticated', iss: `${SUPABASE_URL}/auth/v1`, exp: now + 600, iat: now - 5, role: 'authenticated', aal: 'aal2' };
 
 describe('verifySupabaseJwt — ES256 via JWKS', () => {
   beforeEach(() => resetJwksCacheForTests());

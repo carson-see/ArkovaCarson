@@ -7,6 +7,7 @@
  */
 
 import { test, expect, SEED_USERS, getServiceClient } from './fixtures';
+import { submitTotpCodeWithBoundaryRetry } from './helpers/mfa';
 import { uniqueTestId } from './helpers/unique';
 
 // Auth spec tests the login/signup forms themselves — they must start
@@ -178,6 +179,15 @@ test.describe('Authentication', () => {
       await page.getByRole('button', { name: 'Sign in' }).click();
 
       await page.waitForURL(/\/(vault|dashboard|onboarding)/, { timeout: 10000 });
+      const enrollment = page.getByTestId('mfa-enrollment-required');
+      await expect(enrollment).toBeVisible();
+      const secret = (await page.getByTestId('mfa-enrollment-secret').innerText()).trim();
+      await submitTotpCodeWithBoundaryRetry(page, secret, {
+        codeTestId: 'mfa-enrollment-code',
+        submitTestId: 'mfa-enrollment-submit',
+        errorTestId: 'mfa-enrollment-error',
+      });
+      await expect(enrollment).toBeHidden();
 
       // Open user dropdown and sign out. The disposable user prevents this
       // test from invalidating the shared storageState seed session.

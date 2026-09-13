@@ -4,6 +4,19 @@ _Last updated: 2026-09-07 (ninth closure: approver-class fields now reject a LEA
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
 _Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditions + new do-not-merge body/label parity lint; previously: evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
 
+## 2026-09-12 — soak floors 4h/24h + post-soak T0 delta (CTO decision)
+
+`TIER_SPECS.T2.soakHours` 12→4, `T3` 48→24 (Carson's cost-effectiveness directive). **Duration stopped being the primary evidence; targeted changed-behaviour coverage is.** No soak here ever surfaced a defect after the first full cycle of the changed behaviour — the windows that died, died from observers and environment (Cloud Run min-instance recycles, `$TMPDIR` sweeps, control-plane 5xx, base refreshes; HANDOFF 2026-09-08/09-09), not the code under test. The targeted fields, `Rollback rehearsed:`, and T3's trigger/flush/isolation set are unchanged and still mandatory; 24h still contains exactly one 03:00 UTC daily flush, and a FORCED trigger firing counts when the field cites the log line.
+
+**New field `Post-soak T0 delta: <current head SHA>`** (`headShaEvidenceResult`, shared by the T1/T2/T3 standard, frontend-T2 and unsoakable-T2 paths). Before it, a post-soak commit touching only `e2e/**` or `docs/**` — files `isT0OnlyFile` already calls T0 *because they cannot reach prod runtime* — invalidated exact-head evidence and forced a re-soak of code the soak already covered. Opt-in per PR; every condition fails CLOSED, keeping the original staleness error:
+
+- the field must name the CURRENT head (not some other commit);
+- the soaked SHA must be an ANCESTOR of it — `null` ancestry rejects, so a rebase/force-push cannot pass;
+- the delta list must be computable and non-empty (`changedFilesProvider`, default `changedFilesBetween`);
+- every file must satisfy `isT0OnlyFile` with DEFAULT options — no `diffProvider` carve-outs, which judge T0-ness from a diff against the PR base rather than the post-soak delta. The first non-T0 file is named in the error.
+
+RC-manifest head binding (`validateHeadBindingMode`) is deliberately untouched.
+
 ## 2026-09-05 — a claim rule that could not fire, and a sixth surface nobody checked
 
 **`CLAIM_RULES[retrieval-mechanism-claim]` was DEAD.** Its `tools` still read
@@ -866,3 +879,42 @@ with the real GitHub expression evaluator; SCRUM-4565 retains the event matrix
 and negative controls for bot identity, sender identity, base changes, cancellation
 groups, and required-result preservation. All live evidence-input and per-step
 identity assertions remain enforced by the existing suite.
+
+## 2026-09-12 — webhook registration drift: two gotchas worth writing down (SCRUM-3982)
+
+Registering `attestation.created` + `attestation.revoked` exercised
+`check-webhook-event-registration-drift.ts` end to end. Both surprises came
+from the region regexes, and both fail in the safe direction (reported drift),
+which is the design working:
+
+- `packages/sdk/src/types.ts` is matched with
+  `/export type WebhookEventType\s*=([\s\S]*?);/` — non-greedy to the FIRST
+  semicolon. A semicolon inside a comment in that union truncates the region,
+  and the gate reports every member after it as missing from the mirror. The
+  failure text says "Missing", which reads like a forgotten edit rather than a
+  truncated read, so check the comment punctuation before re-adding ids.
+- The markdown surface (`docs/api/webhooks.md`) is set-compared and only counts
+  the FIRST cell of a table row, so a new event needs its own row — adding it
+  to an existing row's prose does not satisfy the gate. That is deliberate:
+  mentioned is not documented.
+
+The script's own test gained a tail-order assertion
+(`compliance.document_expiring`, `attestation.created`, `attestation.revoked`),
+so the declaration order the five order-sensitive mirrors must match is pinned
+by name, not only by count. SCRUM-3972 appends seven `suborg.*` entries after
+these — declared land order is 3982 then 3972.
+
+## SCRUM-3982 CTO review — the drift test's tail assertion (2026-09-12)
+
+`check-webhook-event-registration-drift.test.ts` asserted the registry's last
+three entries with `canonical.ids.slice(-3)`. That pins `attestation.revoked`
+as the final entry of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` **forever**, so
+SCRUM-3972 — which appends seven `suborg.*` entries after these, to the same
+six ordered mirrors — would have turned a green test red on a clean union
+merge, with a failure message that reads like drift.
+
+Replaced with relative ordering: `attestation.created` sits immediately after
+`compliance.document_expiring`, and `attestation.revoked` immediately after
+that. Same guarantee about where SCRUM-3982's entries go, indifferent to what
+lands after them. Prefer relative-position assertions over tail slices whenever
+the thing being ordered is an append-only list that other PRs also append to.

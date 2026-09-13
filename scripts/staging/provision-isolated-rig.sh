@@ -529,11 +529,20 @@ if [[ $APPLY -eq 1 ]]; then
   fi
 
   # A paid/live rig cannot truthfully identify as T0. Required worker uptime
-  # keeps the canonical staging-evidence floor (T1=2h, T2=12h, T3=48h).
+  # keeps the canonical staging-evidence floor (T1=2h, T2=4h, T3=24h).
+  #
+  # TIER_SPECS in scripts/ci/check-staging-evidence.ts is the SOURCE OF TRUTH
+  # for these numbers; this case is a mirror of it, in minutes. They were
+  # T2=720 / T3=2880 until the CTO decision of 2026-09-12 (Carson's directive
+  # to make the release process cost-effective) cut the T2 floor 12h→4h and the
+  # T3 floor 48h→24h, on the finding that soak duration is no longer the primary
+  # evidence — targeted changed-behaviour coverage is. If TIER_SPECS moves
+  # again, move these with it or the provisioner will refuse to stand up a rig
+  # for a soak the evidence gate would accept.
   case "$TIER" in
     T1) MIN_DURATION_MIN=120 ;;
-    T2) MIN_DURATION_MIN=720 ;;
-    T3) MIN_DURATION_MIN=2880 ;;
+    T2) MIN_DURATION_MIN=240 ;;
+    T3) MIN_DURATION_MIN=1440 ;;
     *)
       echo "ERROR: live rig tier must be one of T1, T2, or T3; T0/unknown tiers cannot provision a soak rig." >&2
       exit 2
@@ -647,6 +656,11 @@ BASE_ENV_VARS=(
   "NODE_ENV=production"
   "ENABLE_AI_FRAUD=false"
   "ENABLE_AI_REPORTS=false"
+  # Mirrors the prod deploy (deploy-worker.yml --set-env-vars). The worker's
+  # code default is 4500ms and prod runs 15000; --set-env-vars is authoritative
+  # here, so without this line a rig soaks /api/v1/ai/extract at a budget prod
+  # does not use and the extraction evidence describes the wrong system.
+  "AI_EXTRACTION_LATENCY_BUDGET_MS=15000"
   "CORS_ALLOWED_ORIGINS=https://app.arkova.ai"
   "FRONTEND_URL=${FRONTEND_URL_VALUE}"
 )
@@ -1841,7 +1855,7 @@ replay_schema() {
   while (( attempt <= LINK_MAX_ATTEMPTS )); do
     echo "executing (attempt ${attempt}/${LINK_MAX_ATTEMPTS}): npx supabase db push --linked" >&2
     set +e
-    out="$(npx supabase db push --linked 2>&1)"; rc=$?
+    out="$(npx --no-install supabase db push --linked 2>&1)"; rc=$?
     set -e
     printf '%s\n' "$out"
     if (( rc == 0 )); then

@@ -1467,6 +1467,7 @@ export const openApiSpec: Record<string, any> = {
           'Register a new webhook endpoint programmatically. Returns the HMAC signing secret ONCE — save it immediately, it cannot be retrieved later. The URL must be HTTPS and is validated against private/internal/cloud-metadata IPs (SSRF protection) with full DNS resolution. Pass `verify: true` to require a synchronous verification ping (the endpoint must echo a challenge token before registration succeeds).',
         operationId: 'createWebhookEndpoint',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         requestBody: {
           required: true,
@@ -1500,6 +1501,7 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`), or the key actor is not an ORG_ADMIN.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
         },
       },
@@ -1508,6 +1510,7 @@ export const openApiSpec: Record<string, any> = {
         description: "List all webhook endpoints registered to the API key's organization. Paginated. Secrets are never returned.",
         operationId: 'listWebhookEndpoints',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } },
@@ -1531,6 +1534,7 @@ export const openApiSpec: Record<string, any> = {
             },
           },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
     },
@@ -1540,6 +1544,7 @@ export const openApiSpec: Record<string, any> = {
         description: 'Retrieve metadata for a single webhook endpoint. Secrets are never returned.',
         operationId: 'getWebhookEndpoint',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
         responses: {
@@ -1548,6 +1553,7 @@ export const openApiSpec: Record<string, any> = {
             content: { 'application/json': { schema: { $ref: '#/components/schemas/WebhookEndpoint' } } },
           },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '404': { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -1556,6 +1562,7 @@ export const openApiSpec: Record<string, any> = {
         description: 'Partially update a webhook endpoint. Provide any subset of {url, events, description, is_active}. Updating the URL re-validates SSRF protection. The signing secret cannot be rotated via this endpoint — delete and re-register instead.',
         operationId: 'updateWebhookEndpoint',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
         requestBody: {
@@ -1584,6 +1591,7 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`), or the key actor is not an ORG_ADMIN.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '404': { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -1592,11 +1600,13 @@ export const openApiSpec: Record<string, any> = {
         description: 'Permanently delete a webhook endpoint. Cascades to delivery logs.',
         operationId: 'deleteWebhookEndpoint',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
         responses: {
           '204': { description: 'Webhook endpoint deleted' },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`), or the key actor is not an ORG_ADMIN.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '404': { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -1608,6 +1618,7 @@ export const openApiSpec: Record<string, any> = {
         description: 'Send a synthetic test event to a webhook endpoint to verify configuration. The payload includes test: true so consumers can distinguish test from real events.',
         operationId: 'testWebhook',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         requestBody: {
           required: true,
@@ -1616,6 +1627,7 @@ export const openApiSpec: Record<string, any> = {
         responses: {
           '200': { description: 'Test delivery result', content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, status_code: { type: 'integer' }, response_body: { type: 'string' }, event_id: { type: 'string' } } } } } },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '404': { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -1626,6 +1638,7 @@ export const openApiSpec: Record<string, any> = {
         description: 'View recent webhook delivery attempts for self-service debugging. Filter by endpoint_id.',
         operationId: 'listWebhookDeliveries',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [
           { name: 'endpoint_id', in: 'query', schema: { type: 'string', format: 'uuid' }, description: 'Filter by endpoint ID' },
@@ -1634,6 +1647,7 @@ export const openApiSpec: Record<string, any> = {
         responses: {
           '200': { description: 'Delivery log entries', content: { 'application/json': { schema: { type: 'object', properties: { deliveries: { type: 'array', items: { $ref: '#/components/schemas/WebhookDelivery' } }, total: { type: 'integer' } } } } } },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
     },
@@ -1646,6 +1660,7 @@ export const openApiSpec: Record<string, any> = {
         description: 'Re-fires a previously-attempted delivery using its original payload, signed with a fresh timestamp. Inserts a new delivery log row (idempotency_key=`replay-{id}-{ts}`) — the original attempt is preserved for audit. Cross-org access returns 404.',
         operationId: 'replayWebhookDelivery',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'The delivery log ID to replay' }],
         responses: {
@@ -1666,7 +1681,7 @@ export const openApiSpec: Record<string, any> = {
             },
           },
           '401': { $ref: '#/components/responses/Unauthorized' },
-          '403': { description: 'Endpoint URL now targets a private network (SSRF protection re-validated on replay)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '403': { description: 'Either the API key does not hold the `webhooks:manage` scope (`insufficient_scope`), or the endpoint URL now targets a private network (SSRF protection re-validated on replay).', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '404': { description: 'Delivery not found or does not belong to your organization', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '409': { description: 'Cannot replay to a disabled webhook endpoint', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
@@ -1678,6 +1693,7 @@ export const openApiSpec: Record<string, any> = {
         description: 'Self-service dead-letter queue: deliveries that exhausted all retry attempts. ORG_ADMIN only.',
         operationId: 'listWebhookDlq',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, minimum: 1, maximum: 100 } },
@@ -1685,7 +1701,7 @@ export const openApiSpec: Record<string, any> = {
         responses: {
           '200': { description: 'Dead-letter queue entries', content: { 'application/json': { schema: { type: 'object', properties: { entries: { type: 'array', items: { type: 'object', additionalProperties: true } }, total: { type: 'integer' } } } } } },
           '401': { $ref: '#/components/responses/Unauthorized' },
-          '403': { description: 'ORG_ADMIN required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`), or the key actor is not an ORG_ADMIN.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
     },
@@ -1695,12 +1711,13 @@ export const openApiSpec: Record<string, any> = {
         description: 'Marks a dead-letter queue entry as resolved (acknowledged). Mutates delivery evidence, so ORG_ADMIN only.',
         operationId: 'resolveWebhookDlqEntry',
         tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'The DLQ entry ID' }],
         responses: {
           '200': { description: 'DLQ entry resolved', content: { 'application/json': { schema: { type: 'object', properties: { resolved: { type: 'boolean' }, id: { type: 'string', format: 'uuid' } } } } } },
           '401': { $ref: '#/components/responses/Unauthorized' },
-          '403': { description: 'ORG_ADMIN required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '403': { description: 'The API key does not hold the `webhooks:manage` scope (`insufficient_scope`), or the key actor is not an ORG_ADMIN.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '404': { description: 'DLQ entry not found or does not belong to your organization', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
@@ -2514,7 +2531,11 @@ router.get('/spec.json', (_req, res) => {
 router.use('/', swaggerUi.serve, swaggerUi.setup(openApiSpec, {
   customCss: nordicVaultCss,
   customSiteTitle: 'Arkova Verification API Docs',
-  customfavIcon: 'https://arkova-26.vercel.app/favicon.ico',
+  // Review on PR #2838: the previous arkova-26.vercel.app/favicon.ico was a
+  // 404 (verified 2026-09-12). app.arkova.ai serves the brand SVG; the host is
+  // allow-listed in DOCS_CSP img-src (middleware/securityHeaders.ts) — change
+  // both together.
+  customfavIcon: 'https://app.arkova.ai/favicon.svg',
 }));
 
 export { router as docsRouter };

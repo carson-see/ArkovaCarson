@@ -555,7 +555,7 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const admissionRollback = markdownSection(STAGING_AGENTS_RAW, ADMISSION_ROLLBACK_HEADING);
 
     expect(sha256(step4)).toBe('f59687e0347c18d812aab0d5c34710b1b62579e4d4ad4f7f9168144ac37e7b73');
-    expect(sha256(admissionV2)).toBe('b043efd46cf96c08423dccfabfef564fca7b964ed8a8ade723f6454e6d1453de');
+    expect(sha256(admissionV2)).toBe('d0cebcfa86ba63f0b3c65aa35702c049e7c2607edb4e1ecda0a81b3dc3adfd03');
     expect(sha256(admissionRollback)).toBe('7b833be979de8b493535800df5393e57ece6541523ed9e5eeaaeadd8766dc5c3');
     for (const [heading, section] of [
       [STEP4_HEADING, step4],

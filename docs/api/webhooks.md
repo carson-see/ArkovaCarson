@@ -50,7 +50,11 @@ All webhook management endpoints require an Arkova API key. Pass it as either:
 - **Header:** `X-API-Key: ak_live_...`
 - **Bearer:** `Authorization: Bearer ak_live_...`
 
-API keys are scoped to a single organization. All webhook operations are automatically scoped to your org — you cannot register, read, or modify another org's webhooks.
+**The key must hold the `webhooks:manage` scope** (SCRUM-3981). Every route on this page is covered, reads included, and no other scope implies it — a key minted with only the default `read:search` gets `403 insufficient_scope`. Mint or re-issue the key with `webhooks:manage` selected; see the [scope vocabulary](./README.md#canonical-api-key-scope-vocabulary).
+
+Registering, updating and deleting an endpoint, and both dead-letter-queue routes, additionally require the key's actor to be an ORG_ADMIN — also a `403`.
+
+API keys are scoped to a single organization. All webhook operations are automatically scoped to your org — you cannot register, read, or modify another org's webhooks. Asking for another org's endpoint by id returns `404`, not `403`: holding `webhooks:manage` is a capability, not authority over someone else's data.
 
 ---
 
@@ -67,7 +71,7 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 | `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) | Stable |
 | `anchor.expired` | Anchor's `expires_at` timestamp passes | Stable |
 | `anchor.superseded` | A `SECURED` anchor is atomically replaced by a re-issued child (`SECURED` → `SUPERSEDED`), via `POST /api/anchor/:id/supersede`. Offered as a listed subscription option since SCRUM-3538; the CRUD allowlist has accepted it since SCRUM-2937. | Stable |
-| `anchor.batch_secured` | Aggregate event for the merkle-batch path (fires once per merkle TX; per-anchor `anchor.secured` events still fan out alongside). Subscribable since SCRUM-1794. | Stable |
+| `anchor.batch_secured` | Aggregate event for the merkle-batch path, intended to fire once per merkle transaction. | Contract defined; subscriptions are accepted and the payload contract has been locked since SCRUM-1794, but **no producer dispatches this event** — no delivery has ever occurred. Records secured through the merkle-batch path are reported by the per-anchor `anchor.secured` fan-out, which is live; subscribe to that |
 
 `anchor.superseded` payload `data`: `public_id`, `status` (always `SUPERSEDED`), `chain_tx_id`, `chain_block_height`, `superseded_at`, plus optional `superseded_by_public_id` (the replacement record's public id — `null` when it is not resolvable at dispatch time), `supersession_reason` (free text, max 500 chars), and `org_public_id`. Follow `superseded_by_public_id` to walk the version chain without polling.
 
@@ -86,6 +90,26 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 | `compliance.document_expiring` | A `SECURED` record is inside its 7-day expiry window and has **not** expired yet. Advance warning — `anchor.expired` fires after the fact, once the sweep has already transitioned the record to `EXPIRED`. Emitted by the daily `check-credential-expiry` job, gated on `ENABLE_EXPIRY_ALERTS`. | Stable |
 
 `compliance.document_expiring` payload `data`: `public_id`, `status` (always `SECURED`), `expires_at`, `days_remaining` (positive integer), `warning_level` (`7_day`), plus optional `credential_type`, `label`, `org_public_id`.
+
+### Attestation Lifecycle (SCRUM-3982)
+
+| Event | Fired When | Status |
+|---|---|---|
+| `attestation.created` | An attester creates a **single** attestation via `POST /api/v1/attestations`. Fires at creation, before the attestation is secured. Bulk creation via `POST /api/v1/attestations/batch-create` does **not** emit this event. | Stable for the single-create route |
+| `attestation.revoked` | An attester withdraws an attestation via `PATCH /api/v1/attestations/{public_id}/revoke`. | Contract defined; subscriptions are accepted and the payload contract is locked, but the emit point is **not yet reachable in production** — no delivery of this event has occurred |
+
+`attestation.created` payload `data`: `public_id`, `attestation_type`, `status` (`DRAFT` or `PENDING` — a creation event never carries a terminal status), `created_at`, plus optional `org_public_id`.
+
+`attestation.revoked` payload `data`: `public_id`, `status` (always `REVOKED`), `revocation_reason`, `revoked_at`, plus optional `attestation_type` and `org_public_id`.
+
+**There is no subscribable attestation-finality event yet.** An earlier version
+of this page suggested pairing `attestation.created` with `anchor.secured` for
+on-chain finality; that is wrong — an attestation reaches finality through its
+own anchoring job, which emits `attestation.active`, and that event is not
+registered and therefore cannot be subscribed to. Poll
+`GET /api/v1/attestations/{public_id}` for `status: ACTIVE` until it is.
+
+Both obey the same allowlist as every other family: public ids only, no internal UUIDs, no document fingerprint, RFC 3339 timestamps with an explicit timezone. Until SCRUM-3982 these two events were dispatched without being registered, so no endpoint could subscribe to them and their payloads were not schema-checked; registering them is what makes the field ban enforceable, not merely documented.
 
 **Credential-event delivery status:** `credential.issued` and `credential.status_changed` are live — subscribed endpoints receive them today. `credential.verified` is the one exception: its payload schema, dispatch validation, HMAC signing, and CRUD acceptance are all live, and you can register a subscription for it now via `POST /webhooks` (or update an existing subscription), but emission is behind a production feature gate that has not been enabled — deliveries begin when that gate opens, with no re-registration needed. All three schemas obey the same allowlist rules as anchor events: `public_id`-only (including `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps with explicit timezone (`Z` or `±HH:MM`). See `services/worker/src/webhooks/payload-schemas.ts` for the canonical contract.
 
@@ -151,6 +175,8 @@ curl -X POST https://arkova-worker-270018525501.us-central1.run.app/api/v1/webho
 | 400 | `invalid_url` | URL targets a private/internal/cloud-metadata IP (SSRF blocked) |
 | 400 | `verification_failed` | `verify: true` was passed but the verification ping failed |
 | 401 | `authentication_required` | Missing or invalid API key |
+| 403 | `insufficient_scope` | The API key does not hold the `webhooks:manage` scope |
+| 403 | `forbidden` | The key holds `webhooks:manage` but its actor is not an ORG_ADMIN |
 | 429 | (rate limit) | Exceeded 10 req/min on webhook management |
 
 ---
@@ -539,6 +565,8 @@ All errors follow the same envelope:
 | 400 | `invalid_url` | URL targets a private/internal IP |
 | 400 | `verification_failed` | Verification ping (`verify: true`) didn't succeed |
 | 401 | `authentication_required` | Missing or invalid API key |
+| 403 | `insufficient_scope` | The API key does not hold the `webhooks:manage` scope |
+| 403 | `forbidden` | ORG_ADMIN required for this route (register / update / delete / DLQ) |
 | 404 | `not_found` | Endpoint ID doesn't exist or belongs to another org |
 | 429 | (rate limit) | Exceeded 10 req/min |
 | 500 | `internal_error` | Server-side failure — retry with exponential backoff |
