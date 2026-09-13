@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-12-TRAIN-B2",
+  "created_at": "2026-09-12T22:05:00Z",
+  "created_by": "carson@arkova.io (CTO release session, Claude Fable 5.1)",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": "",
+  "approval_time": "",
+  "train_launch_sha": "89dba6baafa1f73311e6885bcb85698d7f3d709d",
+  "target_main_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
+  "allowed_base_shas": [
+    "8c09886eb3c75e4fc070d27b7b1a577c08422f09"
+  ],
+  "covered_main_shas": [],
+  "included_prs": [
+    {
+      "number": 2837,
+      "head_sha": "3f7575459c97e18d07db377d68943989dc87720f",
+      "base_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "TypeCheck & Lint, Tests, Policy Lints, Dependency Scanning green on head after review fold; only Staging Soak Evidence Gate red pending this manifest.",
+      "rollback_note": "Revert both commits; behaviour returns to the pre-existing fail-closed 503 on a missing ai_credits row. No schema change.",
+      "migration_files": [],
+      "branch": "fix/ai-credits-auto-provision-scrum-4939"
+    },
+    {
+      "number": 2834,
+      "head_sha": "0b1f1897a609e8afb1be20b828aeb5b4be3e0241",
+      "base_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Required checks green on head; SonarCloud S6505 addressed with --no-install + test fake.",
+      "rollback_note": "Revert the deploy-worker.yml line and redeploy; prod returns to the 4500 ms code default.",
+      "migration_files": [],
+      "branch": "fix/ai-extraction-latency-budget-15s"
+    },
+    {
+      "number": 2841,
+      "head_sha": "492260d03c46b779b5440a3c2f52662f9b0545f7",
+      "base_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Worker 5,585 tests; root 92; Lighthouse HF-429 flake re-run.",
+      "rollback_note": "Revert six commits; no migration; pause the Scheduler job if partial.",
+      "migration_files": [],
+      "branch": "feat/scrum-5023-api-key-expiry-visibility"
+    },
+    {
+      "number": 2842,
+      "head_sha": "aeddccc4b7e2a3a74a0ae0fb39f95bca4ad9b31f",
+      "base_sha": "8c09886eb3c75e4fc070d27b7b1a577c08422f09",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Policy Lints fixed (bounded body read); 125+213+79 worker tests; TLA 12/12.",
+      "rollback_note": "ENABLE_COMPUTEID_INTEGRATION=false + deploy: both surfaces 503, job skipped; only artifact is an inert job_queue cursor row.",
+      "migration_files": [],
+      "branch": "feat/scrum-4495-computeid-activation-readiness"
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-cto-train-b-0912-staging",
+    "revision": "arkova-worker-cto-train-b-0912-staging-00009-qof",
+    "deploy_tag": "train-b2",
+    "image_digest": "sha256:175448e506c6e992dbd3eb283931068c279ab6a2689a6db52b08becb15b65ff8",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "deploy_log_id": "3",
+    "preflight_result": "environment_type=clean_mirror"
+  },
+  "soak": {
+    "start": "2026-09-12T22:28:58Z",
+    "end": "",
+    "duration_hours": 4,
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@45549ba9d",
+    "result": "",
+    "evidence_links": [],
+    "expires_at": "2026-09-19T21:56:48Z"
+  },
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "No migration in this train.",
+    "reapply_proof": "n/a",
+    "stop_conditions": [
+      "SHA mismatch",
+      "dirty preflight",
+      "cycle failure not attributable to environment"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "#2841 email delivery not exercised on the rig (no Resend key by decision); template pinned by unit tests.",
+    "#2842 lit reconciliation path not exercised (flag off = prod state); offline golden receipt test + 38 unit tests.",
+    "Post-soak T0 delta: none expected.",
+    "Window 1 (head 6cb68f88e, rev 00007-lis, 21:56:48Z\u2192) superseded: #2841/#2842 gap fixes (492260d03, aeddccc4b) changed the train head; window 2 runs on 89dba6baa."
+  ],
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b2-2026-09-12.json",
+  "staging_branch": "rc/train-b2-2026-09-12",
+  "preflight_timestamp": "2026-09-12T20:46:52.735Z"
+}
