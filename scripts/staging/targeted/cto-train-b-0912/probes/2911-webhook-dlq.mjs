@@ -43,6 +43,7 @@
 // computeid.test.ts), not by this rig, which writes the row directly rather
 // than driving an HMAC-signed webhook end to end.
 import { createHash, randomUUID } from 'node:crypto';
+import { signInMfa } from '../common.mjs';
 
 export const pr = '#2911';
 
@@ -74,17 +75,6 @@ const PROVIDER = 'checkr';
 const REASON = 'rule_event_enqueue_failed';
 const HEX64_RE = /\b[0-9a-f]{64}\b/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** GoTrue password grant -> access_token for a rig user. Same shape as #2841/#2845. */
-async function signIn(supabaseUrl, anonKey, email, password) {
-  const r = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: { apikey: anonKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  const body = await r.json().catch(() => null);
-  return { status: r.status, token: body?.access_token ?? null, error: body?.error_description ?? body?.msg ?? null };
-}
 
 export async function run(ctx) {
   const { admin, state, probe, workerFetch, SUPABASE_URL, ANON_KEY, cycleId, env } = ctx;
@@ -126,12 +116,19 @@ export async function run(ctx) {
   // this cycle creates is deleted at the end of this same run, whatever the
   // outcome, so no permanent backlog accumulates over hundreds of cycles.
   try {
-    // ── 2. Platform-admin session ───────────────────────────────────────────
-    const signedIn = await signIn(SUPABASE_URL, ANON_KEY, state.platformAdmin.email, state.platformAdmin.password ?? state.password);
+    // ── 2. Platform-admin session, stepped up to AAL2 (0451: a bare password-grant
+    // session is AAL1 and is rejected by both PostgREST's pre-request hook and the
+    // mfa_verified_authenticated RESTRICTIVE policy before the worker's own
+    // isPlatformAdmin check ever runs). signInMfa enrolls a TOTP factor on first
+    // use (persisted to FIXTURE_STATE) and re-challenges it on every later cycle.
+    const signedIn = await signInMfa(ctx, 'platformAdmin');
     out.push(probe('2911_platform_admin_signed_in', true, Boolean(signedIn.token), {
-      detail: { status: signedIn.status, error: signedIn.error, email: state.platformAdmin.email },
+      detail: { status: signedIn.status, error: signedIn.error, email: state.platformAdmin.email, aalBefore: signedIn.aalBefore, roleBefore: signedIn.roleBefore },
     }));
     if (!signedIn.token) return out;
+    out.push(probe('2911_platform_admin_session_is_aal2', 'aal2', signedIn.aalAfter, {
+      detail: { roleAfter: signedIn.roleAfter, note: 'Session must be stepped up to AAL2 before any admin route can be exercised (0451_uat04_mandatory_mfa.sql).' },
+    }));
     const jwt = signedIn.token;
 
     // ── 3. GET lists it, no 64-hex string anywhere in the body ─────────────
