@@ -169,6 +169,28 @@ const ConfigSchema = z.object({
    */
   enableCredentialVerifiedWebhook: boolFlag(false),
 
+  /**
+   * SCRUM-3972 (CTO ruling R16b) — gate the sub-organization webhook FAN-OUT:
+   * delivering an APPROVED child organization's `anchor.*` / `credential.*`
+   * events to a PARENT endpoint whose `scope` is `self_and_descendants`.
+   *
+   * Default false, and deliberately so: this reverses decision D2
+   * (`api/v1/orgSubOrgs.ts` — "a parent sees what its sub-orgs SPEND, never
+   * what they secured"). Nothing about a child's records has crossed the
+   * affiliation boundary before this flag exists, and flipping it starts
+   * sending a parent the public identifiers of documents a child secured. That
+   * is a founder decision, not a deploy decision: Carson flips it after reading
+   * the PR body. Until then every code path below is dead and endpoint `scope`
+   * is an inert stored preference.
+   *
+   * NOTE the scope split: the seven `suborg.*` lifecycle events (feature (a) of
+   * SCRUM-3972) are NOT gated by this flag. They describe the PARENT's own
+   * affiliation actions, are emitted on the parent's own org id, and reach
+   * default `scope: 'self'` endpoints — no boundary is crossed. Only the
+   * cross-org fan-out is dark.
+   */
+  enableSubOrgWebhookFanout: boolFlag(false),
+
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */
   geminiApiKey: z.string().optional(),
@@ -1105,6 +1127,8 @@ function loadConfig(): Config {
     enableTreasuryAlerts: process.env.ENABLE_TREASURY_ALERTS,
     enablePlatformHealthDigest: process.env.ENABLE_PLATFORM_HEALTH_DIGEST,
     enableWebhookHmac: process.env.ENABLE_WEBHOOK_HMAC,
+    // SCRUM-3972 — cross-org webhook fan-out (dark; see enableSubOrgWebhookFanout).
+    enableSubOrgWebhookFanout: process.env.ENABLE_SUBORG_WEBHOOK_FANOUT,
     enableRuleActionDispatcher: process.env.ENABLE_RULE_ACTION_DISPATCHER,
     enableAllocationRollover: process.env.ENABLE_ALLOCATION_ROLLOVER,
     enableVisualFraudDetection: process.env.ENABLE_VISUAL_FRAUD_DETECTION,

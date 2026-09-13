@@ -84,6 +84,15 @@
       "soak": "must-be-on",
       "why": "Rule action fan-out. Paired with ENABLE_RULES_ENGINE; either OFF silences the automation path."
     },
+    "ENABLE_SUBORG_WEBHOOK_FANOUT": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableSubOrgWebhookFanout", "flagRegistry ENV_FLAG_GETTERS (log-only)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SCRUM-3972. Gates the CROSS-ORG webhook fan-out only: delivering an APPROVED child organization's anchor.*/credential.* events to a PARENT endpoint whose scope is 'self_and_descendants'. Ships DARK because turning it on reverses decision D2 (api/v1/orgSubOrgs.ts — a parent sees what its affiliates SPEND, never what they secured); the founder flips it after reading PR #NNNN, which is why it is env-backed rather than switchboard-backed — a DB write must not be able to re-open it. Not in deploy-worker.yml, so the prod value is the config.ts Zod default (false). The seven suborg.* lifecycle events are NOT behind this flag: they are the parent's own affiliation actions on the parent's own org id and cross no boundary. Soak posture 'either': with it OFF the soak proves the blast-radius-zero claim for every existing endpoint; a targeted ON probe is a separate, explicitly-scoped run."
+    },
     "ENABLE_WEBHOOK_HMAC": {
       "sources": ["env"],
       "resolvers": ["config.ts enableWebhookHmac (default true)"],
