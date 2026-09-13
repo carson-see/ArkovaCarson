@@ -1,6 +1,18 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-09-13 (SCRUM-3843: max-cardinality 16KB CHECK test re-landed)_
+_Last updated: 2026-09-07 (SCRUM-4493: ComputeID AgentPassport revocation receiver)_
+
+## 2026-09-07 — SCRUM-4493: `computeid.ts` — ComputeID AgentPassport revocation receiver (flag-gated dark)
+
+Forked from `checkr.ts`. Three things are deliberately different and are the first places to look when this handler behaves unlike its siblings:
+
+1. **One Arkova-global registration, not per-org.** ComputeID signs every delivery with the single secret we handed them at `POST /v1/webhooks/register`; the org is resolved from the passport → agent binding (`agents.metadata.computeid.passport_id`, jsonb `@>` lookup), not from an account header. `COMPUTEID_WEBHOOK_SECRET` may be a comma-separated list (current,next) because ComputeID has **no deregister/rotate endpoint** (verified live 2026-09-07) — rotation is register-new → ask the partner to retire old.
+2. **No nonce table.** A per-provider nonce table needs a migration, which is PR-B (SCRUM-4497). Replay safety comes from the ordering FLOOR on the SIGNED payload timestamp in `integrations/computeid/binding.ts` (last applied event, else the admitting receipt's `issued_at`, else `bound_at`): older events and exact replays are no-ops, a late `passport.reinstated` can never undo a later `passport.revoked`, a pre-admission replay cannot revoke a fresh agent, and `revoked` is terminal. Do not "fix" a duplicate delivery by adding a nonce here.
+4. **Keys first, then a compare-and-set.** The auth path reads only `api_keys.is_active`, so keys are deactivated BEFORE the row flips (and reactivated after, only the ones we suspended); the `agents` update is a CAS on `(status, metadata->computeid->>last_event_at)` with `.select('id')`, and zero rows → `409 conflict_retry` + DLQ. `passport.reinstated` lifts only a suspension carrying `suspended_by: 'computeid'`.
+5. **Its own limiter bucket, content-type-agnostic raw parsing, real 413.** `rateLimiters.computeidWebhook` (not the shared Stripe bucket); `express.raw({ type: () => true, limit })` because the HMAC is the authentication and a `text/plain` default must not become a 500; body-parser's `entity.too.large` is mapped to `413 payload_too_large` at the mount (it is not an `AppError`, so the global handler would have returned 500). `middleware/computeidGate.ts` runs first at the mount.
+3. **Ack semantics.** `test` and unknown event names → `200 ignored`. Unbound passport → `200 orphaned` + `webhook_dlq` row (reason `unbound_passport`). A DB failure mid-apply → `500` + DLQ so the partner can retry — but their delivery is `node-fetch` fire-and-forget with undocumented retry, so treat every 5xx as a probable loss until SCRUM-4497's re-verify cron exists.
+
+Signature contract verified against a real delivery (`integrations/computeid/__fixtures__/golden-test-delivery.json`): `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>`, no timestamp header. The `sha256=` prefix is required; a bare hex digest is rejected. Body cap 64 KiB, checked before signature verification. The partner-supplied free-text `reason` is never logged, never written to `audit_events.details`, never written to the DLQ — `computeid.test.ts` pins that with a serialized-args assertion.
 
 ## 2026-09-13 — `docusign.test.ts`: PR #2485's comments re-landed onto the already-present max-cardinality test (SCRUM-3843)
 
@@ -15,18 +27,6 @@ comments are now applied verbatim. No behavior changed; the invariant (rule-even
 `pg_column_size <= 16384` at 100 docs / 20 signers, `document_ids` absent from that payload,
 `document_hashes` and `document_ids` both present at full cardinality on the two uncapped
 surfaces) was already pinned and stays pinned.
-
-## 2026-09-07 — SCRUM-4493: `computeid.ts` — ComputeID AgentPassport revocation receiver (flag-gated dark)
-
-Forked from `checkr.ts`. Three things are deliberately different and are the first places to look when this handler behaves unlike its siblings:
-
-1. **One Arkova-global registration, not per-org.** ComputeID signs every delivery with the single secret we handed them at `POST /v1/webhooks/register`; the org is resolved from the passport → agent binding (`agents.metadata.computeid.passport_id`, jsonb `@>` lookup), not from an account header. `COMPUTEID_WEBHOOK_SECRET` may be a comma-separated list (current,next) because ComputeID has **no deregister/rotate endpoint** (verified live 2026-09-07) — rotation is register-new → ask the partner to retire old.
-2. **No nonce table.** A per-provider nonce table needs a migration, which is PR-B (SCRUM-4497). Replay safety comes from the ordering FLOOR on the SIGNED payload timestamp in `integrations/computeid/binding.ts` (last applied event, else the admitting receipt's `issued_at`, else `bound_at`): older events and exact replays are no-ops, a late `passport.reinstated` can never undo a later `passport.revoked`, a pre-admission replay cannot revoke a fresh agent, and `revoked` is terminal. Do not "fix" a duplicate delivery by adding a nonce here.
-4. **Keys first, then a compare-and-set.** The auth path reads only `api_keys.is_active`, so keys are deactivated BEFORE the row flips (and reactivated after, only the ones we suspended); the `agents` update is a CAS on `(status, metadata->computeid->>last_event_at)` with `.select('id')`, and zero rows → `409 conflict_retry` + DLQ. `passport.reinstated` lifts only a suspension carrying `suspended_by: 'computeid'`.
-5. **Its own limiter bucket, content-type-agnostic raw parsing, real 413.** `rateLimiters.computeidWebhook` (not the shared Stripe bucket); `express.raw({ type: () => true, limit })` because the HMAC is the authentication and a `text/plain` default must not become a 500; body-parser's `entity.too.large` is mapped to `413 payload_too_large` at the mount (it is not an `AppError`, so the global handler would have returned 500). `middleware/computeidGate.ts` runs first at the mount.
-3. **Ack semantics.** `test` and unknown event names → `200 ignored`. Unbound passport → `200 orphaned` + `webhook_dlq` row (reason `unbound_passport`). A DB failure mid-apply → `500` + DLQ so the partner can retry — but their delivery is `node-fetch` fire-and-forget with undocumented retry, so treat every 5xx as a probable loss until SCRUM-4497's re-verify cron exists.
-
-Signature contract verified against a real delivery (`integrations/computeid/__fixtures__/golden-test-delivery.json`): `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>`, no timestamp header. The `sha256=` prefix is required; a bare hex digest is rejected. Body cap 64 KiB, checked before signature verification. The partner-supplied free-text `reason` is never logged, never written to `audit_events.details`, never written to the DLQ — `computeid.test.ts` pins that with a serialized-args assertion.
 
 _Last updated: 2026-08-30 (`adobe-sign.ts`: registration challenge + DLQ the orphaned-webhook_id path)_
 
