@@ -1,3 +1,13 @@
+## 2026-09-10 — PR #2570 unknown debit response recovery
+
+A lost/malformed debit RPC response can follow a committed charge. The default
+adapter now returns an explicit uncertain outcome; thrown debit calls follow the
+same recovery path. Leave the linked artifact materialized, emit a bounded alert,
+and let confirmation/requeue retain its original anchor for idempotent debit retry.
+Only validated business rejections may take the existing failure/requeue paths.
+The previous terminal-failure behavior was reproduced through the default adapter
+before this change. Full-schema lost-response/retry evidence must accompany release.
+
 ## 2026-09-12 — SCRUM-5023: `api-key-expiry-notice` dedupes on `audit_events`, by design
 
 Key expiry was entirely silent — no warning before, no notice after. This daily job emails an org's
@@ -50,16 +60,6 @@ answers 200 on a partly-failed sweep (`failed` is a per-key count in the body) �
 Scheduler re-drive the whole window and re-mail every key that already succeeded.
 
 Constitution 1.4: the notice carries the key PREFIX and NAME only. Never the key, never the hash.
-
-## 2026-09-10 — PR #2570 unknown debit response recovery
-
-A lost/malformed debit RPC response can follow a committed charge. The default
-adapter now returns an explicit uncertain outcome; thrown debit calls follow the
-same recovery path. Leave the linked artifact materialized, emit a bounded alert,
-and let confirmation/requeue retain its original anchor for idempotent debit retry.
-Only validated business rejections may take the existing failure/requeue paths.
-The previous terminal-failure behavior was reproduced through the default adapter
-before this change. Full-schema lost-response/retry evidence must accompany release.
 
 # services/worker/src/jobs/agents.md
 
