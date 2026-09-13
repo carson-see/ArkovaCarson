@@ -1,4 +1,16 @@
 # services/worker/src/
+_Last updated: 2026-09-13 (Connectors page: `index.ts` gains a `driveFoldersRouter` mount, same kill switch/limiter/auth gate as `driveOAuthRouter` — SPEC-CONNECTORS)_
+
+## 2026-09-13 — `index.ts` mounts `drive-folders.ts` on the existing `/google_drive` path scope
+
+`GET /api/v1/integrations/google_drive/folders` (Connectors page folder picker) is mounted as a
+SECOND `app.use('/api/v1/integrations', ...)` block, immediately after the existing
+`driveOAuthRouter` mount, reusing the identical `pathScopedKillSwitch('/google_drive',
+'ENABLE_DRIVE_OAUTH')`, `pathScopedMiddleware('/google_drive', rateLimiters.api)`, and
+`pathScopedMiddleware('/google_drive', integrationsAuthGate)` chain — no new feature flag, the
+picker dies with the connector. See `api/v1/integrations/agents.md` and
+`integrations/oauth/agents.md` for the endpoint and the `listChildFolders()`/scope details.
+
 _Last updated: 2026-09-07 (SCRUM-4492: ComputeID AgentPassport integration — `config.ts` gains the ComputeID flag/secret/CA-pin trio with a boot guard; `index.ts` gains the `/webhooks/computeid` mount)_
 
 ## 2026-09-07 — ComputeID AgentPassport integration (SCRUM-4492 / SCRUM-4493 / SCRUM-4494)
