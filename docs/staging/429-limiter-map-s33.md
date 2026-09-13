@@ -159,7 +159,7 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 9 | services/worker/src/api/v1/router.ts | 260 | router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter); |
 | 10 | services/worker/src/api/v1/router.ts | 327 | const aiRateLimiter = rateLimit({ |
 | 11 | services/worker/src/api/v1/router.ts | 330 | scope: 'ai', |
-| 12 | services/worker/src/api/v1/router.ts | 371 | router.use('/webhooks', batchRateLimiter, webhooksRouter); |
+| 12 | services/worker/src/api/v1/router.ts | 515 | router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter); |
 | 13 | services/worker/src/api/v1/router.ts | 552 | nessieCapabilityGate(), |
 | 14 | services/worker/src/middleware/usageTracking.ts | 18 | const FREE_TIER_MONTHLY_QUOTA = 10_000; |
 | 15 | services/worker/src/middleware/usageTracking.ts | 171 | res.status(429).json({ |
