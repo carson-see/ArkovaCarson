@@ -14,6 +14,19 @@
 
 ## Now
 
+### 2026-09-13T14:20Z → 15:10Z — CTO release session (Claude Fable): B3b landed, three new PRs opened under Carson's 8-PR allowance, train plan for the rest
+
+**Read this block first.** Earlier blocks stay accurate except where this one supersedes them.
+
+- **Merged:** #2843 (`c8b505eb6`, 14:43:40Z) and #2845 (`8115bfdc6`, 14:45:36Z) — Train B3b fully landed. Before #2845's revision took traffic the cutover grant ran on prod (`UPDATE api_keys … array_append(scopes,'webhooks:manage')` for active keys of the 3 endpoint-owning orgs → 15 rows, matching the review census). Prod deploy verification for both is in this session's watchers; Jira closeouts follow it.
+- **Standing-rig close done:** 0451/0452 on prod and reconciled (`list_migrations MCP tool` re-read 14:14Z); #2832 (`c845b0b41`) is embarked behind dependabot #2875, #2831 (`c935a0b9f`) re-enters when its identity/drift re-runs pass. After both merge: stop the CTO drivers under `/Volumes/Extreme/offload/cto-soak-2026-09-12/{mfa-2832,invite-2831}`, then the standing rig hosts Train C.
+- **Founder allowance (relayed by the sprint session, Carson 15:05Z/15:20Z): up to 8 new PRs; "hold off on re-soaking" until they are in.** Opened so far (3 of 8): **#2903** Drive null-cursor bootstrap (SCRUM-5094, T2, head `a193a4f74`), **#2904** SCRUM-3972 sub-org webhook events + fan-out scope, 0454 (T3, head `bed9c2cfd`), **#2905** SCRUM-5024 partner referrals, 0455+0456 (T3, head `41bb540e0`). All draft; review passes (/codereview /debug /simplify /tlaprecheck) running; fixes fold into the same PRs. Division of labour (Carson): this session owns review, pre-mortem, rigs, soaks, merges; the sprint session codes and plans only.
+- **Train B5 (T2, 4 h, rig 1 `xhvasifpunswhsgfsstd`):** #2841 (`4c472d226`) + #2846 (`6f48d0a92`) — both merged with main today, single merge-base, GitHub-mergeable — plus #2903 and any further T2 handed over before the cut. Cut only after every member has main merged; merge as one Mergify batch.
+- **Train C (T3, 24 h, standing rig after #2832/#2831 merge):** #2904 + #2905 (+ any further migration PR); apply 0454/0455/0456 on the rig, rollback/reapply rehearsal per migration, Trigger A/B, daily flush, per-org isolation, and 3972's flag-flip condition (a `self_and_descendants` endpoint receiving a child's `anchor.secured`); merge as one batch; flip `ENABLE_SUBORG_WEBHOOK_FANOUT` on prod after.
+- **Train B4 (#2844, rig 3):** 24 h floor 2026-09-14T02:02Z; head re-anchored to `2346dd0ed` (docs-only delta); at seal: apply 0453 with its exemption, seal, merge.
+- **Rigs:** rig 1 free (B5); rig 2 `pdgfbbnrqhojiihtxycd` idle on rev 00008-quh (spare); rig 3 B4; standing rig → Train C. Dependabot worker/root bumps stay held by the soak gate.
+
+
 ### 2026-09-13T11:17Z → 14:20Z — CTO release session (Claude Fable): B3b sealed, #2842 merged, standing-rig windows closed with 0451/0452 applied to prod, gate mechanics corrected
 
 **Read this block first.** Earlier blocks below stay accurate except where this one supersedes them.
