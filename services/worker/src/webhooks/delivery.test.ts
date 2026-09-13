@@ -243,6 +243,7 @@ import {
   deriveResourceKey,
   __resetSequenceForTest,
   __resetWebhookFlagCacheForTest,
+  __resetRefusalLogStateForTest,
   resetCircuitBreakers,
   resolveDlqEntry,
 } from './delivery.js';
@@ -1925,5 +1926,143 @@ describe('resolveDlqEntry (ARK-SEC-026 org-ownership check)', () => {
 
     expect(result).toBe(false);
     expect(updateEq).not.toHaveBeenCalled();
+  });
+});
+
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * SCRUM-3982 (CTO review ruling Z1) — the retry sweep is the third way out.
+ *
+ * `processWebhookRetries` re-reads `webhook_delivery_logs.payload` and hands it
+ * straight to `deliverToEndpoint`, which signs whatever it is given. A row
+ * written before the ratchet landed would therefore keep being retried, banned
+ * field and all, until it exhausted its attempts — the ratchet stopping the
+ * first dispatch and the retry sweep delivering it anyway.
+ * ──────────────────────────────────────────────────────────────────────────── */
+describe('processWebhookRetries refuses stored payloads with banned fields (SCRUM-3982)', () => {
+  const RETRY_ENDPOINT = { ...MOCK_ENDPOINT, url: 'https://198.51.100.1/cb' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetSequenceForTest();
+    __resetRefusalLogStateForTest();
+    resetCircuitBreakers();
+  });
+
+  function row(id: string, eventType: string, data: Record<string, unknown>) {
+    return {
+      id,
+      attempt_number: 1,
+      payload: {
+        event_type: eventType,
+        event_id: id,
+        timestamp: '2026-03-10T11:55:00Z',
+        data,
+        resource_key: `anchor:${id}`,
+        sequence: 100,
+      },
+      webhook_endpoints: RETRY_ENDPOINT,
+    };
+  }
+
+  function routeRetry(rows: unknown[]) {
+    retryLogsSelect.limit.mockResolvedValue({ data: rows, error: null });
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-retry' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_delivery_logs') {
+        return {
+          select: (...args: string[]) =>
+            args[0]?.includes('webhook_endpoints')
+              ? { eq: retryLogsSelect.eq }
+              : { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) },
+          insert: deliveryLogInsert.insert,
+          update: deliveryLogUpdate.update,
+        };
+      }
+      return {};
+    });
+  }
+
+  it('does not sign or send a retrying row that carries fingerprint', async () => {
+    routeRetry([
+      row('evt-leak', 'attestation.active', {
+        public_id: 'ATT-1',
+        status: 'ACTIVE',
+        fingerprint: 'a'.repeat(64),
+      }),
+    ]);
+
+    await processWebhookRetries();
+
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('records the refusal durably on the delivery row instead of dropping it silently', async () => {
+    // Assert the EFFECT: the row is terminated with a reason, so the refusal is
+    // auditable in `webhook_delivery_logs` and not only in a log line that ages
+    // out. It must also leave `retrying` — a refusal is permanent, and a row
+    // that stays `retrying` is re-read every sweep AND head-of-line-blocks
+    // every newer event for the same resource, forever.
+    routeRetry([
+      row('evt-leak', 'anchor.revocation_anchored', {
+        public_id: 'ARK-1',
+        anchor_id: 'internal-uuid',
+        fingerprint: 'b'.repeat(64),
+      }),
+    ]);
+
+    await processWebhookRetries();
+
+    expect(deliveryLogUpdate.update).toHaveBeenCalled();
+    const patch = (deliveryLogUpdate.update.mock.calls.at(-1) as unknown[])[0] as {
+      status: string;
+      error_message: string;
+    };
+    expect(patch.status).toBe('failed');
+    expect(patch.error_message).toContain('SCRUM-3982');
+    expect(patch.error_message).toContain('anchor_id');
+    // Never the value.
+    expect(patch.error_message).not.toContain('internal-uuid');
+    expect(patch.error_message).not.toContain('b'.repeat(64));
+  });
+
+  it('still delivers a clean row in the same sweep as a refused one', async () => {
+    routeRetry([
+      row('evt-leak', 'attestation.active', { public_id: 'ATT-1', fingerprint: 'c'.repeat(64) }),
+      row('evt-clean', 'anchor.secured', {
+        public_id: 'ARK-2',
+        chain_tx_id: 'tx-1',
+        chain_block_height: 850000,
+        status: 'SECURED',
+        chain_timestamp: '2026-03-10T11:00:00Z',
+        secured_at: '2026-03-10T11:00:01Z',
+      }),
+    ]);
+
+    await processWebhookRetries();
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).event_id).toBe('evt-clean');
+  });
+
+  it('rate-limits the refusal log so a permanent refusal is not a per-row error burst', async () => {
+    routeRetry(
+      Array.from({ length: 5 }, (_, i) =>
+        row(`evt-${i}`, 'attestation.active', {
+          public_id: `ATT-${i}`,
+          fingerprint: 'd'.repeat(64),
+        }),
+      ),
+    );
+
+    await processWebhookRetries();
+
+    const refusalLogs = mockLogger.error.mock.calls.filter((c) =>
+      String(c[1]).includes('refused before signing'),
+    );
+    expect(refusalLogs).toHaveLength(1);
   });
 });

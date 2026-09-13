@@ -14,7 +14,7 @@ const { mockDbFrom, mockLogger } = vi.hoisted(() => ({
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 
-import { replayDelivery } from './delivery.js';
+import { replayDelivery, __resetRefusalLogStateForTest } from './delivery.js';
 
 const ORG = 'org-a';
 const DELIVERY_ID = 'log-1';
@@ -238,5 +238,114 @@ describe('replayDelivery (SCRUM-1172 AC3)', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe('delivery_failed');
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * SCRUM-3982 (CTO review ruling Z1) — replay is a second way out of the
+ * process, and the banned-field ratchet has to bind it too.
+ *
+ * `dispatchWebhookEvent` validates an event's FIRST dispatch. `replayDelivery`
+ * reads `webhook_delivery_logs.payload` and re-signs it verbatim, so every row
+ * persisted BEFORE the ratchet landed — including the `attestation.created`
+ * rows that carried `fingerprint` — was still one authenticated API call away
+ * from a customer endpoint.
+ * ──────────────────────────────────────────────────────────────────────────── */
+describe('replayDelivery refuses a stored payload that carries a banned field (SCRUM-3982)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetRefusalLogStateForTest();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, text: vi.fn().mockResolvedValue('OK') }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('refuses a historical row carrying fingerprint and never fetches', async () => {
+    const { insertChain } = stageDb({
+      selectRow: defaultRow({
+        event_type: 'attestation.created',
+        payload: {
+          event_type: 'attestation.created',
+          event_id: 'att-1',
+          timestamp: '2026-04-01T00:00:00Z',
+          data: {
+            public_id: 'ATT-1',
+            attestation_type: 'VERIFICATION',
+            status: 'PENDING',
+            created_at: '2026-04-01T00:00:00Z',
+            fingerprint: 'a'.repeat(64),
+          },
+        },
+      }),
+    });
+
+    const result = await replayDelivery(DELIVERY_ID, ORG, { urlGuard: async () => false });
+
+    expect(result).toEqual({ ok: false, error: 'payload_refused' });
+    // Assert the EFFECT, not just the return: nothing was signed, nothing was
+    // sent, and no replay row was created that could be retried later.
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(insertChain.insert).not.toHaveBeenCalled();
+  });
+
+  it('logs the refusal at error level naming the key but never the value', async () => {
+    const fingerprint = 'deadbeef'.repeat(8);
+    stageDb({
+      selectRow: defaultRow({
+        event_type: 'anchor.revocation_anchored',
+        payload: {
+          event_type: 'anchor.revocation_anchored',
+          event_id: 'rev-1',
+          timestamp: '2026-04-01T00:00:00Z',
+          data: { public_id: 'ARK-1', anchor_id: 'uuid-here', fingerprint },
+        },
+      }),
+    });
+
+    await replayDelivery(DELIVERY_ID, ORG, { urlGuard: async () => false });
+
+    expect(mockLogger.error).toHaveBeenCalled();
+    const logged = JSON.stringify(mockLogger.error.mock.calls);
+    expect(logged).toContain('anchor_id');
+    expect(logged).toContain('fingerprint');
+    expect(logged).not.toContain(fingerprint);
+    expect(logged).not.toContain('uuid-here');
+  });
+
+  it('refuses a stored row whose event type is not registered at all', async () => {
+    stageDb({
+      selectRow: defaultRow({
+        event_type: 'payment.subscription_updated',
+        payload: {
+          event_type: 'payment.subscription_updated',
+          event_id: 'sub-1',
+          timestamp: '2026-04-01T00:00:00Z',
+          data: { anything: 'goes' },
+        },
+      }),
+    });
+
+    const result = await replayDelivery(DELIVERY_ID, ORG, { urlGuard: async () => false });
+    expect(result).toEqual({ ok: false, error: 'payload_refused' });
+  });
+
+  it('STILL replays a clean row that merely predates a schema tightening', async () => {
+    // `anchor.secured` gained non-nullable chain fields in PR #567. The default
+    // fixture row carries only `public_id` — it fails today's schema, but it
+    // declares no field we have not published. Refusing it would make every
+    // pre-#567 delivery log un-replayable: an availability regression, not a
+    // privacy control. It delivers, with a warn.
+    stageDb({ selectRow: defaultRow() });
+
+    const result = await replayDelivery(DELIVERY_ID, ORG, { urlGuard: async () => false });
+
+    expect(result.ok).toBe(true);
+    expect(globalThis.fetch).toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalled();
   });
 });

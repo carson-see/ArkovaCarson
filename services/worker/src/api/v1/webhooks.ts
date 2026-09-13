@@ -591,6 +591,18 @@ router.post('/deliveries/:id/replay', async (req, res) => {
       errorResponse(res, 403, 'ssrf_blocked', 'Endpoint URL targets a private network');
       return;
     }
+    if (result.error === 'payload_refused') {
+      // SCRUM-3982: the stored payload carries a field that may never leave
+      // Arkova (or its event type has no schema). 422 rather than 500 — the
+      // request is well-formed, the stored resource is not replayable.
+      errorResponse(
+        res,
+        422,
+        'payload_refused',
+        'Stored payload contains a field that cannot be delivered; contact support to have this event re-issued',
+      );
+      return;
+    }
     if (result.error === 'delivery_failed' && !result.new_delivery_id) {
       errorResponse(res, 500, 'internal_error', 'Failed to record replay');
       return;

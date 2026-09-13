@@ -308,3 +308,28 @@ The current `agentKeyAuthority.machine.ts` removes the retired compensating-clea
 - **The tree is NOT one level deep, and a draft invariant that claimed so was disproved by TLC** in three steps (`affiliate(o2,o1)` then `affiliate(o1,o3)`): an org that already has children can itself become a sub-org. That is correct — `check_sub_org_depth` permits a chain to depth 3, and the code rule is only that a sub-org may not *create* affiliates. The consequence is load-bearing: because chains are real, `0429` prunes `get_org_subtree` at the RECURSIVE term so a confidential org hides the branch beneath it, not just itself.
 - Authorization (who may sign which half) is **out of scope** — actor identity is not in this state. It is proven empirically instead, checks 5 and 9 of `docs/staging/hakichain-suborgs-2026-09/verify-0429.sql`.
 - Documentation-only, like `partnerProvisioning` and `calibrationWorkflow`: no `runtimeAdapter`. The consent columns live on `organizations`, which this machine does not own, so the adapter subset does not fit. Runtime enforcement is the `protect_org_tenancy_fields()` trigger; this spec proves that trigger's reset rule is sufficient.
+
+## webhookPayloadRefusal (SCRUM-3982, CTO review ruling Z1)
+
+Models the two properties the banned-field ratchet has to hold at once, because
+they pull against each other:
+
+- `bannedFieldNeverDelivered` — a payload carrying a banned key is never
+  DELIVERED by any path (first dispatch, replay, retry sweep).
+- `refusalIsTerminal` — an evaluated refused delivery is never still RETRYING.
+
+The second is the one worth having. A refusal is permanent (the stored bytes do
+not change), so "log it and return false" leaves the row in `retrying` where the
+sweep re-reads it every cycle AND, because the sweep advances only the
+lowest-`sequence` row per resource, it head-of-line-blocks every newer event for
+that resource forever. Deleting the `status='failed'` write from
+`processWebhookRetries` reproduces exactly that: TLC finds it at depth 4
+(`enqueueClean(d1)` → `enqueueLegacyLeaky(d2)` → legacy refuse → `d2` still
+RETRYING with `evaluated` true).
+
+`pr` tier: 3 deliveries, 451 states / 125 distinct, depth 7. No attempt counter
+— a refusal does not consume an attempt, it ends the row, so the count is
+irrelevant to both properties and only costs state space.
+
+`npm run verify:machines` globs `machines/*.machine.ts`, so this machine is in
+CI automatically; no workflow edit was needed.

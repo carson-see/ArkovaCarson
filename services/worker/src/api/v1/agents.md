@@ -1278,3 +1278,21 @@ Two things measured while doing it, neither changed here:
 Payload keys at both dispatch sites are pinned in `attestations.test.ts` by
 reading this file's own source — a spy would only cover the path the test
 drives, and the thing being ratcheted is the literal key set at the call site.
+
+## SCRUM-3982 CTO review (2026-09-12) — replay refusal + fire-and-forget dispatch
+
+- `replayDelivery` can now return `payload_refused`. Both replay routes
+  (`webhooks.ts` API-key route and `webhooks-self-service.ts` session route) map
+  it to **HTTP 422** with code `payload_refused` — the request is well-formed,
+  the stored resource is not deliverable. Additive per CLAUDE.md §1.8; no
+  existing status code changed. Keep the two routes' error ladders identical:
+  they delegate to the same `replayDelivery` and any divergence is a bug.
+- `batch.ts` dispatched `job.completed` as `void dispatchWebhookEvent(...)` with
+  no `.catch()`. That was survivable only while dispatch could not reject for
+  that event; it can now (an unregistered type or a banned field rejects), and
+  an unhandled rejection in a fire-and-forget call takes the process down rather
+  than the job. Both call sites now `.catch()` into a warn. **Any new
+  `void dispatchWebhookEvent(...)` must carry a `.catch()`.**
+- `attestations.ts` `fingerprint` selects at `:428` / `:816` feed the published
+  201 response bodies (`:489`, `:851`) and are part of the frozen v1 contract.
+  Do not strip them as dead reads — they are banned from webhook payloads only.
