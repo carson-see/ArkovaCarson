@@ -224,8 +224,51 @@ jobs:
           echo "::add-mask::${TOKEN}"
           echo "CLOUDFLARE_API_TOKEN=${TOKEN}" >> "$GITHUB_ENV"
 
+      # The 2026-09-08 manual deploy failed partway through on a Cloudflare
+      # API token with too-narrow route-edit scope — a class of failure that
+      # otherwise only surfaces deep inside `wrangler deploy`'s own error
+      # output. Fail fast, before touching wrangler at all, with a message
+      # that names what to fix. LIMITATION (stated, not hidden): Cloudflare's
+      # `/user/tokens/verify` endpoint confirms the token is well-formed and
+      # `active` — it does NOT enumerate the token's permission groups (that
+      # requires Account:Read/Token-introspection access the deploy token may
+      # itself lack). This step can prove "the token is dead" but cannot
+      # prove "the token has route-edit scope"; a scope-too-narrow failure
+      # can still surface later, inside `wrangler deploy` itself. Required
+      # permission groups for this token (document kept in sync with
+      # services/edge/agents.md and the Confluence runbook): Workers
+      # Scripts:Edit, Workers Routes:Edit, Workers KV Storage:Edit, Zone:Read
+      # on arkova.ai.
+      - name: Verify Cloudflare API token is active
+        run: |
+          set -euo pipefail
+          RESP="$(curl -fsS --max-time 10 -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" || true)"
+          STATUS="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b?.result?.status||""))}catch{process.stdout.write("")}' "${RESP:-{}}")"
+          if [ "${STATUS}" != "active" ]; then
+            echo "::error::Cloudflare API token verify failed (status='${STATUS:-<unparseable response>}'). The token in Secret Manager (cloudflare-api-token, project ${PROJECT_ID}) is missing, expired, or revoked. Regenerate it in the Cloudflare dashboard with these permission groups: Workers Scripts:Edit, Workers Routes:Edit, Workers KV Storage:Edit, Zone:Read (scoped to arkova.ai) — then update the Secret Manager value. Note: a token that verifies 'active' here can still lack route-edit scope; this check cannot enumerate permission groups (see the workflow comment above this step)."
+            exit 1
+          fi
+          echo "✅ Cloudflare API token verify: status=active."
+
       - name: Generate build-info
         run: node scripts/generate-build-info.mjs "${{ needs.test.outputs.resolved-sha }}"
+
+      # Records what edge.arkova.ai was serving BEFORE this deploy, for the
+      # run log — the live bundle's actual state (including whether the
+      # ES256 verifier fix was already live) has been unverified for months,
+      # so the first real run through this pipeline should document its
+      # before-state rather than silently overwrite it with no record.
+      - name: Record pre-deploy live identity
+        run: |
+          set -euo pipefail
+          BODY="$(curl -fsS --max-time 10 -H 'Cache-Control: no-cache' "https://edge.arkova.ai/health?cb=predeploy-${{ github.run_id }}" || true)"
+          PRE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "${BODY:-{}}")"
+          if [ -z "${PRE_SHA}" ]; then
+            echo "Pre-deploy edge.arkova.ai/health: no version identity (pre-workflow build) — response: ${BODY:-<unreachable>}"
+          else
+            echo "Pre-deploy edge.arkova.ai/health reports git_sha=${PRE_SHA}"
+          fi
 
       - name: wrangler deploy
         env:
@@ -236,22 +279,28 @@ jobs:
       # mechanism): a `wrangler deploy` exit 0 only proves the Cloudflare API
       # accepted the upload — it does NOT prove edge.arkova.ai is serving it
       # (propagation lag, a route misconfiguration, a stale KV-bound
-      # environment). Curl the live endpoint and assert its self-reported
-      # git_sha equals the commit this job just deployed; fail the job if not.
+      # environment, or a CDN/cache layer serving a pre-deploy snapshot).
+      # Curl the live endpoint with a cache-busting query param + no-cache
+      # header and assert its self-reported git_sha equals the commit this
+      # job just deployed; fail the job if not. Retries up to 5 times across
+      # roughly 60s (4 x 15s waits) to absorb propagation lag without
+      # mistaking it for a real failure.
       - name: Verify deployed-version parity
         env:
           EXPECTED_SHA: ${{ needs.test.outputs.resolved-sha }}
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
-            BODY="$(curl -fsS --max-time 10 https://edge.arkova.ai/health || true)"
+            BODY="$(curl -fsS --max-time 10 -H 'Cache-Control: no-cache' "https://edge.arkova.ai/health?cb=postdeploy-${{ github.run_id }}-${attempt}" || true)"
             LIVE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "${BODY:-{}}")"
             if [ "${LIVE_SHA}" = "${EXPECTED_SHA}" ]; then
               echo "✅ edge.arkova.ai/health reports git_sha=${LIVE_SHA} — matches deployed commit."
               exit 0
             fi
-            echo "Attempt ${attempt}/5: live git_sha='${LIVE_SHA}', expected '${EXPECTED_SHA}' — retrying in 5s (propagation lag)..."
-            sleep 5
+            if [ "${attempt}" -lt 5 ]; then
+              echo "Attempt ${attempt}/5: live git_sha='${LIVE_SHA}', expected '${EXPECTED_SHA}' — retrying in 15s (propagation lag / cache, ~60s total window)..."
+              sleep 15
+            fi
           done
-          echo "::error::Deployed-version parity check FAILED — edge.arkova.ai/health git_sha ('${LIVE_SHA}') does not match the commit this job deployed ('${EXPECTED_SHA}') after 5 attempts. wrangler deploy exited 0 but the live edge is not serving this commit — this is exactly the merged-but-undeployed failure mode SCRUM-3907 exists to catch. Do not assume the deploy succeeded; investigate before re-running."
+          echo "::error::Deployed-version parity check FAILED — edge.arkova.ai/health git_sha ('${LIVE_SHA}') does not match the commit this job deployed ('${EXPECTED_SHA}') after 5 attempts over ~60s. wrangler deploy exited 0 but the live edge is not serving this commit — this is exactly the merged-but-undeployed failure mode SCRUM-3907 exists to catch. Do not assume the deploy succeeded; investigate before re-running."
           exit 1

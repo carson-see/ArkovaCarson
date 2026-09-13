@@ -49,12 +49,39 @@ drift); the edge worker had no equivalent of ANY kind.
   that already lives in Secret Manager instead of provisioning a second
   credential store for the same token. The value is `::add-mask::`-ed
   before it touches `$GITHUB_ENV`.
+- **Cloudflare API token preflight** (`deploy` job, before `wrangler
+  deploy`) — the 2026-09-08 manual deploy failed partway through on a
+  token with too-narrow route-edit scope. `curl
+  https://api.cloudflare.com/client/v4/user/tokens/verify` fails the job
+  fast, naming the fix, instead of letting a bad token surface deep inside
+  `wrangler`'s own error output. **Required permission groups** for
+  `cloudflare-api-token` (keep this list in sync with the workflow's own
+  comment and the Confluence runbook): **Workers Scripts:Edit, Workers
+  Routes:Edit, Workers KV Storage:Edit, Zone:Read** on `arkova.ai`.
+  LIMITATION, stated plainly: `/user/tokens/verify` confirms the token is
+  well-formed and `active` — it does NOT enumerate permission groups
+  (Cloudflare has no endpoint for a token to introspect its own scopes
+  without additional Account:Read access it may itself lack). This step
+  proves "the token is dead"; it cannot prove "the token has route-edit
+  scope" — a scope-too-narrow failure can still surface later, inside
+  `wrangler deploy` itself.
+- **Pre-deploy identity record** (`deploy` job, before `wrangler deploy`) —
+  GETs `/health` and logs the SHA it was serving BEFORE this run (or "no
+  version identity (pre-workflow build)" if the field is absent — the
+  expected state for every deploy until the first one through this
+  pipeline). The live bundle's actual state, including whether PR #2589's
+  ES256 verifier fix was already somehow live, has been unverified for
+  months; the first real run should document its before-state in the log
+  rather than silently overwrite it with no record.
 - **Deployed-version parity check** (last step of the `deploy` job) — curls
-  `https://edge.arkova.ai/health` (5 attempts, 5s apart, for propagation
-  lag) and fails the job if `git_sha` does not equal the commit that job
-  just deployed. `wrangler deploy` exiting 0 only proves the Cloudflare API
-  accepted the upload, not that the route is serving it — this is the
-  actual "never again" mechanism SCRUM-3907 asked for.
+  `https://edge.arkova.ai/health` with a cache-busting query param + a
+  `Cache-Control: no-cache` header (a CDN/cache layer serving a pre-deploy
+  snapshot would otherwise silently pass or fail this check for the wrong
+  reason), up to 5 attempts across roughly 60s, and fails the job if
+  `git_sha` does not equal the commit that job just deployed. `wrangler
+  deploy` exiting 0 only proves the Cloudflare API accepted the upload,
+  not that the route is serving it — this is the actual "never again"
+  mechanism SCRUM-3907 asked for.
 - **`scripts/ci/check-edge-deployed-version.ts`** (new, root-level;
   `.test.ts` sibling) — read-only, OUT-OF-BAND drift check: `git_sha` from
   the live `/health` vs `origin/main` via `git merge-base --is-ancestor` /
