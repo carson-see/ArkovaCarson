@@ -1,14 +1,33 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-09-13 (SCRUM-4514: inbound webhook_dlq is now drained)_
+_Last updated: 2026-09-13 (SCRUM-4514: CTO decision — no raw-body retention, no server-side replay)_
 
-## 2026-09-13 — SCRUM-4514: `webhook_dlq` is now drained — update the "drained by nobody" claim below
+## 2026-09-13 (later) — SCRUM-4514 CTO decision: no raw-body retention, so no `/replay` endpoint
+
+The entry immediately below this one (same day, earlier) describes a `POST
+/api/admin/webhook-dlq/replay` endpoint that claimed rows and always reported
+`not_replayable`. The CTO closed that open question the same day: Arkova does **not** retain raw
+partner webhook bodies to make server-side replay possible (§1.6A stands; DocuSign/Adobe bodies
+carry signer emails). An endpoint named "replay" that can never replay anything is misleading
+surface, so it was removed and replaced with `POST /api/admin/webhook-dlq/resolve` — an
+operator acknowledges a row once they have separately triggered redelivery **at the partner**
+(DocuSign Connect "Resend", Adobe Sign webhook retry / re-send from the developer console,
+Checkr webhook-logs re-send, ComputeID asked to re-emit — see the SCRUM-4514 Confluence page's
+partner redelivery matrix). `GET /api/admin/webhook-dlq` now also returns each row's
+`external_id` and `reason` (still never `payload_hash`) so the operator has what they need to
+find the matching delivery in the partner's console. Wherever "the drain claims and resolves
+every row, but cannot actually re-invoke any handler" appears below, read "resolve" for
+"drain/replay" — the mechanism changed from a claim-and-attempt to an operator acknowledgment,
+the underlying fact (nothing here can reprocess a delivery) did not.
+
+## 2026-09-13 (earlier) — SCRUM-4514: `webhook_dlq` is now drained — update the "drained by nobody" claim below
 
 The 2026-08-23 entry below (and this folder's earlier agents.md snapshots) states
 "Nothing under `services/worker/src/jobs/` reads that table ... drained by nobody. Treat a
 DLQ insert as a record of the loss, never as a recovery path." That is now stale for the
 "drained by nobody" half: `api/admin-webhook-dlq.ts` (`GET /api/admin/webhook-dlq`,
-`POST /api/admin/webhook-dlq/replay`, platform-admin only) and the report-only
+`POST /api/admin/webhook-dlq/resolve` — see the entry above; originally shipped this same day
+as `/replay`, superseded — platform-admin only) and the report-only
 `POST /jobs/webhook-dlq-report` cron (`jobs/webhook-dlq-report.ts`) both read it now.
 
 The "treat a DLQ insert as a record of the loss" half is **still correct** — do not remove it.
@@ -16,11 +35,10 @@ None of the four inbound writers into this table (`docusign.ts`, `adobe-sign.ts`
 and `computeid.ts` via `integrations/computeid/passport-transition.ts`'s
 `recordPassportFailure` -> `enqueue_computeid_failure` RPC) persist the raw webhook body — by
 design, per this folder's own "DO NOT persist raw webhook payloads" rule below. So the operator
-drain claims and resolves every row, but cannot actually re-invoke any handler: every row is
-reported `not_replayable` today. See `api/admin-webhook-dlq.ts`'s module doc comment for the
-full per-provider replayability matrix and the reasoning. If a future change wants real replay,
-it has to start by deciding to retain enough data to reprocess a delivery — which is a bigger
-privacy/§1.6A conversation, not something this drain endpoint can quietly opt into.
+surface can acknowledge/resolve every row, but cannot actually re-invoke any handler — there is
+nothing to replay. See `api/admin-webhook-dlq.ts`'s module doc comment and the entry above for
+the full reasoning and the CTO decision that closed this off (not a future extension point
+anymore — retaining raw bodies for replay was considered and declined on privacy grounds).
 
 `computeid.ts` was found to be a fourth writer into this table (not three, as this ticket's
 brief assumed) by grepping the actual writers instead of trusting the brief — it writes through

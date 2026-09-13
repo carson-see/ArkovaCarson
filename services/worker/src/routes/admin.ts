@@ -29,7 +29,7 @@ import { handleProofPacketExport } from '../api/proof-packet.js';
 import { handleCollisionContext } from '../api/collision-context.js';
 import { handleListRules, handleGetRule, handleListRuleExecutions, handleRunRuleNow, handleTestRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
 import { handleInjectDemoEvent } from '../api/demo-event-injector.js';
-import { handleWebhookDlqList, handleWebhookDlqReplay } from '../api/admin-webhook-dlq.js';
+import { handleWebhookDlqList, handleWebhookDlqResolve } from '../api/admin-webhook-dlq.js';
 import { handleComplianceInboxSummary } from '../api/compliance-inbox-summary.js';
 import { handleMarkNotificationsRead, handleUnreadNotificationCount } from '../api/notifications.js';
 import { getQueryStats } from '../utils/queryMonitor.js';
@@ -660,10 +660,14 @@ adminRouter.post('/notifications/mark-read', async (req, res) => {
   }
 });
 
-// ─── SCRUM-4514: Inbound webhook DLQ — operator drain, replay, visibility ───
+// ─── SCRUM-4514: Inbound webhook DLQ — operator visibility + resolve ───
 // Session auth only (extractAuthUserId + isPlatformAdmin inside the handler),
 // same guard as every other route in this router. Never API-key auth — this
 // is an internal operator surface, not part of the public verification API.
+// No replay endpoint: CTO decision 2026-09-13 — Arkova does not retain raw
+// partner webhook bodies (§1.6A), so there is nothing to replay server-side.
+// Redelivery happens at the partner (see the SCRUM-4514 Confluence page's
+// partner redelivery matrix); /resolve just acknowledges it happened.
 adminRouter.get('/admin/webhook-dlq', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
@@ -675,13 +679,13 @@ adminRouter.get('/admin/webhook-dlq', async (req, res) => {
   }
 });
 
-adminRouter.post('/admin/webhook-dlq/replay', async (req, res) => {
+adminRouter.post('/admin/webhook-dlq/resolve', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleWebhookDlqReplay(userId, req, res);
+    await handleWebhookDlqResolve(userId, req, res);
   } catch (error) {
-    logger.error({ error }, 'Webhook DLQ replay request failed');
+    logger.error({ error }, 'Webhook DLQ resolve request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

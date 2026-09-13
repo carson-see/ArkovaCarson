@@ -1,33 +1,42 @@
 # agents.md — services/worker/src/api/
 
-## 2026-09-13 — SCRUM-4514: `admin-webhook-dlq.ts` — inbound webhook DLQ operator drain
+## 2026-09-13 — SCRUM-4514: `admin-webhook-dlq.ts` — inbound webhook DLQ visibility + resolve (CTO-revised same day)
 
-New: `handleWebhookDlqList` (`GET /api/admin/webhook-dlq` — counts by provider + oldest age,
-ids only, never `reason`/`payload_hash` in bulk) and `handleWebhookDlqReplay`
-(`POST /api/admin/webhook-dlq/replay` — claims up to `limit`, default 20, max 50, oldest-first
-unresolved rows). Both are session-auth + `isPlatformAdmin` only, mounted on `adminRouter` in
-`routes/admin.ts` next to `treasury`/`rules`/`queue` — never API-key auth, this is an internal
-operator surface, not part of the public verification API, and deliberately not added to
-`api/v1/docs.ts` / `docs/api/openapi.yaml` / `docs.routeParity.test.ts` for the same reason none
-of the other `adminRouter` endpoints (treasury, rules, queue, admin/*) are — see that router's
-existing routes for the precedent.
+Shipped twice in one day. First cut: `handleWebhookDlqList` (GET) + `handleWebhookDlqReplay`
+(POST `/replay`, claimed rows and always reported `not_replayable`, since none of the four
+writers persist a raw body — see `api/v1/webhooks/agents.md`). CTO decision closed the open
+question that first cut raised: Arkova does not retain raw partner webhook bodies for replay
+(§1.6A; DocuSign/Adobe bodies carry signer emails), so a "replay" endpoint that can never
+replay anything is misleading surface. Current shape:
 
-Claim atomicity: `UPDATE webhook_dlq SET resolved_at = now() WHERE id IN (...) AND
-resolved_at IS NULL RETURNING *` — the `resolved_at IS NULL` guard, not the preceding ordering
-SELECT, is what makes two concurrent callers (Cloud Run `minScale >= 2` double-firing this
-route, a retried operator request, or two operators) unable to both claim the same row.
+- `handleWebhookDlqList` — `GET /api/admin/webhook-dlq` — counts by provider + oldest age, plus
+  per-row `id`/`external_id`/`reason` (never `payload_hash` — there is no body to return). The
+  `external_id`/`reason` fields exist so an operator can go find the matching delivery in the
+  partner's own console.
+- `handleWebhookDlqResolve` — `POST /api/admin/webhook-dlq/resolve` — body
+  `{ ids: string[] (1-100), note: string (<=500) }`. Atomically resolves whichever of `ids` are
+  still unresolved (`UPDATE ... WHERE id = ANY($ids) AND resolved_at IS NULL RETURNING id`) and
+  reports `{ resolved, already_resolved }`. Idempotent by construction: calling it twice with the
+  same ids resolves them once, then reports the rest as `already_resolved` — never an error,
+  never a double count. `note` is validated (bounded, required) but persisted nowhere — no
+  `resolved_note` column exists and adding one is a migration, deliberately not done (see below)
+  — and never logged, on the same discipline as `reason`/`payload_hash`.
 
-Replayability: every row is reported `not_replayable` today, for every one of the four
-providers that write into `webhook_dlq` (`docusign`, `adobe_sign`, `checkr`, and `computeid` —
-see `api/v1/webhooks/agents.md`'s 2026-09-13 entry). None of the four writers persist the raw
-webhook body, so there is nothing to hand back into the original handler. `assessReplayability()`
-in this file is the single extension point if that ever changes; see its doc comment before
-copying this pattern for a different DLQ that DOES have a real body to replay.
+Both routes are session-auth + `isPlatformAdmin` only, mounted on `adminRouter` in
+`routes/admin.ts` next to `treasury`/`rules`/`queue` — never API-key auth. Deliberately not added
+to `api/v1/docs.ts` / `docs/api/openapi.yaml` / `docs.routeParity.test.ts`, matching every other
+`adminRouter` endpoint.
 
-No `claimed_at` / `attempt_count` / `last_error` column exists on `webhook_dlq` — adding one is
-a migration, deliberately not done here (T3 boundary this SCRUM-4514 change stays under; the
-path detector's `requiredTierFor()` returns T2 for this change's full file set).
-`resolved_at` is reused as both the claim marker and the terminal marker instead.
+No `claimed_at` / `attempt_count` / `resolved_note` column exists on `webhook_dlq` — adding one
+is a migration, deliberately not done here (T3 boundary this SCRUM-4514 change stays under; the
+path detector's `requiredTierFor()` returns T2 for this change's full file set). `resolved_at`
+is the only state column this module writes.
+
+Redelivery, when it happens, happens entirely outside this module — at the partner, via each
+provider's own console (DocuSign Connect "Resend", Adobe Sign retry/re-send, Checkr webhook-logs
+re-send, ComputeID asked to re-emit). `/resolve` only acknowledges that already happened; it
+never itself re-invokes a handler or contacts a partner. See the SCRUM-4514 Confluence page's
+partner redelivery matrix for the operator runbook.
 
 ## 2026-09-12 — `apiScopeEnforcementCensus.test.ts`: a grantable scope must gate something (SCRUM-3981)
 

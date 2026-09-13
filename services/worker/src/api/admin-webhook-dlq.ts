@@ -1,65 +1,54 @@
 /**
- * Inbound Webhook DLQ — Operator Drain, Replay & Visibility (SCRUM-4514)
+ * Inbound Webhook DLQ — Operator Visibility & Resolve (SCRUM-4514)
  *
- * GET  /api/admin/webhook-dlq          — counts by provider + oldest age (ids/providers only)
- * POST /api/admin/webhook-dlq/replay   — claim + attempt-replay up to `limit` unresolved rows
+ * GET  /api/admin/webhook-dlq          — counts by provider + oldest age + per-row detail
+ * POST /api/admin/webhook-dlq/resolve  — mark specific rows resolved (idempotent, atomic)
  *
  * Background: `webhook_dlq` (baseline migration, comment: "SCRUM-1148: inbound
  * webhook intake failures") was originally written by three inbound handlers —
  * `api/v1/webhooks/docusign.ts`, `adobe-sign.ts`, `checkr.ts` — whenever an
- * HMAC-valid payload fails normalization or enqueue. Per that folder's
- * agents.md: "Nothing under services/worker/src/jobs/ reads that table ...
- * drained by nobody. Treat a DLQ insert as a record of the loss, never as a
- * recovery path." This module is that drain.
+ * HMAC-valid payload fails normalization or enqueue. A FOURTH writer exists as
+ * of migration 0448 (2026-09-07, SCRUM-4493): `api/v1/webhooks/computeid.ts`
+ * (flag-gated dark) writes via `integrations/computeid/passport-transition.ts`'s
+ * `recordPassportFailure` -> the `enqueue_computeid_failure` RPC, into this
+ * same table with `provider = 'computeid'`. `webhook_dlq` was drained by
+ * nobody before this change. This module is that drain.
  *
- * A FOURTH writer exists as of migration 0448 / PR #2570-adjacent work
- * (2026-09-07, SCRUM-4493): `api/v1/webhooks/computeid.ts` (flag-gated dark)
- * writes via `integrations/computeid/passport-transition.ts`'s
- * `recordPassportFailure` -> the `enqueue_computeid_failure` RPC, which
- * INSERTs into this same `webhook_dlq` table with `provider = 'computeid'`
- * (deduped on `(provider, payload_hash, reason)`, unlike the other three
- * providers' plain inserts). The original task brief for this ticket named
- * only DocuSign/Adobe Sign/Checkr; `computeid` was found by grepping the
- * actual writers rather than trusting that list, and is included below.
+ * CTO DECISION (2026-09-13, closing the open question this module originally
+ * raised): Arkova does NOT retain raw partner webhook bodies to make
+ * server-side replay possible. `webhook_dlq` stores only `provider`,
+ * `external_id`, `webhook_id`, `reason`, `payload_hash` — by design, per
+ * §1.6A and webhooks/agents.md's "DO NOT persist raw webhook payloads" rule.
+ * DocuSign/Adobe Sign bodies carry signer emails; retaining them for replay
+ * would be a privacy tradeoff, not a free engineering win. An earlier version
+ * of this module shipped a `POST /replay` endpoint that claimed rows and
+ * always reported `not_replayable` — accurate, but a "replay" endpoint that
+ * can never replay anything is misleading surface. It has been removed.
  *
- * REPLAYABILITY (verified against the writers + the table schema, not
- * asserted): `webhook_dlq` stores only `provider`, `external_id`,
- * `webhook_id`, `reason`, `payload_hash` — never the raw webhook body. All
- * four writers follow the explicit rule ("DO NOT persist raw webhook
- * payloads" in webhooks/agents.md; "the partner's free-text reason and the
- * raw body never reach the DLQ" in passport-transition.ts). That means there
- * is no request body anywhere to hand back into the original handler's
- * processing function. Re-invoking the same handler code path — the CTO
- * design requirement for this change — is therefore not possible for ANY
- * row today, for ANY of the four providers. This module fails closed
- * accordingly: `assessReplayability()` returns `replayable: false` with a
- * specific per-row reason for every provider, and is the single extension
- * point if a future change decides to retain enough data (a separate, larger
- * design/privacy discussion — see docs/reference and §1.6A) to make replay
- * real. Until then, "drain" means: claim the row so it stops sitting
- * invisibly in an unresolved backlog, record why it can't be replayed, and
- * surface counts to an operator — not silently keep losing deliveries.
+ * The product value here is (1) visibility — an operator can see a DLQ'd
+ * failure exists, which provider, which external id, and why — and (2)
+ * acknowledgment — once the operator has separately triggered redelivery AT
+ * THE PARTNER (see the partner redelivery matrix in the SCRUM-4514 Confluence
+ * page: DocuSign Connect "Resend", Adobe Sign webhook retry / re-send from
+ * the developer console, Checkr webhook-logs re-send, ComputeID asked to
+ * re-emit), `POST /resolve` marks the row(s) done here. This module never
+ * attempts to reprocess anything itself.
  *
- * ATOMICITY (double-fire safety): Cloud Run runs this service at
- * `minScale >= 2` with in-process behavior, so two concurrent hits of this
- * route (two instances, a retried operator request, or two operators) must
- * never claim + report the same row twice. The claim is a single
- * `UPDATE webhook_dlq SET resolved_at = now() WHERE id IN (...) AND
- * resolved_at IS NULL RETURNING *` — Postgres serializes concurrent UPDATEs
- * against the same rows, and the `resolved_at IS NULL` guard means a row
- * already closed out by a concurrent caller simply falls out of the second
- * caller's RETURNING set. The preceding SELECT (oldest-first, LIMIT `limit`)
- * is ordering only, not the safety mechanism.
+ * ATOMICITY / idempotency: the resolve is a single
+ * `UPDATE webhook_dlq SET resolved_at = now() WHERE id = ANY($ids) AND
+ * resolved_at IS NULL RETURNING id`. Calling `/resolve` twice with the same
+ * ids is safe — the first call resolves them (`resolved: n`), the second
+ * finds nothing left to claim and reports them under `already_resolved`
+ * instead of erroring or double-counting.
  *
- * No `claimed_at` / `attempt_count` / `last_error` column exists on
- * `webhook_dlq` (verified against `database.types.ts`). Adding one is a
- * migration — a T3 surface this SCRUM-4514 change deliberately does not
- * cross. `resolved_at` is reused as both the claim marker and the terminal
- * "drained" marker (there is nothing to retry into once a row is confirmed
- * non-replayable — the raw body it would need is gone for good). Per-row
- * outcome is returned in the API response and logged (bounded, ids/provider/
- * reason text only — never a payload or payload_hash in a log line) since
- * there is no column to persist it to.
+ * No `resolved_note` (or equivalent) column exists on `webhook_dlq` (verified
+ * against `database.types.ts`). Adding one is a migration — a T3 surface this
+ * SCRUM-4514 change deliberately does not cross. The `note` field in the
+ * resolve request is validated (bounded) but stored nowhere; it exists for
+ * the operator's own record-keeping (e.g. in their own ticket/runbook), not
+ * as a durable audit trail on this table. It is also never logged — treated
+ * with the same discipline as `reason`/`payload_hash`, since an operator note
+ * could reference partner-identifying detail.
  */
 
 import type { Request, Response } from 'express';
@@ -67,9 +56,8 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
 
-const MAX_REPLAY_BATCH = 50;
-const DEFAULT_REPLAY_BATCH = 20;
-const DETAIL_MAX = 500; // matches webhook_dlq.reason's own CHECK (char_length <= 500)
+const MAX_RESOLVE_IDS = 100;
+const NOTE_MAX = 500;
 
 export const KNOWN_INBOUND_DLQ_PROVIDERS = ['docusign', 'adobe_sign', 'checkr', 'computeid'] as const;
 export type KnownInboundDlqProvider = (typeof KNOWN_INBOUND_DLQ_PROVIDERS)[number];
@@ -85,54 +73,22 @@ export interface DlqRow {
   created_at: string;
 }
 
-export interface ReplayAssessment {
-  replayable: boolean;
-  detail: string;
-}
-
-/**
- * Per-provider replayability check. Every branch returns `replayable: false`
- * today — see the module doc comment for why. Kept as a function (not an
- * inline constant) so a provider that starts persisting enough to reprocess
- * can flip independently without touching the claim/response plumbing below.
- */
-export function assessReplayability(row: Pick<DlqRow, 'provider'>): ReplayAssessment {
-  switch (row.provider) {
-    case 'docusign':
-    case 'adobe_sign':
-    case 'checkr':
-      return {
-        replayable: false,
-        detail:
-          'raw webhook payload not persisted (webhooks/agents.md: "DO NOT persist raw webhook payloads") — ' +
-          'only payload_hash and ids are retained, which is not enough to re-invoke the original handler',
-      };
-    case 'computeid':
-      return {
-        replayable: false,
-        detail:
-          'raw webhook payload not persisted (passport-transition.ts: "the raw body never reach[es] the DLQ") — ' +
-          'only payload_hash and ids are retained, which is not enough to re-invoke the original handler',
-      };
-    default:
-      return {
-        replayable: false,
-        detail: `unknown provider "${row.provider}" — no replay handler registered for it`,
-      };
-  }
-}
-
-function bounded(text: string, max = DETAIL_MAX): string {
-  return text.length > max ? text.slice(0, max) : text;
+export interface DlqListRow {
+  id: string;
+  provider: string;
+  external_id: string | null;
+  reason: string;
+  age_seconds: number;
 }
 
 /**
  * GET /api/admin/webhook-dlq
  *
- * Counts by provider + oldest unresolved age, plus the bare id list. Never
- * returns `reason` or `payload_hash` in bulk — `reason` can echo
- * upstream-derived failure text, and this is a list/count view, not a
- * per-row detail view.
+ * Counts by provider + oldest unresolved age, plus per-row `id`,
+ * `external_id`, and `reason` — the fields an operator needs to go find the
+ * matching delivery in the partner's own console and request redelivery
+ * there. Never `payload_hash` or any request body; there is no body to
+ * return.
  */
 export async function handleWebhookDlqList(userId: string, req: Request, res: Response): Promise<void> {
   const isAdmin = await isPlatformAdmin(userId);
@@ -142,10 +98,10 @@ export async function handleWebhookDlqList(userId: string, req: Request, res: Re
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- webhook_dlq predates strict Supabase typing on this path (matches the three writers)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- webhook_dlq predates strict Supabase typing on this path (matches the four writers)
     const { data, error } = await (db as any)
       .from('webhook_dlq')
-      .select('id, provider, created_at')
+      .select('id, provider, external_id, reason, created_at')
       .is('resolved_at', null)
       .order('created_at', { ascending: true });
 
@@ -155,21 +111,30 @@ export async function handleWebhookDlqList(userId: string, req: Request, res: Re
       return;
     }
 
-    const rows = (data ?? []) as Array<Pick<DlqRow, 'id' | 'provider' | 'created_at'>>;
+    const rawRows = (data ?? []) as Array<Pick<DlqRow, 'id' | 'provider' | 'external_id' | 'reason' | 'created_at'>>;
     const now = Date.now();
     const byProvider: Record<string, { count: number; oldest_age_seconds: number }> = {};
-    for (const row of rows) {
+    const rows: DlqListRow[] = [];
+
+    for (const row of rawRows) {
       const ageSeconds = Math.max(0, Math.floor((now - new Date(row.created_at).getTime()) / 1000));
       const bucket = byProvider[row.provider] ?? { count: 0, oldest_age_seconds: 0 };
       bucket.count += 1;
       bucket.oldest_age_seconds = Math.max(bucket.oldest_age_seconds, ageSeconds);
       byProvider[row.provider] = bucket;
+      rows.push({
+        id: row.id,
+        provider: row.provider,
+        external_id: row.external_id,
+        reason: row.reason,
+        age_seconds: ageSeconds,
+      });
     }
 
     res.json({
-      total_unresolved: rows.length,
+      total_unresolved: rawRows.length,
       by_provider: byProvider,
-      ids: rows.map((r) => r.id),
+      rows,
     });
   } catch (err) {
     logger.error({ error: err }, 'webhook-dlq list request threw');
@@ -177,149 +142,106 @@ export async function handleWebhookDlqList(userId: string, req: Request, res: Re
   }
 }
 
-export interface ReplayRowOutcome {
-  id: string;
-  provider: string;
-  replayable: boolean;
-  outcome: 'not_replayable' | 'replayed' | 'error';
-  detail: string;
+export interface ResolveResponse {
+  resolved: number;
+  already_resolved: number;
 }
 
-export interface ReplayResponse {
-  claimed: number;
-  replayed: number;
-  not_replayable: number;
-  errored: number;
-  results: ReplayRowOutcome[];
+function isValidIdsArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length >= 1 &&
+    value.length <= MAX_RESOLVE_IDS &&
+    value.every((v) => typeof v === 'string' && v.length > 0)
+  );
 }
 
 /**
- * POST /api/admin/webhook-dlq/replay
- * Body: `{ limit?: number }` — default 20, max 50.
+ * POST /api/admin/webhook-dlq/resolve
+ * Body: `{ ids: string[] (1-100), note: string (<=500 chars) }`
  *
- * Claims up to `limit` of the oldest unresolved rows and, per row, either
- * re-invokes the original handler's processing path (no provider qualifies
- * today — see module doc comment) or records why it can't and marks it
- * resolved anyway, so it stops occupying the unresolved backlog. Returns
- * counts + per-row outcome; never a payload or payload_hash.
+ * Marks the given rows resolved. Idempotent: an id that is already resolved
+ * (by an earlier call, or by someone else) is reported under
+ * `already_resolved` rather than erroring or being double-counted. An id that
+ * does not match any row is silently ignored (contributes to neither count) —
+ * there is no third "not_found" bucket in this response shape.
+ *
+ * `note` is validated but not persisted (see module doc comment) and is
+ * never logged.
  */
-export async function handleWebhookDlqReplay(userId: string, req: Request, res: Response): Promise<void> {
+export async function handleWebhookDlqResolve(userId: string, req: Request, res: Response): Promise<void> {
   const isAdmin = await isPlatformAdmin(userId);
   if (!isAdmin) {
     res.status(403).json({ error: 'Forbidden — platform admin access required' });
     return;
   }
 
-  const rawLimit = req.body?.limit;
-  let limit = DEFAULT_REPLAY_BATCH;
-  if (rawLimit !== undefined) {
-    if (typeof rawLimit !== 'number' || !Number.isInteger(rawLimit) || rawLimit < 1) {
-      res.status(400).json({ error: 'limit must be a positive integer' });
-      return;
-    }
-    limit = Math.min(rawLimit, MAX_REPLAY_BATCH);
+  const { ids, note } = (req.body ?? {}) as { ids?: unknown; note?: unknown };
+
+  if (!isValidIdsArray(ids)) {
+    res.status(400).json({ error: `ids must be a non-empty array of strings, max ${MAX_RESOLVE_IDS}` });
+    return;
+  }
+  if (typeof note !== 'string' || note.length === 0 || note.length > NOTE_MAX) {
+    res.status(400).json({ error: `note must be a non-empty string, max ${NOTE_MAX} chars` });
+    return;
   }
 
+  const uniqueIds = [...new Set(ids)];
+  const nowIso = new Date().toISOString();
+
   try {
+    // Atomic claim: only rows currently unresolved are matched, so calling
+    // this twice with the same ids resolves them once, then resolves zero.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: candidates, error: selectError } = await (db as any)
-      .from('webhook_dlq')
-      .select('id, provider, external_id, webhook_id, reason, payload_hash, resolved_at, created_at')
-      .is('resolved_at', null)
-      .order('created_at', { ascending: true })
-      .limit(limit);
-
-    if (selectError) {
-      logger.error({ error: selectError }, 'webhook-dlq replay candidate select failed');
-      res.status(500).json({ error: 'Failed to query webhook DLQ' });
-      return;
-    }
-
-    const candidateRows = (candidates ?? []) as DlqRow[];
-    if (candidateRows.length === 0) {
-      res.json({ claimed: 0, replayed: 0, not_replayable: 0, errored: 0, results: [] } satisfies ReplayResponse);
-      return;
-    }
-
-    const ids = candidateRows.map((r) => r.id);
-    const nowIso = new Date().toISOString();
-
-    // Atomic claim: the WHERE resolved_at IS NULL guard is what prevents two
-    // concurrent callers from claiming the same row — not the ordering of the
-    // SELECT above. A row a concurrent caller already resolved between the
-    // SELECT and this UPDATE simply will not appear in `claimed` here.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: claimed, error: claimError } = await (db as any)
+    const { data: justResolved, error: updateError } = await (db as any)
       .from('webhook_dlq')
       .update({ resolved_at: nowIso })
-      .in('id', ids)
+      .in('id', uniqueIds)
       .is('resolved_at', null)
-      .select('id, provider, external_id, webhook_id, reason, payload_hash, resolved_at, created_at');
+      .select('id');
 
-    if (claimError) {
-      logger.error({ error: claimError }, 'webhook-dlq replay claim UPDATE failed');
-      res.status(500).json({ error: 'Failed to claim webhook DLQ rows' });
+    if (updateError) {
+      logger.error({ error: updateError }, 'webhook-dlq resolve UPDATE failed');
+      res.status(500).json({ error: 'Failed to resolve webhook DLQ rows' });
       return;
     }
 
-    const claimedRows = (claimed ?? []) as DlqRow[];
-    const results: ReplayRowOutcome[] = [];
-    let replayedCount = 0;
-    let notReplayableCount = 0;
-    // Always 0 today: no provider reaches the `replayable: true` branch below,
-    // so there is no actual re-invocation attempt that could throw yet. Kept
-    // as a named counter (not folded away) so the response/log shape does not
-    // have to change the day a provider does.
-    const erroredCount = 0;
+    const resolvedIds = (justResolved ?? []) as Array<{ id: string }>;
+    const resolvedCount = resolvedIds.length;
 
-    for (const row of claimedRows) {
-      const assessment = assessReplayability(row);
-      if (assessment.replayable) {
-        // No provider reaches this branch today (see module doc comment).
-        // Left in place as the extension point for a future provider that
-        // persists enough to actually reprocess.
-        replayedCount += 1;
-        results.push({
-          id: row.id,
-          provider: row.provider,
-          replayable: true,
-          outcome: 'replayed',
-          detail: bounded(assessment.detail),
-        });
-        continue;
-      }
-      notReplayableCount += 1;
-      results.push({
-        id: row.id,
-        provider: row.provider,
-        replayable: false,
-        outcome: 'not_replayable',
-        detail: bounded(assessment.detail),
-      });
+    // Second pass: of the requested ids, how many now exist AND are
+    // resolved (either by this call or by an earlier one)? Subtracting this
+    // call's own resolved count leaves "was already resolved before this
+    // call" — the idempotency-visible bucket. Ids that never matched a row
+    // at all are absent from both counts.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: nowResolved, error: selectError } = await (db as any)
+      .from('webhook_dlq')
+      .select('id')
+      .in('id', uniqueIds)
+      .not('resolved_at', 'is', null);
+
+    if (selectError) {
+      logger.error({ error: selectError }, 'webhook-dlq resolve post-check SELECT failed');
+      // The UPDATE already committed — do not fail the request over a
+      // reporting-only follow-up query. Report what we know for certain.
+      res.json({ resolved: resolvedCount, already_resolved: 0 } satisfies ResolveResponse);
+      return;
     }
 
-    // Bounded, ids/provider/counts only — never `reason` or `payload_hash`.
-    logger.warn(
-      {
-        claimed: claimedRows.length,
-        replayed: replayedCount,
-        not_replayable: notReplayableCount,
-        errored: erroredCount,
-        providers: [...new Set(claimedRows.map((r) => r.provider))],
-        ids: claimedRows.map((r) => r.id),
-      },
-      'webhook-dlq operator drain executed',
+    const totalNowResolved = ((nowResolved ?? []) as Array<{ id: string }>).length;
+    const alreadyResolvedCount = Math.max(0, totalNowResolved - resolvedCount);
+
+    // Bounded, ids/counts only — never `reason`, `payload_hash`, or `note`.
+    logger.info(
+      { resolved: resolvedCount, already_resolved: alreadyResolvedCount, ids: uniqueIds },
+      'webhook-dlq rows resolved by operator',
     );
 
-    res.json({
-      claimed: claimedRows.length,
-      replayed: replayedCount,
-      not_replayable: notReplayableCount,
-      errored: erroredCount,
-      results,
-    } satisfies ReplayResponse);
+    res.json({ resolved: resolvedCount, already_resolved: alreadyResolvedCount } satisfies ResolveResponse);
   } catch (err) {
-    logger.error({ error: err }, 'webhook-dlq replay request threw');
+    logger.error({ error: err }, 'webhook-dlq resolve request threw');
     res.status(500).json({ error: 'Internal server error' });
   }
 }

@@ -3,15 +3,22 @@
 New job, `POST /jobs/webhook-dlq-report` (Cloud Scheduler HTTP trigger only, same shape as
 `queue-digest-cron.ts` — no in-process registration). Report-only: counts unresolved
 `webhook_dlq` rows by provider and the oldest unresolved age, logs at `warn` when non-empty /
-`info` when clean, never mutates a row. The actual claim/replay/resolve path is the operator
-endpoint `api/admin-webhook-dlq.ts` (`POST /api/admin/webhook-dlq/replay`), not this job — keep
-them separate; this job exists so a growing backlog is visible in logs/Sentry between operator
-drain runs. Selects only `provider, created_at` — never `reason`, `payload_hash`,
-`external_id`, or `webhook_id` in the query, so there is nothing PII-adjacent to accidentally
-log. See `api/v1/webhooks/agents.md`'s 2026-09-13 entry for the replayability finding this pair
-of changes is built around: none of the four inbound writers (`docusign`, `adobe_sign`,
-`checkr`, `computeid`) persist a raw body, so nothing in this table is actually replayable
-today — the drain claims and resolves every row, but every outcome is `not_replayable`.
+`info` when clean, never mutates a row. Unchanged by the CTO decision below — the resolve path
+lives entirely in `api/admin-webhook-dlq.ts` (`POST /api/admin/webhook-dlq/resolve`), not this
+job; this job exists so a growing backlog is visible in logs/Sentry between operator resolve
+runs. Selects only `provider, created_at` — never `reason`, `payload_hash`, `external_id`, or
+`webhook_id` in the query, so there is nothing PII-adjacent to accidentally log.
+
+**Same-day correction:** this entry originally said the sibling operator endpoint was
+`POST /api/admin/webhook-dlq/replay` and that it "claims and resolves every row, but every
+outcome is not_replayable." The CTO decided the same day that Arkova does not retain raw partner
+webhook bodies for replay (§1.6A), so that endpoint was replaced with
+`POST /api/admin/webhook-dlq/resolve` — an operator acknowledgment after redelivery happens at
+the partner, not a claim-and-attempt. See `api/v1/webhooks/agents.md`'s 2026-09-13 entries for
+the full history: none of the four inbound writers (`docusign`, `adobe_sign`, `checkr`,
+`computeid`) persist a raw body, so nothing in this table was ever actually replayable —
+this job's report is about visibility into that backlog, independent of which shape the
+operator endpoint takes.
 
 ## 2026-09-10 — PR #2570 unknown debit response recovery
 

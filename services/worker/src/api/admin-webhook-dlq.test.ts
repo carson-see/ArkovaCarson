@@ -1,11 +1,15 @@
 /**
- * Unit tests for the inbound webhook DLQ operator drain (SCRUM-4514).
+ * Unit tests for the inbound webhook DLQ operator visibility + resolve
+ * surface (SCRUM-4514).
  *
- * Covers: platform-admin authz gate, claim atomicity (two concurrent
- * replay calls never both claim the same row), the fail-closed replay
- * outcome per provider (docusign/adobe_sign/checkr all lack a persisted
- * raw body, so none are replayable today), bounded per-row detail text,
- * and that no log call ever carries payload/payload_hash/reason content.
+ * CTO decision (2026-09-13): no raw-body retention, no server-side replay.
+ * `GET` surfaces enough per-row detail (id/provider/external_id/reason) for
+ * an operator to go trigger redelivery at the partner; `POST /resolve`
+ * acknowledges that happened. Covers: platform-admin authz gate, resolve
+ * idempotency (second call on the same ids reports already_resolved, not an
+ * error or a double count), input bound validation, and that no log call —
+ * list or resolve — ever carries payload_hash, the operator's note text, or
+ * looks like a raw webhook body.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -21,12 +25,7 @@ vi.mock('../utils/platformAdmin.js', () => ({ isPlatformAdmin: mockIsPlatformAdm
 vi.mock('../utils/db.js', () => ({ db: { from: mockFrom } }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 
-import {
-  handleWebhookDlqList,
-  handleWebhookDlqReplay,
-  assessReplayability,
-  type DlqRow,
-} from './admin-webhook-dlq.js';
+import { handleWebhookDlqList, handleWebhookDlqResolve } from './admin-webhook-dlq.js';
 
 function mockReq(body: Record<string, unknown> = {}): Request {
   return { body } as unknown as Request;
@@ -49,20 +48,7 @@ function mockRes(): Response & { statusCode: number; body: unknown } {
 }
 
 const ADMIN = 'admin-user-id';
-
-function makeRow(overrides: Partial<DlqRow> = {}): DlqRow {
-  return {
-    id: 'row-1',
-    provider: 'docusign',
-    external_id: 'env-123',
-    webhook_id: null,
-    reason: 'normalization failed',
-    payload_hash: 'a'.repeat(64),
-    resolved_at: null,
-    created_at: new Date(Date.now() - 60_000).toISOString(),
-    ...overrides,
-  };
-}
+const NOTE = 'Resent via DocuSign Connect logs 2026-09-13; delivery confirmed 202.';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -78,19 +64,14 @@ describe('SCRUM-4514: platform-admin authz gate', () => {
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it('POST replay: 403s a non-admin session user', async () => {
+  it('POST resolve: 403s a non-admin session user', async () => {
     mockIsPlatformAdmin.mockResolvedValue(false);
     const res = mockRes();
-    await handleWebhookDlqReplay('org-admin-user', mockReq(), res);
+    await handleWebhookDlqResolve('org-admin-user', mockReq({ ids: ['r1'], note: NOTE }), res);
     expect(res.statusCode).toBe(403);
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  // The router layer (routes/admin.ts) never calls these handlers without a
-  // resolved session userId — an API-key-only or anonymous request 401s at
-  // `extractAuthUserId` before reaching here. isPlatformAdmin is therefore
-  // the only gate this module itself is responsible for, and it must always
-  // run before any `db.from` call.
   it('never queries the DLQ table before the admin check resolves', async () => {
     let adminCheckResolved = false;
     mockIsPlatformAdmin.mockImplementation(async () => {
@@ -104,44 +85,27 @@ describe('SCRUM-4514: platform-admin authz gate', () => {
     });
     await handleWebhookDlqList(ADMIN, mockReq(), mockRes());
   });
-});
 
-describe('SCRUM-4514: replayability — all four inbound providers fail closed today', () => {
-  // computeid is the fourth writer (migration 0448 / SCRUM-4493, 2026-09-07,
-  // flag-gated dark) found by grepping the live writers rather than trusting
-  // the ticket's original docusign/adobe_sign/checkr-only list.
-  it.each(['docusign', 'adobe_sign', 'checkr', 'computeid'])('%s: not replayable (no raw body persisted)', (provider) => {
-    const assessment = assessReplayability({ provider });
-    expect(assessment.replayable).toBe(false);
-    expect(assessment.detail.length).toBeLessThanOrEqual(500);
-    expect(assessment.detail).toMatch(/not persisted|payload_hash/);
-  });
-
-  it('unknown provider: not replayable, names the provider', () => {
-    const assessment = assessReplayability({ provider: 'some_new_vendor' });
-    expect(assessment.replayable).toBe(false);
-    expect(assessment.detail).toContain('some_new_vendor');
-  });
 });
 
 describe('SCRUM-4514: GET /admin/webhook-dlq (list/counts)', () => {
-  it('returns counts by provider + oldest age, ids only — never reason/payload_hash', async () => {
+  it('returns counts by provider + oldest age, and per-row id/provider/external_id/reason — never payload_hash', async () => {
     const old = new Date(Date.now() - 3600_000).toISOString();
     const recent = new Date(Date.now() - 10_000).toISOString();
     mockFrom.mockImplementation((table: string) => {
       expect(table).toBe('webhook_dlq');
       return {
         select: (cols: string) => {
-          // The list view must not select reason/payload_hash in bulk.
-          expect(cols).not.toContain('reason');
           expect(cols).not.toContain('payload_hash');
+          expect(cols).toContain('reason');
+          expect(cols).toContain('external_id');
           return {
             is: () => ({
               order: () => ({
                 data: [
-                  { id: 'r1', provider: 'docusign', created_at: old },
-                  { id: 'r2', provider: 'docusign', created_at: recent },
-                  { id: 'r3', provider: 'checkr', created_at: recent },
+                  { id: 'r1', provider: 'docusign', external_id: 'env-1', reason: 'invalid_body:json_parse', created_at: old },
+                  { id: 'r2', provider: 'docusign', external_id: 'env-2', reason: 'timeout', created_at: recent },
+                  { id: 'r3', provider: 'checkr', external_id: 'rep-1', reason: 'unbound_passport', created_at: recent },
                 ],
                 error: null,
               }),
@@ -158,14 +122,17 @@ describe('SCRUM-4514: GET /admin/webhook-dlq (list/counts)', () => {
     const body = res.body as {
       total_unresolved: number;
       by_provider: Record<string, { count: number; oldest_age_seconds: number }>;
-      ids: string[];
+      rows: Array<{ id: string; provider: string; external_id: string | null; reason: string; age_seconds: number }>;
     };
     expect(body.total_unresolved).toBe(3);
     expect(body.by_provider.docusign.count).toBe(2);
     expect(body.by_provider.checkr.count).toBe(1);
     expect(body.by_provider.docusign.oldest_age_seconds).toBeGreaterThanOrEqual(3599);
-    expect(body.ids.sort()).toEqual(['r1', 'r2', 'r3']);
-    expect(JSON.stringify(body)).not.toMatch(/payload_hash|normalization failed/);
+    expect(body.rows.map((r) => r.id).sort()).toEqual(['r1', 'r2', 'r3']);
+    const r1 = body.rows.find((r) => r.id === 'r1')!;
+    expect(r1.external_id).toBe('env-1');
+    expect(r1.reason).toBe('invalid_body:json_parse');
+    expect(JSON.stringify(body)).not.toMatch(/payload_hash|[a-f0-9]{64}/);
   });
 
   it('500s cleanly on a query error', async () => {
@@ -178,183 +145,159 @@ describe('SCRUM-4514: GET /admin/webhook-dlq (list/counts)', () => {
   });
 });
 
-describe('SCRUM-4514: POST /admin/webhook-dlq/replay — claim + fail-closed outcome', () => {
-  it('claims up to `limit` oldest rows, marks every row not_replayable, resolves them', async () => {
-    const rows = [makeRow({ id: 'r1', provider: 'docusign' }), makeRow({ id: 'r2', provider: 'checkr' })];
-
-    const selectChain = {
-      select: () => ({ is: () => ({ order: () => ({ limit: () => ({ data: rows, error: null }) }) }) }),
-    };
-    const updateChain = {
-      update: (patch: Record<string, unknown>) => {
-        expect(typeof patch.resolved_at).toBe('string');
-        return {
-          in: (col: string, ids: string[]) => {
-            expect(col).toBe('id');
-            expect(ids.sort()).toEqual(['r1', 'r2']);
-            return {
-              is: () => ({
-                select: () => ({ data: rows.map((r) => ({ ...r, resolved_at: patch.resolved_at })), error: null }),
-              }),
-            };
-          },
-        };
-      },
-    };
-
-    let call = 0;
-    mockFrom.mockImplementation(() => {
-      call += 1;
-      return call === 1 ? selectChain : updateChain;
-    });
-
-    const res = mockRes();
-    await handleWebhookDlqReplay(ADMIN, mockReq({ limit: 2 }), res);
-
-    expect(res.statusCode).toBe(200);
-    const body = res.body as {
-      claimed: number;
-      replayed: number;
-      not_replayable: number;
-      errored: number;
-      results: Array<{ id: string; outcome: string; detail: string }>;
-    };
-    expect(body.claimed).toBe(2);
-    expect(body.replayed).toBe(0);
-    expect(body.not_replayable).toBe(2);
-    expect(body.errored).toBe(0);
-    expect(body.results.every((r) => r.outcome === 'not_replayable')).toBe(true);
-    expect(body.results.every((r) => r.detail.length <= 500)).toBe(true);
-
-    // The claim call is the only place the response can differ from reality
-    // — assert the atomicity guard was actually applied, not just that a
-    // 200 came back.
-    const warnCall = mockLogger.warn.mock.calls.find(([, msg]) => msg === 'webhook-dlq operator drain executed');
-    expect(warnCall).toBeDefined();
-    const loggedPayload = JSON.stringify(warnCall![0]);
-    expect(loggedPayload).not.toMatch(/normalization failed|payload_hash|[a-f0-9]{64}/);
-  });
-
-  it('atomicity: a row already resolved by a concurrent claim is excluded from this caller\'s claimed set', async () => {
-    // Simulate: the SELECT sees 2 unresolved rows, but by the time this
-    // caller's UPDATE runs, a concurrent caller already resolved r1 —
-    // exactly what the `is('resolved_at', null)` guard on the UPDATE
-    // protects against in production (Postgres re-evaluates the WHERE
-    // clause under the row lock). The mock stands in for that guard by
-    // only returning r2 from the UPDATE...RETURNING.
-    const candidateRows = [makeRow({ id: 'r1' }), makeRow({ id: 'r2' })];
-
-    const selectChain = {
-      select: () => ({ is: () => ({ order: () => ({ limit: () => ({ data: candidateRows, error: null }) }) }) }),
-    };
-    const updateChain = {
-      update: () => ({
-        in: () => ({
-          is: () => ({
-            // Only r2 comes back — r1 was claimed by a concurrent caller.
-            select: () => ({ data: [makeRow({ id: 'r2' })], error: null }),
-          }),
-        }),
-      }),
-    };
-
-    let call = 0;
-    mockFrom.mockImplementation(() => (++call === 1 ? selectChain : updateChain));
-
-    const res = mockRes();
-    await handleWebhookDlqReplay(ADMIN, mockReq(), res);
-
-    const body = res.body as { claimed: number; results: Array<{ id: string }> };
-    expect(body.claimed).toBe(1);
-    expect(body.results.map((r) => r.id)).toEqual(['r2']);
-  });
-
-  it('two sequential drain calls never report the same row twice (simulated concurrency)', async () => {
-    // A single shared "table" whose UPDATE respects resolved_at IS NULL,
-    // driving both calls against the SAME backing state — the strongest
-    // check this test file can do without a real Postgres instance.
-    const table: DlqRow[] = [makeRow({ id: 'r1' }), makeRow({ id: 'r2' })];
-
-    function makeChainFor(currentTable: DlqRow[]) {
+describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', () => {
+  /** A tiny in-memory `webhook_dlq` stand-in shared across chained mock calls. */
+  function makeTable(rows: Array<{ id: string; resolved_at: string | null }>) {
+    function chainFor() {
       return {
-        select: () => ({
-          is: () => ({
-            order: () => ({
-              limit: (n: number) => ({
-                data: currentTable.filter((r) => r.resolved_at === null).slice(0, n),
-                error: null,
-              }),
-            }),
-          }),
-        }),
-        update: (patch: Record<string, unknown>) => ({
+        update: (patch: { resolved_at: string }) => ({
           in: (_col: string, ids: string[]) => ({
             is: () => {
-              const claimedNow = currentTable.filter(
-                (r) => ids.includes(r.id) && r.resolved_at === null,
-              );
-              for (const row of claimedNow) row.resolved_at = patch.resolved_at as string;
-              return { select: () => ({ data: claimedNow, error: null }) };
+              const justResolved = rows.filter((r) => ids.includes(r.id) && r.resolved_at === null);
+              for (const r of justResolved) r.resolved_at = patch.resolved_at;
+              return { select: () => ({ data: justResolved.map((r) => ({ id: r.id })), error: null }) };
             },
+          }),
+        }),
+        select: () => ({
+          in: (_col: string, ids: string[]) => ({
+            not: (_col2: string, _op: string, _val: unknown) => ({
+              data: rows.filter((r) => ids.includes(r.id) && r.resolved_at !== null).map((r) => ({ id: r.id })),
+              error: null,
+            }),
           }),
         }),
       };
     }
+    return chainFor;
+  }
 
-    mockFrom.mockImplementation(() => makeChainFor(table));
+  it('resolves unresolved rows and returns resolved count, already_resolved 0', async () => {
+    const rows = [
+      { id: 'r1', resolved_at: null },
+      { id: 'r2', resolved_at: null },
+    ];
+    mockFrom.mockImplementation(() => makeTable(rows)());
 
-    const resA = mockRes();
-    const resB = mockRes();
-    // Fire both "concurrently" (same microtask interleaving vitest gives us);
-    // the shared `table` array is what makes this a real atomicity check.
-    await Promise.all([
-      handleWebhookDlqReplay(ADMIN, mockReq(), resA),
-      handleWebhookDlqReplay(ADMIN, mockReq(), resB),
-    ]);
-
-    const idsA = (resA.body as { results: Array<{ id: string }> }).results.map((r) => r.id);
-    const idsB = (resB.body as { results: Array<{ id: string }> }).results.map((r) => r.id);
-    const overlap = idsA.filter((id) => idsB.includes(id));
-    expect(overlap).toEqual([]);
-    expect([...idsA, ...idsB].sort()).toEqual(['r1', 'r2']);
-  });
-
-  it('rejects a non-integer or non-positive limit with 400', async () => {
-    const res1 = mockRes();
-    await handleWebhookDlqReplay(ADMIN, mockReq({ limit: 'lots' }), res1);
-    expect(res1.statusCode).toBe(400);
-    expect(mockFrom).not.toHaveBeenCalled();
-
-    const res2 = mockRes();
-    await handleWebhookDlqReplay(ADMIN, mockReq({ limit: 0 }), res2);
-    expect(res2.statusCode).toBe(400);
-  });
-
-  it('caps limit at 50 even if a larger value is requested', async () => {
-    let capturedLimit: number | undefined;
-    mockFrom.mockImplementation(() => ({
-      select: () => ({
-        is: () => ({
-          order: () => ({
-            limit: (n: number) => {
-              capturedLimit = n;
-              return { data: [], error: null };
-            },
-          }),
-        }),
-      }),
-    }));
-    await handleWebhookDlqReplay(ADMIN, mockReq({ limit: 5000 }), mockRes());
-    expect(capturedLimit).toBe(50);
-  });
-
-  it('returns zero counts with no DB write when the queue is already empty', async () => {
-    mockFrom.mockReturnValue({
-      select: () => ({ is: () => ({ order: () => ({ limit: () => ({ data: [], error: null }) }) }) }),
-    });
     const res = mockRes();
-    await handleWebhookDlqReplay(ADMIN, mockReq(), res);
-    expect(res.body).toEqual({ claimed: 0, replayed: 0, not_replayable: 0, errored: 0, results: [] });
-    expect(mockFrom).toHaveBeenCalledTimes(1); // select only, no update chain entered
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r2'], note: NOTE }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ resolved: 2, already_resolved: 0 });
+    expect(rows.every((r) => r.resolved_at !== null)).toBe(true);
+  });
+
+  it('idempotency: calling resolve twice on the same ids reports already_resolved on the second call, never double-counts', async () => {
+    const rows = [
+      { id: 'r1', resolved_at: null },
+      { id: 'r2', resolved_at: null },
+    ];
+    mockFrom.mockImplementation(() => makeTable(rows)());
+
+    const first = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r2'], note: NOTE }), first);
+    expect(first.body).toEqual({ resolved: 2, already_resolved: 0 });
+
+    const second = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r2'], note: NOTE }), second);
+    expect(second.body).toEqual({ resolved: 0, already_resolved: 2 });
+  });
+
+  it('mixed batch: some ids already resolved, some not — both counts correct in one call', async () => {
+    const rows = [
+      { id: 'r1', resolved_at: new Date().toISOString() }, // already resolved
+      { id: 'r2', resolved_at: null }, // fresh
+    ];
+    mockFrom.mockImplementation(() => makeTable(rows)());
+
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r2'], note: NOTE }), res);
+    expect(res.body).toEqual({ resolved: 1, already_resolved: 1 });
+  });
+
+  it('an id that matches no row contributes to neither count', async () => {
+    const rows = [{ id: 'r1', resolved_at: null }];
+    mockFrom.mockImplementation(() => makeTable(rows)());
+
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'does-not-exist'], note: NOTE }), res);
+    expect(res.body).toEqual({ resolved: 1, already_resolved: 0 });
+  });
+
+  it('rejects an empty ids array with 400', async () => {
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [], note: NOTE }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('rejects more than 100 ids with 400', async () => {
+    const ids = Array.from({ length: 101 }, (_, i) => `id-${i}`);
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids, note: NOTE }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-array ids field with 400', async () => {
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: 'r1', note: NOTE }), res);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a missing note with 400', async () => {
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1'] }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('rejects a note over 500 chars with 400', async () => {
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1'], note: 'x'.repeat(501) }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('accepts a note at exactly 500 chars', async () => {
+    const rows = [{ id: 'r1', resolved_at: null }];
+    mockFrom.mockImplementation(() => makeTable(rows)());
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1'], note: 'x'.repeat(500) }), res);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('never logs the note content, payload_hash, or reason — only ids/counts', async () => {
+    const rows = [{ id: 'r1', resolved_at: null }];
+    mockFrom.mockImplementation(() => makeTable(rows)());
+    const secretishNote = 'contact: jane.doe@example.com re: envelope 12345';
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1'], note: secretishNote }), mockRes());
+
+    const allLoggedText = [...mockLogger.info.mock.calls, ...mockLogger.warn.mock.calls, ...mockLogger.error.mock.calls]
+      .map((call) => JSON.stringify(call))
+      .join('\n');
+    expect(allLoggedText).not.toContain(secretishNote);
+    expect(allLoggedText).not.toContain('jane.doe@example.com');
+    expect(allLoggedText).not.toMatch(/payload_hash/);
+  });
+
+  it('de-duplicates repeated ids in the request before claiming', async () => {
+    const rows = [{ id: 'r1', resolved_at: null }];
+    let capturedIds: string[] = [];
+    mockFrom.mockImplementation(() => ({
+      update: () => ({
+        in: (_col: string, ids: string[]) => {
+          capturedIds = ids;
+          return {
+            is: () => ({
+              select: () => ({ data: rows.filter((r) => ids.includes(r.id)).map((r) => ({ id: r.id })), error: null }),
+            }),
+          };
+        },
+      }),
+      select: () => ({ in: () => ({ not: () => ({ data: [], error: null }) }) }),
+    }));
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r1', 'r1'], note: NOTE }), mockRes());
+    expect(capturedIds).toEqual(['r1']);
   });
 });
