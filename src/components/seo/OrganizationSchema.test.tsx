@@ -108,7 +108,11 @@ describe('<OrganizationSchema />', () => {
     );
     const script = container.querySelector('script[type="application/ld+json"]');
     const raw = script!.innerHTML;
+    // SCRUM-4989: assert the property (no raw `<` can reach the tokenizer, one
+    // script element, payload still round-trips) not one particular escape form.
     expect(raw).not.toContain('</script>');
-    expect(raw).toContain('<\\/script');
+    expect(raw).not.toContain('<');
+    expect(container.querySelectorAll('script')).toHaveLength(1);
+    expect(JSON.parse(raw).description).toBe('evil</script><script>alert(1)</script>');
   });
 });
