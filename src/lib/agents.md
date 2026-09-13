@@ -70,6 +70,29 @@ fixed in this change.
 
 `jsonLd.ts` — `toJsonLd(value)` is the one serializer for every `<script type="application/ld+json">` rendered through `dangerouslySetInnerHTML`. It escapes every `<` — covering `</script`, `<script` and `<!--`, all three of which steer the HTML tokenizer — plus U+2028/U+2029. It deliberately does **not** use `replace(/<\/script/gi, '<\\/script')`: that substitutes a lowercase literal for whatever it matched, so `</ScRiPt>` in a title stops round-tripping. `src/components/verification/PublicVerification.tsx` still carries its own `replace(/<\//g, '<\\/')` — it is a T2 surface, so folding it in is a separate change.
 
+## 2026-09-13 founder feedback — `SUB_ORG_LABELS` grew an error-translation block
+
+`ManageSubOrgs` used to `toast.error(data.error ?? FALLBACK)`, i.e. echo the worker's reply straight
+to the customer. `services/worker/src/api/v1/orgSubOrgs.ts` replies with a MIX of engineer-facing
+sentences ("Admin permissions required") and bare machine codes (`sub_org_limit_reached`,
+`cap_check_unavailable`, `credit_allocation_unavailable`, `membership_lookup_unavailable`), so both
+kinds reached the interface — see `docs/uat/suborg-ux/before/step8-create-error-toast-1280.png`.
+
+The `ERROR_*` entries in `SUB_ORG_LABELS` are the translation target, keyed from
+`WORKER_ERROR_COPY` in `ManageSubOrgs.tsx`. Rules:
+
+- an unmapped reply falls back to the caller's generic copy **and** is `console.error`-logged with
+  the raw value — it is never silently generalised away;
+- when the worker adds an error code, add the mapping here in the same change. A missing mapping is
+  not a crash, it is a customer reading a slightly vaguer sentence than they should, which is
+  exactly the kind of thing that never gets noticed.
+
+Also promoted here in the same change: `LOAD_ERROR_TITLE` / `LOAD_ERROR_DESC` / `LOAD_ERROR_RETRY`,
+which had been sitting in a local `SUB_ORG_STATE_COPY` constant in `ManageSubOrgs.tsx` since
+`copy.ts` was locked under a concurrent PR. The note there said to promote them the next time this
+file was touched; that has now happened and the local constant is gone.
+
+
 ## PR #2637 MFA assurance identity (2026-09-05)
 
 `mfaSessionKey.ts` derives a UI cache key from a current user's GoTrue session_id
