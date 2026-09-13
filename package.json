@@ -94,7 +94,7 @@
     "upng-js": "2.1.0",
     "utif2": "4.1.0",
     "xlsx": "0.18.5",
-    "zod": "4.5.4"
+    "zod": "4.6.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
