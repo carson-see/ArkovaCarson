@@ -1250,3 +1250,28 @@ ComputeID admission now uses service-only `admit_computeid_agent`: one passport 
 `resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+## 2026-09-12 SCRUM-5024 — `referrals.ts` (new): `GET /api/v1/referrals`
+
+Read-only. Returns the calling organization's ACTIVE referral code, the share
+link, and the organizations that code introduced.
+
+- **The 401 is in the HANDLER, not the mount.** `requireScope('read:orgs')` in
+  `router.ts` is a capability gate, not authentication: `apiKeyAuth.ts` calls
+  `next()` the moment `req.apiKey` is unset, so an anonymous caller passes
+  straight through it. A local `requireApiKey(req, res)` (same shape as
+  `webhooks.ts`) writes the 401.
+- The organization is `req.apiKey.orgId` — never a query parameter, a body
+  field, or `req.apiKey.userId`. `referrals.test.ts` asserts this on the QUERY
+  (which `org_id` each read filtered by), not only on the response body.
+- **Public ids only.** No `id`, `org_id`, `user_id` or `referral_code_id` in any
+  casing at any depth; a recursive walk in the test asserts no banned key and no
+  uuid-shaped value survives. `organization_public_id` is OMITTED, not null, for
+  an organization that predates the public-id backfill.
+- An organization with no minted code answers **200** with
+  `referral_code: null` and `referred: []` — not 404, which is
+  indistinguishable from "this endpoint is gone". A FAILED read answers 500:
+  degrading to an empty list would tell a partner they referred nobody.
+- No scope-vocabulary change — `read:orgs` already exists in `apiScopes.ts`.
+- Documented in `docs.ts`, `docs/api/openapi.yaml` and the `docs/api/README.md`
+  table, and added to the `MOUNTS` table in `docs.routeParity.test.ts`.

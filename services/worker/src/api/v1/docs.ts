@@ -1726,6 +1726,54 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    '/referrals': {
+      get: {
+        summary: 'Partner referral code and attributed organizations',
+        description:
+          'Returns the calling organization\'s active referral code, the link to share, and the organizations that code introduced. '
+          + 'The organization is derived from the API key — there is no organization parameter. '
+          + 'Identifiers are public ids only. `organization_public_id` is omitted for an organization that has no public id. '
+          + 'MEASURED: which organizations presented this code at creation, and when. '
+          + 'NOT ASSERTED: any commission, payout, discount or revenue share. No field here feeds billing.',
+        operationId: 'listReferrals',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        responses: {
+          '200': {
+            description: 'Referral code and attributed organizations. An organization with no minted code returns `referral_code: null` and an empty list, not a 404.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['referral_code', 'share_url', 'referred', 'total'],
+                  properties: {
+                    referral_code: { type: 'string', nullable: true, description: '8 characters from ABCDEFGHJKMNPQRSTUVWXYZ23456789, or null when none has been minted.' },
+                    share_url: { type: 'string', nullable: true, description: 'Null exactly when referral_code is null.' },
+                    referred: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['display_name', 'referred_at', 'verification_status'],
+                        properties: {
+                          organization_public_id: { type: 'string', description: 'Omitted when the referred organization has no public id.' },
+                          display_name: { type: 'string' },
+                          referred_at: { type: 'string', format: 'date-time' },
+                          verification_status: { type: 'string' },
+                        },
+                      },
+                    },
+                    total: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'API key lacks the read:orgs scope', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {

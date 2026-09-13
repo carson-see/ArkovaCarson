@@ -57,6 +57,7 @@ import { nessieCapabilityGate } from '../../middleware/nessieCapabilityGate.js';
 import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
 import { regulatoryAlertsRouter } from './regulatory-alerts.js';
+import { referralsRouter } from './referrals.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { anchorBulkRouter } from './anchor-bulk.js';
@@ -722,6 +723,14 @@ router.use('/compliance/audit', requireAuth, batchRateLimiter, complianceAuditRo
 // one DB read is a single indexed `profiles` PK lookup, and the router-level
 // anon/keyed limiter (100 req/min) has already run above, so putting it ahead of
 // the tighter per-route limiter is not a meaningful amplification vector.
+// ─── Partner referrals — SCRUM-5024 ───
+// `requireScope` is a capability gate, NOT authentication: it passes an
+// anonymous caller straight through (apiKeyAuth.ts). The 401 is enforced in the
+// handler, which also derives the organization from `req.apiKey.orgId` rather
+// than from anything the caller supplies. `read:orgs` already exists in
+// apiScopes.ts — no scope-vocabulary change.
+router.use('/referrals', requireScope('read:orgs'), referralsRouter);
+
 router.use('/ferpa', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, ferpaDisclosuresRouter);
 router.use('/directory-opt-out', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, directoryOptOutRouter);
 router.use('/hipaa/audit', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, hipaaAuditRouter);
