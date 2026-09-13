@@ -1876,3 +1876,32 @@ The client-side manual fallback is retired. Five negative controls reproduced re
 ## 2026-09-10 — PR #2570 current-main integration review
 
 The current main merge preserves both the atomic connector publication and uncertain-debit recovery changes, alongside PR #2565 signer backfill and PR #2695 timestamp semantics. The only manual conflict was this documentation file; both complete entries were retained. Migration 0445 is unchanged. Targeted default-adapter, connector, signer and route tests qualify the combined source; production migration and deployment remain separate release prerequisites.
+
+## 2026-09-12 — `computeid-passport-recheck.ts` (SCRUM-4495)
+
+Hourly reconciliation of every ComputeID-bound agent against `GET /v1/agents/{id}/verify`. It exists because ComputeID has **no webhook retry** — a non-2xx from us is swallowed, and our own receiver answers 409 to the loser of a compare-and-set race expecting a redelivery that never comes — so a revocation can be lost outright and a revoked passport's Arkova keys stay live. Carson committed to the partner on 2026-09-07 that a lost delivery is caught within the hour.
+
+Read before changing it:
+
+- **It is not a second lifecycle.** A divergence becomes the `passport.*` event a webhook would have carried and goes through `integrations/computeid/passport-transition.ts`, the same path the receiver uses.
+- **Ordering.** The synthesized event carries the receipt's SIGNED `issued_at`, so `binding.ts`'s floor drops it when a newer webhook already landed. An older observation can never overwrite a newer one.
+- **Steady state writes nothing.** An event is synthesized only when the observed status differs from the agent's own, so a healthy fleet performs zero writes and never advances the ordering floor.
+- **Evidence asymmetry.** Reinstatement needs a signature-verified receipt; suspension and revocation are also accepted on an unsigned status. See `integrations/computeid/agents.md` for why.
+- **Bounds.** `RECHECK_MAX_AGENTS_PER_RUN` / `RECHECK_MAX_VERIFY_CALLS` / `RECHECK_PAGE_SIZE`, with per-passport memoization so N agents on one passport cost one partner call. Termination is an EMPTY page, never a short one (a hosted PostgREST cap can sit below the requested limit).
+- **Triple gate.** Flag off → `{skipped:true, reason:'flag_off'}`; no `COMPUTEID_API_KEY` → `api_key_unconfigured`; unusable CA pin → `ca_pin_unusable`. It never throws the worker over a partner outage — an unreachable partner is `unresolved`, never "the passport is fine".
+- Ports are injected (`RecheckPorts`), so the tests exercise the real decision logic without a live DB or network.
+
+### 2026-09-12 — CTO review corrections (#2842)
+
+- **Evidence asymmetry, corrected.** The line above ("suspension and revocation are also accepted on an unsigned status") was true of the *event* and false of the *terminal record*. Unsigned evidence now suspends only; the cross-org tombstone needs a signature-verified `revoked` receipt. See `integrations/computeid/agents.md`.
+- **One clock per OBSERVATION.** Receipts live 300 s and a run can outlast that. A single run-level `now` let a receipt that expired mid-run still verify as `signed` — and that is the evidence the reinstate path reactivates API keys on. `ports.now()` is sampled per observation, and a memoized signed verdict is discarded once past its own `expiresAt`.
+- **The caps are a rate limit, not a ceiling.** The scan cursor was run-local, so the first `RECHECK_MAX_VERIFY_CALLS` agents were re-checked forever and the rest never were. It now persists in a `job_queue` singleton row (`RECHECK_CURSOR_ROW_ID`) and resets to null on a completed pass. A truncated run raises a Sentry warning.
+- **Partner calls fan out at `RECHECK_VERIFY_CONCURRENCY`.** 200 sequential 5 s verifications is ~1000 s — past Cloud Run's 600 s request deadline and the 10-minute Sentry `maxRuntime`, so a merely-slow partner paged ops every hour. Each page's distinct passports resolve concurrently before the agent walk.
+- **Silence is a defect here, not politeness.** Flag on with no `COMPUTEID_API_KEY` used to return a quiet `200 {skipped:true}` under a green Sentry check-in while nothing was re-checked; it now logs ERROR and raises a Sentry event, as does an unusable CA pin. A run whose partner calls were ALL rejected for authentication (`unresolvedAuth === passportsVerified` — the shape of a rotated key) alerts rather than reporting a clean run. Unrecognized partner statuses are counted in `unknownStatus` instead of vanishing into the same `null` as agreement.
+
+### 2026-09-12 (second pass)
+
+- **`decideEvent` now takes `metadata` as well as `status`** and refuses `passport.reinstated` unless `binding.suspended_by === 'computeid'` — mirroring `binding.ts`. See `integrations/computeid/agents.md` for the write-amplification this stops.
+- **An all-authentication-failure run THROWS** (CTO ruling 2026-09-12). A Sentry message alone was not enough: the route answered 200, so `withCronMonitoring` reported an OK check-in and the monitor said the safety net was healthy while a rotated key meant it verified nothing. The throw becomes a 500 and the check-in goes to `error`. Partial auth failures do not qualify — one bad passport is not a rotated key.
+- **`COMPUTEID_RECHECK_CRON`** is the single source for the schedule: the `withCronMonitoring` slug's declared crontab and the schedule quoted in `cloud-scheduler.sh`'s `NOT_SCHEDULED` reason, bound together by a test. Nothing bound the literal before, so Sentry's monitor could have drifted from the gcloud binding silently.
+- **Correction to the rationale, not the schedule.** `17 * * * *` stays, but the reason given for it was false: SCRUM-4475 replaced the global bucket, so the `:00` pile-up is **not** currently costing other jobs 429s. Spreading off `:00` is prevention, not a fix for a live incident. Corrected in all four places that repeated the claim.
