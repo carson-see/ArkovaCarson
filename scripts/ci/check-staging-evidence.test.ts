@@ -219,7 +219,7 @@ Queue rewrite.
 - Trigger A fires: 4 (10k threshold reached at T+04:32, T+10:11, T+22:04, T+38:51)
 - Trigger B fires: 2 (clock fired at T+09:14 and T+34:01)
 - Daily flush observation: fired 2026-05-05 08:00 UTC, drained 4,217 anchors across 18 orgs
-- Per-org isolation check: zero cross-org claims observed in 48h
+- Per-org isolation check: zero cross-org claims observed in 24h
 `;
 
 describe('check-staging-evidence', () => {
@@ -229,8 +229,12 @@ describe('check-staging-evidence', () => {
       // CLAUDE.md §1.12: the T1 row is "2 h soak" — the gate must match the
       // constitution, not the other way around (merged #2241/#2264 finding).
       expect(TIER_SPECS.T1.soakHours).toBe(2);
-      expect(TIER_SPECS.T2.soakHours).toBe(12);
-      expect(TIER_SPECS.T3.soakHours).toBe(48);
+      // CTO decision 2026-09-12 (Carson's directive to make the release
+      // process cost-effective): T2 12h→4h, T3 48h→24h. Duration stopped being
+      // the primary evidence — targeted changed-behaviour coverage is — and a
+      // 24h window still contains exactly one 03:00 UTC daily-flush cycle.
+      expect(TIER_SPECS.T2.soakHours).toBe(4);
+      expect(TIER_SPECS.T3.soakHours).toBe(24);
     });
 
     it('requires the soak window fields for T1 (§1.12: "soak start/end" is T1 evidence)', () => {
@@ -369,6 +373,20 @@ describe('check-staging-evidence', () => {
           'scripts/ci/check-feedback-rules.ts',
           'memory/README.md',
         ]).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for the job_queue producer/consumer parity guard', () => {
+      // scripts/ci/check-job-queue-parity.ts runs only in the ci.yml
+      // Dependency Scanning job (`npm run ci:job-queue-parity`) and is never
+      // imported by src/, services/worker/src/, packages/, integrations/, or
+      // e2e/ — no prod runtime to soak, same class as the other
+      // scripts/ci/check-*.ts gates above.
+      expect(
+        requiredTierFor(['scripts/ci/check-job-queue-parity.ts']).tier,
+      ).toBe('T0');
+      expect(
+        requiredTierFor(['scripts/ci/check-job-queue-parity.test.ts']).tier,
       ).toBe('T0');
     });
 
@@ -1534,8 +1552,8 @@ describe('check-staging-evidence', () => {
 
     it.each([
       [
-        'complete T2 at exactly 12 hours',
-        completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 02:00 UTC'),
+        'complete T2 at exactly 4 hours',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
         t2Files,
       ],
       [
@@ -1544,8 +1562,8 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T2 one minute above 12 hours',
-        completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 02:01 UTC'),
+        'T2 one minute above 4 hours',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:01 UTC'),
         t2Files,
       ],
       [
@@ -1568,16 +1586,16 @@ describe('check-staging-evidence', () => {
 
     it.each([
       [
-        'T2 shorter than 12 hours',
-        completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
+        'T2 shorter than 4 hours',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
         t2Files,
-        /below the 12h minimum/,
+        /below the 4h minimum/,
       ],
       [
-        'T2 one minute below 12 hours',
-        completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 01:59 UTC'),
+        'T2 one minute below 4 hours',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 17:59 UTC'),
         t2Files,
-        /below the 12h minimum/,
+        /below the 4h minimum/,
       ],
       [
         'non-parseable prod-affecting timestamps',
@@ -4130,15 +4148,15 @@ ${opts.note ?? ''}`;
     });
 
     it('does not let the note waive anything beyond the preflight fields', () => {
-      // Same approved note, but the soak clock is 2h on a 12h T2 floor. The
+      // Same approved note, but the soak clock is 1h on a 4h T2 floor. The
       // note must not become a blanket bypass.
       const shortSoak = t2Body({
         preflightTimestampLine: '- Preflight timestamp: NOT RUN',
         note: REAL_APPROVER_NOTE,
-      }).replace('- Soak end: 2026-08-22 02:00 UTC', '- Soak end: 2026-08-21 16:00 UTC');
+      }).replace('- Soak end: 2026-08-22 02:00 UTC', '- Soak end: 2026-08-21 15:00 UTC');
       const r = run(shortSoak);
       expect(r.ok).toBe(false);
-      expect(r.errors.join(' ')).toMatch(/below the 12h minimum/i);
+      expect(r.errors.join(' ')).toMatch(/below the 4h minimum/i);
     });
 
     it('does not let the note waive a stale PR head SHA', () => {
@@ -4411,8 +4429,8 @@ ${opts.note ?? ''}`;
       expect(r.errors.join(' ')).toMatch(/Changed behavior:/i);
     });
 
-    it('does not let a residual-risk note waive the standard T2 12h floor', () => {
-      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 18:00 UTC\n')}
+    it('does not let a residual-risk note waive the standard T2 4h floor', () => {
+      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 16:00 UTC\n')}
 ### Residual-risk note (preflight non-clean_mirror)
 - Contamination type: soak_artifact
 - Affected rows: 15 timestamp-versioned migration ledger rows
@@ -4422,11 +4440,11 @@ ${opts.note ?? ''}`;
 `;
       const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
       expect(r.ok).toBe(false);
-      expect(r.errors.join(' ')).toMatch(/12h minimum/i);
+      expect(r.errors.join(' ')).toMatch(/4h minimum/i);
     });
 
-    it('requires an explicit async-cycle floor for RM-approved targeted T2 evidence below 12h', () => {
-      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 18:00 UTC\n')}- RM-approved targeted evidence: Carson approved targeted DocuSign Retry-After evidence for this T2-long path
+    it('requires an explicit async-cycle floor for RM-approved targeted T2 evidence below 4h', () => {
+      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 16:00 UTC\n')}- RM-approved targeted evidence: Carson approved targeted DocuSign Retry-After evidence for this T2-long path
 `;
       const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
       expect(r.ok).toBe(false);
@@ -4434,7 +4452,7 @@ ${opts.note ?? ''}`;
     });
 
     it('allows RM-approved targeted T2 evidence when it names the async-cycle floor', () => {
-      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 18:00 UTC\n')}- RM-approved targeted evidence: Carson approved targeted DocuSign Retry-After evidence for this T2-long path
+      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 16:00 UTC\n')}- RM-approved targeted evidence: Carson approved targeted DocuSign Retry-After evidence for this T2-long path
 - Async-cycle floor: Retry-After backoff cycle observed through one complete retry slot
 `;
       const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
@@ -5160,6 +5178,242 @@ ${note}
     // bleeding into each other.
     it('a frontend-only T2 PR is NOT treated as offline-package (stays frontend-targeted T2)', () => {
       expect(isOfflinePackageOnlyChange(['src/components/anchor/AssetDetailView.tsx'])).toBe(false);
+    });
+  });
+  // ───────────────────────────────────────────────────────────────────────
+  // Post-soak T0-only delta allowance (CTO decision 2026-09-12).
+  //
+  // Before this, ANY commit after the soak invalidated exact-head evidence —
+  // including one that only touches `e2e/**` or `docs/**`, files the tier
+  // detector already classifies T0 precisely because they cannot reach prod
+  // runtime. That forced a re-soak to re-prove code the soak already covered.
+  // The field is opt-in per PR and EVERY condition fails closed: a wrong SHA,
+  // a non-ancestor or unknown ancestry, an uncomputable/empty delta, or one
+  // non-T0 file in the delta all keep the original stale-head rejection.
+  // ───────────────────────────────────────────────────────────────────────
+  describe('post-soak T0-only delta allowance', () => {
+    const soakedSha = '1234567890abcdef1234567890abcdef12345678';
+    const currentSha = 'fedcba9876543210fedcba9876543210fedcba98';
+    const baseSha = 'abcdef1234567890abcdef1234567890abcdef12';
+    const t2Files = ['services/worker/src/api/v1/docusign.ts'];
+
+    const t2Body = (deltaLine?: string) => `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: ${soakedSha}
+${deltaLine === undefined ? '' : `${deltaLine}\n`}- Changed behavior: DocuSign rate-limit retry preserves the Retry-After backoff slot
+- Targeted evidence: staging POST /api/v1/docusign/envelopes replay hit 429 then retried after Retry-After and completed
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Base SHA: ${baseSha}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 20:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+`;
+
+    const T0_DELTA = ['e2e/verification.spec.ts', 'docs/staging/README.md'];
+
+    const run = (opts: {
+      body: string;
+      files?: string[];
+      ancestry?: boolean | null;
+      delta?: string[] | null;
+    }) => check({
+      body: opts.body,
+      files: opts.files ?? t2Files,
+      headSha: currentSha,
+      baseSha,
+      ancestryProvider: () => (opts.ancestry === undefined ? true : opts.ancestry),
+      changedFilesProvider: () => (opts.delta === undefined ? T0_DELTA : opts.delta),
+    });
+
+    it('accepts a stale head when the delta is e2e/docs-only and the field names the current head', () => {
+      const r = run({ body: t2Body(`- Post-soak T0 delta: ${currentSha}`) });
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toContain(
+        `post-soak delta accepted: 2 T0-only file(s) between ${soakedSha.slice(0, 7)} and ${currentSha.slice(0, 7)}`,
+      );
+    });
+
+    it('rejects a delta containing a non-T0 file, and NAMES that file', () => {
+      const r = run({
+        body: t2Body(`- Post-soak T0 delta: ${currentSha}`),
+        delta: ['e2e/verification.spec.ts', 'services/worker/src/api/x.ts', 'docs/staging/README.md'],
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toContain('services/worker/src/api/x.ts');
+      expect(r.errors.join(' ')).toMatch(/not a T0-classified file/i);
+    });
+
+    it('rejects when the soaked SHA is NOT an ancestor of the current head (rebase/force-push)', () => {
+      const r = run({ body: t2Body(`- Post-soak T0 delta: ${currentSha}`), ancestry: false });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/not an ancestor of/i);
+    });
+
+    it('rejects when ancestry is unresolvable (null) — fails closed, never an implicit yes', () => {
+      const r = run({ body: t2Body(`- Post-soak T0 delta: ${currentSha}`), ancestry: null });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/unresolvable ancestry/i);
+    });
+
+    it('rejects when the changed-file provider returns null (delta not computable)', () => {
+      const r = run({ body: t2Body(`- Post-soak T0 delta: ${currentSha}`), delta: null });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/could not be computed/i);
+    });
+
+    it('rejects an empty delta — a stale head with no diff is unexplained, not exempt', () => {
+      const r = run({ body: t2Body(`- Post-soak T0 delta: ${currentSha}`), delta: [] });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/is empty/i);
+    });
+
+    it("rejects when the field's SHA is not the CURRENT head (claimed against another commit)", () => {
+      const r = run({ body: t2Body(`- Post-soak T0 delta: ${soakedSha}`) });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/must contain the CURRENT 40-character PR head SHA/i);
+    });
+
+    it('rejects when the field carries no 40-char SHA at all', () => {
+      const r = run({ body: t2Body('- Post-soak T0 delta: only e2e specs changed, honest') });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/must contain the CURRENT 40-character PR head SHA/i);
+    });
+
+    it('keeps the unchanged stale-head error when the field is ABSENT', () => {
+      const r = run({ body: t2Body() });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/PR head SHA:.*does not match current PR head/i);
+      expect(r.errors.join(' ')).not.toMatch(/Post-soak T0 delta/i);
+    });
+
+    it('is a no-op on a matching head (the allowance never fires when evidence is exact-head)', () => {
+      const r = check({
+        body: t2Body(`- Post-soak T0 delta: ${soakedSha}`).replace(
+          `- PR head SHA: ${soakedSha}`,
+          `- PR head SHA: ${soakedSha}`,
+        ),
+        files: t2Files,
+        headSha: soakedSha,
+        baseSha,
+        ancestryProvider: () => true,
+        changedFilesProvider: () => T0_DELTA,
+      });
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).not.toMatch(/post-soak delta accepted/i);
+    });
+
+    // ── T1 expedited path ──
+    it('accepts a T0-only delta on the T1 expedited path', () => {
+      const t1Body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: ${soakedSha}
+- Post-soak T0 delta: ${currentSha}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
+`;
+      const r = run({ body: t1Body, files: ['src/components/Foo.tsx'] });
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/post-soak delta accepted/i);
+    });
+
+    // ── frontend-T2 path ──
+    const frontendFiles = [
+      'src/components/anchor/AssetDetailView.tsx',
+      'src/components/verification/PublicVerification.tsx',
+    ];
+    const frontendBody = (deltaLine: string) => `## Staging Soak Evidence
+- Tier: T2
+- PR head SHA: ${soakedSha}
+${deltaLine}
+- RM-approved targeted evidence: Carson/RM approved targeted frontend-only T2 evidence for this UI contract path
+- Async-cycle floor: Async UI validation cycle: copy/route contract assertions plus Playwright affected-view pass under 8 parallel workers
+- Changed behavior: verification page copy and UI contract for the credential evidence panel
+- Targeted evidence: Playwright verification-copy.spec.ts exercised the changed verification copy and UI contract
+- Load/concurrency evidence: Playwright ran the affected verification UI checks under 8 parallel workers with p95 assertion latency recorded
+- E2E result: credential-detail + public-verification E2E 18/18 green on head
+- CI/E2E green: Tests, E2E Tests, TypeCheck & Lint all green on current head
+- Rollback plan: revert PR — additive display-only components, no data/schema/worker state
+`;
+
+    it('accepts a T0-only delta on the frontend-T2 evidence path', () => {
+      const r = run({ body: frontendBody(`- Post-soak T0 delta: ${currentSha}`), files: frontendFiles });
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/post-soak delta accepted/i);
+      expect(r.notes.join(' ')).toMatch(/frontend-T2/i);
+    });
+
+    it('rejects a non-T0 delta on the frontend-T2 evidence path', () => {
+      const r = run({
+        body: frontendBody(`- Post-soak T0 delta: ${currentSha}`),
+        files: frontendFiles,
+        delta: ['src/components/anchor/AssetDetailView.tsx'],
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/not a T0-classified file/i);
+    });
+
+    // ── unsoakable-T2 path ──
+    const offlineFiles = [
+      'packages/arkova-py/src/arkova/client.py',
+      'packages/arkova-py/pyproject.toml',
+    ];
+    const unsoakableBody = (deltaLine: string) => `## Staging Soak Evidence
+- Tier: T2
+- PR head SHA: ${soakedSha}
+${deltaLine}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Test evidence: pytest 42/42 green + parity suite green on current head
+- CI green: Tests, TypeCheck & Lint all green on current head
+- Staging tag URL or N/A explanation: N/A — offline Python SDK: no worker runtime, no migration, no served contract to soak
+
+### Unsoakable-surface note
+- No worker runtime: offline SDK package — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id, no migration (nothing a soak could exercise)
+- Surfaces touched: packages/arkova-py (standalone Python client library, run offline by consumers)
+- Approved by: Carson
+`;
+
+    it('accepts a T0-only delta on the architecturally-unsoakable evidence path', () => {
+      const r = run({ body: unsoakableBody(`- Post-soak T0 delta: ${currentSha}`), files: offlineFiles });
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/post-soak delta accepted/i);
+      expect(r.notes.join(' ')).toMatch(/unsoakable/i);
+    });
+
+    it('rejects a non-T0 delta on the architecturally-unsoakable evidence path', () => {
+      const r = run({
+        body: unsoakableBody(`- Post-soak T0 delta: ${currentSha}`),
+        files: offlineFiles,
+        delta: ['packages/arkova-py/src/arkova/client.py'],
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/not a T0-classified file/i);
     });
   });
 });
