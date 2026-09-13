@@ -120,6 +120,33 @@ describe('POST /api/anchor/:id/revoke', () => {
     });
   });
 
+  // SCRUM-4986: membership existence was the only check; role was selected and
+  // ignored. ORG_MEMBER / INDIVIDUAL callers must get the same 404 a
+  // non-member gets, and the RPC must never be reached.
+  it('returns 404 and never calls the RPC when the caller is an ORG_MEMBER', async () => {
+    mockMembershipSingle.mockResolvedValue({ data: { role: 'ORG_MEMBER' }, error: null });
+    const app = buildApp();
+    const res = await request(app)
+      .post('/api/anchor/11111111-1111-4111-8111-111111111111/revoke')
+      .send({ reason: 'Document expired' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('not_found');
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 and never calls the RPC when the membership row carries the INDIVIDUAL role', async () => {
+    mockMembershipSingle.mockResolvedValue({ data: { role: 'INDIVIDUAL' }, error: null });
+    const app = buildApp();
+    const res = await request(app)
+      .post('/api/anchor/11111111-1111-4111-8111-111111111111/revoke')
+      .send({ reason: 'Document expired' });
+
+    expect(res.status).toBe(404);
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
   it('rejects missing reason', async () => {
     const app = buildApp();
     const res = await request(app)

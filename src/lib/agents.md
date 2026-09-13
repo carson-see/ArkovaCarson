@@ -2,6 +2,25 @@
 
 _Last updated: 2026-09-03_
 
+## 2026-09-12 — SCRUM-5023: `API_KEY_LABELS` gains the expiry vocabulary
+
+`EXPIRING_SOON` plus the remaining-time fragments (`EXPIRES_TODAY`, `EXPIRES_IN_ONE_DAY`,
+`EXPIRES_IN_DAYS` with a `{days}` placeholder the component interpolates) and the Extend dialog
+strings. Split by plurality on purpose — a single template prints "in 0 days" on the last day and
+"in 1 days" the day before, which reads as a bug in a warning the user is meant to trust.
+
+`EXTEND_FAILED` is the scrubbed message shown when `onExtend` rejects. Like `REVOKE_FAILED` it states
+that **nothing changed**, because the dialog stays open and the key's expiry is untouched. §1.3-clean
+(no banned terms), and `src/lib/copy.ts` IS scanned by `lint:copy` — `EXCLUDE_PATTERNS` in
+`scripts/check-copy-terms.ts` covers tests, `node_modules`, `dist`, `src/components/ui/**` and
+`src/components/admin/treasury/**`, and nothing else.
+
+`EXTEND_CURRENT` / `EXTEND_CURRENT_NONE` state the key's CURRENT expiry inside the Extend dialog, and
+`EXTEND_CONFIRM_*` are the confirmation step. Both exist because every preset REPLACES the expiry
+rather than adding to it: without the current value on screen, "30 days" on a key with eleven months
+left is indistinguishable from an extension.
+
+
 ## PR #2637 MFA assurance identity (2026-09-05)
 
 `mfaSessionKey.ts` derives a UI cache key from a current user's GoTrue session_id
