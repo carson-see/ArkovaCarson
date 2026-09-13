@@ -1,5 +1,62 @@
 # agents.md — pages
-_Last updated: 2026-09-12_
+_Last updated: 2026-09-13_
+
+## 2026-09-13 SCRUM-5044/5045/5043 — `PipelineAdminPage.tsx` Pipeline Controls is now fully data-driven
+
+All five previously-hardcoded JobButton groups (Processing, Federal & Compliance,
+Professional Licensing, Academic & Education, Business Entities) are now
+`PipelineJobControl[]` arrays in the same shape `INTERNATIONAL_JOB_GROUPS`
+already used — `PROCESSING_JOB_CONTROLS`, `FEDERAL_COMPLIANCE_JOB_CONTROLS`,
+`PROFESSIONAL_LICENSING_JOB_CONTROLS`, `ACADEMIC_EDUCATION_JOB_CONTROLS`,
+`BUSINESS_ENTITIES_JOB_CONTROLS`. `PIPELINE_JOB_GROUPS` concatenates all of
+them with `INTERNATIONAL_JOB_GROUPS` and is the single thing the "Pipeline
+Controls" JSX maps over now — adding, disabling, or re-sourcing a control is a
+one-line data change, not a JSX edit in five different places.
+
+**`disabledReason` is now honest, not aspirational** (SCRUM-5045): controls
+whose source has never produced a record, or that hit a real upstream/code
+defect (403 bot-protection, 404 moved endpoint, 502 code defect, a date-filter
+bug returning 200/zero-rows), carry a `disabledReason` naming the actual Jira
+ticket instead of running against a route that quietly never worked.
+
+**`longRunning: true`** (fetch-finra, fetch-npi, fetch-calbar,
+fetch-all-state-bills) does two things (SCRUM-5043 UI half):
+1. Renders a "Runs in background" caption/description under the control.
+2. In `triggerJob`, a `504` from a longRunning control's route sets status
+   `'done'` (not `'error'`) with a message telling the operator to check
+   source volume instead of assuming the job failed. **Only** applies when
+   `LONG_RUNNING_JOB_PATHS.has(jobPath)` — a 504 from any other control is
+   still a hard error, unchanged.
+
+**`sourceKey`** maps a control to the `public_records.source` value(s) it
+writes (array for controls that fan into more than one source, e.g.
+`fetch-continuing-education` → `['nasba_cpe', 'accme']`). Controls with no
+source-tagged output (`fetch-certifications`, `fetch-sos`) omit it and render
+no freshness caption.
+
+**Per-source freshness (SCRUM-5044)** reads `public_records` directly —
+`fetchStats` runs one `Promise.allSettled` over `DISTINCT_SOURCE_KEYS`, two
+lightweight queries per source (a `head:true` count filtered to the last 30
+days, and an `order(created_at desc).limit(1)`), both backed by
+`idx_public_records_source_created (source, created_at DESC)`. **This is
+deliberately NOT the unindexed full-table query already ruled out** for this
+table (see the "direct public_records query times out on 1.4M rows" comment
+a few hundred lines below in the records-browser fallback) — per-source +
+per-index-key scoping is what makes it safe. `count_public_records_by_source`
+(→ `bySource`) is a periodically-refreshed cache of **total** counts only, no
+last-insert timestamp and no 30-day window, and no existing RPC covers either
+— per the spec this reads the table directly rather than adding a migration
+or worker route. A single source's failed query renders "Freshness
+unavailable" for just that control (isolated try/catch, same pattern as the
+existing `byCredentialType` fetch); it never gets rendered as "No records
+yet" — that phrase means the query succeeded and found zero rows, not that
+the query failed.
+
+Known trade-off, not fixed here: freshness is fetched on every `fetchStats`
+call, including the 30s visible-tab poll (same cadence as `byCredentialType`)
+— not gated behind the CollapsibleSection's open state. ~26 distinct sources
+× 2 queries per poll cycle per open admin tab. Cheap per-query (index-backed,
+`head:true`/`limit:1`), but worth revisiting if the source count grows a lot.
 
 ## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
 
