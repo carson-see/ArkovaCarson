@@ -791,3 +791,23 @@ negative controls. The staging live-input and step-identity contracts remain in
 It checks EXISTENCE only — never a value, never a version payload, nothing printed. It lists only NEWLY-introduced names: the pre-existing ones are already proven by every green deploy on `main`. **Add a name to that list in the same commit that adds it to `--set-secrets`.** A name in `--set-secrets` that is neither covered by a green deploy nor listed in the preflight is precisely the hole this step closes.
 
 Also added dark: `ENABLE_COMPUTEID_INTEGRATION=false` in `--set-env-vars`. It was already false by `config.ts` default; stating it makes the activation flip one reviewable line instead of an invisible default, and it fails SAFE if the code default ever changes.
+
+## 2026-09-13 — `deploy-worker.yml`: `CLOUDFLARE_ORIGIN_GUARD_MODE=off` added; `CLOUDFLARE_ORIGIN_SECRET` deliberately NOT added yet (SCRUM-3888)
+
+Same "state the dark default explicitly" move as `ENABLE_COMPUTEID_INTEGRATION=false` above:
+`CLOUDFLARE_ORIGIN_GUARD_MODE=off` in `--set-env-vars` matches `config.ts`'s own default and makes
+a future activation one reviewable line rather than an invisible default.
+
+`CLOUDFLARE_ORIGIN_SECRET` is **not** added to `--set-secrets` in this change, on purpose — this is
+the inverse of the SCRUM-4495 preflight entry above, and the same mechanism is exactly why: a
+`--set-secrets` reference to a Secret Manager id (`cloudflare-origin-secret`) that does not exist
+yet fails the "Preflight required Secret Manager entries" step for **every subsequent worker
+deploy**, not just this flag's own rollout, until someone creates it. The flag defaults `off` and
+needs no secret in that mode (`services/worker/src/config.ts` fails the boot loudly if a non-off
+mode is ever set without one — see its `cloudflareOriginGuardMode`/`cloudflareOriginSecret`
+cross-field guard), so there is nothing to provision until the release session is ready to roll
+into `observe`. When that happens, in ONE motion: create the `cloudflare-origin-secret` Secret
+Manager entry, add `CLOUDFLARE_ORIGIN_SECRET=cloudflare-origin-secret:latest` to `--set-secrets`,
+add `cloudflare-origin-secret` to the preflight loop's `for secret in ...` list, and only then flip
+`CLOUDFLARE_ORIGIN_GUARD_MODE`. Full rollout/rollback procedure:
+`docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`.
