@@ -55,6 +55,7 @@
 // from the DB delivery-log table, per the task's own instruction — this rig
 // has no Sentry read access at all.
 import { randomBytes } from 'node:crypto';
+import { signInMfa } from '../common.mjs';
 
 export const pr = '#2904';
 
@@ -171,17 +172,6 @@ async function ensureEndpoint(admin, { orgId, createdBy, description, scope, eve
     .single();
   if (error) throw new Error(`#2904 insert endpoint ${description}: ${error.message}`);
   return data.id;
-}
-
-/** GoTrue password grant → access_token for a rig user. */
-async function signIn(supabaseUrl, anonKey, email, password) {
-  const r = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: { apikey: anonKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  const body = await r.json().catch(() => null);
-  return { status: r.status, token: body?.access_token ?? null, error: body?.error_description ?? body?.msg ?? null };
 }
 
 // ───────────────────────────────── seed ─────────────────────────────────────
@@ -483,13 +473,20 @@ async function checkDarkContract(ctx, seeded) {
 
 /** (e) suborg.* lifecycle: six fresh types on the parent this cycle + the persisted 'created' row; four on the child. */
 async function checkSubOrgLifecycle(ctx, seeded) {
-  const { admin, workerFetch, state, probe, SUPABASE_URL, ANON_KEY, cycleId } = ctx;
+  const { admin, workerFetch, probe, cycleId } = ctx;
   const out = [];
   const child = seeded.lifecycleChild;
 
-  const signed = await signIn(SUPABASE_URL, ANON_KEY, state.adminA.email, state.password);
-  out.push(probe('2904_suborg_admin_signed_in', true, Boolean(signed.token), { detail: signed.error }));
+  // 0451 mandatory MFA: adminA is the shared org-A admin fixture (top-level
+  // state key, same one #2911 uses for platformAdmin) — signInMfa enrolls a
+  // TOTP factor on first use and persists it to FIXTURE_STATE so every later
+  // cycle re-challenges the same factor instead of re-enrolling.
+  const signed = await signInMfa(ctx, 'adminA');
+  out.push(probe('2904_suborg_admin_signed_in', true, Boolean(signed.token), {
+    detail: { status: signed.status, error: signed.error, aalBefore: signed.aalBefore, roleBefore: signed.roleBefore },
+  }));
   if (!signed.token) return out;
+  out.push(probe('2904_suborg_admin_session_is_aal2', 'aal2', signed.aalAfter, { detail: { roleAfter: signed.roleAfter } }));
   const jwt = signed.token;
 
   // Renormalise: PENDING, unsuspended, zero balance — every action below must

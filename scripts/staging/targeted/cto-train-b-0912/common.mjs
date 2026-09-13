@@ -1,6 +1,6 @@
 // Shared helpers for the cto-train-b-0912 targeted train driver.
 // Self-contained on purpose; only @supabase/supabase-js is external (repo root).
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -25,6 +25,20 @@ export function iamToken() {
 // Mirrors services/worker/src/auth/apiKeys.ts: HMAC-SHA256(rawKey) hex under API_KEY_HMAC_SECRET.
 export function hashApiKey(rawKey, secret) {
   return createHmac('sha256', secret).update(rawKey).digest('hex');
+}
+
+// Short, non-secret fingerprint of the API_KEY_HMAC_SECRET a fixture key was
+// minted under. This driver's own env sources the secret by NAME, not value
+// (gcloud secrets versions access --secret=<name>), and different rigs/deploys
+// reference different secret names (e.g. the standing rig's Cloud Run service
+// mounts `api-key-hmac-secret`, not the isolated Train B rig's
+// `api-key-hmac-secret-staging` — confirmed different values 2026-09-13).
+// Persisting this fingerprint alongside a minted key lets seed() detect "this
+// key was hashed under a secret that is no longer the one this run has" and
+// re-mint, instead of trusting a raw key that will 401 invalid_api_key against
+// whichever worker is actually being driven this run.
+export function apiKeyHmacFingerprint(secret) {
+  return createHash('sha256').update(secret).digest('hex').slice(0, 12);
 }
 
 /** probe(name, expected, actual, {detail, pass}) -> {name, expected, actual, pass, detail} */
@@ -182,11 +196,13 @@ async function challengeAndVerify(supabaseUrl, anonKey, aal1Token, factorId, sec
  * A session that is already AAL2 straight out of the password grant (e.g.
  * migration 0451 not yet applied on this rig) is returned as-is — no-op.
  *
- * ctx: { state, SUPABASE_URL, ANON_KEY } (every probe's run(ctx)/seed(ctx) already carries these).
+ * ctx: { state, SUPABASE_URL, ANON_KEY, admin } (every probe's run(ctx)/seed(ctx)
+ * already carries these — `admin` is the service-role client, used only for the
+ * stale-factor cleanup fallback below).
  * stateKey: e.g. 'platformAdmin', 'adminA' — the fixture's entry under ctx.state.
  */
 export async function signInMfa(ctx, stateKey) {
-  const { state, SUPABASE_URL: supabaseUrl, ANON_KEY: anonKey } = ctx;
+  const { state, SUPABASE_URL: supabaseUrl, ANON_KEY: anonKey, admin } = ctx;
   const entry = state[stateKey];
   if (!entry?.email || !(entry?.password ?? state.password)) {
     throw new Error(`signInMfa: state.${stateKey} has no email/password — run setup.mjs`);
@@ -203,6 +219,7 @@ export async function signInMfa(ctx, stateKey) {
     return { status: grant.status, token: grant.accessToken, error: null, aalBefore: before.aal, aalAfter: before.aal, roleBefore: before.role, roleAfter: before.role };
   }
   const aal1Token = grant.accessToken;
+  const userId = entry.userId ?? before.sub ?? null;
 
   // Reuse a persisted factor if we have one; a verified/unverified factor with
   // no persisted secret is unusable (GoTrue never re-exposes a TOTP secret
@@ -213,10 +230,28 @@ export async function signInMfa(ctx, stateKey) {
   let secret = entry.totpSecret ?? null;
 
   if (!factorId || !secret) {
-    const list = await gotrue(supabaseUrl, anonKey, aal1Token, '/factors');
-    const totpFactors = (list.body?.factors ?? (Array.isArray(list.body) ? list.body : [])).filter((f) => f.factor_type === 'totp');
+    // GoTrue has no GET /factors — that 405s (Allow: POST only, confirmed
+    // empirically 2026-09-13). A user's own current factors are listed on
+    // GET /user instead, under the `factors` key.
+    const me = await gotrue(supabaseUrl, anonKey, aal1Token, '/user');
+    const totpFactors = (me.body?.factors ?? []).filter((f) => f.factor_type === 'totp');
     for (const f of totpFactors) {
-      await gotrue(supabaseUrl, anonKey, aal1Token, `/factors/${f.id}`, { method: 'DELETE' });
+      // GoTrue refuses to let an AAL1 session unenroll an already-VERIFIED
+      // factor (422 insufficient_aal — confirmed empirically 2026-09-13: "AAL2
+      // required to unenroll verified factor"), which is exactly the state a
+      // leftover factor from an earlier successful signInMfa run is in once
+      // this run's persisted totpFactorId/totpSecret are lost (e.g. a
+      // setup.mjs re-run clobbering the shared fixture user — reproduced the
+      // same day). The service-role admin API is not subject to that AAL
+      // check, so prefer it; fall back to the user's own token only if no
+      // admin client or user id is available (best-effort, matches prior
+      // behaviour for an unverified factor, which the user's own token CAN
+      // remove).
+      if (admin && userId) {
+        await admin.auth.admin.mfa.deleteFactor({ id: f.id, userId });
+      } else {
+        await gotrue(supabaseUrl, anonKey, aal1Token, `/factors/${f.id}`, { method: 'DELETE' });
+      }
     }
     // GoTrue's raw REST endpoint wants snake_case (factorType/friendlyName is the
     // supabase-js client's naming, not the wire format — confirmed empirically

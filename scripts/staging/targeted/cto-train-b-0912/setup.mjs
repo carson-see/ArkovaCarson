@@ -8,7 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { SUPABASE_URL, PREFIX, hashApiKey, probe, workerFetch, restFetch, TAG_URL } from './common.mjs';
+import { SUPABASE_URL, PREFIX, hashApiKey, apiKeyHmacFingerprint, probe, workerFetch, restFetch, TAG_URL } from './common.mjs';
 
 const SERVICE_KEY = process.env.STAGING_SUPABASE_SERVICE_ROLE_KEY;
 const ANON_KEY = process.env.STAGING_SUPABASE_ANON_KEY;
@@ -52,11 +52,26 @@ async function ensureUser({ local, role, orgId, isPlatformAdmin = false }) {
   return { userId, email, password: PASSWORD, orgId: orgId ?? null, role };
 }
 async function ensureApiKey(orgId, createdBy) {
-  if (state.apiKey?.raw) return state.apiKey;
+  const fingerprint = apiKeyHmacFingerprint(API_KEY_HMAC_SECRET);
+  // Reuse only when the persisted key was minted under THIS run's secret —
+  // otherwise the worker's own HMAC lookup 401s invalid_api_key even though
+  // the row still exists (see apiKeyHmacFingerprint's doc comment). A prior
+  // fixtures.json with no fingerprint at all (pre-dates this check) is
+  // treated as stale, not trusted.
+  if (state.apiKey?.raw && state.apiKey?.hmacFingerprint === fingerprint) return state.apiKey;
   const raw = `ak_test_${randomBytes(32).toString('hex')}`;
-  const { data, error } = await admin.from('api_keys').insert({ org_id: orgId, key_prefix: raw.slice(0, 12), key_hash: hashApiKey(raw, API_KEY_HMAC_SECRET), name: `${PREFIX}-machine-key`, scopes: ['read:search', 'anchor:write', 'anchor:read', 'keys:read', 'webhooks:manage', 'verify', 'verify:batch'], created_by: createdBy }).select('id').single();
+  const name = `${PREFIX}-machine-key`;
+  const row = { org_id: orgId, key_prefix: raw.slice(0, 12), key_hash: hashApiKey(raw, API_KEY_HMAC_SECRET), name, scopes: ['read:search', 'anchor:write', 'anchor:read', 'keys:read', 'webhooks:manage', 'verify', 'verify:batch'], created_by: createdBy, is_active: true, revoked_at: null };
+  const { data: existing, error: findErr } = await admin.from('api_keys').select('id').eq('org_id', orgId).eq('name', name).maybeSingle();
+  if (findErr) throw new Error(`api key lookup: ${findErr.message}`);
+  if (existing) {
+    const { error } = await admin.from('api_keys').update(row).eq('id', existing.id);
+    if (error) throw new Error(`api key re-mint: ${error.message}`);
+    return { id: existing.id, raw, orgId, hmacFingerprint: fingerprint };
+  }
+  const { data, error } = await admin.from('api_keys').insert(row).select('id').single();
   if (error) throw new Error(`api key: ${error.message}`);
-  return { id: data.id, raw, orgId };
+  return { id: data.id, raw, orgId, hmacFingerprint: fingerprint };
 }
 
 async function main() {
@@ -64,16 +79,29 @@ async function main() {
   state.prefix = PREFIX; state.password = PASSWORD; state.createdAt = state.createdAt ?? new Date().toISOString();
   state.orgA = await ensureOrg(`${PREFIX}-org-a`);
   state.orgB = await ensureOrg(`${PREFIX}-org-b`);
-  state.adminA = await ensureUser({ local: `${PREFIX}-admin-a`, role: 'ORG_ADMIN', orgId: state.orgA });
-  state.memberA = await ensureUser({ local: `${PREFIX}-member-a`, role: 'ORG_MEMBER', orgId: state.orgA });
-  state.adminB = await ensureUser({ local: `${PREFIX}-admin-b`, role: 'ORG_ADMIN', orgId: state.orgB });
-  state.individual = await ensureUser({ local: `${PREFIX}-individual`, role: 'INDIVIDUAL', orgId: null });
+  // Merge, don't replace: ensureUser()'s return never carries totpFactorId/
+  // totpSecret, so a plain `state.X = await ensureUser(...)` clobbers
+  // whatever signInMfa() (common.mjs) already persisted there for a 0451
+  // MFA-enrolled fixture user on a prior run — the GoTrue factor stays
+  // enrolled+verified, but the driver forgets its id/secret, and the next
+  // signInMfa() call tries to re-enroll the same friendly_name and 422s
+  // mfa_factor_name_conflict (reproduced 2026-09-13 against the standing
+  // rig: a re-run of this script wiped state.adminA.totpSecret mid-soak).
+  state.adminA = { ...(state.adminA ?? {}), ...(await ensureUser({ local: `${PREFIX}-admin-a`, role: 'ORG_ADMIN', orgId: state.orgA })) };
+  state.memberA = { ...(state.memberA ?? {}), ...(await ensureUser({ local: `${PREFIX}-member-a`, role: 'ORG_MEMBER', orgId: state.orgA })) };
+  state.adminB = { ...(state.adminB ?? {}), ...(await ensureUser({ local: `${PREFIX}-admin-b`, role: 'ORG_ADMIN', orgId: state.orgB })) };
+  state.individual = { ...(state.individual ?? {}), ...(await ensureUser({ local: `${PREFIX}-individual`, role: 'INDIVIDUAL', orgId: null })) };
   // #2911 (webhook DLQ admin drain): a platform-admin fixture, org-less like a
   // real Arkova staff account. isPlatformAdmin is the ONLY gate handleWebhookDlqList
   // / handleWebhookDlqResolve check (utils/platformAdmin.ts's is_platform_admin
   // column) — org membership is irrelevant to this surface.
-  state.platformAdmin = await ensureUser({ local: `${PREFIX}-platform-admin`, role: 'INDIVIDUAL', orgId: null, isPlatformAdmin: true });
+  state.platformAdmin = { ...(state.platformAdmin ?? {}), ...(await ensureUser({ local: `${PREFIX}-platform-admin`, role: 'INDIVIDUAL', orgId: null, isPlatformAdmin: true })) };
   state.apiKey = await ensureApiKey(state.orgA, state.adminA.userId);
+  // Global record of which secret THIS run minted keys under — diagnostic
+  // (see apiKeyHmacFingerprint doc comment); per-probe seed()s that mint
+  // their own keys (#2904, #2905) always re-hash under ctx.API_KEY_HMAC_SECRET
+  // on every call already, so this run's value is authoritative for them too.
+  state.apiKeyHmacFingerprint = apiKeyHmacFingerprint(API_KEY_HMAC_SECRET);
   const ctx = { admin, state, ANON_KEY, SERVICE_KEY, API_KEY_HMAC_SECRET, hashApiKey, probe, workerFetch, restFetch, SUPABASE_URL, TAG_URL, PREFIX, env: process.env };
   // TRAIN_PROBES (comma-separated PR numbers) limits seeding to the train's own
   // modules, so a stale sibling seed (e.g. #2836's private-URL fixture, now

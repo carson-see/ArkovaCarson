@@ -46,6 +46,7 @@
 // it, so nothing further is proven by also driving admin-provisioning's HTTP
 // route.
 import { randomBytes } from 'node:crypto';
+import { signInMfa } from '../common.mjs';
 
 export const pr = '#2905';
 
@@ -125,17 +126,6 @@ async function ensureApiKey(admin, { orgId, createdBy, name, scopes, hashApiKey,
   return { id: data.id, raw };
 }
 
-/** GoTrue password grant → access_token for a rig user. */
-async function signIn(supabaseUrl, anonKey, email, password) {
-  const r = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: { apikey: anonKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  const body = await r.json().catch(() => null);
-  return { status: r.status, token: body?.access_token ?? null, error: body?.error_description ?? body?.msg ?? null };
-}
-
 /** PostgREST RPC call as a given caller (jwt) or, when omitted, as anon-keyed but unauthenticated. */
 async function callRpc(ctx, fnName, args, jwt) {
   const { restFetch, ANON_KEY } = ctx;
@@ -177,7 +167,7 @@ export async function seed(admin, state, ctx) {
 // ───────────────────────────────── run ──────────────────────────────────────
 
 export async function run(ctx) {
-  const { admin, state, probe, workerFetch, SUPABASE_URL, ANON_KEY } = ctx;
+  const { admin, state, probe, workerFetch, ANON_KEY } = ctx;
   const out = [];
   const seeded = state['#2905'];
   if (!seeded || seeded.skipped) {
@@ -185,11 +175,29 @@ export async function run(ctx) {
     return out;
   }
 
-  const signedR = await signIn(SUPABASE_URL, ANON_KEY, seeded.adminR.email, seeded.adminR.password);
-  const signedD = await signIn(SUPABASE_URL, ANON_KEY, seeded.memberD.email, seeded.memberD.password);
-  out.push(probe('2905_referrer_admin_signed_in', true, Boolean(signedR.token), { detail: signedR.error }));
-  out.push(probe('2905_referred_member_signed_in', true, Boolean(signedD.token), { detail: signedD.error }));
+  // 0451 mandatory MFA: adminR/memberD are per-module fixture users nested
+  // under state['#2905'] (this module's own seed() output), not top-level
+  // state keys like adminA/platformAdmin, so signInMfa (which persists a
+  // TOTP factor to FIXTURE_STATE under a flat state[stateKey]) has no stable
+  // top-level slot to write into by default. Alias them onto stable
+  // top-level keys here, merging in the identity fields fresh every cycle
+  // (seed() output, authoritative) with whatever totp fields a prior cycle
+  // already persisted under that same alias — so the enrolled factor
+  // survives across cycles instead of re-enrolling every time.
+  state.referral2905AdminR = { ...seeded.adminR, ...(state.referral2905AdminR ?? {}) };
+  state.referral2905MemberD = { ...seeded.memberD, ...(state.referral2905MemberD ?? {}) };
+
+  const signedR = await signInMfa(ctx, 'referral2905AdminR');
+  const signedD = await signInMfa(ctx, 'referral2905MemberD');
+  out.push(probe('2905_referrer_admin_signed_in', true, Boolean(signedR.token), {
+    detail: { status: signedR.status, error: signedR.error, aalBefore: signedR.aalBefore, roleBefore: signedR.roleBefore },
+  }));
+  out.push(probe('2905_referred_member_signed_in', true, Boolean(signedD.token), {
+    detail: { status: signedD.status, error: signedD.error, aalBefore: signedD.aalBefore, roleBefore: signedD.roleBefore },
+  }));
   if (!signedR.token || !signedD.token) return out;
+  out.push(probe('2905_referrer_admin_session_is_aal2', 'aal2', signedR.aalAfter, { detail: { roleAfter: signedR.roleAfter } }));
+  out.push(probe('2905_referred_member_session_is_aal2', 'aal2', signedD.aalAfter, { detail: { roleAfter: signedD.roleAfter } }));
   const jwtR = signedR.token;
   const jwtD = signedD.token;
 
@@ -231,7 +239,13 @@ export async function run(ctx) {
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  out.push(probe('2905_referred_audit_actor_is_null', null, referredAuditRow?.actor_id ?? 'NO_ROW', {
+  // Bug fixed here: `referredAuditRow?.actor_id ?? 'NO_ROW'` collapsed the
+  // desired PASS outcome (row exists, actor_id IS null) into the same
+  // 'NO_ROW' sentinel used for "no row found" — `??` treats a real `null`
+  // actor_id as nullish too, so this probe could never observe a true pass
+  // for the exact 0456 regression it exists to guard. Distinguish "row
+  // missing" from "row present with a null actor_id" explicitly instead.
+  out.push(probe('2905_referred_audit_actor_is_null', null, referredAuditRow ? referredAuditRow.actor_id : 'NO_ROW', {
     detail: { note: '0456 fix: actor_id must be NULL — the pre-fix body filed auth.uid() here, letting the referred user read the referrer raw uuid back through their own audit_events row', row: referredAuditRow },
   }));
   out.push(probe('2905_referred_audit_filed_against_referrer_org', seeded.referrerOrg.id, referredAuditRow?.org_id ?? null, {}));
