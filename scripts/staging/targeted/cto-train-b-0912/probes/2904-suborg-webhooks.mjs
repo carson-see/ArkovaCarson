@@ -217,6 +217,23 @@ export async function seed(admin, state, ctx) {
   const selfEndpointId = await ensureEndpoint(admin, { orgId: state.orgA, createdBy: state.adminA.userId, description: NAMES.selfEndpoint, scope: 'self', events: [FANOUT_EVENT] });
 
   // The lifecycle child: real, API-driven affiliation transitions every cycle.
+  // Fund orgA itself. #2844's seed()/resetFixtures() normally tops orgA up to
+  // PARENT_START_BALANCE (100_000) every cycle, and this module's header
+  // claims #2904 "must not depend on that ordering to stay independently
+  // seedable" — true for payment_state (set above) but NOT for credits: this
+  // module only ever zeroes the lifecycle child's balance, never funds orgA's
+  // own. Run with TRAIN_PROBES=2904,... (2844 excluded, as in a Train-C
+  // targeted window) and orgA's org_credits row is never seeded, so the first
+  // POST /api/v1/org/sub-orgs/credits 409s insufficient_parent_balance and
+  // cascades into every other assertion this cycle (observed 2026-09-13,
+  // train-c window1 old-sha run). Match #2844's floor so this is genuinely
+  // self-contained regardless of which sibling probes are selected.
+  const PARENT_CREDIT_FLOOR = 100_000;
+  const { data: existingParentCredits } = await admin.from('org_credits').select('balance').eq('org_id', state.orgA).maybeSingle();
+  if ((existingParentCredits?.balance ?? 0) < PARENT_CREDIT_FLOOR) {
+    await ensureCredits(admin, state.orgA, PARENT_CREDIT_FLOOR);
+  }
+
   const lifecycleChild = await ensureOrg(admin, { name: NAMES.lifecycleChild, parentOrgId: state.orgA, approvalStatus: 'PENDING' });
   await ensureCredits(admin, lifecycleChild.id, 0);
   const lifecycleChildEndpointId = await ensureEndpoint(admin, { orgId: lifecycleChild.id, createdBy: state.adminA.userId, description: `${TAG}-lifecycle-child-endpoint`, scope: 'self', events: childEndpointEvents });

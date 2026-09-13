@@ -19,7 +19,12 @@ export TRAIN_TAG_URL="${TRAIN_TAG_URL:-https://arkova-worker-cto-train-b-0912-st
 export STAGING_SUPABASE_SERVICE_ROLE_KEY="${STAGING_SUPABASE_SERVICE_ROLE_KEY:-$(gcloud secrets versions access latest --secret=supabase-service-role-key-${TRAIN_SECRET_SUFFIX}-staging --project=arkova1)}"
 export STAGING_SUPABASE_ANON_KEY="${STAGING_SUPABASE_ANON_KEY:-$(gcloud secrets versions access latest --secret=supabase-anon-key-${TRAIN_SECRET_SUFFIX}-staging --project=arkova1)}"
 export CRON_SECRET="$(gcloud secrets versions access latest --secret=cron-secret --project=arkova1)"
-export API_KEY_HMAC_SECRET="$(gcloud secrets versions access latest --secret=api-key-hmac-secret-staging --project=arkova1)"
+# Same standing-rig gap b2dd46357 fixed for the two STAGING_SUPABASE_* keys:
+# the isolated Train B rig mounts api-key-hmac-secret-staging, but the
+# standing rig's Cloud Run service mounts the unsuffixed api-key-hmac-secret
+# (v1) — confirmed different values 2026-09-13 (see common.mjs). Honour an
+# explicit key from the launcher instead of always fetching the -staging one.
+export API_KEY_HMAC_SECRET="${API_KEY_HMAC_SECRET:-$(gcloud secrets versions access latest --secret=api-key-hmac-secret-staging --project=arkova1)}"
 # webhook_endpoints.url CHECK requires https://; a literal private IP is refused before any socket.
 export TRAIN_2836_PRIVATE_URL="${TRAIN_2836_PRIVATE_URL:-https://169.254.169.254/}"
 export FIXTURE_STATE="${FIXTURE_STATE:-/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b/state/fixtures.json}"
