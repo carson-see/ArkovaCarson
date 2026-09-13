@@ -3956,7 +3956,7 @@ export const DRIVE_RECORD_LINKS_LABELS = {
   REVISION_LABEL: 'Source revision',
   MODIFIED_TIME_LABEL: 'Source modification time',
   SOURCE_NOTE:
-    'Measured: this record was secured from a file in your organization\'s connected '
+    'Recorded: this record was secured from a file in your organization\'s connected '
     + 'Google Drive, and the identifiers shown here are the ones Arkova recorded for '
     + 'that file at the moment it retrieved the document. '
     + 'Not asserted: that the linked item still exists, still holds the same '
