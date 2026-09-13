@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "rc_id": "rc-train-b5b-2026-09-13",
+  "created_at": "2026-09-13T23:45:00Z",
+  "created_by": "CTO release session (Claude Sonnet 5) for carson@arkova.io",
+  "release_owner": "CTO release session",
+  "approval_status": "approved",
+  "approval_actor": "carson@arkova.io (CTO release session, directive 2026-09-13)",
+  "approval_time": "2026-09-13T23:45:00Z",
+  "train_launch_sha": "9321e767c3ce249cd53ea94654f38434ec7035be",
+  "target_main_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+  "allowed_base_shas": [
+    "64c3824e53c256936c6d4a5d9064ac97533f673c"
+  ],
+  "covered_main_shas": [
+    "64c3824e53c256936c6d4a5d9064ac97533f673c"
+  ],
+  "included_prs": [
+    {
+      "head_sha": "08677552bc509aadbe56c75cf1a7e283f9542d7a",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "SCRUM-5023",
+      "number": 2841,
+      "ci_summary": "Worker Build/TypeCheck&Lint/TLA+/Verifier/SonarCloud/sonatype-sca all pass post-fix. Policy Lints FAILS pre-existing (R0-8 count:'exact' callsite 79->80, unrelated to this train's agents.md conflict fix — needs the count-exact-allowed label or a fix on the PR's own branch). Tests job pending at manifest-write time. Staging Soak Evidence Gate red pending this manifest, as expected pre-seal.",
+      "rollback_note": "Revert the PR's commits; no migration. Additive response fields; older worker/frontend fall back cleanly. Cron disabled via pausing api-key-expiry-notice Cloud Scheduler job (writes only append-only audit_events).",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io"
+    },
+    {
+      "head_sha": "6d28c3a40ce3193662b2b30fa9e9db031090e6d0",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "SCRUM-4507",
+      "number": 2846,
+      "ci_summary": "Worker Build/TypeCheck&Lint/TLA+/Verifier/SonarCloud/sonatype-sca all pass post-fix. Dependency Scanning job's check-agents-md-append-only.ts step FAILS — traced this to a PRE-EXISTING drop already present on origin/main itself (src/components/org/agents.md, 2 lines missing vs merge-base 8115bfdc, unrelated to any of this train's 4 members — reproduced directly against origin/main with no PR involved). Flagged separately for a main-branch fix; not caused by or fixable within this PR. Tests/Lighthouse pending at manifest-write time.",
+      "rollback_note": "Pure additive change, no migration. Revert the commits; new metadata keys are read-only/optional end to end, no backfill needed on rollback.",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io"
+    },
+    {
+      "head_sha": "3bd8eebc4cc0263813b783515d834c98f535214e",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "SCRUM-3906/SCRUM-3843",
+      "number": 2909,
+      "ci_summary": "Worker Build/TypeCheck&Lint/TLA+/Verifier/SonarCloud/sonatype-sca all pass post-fix. Same pre-existing main-inherited check-agents-md-append-only.ts failure as #2846 (src/components/org/agents.md, unrelated to this PR's files). Tests/Lighthouse pending at manifest-write time.",
+      "rollback_note": "Revert both commits — no migration/schema/RLS/deployed-state dependency. Restores prior aiSemanticSearchGate()-gated 503 behavior exactly; docs/openapi/README revert with it.",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io"
+    },
+    {
+      "head_sha": "f22a50f15288ad957d6de72155aee01b3a9a0f9c",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "SCRUM-5121",
+      "number": 2912,
+      "ci_summary": "Worker Build/TLA+/Verifier/SonarCloud/sonatype-sca/Python SDK Tests all pass post-fix. Same pre-existing main-inherited check-agents-md-append-only.ts failure as #2846/#2909 (unrelated file). TypeCheck&Lint/Generated Types Check pending at manifest-write time.",
+      "rollback_note": "Revert this PR. No migration; organization_rules rows it creates/adopts are identical shape to hand-built rules and remain manageable via RulesPage/RuleBuilderPage after rollback. action_type on PATCH /api/rules/:id is additive/optional.",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io"
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-cto-train-b-0912-staging",
+    "revision": "PENDING (deploy in progress at manifest-write time)",
+    "deploy_tag": "PENDING",
+    "image_digest": "PENDING",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "deploy_log_id": "PENDING",
+    "preflight_result": "environment_type=clean_mirror (2026-09-13T23:35:39.584Z, docs/staging/cto-train-b-0912/preflight-b5b-20260913T233539Z.json); the prior Train B5a supervisor process on this rig was found still running past its own sealed 4.02h/47-cycle close and was stopped (SIGTERM, PIDs 65887/65889) before this preflight was run, so the rig was genuinely idle at capture time. missing_from_staging notes 0452 and 20260912143110 as informational — neither migration file exists on current main and neither is owned by any of this train's 4 members.",
+    "origin_guard_mode": "n/a for this train's changed surfaces"
+  },
+  "soak": {
+    "tier": "T2 (4 h floor, CLAUDE.md §1.12)",
+    "start": "PENDING",
+    "end": "",
+    "cycles": 0,
+    "failures": 0,
+    "evidence_dir": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/window1",
+    "notes": "Manifest written pre-deploy; environment/soak fields to be completed once the candidate is deployed and the supervisor is launched.",
+    "result": "pending",
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs",
+    "evidence_links": [],
+    "expires_at": ""
+  },
+  "migration_plan": {
+    "migrations": [],
+    "note": "no member carries a migration (confirmed via gh pr diff <N> --name-only for all four)"
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "pre_deploy_step": ""
+  },
+  "exceptions": [
+    {
+      "type": "pre-existing-ci-failure",
+      "detail": "check-agents-md-append-only.ts fails on #2846/#2909/#2912's speculative merge preview due to a 2-line content drop in src/components/org/agents.md already present on origin/main itself (verified: reproduces with HEAD_REF_SHA=origin/main, no PR involved). Not caused by, or fixable within, any of this train's 4 PRs. Flagged as a separate main-branch fix (out of this train's scope)."
+    },
+    {
+      "type": "pre-existing-ci-failure",
+      "detail": "#2841's Policy Lints job fails R0-8 (count:'exact' callsite count 79->80) pre-existing to the PR's own diff (verified against the PR's own BASE_REF_SHA, independent of this train's agents.md conflict-fix commit). Needs either a fix on #2841's own branch or the count-exact-allowed label; not addressed by this manifest."
+    }
+  ],
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b5b-2026-09-13.json",
+  "staging_branch": "rc/train-b5b-2026-09-13",
+  "preflight_timestamp": "2026-09-13T23:35:39.584Z"
+}
