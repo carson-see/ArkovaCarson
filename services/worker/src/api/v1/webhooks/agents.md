@@ -1,6 +1,20 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-09-07 (SCRUM-4493: ComputeID AgentPassport revocation receiver)_
+_Last updated: 2026-09-13 (SCRUM-3843: max-cardinality 16KB CHECK test re-landed)_
+
+## 2026-09-13 — `docusign.test.ts`: PR #2485's comments re-landed onto the already-present max-cardinality test (SCRUM-3843)
+
+PR #2485 ("DocuSign rule-event payload 16KB CHECK overflow at max cardinality", bilateral Finding 7)
+closed unmerged. Checked before redoing the work: the SUBSTANTIVE fix (`document_ids` moved off the
+capped `organization_rule_events.payload` onto the uncapped job payload — `docusign.ts` around
+`_signers`/`document_hashes` construction and the `submitJob` call) and the full 100-document /
+20-signer max-cardinality test asserting it were already on `main`, landed independently of #2485.
+The ONLY thing #2485 carried that `main` did not was two explanatory comments on the existing
+`expect()` calls (`gh pr diff 2485` — 24 lines, comments only, zero new assertions). Those two
+comments are now applied verbatim. No behavior changed; the invariant (rule-event payload
+`pg_column_size <= 16384` at 100 docs / 20 signers, `document_ids` absent from that payload,
+`document_hashes` and `document_ids` both present at full cardinality on the two uncapped
+surfaces) was already pinned and stays pinned.
 
 ## 2026-09-07 — SCRUM-4493: `computeid.ts` — ComputeID AgentPassport revocation receiver (flag-gated dark)
 
