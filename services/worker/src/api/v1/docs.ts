@@ -1726,20 +1726,42 @@ export const openApiSpec: Record<string, any> = {
       get: {
         summary: 'Agentic verification search',
         description:
-          'Semantic search returning frozen verification schema results. Designed for AI agents, ATS systems, and background check integrations. Requires API key (not JWT).',
+          'Search returning frozen verification schema results. Designed for AI agents, ATS systems, and background check integrations. Requires API key (not JWT). '
+          + 'SCRUM-3906: this route now answers with EITHER a semantic (embedding + cosine-similarity) match OR a lexical (ILIKE substring) match — `search_mode` on '
+          + 'the response says which. Semantic is used when ENABLE_SEMANTIC_SEARCH is on and the embed+match RPC succeeds; the route falls back to lexical, never a 503, '
+          + 'when the flag is off or that RPC/embedding call fails. Only the semantic path costs an AI credit or emits `similarity`; `issuer_name`, `issued_date`, `expiry_date` '
+          + 'and `anchor_timestamp` are omitted (never null) on a lexical result — that path does not query them.',
         operationId: 'agenticVerifySearch',
         tags: ['AI Intelligence', 'Verification'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [
           { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 } },
-          { name: 'threshold', in: 'query', schema: { type: 'number', default: 0.75 } },
+          { name: 'threshold', in: 'query', schema: { type: 'number', default: 0.75 }, description: 'Semantic-path only; ignored on a lexical-path request.' },
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 5, maximum: 20 } },
         ],
         responses: {
-          '200': { description: 'Verification results with similarity scores', content: { 'application/json': { schema: { type: 'object', properties: { results: { type: 'array', items: { $ref: '#/components/schemas/VerificationResult' } }, total: { type: 'integer' } } } } } },
+          '200': {
+            description: 'Verification results. `search_mode` (`semantic_vector` | `lexical_substring`) tells the caller which path answered — see the operation description.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    query: { type: 'string' },
+                    results: { type: 'array', items: { $ref: '#/components/schemas/VerificationResult' } },
+                    count: { type: 'integer' },
+                    threshold: { type: 'number', description: 'Echoes the request threshold; not applied on the lexical path.' },
+                    search_mode: { type: 'string', enum: ['semantic_vector', 'lexical_substring'] },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '402': { description: 'No AI credits remaining for the semantic path (flag on, RPC not yet attempted). Retry to get a lexical result instead is NOT automatic on this status — insufficient credits is a distinct condition from a semantic RPC failure.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
-          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+          '503': { description: 'ENABLE_VERIFICATION_API is off (worker-wide gate, applies to all of /api/v1/*). No longer returned for ENABLE_SEMANTIC_SEARCH off — see the operation description.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
     },
