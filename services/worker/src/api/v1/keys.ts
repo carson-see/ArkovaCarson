@@ -57,7 +57,7 @@ const ApiKeyScopeSchema = z.enum(API_KEY_SCOPES);
 
 export const CreateKeySchema = z.object({
   name: z.string().min(1).max(100),
-  scopes: z.array(ApiKeyScopeSchema).min(1).default(DEFAULT_API_KEY_SCOPES),
+  scopes: z.array(ApiKeyScopeSchema).min(1).max(30).default(DEFAULT_API_KEY_SCOPES), // max mirrors docs/api/openapi.yaml maxItems (SCRUM-4984 PR)
   expires_in_days: z.number().int().positive().optional(),
   // REG-04: FERPA requester identity verification fields
   ferpa_exception_category: z.enum(FERPA_EXCEPTION_CATEGORIES).optional(),
