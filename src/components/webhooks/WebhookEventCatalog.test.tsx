@@ -86,16 +86,61 @@ describe('WebhookEventCatalog', () => {
     // 'anchor.superseded', ...)` in services/worker/src/api/anchor-lineage.ts
     // (SCRUM-2937), on the POST /api/anchor/:id/supersede path.
     'anchor.superseded',
-    'anchor.batch_secured',
+    // CTO ruling Z5 (2026-09-12): `anchor.batch_secured` is deliberately NOT
+    // here. It is registered in payload-schemas.ts and accepted by the CRUD
+    // allowlist (SCRUM-1794), but `git grep -n "dispatchWebhookEvent("
+    // services/worker/src` returns no call site for it — the only two
+    // `event_type: 'anchor.batch_secured'` literals in the worker
+    // (services/worker/src/jobs/check-confirmations.ts:153 and :169) build
+    // `audit_events` rows, not webhook dispatches. Registered and
+    // subscribable, never emitted. Flip this only after a real dispatch site
+    // exists, not because the merkle-batch path runs (§1.13 R-7).
     'credential.issued',
     'credential.status_changed',
     'compliance.document_expiring',
+    // SCRUM-3982: emit point verified — `dispatchWebhookEvent(profile.org_id,
+    // 'attestation.created', ...)` in services/worker/src/api/v1/attestations.ts,
+    // and the `profiles` lookup above it really does select `org_id`, so the
+    // guard can be true. `attestation.revoked` is deliberately NOT here: its
+    // guard reads `attestation.attester_org_id` while the ownership query
+    // selects only `id, status, attester_user_id`, so that dispatch has never
+    // fired. Registered and subscribable, not live.
+    'attestation.created',
   ]);
 
   it('claims live only for events with a real emit point', () => {
     for (const entry of WEBHOOK_EVENT_CATALOG) {
       expect(entry.live, entry.id).toBe(LIVE_EVENT_IDS.has(entry.id));
     }
+  });
+
+  it('keeps attestation.revoked deferred while its producer is unreachable (SCRUM-3982)', () => {
+    // Flip this only after `services/worker/src/api/v1/attestations.ts` selects
+    // `attester_org_id` in the revoke handler's ownership query — the guard,
+    // not the presence of the dispatch call, is what makes the badge truthful.
+    const revoked = WEBHOOK_EVENT_CATALOG.find((e) => e.id === 'attestation.revoked');
+    expect(revoked).toBeDefined();
+    expect(revoked?.live).toBe(false);
+  });
+
+  it('keeps anchor.batch_secured deferred while no dispatch site emits it (CTO ruling Z5)', () => {
+    // Flip this only when `dispatchWebhookEvent(..., 'anchor.batch_secured',
+    // ...)` exists in services/worker/src — the `event_type:
+    // 'anchor.batch_secured'` literals in check-confirmations.ts build
+    // `audit_events` rows, and an audit row is not a delivery.
+    const batch = WEBHOOK_EVENT_CATALOG.find((e) => e.id === 'anchor.batch_secured');
+    expect(batch).toBeDefined();
+    expect(batch?.live).toBe(false);
+  });
+
+  it('scopes the attestation.created description to single creation (CTO ruling Z5)', () => {
+    // POST /api/v1/attestations dispatches this; POST
+    // /api/v1/attestations/batch-create does not. The catalog description is
+    // the only place a subscriber learns that, so it must say so rather than
+    // implying every creation path fires the event.
+    const description = WEBHOOK_EVENT_DESCRIPTIONS['attestation.created'];
+    expect(description).toMatch(/single/i);
+    expect(description).toMatch(/bulk/i);
   });
 
   it('keeps credential.verified deferred while its emit flag is dark in prod (SCRUM-1799)', () => {

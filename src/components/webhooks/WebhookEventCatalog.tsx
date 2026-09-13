@@ -37,75 +37,13 @@ import {
 import { WEBHOOK_LABELS, WEBHOOK_EVENT_DESCRIPTIONS } from '@/lib/copy';
 import { AVAILABLE_EVENTS } from './WebhookSettings';
 
-export interface WebhookCatalogEntry {
-  id: string;
-  /** True only when the worker has a real emit point for this event. */
-  live: boolean;
-  /** Wire payload `data` fields, mirroring payload-schemas.ts (strict). */
-  fields: string[];
-}
-
-// Field lists verified 2026-07-06 against
-// services/worker/src/webhooks/payload-schemas.ts (strict Zod schemas).
-// `?` marks nullable/optional fields.
-const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
-  'anchor.submitted': {
-    live: true,
-    fields: ['public_id', 'status', 'submitted_at', 'chain_tx_id?', 'chain_block_height?', 'org_public_id?'],
-  },
-  'anchor.secured': {
-    live: true,
-    fields: ['public_id', 'status', 'chain_tx_id', 'chain_block_height', 'chain_timestamp', 'secured_at', 'org_public_id?'],
-  },
-  'anchor.revoked': {
-    live: true,
-    fields: ['public_id', 'status', 'revoked_at', 'revocation_reason?', 'chain_tx_id?', 'chain_block_height?', 'org_public_id?'],
-  },
-  'anchor.expired': {
-    live: true,
-    fields: ['public_id', 'status', 'chain_tx_id', 'chain_block_height', 'expires_at', 'expired_at', 'org_public_id?'],
-  },
-  // DI-775 (SCRUM-3538): `live: true` — the emit point is real:
-  // `dispatchWebhookEvent(..., 'anchor.superseded', ...)` in
-  // services/worker/src/api/anchor-lineage.ts (SCRUM-2937), on the
-  // POST /api/anchor/:id/supersede path. Fields mirror
-  // AnchorSupersededPayloadSchema (strict); SUPERSEDED can only follow
-  // SECURED, so the chain fields are non-null there and are listed unmarked.
-  'anchor.superseded': {
-    live: true,
-    fields: ['public_id', 'status', 'chain_tx_id', 'chain_block_height', 'superseded_at', 'superseded_by_public_id?', 'supersession_reason?', 'org_public_id?'],
-  },
-  'anchor.batch_secured': {
-    live: true,
-    fields: ['public_ids', 'anchor_count', 'chain_tx_id', 'chain_block_height', 'chain_timestamp', 'secured_at'],
-  },
-  // Emits on connector credential import (SCRUM-1798 Phase 2a,
-  // services/worker/src/api/v1/credential-sources.ts) — unflagged.
-  'credential.issued': {
-    live: true,
-    fields: ['public_id', 'status', 'issued_at', 'expires_at?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
-  },
-  // Wired but flag-gated dark: ENABLE_CREDENTIAL_VERIFIED_WEBHOOK defaults
-  // false and is unset in prod. Flip only after verifying the prod flag.
-  'credential.verified': {
-    live: false,
-    fields: ['public_id', 'status', 'verified_at', 'verifier_country?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
-  },
-  // Four live producers (SCRUM-1800): revoke, supersede, bulk-confirm, and
-  // reorg-revert — any anchor with a credential_type emits on those
-  // transitions, no feature flag.
-  'credential.status_changed': {
-    live: true,
-    fields: ['public_id', 'previous_status', 'new_status', 'changed_at', 'reason?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
-  },
-  // BUG-002: `live: true` is asserted because the emit point is real —
-  // POST /cron/check-credential-expiry, behind the ENABLE_EXPIRY_ALERTS flag.
-  // Field list mirrors ComplianceDocumentExpiringPayloadSchema (strict).
-  'compliance.document_expiring': {
-    live: true,
-    fields: ['public_id', 'status', 'expires_at', 'days_remaining', 'warning_level', 'credential_type?', 'label?', 'org_public_id?'],
-  },
-};
+// CTO ruling Z5 (2026-09-12): the liveness table moved to
+// ./webhookEventLiveness so the subscription picker in WebhookSettings.tsx can
+// read the SAME flags. It used to live here, which meant the picker's
+// "not yet active" suffix was hand-maintained separately and could disagree
+// with this badge — and did.
+export type { WebhookCatalogEntry } from './webhookEventLiveness';
+import { CATALOG_DATA, type WebhookCatalogEntry } from './webhookEventLiveness';
 
 /**
  * Catalog entries in AVAILABLE_EVENTS order so this component and the
