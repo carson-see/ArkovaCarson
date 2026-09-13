@@ -2193,13 +2193,24 @@ function JobControlTile({
         disabledReason={job.disabledReason}
         onTrigger={onTrigger}
       />
+      {job.disabledReason && (
+        // UAT: button.tsx applies disabled:pointer-events-none, so a disabled
+        // control never receives hover and its title tooltip never reaches a
+        // mouse user — the reason must exist as visible text too, not only in
+        // title/aria-label. break-words so a long reason wraps instead of
+        // overflowing the card at 375px. Placed before the freshness caption
+        // when both exist (several disabled controls still carry a sourceKey).
+        <p className="text-[10px] text-muted-foreground pl-1 break-words" data-testid={`pipeline-job-reason-${job.path}`}>
+          {job.disabledReason}
+        </p>
+      )}
       {job.longRunning && (
         <p className="text-[10px] text-muted-foreground pl-1" data-testid={`pipeline-job-hint-${job.path}`}>
           {PIPELINE_CONTROL_LABELS.RUNS_IN_BACKGROUND}
         </p>
       )}
       {freshnessCaption && (
-        <p className="text-[10px] text-muted-foreground pl-1" data-testid={`pipeline-job-freshness-${job.path}`}>
+        <p className="text-[10px] text-muted-foreground pl-1 break-words" data-testid={`pipeline-job-freshness-${job.path}`}>
           {freshnessCaption}
         </p>
       )}

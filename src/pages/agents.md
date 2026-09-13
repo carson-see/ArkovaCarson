@@ -82,6 +82,20 @@ state (`sourceFreshness`) and its own callback (`fetchSourceFreshness`):
   up a new `fetchSourceFreshness` identity on every toggle never restarts its
   interval/listener.
 
+**UAT catch (2026-09-13, same ticket): `title`/`aria-label` alone is not
+enough for a disabled control.** `src/components/ui/button.tsx` applies
+`disabled:pointer-events-none`, so a disabled `<button>` never receives
+`:hover` and its `title` tooltip never renders for a mouse user — a
+`disabledReason` that only exists in `title`/`aria-label` is invisible in
+practice, defeating the point of SCRUM-5045. `JobControlTile` now also
+renders `job.disabledReason` as a visible `break-words` caption (same style
+as the freshness/longRunning captions, `pipeline-job-reason-<path>` testid),
+placed first when a control also has a freshness caption (several disabled
+controls still carry a `sourceKey`). `title`/`aria-label` are unchanged —
+this is additive, not a replacement. `button.tsx` itself is untouched; fixing
+`disabled:pointer-events-none` there is a bigger, cross-page decision (it
+affects every disabled button in the app) that was out of scope here.
+
 ## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
 
 `SettingsPage` writes `profiles.social_links`; `PublicProfilePage` is its cross-user render surface. Both go through `src/lib/socialLinks.ts`.

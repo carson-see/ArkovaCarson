@@ -572,7 +572,27 @@ describe('PipelineAdminPage', () => {
       const el = await screen.findByTestId(`pipeline-job-${path}`);
       expect(el).toBeDisabled();
       expect(el).toHaveAttribute('title', reason);
+
+      // UAT (SCRUM-5045 follow-up): button.tsx applies
+      // disabled:pointer-events-none, so a disabled control never receives
+      // hover and its `title` tooltip never renders for a mouse user — the
+      // reason must also exist as visible text, not just in title/aria-label.
+      const reasonCaption = await screen.findByTestId(`pipeline-job-reason-${path}`);
+      expect(reasonCaption).toHaveTextContent(reason);
     }
+  });
+
+  it('does not render a disabled-reason caption for an enabled control', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+    await screen.findByTestId('pipeline-job-fetch-edgar');
+
+    expect(screen.queryByTestId('pipeline-job-reason-fetch-edgar')).not.toBeInTheDocument();
   });
 
   it('keeps the three pre-existing international "not wired" controls disabled as-is', async () => {
