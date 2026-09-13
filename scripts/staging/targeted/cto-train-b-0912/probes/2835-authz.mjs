@@ -582,8 +582,18 @@ export async function run(ctx) {
       }));
       const { count: joinedAudit } = await admin.from('audit_events').select('id', { count: 'exact', head: true })
         .eq('event_type', 'MEMBER_JOINED').eq('target_id', invitation.id).gte('created_at', acceptStart);
+      // Covers BOTH race interleavings, and cycle 2026-09-13T01-43-26Z proved
+      // that matters: it read 2 while both accepts were 2xx with ONE
+      // org_members row. The 23505 guard only covered the case where both
+      // accepts pass the lookup; the winner's insert usually commits FIRST, so
+      // the loser finds an existing membership, skips the insert and fell
+      // through to a second emit. Fixed by `if (!membershipCreatedHere) return`
+      // (wt-2835 f8894103a). origin/main emits twice in both interleavings.
       out.push(probe('2835_invite_exactly_one_member_joined_audit', 1, joinedAudit ?? null, {
-        detail: { scopedBy: { target_id: invitation.id, since: acceptStart }, note: 'The race loser must not emit a second MEMBER_JOINED.' },
+        detail: {
+          scopedBy: { target_id: invitation.id, since: acceptStart },
+          note: 'One join, one MEMBER_JOINED — whichever accept loses the race, and whether it loses at the lookup or at the 23505.',
+        },
       }));
       const { data: invAfter } = await admin.from('invitations').select('status, accepted_at').eq('id', invitation.id).maybeSingle();
       out.push(probe('2835_invite_marked_accepted', true, invAfter?.status === 'accepted' || Boolean(invAfter?.accepted_at), {
