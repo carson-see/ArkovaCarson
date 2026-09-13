@@ -1,0 +1,169 @@
+{
+  "blockCount": 6,
+  "blocks": [
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Arkova",
+      "url": "https://arkova.ai",
+      "logo": "https://app.arkova.ai/arkova-logo.png",
+      "description": "Privacy-first document verification platform. Anchor credentials to an immutable public record and verify them instantly.",
+      "@id": "https://arkova.ai/#org",
+      "sameAs": [
+        "https://www.wikidata.org/wiki/Q138865713",
+        "https://www.linkedin.com/company/arkovatech",
+        "https://x.com/arkovatech",
+        "https://www.youtube.com/channel/UCTTDFFSLxl85omCeJ9DBvrg",
+        "https://github.com/carson-see/ArkovaCarson"
+      ],
+      "foundingDate": "2025",
+      "founder": [
+        {
+          "@id": "https://arkova.ai/#carson-seeger"
+        },
+        {
+          "@id": "https://arkova.ai/#sarah-rushton"
+        },
+        {
+          "@id": "https://arkova.ai/#yaacov-petscher"
+        }
+      ],
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Tallahassee",
+        "addressRegion": "FL",
+        "addressCountry": "US"
+      },
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "email": "hello@arkova.ai",
+        "contactType": "customer support"
+      },
+      "numberOfEmployees": {
+        "@type": "QuantitativeValue",
+        "value": 3
+      }
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Arkova",
+      "url": "https://app.arkova.ai",
+      "description": "Secure document verification platform — anchor credentials to an immutable record and verify them instantly.",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "https://app.arkova.ai/search?q={search_term_string}",
+        "query-input": "required name=search_term_string"
+      }
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "@id": "https://arkova.ai/#software",
+      "name": "Arkova",
+      "url": "https://app.arkova.ai",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "description": "Privacy-first document verification platform. Anchor credentials to an immutable public record and verify them instantly. Documents never leave the user's device.",
+      "offers": {
+        "@type": "AggregateOffer",
+        "lowPrice": "0",
+        "highPrice": "99",
+        "priceCurrency": "USD",
+        "offerCount": "3"
+      },
+      "featureList": [
+        "Client-side SHA-256 cryptographic fingerprinting",
+        "Public verification via shareable links and QR codes",
+        "AI-powered credential metadata extraction",
+        "REST API with batch verification",
+        "PDF proof certificates",
+        "Bulk CSV credential anchoring",
+        "Webhook notifications",
+        "MCP server for AI agent access"
+      ]
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "@id": "https://arkova.ai/#product",
+      "name": "Arkova Compliance Audit Automation",
+      "description": "Arkova automates compliance evidence collection, jurisdiction-aware audit checks, and tamper-evident document verification for GRC teams.",
+      "brand": {
+        "@id": "https://arkova.ai/#org"
+      },
+      "category": "Compliance audit software",
+      "url": "https://arkova.ai",
+      "isRelatedTo": {
+        "@id": "https://arkova.ai/#software"
+      },
+      "offers": {
+        "@type": "AggregateOffer",
+        "lowPrice": "0",
+        "highPrice": "99",
+        "priceCurrency": "USD",
+        "offerCount": "3",
+        "url": "https://app.arkova.ai"
+      }
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "Service",
+      "@id": "https://arkova.ai/#audit-automation-service",
+      "name": "Arkova Compliance Audit Automation Service",
+      "serviceType": "Compliance audit automation",
+      "description": "Jurisdiction-aware compliance audit automation with verified evidence, scorecards, and proof-ready reporting for regulated teams.",
+      "provider": {
+        "@id": "https://arkova.ai/#org"
+      },
+      "areaServed": "Global",
+      "url": "https://arkova.ai",
+      "hasOfferCatalog": {
+        "@type": "OfferCatalog",
+        "name": "Arkova audit automation plans",
+        "itemListElement": [
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Self-serve compliance audit automation"
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Enterprise evidence verification workflows"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "HowTo",
+      "name": "How to Verify a Document with Arkova",
+      "description": "Three steps to permanently verifiable records. Your documents never leave your device.",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "position": 1,
+          "name": "Upload & Fingerprint",
+          "text": "Select your document and a unique cryptographic fingerprint (SHA-256) is generated entirely in your browser. The document itself never leaves your device — only the fingerprint moves forward."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 2,
+          "name": "Permanent Anchoring",
+          "text": "The fingerprint is recorded on a public, immutable network. Anchors are batched for efficiency, reducing costs while maintaining cryptographic integrity."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 3,
+          "name": "Universal Verification",
+          "text": "Anyone can verify a document by generating its fingerprint and comparing it against the permanent record. No account required — verification is open and free."
+        }
+      ]
+    }
+  ]
+}
