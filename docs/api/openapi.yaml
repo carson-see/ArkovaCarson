@@ -561,6 +561,74 @@ paths:
         "201":
           description: API key created (raw key returned only once)
 
+  /integrations/google_drive/folders:
+    get:
+      operationId: listGoogleDriveFolders
+      summary: List a Google Drive folder's child folders
+      description: >
+        Connectors page folder picker (My Drive only — shared drives are not supported).
+        Session-authenticated (Supabase JWT), org-admin only; NOT reachable with an API key.
+        Metadata-only. `hasChildren` is always null (unknown) in v1.
+      tags: [Integrations]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: org_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: parent
+          in: query
+          description: Drive folder id to list, or the literal "root" for My Drive.
+          schema:
+            type: string
+            default: root
+        - name: page_token
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Child folders of the requested parent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  folders:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        hasChildren:
+                          type: boolean
+                          nullable: true
+                        driveId:
+                          type: string
+                          nullable: true
+                  nextPageToken:
+                    type: string
+        "400":
+          description: "`drive=` (shared drive) query param is not supported in v1, or the query failed validation"
+        "401":
+          description: Authentication required
+        "403":
+          description: Only organization admins can browse Drive folders
+        "404":
+          description: Google Drive is not connected for this organization (`not_connected`)
+        "409":
+          description: "`insufficient_drive_scope` (stored grant cannot list folders) or `reconnect_required`"
+        "429":
+          description: Per-org rate limit exceeded (30 req/min)
+        "502":
+          description: Google Drive is unavailable (`drive_unavailable`) — may carry Retry-After
+
   /usage:
     get:
       operationId: getUsage
