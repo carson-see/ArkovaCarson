@@ -126,6 +126,14 @@ vi.mock('dns', () => dnsModule);
 
 vi.stubGlobal('fetch', mockFetch);
 
+import { __setWebhookFetchForTests } from './egress.js';
+
+// SCRUM-4983 (#2836, on main since 2026-09-13): production dispatch is IP-pinned
+// through undici's own fetch, which vi.stubGlobal('fetch') cannot intercept.
+// Route the module's dispatch back to the stubbed global so every assertion on
+// mockFetch below still holds — the same hook delivery.test.ts installs.
+__setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
+
 import {
   dispatchWebhookEvent,
   resetCircuitBreakers,
