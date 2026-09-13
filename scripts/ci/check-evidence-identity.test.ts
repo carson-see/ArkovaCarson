@@ -24,6 +24,9 @@ import {
 
 const HEAD = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
 const OTHER = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+// Distinct 40-hex SHAs for the Post-soak T0 delta allowance tests below.
+const SOAKED = '5'.repeat(40);
+const WRONG_DELTA = '9'.repeat(40);
 
 function t2Body(overrides: Partial<Record<string, string>> = {}): string {
   const headSha = overrides.headSha ?? HEAD;
@@ -70,6 +73,135 @@ describe('checkHeadShaIdentity', () => {
     const finding = checkHeadShaIdentity(body, HEAD);
     expect(finding).not.toBeNull();
     expect(finding!.message).toMatch(/no.*PR head SHA|declares no/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkHeadShaIdentity — Post-soak T0 delta allowance (CTO decision
+// 2026-09-12, Confluence 146440221 / SCRUM-5054). Mirrors
+// check-staging-evidence.ts's headShaEvidenceResult() for the SAME field —
+// see PRs #2841/#2834/#2842, all merged origin/main d0a5ffa27.
+// ---------------------------------------------------------------------------
+
+function deltaBody(overrides: { headSha?: string; deltaSha?: string } = {}): string {
+  const headSha = overrides.headSha ?? SOAKED;
+  const lines = [
+    '## Staging Soak Evidence',
+    'Tier: T2',
+    `PR head SHA: ${headSha}`,
+    'Base SHA: 1111111111111111111111111111111111111111',
+    'Preflight result: environment_type=clean_mirror',
+    'Staging deploy log id: 12345',
+    'Soak start: 2026-07-19T00:00:00Z',
+    'Soak end: 2026-07-19T13:00:00Z',
+  ];
+  if (overrides.deltaSha !== undefined) {
+    lines.push(`Post-soak T0 delta: ${overrides.deltaSha}`);
+  }
+  return lines.join('\n');
+}
+
+describe('checkHeadShaIdentity — Post-soak T0 delta allowance', () => {
+  it('ACCEPTS a delta that names the actual head, descends from the soaked head, and touches only T0 files', () => {
+    const finding = checkHeadShaIdentity(deltaBody({ deltaSha: HEAD }), HEAD, {
+      ancestryProvider: () => true,
+      changedFilesProvider: () => ['docs/reference/ENV.md', 'e2e/api-keys.spec.ts'],
+    });
+    expect(finding).toBeNull();
+  });
+
+  it('FAILS when the delta field names a SHA other than the actual head', () => {
+    const finding = checkHeadShaIdentity(deltaBody({ deltaSha: WRONG_DELTA }), HEAD, {
+      ancestryProvider: () => true,
+      changedFilesProvider: () => ['docs/x.md'],
+    });
+    expect(finding).not.toBeNull();
+    expect(finding!.name).toBe('head-sha-identity');
+    expect(finding!.message).toMatch(/Post-soak T0 delta/);
+    expect(finding!.message).toMatch(/CURRENT/);
+  });
+
+  it('FAILS when the soaked head is not an ancestor of the actual head', () => {
+    const finding = checkHeadShaIdentity(deltaBody({ deltaSha: HEAD }), HEAD, {
+      ancestryProvider: () => false,
+      changedFilesProvider: () => ['docs/x.md'],
+    });
+    expect(finding).not.toBeNull();
+    expect(finding!.message).toMatch(/ancestor/i);
+  });
+
+  it('FAILS (fails closed) when ancestry is unresolvable', () => {
+    const finding = checkHeadShaIdentity(deltaBody({ deltaSha: HEAD }), HEAD, {
+      ancestryProvider: () => null,
+      changedFilesProvider: () => ['docs/x.md'],
+    });
+    expect(finding).not.toBeNull();
+    expect(finding!.message).toMatch(/ancestry|ancestor/i);
+  });
+
+  it('FAILS when the post-soak changed-file list is empty', () => {
+    const finding = checkHeadShaIdentity(deltaBody({ deltaSha: HEAD }), HEAD, {
+      ancestryProvider: () => true,
+      changedFilesProvider: () => [],
+    });
+    expect(finding).not.toBeNull();
+    expect(finding!.message).toMatch(/empty|fails closed/i);
+  });
+
+  it('FAILS when the post-soak changed-file list cannot be computed', () => {
+    const finding = checkHeadShaIdentity(deltaBody({ deltaSha: HEAD }), HEAD, {
+      ancestryProvider: () => true,
+      changedFilesProvider: () => null,
+    });
+    expect(finding).not.toBeNull();
+    expect(finding!.message).toMatch(/could not be computed|fails closed/i);
+  });
+
+  it('FAILS when any post-soak file is not T0-classified', () => {
+    const finding = checkHeadShaIdentity(deltaBody({ deltaSha: HEAD }), HEAD, {
+      ancestryProvider: () => true,
+      changedFilesProvider: () => ['docs/x.md', 'services/worker/src/x.ts'],
+    });
+    expect(finding).not.toBeNull();
+    expect(finding!.message).toMatch(/not T0|T0, not/i);
+  });
+
+  it('keeps the ORIGINAL stale-head failure when no Post-soak T0 delta field is present', () => {
+    const finding = checkHeadShaIdentity(deltaBody(), HEAD, {
+      ancestryProvider: () => true,
+      changedFilesProvider: () => ['docs/x.md'],
+    });
+    expect(finding).not.toBeNull();
+    expect(finding!.message).toMatch(/does not match|invalidat/i);
+    expect(finding!.message).not.toMatch(/Post-soak T0 delta/);
+  });
+});
+
+describe('runEvidenceIdentity — Post-soak T0 delta note', () => {
+  it('passes with an info note when the delta is accepted', () => {
+    const r = runEvidenceIdentity({
+      body: deltaBody({ deltaSha: HEAD }),
+      actualHeadSha: HEAD,
+      isDraft: false,
+      ancestryProvider: () => true,
+      changedFilesProvider: () => ['docs/x.md'],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.findings).toEqual([]);
+    expect(r.notes.some((n) => /post-soak t0 delta/i.test(n))).toBe(true);
+  });
+
+  it('still fails when the delta is rejected', () => {
+    const r = runEvidenceIdentity({
+      body: deltaBody({ deltaSha: HEAD }),
+      actualHeadSha: HEAD,
+      isDraft: false,
+      ancestryProvider: () => false,
+      changedFilesProvider: () => ['docs/x.md'],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.findings.some((f) => f.name === 'head-sha-identity')).toBe(true);
+    expect(r.notes).toEqual([]);
   });
 });
 
@@ -230,6 +362,21 @@ describe('formatReport', () => {
   it('renders a passing line when identity holds', () => {
     const out = formatReport(runEvidenceIdentity(healthyInput()));
     expect(out).toMatch(/identity/i);
+  });
+
+  it('renders the accepted Post-soak T0 delta as an info line, still passing', () => {
+    const out = formatReport(
+      runEvidenceIdentity({
+        body: deltaBody({ deltaSha: HEAD }),
+        actualHeadSha: HEAD,
+        isDraft: false,
+        ancestryProvider: () => true,
+        changedFilesProvider: () => ['docs/x.md'],
+      }),
+    );
+    expect(out).toMatch(/post-soak t0 delta/i);
+    expect(out).toMatch(/✅/);
+    expect(out).not.toMatch(/::error::/);
   });
 
   it('renders ::error:: when a finding exists and not report-only', () => {
