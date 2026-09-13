@@ -1,5 +1,17 @@
 # machines/agents.md
 
+## 2026-09-12 — `aiCreditsPeriodProvision.machine.ts` (SCRUM-4939 / PR #2837): the `ai_credits` provisioning race
+
+New machine for `ensureAICreditsPeriod` in `services/worker/src/ai/cost-tracker.ts`. `public.ai_credits` has no unique constraint on `(org_id, period_start)` — PK on `id` only, three non-unique indexes — so provisioning cannot be an upsert and is a select-then-insert with a genuine TOCTOU window. Adding the constraint is DDL on a table read by every extraction: its own migration, its own lock-timeout review (CLAUDE.md §1.2), a T3 PR. The window is closed in application code instead, and this machine is what checks that protocol: insert → re-read → the racer whose row is not the keeper (lowest `(created_at, id)`) deletes **only the row it itself inserted**, by id.
+
+**Why the direction of failure matters more than the race.** `deduct_ai_credits`'s `UPDATE` has no row limit and `ai_credits.reconcile_refund` refunds through the same RPC, so a surviving duplicate double-debits and double-refunds for the rest of the month. But a compensation that could remove the *last* row would put the org straight back on the hard 503 the PR exists to remove — strictly worse. `neverZeroRowsOnceProvisioned` is unconditional and is the invariant that earns the machine.
+
+Modeled deliberately narrowly: one domain element = one concurrent request for one org's one period; `firstInserter` stands in for the `(created_at, id)` total order; a re-read is assumed to see every already-committed insert (each PostgREST statement is its own read-committed transaction). A stale re-read that misses the keeper's row is NOT modeled — its outcome is a surviving duplicate, identical to the modeled `deleteOwnFails`, never a zero-row state. Credit arithmetic is out of scope (the DSL has no arithmetic).
+
+Certificate (tier `pr`, 2 racers): proofPassed true; invariants `neverZeroRowsOnceProvisioned`, `keeperRowNeverDeleted`, `settledConvergesToOneRow`; graph equivalence true (24/24 states, 34/34 edges); TLC 35 generated / 24 distinct, depth 7; deadlock check off (an all-DONE world is the correct terminal state of a race, same resolution as `agentPassport` / `partnerProvisioning` / `drainRunAccounting`). `nightly` tier runs 3 racers. Picked up automatically by `npm run verify:machines` / the `tla-verify` CI job (the script globs `machines/*.machine.ts`).
+
+Owed follow-up: a unique `(org_id, period_start)` index is still the correct permanent fix and would make `deleteOwn` / `deleteOwnFails` unreachable. It is a separate T3 migration.
+
 ## 2026-09-10 — PR #2570 models independent broadcaster publication
 
 The DocuSign model now includes anchor publication and an independently schedulable broadcaster claim. `broadcastRequiresFreshLinkedAnchor` prevents a broadcaster claiming an unlinked or superseded anchor. Atomic minting publishes and links together; a separate inserted-anchor action is a negative control. The model checks the concurrency design; SQL tests separately check full metadata equality, tenant scope, permissions, and real row locks. It does not model unknown external calls or replace staging qualification.
@@ -300,6 +312,13 @@ The original `agentPassport.machine.ts` prose claimed graph equivalence but omit
 
 The current `agentKeyAuthority.machine.ts` removes the retired compensating-cleanup path: admission now commits agent, key and audits in one transaction. The remaining direct-mint/PATCH model passes at 20 states / 32 edges. New `passportAdmission.machine.ts` models absent-row serialization, two organizations, terminal provider authority, rollback, unknown responses and mandatory audits; its PR proof and graph equivalence pass at 525 states / 1681 edges. Five negative controls reproduce missing sentinel locks, global-revocation bypass, missing audits, late mint and stale PATCH. These are bounded design proofs with real SQL tests, not generated runtime adapters.
 
+## 2026-09-11 — UAT-04 authority model
+
+`mandatoryMfaAuthority.machine.ts` models mailbox precedence, MFA enrollment and
+verification before or after mailbox proof, AAL1 session resets with and without
+a factor, and product/key-provision authority. TLC proves the modeled invariants;
+adapter correctness is established separately by runtime tests.
+
 ## subOrgListingConsent.machine.ts (SCRUM-3864)
 
 - Models the two-party listing-consent lifecycle added by migration `0429`: `parentOf`, `parentOptin`, `childOptin` per org. Proves that a consent pair can never outlive the affiliation it was given for — the failure that would publish an edge nobody agreed to.
@@ -309,9 +328,10 @@ The current `agentKeyAuthority.machine.ts` removes the retired compensating-clea
 - Authorization (who may sign which half) is **out of scope** — actor identity is not in this state. It is proven empirically instead, checks 5 and 9 of `docs/staging/hakichain-suborgs-2026-09/verify-0429.sql`.
 - Documentation-only, like `partnerProvisioning` and `calibrationWorkflow`: no `runtimeAdapter`. The consent columns live on `organizations`, which this machine does not own, so the adapter subset does not fit. Runtime enforcement is the `protect_org_tenancy_fields()` trigger; this spec proves that trigger's reset rule is sufficient.
 
-## 2026-09-11 — UAT-04 authority model
+## webhookEgressRefusal.machine.ts (SCRUM-4983)
 
-`mandatoryMfaAuthority.machine.ts` models mailbox precedence, MFA enrollment and
-verification before or after mailbox proof, AAL1 session resets with and without
-a factor, and product/key-provision authority. TLC proves the modeled invariants;
-adapter correctness is established separately by runtime tests.
+- Models the webhook delivery lifecycle once the outbound socket is IP-pinned (`services/worker/src/webhooks/egress.ts`). The lifecycle had no machine before this; PR #2836 adds a genuinely new terminal edge — a refusal from the pinned layer is PERMANENT (`private_target`, `unresolvable`, `scheme_not_allowed`, `invalid_url`, `redirect_invalid`), so it must skip the retry ladder, open no socket and dead-letter in one attempt, while receiver 5xx / timeout / reset stay on the ladder.
+- Verified 2026-09-12: `proofPassed: true`, `equivalent: true`, 121 distinct states, depth 7. Invariants `refusalIsTerminal`, `refusalNeverOpensASocket`, `terminalFailureIsAlwaysDeadLettered`, `acceptedDeliveryIsNeverDeadLettered`, `dlqKindSatisfiesMigration0338Check`.
+- **`dlqKind` can represent a value the database cannot store, on purpose.** Migration `0338` ships `CHECK (failure_kind IN ('http_delivery', 'log_write'))` and that constraint is live on prod. Because the DLQ write is a PostgREST upsert, a rejection arrives in `{ error }` rather than as a throw, so a third value loses the audit row silently while the "Moved to dead letter queue" info line still fires. `dlqKindSatisfiesMigration0338Check` is the ratchet: the negative control (set `EGRESS_REFUSED` in `refuseAtPinnedLayer`) violates it in two steps. Widening the CHECK needs a migration, which makes any such change T3.
+- The A1/A2/AMAX ladder stands in for `MAX_RETRIES = 5`: the model proves the SHAPE of the ladder, not its depth. Circuit breaker, per-resource head-of-line ordering (SCRUM-2250) and idempotency-key dedupe are **out of scope** — they are covered by `webhooks/delivery.test.ts`.
+- `SUCCESS` and `FAILED` are terminal by design, so `checks: { deadlock: false }` — same resolution as `partnerProvisioning` and `drainRunAccounting`. Documentation-only: no `runtimeAdapter`; the rows live on `webhook_delivery_logs` / `webhook_dead_letter_queue`, which this machine does not own.
