@@ -85,6 +85,25 @@ Constitution 1.4: the notice carries the key PREFIX and NAME only. Never the key
 
 # services/worker/src/jobs/agents.md
 
+
+## 2026-09-12 — SCRUM-4507: the `_drive_*` metadata keys written by `drive-file-changed.ts`
+
+The Drive sink's `p_metadata` gained four keys — `_drive_shared_drive_id`, `_drive_folder_id`,
+`_drive_folder_path`, `_drive_revision_kind` — which `connector-artifact-drain.ts` (untouched, T3)
+carries onto `anchors.metadata`, where the authenticated record page renders them as links back
+into Drive.
+
+- **Underscore-prefixed on purpose.** `AssetDetailView`'s generic metadata dump hides `_`-prefixed
+  keys (`isAnchorMetadataVisible`, BUG-2026-07-17-010). These render through a dedicated Drive
+  source block with labels and a §1.5 note instead of as raw `drive folder id:` rows.
+- **`?? null`, never `?? undefined`.** A JSON `undefined` drops the key, which would make "this
+  record predates the link-back" and "Drive had no shared drive for this file" indistinguishable.
+- **`file_id` / `revision_id` keep their existing names.** The record page's link builder reads
+  those, so renaming them would silently break every Drive anchor written before this change.
+- **§1.4 / §1.6A unchanged.** All four are opaque Drive ids plus a folder path. No email, no account
+  label, no digest, no bytes. `drive-file-changed.test.ts` pins the exact `p_metadata` key set, the
+  byte-discard invariant, and asserts the serialized metadata contains no `@`.
+
 ## 2026-09-10 — PR #2570 atomic connector publication (SCRUM-3882)
 
 The materializer now calls `materialize_connector_artifact_anchor` (migration 0445). SQL locks and revalidates the captured artifact version, fingerprint, and complete metadata before creating/reusing an anchor and linking it in the same transaction. It locks the owner/admin membership and scopes artifact and anchor reads by organization. The old insert/link/compensating-delete sequence allowed a separate broadcaster to claim an unlinked stale anchor and has been removed. Unknown RPC replies never license a debit or a compensating lease write; confirmation/reaping retain the original anchor id. Declared inbound provenance stays `issuer_record_attestation`; measured outbound provenance stays `document_bytes`. PR #2566 and this child require complete-stack T3 qualification; local checks do not establish staging or production state.
