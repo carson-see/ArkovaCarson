@@ -106,6 +106,23 @@ export interface BasePremergeInput {
   baseRefName: string;
 }
 
+/**
+ * G-5 (CTO decision 2026-09-12, Confluence 146440221 / SCRUM-5054): an honest
+ * N/A for the two checks that are ANCHORING-SPECIFIC. A train that changes no
+ * anchoring path has no forced-flush Cloud Scheduler job and no funded chain
+ * treasury to assert, and fabricating either to satisfy the gate would be worse
+ * than leaving `docs/staging/soak-preflight/` empty.
+ *
+ * The escape hatch is deliberately narrow and FAILS CLOSED — see
+ * `notApplicableAccepted`.
+ */
+export interface NotApplicableReasons {
+  /** Why checkSchedulerOidcAudience does not apply to this soak. */
+  schedulerJob?: string;
+  /** Why checkTreasuryFunded does not apply to this soak. */
+  treasury?: string;
+}
+
 export interface AntiHollowSoakInput {
   /** Changed-path drain log (signature #1). */
   drainLog: DrainCycle[];
@@ -124,11 +141,84 @@ export interface AntiHollowSoakInput {
    * attribution-unaware mode (passes with a caveat).
    */
   changedPaths?: string[];
+  /**
+   * G-5: per-check "this check does not apply to this soak" reasons. Accepted
+   * ONLY when `changedPaths` is non-empty and no changed path looks
+   * anchoring-related; otherwise the claim is refused and the check runs
+   * normally (fail closed). See `notApplicableAccepted`.
+   */
+  notApplicable?: NotApplicableReasons;
 }
 
 export interface AntiHollowSoakReport {
   allPassed: boolean;
   results: GuardResult[];
+}
+
+// ---------------------------------------------------------------------------
+// G-5 — the N/A adjudicator (shared by checks 2 and 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * A changed path matching this is anchoring-adjacent, so the anchoring-specific
+ * checks DO apply and no N/A claim over them can be honest.
+ */
+const ANCHORING_PATH_RE = /anchor|batch|drain|flush|chain|treasury/i;
+
+export interface NotApplicableVerdict {
+  /** True only when the N/A claim is accepted; the check is then skipped. */
+  accepted: boolean;
+  /** Present when a reason was supplied but REFUSED — explains why. */
+  refusal?: string;
+}
+
+/**
+ * Adjudicate an N/A claim. Accepted only when ALL of:
+ *   1. a non-empty reason is supplied,
+ *   2. `changedPaths` is a non-empty array — an undeclared change set cannot
+ *      prove the check is irrelevant, so it can never buy an exemption, and
+ *   3. NO changed path looks anchoring-related (`ANCHORING_PATH_RE`).
+ *
+ * Anything else REFUSES the claim and the caller runs the real check
+ * (fail closed). This is why the escape hatch cannot be used to wave through
+ * the very soaks these guards exist for.
+ */
+export function notApplicableAccepted(
+  reason: string | undefined,
+  changedPaths: string[] | undefined,
+): NotApplicableVerdict {
+  if (typeof reason !== 'string' || reason.trim().length === 0) {
+    return { accepted: false };
+  }
+
+  if (!Array.isArray(changedPaths) || changedPaths.length === 0) {
+    return {
+      accepted: false,
+      refusal:
+        'N/A REFUSED: a not-applicable reason was supplied but no changedPaths ' +
+        'were declared. An undeclared change set cannot prove this check is ' +
+        'irrelevant, so the check runs normally (fail closed).',
+    };
+  }
+
+  const anchoringPaths = changedPaths.filter((p) => ANCHORING_PATH_RE.test(String(p)));
+  if (anchoringPaths.length > 0) {
+    return {
+      accepted: false,
+      refusal:
+        `N/A REFUSED: changed path(s) [${anchoringPaths.join(', ')}] look ` +
+        `anchoring-related, so this check DOES apply and runs normally ` +
+        `(fail closed).`,
+    };
+  }
+
+  return { accepted: true };
+}
+
+/** Apply a refusal note (if any) to the real check's result. */
+function withRefusal(result: GuardResult, verdict: NotApplicableVerdict): GuardResult {
+  if (!verdict.refusal) return result;
+  return { ...result, message: `${verdict.refusal} ${result.message}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -272,8 +362,29 @@ function originOf(u: string): string | null {
  * equality check false-fails every HEALTHY job that flushes a specific path.
  * The correct comparison is ORIGIN vs ORIGIN — the audience origin must equal
  * the target URI origin.
+ *
+ * G-5: this check is ANCHORING-SPECIFIC. A soak whose change set contains no
+ * anchoring path has no forced-flush job to assert, so `notApplicableReason`
+ * (adjudicated by `notApplicableAccepted` against `changedPaths`) may mark it
+ * N/A. A refused claim falls through to the real check.
  */
-export function checkSchedulerOidcAudience(job: SchedulerJob): GuardResult {
+export function checkSchedulerOidcAudience(
+  job: SchedulerJob,
+  notApplicableReason?: string,
+  changedPaths?: string[],
+): GuardResult {
+  const verdict = notApplicableAccepted(notApplicableReason, changedPaths);
+  if (verdict.accepted) {
+    return {
+      name: 'scheduler-oidc-audience',
+      pass: true,
+      message: `N/A: ${(notApplicableReason as string).trim()}`,
+    };
+  }
+  return withRefusal(schedulerOidcAudienceResult(job), verdict);
+}
+
+function schedulerOidcAudienceResult(job: SchedulerJob): GuardResult {
   const name = 'scheduler-oidc-audience';
 
   const uri = job?.httpTarget?.uri;
@@ -353,8 +464,29 @@ export function checkSchedulerOidcAudience(job: SchedulerJob): GuardResult {
  * The rig treasury must hold at least the minimum required balance during the
  * soak window. If the balance is below the minimum, hasFunds() short-circuits
  * and the anchor/broadcast path is skipped — the soak exercises nothing.
+ *
+ * G-5: this check is ANCHORING-SPECIFIC. A mock-profile rig with no chain path
+ * in the change set has no treasury to fund, so `notApplicableReason`
+ * (adjudicated by `notApplicableAccepted` against `changedPaths`) may mark it
+ * N/A. A refused claim falls through to the real check.
  */
-export function checkTreasuryFunded(status: TreasuryStatus): GuardResult {
+export function checkTreasuryFunded(
+  status: TreasuryStatus,
+  notApplicableReason?: string,
+  changedPaths?: string[],
+): GuardResult {
+  const verdict = notApplicableAccepted(notApplicableReason, changedPaths);
+  if (verdict.accepted) {
+    return {
+      name: 'treasury-funded',
+      pass: true,
+      message: `N/A: ${(notApplicableReason as string).trim()}`,
+    };
+  }
+  return withRefusal(treasuryFundedResult(status), verdict);
+}
+
+function treasuryFundedResult(status: TreasuryStatus): GuardResult {
   const name = 'treasury-funded';
   const { treasuryBalanceSats, minRequiredSats } = status ?? ({} as TreasuryStatus);
 
@@ -505,8 +637,16 @@ export function runAntiHollowSoakGuards(
 ): AntiHollowSoakReport {
   const results: GuardResult[] = [
     checkNonSkipDrainPreflight(input.drainLog, input.changedPaths),
-    checkSchedulerOidcAudience(input.schedulerJob),
-    checkTreasuryFunded(input.treasury),
+    checkSchedulerOidcAudience(
+      input.schedulerJob,
+      input.notApplicable?.schedulerJob,
+      input.changedPaths,
+    ),
+    checkTreasuryFunded(
+      input.treasury,
+      input.notApplicable?.treasury,
+      input.changedPaths,
+    ),
     checkDeployProvenance(input.deployProvenance),
     checkBaseIsMainPremerge(input.base),
   ];

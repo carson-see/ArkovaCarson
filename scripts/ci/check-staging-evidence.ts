@@ -2572,6 +2572,77 @@ function shaEvidenceErrors(opts: {
 
 const BASE_DRIFT_IMPACT_FIELD = 'Base drift impact:';
 const GIT_BIN = '/usr/bin/git';
+const FORTY_HEX_RE = /^[0-9a-f]{40}$/i;
+
+/**
+ * Shells out to `git fetch`. Production default; tests inject a spy so the
+ * unit test in check-staging-evidence.test.ts never touches the network —
+ * it points `origin` at a local sibling repo instead.
+ */
+export type FetchHook = (args: string[], cwd: string) => void;
+
+function defaultFetchHook(args: string[], cwd: string): void {
+  execFileSync(GIT_BIN, args, { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
+}
+
+/** True when `<sha>^{commit}` resolves locally — no network access. */
+function commitExists(sha: string, cwd: string): boolean {
+  try {
+    execFileSync(GIT_BIN, ['cat-file', '-e', `${sha}^{commit}`], { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface GitFetchOpts {
+  /** Repo working directory. Defaults to {@link REPO}. Test-only. */
+  cwd?: string;
+  /** Fetch implementation. Defaults to shelling out to real `git`. Test-only. */
+  fetch?: FetchHook;
+}
+
+/**
+ * Deepens a shallow clone so a SHA that GitHub can serve but the local
+ * checkout doesn't have (default `actions/checkout` fetch-depth is 1) stops
+ * making ancestry/diff queries fail closed for the wrong reason (PR #2841
+ * run 34737600583, 05:24Z: "of unresolvable ancestry" on a genuinely
+ * soaked-then-merged head — SCRUM-5054).
+ *
+ * For each 40-hex SHA not already present, fetches it by full id with
+ * `--depth=2000` — GitHub serves any reachable SHA this way, deepening
+ * along that commit's own history. That alone can leave an unrelated local
+ * shallow graft (e.g. the checked-out HEAD) still blocking traversal, so
+ * whenever anything was missing this also makes one best-effort
+ * `--unshallow` fetch of `origin` afterward — the only fetch that reliably
+ * clears a shallow boundary regardless of which side of the pair was
+ * absent. Both fetches are best-effort: failures (network off, already a
+ * complete clone) are swallowed here and surface as a `null` from the
+ * caller's retried `git` command instead. Never fetches when every SHA is
+ * already present locally.
+ */
+function ensureCommitsPresent(shas: readonly string[], opts: GitFetchOpts = {}): void {
+  const cwd = opts.cwd ?? REPO;
+  const fetch = opts.fetch ?? defaultFetchHook;
+
+  const missing = shas.filter((sha) => FORTY_HEX_RE.test(sha) && !commitExists(sha, cwd));
+  if (missing.length === 0) return;
+
+  for (const sha of missing) {
+    try {
+      fetch(['fetch', '--no-tags', '--quiet', '--depth=2000', 'origin', sha], cwd);
+    } catch {
+      // Best-effort — the caller's retry decides whether this resolved anything.
+    }
+  }
+
+  try {
+    fetch(['fetch', '--no-tags', '--quiet', '--unshallow', 'origin'], cwd);
+  } catch {
+    // Expected and harmless on an already-complete clone ("--unshallow on a
+    // complete repository does not make sense") or when origin is unreachable.
+  }
+}
 
 /**
  * Changed-file list between two commits. `null` means the question could not be
@@ -2580,16 +2651,35 @@ const GIT_BIN = '/usr/bin/git';
  */
 export type ChangedFilesProvider = (fromSha: string, toSha: string) => string[] | null;
 
-function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
-  try {
-    return execFileSync(
-      GIT_BIN,
-      ['diff', '--name-only', `${fromSha}..${toSha}`],
-      { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-    ).split('\n').map((line) => line.trim()).filter(Boolean);
-  } catch {
-    return null;
-  }
+/**
+ * Exported for reuse by scripts/ci/check-evidence-identity.ts, whose
+ * `checkHeadShaIdentity` evaluates the SAME `Post-soak T0 delta:` field
+ * against the SAME PR head — a single git-shelling implementation for both
+ * gates avoids the two drifting the way `POST_SOAK_T0_DELTA_FIELD` itself
+ * once did (SCRUM-5054).
+ *
+ * `opts` is test-only (see {@link GitFetchOpts}); production callers always
+ * use the zero-arg form, which operates on {@link REPO} against real `git`.
+ */
+export function changedFilesBetween(fromSha: string, toSha: string, opts: GitFetchOpts = {}): string[] | null {
+  const cwd = opts.cwd ?? REPO;
+  const attempt = (): string[] | null => {
+    try {
+      return execFileSync(
+        GIT_BIN,
+        ['diff', '--name-only', `${fromSha}..${toSha}`],
+        { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      ).split('\n').map((line) => line.trim()).filter(Boolean);
+    } catch {
+      return null;
+    }
+  };
+
+  const first = attempt();
+  if (first !== null) return first;
+
+  ensureCommitsPresent([fromSha, toSha], opts);
+  return attempt();
 }
 
 /**
@@ -2624,21 +2714,36 @@ function gitFileDiffProvider(baseSha: string): DiffProvider {
 /**
  * Default {@link AncestryProvider}: `git merge-base --is-ancestor`.
  * Exit 0 → ancestor, exit 1 → definitively not an ancestor, anything else
- * (128 = bad/unknown object, spawn failure) → `null` so callers fail closed.
+ * (128 = bad/unknown object, spawn failure) → retries once after
+ * {@link ensureCommitsPresent} deepens a shallow clone, then `null` so
+ * callers fail closed if it's still unresolved (SCRUM-5054).
+ *
+ * `opts` is test-only (see {@link GitFetchOpts}); production callers always
+ * use the zero-arg form, which operates on {@link REPO} against real `git`.
  */
-function gitAncestryProvider(): AncestryProvider {
+/** Exported for reuse by check-evidence-identity.ts — see {@link changedFilesBetween}. */
+export function gitAncestryProvider(opts: GitFetchOpts = {}): AncestryProvider {
+  const cwd = opts.cwd ?? REPO;
   return (ancestorSha: string, descendantSha: string): boolean | null => {
     if (ancestorSha === descendantSha) return true;
-    try {
-      execFileSync(
-        GIT_BIN,
-        ['merge-base', '--is-ancestor', ancestorSha, descendantSha],
-        { cwd: REPO, stdio: ['ignore', 'ignore', 'ignore'] },
-      );
-      return true;
-    } catch (err) {
-      return (err as { status?: number }).status === 1 ? false : null;
-    }
+    const attempt = (): boolean | null => {
+      try {
+        execFileSync(
+          GIT_BIN,
+          ['merge-base', '--is-ancestor', ancestorSha, descendantSha],
+          { cwd, stdio: ['ignore', 'ignore', 'ignore'] },
+        );
+        return true;
+      } catch (err) {
+        return (err as { status?: number }).status === 1 ? false : null;
+      }
+    };
+
+    const first = attempt();
+    if (first !== null) return first;
+
+    ensureCommitsPresent([ancestorSha, descendantSha], opts);
+    return attempt();
   };
 }
 
@@ -3250,6 +3355,17 @@ const STAGING_TOOLING_ALLOW = [
   // scripts/ci/check-*.ts gates above. Its exemptions file already rides the
   // scripts/ci/snapshots/ entry.
   /^scripts\/ci\/check-doc-pointers(\.test)?\.ts$/,
+  // job_queue producer/consumer parity guard: the worker has no central job
+  // dispatcher, so an enqueued type with no consumer (or vice versa) produces
+  // NO error — the row sits `pending` forever. Runs only in the ci.yml
+  // Dependency Scanning job (`npm run ci:job-queue-parity`); verified no
+  // importer exists under src/, services/worker/src/, packages/, integrations/,
+  // or e2e/ — the only repo hits outside scripts/ci/ are two agents.md doc
+  // mentions (services/worker/src/api/v1/agents.md,
+  // services/worker/src/jobs/agents.md), which are already T0 via the
+  // agents.md rule below. No prod runtime to soak → T0 tooling, same class as
+  // the other scripts/ci/check-*.ts gates above.
+  /^scripts\/ci\/check-job-queue-parity(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   // SCRUM-1253 (R0-7): memory feedback-rules CI gates. Per-rule scripts under
   // scripts/ci/feedback-rules/ + the check-feedback-rules.ts orchestrator run
