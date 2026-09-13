@@ -14,9 +14,24 @@
  * `parent_org_id` and stop. There is no recursive CTE and no subtree helper —
  * `get_org_subtree` in particular must NEVER be used for this, because it
  * prunes on public-listing consent (migration 0429), so a confidential child
- * would be invisible to an authority decision it should govern. Depth is
- * additionally bounded in the database by `check_sub_org_depth` (one level), so
- * "descendants" and "direct children" are the same set.
+ * would be invisible to an authority decision it should govern.
+ *
+ * ONE HOP BY CHOICE, NOT BY DATABASE GUARANTEE (CTO review 2026-09-12). An
+ * earlier draft of this header justified the single read with
+ * "`check_sub_org_depth` bounds depth to one level, so 'descendants' and
+ * 'direct children' are the same set". That is not true.
+ * `check_sub_org_depth` is a BEFORE trigger that rejects a row only when its
+ * PROPOSED PARENT already has a parent; it never asks whether the row being
+ * re-parented already has children of its own. So `affiliate(o2, o1)` followed
+ * by `affiliate(o1, o3)` reaches `o2 -> o1 -> o3` with both writes accepted —
+ * TLC reproduces it in three states in
+ * `machines/subOrgWebhookFanout.machine.ts`, and
+ * `machines/subOrgListingConsent.machine.ts` found the same shape
+ * independently. Deeper chains are therefore REACHABLE, and this module
+ * deliberately does not follow them: `o3` receives nothing belonging to `o2`,
+ * even scoped `self_and_descendants`. That is the safe direction (narrower
+ * than the graph), but it means the user-facing copy must promise direct
+ * affiliates only — which it now does.
  *
  * DIRECTION IS ASYMMETRIC AND DELIBERATE. A child endpoint never receives a
  * parent's events. `scope` on a child's endpoint widens toward THAT child's own
@@ -130,6 +145,8 @@ interface DescendantProbeCache {
 interface OrgLineage {
   parentOrgId: string | null;
   approved: boolean;
+  /** `organizations.suspended` — tenancy ended, independently of approval. */
+  suspended: boolean;
   publicId: string | null;
   expiresAt: number;
 }
@@ -220,7 +237,7 @@ async function resolveOwnerLineage(
   // would be a tautology, not an isolation control.
   const { data, error } = await db
     .from('organizations')
-    .select('parent_org_id, parent_approval_status, public_id')
+    .select('parent_org_id, parent_approval_status, suspended, public_id')
     .eq('id', orgId)
     .maybeSingle();
 
@@ -232,6 +249,7 @@ async function resolveOwnerLineage(
   const row = data as {
     parent_org_id: string | null;
     parent_approval_status: string | null;
+    suspended: boolean | null;
     public_id: string | null;
   } | null;
 
@@ -241,6 +259,14 @@ async function resolveOwnerLineage(
     // nullable (a pending request has no status at all) and NULL must not read
     // as approval — the DB CHECK allows NULL / PENDING / APPROVED / REVOKED.
     approved: row?.parent_approval_status === 'APPROVED',
+    // CTO review 2026-09-12. `suspend_suborg` (migration 0290) sets
+    // `suspended = true` and does NOT move `parent_approval_status`, so an
+    // offboarded affiliate reads 'APPROVED' forever. Approval alone would
+    // therefore keep streaming a former affiliate's secured-record public ids
+    // to its ex-parent indefinitely. NULL reads as not-suspended, which is the
+    // column's own NOT NULL DEFAULT false semantics, not a fail-open: the
+    // approval predicate above is the primary gate and it is strict.
+    suspended: row?.suspended === true,
     publicId: row?.public_id ?? null,
     expiresAt: now + FANOUT_CACHE_TTL_MS,
   };
@@ -269,6 +295,17 @@ export async function resolveDescendantFanout(params: {
   // flag-off path issues exactly zero additional queries.
   if (!isSubOrgFanoutEnabled()) return emptyResolution();
 
+  // CTO review 2026-09-12. The `suborg.*` family is dispatched on the PARENT's
+  // own org id by `webhooks/subOrgEvents.ts`, and four of the seven are ALSO
+  // dispatched on the affiliate's. Fanning the affiliate-side copy back up to
+  // the parent can only duplicate an event the parent was already sent
+  // directly — and because those schemas are `.strict()` without
+  // `org_public_id`, delivery.ts would refuse the stamped copy, raising an
+  // error-level Sentry alarm and marking the dispatch non-ok for a request
+  // that was entirely correct. The fan-out exists for the record families a
+  // parent cannot otherwise see (`anchor.*` / `credential.*` / `compliance.*`).
+  if (eventType.startsWith('suborg.')) return emptyResolution();
+
   const failures: FanoutFailure[] = [];
 
   const anyDescendants = await anyDescendantsEndpointExists(now, failures);
@@ -277,7 +314,7 @@ export async function resolveDescendantFanout(params: {
 
   const lineage = await resolveOwnerLineage(orgId, now, failures);
   if (lineage === null) return { endpoints: [], ownerOrgPublicId: null, failures };
-  if (!lineage.parentOrgId || !lineage.approved) return emptyResolution();
+  if (!lineage.parentOrgId || !lineage.approved || lineage.suspended) return emptyResolution();
 
   // A cross-organization payload MUST name the organization the event belongs
   // to (R16). Without a public slug we cannot say whose event this is, and an

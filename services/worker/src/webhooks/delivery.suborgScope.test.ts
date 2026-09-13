@@ -189,6 +189,8 @@ interface OrgFixture {
   parent_org_id: string | null;
   parent_approval_status: string | null;
   public_id: string | null;
+  /** CTO review 2026-09-12: tenancy suspension is a column of its own. */
+  suspended?: boolean;
 }
 
 interface Scenario {
@@ -408,6 +410,74 @@ describe('cross-organization webhook fan-out (SCRUM-3972)', () => {
       expect(result.ok).toBe(true);
     },
   );
+
+  /**
+   * CTO review 2026-09-12. `suspend_suborg` (baseline, migration 0290) sets
+   * `organizations.suspended = true` and NEVER touches
+   * `parent_approval_status`, so an offboarded affiliate stays 'APPROVED'
+   * forever. Without this predicate the parent keeps receiving the public ids
+   * of everything its former affiliate secures — the exact D2 disclosure the
+   * flag exists to gate, continuing after the tenancy that justified it ended.
+   */
+  it('stops the feed when the affiliate has been suspended, even though it is still APPROVED', async () => {
+    setFanoutFlag(true);
+    install({
+      endpoints: [
+        endpoint('ep_child', CHILD_ORG, 'self'),
+        endpoint('ep_parent', PARENT_ORG, 'self_and_descendants'),
+      ],
+      orgs: {
+        ...APPROVED_TREE,
+        [CHILD_ORG]: {
+          parent_org_id: PARENT_ORG,
+          parent_approval_status: 'APPROVED',
+          public_id: CHILD_PUBLIC_ID,
+          suspended: true,
+        },
+      },
+    });
+
+    const result = await dispatchWebhookEvent(CHILD_ORG, 'anchor.secured', 'evt_susp', SECURED_PAYLOAD);
+
+    expect(deliveredUrls()).toEqual([expect.stringContaining('ep_child')]);
+    expect(result.descendantEndpointCount).toBe(0);
+    // Not a failure: "suspended" is a legitimate answer of "none", not an error.
+    expect(result.ok).toBe(true);
+  });
+
+  /**
+   * CTO review 2026-09-12. The seven `suborg.*` events are already dispatched
+   * on the PARENT's own org id by `emitSubOrgEvent`; four are ALSO dispatched
+   * on the affiliate's. Fanning the affiliate-side copy back up to the parent
+   * can only produce a duplicate — and because the `suborg.*` schemas are
+   * `.strict()` without `org_public_id`, it produces it as an error-level
+   * Sentry alarm plus a non-ok dispatch, for an entirely correct request.
+   */
+  it('does not fan a suborg.* event out to the parent — it is already addressed there', async () => {
+    setFanoutFlag(true);
+    install({
+      endpoints: [
+        endpoint('ep_parent', PARENT_ORG, 'self_and_descendants', ['suborg.credits_allocated']),
+      ],
+      orgs: APPROVED_TREE,
+    });
+
+    const result = await dispatchWebhookEvent(CHILD_ORG, 'suborg.credits_allocated', 'evt_so', {
+      public_id: CHILD_PUBLIC_ID,
+      display_name: 'Affiliate Ltd',
+      parent_public_id: PARENT_PUBLIC_ID,
+      parent_approval_status: 'APPROVED',
+      occurred_at: '2026-09-12T10:00:00.000Z',
+      amount: 10,
+      parent_balance: 90,
+      child_balance: 10,
+    });
+
+    expect(deliveredUrls()).toEqual([]);
+    expect(result.descendantEndpointCount).toBe(0);
+    expect(result.ok).toBe(true);
+    expect(mockSentry.captureMessage).not.toHaveBeenCalled();
+  });
 
   it('does not reach an unrelated organization that happens to subscribe to descendants', async () => {
     setFanoutFlag(true);
