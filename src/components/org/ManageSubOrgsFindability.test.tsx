@@ -253,6 +253,52 @@ describe('ManageSubOrgs — findability and clarity (founder feedback 2026-09-13
     expect(calls.some((c) => c.url.includes('/sub-orgs/revoke'))).toBe(false);
   });
 
+  // CTO review 2026-09-13 (review focus: can the confirmation be bypassed?).
+  // Radix's AlertDialog auto-focuses the first focusable descendant on open,
+  // and Cancel is written before Action in the DOM (AlertDialogFooter). A
+  // stray Enter right after the dialog opens must land on the safe control,
+  // not the destructive one — this is the same shape SCRUM-3868's Offboard
+  // dialog already relies on; it was never itself pinned by a test.
+  it('focuses "Keep Affiliation", not the destructive action, when the dialog opens', async () => {
+    setupFetch();
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(within(rowFor('Fabrikam Compliance')).getByRole('button', { name: /Revoke/ }));
+    await screen.findByText('End the affiliation with Fabrikam Compliance?');
+
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep Affiliation' }));
+  });
+
+  // A double click dispatches two click events before React necessarily
+  // finishes committing the `disabled` state from the first. `fireEvent` (unlike
+  // `userEvent`) dispatches synchronously with no pointerdown/pointerup delay
+  // between the two clicks, so this is the shape that would actually race —
+  // testing-library wraps each `fireEvent` in `act()`, which flushes React's
+  // state update before the call returns, so the second `fireEvent.click` on
+  // an already-`disabled` button should be a no-op at the DOM level.
+  it('does not send a second revoke request on a rapid double click', async () => {
+    const { calls, fetchMock } = setupFetch();
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(within(rowFor('Fabrikam Compliance')).getByRole('button', { name: /Revoke/ }));
+    const confirmButton = await screen.findByRole('button', { name: 'End Affiliation' });
+
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.click(confirmButton);
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(calls.filter((c) => c.url.includes('/sub-orgs/revoke'))).toHaveLength(1);
+    });
+    // Not just the assertion above being early: give any stray second call a
+    // full microtask turn to have landed before declaring it absent.
+    await Promise.resolve();
+    expect(fetchMock.mock.calls.filter(([input]) => requestUrl(input).includes('/sub-orgs/revoke')))
+      .toHaveLength(1);
+  });
+
   it('names the organization in the offboard confirmation', async () => {
     setupFetch();
     const user = userEvent.setup();

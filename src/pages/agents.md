@@ -1,6 +1,33 @@
 # agents.md — pages
 _Last updated: 2026-09-13_
 
+## 2026-09-13 CTO review (PR #2907) — `fetchParentOrgName` is RLS-blocked in the common case
+
+Verified, not assumed: `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` gives
+`organizations` exactly one SELECT policy, `organizations_select_member`, scoped to
+`get_user_org_ids()` (the CALLER's own `org_members` rows). A child org's members are never added
+to the parent's `org_members` — only the reverse happens, when a parent creates a new affiliate
+(`buildAffiliateMembershipRows`, `services/worker/src/api/v1/orgSubOrgs.ts`). So for a child that
+requested affiliation into an existing parent (the common path, as opposed to being created BY that
+parent), `OrgProfilePage.tsx`'s direct `.from('organizations').select('display_name').eq('id',
+parentOrgId).single()` is RLS-denied: PostgREST returns zero rows, no thrown error, `data: null`.
+
+This is **not a leak** — RLS is doing its job — but it does mean the "pending/revoked children see
+the parent's real name" behaviour below does not reach most real users: it silently falls back to
+the generic `SUB_ORG_LABELS.PARENT_ORGANIZATION` ("parent organization") label, same as before this
+PR. The two mocked-success tests in `OrgProfilePageAffiliates.test.tsx` ("names the parent
+organization for a REVOKED/PENDING child…") are a fair test of the render logic given data, but they
+resolve the Supabase mock unconditionally and so prove nothing about whether the data ever arrives —
+the `docs/uat/suborg-ux` E2E capture has the same gap (Supabase is stubbed via `page.route`, not run
+against real RLS). Added `describe('when the parent-name read is RLS-blocked (the common real
+case)')` in that file, using the shape PostgREST actually returns, to pin the graceful-fallback
+behaviour and stop the existing tests from reading as proof of something they do not cover.
+
+Fixing this for real needs a child-scoped SECURITY DEFINER RPC (narrower than
+`search_organizations_public`, which searches by name/domain, not by id) returning only
+`display_name` for the caller's own `parent_org_id` — a backend/DB change, out of scope for this
+frontend-only T1 PR. Flagged as a follow-up rather than fixed here.
+
 ## 2026-09-13 founder feedback — `OrgProfilePage` gained an **Affiliates** tab
 
 Founder: "when I try and use sub orgs it's clunky and confusing". Full walk and evidence:
@@ -29,7 +56,8 @@ telling them so. It is now its own `TabsContent value="affiliates"`, 476 px / 49
   APPROVED, the PENDING and REVOKED screens rendered the literal fallback string, i.e. "Affiliation
   revoked by parent organization".
 
-Tests: `OrgProfilePageAffiliates.test.tsx` (10 cases).
+Tests: `OrgProfilePageAffiliates.test.tsx` (13 cases as of the 2026-09-13 CTO review above — 10
+original + a PENDING-cannot-re-request gate test + 2 RLS-blocked fallback tests).
 
 ## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
 

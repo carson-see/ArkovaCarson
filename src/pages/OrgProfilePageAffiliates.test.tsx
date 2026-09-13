@@ -14,7 +14,26 @@
  *   - it carries the pending-request count so the queue is visible from the
  *     tab row itself;
  *   - the panel is no longer rendered inside Settings;
- *   - a child organisation whose affiliation was REVOKED can request again.
+ *   - a child organisation whose affiliation was REVOKED can request again;
+ *   - a PENDING child never sees the request-again control (no duplicate
+ *     request while one is outstanding);
+ *   - the `organizations` table only grants SELECT to members of that org
+ *     (`organizations_select_member`, `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`),
+ *     and a child's members are never added to the parent's `org_members` —
+ *     only the reverse happens, when a parent creates a new affiliate
+ *     (`buildAffiliateMembershipRows` in `services/worker/src/api/v1/orgSubOrgs.ts`).
+ *     So `fetchParentOrgName`'s direct `.from('organizations')` read is RLS-blocked
+ *     for the child side in the overwhelmingly common case, and PostgREST
+ *     returns zero rows rather than an error. CTO review (2026-09-13): the
+ *     "real name" tests above use a mock that always resolves — a fair test of
+ *     the render logic given data, but it does not prove the data ever
+ *     arrives. The RLS-blocked tests below cover what actually reaches most
+ *     users: a graceful fallback to the generic label, never a crash or a
+ *     leaked `undefined`. Making the real name reach the client for real
+ *     needs a SECURITY DEFINER RPC narrower than `search_organizations_public`
+ *     (e.g. child-scoped, returning only `display_name` for the caller's own
+ *     `parent_org_id`) — a backend change, out of scope for this frontend-only
+ *     PR.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,7 +42,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { OrgProfilePage } from './OrgProfilePage';
 
-const { mockOrganization, mockSubOrgCounts, mockSupabaseEq } = vi.hoisted(() => ({
+const { mockOrganization, mockSubOrgCounts, mockSupabaseEq, mockOrgNameQueryResult } = vi.hoisted(() => ({
   // Records every .eq(column, value) so the page's own queries can be asserted
   // to be scoped (arkova/no-unscoped-service-test).
   mockSupabaseEq: vi.fn(),
@@ -40,6 +59,16 @@ const { mockOrganization, mockSubOrgCounts, mockSupabaseEq } = vi.hoisted(() => 
   },
   // What the mocked ManageSubOrgs reports up through `onCountsChange`.
   mockSubOrgCounts: { current: { pending: 2, approved: 1 } as { pending: number; approved: number } | null },
+  // What `.from('organizations').select('display_name').eq('id', parentOrgId).single()`
+  // resolves to. Defaults to a successful read; the RLS-blocked tests below
+  // override it to what PostgREST actually returns when the row is denied by
+  // RLS — no error, zero rows, `.single()` resolves `data: null`.
+  mockOrgNameQueryResult: {
+    current: { data: { display_name: 'Global Holdings' }, error: null } as {
+      data: { display_name: string } | null;
+      error: unknown;
+    },
+  },
 }));
 
 vi.mock('@/hooks/useAuth', () => ({
@@ -90,10 +119,12 @@ vi.mock('@/lib/supabase', () => {
   const results: Record<string, unknown> = {
     org_members: { data: { role: 'owner' }, error: null },
     anchors: { count: 0, error: null, data: null },
-    organizations: { data: { display_name: 'Global Holdings' }, error: null },
   };
   function chain(table: string) {
-    const result = results[table] ?? { data: null, error: null };
+    // `organizations` is looked up dynamically (not from the static `results`
+    // map above) so a test can swap in the RLS-blocked response without a
+    // second vi.mock factory.
+    const result = table === 'organizations' ? mockOrgNameQueryResult.current : (results[table] ?? { data: null, error: null });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const c: any = {};
     for (const m of ['select', 'is', 'update', 'order', 'limit']) c[m] = () => c;
@@ -186,6 +217,7 @@ describe('OrgProfilePage — Affiliates tab (founder feedback 2026-09-13)', () =
       parent_approval_status: null,
     };
     mockSubOrgCounts.current = { pending: 2, approved: 1 };
+    mockOrgNameQueryResult.current = { data: { display_name: 'Global Holdings' }, error: null };
   });
 
   it('offers Affiliates in the org tab row', async () => {
@@ -285,5 +317,64 @@ describe('OrgProfilePage — Affiliates tab (founder feedback 2026-09-13)', () =
 
     expect(await screen.findByText('Global Holdings')).toBeInTheDocument();
     expect(screen.queryByText('parent organization')).not.toBeInTheDocument();
+  });
+
+  // A PENDING child already has an outstanding request. The control that
+  // re-opens RequestAffiliationDialog is gated on `!isChildOrg ||
+  // parentApprovalStatus === 'REVOKED'` — PENDING satisfies neither, so it
+  // must not render. A second concurrent request is not something the worker
+  // needs to reject if the UI never offers it.
+  it('does not let a PENDING child request affiliation again while one request is outstanding', async () => {
+    mockOrganization.current = {
+      ...mockOrganization.current,
+      parent_org_id: 'org-parent',
+      parent_approval_status: 'PENDING',
+    };
+    renderPage('?tab=affiliates');
+
+    await screen.findByText('Global Holdings');
+    expect(screen.queryByRole('button', { name: /Request Affiliation/ })).not.toBeInTheDocument();
+    // The only affiliation-scoped control offered mid-request is Cancel.
+    expect(screen.getByRole('button', { name: 'Cancel Request' })).toBeInTheDocument();
+  });
+
+  // `organizations_select_member` (baseline RLS) grants SELECT only to org
+  // ids in `get_user_org_ids()` — the org_members rows for the CURRENT user.
+  // A child's members are never added to the parent's org_members (only the
+  // reverse, when a parent creates a new affiliate — see file header), so in
+  // the common case this query is denied and PostgREST's `.single()` resolves
+  // `data: null` with no thrown error, not a populated row. These two tests
+  // use that real shape instead of the always-succeeds mock the tests above
+  // use, and pin the fallback the page actually ships in that case.
+  describe('when the parent-name read is RLS-blocked (the common real case)', () => {
+    beforeEach(() => {
+      mockOrgNameQueryResult.current = { data: null, error: null };
+    });
+
+    it('falls back to the generic label for a REVOKED child, not a blank or "undefined"', async () => {
+      mockOrganization.current = {
+        ...mockOrganization.current,
+        parent_org_id: 'org-parent',
+        parent_approval_status: 'REVOKED',
+      };
+      renderPage('?tab=affiliates');
+
+      expect(await screen.findByText('parent organization')).toBeInTheDocument();
+      expect(screen.queryByText('Global Holdings')).not.toBeInTheDocument();
+      expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    });
+
+    it('falls back to the generic label for a PENDING child, not a blank or "undefined"', async () => {
+      mockOrganization.current = {
+        ...mockOrganization.current,
+        parent_org_id: 'org-parent',
+        parent_approval_status: 'PENDING',
+      };
+      renderPage('?tab=affiliates');
+
+      expect(await screen.findByText('parent organization')).toBeInTheDocument();
+      expect(screen.queryByText('Global Holdings')).not.toBeInTheDocument();
+      expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    });
   });
 });

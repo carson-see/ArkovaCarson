@@ -51,5 +51,24 @@ endpoint. What changed:
 - counts are singular/plural and the pending count is stated separately;
 - rows stack below `sm` so the display name wraps instead of truncating to ~8 characters.
 
-Tests: `ManageSubOrgsFindability.test.tsx` (15 cases) plus updates to `ManageSubOrgs.test.tsx`
-(create disclosure, revoke confirmation) and `ManageSubOrgsOffboard.test.tsx` (named dialog title).
+Tests: `ManageSubOrgsFindability.test.tsx` (17 cases as of the 2026-09-13 CTO review below — 15
+original + 2 covering the revoke confirmation's default focus and double-click protection) plus
+updates to `ManageSubOrgs.test.tsx` (create disclosure, revoke confirmation) and
+`ManageSubOrgsOffboard.test.tsx` (named dialog title).
+
+## 2026-09-13 CTO review (PR #2907) — revoke confirmation, Enter/double-click safety verified
+
+Review focus was whether the new Revoke `AlertDialog` (finding 4 above) could be bypassed by a
+stray Enter keypress or fired twice by a double click. Both were previously assumed-safe by
+similarity to SCRUM-3868's Offboard dialog, which used the same shape but was never itself pinned by
+a test. Added two tests: default focus lands on `AlertDialogCancel` ("Keep Affiliation"), not the
+destructive `AlertDialogAction`, so a stray Enter right after the dialog opens cannot revoke; and a
+synchronous `fireEvent.click` × 2 on the confirm button (the shape that would actually race, unlike
+`userEvent.click` which yields between events) sends exactly one `/sub-orgs/revoke` request, because
+`setActionLoading` runs synchronously as the first line of `handleRevoke` and
+`testing-library`'s `act()`-wrapped `fireEvent` flushes that before the second click is dispatched.
+Also confirmed and documented (`src/pages/agents.md`'s dated entry): the "pending/revoked children
+see the parent's real name" claim in `docs/uat/suborg-ux/FINDINGS.md` finding 3 does not hold for the
+common case — RLS on `organizations` blocks the read for a child that requested affiliation into an
+existing parent, and the UI falls back to the generic label, same as before this PR. Not a security
+issue; a false "Fixed" claim, corrected in that file with regression tests added here.

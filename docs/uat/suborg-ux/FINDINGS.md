@@ -91,6 +91,22 @@ two states where a child needs to know who to chase. The screen reads "Affiliati
 *Evidence:* `before/step11-revoked-child-dead-end-1280.png`.
 *Fix:* fetch the name for any child that has a parent, regardless of status. **Fixed.**
 
+**CTO review addendum (2026-09-13) — "Fixed" overstates this.** The status gate on the fetch is
+removed, and the render logic is correct given data — but `fetchParentOrgName` is a direct
+`.from('organizations')` read, and that table's only SELECT policy
+(`organizations_select_member`, `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`) is
+scoped to the CALLER's own `org_members` rows. A child's members are never added to the parent's
+`org_members` — only the reverse, when a parent creates a new affiliate
+(`buildAffiliateMembershipRows`, `services/worker/src/api/v1/orgSubOrgs.ts`) — so for a child that
+*requested* affiliation into an existing parent (the path this finding is about), the read is
+RLS-denied and falls back to the same generic `'parent organization'` label as before. Not a leak —
+RLS is correctly doing its job — but this finding is not actually resolved for the common case; it
+only changed for children the parent itself created. Regression coverage for both the render-logic
+path (mocked success) and the RLS-blocked path (PostgREST's real zero-rows shape) is in
+`OrgProfilePageAffiliates.test.tsx`; see `src/pages/agents.md`'s dated entry. Landing the real fix
+needs a child-scoped SECURITY DEFINER RPC — a backend change, out of scope for this frontend-only
+PR — tracked as a follow-up rather than fixed here.
+
 ### 4. Revoke fires immediately; the gentler Offboard beside it confirms. — confusing
 
 On an approved affiliate the row carries two identically styled red buttons, "Offboard" and

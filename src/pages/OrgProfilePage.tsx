@@ -228,8 +228,30 @@ export function OrgProfilePage() {
   // was APPROVED, so the two states where a child most needs to know WHO to
   // chase — PENDING and REVOKED — rendered the literal fallback string
   // ("Affiliation revoked by parent organization", see
-  // docs/uat/suborg-ux/step11-revoked-child-dead-end-1280.png). The name is
-  // fetched for any child with a parent now.
+  // docs/uat/suborg-ux/step11-revoked-child-dead-end-1280.png). The gate on
+  // status is removed; the query is attempted for any child with a parent now.
+  //
+  // CTO review (2026-09-13): removing the status gate does not, by itself,
+  // make the name arrive. This is a direct `.from('organizations')` read, and
+  // the ONLY SELECT policy on that table is `organizations_select_member`
+  // (`supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`),
+  // restricted to org ids in the CALLER's own `get_user_org_ids()`. A child
+  // org's members are never added to the parent's `org_members` — only the
+  // reverse happens, when a parent creates a new affiliate
+  // (`buildAffiliateMembershipRows`, `services/worker/src/api/v1/orgSubOrgs.ts`)
+  // — so for a child that REQUESTED affiliation into an existing parent (the
+  // common path), RLS denies this read and PostgREST returns zero rows: no
+  // thrown error, `data` is `null`, and the UI falls back to the generic
+  // `SUB_ORG_LABELS.PARENT_ORGANIZATION` label below — gracefully, not a
+  // crash or a leak, but also not the real name. `OrgProfilePageAffiliates.test.tsx`
+  // pins both directions: the render-logic tests above (mocked as if RLS
+  // allowed the read) AND the two tests under "when the parent-name read is
+  // RLS-blocked" (the shape PostgREST actually returns). Making the name
+  // reach the client for real needs a child-scoped SECURITY DEFINER RPC
+  // (narrower than `search_organizations_public`, which searches by name/
+  // domain, not by id) — a backend change, out of scope for a frontend-only
+  // PR. Flagged as a follow-up; do not read this query's presence as proof
+  // the feature works end to end.
   useEffect(() => {
     async function fetchParentOrgName() {
       if (!parentOrgId) {
