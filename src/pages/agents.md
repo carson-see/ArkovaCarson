@@ -63,6 +63,15 @@ come back quietly. `src/lib/publishedVerificationPointers.test.ts` holds the
 copy-level half of the same guard.
 _Last updated: 2026-08-30_
 
+## 2026-09-11 — UAT-22 selected-org invitations
+
+`OrgProfilePage` passes the authenticated profile's platform-admin status to
+`useInviteMember`. This lets the existing Invite Member dialog act on the org in the URL while
+ordinary ORG_ADMIN users retain the tenant-scoped RPC path. The selected organization ID remains
+the route parameter; no client-supplied org or actor display field is authoritative.
+The same status selects the worker-backed organization metadata read, so a foreign selected org
+renders its real name instead of the previous generic `Organization` fallback.
+
 ## 2026-09-05 — `DevelopersPage.tsx` advertised two unregistered MCP tools
 
 The MCP section's two example cards read `verify_credential` and `search_credentials`.

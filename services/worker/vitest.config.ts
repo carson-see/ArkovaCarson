@@ -1,10 +1,12 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts', 'scripts/**/*.test.ts'],
+    // The real-database suite runs in its dedicated CI step with local credentials.
+    exclude: [...configDefaults.exclude, 'src/api/admin-invitations.local.test.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
