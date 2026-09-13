@@ -15,30 +15,6 @@ _Last updated: 2026-09-12_
 
 `jsonLd.ts` — `toJsonLd(value)` is the one serializer for every `<script type="application/ld+json">` rendered through `dangerouslySetInnerHTML`. It escapes every `<` — covering `</script`, `<script` and `<!--`, all three of which steer the HTML tokenizer — plus U+2028/U+2029. It deliberately does **not** use `replace(/<\/script/gi, '<\\/script')`: that substitutes a lowercase literal for whatever it matched, so `</ScRiPt>` in a title stops round-tripping. `src/components/verification/PublicVerification.tsx` still carries its own `replace(/<\//g, '<\\/')` — it is a T2 surface, so folding it in is a separate change.
 
-
-## SCRUM-4507 — `driveLinks.ts` validates a CHARACTER CLASS, not a shape (2026-09-12)
-
-`docusignLinks.ts` validates a strict UUID because DocuSign ids are UUIDs. Drive ids are opaque
-URL-safe base64-ish tokens with no documented length or layout, so there is no shape to check. What
-`driveLinks.ts` checks instead is the character class, `/^[A-Za-z0-9_-]{10,}$/`, and that single
-fact is the whole security property: the class contains no `:`, `/`, `.`, `%`, `?`, `#` or
-whitespace, so `javascript:`, `data:`, `../`, `%2e%2e%2f`, `//evil`, `https://evil…` and
-query/fragment smuggling are all unreachable BY CONSTRUCTION rather than by sanitization. A value
-that fails never reaches the template literal. The 10-char floor is a sanity bound, NOT the control
-— do not relax the class thinking the length protects you.
-
-Two differences from the DocuSign module, both deliberate:
-
-- **No `env` parameter.** Drive has one console. A selector would be a knob with nothing behind it
-  and a second place a metadata value could influence an origin.
-- **No revision deep link.** The stored revision is not always a Drive revision id (Workspace-native
-  files carry a synthetic `mtime:`/`evt:` token — see `_drive_revision_kind`) and the URL shape for
-  a real Drive revision is unverified against the live product. A link that works for some records
-  and 404s for others is worse than plain text, so the revision renders as text.
-
-Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
-verification page and the anonymous verify API must never import it.
-
 ## PR #2637 MFA assurance identity (2026-09-05)
 
 `mfaSessionKey.ts` derives a UI cache key from a current user's GoTrue session_id
@@ -737,3 +713,27 @@ what the event means, not whether it is delivered — liveness lives in
   single creation: `POST /api/v1/attestations` dispatches the event,
   `POST /api/v1/attestations/batch-create` does not. Do not generalise the
   wording back without making batch-create emit (§1.13 R-7).
+
+## SCRUM-4507 — `driveLinks.ts` validates a CHARACTER CLASS, not a shape (2026-09-12)
+
+`docusignLinks.ts` validates a strict UUID because DocuSign ids are UUIDs. Drive ids are opaque
+URL-safe base64-ish tokens with no documented length or layout, so there is no shape to check. What
+`driveLinks.ts` checks instead is the character class, `/^[A-Za-z0-9_-]{10,}$/`, and that single
+fact is the whole security property: the class contains no `:`, `/`, `.`, `%`, `?`, `#` or
+whitespace, so `javascript:`, `data:`, `../`, `%2e%2e%2f`, `//evil`, `https://evil…` and
+query/fragment smuggling are all unreachable BY CONSTRUCTION rather than by sanitization. A value
+that fails never reaches the template literal. The 10-char floor is a sanity bound, NOT the control
+— do not relax the class thinking the length protects you.
+
+Two differences from the DocuSign module, both deliberate:
+
+- **No `env` parameter.** Drive has one console. A selector would be a knob with nothing behind it
+  and a second place a metadata value could influence an origin.
+- **No revision deep link.** The stored revision is not always a Drive revision id (Workspace-native
+  files carry a synthetic `mtime:`/`evt:` token — see `_drive_revision_kind`) and the URL shape for
+  a real Drive revision is unverified against the live product. A link that works for some records
+  and 404s for others is worse than plain text, so the revision renders as text.
+
+Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
+verification page and the anonymous verify API must never import it.
+
