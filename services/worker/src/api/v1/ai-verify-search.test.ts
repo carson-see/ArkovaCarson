@@ -323,6 +323,35 @@ describe('GET /api/v1/verify/search', () => {
       expect(deductAICredits).not.toHaveBeenCalled();
     });
 
+    it('embedding provider hanging (never resolving) falls back to lexical within the bounded timeout, not indefinitely', async () => {
+      vi.useFakeTimers();
+      try {
+        // Never resolves or rejects — simulates a stalled connection to the
+        // provider. generateEmbedding()'s underlying fetch carries no
+        // AbortSignal (unlike the batch generateEmbeddings()), so without a
+        // route-level bound this would hold the request open forever.
+        mockGenerateEmbedding.mockReturnValueOnce(new Promise(() => {}));
+        vi.mocked(db.rpc).mockResolvedValueOnce({ data: [lexicalRow], error: null } as never);
+
+        const handler = getHandler('get');
+        const { req, res } = createMockReqRes({ q: 'transcript' }, mockApiKey);
+
+        const handlerDone = handler(req, res);
+        await vi.advanceTimersByTimeAsync(8_000);
+        await handlerDone;
+
+        const response = vi.mocked(res.json).mock.calls[0][0];
+        expect(response.search_mode).toBe(SEARCH_MODE_LEXICAL);
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: 'embedding_failed' }),
+          expect.any(String),
+        );
+        expect(deductAICredits).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('search_public_credential_embeddings RPC error falls back to lexical (any error code, not just 42883)', async () => {
       vi.mocked(db.rpc)
         .mockResolvedValueOnce({

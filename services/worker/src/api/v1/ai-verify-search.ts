@@ -127,6 +127,39 @@ interface LexicalCredentialRow {
  * null — that is a real answer and is returned as such (mirrors the edge's
  * documented distinction in mcp-tools.ts).
  */
+/**
+ * Bound on the embed call itself. `IAIProvider.generateEmbedding()`'s Gemini
+ * implementation issues a raw `fetch` with no `AbortSignal` (unlike the
+ * batch `generateEmbeddings()`, which passes `AbortSignal.timeout(30_000)` —
+ * see `services/worker/src/ai/gemini.ts`), so a stalled connection to the
+ * provider has no bound of its own and would otherwise hold this request
+ * open indefinitely — worse than a thrown error, which already falls back.
+ * Racing it against a local timeout here (rather than fixing the shared
+ * provider, which is out of this route's lane and used by several other
+ * routes) closes the one remaining unbounded leg: both RPCs this route
+ * calls already carry a DB-side `statement_timeout` (5s / 10s — see
+ * `supabase/migrations/0325_public_search_min_length_and_timeouts.sql`).
+ */
+const EMBEDDING_TIMEOUT_MS = 8_000;
+
+async function embedWithTimeout(
+  provider: { generateEmbedding: (q: string) => Promise<{ embedding: number[] }> },
+  q: string,
+): Promise<{ embedding: number[] }> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`embedding timed out after ${EMBEDDING_TIMEOUT_MS}ms`)),
+      EMBEDDING_TIMEOUT_MS,
+    );
+  });
+  try {
+    return await Promise.race([provider.generateEmbedding(q), timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 async function trySemanticSearch(
   q: string,
   threshold: number,
@@ -135,7 +168,7 @@ async function trySemanticSearch(
   let queryEmbedding: { embedding: number[] };
   try {
     const provider = createAIProvider();
-    queryEmbedding = await provider.generateEmbedding(q);
+    queryEmbedding = await embedWithTimeout(provider, q);
   } catch (err) {
     logger.warn(
       { reason: 'embedding_failed', message: err instanceof Error ? err.message : String(err) },
