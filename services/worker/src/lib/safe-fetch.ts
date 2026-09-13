@@ -46,6 +46,26 @@ export class SafeFetchError extends Error {
 }
 
 /**
+ * A SafeFetchError caused by the DESTINATION itself — private/link-local
+ * target, no DNS answer, disallowed scheme, malformed URL, hostile redirect —
+ * is not transient: the same URL yields the same refusal on every attempt.
+ * Callers with a retry ladder (webhook delivery/replay) must not retry these.
+ * `request_failed`, `deadline_exceeded`, `too_many_redirects` and
+ * `response_too_large` stay retryable (receiver/network conditions can change).
+ */
+export const PERMANENT_SAFE_FETCH_CODES: ReadonlySet<SafeFetchErrorCode> = new Set<SafeFetchErrorCode>([
+  'private_target',
+  'unresolvable',
+  'scheme_not_allowed',
+  'invalid_url',
+  'redirect_invalid',
+]);
+
+export function isPermanentSafeFetchError(error: unknown): error is SafeFetchError {
+  return error instanceof SafeFetchError && PERMANENT_SAFE_FETCH_CODES.has(error.code);
+}
+
+/**
  * The minimal response surface safeFetch exposes. Deliberately narrower than
  * the DOM `Response` so a stub dispatch (tests) and the undici dispatch (prod)
  * satisfy the same contract.
@@ -81,6 +101,15 @@ export interface SafeFetchOptions {
 
 const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+/**
+ * Statuses the `Response` constructor refuses to pair with ANY body — a
+ * zero-length ArrayBuffer included (`TypeError: Response constructor: Invalid
+ * response status code 204`). A webhook receiver answering `204 No Content` is
+ * the single most common "accepted, nothing to say" reply, so the adapter below
+ * must build those with a null body or it turns an accepted delivery into a
+ * five-attempt retry ladder ending in the DLQ.
+ */
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
 const DEFAULT_MAX_REDIRECTS = 3;
 const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_TOTAL_TIMEOUT_MS = 10_000;
@@ -307,7 +336,10 @@ export function createSafeFetchImpl(
   return async function safeFetchImpl(url: string, init: RequestInit = {}): Promise<Response> {
     const res = await safeFetchSingleHop(url, init, deps);
     const isRedirect = res.status >= 300 && res.status < 400;
-    const body = isRedirect ? null : await res.arrayBuffer();
+    // Null-body statuses (204/205/304 …) carry no entity body and the Response
+    // constructor throws if one is supplied, so never read or attach it.
+    const hasNoBody = isRedirect || NULL_BODY_STATUSES.has(res.status);
+    const body = hasNoBody ? null : await res.arrayBuffer();
     return new Response(body, {
       status: res.status,
       headers: res.headers,

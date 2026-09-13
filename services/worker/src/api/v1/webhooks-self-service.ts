@@ -36,6 +36,7 @@ import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
+import { formatEgressFailure, webhookFetch } from '../../webhooks/egress.js';
 import {
   getDeadLetterEntries,
   isPrivateUrlResolved,
@@ -153,7 +154,8 @@ router.post('/:id/test', async (req, res) => {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
 
-    const response = await fetch(endpoint.url, {
+    // SCRUM-4983: IP-pinned dispatch (see webhooks/egress.ts).
+    const response = await webhookFetch(endpoint.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -194,6 +196,12 @@ router.post('/:id/test', async (req, res) => {
       event_id: eventId,
     });
   } catch (err) {
+    const egress = formatEgressFailure(err);
+    if (egress.permanent) {
+      logger.warn({ id, code: egress.code }, 'webhook self-service: test ping blocked at dispatch (pinned egress refused the resolved target)');
+      errorResponse(res, 400, 'invalid_url', 'Webhook URL targets a private or internal network address');
+      return;
+    }
     logger.error({ error: err, id }, 'webhook self-service: test ping failed');
     errorResponse(
       res,
