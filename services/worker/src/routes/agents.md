@@ -306,3 +306,17 @@ exhaust that single job's 10/min bucket.
 ## 2026-09-12 — `POST /jobs/computeid-passport-recheck` (SCRUM-4495)
 
 New cron route delegating to `jobs/computeid-passport-recheck.ts`. Dark unless `ENABLE_COMPUTEID_INTEGRATION=true`, and it answers `200 {skipped:true}` rather than an error when dark, so a scheduled trigger against a dark flag is quiet. Listed in `scripts/gcp-setup/cloud-scheduler.sh`'s `NOT_SCHEDULED` with the schedule to bind (`17 * * * *` — hourly but off the top of the hour, because every `/jobs/*` route shares one per-IP burst guard, and spreading hourly jobs off `:00` is prevention rather than a fix for live 429s (SCRUM-4475 replaced the global bucket)); bind it in the same motion as the flag flip, per `docs/partners/computeid-activation-runbook.md`.
+
+## 2026-09-13 SCRUM-3888 — `health.ts` gains an optional `getOriginGuardStats` dep
+
+Same shape as `getAnchoringRpcStatus` above: optional on `HealthCheckDeps`, so every existing
+caller/mock stays valid when absent, and SYNCHRONOUS — an in-memory counter read
+(`middleware/requireCloudflareOrigin.ts`'s `getOriginGuardStats()`), no I/O, no risk to `/health`
+latency. When supplied, `info.originGuard` (detailed-view only, `HEALTH_DETAIL_TOKEN`-gated, same
+as every other `info.*` field) reports the origin guard's mode, whether the shared secret is
+configured, and observe-mode "would block" tallies per route family — the rollout signal for
+SCRUM-3888's `off → observe → enforce` procedure (`docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`).
+Wired in `index.ts`'s `healthCheckHandler` deps as `getOriginGuardStats: () =>
+getOriginGuardStats()`. Counters are process-local (Cloud Run runs multiple instances), so this is
+a quick per-instance signal, not a durable audit trail — the `origin_guard_would_block` /
+`origin_guard_blocked` structured log lines are that.
