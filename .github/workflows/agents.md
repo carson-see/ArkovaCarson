@@ -212,8 +212,7 @@ Two compliant shapes, both now in use:
 
 ## Files
 
-All 17 workflows, with their real triggers (SCRUM-3907 added `edge-deploy.yml`,
-16 -> 17). **Not everything here is PR-driven** —
+All 17 workflows, with their real triggers (SCRUM-3907 added `edge-deploy.yml`, 16 -> 17). **Not everything here is PR-driven** —
 four workflows can fire with no PR and no push to `main` (cron, tag push, or an
 issue comment), so a change to one of those can take effect outside the PR cycle.
 
