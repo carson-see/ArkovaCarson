@@ -1,5 +1,32 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-12 — `apiScopeEnforcementCensus.test.ts`: a grantable scope must gate something (SCRUM-3981)
+
+`apiScopes.ts` is the vocabulary; it was never a claim that any of it is enforced.
+`webhooks:manage` shipped in `API_KEY_SCOPES`, in `docs/api/README.md`, and in the dashboard's
+scope picker, and no route required it — an operator who withheld it from a key withheld nothing.
+The failure mode is structural, not a one-off: a scope is added to the vocabulary in one PR and
+wired to a mount in another, and nothing notices when the second PR never lands.
+
+The census test closes it in both directions. Every `API_KEY_SCOPES` entry must be the argument of
+a `requireScope` / `requireScopeAnyAuth` / `requireScopeV2` call somewhere under
+`services/worker/src`, OR carry a one-line entry in `KNOWN_UNENFORCED` saying what is actually
+true. A new scope therefore arrives with a mount or with an admission; and once a scope IS
+enforced, its `KNOWN_UNENFORCED` entry has to be deleted or the test fails.
+
+Nine scopes are listed as unenforced today, and the list is worth reading rather than trusting:
+`write:anchors` is a grant-side alias of `anchor:write`, `attestations:write` is a genuine gap
+(the `/attestations` mount carries no scope guard), `keys:read` is required by nobody and granted
+by nobody, and the rest are either pre-GA or exist only as the `required` side of a back-compat
+branch in `scopeSatisfies` that no mount reaches.
+
+Honest limits, so nobody over-reads a green run: the scan is lexical. It counts guard call sites;
+it does not prove the guard is reachable, that the router it guards is mounted, or that a handler
+does not bypass it. Lines beginning `//` or `*` are skipped so a scope named in prose does not
+read as enforcement. Reachability is `docs.routeParity.test.ts`, `phiScopeMount.test.ts` and
+`api/v1/webhooks-scope.test.ts`, each for its own surface.
+
+
 ## 2026-09-13 — `rules-crud.ts`: D4 (`action_type` on PATCH) + connector adopt-vs-create race guard
 
 **D4 (Connectors page, SPEC-CONNECTORS §1.5).** `UpdateOrgRuleInput` gained an optional
@@ -34,33 +61,6 @@ RuleBuilderPage admin building a second, differently-filtered rule on the same `
 purpose is legitimate existing use of this endpoint and must not be blocked by a check that exists
 to protect one UI's adopt-vs-create invariant. The frontend hook treats `409 rule_exists` as "adopt
 the winner" (a follow-up PATCH to `existing_rule_id`), not a raw error.
-
-## 2026-09-12 — `apiScopeEnforcementCensus.test.ts`: a grantable scope must gate something (SCRUM-3981)
-
-`apiScopes.ts` is the vocabulary; it was never a claim that any of it is enforced.
-`webhooks:manage` shipped in `API_KEY_SCOPES`, in `docs/api/README.md`, and in the dashboard's
-scope picker, and no route required it — an operator who withheld it from a key withheld nothing.
-The failure mode is structural, not a one-off: a scope is added to the vocabulary in one PR and
-wired to a mount in another, and nothing notices when the second PR never lands.
-
-The census test closes it in both directions. Every `API_KEY_SCOPES` entry must be the argument of
-a `requireScope` / `requireScopeAnyAuth` / `requireScopeV2` call somewhere under
-`services/worker/src`, OR carry a one-line entry in `KNOWN_UNENFORCED` saying what is actually
-true. A new scope therefore arrives with a mount or with an admission; and once a scope IS
-enforced, its `KNOWN_UNENFORCED` entry has to be deleted or the test fails.
-
-Nine scopes are listed as unenforced today, and the list is worth reading rather than trusting:
-`write:anchors` is a grant-side alias of `anchor:write`, `attestations:write` is a genuine gap
-(the `/attestations` mount carries no scope guard), `keys:read` is required by nobody and granted
-by nobody, and the rest are either pre-GA or exist only as the `required` side of a back-compat
-branch in `scopeSatisfies` that no mount reaches.
-
-Honest limits, so nobody over-reads a green run: the scan is lexical. It counts guard call sites;
-it does not prove the guard is reachable, that the router it guards is mounted, or that a handler
-does not bypass it. Lines beginning `//` or `*` are skipped so a scope named in prose does not
-read as enforcement. Reachability is `docs.routeParity.test.ts`, `phiScopeMount.test.ts` and
-`api/v1/webhooks-scope.test.ts`, each for its own surface.
-
 ## 2026-08-30 — `connector-health.ts`: the `adobe_sign` kind is DERIVED, never asserted
 
 PR #2519 corrected `adobe_sign` from a hardcoded `kind: 'live'` to `'gated'`: the connector had no

@@ -1,28 +1,6 @@
 # agents.md — e2e/
 
-_Last updated: 2026-09-13 (`connectors.spec.ts` added — SPEC-CONNECTORS)._
-
-## 2026-09-13 — `connectors.spec.ts` added; `route-screenshot-baseline.spec.ts` gained a `connectors` entry
-
-Google Drive itself is mocked at the network boundary
-(`page.route('**/api/v1/integrations/google_drive/folders**', ...)`) — the real worker process is
-never asked to decrypt a KMS-encrypted token or call the real Google API, so the test needs no real
-Drive grant. `/api/rules` is deliberately NOT mocked: it hits the real worker + test database, so
-"Save, reload, selection and action persist" is a genuine persistence check. The test seeds a
-connected `org_integrations` row directly via `getServiceClient()` (fake `encrypted_tokens` —
-never decrypted, because the folders call is intercepted before it reaches the worker) and cleans
-up both `org_integrations` and `organization_rules` rows for the seed org-admin's org in
-`afterEach`, so re-runs start clean.
-
-The route-guard case uses a SEPARATE `base.describe` block with
-`base.use({ storageState: { cookies: [], origins: [] } })` to get a genuinely logged-out context —
-every default `page` fixture in this file is already authenticated via project `storageState`
-(see the top of `fixtures/auth.ts`), so asserting an unauthenticated redirect needs to opt OUT of
-that, not just navigate with the default `page`.
-
-`route-screenshot-baseline.spec.ts` gained one `connectors` entry, inserted next to the existing
-`rules` / `rule-builder` entries — which stay (SPEC-CONNECTORS PM-9: `/organization/rules` remains
-routed; deleting its baseline would hide a regression in a page that is still live).
+_Last updated: 2026-09-13 (`uat-pr2840.spec.ts` self-skips outside its own config, CI run 34741690944)._
 
 ## 2026-09-13 SCRUM-4989 — `uat-pr2840.spec.ts` was NOT actually excluded from CI; it self-skips now
 
@@ -64,6 +42,28 @@ Its hostile/safe pair is the pattern worth copying: a capture that proves someth
 render is worthless without the control showing the same code path DOES render legitimate values.
 
 Evidence and reproduction steps: `docs/uat/pr-2840/README.md`.
+
+## 2026-09-13 — `connectors.spec.ts` added; `route-screenshot-baseline.spec.ts` gained a `connectors` entry
+
+Google Drive itself is mocked at the network boundary
+(`page.route('**/api/v1/integrations/google_drive/folders**', ...)`) — the real worker process is
+never asked to decrypt a KMS-encrypted token or call the real Google API, so the test needs no real
+Drive grant. `/api/rules` is deliberately NOT mocked: it hits the real worker + test database, so
+"Save, reload, selection and action persist" is a genuine persistence check. The test seeds a
+connected `org_integrations` row directly via `getServiceClient()` (fake `encrypted_tokens` —
+never decrypted, because the folders call is intercepted before it reaches the worker) and cleans
+up both `org_integrations` and `organization_rules` rows for the seed org-admin's org in
+`afterEach`, so re-runs start clean.
+
+The route-guard case uses a SEPARATE `base.describe` block with
+`base.use({ storageState: { cookies: [], origins: [] } })` to get a genuinely logged-out context —
+every default `page` fixture in this file is already authenticated via project `storageState`
+(see the top of `fixtures/auth.ts`), so asserting an unauthenticated redirect needs to opt OUT of
+that, not just navigate with the default `page`.
+
+`route-screenshot-baseline.spec.ts` gained one `connectors` entry, inserted next to the existing
+`rules` / `rule-builder` entries — which stay (SPEC-CONNECTORS PM-9: `/organization/rules` remains
+routed; deleting its baseline would hide a regression in a page that is still live).
 
 ## 2026-09-08 — every failed E2E job used to discard its own evidence
 
