@@ -376,6 +376,20 @@ describe('check-staging-evidence', () => {
       ).toBe('T0');
     });
 
+    it('returns T0 for the job_queue producer/consumer parity guard', () => {
+      // scripts/ci/check-job-queue-parity.ts runs only in the ci.yml
+      // Dependency Scanning job (`npm run ci:job-queue-parity`) and is never
+      // imported by src/, services/worker/src/, packages/, integrations/, or
+      // e2e/ — no prod runtime to soak, same class as the other
+      // scripts/ci/check-*.ts gates above.
+      expect(
+        requiredTierFor(['scripts/ci/check-job-queue-parity.ts']).tier,
+      ).toBe('T0');
+      expect(
+        requiredTierFor(['scripts/ci/check-job-queue-parity.test.ts']).tier,
+      ).toBe('T0');
+    });
+
     // --- G1 (PI-0.5): KPI-3 rehearsal + clean-room .mjs tooling classify T0 ---
     it('returns T0 for the KPI-3 rehearsal tooling bundle', () => {
       expect(
