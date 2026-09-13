@@ -82,6 +82,7 @@ const AIReportsPage = lazyWithRetry(() => import('@/pages/AIReportsPage').then(m
 const ComplianceDashboardPage = lazyWithRetry(() => import('@/pages/ComplianceDashboardPage').then(m => ({ default: m.ComplianceDashboardPage })));
 const RuleBuilderPage = lazyWithRetry(() => import('@/pages/RuleBuilderPage').then(m => ({ default: m.RuleBuilderPage })));
 const RulesPage = lazyWithRetry(() => import('@/pages/RulesPage').then(m => ({ default: m.RulesPage })));
+const ConnectorsPage = lazyWithRetry(() => import('@/pages/ConnectorsPage').then(m => ({ default: m.ConnectorsPage })));
 const DevelopersPage = lazyWithRetry(() => import('@/pages/DevelopersPage').then(m => ({ default: m.DevelopersPage })));
 const AttestationsPage = lazyWithRetry(() => import('@/pages/AttestationsPage').then(m => ({ default: m.AttestationsPage })));
 const AdminOnboardingPage = lazyWithRetry(() => import('@/pages/AdminOnboardingPage').then(m => ({ default: m.AdminOnboardingPage })));
@@ -303,6 +304,8 @@ export function App() {
           <Route path={ROUTES.COMPLIANCE_DASHBOARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Compliance"><ComplianceDashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RULES} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Rules"><RulesPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RULE_BUILDER} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RuleBuilder"><RuleBuilderPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          {/* SPEC-CONNECTORS — replaces the Rules nav entry; /organization/rules stays routed (PM-9) */}
+          <Route path={ROUTES.CONNECTORS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Connectors"><ConnectorsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ANCHOR_QUEUE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           {/* SCRUM-1097 — AC names /admin/queue specifically. Alias to the existing AnchorQueuePage so both URLs work. */}
           <Route path="/admin/queue" element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

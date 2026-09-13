@@ -14,8 +14,10 @@ import { Badge } from '@/components/ui/badge';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS } from '@/lib/copy';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
-import { useSignatureConnection } from './useSignatureConnection';
-import { followSignatureOAuthStart } from './signatureOAuthResponse';
+// These two live with the OTHER integration cards (Adobe Sign also depends
+// on useSignatureConnection) — not moved here with this card.
+import { useSignatureConnection } from '../integrations/useSignatureConnection';
+import { followSignatureOAuthStart } from '../integrations/signatureOAuthResponse';
 
 interface DocusignConnectorCardProps {
   orgId: string;
