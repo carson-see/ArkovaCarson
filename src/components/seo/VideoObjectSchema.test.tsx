@@ -33,6 +33,15 @@ describe('VideoObjectSchema', () => {
     expect(data.contentUrl).toBe('https://www.youtube.com/watch?v=abc123');
   });
 
+  it('escapes </script inside string fields so the JSON-LD block cannot be closed early (SCRUM-4989)', () => {
+    const hostile = 'How Arkova Works</script><script>alert(1)</script>';
+    const { container } = render(<VideoObjectSchema {...baseProps} name={hostile} />);
+    const script = container.querySelector('script[type="application/ld+json"]')!;
+    expect(script.innerHTML).not.toMatch(/<\/script/i);
+    expect(container.querySelectorAll('script')).toHaveLength(1);
+    expect(JSON.parse(script.innerHTML).name).toBe(hostile);
+  });
+
   it('references the canonical Organization @id, not an inline Organization block', () => {
     const { container } = render(<VideoObjectSchema {...baseProps} />);
     const data = JSON.parse(container.querySelector('script')!.innerHTML);

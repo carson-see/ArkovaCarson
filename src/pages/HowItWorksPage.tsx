@@ -6,6 +6,7 @@
  * Includes HowTo JSON-LD schema for SEO.
  */
 
+import { toJsonLd } from '@/lib/jsonLd';
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Building2, Upload, Anchor, Search, Lock, Sparkles, Globe, ArrowRight } from 'lucide-react';
@@ -73,7 +74,7 @@ function HowToSchema() {
     <script
       type="application/ld+json"
       dangerouslySetInnerHTML={{
-        __html: JSON.stringify({
+        __html: toJsonLd({
           '@context': 'https://schema.org',
           '@type': 'HowTo',
           name: 'How to Verify a Document with Arkova',
