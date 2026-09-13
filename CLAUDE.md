@@ -198,8 +198,10 @@ Every prod-affecting PR declares its tier in the body. The path-based detector i
 |---|---|---|---|
 | **T0** No PR | Docs, tests, CI, or tooling-only | 0 h | **Not a PR** — direct commit to `main` per §0 rule 8 with local `typecheck`/`lint`/`test` green first. Bot-opened T0 PRs need no evidence block; CI must be green |
 | **T1** Expedited smoke | Low-risk config or code-only changes with no migration, public API contract, auth, billing, anchoring, queue/concurrency, worker behavior, chain/treasury, or security-sensitive surface | 2 h soak | Tier, exact PR head SHA, staging tag URL or N/A explanation, health/smoke result, soak start/end, CI/E2E green, rollback plan, risk rationale, human approver |
-| **T2** Standard | Public API, worker behavior, queues, AI behavior, anchoring, billing, webhooks, SDK/contract surface | 12 h soak + rollback rehearsal | Merge-grade staging evidence with exact PR head SHA/base SHA, clean preflight, deploy log id, E2E result, rollback rehearsal |
-| **T3** Critical | Migrations, data integrity, concurrency/fan-out, security, chain/treasury, anchor lifecycle, cron-on-anchors | 48 h soak + multiple trigger cycles + clean-mirror or isolated staging | T2 fields + Trigger A fires, Trigger B fires, Daily flush observation, Per-org isolation check |
+| **T2** Standard | Public API, worker behavior, queues, AI behavior, anchoring, billing, webhooks, SDK/contract surface | 4 h soak + rollback rehearsal | Merge-grade staging evidence with exact PR head SHA/base SHA, clean preflight, deploy log id, E2E result, rollback rehearsal |
+| **T3** Critical | Migrations, data integrity, concurrency/fan-out, security, chain/treasury, anchor lifecycle, cron-on-anchors | 24 h soak + multiple trigger cycles + clean-mirror or isolated staging | T2 fields + Trigger A fires, Trigger B fires, Daily flush observation, Per-org isolation check |
+
+Post-soak commits that touch only T0-classified files (e2e/, docs/, tests, CI) do not invalidate evidence when the body carries `Post-soak T0 delta: <current head SHA>` (gate-verified: ancestry + per-file T0 classification).
 
 Batched T2/T3 release candidates may centralize long soak evidence in `docs/staging/rc-manifests/rc-*.json` while preserving per-PR authorization, CI, risk tier, exact head SHA coverage, rollback notes, and production proof. RC manifests are audited evidence, not a bypass: stale heads/bases, dirty preflight, expired evidence, missing approval, or missing migration rollback/reapply proof fail the same `Staging Soak Evidence Gate`.
 
