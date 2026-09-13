@@ -156,6 +156,32 @@ describe('projectPublicRecordToTemplate — unknown source', () => {
   });
 });
 
+describe('projectPublicRecordToTemplate — sec_adv_bulk is an alias of edgar_form_adv', () => {
+  it('projects identically to edgar_form_adv given the same registry-shaped metadata', () => {
+    const edgarFormAdv = fixtureFor('edgar_form_adv');
+    const secAdvBulk = fixtureFor('sec_adv_bulk');
+
+    // The two fixtures deliberately differ on title/source_id/organization_name
+    // (the real prod situation: two source tags, same fetcher shape) — none
+    // of those feed EDGAR_FORM_ADV_SPEC, so the projections must still match
+    // byte-for-byte once pipeline_source-derived differences are excluded.
+    const edgarOut = projectPublicRecordToTemplate('edgar_form_adv', {
+      title: edgarFormAdv.title, metadata: edgarFormAdv.metadata, source_id: edgarFormAdv.source_id,
+    });
+    const bulkOut = projectPublicRecordToTemplate('sec_adv_bulk', {
+      title: secAdvBulk.title, metadata: secAdvBulk.metadata, source_id: secAdvBulk.source_id,
+    });
+
+    expect(bulkOut).toEqual(edgarOut);
+    expect(edgarOut.issuerName).toBe('SEC EDGAR Form ADV');
+    expect(edgarOut.licenseNumber).toBe('170392');
+  });
+
+  it('SOURCE_FIELD_TABLE points both source keys at the exact same spec object', () => {
+    expect(SOURCE_FIELD_TABLE.sec_adv_bulk).toBe(SOURCE_FIELD_TABLE.edgar_form_adv);
+  });
+});
+
 describe('projectPublicRecordToTemplate — every non-openalex pipeline source', () => {
   it.each(OTHER_SOURCES)('produces a schema-valid, non-empty projection for %s', (source) => {
     const fixture = fixtureFor(source);

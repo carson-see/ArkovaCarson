@@ -40,12 +40,25 @@
  *     The person/entity's own name is already the anchor filename
  *     (`buildAnchorFilename`) and is never duplicated into `fieldOfStudy`.
  *
- * `sec_adv_bulk`, named in the scope note, does not exist anywhere in this
- * codebase (verified: `grep -rn sec_adv_bulk services/worker/src` — zero
- * hits). The two SEC investment-adviser sources that DO exist are
- * `edgar_form_adv` (this file's sibling `edgarFormAdvFetcher.ts`) and
- * `sec_iapd` (`secIapdFetcher.ts`) — both covered below under their real
- * names. Flagged in the PR/report rather than silently substituted.
+ * `sec_adv_bulk` does not exist in any fetcher (verified: `grep -rn
+ * sec_adv_bulk services/worker/src` — zero hits), but prod `public_records`
+ * carries ~1,500 rows with `source = 'sec_adv_bulk'` from an April 2026 bulk
+ * Form ADV load that ran before `edgarFormAdvFetcher.ts` was renamed to its
+ * current `edgar_form_adv` source string — the same "row exists, fetcher
+ * name moved on" situation as `australia_law`/`kenya_law`. `SOURCE_FIELD_TABLE`
+ * aliases `sec_adv_bulk` to the identical `edgar_form_adv` spec object (not a
+ * duplicated copy — see the table) so both spellings project the same way;
+ * `edgar_form_adv` is this file's sibling `edgarFormAdvFetcher.ts`, and the
+ * unrelated `sec_iapd` (`secIapdFetcher.ts`) is covered separately below.
+ *
+ * Zero-row / broken sources: `fcc`, `sam_gov`, `sam_gov_exclusions`,
+ * `sos_de`/`sos_ca`/`sos_ny`/`sos_tx`, `ipeds`, `insurance_ca_cdi`,
+ * `cle_ny`/`cle_tx`, `cert_cfa`/`cert_comptia`/`cert_pmi` appear in
+ * `SOURCE_PREFIX`/`mapCredentialType` but have zero rows in prod today — their
+ * fetchers are broken or unfinished placeholders (SCRUM-5045, SCRUM-5046).
+ * `{}` (no `SOURCE_FIELD_TABLE` entry) is the correct, confirmed-intentional
+ * output for all of them; add a real entry only once a fetcher for one of
+ * them is actually live and writing rows.
  *
  * Bounds (unchanged from the original four-source design):
  *   - Every string value is capped at 500 UTF-16 units via
@@ -151,17 +164,15 @@ type FieldRef =
   | { kind: 'sourceId' }
   | { kind: 'meta'; key: string }
   | { kind: 'metaFirst'; key: string }
-  | { kind: 'metaFallback'; keys: string[] }
-  | { kind: 'const'; value: string };
+  | { kind: 'metaFallback'; keys: string[] };
 
 const title: FieldRef = { kind: 'title' };
 const sourceId: FieldRef = { kind: 'sourceId' };
 const meta = (key: string): FieldRef => ({ kind: 'meta', key });
 const metaFirst = (key: string): FieldRef => ({ kind: 'metaFirst', key });
 const metaFallback = (...keys: string[]): FieldRef => ({ kind: 'metaFallback', keys });
-const constant = (value: string): FieldRef => ({ kind: 'const', value });
 
-type AuthorsBuilder = 'openalex' | 'uspto-inventors';
+type AuthorsBuilder = 'openalex';
 
 interface ExtraSpec {
   /** Output key name — need not match the source metadata key. */
@@ -193,6 +204,28 @@ interface SourceSpec {
  * mapping yet — anchoring still proceeds, it just carries the four linkage
  * keys from `buildPipelineAnchorInsert`, same as today.
  */
+
+/**
+ * `sec_adv_bulk` is an ALIAS of this spec object (see header note): prod
+ * `public_records` still carries ~1,500 rows from the April 2026 bulk load
+ * under the old source string, and this is the exact shape
+ * `edgarFormAdvFetcher.ts` wrote before the rename to `edgar_form_adv`. One
+ * spec object, two source keys — not a duplicated copy that can drift.
+ */
+const EDGAR_FORM_ADV_SPEC: SourceSpec = {
+  category: 'registry',
+  issuerName: meta('registry'),
+  issuedDate: meta('last_filing_date'),
+  licenseNumber: meta('crd_number'),
+  extras: [
+    { key: 'secNumber', ref: meta('sec_number') },
+    { key: 'country', ref: meta('country') },
+    { key: 'licenseType', ref: meta('license_type') },
+    { key: 'state', ref: meta('state') },
+    { key: 'registrationStatus', ref: meta('registration_status') },
+  ],
+};
+
 export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
   // ---- Publication ---------------------------------------------------
   openalex: {
@@ -225,19 +258,8 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
   },
 
   // ---- Investment-adviser registries (registry) — see header note re: `sec_adv_bulk`.
-  edgar_form_adv: {
-    category: 'registry',
-    issuerName: meta('registry'),
-    issuedDate: meta('last_filing_date'),
-    licenseNumber: meta('crd_number'),
-    extras: [
-      { key: 'secNumber', ref: meta('sec_number') },
-      { key: 'country', ref: meta('country') },
-      { key: 'licenseType', ref: meta('license_type') },
-      { key: 'state', ref: meta('state') },
-      { key: 'registrationStatus', ref: meta('registration_status') },
-    ],
-  },
+  edgar_form_adv: EDGAR_FORM_ADV_SPEC,
+  sec_adv_bulk: EDGAR_FORM_ADV_SPEC, // alias — pre-rename source string, same fetcher shape
   sec_iapd: {
     category: 'registry',
     issuerName: meta('registry'),
@@ -295,14 +317,19 @@ export const SOURCE_FIELD_TABLE: Record<string, SourceSpec> = {
     ],
   },
 
-  // ---- USPTO patents (legal/document) — no inventor data in metadata today.
+  // ---- USPTO patents (legal/document) ------------------------------------
+  // `usptoFetcher.ts` writes exactly three metadata keys (patent_id,
+  // patent_type, patent_date) — nothing else, no inventors, no issuing-office
+  // field. Project only what the fetcher actually carries: an `authors`
+  // builder with no input source, or a constant issuerName not backed by
+  // fetched data, reads as live capability to the next person touching this
+  // file. Add both back in the same PR that teaches usptoFetcher.ts to
+  // capture them, not before.
   uspto: {
     category: 'legal',
-    issuerName: constant('USPTO'),
     issuedDate: meta('patent_date'),
     licenseNumber: meta('patent_id'),
     fieldOfStudy: title,
-    authors: 'uspto-inventors', // inert today — usptoFetcher.ts writes no `inventors` key yet
     extras: [
       { key: 'patentType', ref: meta('patent_type') },
     ],
@@ -476,8 +503,6 @@ function resolveRaw(
       return record.title;
     case 'sourceId':
       return record.sourceId;
-    case 'const':
-      return ref.value;
     case 'meta':
       if (isForbiddenKey(ref.key)) return undefined;
       return record.metadata[ref.key];
@@ -541,31 +566,6 @@ function buildOpenAlexAuthors(raw: unknown): TemplateAuthor[] {
       author.orcid = truncated(stripUrlPrefix(orcid.trim()));
     }
     authors.push(author);
-    if (authors.length >= MAX_AUTHORS) break;
-  }
-  return authors;
-}
-
-interface InventorInput {
-  name?: unknown;
-}
-
-/**
- * Forward-compatible: `usptoFetcher.ts` does not populate a `metadata.inventors`
- * key today (verified — grep shows only patent_id/patent_type/patent_date/
- * abstract), so this always returns `[]` in production right now. It exists
- * so the day inventor capture ships, the projector already routes it to
- * `authors` (never `recipientIdentifier`) with no template change required.
- */
-function buildInventorAuthors(raw: unknown): TemplateAuthor[] {
-  if (!Array.isArray(raw)) return [];
-  const authors: TemplateAuthor[] = [];
-  for (const entry of raw) {
-    let name: unknown;
-    if (typeof entry === 'string') name = entry;
-    else if (entry && typeof entry === 'object') name = (entry as InventorInput).name;
-    if (typeof name !== 'string' || name.trim().length === 0) continue;
-    authors.push({ name: truncated(name.trim()) });
     if (authors.length >= MAX_AUTHORS) break;
   }
   return authors;
@@ -667,9 +667,6 @@ export function projectPublicRecordToTemplate(
   }
   if (spec.authors === 'openalex') {
     const authors = buildOpenAlexAuthors(ctx.metadata.authors);
-    if (authors.length > 0) out.authors = authors;
-  } else if (spec.authors === 'uspto-inventors') {
-    const authors = buildInventorAuthors(ctx.metadata.inventors);
     if (authors.length > 0) out.authors = authors;
   }
 

@@ -35,6 +35,26 @@
     }
   },
 
+  "sec_adv_bulk": {
+    "_comment": "Pre-rename alias of edgar_form_adv — the April 2026 bulk Form ADV load ran before edgarFormAdvFetcher.ts's source string became 'edgar_form_adv'. Same fetcher shape, different source tag. See publicRecordTemplate.ts's SOURCE_FIELD_TABLE header note.",
+    "title": "Pinnacle Advisory Partners LLC",
+    "source_id": "sec-adv-bulk-0002233445",
+    "metadata": {
+      "crd_number": "170392",
+      "sec_number": "801-70392",
+      "organization_name": "Pinnacle Advisory Partners LLC",
+      "city": "Denver",
+      "state": "CO",
+      "country": "US",
+      "registration_status": "APPROVED",
+      "last_filing_date": "2026-01-10",
+      "pipeline_source": "sec_adv_bulk",
+      "registry": "SEC EDGAR Form ADV",
+      "jurisdiction": "US",
+      "license_type": "investment_adviser"
+    }
+  },
+
   "sec_iapd": {
     "title": "Harborview Wealth Management",
     "source_id": "sec-iapd-104822",

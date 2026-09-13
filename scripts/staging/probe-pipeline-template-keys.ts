@@ -8,7 +8,10 @@
  * Selects the single newest anchor whose metadata carries a
  * `pipeline_source` key, and fails unless that row's metadata carries at
  * least one of `issuerName` / `licenseNumber` / `authors` for a source the
- * projector covers.
+ * projector covers. Read-only (SELECT only) and safe to re-run repeatedly —
+ * including once per T3 trigger cycle against the same soak — since each
+ * run just re-queries the current newest row and reports which anchor id it
+ * inspected; see `--help` for detail.
  *
  * Deliberately NOT imported from `services/worker/src/jobs/` — this script
  * lives in a different package (root `scripts/`, plain `tsx`, bundler
@@ -34,6 +37,7 @@ export const PIPELINE_TEMPLATE_SOURCES = new Set([
   'openalex',
   'edgar',
   'edgar_form_adv',
+  'sec_adv_bulk', // pre-rename alias of edgar_form_adv — same spec, same projection
   'sec_iapd',
   'federal_register',
   'openstates',
@@ -64,6 +68,9 @@ export interface ProbeAnchorRow {
 export interface ProbeResult {
   ok: boolean;
   reason?: string;
+  /** Which anchor this run inspected — printed on every run (pass or fail) so a
+   * T3 soak's repeated invocations across trigger cycles can be told apart. */
+  anchorId?: string;
   pipelineSource?: string;
   keysFound: string[];
 }
@@ -89,6 +96,7 @@ export function evaluateProbeRow(row: ProbeAnchorRow | null): ProbeResult {
     return {
       ok: false,
       reason: 'newest matching row has no string pipeline_source in metadata',
+      anchorId: row.id,
       keysFound,
     };
   }
@@ -100,6 +108,7 @@ export function evaluateProbeRow(row: ProbeAnchorRow | null): ProbeResult {
     return {
       ok: true,
       reason: `pipeline_source=${pipelineSource} has no SOURCE_FIELD_TABLE entry — nothing to check`,
+      anchorId: row.id,
       pipelineSource,
       keysFound,
     };
@@ -116,6 +125,7 @@ export function evaluateProbeRow(row: ProbeAnchorRow | null): ProbeResult {
     reason: hasIdentitySignal
       ? undefined
       : `pipeline_source=${pipelineSource} metadata carries none of issuerName/licenseNumber/authors`,
+    anchorId: row.id,
     pipelineSource,
     keysFound,
   };
@@ -132,11 +142,20 @@ scanning the whole anchors table) and asserts the credential-template
 projection landed — issuerName, licenseNumber, or authors present in that
 row's metadata — for any pipeline_source in PIPELINE_TEMPLATE_SOURCES.
 
+Safe to run repeatedly, including once per T3 trigger cycle on the same
+soak: it only ever SELECTs (no anchors/insert/update/delete calls), so
+back-to-back or concurrent invocations against the same rig cannot
+interfere with each other or with the soak driver. Each run re-queries for
+the CURRENT newest matching row rather than caching one — the printed
+'anchorId' names exactly which anchor that run inspected, so a sequence of
+runs across trigger cycles A/B and the daily flush can be told apart in
+soak evidence instead of all looking like one repeated check.
+
 Env (required to run; never hardcode):
   SUPABASE_URL               Supabase project URL
   SUPABASE_SERVICE_ROLE_KEY  service-role key (read-only usage here)
 
-Prints the evaluated row's keys either way. Exit 0 = pass, 1 = fail.`);
+Prints the evaluated row's id and keys either way. Exit 0 = pass, 1 = fail.`);
 }
 
 async function main(): Promise<number> {

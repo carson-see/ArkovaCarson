@@ -83,10 +83,36 @@ describe('evaluateProbeRow', () => {
     expect(result.keysFound.sort()).toEqual(['jurisdiction', 'licenseNumber', 'pipeline_source'].sort());
   });
 
+  it('reports the anchorId of the row it inspected, on both pass and fail', () => {
+    const failing = evaluateProbeRow({
+      id: 'anchor-fail-1',
+      created_at: '2026-09-13T00:00:00Z',
+      metadata: { pipeline_source: 'openalex' },
+    });
+    expect(failing.anchorId).toBe('anchor-fail-1');
+
+    const passing = evaluateProbeRow({
+      id: 'anchor-pass-1',
+      created_at: '2026-09-13T00:00:00Z',
+      metadata: { pipeline_source: 'openalex', licenseNumber: '10.1234/x' },
+    });
+    expect(passing.anchorId).toBe('anchor-pass-1');
+  });
+
+  it('sec_adv_bulk (pre-rename alias of edgar_form_adv) is covered', () => {
+    const result = evaluateProbeRow({
+      id: 'anchor-bulk-1',
+      created_at: '2026-09-13T00:00:00Z',
+      metadata: { pipeline_source: 'sec_adv_bulk', licenseNumber: '170392' },
+    });
+    expect(result.ok).toBe(true);
+    expect(PIPELINE_TEMPLATE_SOURCES.has('sec_adv_bulk')).toBe(true);
+  });
+
   it('PIPELINE_TEMPLATE_SOURCES covers every source SOURCE_FIELD_TABLE declares (kept in sync manually — see file header)', () => {
     // Mirrors publicRecordTemplate.ts's SOURCE_FIELD_TABLE keys as of 2026-09-13.
     const expected = [
-      'openalex', 'edgar', 'edgar_form_adv', 'sec_iapd', 'federal_register',
+      'openalex', 'edgar', 'edgar_form_adv', 'sec_adv_bulk', 'sec_iapd', 'federal_register',
       'openstates', 'courtlistener', 'uspto', 'npi', 'finra', 'calbar',
       'dapip', 'acnc', 'acra_sg', 'cnpj_br', 'moh_sg', 'australia_law',
       'kenya_law', 'australia_caselaw', 'kenya_caselaw',
