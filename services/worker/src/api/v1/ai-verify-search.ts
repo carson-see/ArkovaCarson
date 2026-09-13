@@ -239,6 +239,80 @@ async function runLexicalSearch(q: string, limit: number): Promise<VerificationS
   }));
 }
 
+/**
+ * One decision table for mode selection, kept separate from HTTP response
+ * writing so the branching (flag off / insufficient credits / semantic ok /
+ * semantic degraded) lives in exactly one place instead of being
+ * interleaved with `res.status().json()` calls. Side effects that must only
+ * happen when semantic actually ran (credit deduction, usage logging) stay
+ * scoped to that one branch; the two lexical branches (flag off, semantic
+ * degraded) both funnel through the same `runLexicalSearch` call below.
+ */
+type SearchOutcome =
+  | { kind: 'insufficient_credits' }
+  | {
+      kind: 'resolved';
+      mode: typeof SEARCH_MODE_SEMANTIC | typeof SEARCH_MODE_LEXICAL;
+      results: VerificationSearchResult[];
+    };
+
+async function resolveSearch(
+  q: string,
+  threshold: number,
+  limit: number,
+  keyOrgId: string | undefined,
+): Promise<SearchOutcome> {
+  const semanticEnabled = await isSemanticSearchEnabled();
+
+  if (!semanticEnabled) {
+    logger.warn(
+      { reason: 'semantic_search_disabled' },
+      'Verification search: ENABLE_SEMANTIC_SEARCH is off, serving lexical fallback',
+    );
+    return {
+      kind: 'resolved',
+      mode: SEARCH_MODE_LEXICAL,
+      results: await runLexicalSearch(q, limit),
+    };
+  }
+
+  // Check credits for the API key's org — only the semantic path costs an
+  // AI credit, so this gate applies only when we are about to attempt it,
+  // not to the lexical fallback.
+  const credits = keyOrgId ? await checkAICredits(keyOrgId) : null;
+  if (credits && !credits.hasCredits) {
+    return { kind: 'insufficient_credits' };
+  }
+
+  const startMs = Date.now();
+  const semanticResults = await trySemanticSearch(q, threshold, limit);
+
+  if (semanticResults !== null) {
+    const durationMs = Date.now() - startMs;
+    if (keyOrgId) {
+      await deductAICredits(keyOrgId, undefined, 1);
+    }
+    logAIUsageEvent({
+      orgId: keyOrgId,
+      eventType: 'embedding',
+      provider: createAIProvider().name,
+      creditsConsumed: 1,
+      durationMs,
+      success: true,
+    }).catch(() => {});
+    return { kind: 'resolved', mode: SEARCH_MODE_SEMANTIC, results: semanticResults };
+  }
+
+  // semanticResults === null: trySemanticSearch already logged the bounded
+  // warn reason. Fall through to lexical — never deduct a credit or log
+  // usage for a search that didn't run.
+  return {
+    kind: 'resolved',
+    mode: SEARCH_MODE_LEXICAL,
+    results: await runLexicalSearch(q, limit),
+  };
+}
+
 /** GET /api/v1/verify/search — Semantic verification search, lexical fallback */
 router.get('/', async (req: Request, res: Response) => {
   // Require API key (not anonymous)
@@ -266,64 +340,22 @@ router.get('/', async (req: Request, res: Response) => {
   const keyOrgId = req.apiKey.orgId;
 
   try {
-    const semanticEnabled = await isSemanticSearchEnabled();
-    let results: VerificationSearchResult[] | null = null;
-    let mode: typeof SEARCH_MODE_SEMANTIC | typeof SEARCH_MODE_LEXICAL = SEARCH_MODE_LEXICAL;
+    const outcome = await resolveSearch(q, threshold, limit, keyOrgId);
 
-    if (!semanticEnabled) {
-      logger.warn(
-        { reason: 'semantic_search_disabled' },
-        'Verification search: ENABLE_SEMANTIC_SEARCH is off, serving lexical fallback',
-      );
-    } else {
-      // Check credits for the API key's org — only the semantic path costs
-      // an AI credit, so this gate applies only when we are about to
-      // attempt it, not to the lexical fallback.
-      const credits = keyOrgId ? await checkAICredits(keyOrgId) : null;
-      if (credits && !credits.hasCredits) {
-        res.status(402).json({
-          error: 'insufficient_credits',
-          message: 'No AI credits remaining.',
-        });
-        return;
-      }
-
-      const startMs = Date.now();
-      const semanticResults = await trySemanticSearch(q, threshold, limit);
-
-      if (semanticResults !== null) {
-        results = semanticResults;
-        mode = SEARCH_MODE_SEMANTIC;
-
-        const durationMs = Date.now() - startMs;
-        if (keyOrgId) {
-          await deductAICredits(keyOrgId, undefined, 1);
-        }
-        logAIUsageEvent({
-          orgId: keyOrgId,
-          eventType: 'embedding',
-          provider: createAIProvider().name,
-          creditsConsumed: 1,
-          durationMs,
-          success: true,
-        }).catch(() => {});
-      }
-      // semanticResults === null: trySemanticSearch already logged the
-      // bounded warn reason. Fall through to the lexical path below —
-      // never deduct a credit or log usage for a search that didn't run.
-    }
-
-    if (results === null) {
-      results = await runLexicalSearch(q, limit);
-      mode = SEARCH_MODE_LEXICAL;
+    if (outcome.kind === 'insufficient_credits') {
+      res.status(402).json({
+        error: 'insufficient_credits',
+        message: 'No AI credits remaining.',
+      });
+      return;
     }
 
     res.json({
       query: q,
-      results,
-      count: results.length,
+      results: outcome.results,
+      count: outcome.results.length,
       threshold,
-      search_mode: mode,
+      search_mode: outcome.mode,
     });
   } catch (err) {
     logger.error({ error: err }, 'Agentic verification search failed');
