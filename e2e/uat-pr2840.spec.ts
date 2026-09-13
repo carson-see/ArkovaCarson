@@ -14,6 +14,26 @@
  *
  * Not part of the CI E2E suite: run explicitly with
  *   npx playwright test e2e/uat-pr2840.spec.ts --config=e2e/uat-pr2840.config.ts
+ *
+ * CI GUARD (2026-09-13, this run: 34741690944 / head 647ca9cac): `playwright.config.ts`
+ * has no `testMatch` scoping and only `testIgnore: 'oauth-email-confirmation.spec.ts'`,
+ * so `node_modules/.bin/playwright test --project=chromium` (ci.yml's literal E2E
+ * command — no file argument) picks this file up under the SHARED config anyway,
+ * despite the comment above and `e2e/agents.md` both saying it never runs there.
+ * Under that config every test here ran against `npm run dev` on :5173 with the
+ * `setup` project's real seed-user `storageState` already applied to the context —
+ * not the `vite preview` :4173 build with a clean context this spec is written for
+ * — and every case that reads Supabase-sourced profile data (auth or not) timed out
+ * on its first `toBeVisible({ timeout: 15_000 })`/`.poll()` at ~16-17s; only the
+ * static-page JSON-LD case, which touches no profile data, passed. Fixing the
+ * environment mismatch itself is out of scope for a T0 e2e-only change (it would
+ * mean asserting this file into `testIgnore` in root `playwright.config.ts`, which
+ * the tier detector does not carve out to T0). Instead this file enforces its own
+ * documented boundary: `uat-pr2840.config.ts` has no `projects` array, so Playwright
+ * runs it as a single anonymous project (`project.name === ''`); every project in
+ * the shared `playwright.config.ts` is named (`chromium`, `firefox`, `setup`, …).
+ * Skipping whenever the project is named makes the file self-enforcing instead of
+ * depending on the shared config to keep excluding it.
  */
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
@@ -166,6 +186,21 @@ async function shot(page: Page, name: string, width: number, height: number) {
   await page.screenshot({ path: path.join(OUT, label), fullPage: false });
   return label;
 }
+
+// Self-enforce the "own config only" boundary documented above and in
+// e2e/agents.md. `uat-pr2840.config.ts` declares no `projects`, so its one
+// implicit project has an empty name; every project declared in the shared
+// `playwright.config.ts` (chromium/firefox/webkit/mobile-*/setup) is named.
+// Running here under a named project means the shared config's glob picked
+// this file up by accident — skip rather than fail against an environment
+// (dev server, real seed-user storageState) this spec was never written for.
+test.beforeEach(async ({}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== '',
+    'uat-pr2840.spec.ts only runs via its own e2e/uat-pr2840.config.ts ' +
+      '(vite preview build, no seeded/shared storageState) — see e2e/agents.md',
+  );
+});
 
 const VIEWPORTS = [
   { w: 1280, h: 800 },
