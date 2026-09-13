@@ -54,3 +54,35 @@ for (const width of [1280, 375]) {
     await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
   });
 }
+
+/**
+ * SCRUM-5024 — a partner link must park the referral code and leave no trace of
+ * it in the address bar. `localStorage` is the canonical store (the visitor may
+ * finish signing up in a later page load, or after an email round trip), and
+ * the parameter is stripped so it cannot ride into a bookmark or a Referer.
+ */
+for (const width of [1280, 375]) {
+  test(`a partner ?ref link is captured and stripped at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/signup?ref=abcd2345&utm_source=partner');
+
+    await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
+
+    // Stripped from the URL, and the unrelated parameter survives.
+    expect(new URL(page.url()).searchParams.get('ref')).toBeNull();
+    expect(new URL(page.url()).searchParams.get('utm_source')).toBe('partner');
+
+    // Parked, normalised to upper case, under the canonical key.
+    const parked = await page.evaluate(() => window.localStorage.getItem('arkova.referral'));
+    expect(parked).not.toBeNull();
+    expect(JSON.parse(parked as string).code).toBe('ABCD2345');
+
+    // A malformed code is discarded rather than parked — it would only ever
+    // come back `unknown_code` from record_org_referral.
+    await page.evaluate(() => window.localStorage.removeItem('arkova.referral'));
+    await page.goto('/signup?ref=not-a-code');
+    await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get('ref')).toBeNull();
+    expect(await page.evaluate(() => window.localStorage.getItem('arkova.referral'))).toBeNull();
+  });
+}

@@ -471,3 +471,11 @@ foreign-private-profile denials. Enrollment screenshots mask QR and secret data.
 At375px the header account button is named by initials, because the full name
 is hidden. MFA sign-out probes use the banner's menu trigger across widths;
 they still click the real Sign out action and require a new-login challenge.
+
+## 2026-09-12 SCRUM-5024 — `signup-entry.spec.ts`: partner `?ref` capture
+
+Two cases added at 1280 px and 375 px: a valid `?ref` is stripped from the URL
+(while an unrelated `utm_source` survives) and parked upper-cased under the
+canonical `localStorage` key `arkova.referral`; a malformed `?ref` is stripped
+AND discarded, because parking it would only ever produce `unknown_code` at
+`record_org_referral`.
