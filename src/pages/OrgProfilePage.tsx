@@ -36,7 +36,7 @@ import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS,
 import { isPlatformAdmin } from '@/lib/platform';
 import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
-import { ManageSubOrgs, type SubOrgCounts } from '@/components/org/ManageSubOrgs';
+import { ManageSubOrgs, translateWorkerError, type SubOrgCounts } from '@/components/org/ManageSubOrgs';
 import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
 import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedBadge';
 import { DriveConnectorCard } from '@/components/integrations/DriveConnectorCard';
@@ -793,9 +793,16 @@ export function OrgProfilePage() {
                       variant="outline"
                       className="text-red-400 border-red-500/20 hover:bg-red-500/10 sm:shrink-0"
                       onClick={async () => {
+                        // Every failure path here used to be silent: the toast
+                        // fired only on `response.ok` and the catch was empty,
+                        // so a 500, a 403 or a dropped connection left the
+                        // button looking inert with the request still pending.
+                        // Same shape as the panel's own handlers — worker codes
+                        // through translateWorkerError, generic fallback for
+                        // anything unrecognised or thrown.
                         try {
                           const { data: { session } } = await supabase.auth.getSession();
-                          if (!session?.access_token) return;
+                          if (!session?.access_token) throw new Error('Not authenticated');
                           const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs/cancel`, {
                             method: 'POST',
                             headers: {
@@ -803,12 +810,19 @@ export function OrgProfilePage() {
                               'Authorization': `Bearer ${session.access_token}`,
                             },
                           });
-                          if (response.ok) {
-                            toast.success(SUB_ORG_LABELS.CANCEL_SUCCESS);
-                            window.location.reload();
+                          if (!response.ok) {
+                            // A 5xx can answer with an HTML error page, so a
+                            // body that will not parse must still reach the
+                            // user as the generic failure rather than as a
+                            // throw indistinguishable from a network drop.
+                            const data = await response.json().catch(() => ({})) as { error?: string };
+                            toast.error(translateWorkerError(data.error, SUB_ORG_LABELS.CANCEL_FAILED));
+                            return;
                           }
+                          toast.success(SUB_ORG_LABELS.CANCEL_SUCCESS);
+                          window.location.reload();
                         } catch {
-                          // Handle silently
+                          toast.error(SUB_ORG_LABELS.CANCEL_FAILED);
                         }
                       }}
                     >

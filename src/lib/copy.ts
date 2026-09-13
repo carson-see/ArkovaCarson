@@ -3089,6 +3089,12 @@ export const SUB_ORG_LABELS = {
   REQUEST_FAILED: 'Failed to send affiliation request.',
   CANCEL_REQUEST: 'Cancel Request',
   CANCEL_SUCCESS: 'Affiliation request cancelled.',
+  // Cancelling used to fail in total silence: the handler toasted only on
+  // `response.ok` and swallowed every other outcome in an empty `catch`, so a
+  // 500, a 403 or a dropped connection left the button looking inert and the
+  // request still pending. Shown whenever the worker's reply is not a
+  // recognised code (`translateWorkerError` maps the ones that are).
+  CANCEL_FAILED: 'Could not cancel your affiliation request. Please try again.',
   NO_RESULTS: 'No verified organizations found.',
 
   // ───────────────────────────────────────────────────────────────────────────

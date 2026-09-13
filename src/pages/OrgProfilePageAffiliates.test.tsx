@@ -36,13 +36,19 @@
  *     PR.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { OrgProfilePage } from './OrgProfilePage';
+import { SUB_ORG_LABELS } from '@/lib/copy';
+import { toast } from 'sonner';
 
-const { mockOrganization, mockSubOrgCounts, mockSupabaseEq, mockOrgNameQueryResult } = vi.hoisted(() => ({
+const { mockOrganization, mockSubOrgCounts, mockSupabaseEq, mockOrgNameQueryResult, mockSession } = vi.hoisted(() => ({
+  // What `supabase.auth.getSession()` resolves to. `null` (signed-out shape) is
+  // the default the navigation tests were written against; the cancel tests
+  // below put a real token in so the cancel handler reaches its fetch.
+  mockSession: { current: null as { access_token: string } | null },
   // Records every .eq(column, value) so the page's own queries can be asserted
   // to be scoped (arkova/no-unscoped-service-test).
   mockSupabaseEq: vi.fn(),
@@ -140,7 +146,7 @@ vi.mock('@/lib/supabase', () => {
   return {
     supabase: {
       from: (table: string) => chain(table),
-      auth: { getSession: async () => ({ data: { session: null } }) },
+      auth: { getSession: async () => ({ data: { session: mockSession.current } }) },
       storage: {
         from: () => ({ upload: vi.fn(), getPublicUrl: () => ({ data: { publicUrl: '' } }) }),
       },
@@ -167,7 +173,13 @@ vi.mock('@/components/org/OrgVerification', () => ({ OrgVerification: () => null
 // Stand-in for the real panel: renders a marker and pushes the counts up the
 // same way the real component does, so the tab badge can be asserted here
 // without this file depending on the panel's fetch behaviour.
-vi.mock('@/components/org/ManageSubOrgs', () => ({
+// Only the component is replaced. The module also exports the real
+// `translateWorkerError`, which the page's cancel handler calls — a factory
+// that omitted it would leave that import `undefined` and quietly turn every
+// mapped worker code into the generic fallback, which is exactly the
+// distinction these tests exist to pin.
+vi.mock('@/components/org/ManageSubOrgs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/org/ManageSubOrgs')>()),
   ManageSubOrgs: ({
     onCountsChange,
   }: {
@@ -218,6 +230,7 @@ describe('OrgProfilePage — Affiliates tab (founder feedback 2026-09-13)', () =
     };
     mockSubOrgCounts.current = { pending: 2, approved: 1 };
     mockOrgNameQueryResult.current = { data: { display_name: 'Global Holdings' }, error: null };
+    mockSession.current = null;
   });
 
   it('offers Affiliates in the org tab row', async () => {
@@ -376,5 +389,158 @@ describe('OrgProfilePage — Affiliates tab (founder feedback 2026-09-13)', () =
       expect(screen.queryByText('Global Holdings')).not.toBeInTheDocument();
       expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * Cancelling a pending affiliation request — pre-existing silent failure.
+ *
+ * The handler behind "Cancel Request" toasted only on `response.ok` and had an
+ * empty `catch { // Handle silently }`. Every other outcome — a 500 from the
+ * worker, a 403 for a non-admin, a 400 because the parent already approved the
+ * request in another tab, a dropped connection — produced no toast, no console
+ * output and no state change. The button looked inert and the request stayed
+ * pending, which is the one thing a user cancelling cannot be allowed to
+ * misread.
+ *
+ * The block was relocated from the Settings tab to the Affiliates tab by the
+ * founder-feedback pass above; the silence predates it and is fixed here. The
+ * shape is the same one the panel's own handlers use: `translateWorkerError`
+ * for the body's `error`, the generic fallback for anything unrecognised or
+ * for a throw, and nothing written to `console.log`.
+ */
+describe('OrgProfilePage — cancelling a pending affiliation request', () => {
+  let reloadSpy: ReturnType<typeof vi.fn>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  function jsonResponse(status: number, body: unknown) {
+    return { ok: status >= 200 && status < 300, status, json: async () => body };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockOrganization.current = {
+      id: 'org-1',
+      display_name: 'Northwind Group',
+      domain: 'northwind.example',
+      verification_status: 'VERIFIED',
+      created_at: '2026-01-01T00:00:00Z',
+      parent_org_id: 'org-parent',
+      parent_approval_status: 'PENDING',
+    };
+    mockSubOrgCounts.current = { pending: 0, approved: 0 };
+    mockOrgNameQueryResult.current = { data: { display_name: 'Global Holdings' }, error: null };
+    // A signed-in admin: without a token the handler returns before its fetch.
+    mockSession.current = { access_token: 'token-abc' };
+
+    reloadSpy = vi.fn();
+    // jsdom's location.reload is not implemented; replace it with a spy
+    // (same approach as src/lib/lazyWithRetry.test.ts).
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: { ...globalThis.location, reload: reloadSpy },
+    });
+
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function clickCancel() {
+    const user = userEvent.setup();
+    renderPage('?tab=affiliates');
+    await user.click(await screen.findByRole('button', { name: 'Cancel Request' }));
+  }
+
+  it('tells the user when the worker refuses the cancellation', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(500, { error: 'Failed to cancel request' }));
+
+    await clickCancel();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/org/sub-orgs/cancel',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.CANCEL_FAILED);
+    expect(toast.success).not.toHaveBeenCalled();
+    // The request is still pending, so the page must not be reloaded into a
+    // view that implies otherwise.
+    expect(reloadSpy).not.toHaveBeenCalled();
+    // No debug channel stands in for user-facing feedback.
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+  });
+
+  it('translates a recognised worker code instead of echoing it', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(403, { error: 'Admin permissions required' }));
+
+    await clickCancel();
+
+    expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.ERROR_NOT_ADMIN);
+    // A mapped code is known copy, not an anomaly worth logging.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the generic copy for an unmapped worker reply, and logs the raw value', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(400, { error: 'No pending affiliation request to cancel' }),
+    );
+
+    await clickCancel();
+
+    expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.CANCEL_FAILED);
+    // translateWorkerError surfaces the unrecognised reply to the console so a
+    // new worker code is visible to engineers without reaching the user.
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[sub-orgs] unmapped worker error', 'No pending affiliation request to cancel');
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+  });
+
+  it('tells the user when the request never reaches the worker', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await clickCancel();
+
+    expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.CANCEL_FAILED);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+  });
+
+  it('tells the user when an error reply carries no JSON body', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON');
+      },
+    });
+
+    await clickCancel();
+
+    expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.CANCEL_FAILED);
+    // What the user reads names the action that failed — an unparseable body
+    // must not degrade into a blank or a bare "Error".
+    expect(String(vi.mocked(toast.error).mock.calls[0]?.[0])).toContain('cancel');
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+  });
+
+  it('still confirms and reloads on success', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { status: 'cancelled' }));
+
+    await clickCancel();
+
+    expect(toast.success).toHaveBeenCalledWith(SUB_ORG_LABELS.CANCEL_SUCCESS);
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(reloadSpy).toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
   });
 });

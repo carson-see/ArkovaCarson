@@ -1,6 +1,28 @@
 # agents.md — pages
 _Last updated: 2026-09-13_
 
+## 2026-09-13 — "Cancel Request" failed in total silence (pre-existing, fixed on top of PR #2907)
+
+The child-side cancel handler in `OrgProfilePage.tsx` toasted only on `response.ok` and ended in
+`catch { // Handle silently }`. A 500 from `POST /api/v1/org/sub-orgs/cancel`, a 403 for a
+non-admin, the 400 the worker returns when the parent already approved the request in another tab,
+and a dropped connection all produced no toast, no console output and no state change: the button
+looked inert while the request stayed pending. The founder-feedback pass in #2907 relocated this
+block from Settings to the Affiliates tab without changing its logic, so the silence predates it.
+
+DO route the reply through `translateWorkerError(data.error, SUB_ORG_LABELS.CANCEL_FAILED)` — the
+same shape `ManageSubOrgs.tsx`'s own handlers use, so a machine code (`sub_org_limit_reached`) or an
+engineer-facing sentence never reaches an operator, and an unmapped reply is `console.error`-logged
+rather than swallowed. DON'T let `await response.json()` be the only body read on an error path: a
+5xx can answer with an HTML error page, and a throw there is indistinguishable from a network drop —
+`.catch(() => ({}))` keeps it on the generic-failure path.
+
+`translateWorkerError` is exported from `@/components/org/ManageSubOrgs`, which
+`OrgProfilePageAffiliates.test.tsx` also `vi.mock`s for the panel component. That factory MUST
+spread `await importOriginal()`; a factory that only returns `ManageSubOrgs` leaves the import
+`undefined`, the handler throws into its catch, and every mapped worker code silently degrades to
+the generic fallback — which is the exact distinction those tests exist to pin.
+
 ## 2026-09-13 CTO review (PR #2907) — `fetchParentOrgName` is RLS-blocked in the common case
 
 Verified, not assumed: `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` gives
