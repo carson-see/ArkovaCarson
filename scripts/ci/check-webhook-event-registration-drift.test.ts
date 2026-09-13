@@ -150,7 +150,32 @@ describe('check-webhook-event-registration-drift — live repository', () => {
     const canonical = readSurface(CANONICAL_SURFACE);
     expect(canonical.unresolved).toBeUndefined();
     expect(canonical.ids).toContain('anchor.superseded');
-    expect(canonical.ids.length).toBeGreaterThanOrEqual(10);
+    expect(canonical.ids.length).toBeGreaterThanOrEqual(12);
+  });
+
+  /**
+   * SCRUM-3982 registered the two attestation events. They are asserted by
+   * name rather than only by count because the count alone would stay green if
+   * one of them were dropped while an unrelated event was added.
+   */
+  it('carries the attestation lifecycle events registered by SCRUM-3982', () => {
+    const canonical = readSurface(CANONICAL_SURFACE);
+    expect(canonical.ids).toContain('attestation.created');
+    expect(canonical.ids).toContain('attestation.revoked');
+
+    // Order matters for the five order-sensitive mirrors: these two are
+    // appended AFTER compliance.document_expiring, contiguously.
+    //
+    // CTO review ruling Z7: expressed as ORDERING, not as `slice(-3)`. The
+    // tail form pinned `attestation.revoked` as the last entry in the registry
+    // forever — so SCRUM-3972, which appends seven `suborg.*` entries after
+    // these, would have turned this green test red on a clean union merge and
+    // sent someone hunting a drift bug that does not exist. What SCRUM-3982
+    // actually asserts is where ITS entries sit relative to the one before
+    // them; later appends are none of its business.
+    const indexOf = (id: string) => canonical.ids.indexOf(id);
+    expect(indexOf('attestation.created')).toBe(indexOf('compliance.document_expiring') + 1);
+    expect(indexOf('attestation.revoked')).toBe(indexOf('attestation.created') + 1);
   });
 
   it.each(MIRROR_SURFACES.map((s) => [s.file, s] as const))(

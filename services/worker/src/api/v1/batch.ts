@@ -224,12 +224,19 @@ async function processAsyncJob(jobId: string, publicIds: string[], orgId?: strin
 
     // WEBHOOK-1: Dispatch job.completed event
     if (orgId) {
+      // SCRUM-3982 (CTO review ruling Z6): `void` with no `.catch()` was
+      // harmless only while `dispatchWebhookEvent` could not reject for this
+      // event. It can now — an unregistered type or a banned field is a
+      // rejection — and an unhandled rejection in a fire-and-forget dispatch
+      // takes the worker down, not the batch job.
       void dispatchWebhookEvent(orgId, 'job.completed', jobId, {
         job_id: jobId,
         status: 'complete',
         total: publicIds.length,
         result_count: results.length,
-      });
+      }).catch((err: unknown) =>
+        logger.warn({ error: err, jobId }, 'job.completed webhook dispatch failed'),
+      );
     }
   } catch (err) {
     logger.error({ error: err, jobId }, 'Async batch job failed');
@@ -252,7 +259,9 @@ async function processAsyncJob(jobId: string, publicIds: string[], orgId?: strin
         total: publicIds.length,
         result_count: 0,
         error: err instanceof Error ? err.message : 'Unknown error',
-      });
+      }).catch((dispatchErr: unknown) =>
+        logger.warn({ error: dispatchErr, jobId }, 'job.completed webhook dispatch failed'),
+      );
     }
   }
 }

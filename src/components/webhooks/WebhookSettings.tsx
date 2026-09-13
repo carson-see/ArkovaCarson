@@ -7,6 +7,7 @@
  */
 
 import { useState, FormEvent } from 'react';
+import { CATALOG_DATA } from './webhookEventLiveness';
 import { Plus, Trash2, AlertCircle, CheckCircle, Loader2, Copy, Check, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -87,17 +88,32 @@ export const AVAILABLE_EVENTS = [
   // credential.issued + credential.status_changed have live, unflagged emit
   // points (SCRUM-1798 Phase 2a / SCRUM-1800). credential.verified is wired
   // but flag-gated dark in prod (ENABLE_CREDENTIAL_VERIFIED_WEBHOOK, default
-  // false) — only IT keeps the "coming soon" suffix. Liveness truth lives in
-  // WebhookEventCatalog.tsx CATALOG_DATA (test-pinned); keep these labels
-  // consistent with it.
+  // false).
+  //
+  // CTO ruling Z5 (2026-09-12): labels carry NO liveness suffix. They used to
+  // spell "(coming soon)" inline, which made this list a second, hand-kept
+  // source of truth that could disagree with the catalog badge — and did
+  // (anchor.batch_secured was badged Active here and in the catalog while no
+  // worker call site dispatched it). The suffix is now derived at render time
+  // from CATALOG_DATA[id].live in ./webhookEventLiveness, the one table both
+  // surfaces read. Test-pinned both ways.
   { id: 'credential.issued', label: 'Credential Issued' },
-  { id: 'credential.verified', label: 'Record Verified (coming soon)' },
+  { id: 'credential.verified', label: 'Record Verified' },
   { id: 'credential.status_changed', label: 'Record Status Changed' },
   // BUG-002: the emit point (POST /cron/check-credential-expiry, gated on
   // ENABLE_EXPIRY_ALERTS) has existed since SCRUM-600, but the event type was
   // never registered in the worker allowlist, so this option could not be
   // offered and every dispatch matched zero endpoints.
   { id: 'compliance.document_expiring', label: 'Document Expiring Soon' },
+  // SCRUM-3982: both were dispatched from services/worker/src/api/v1/attestations.ts
+  // while unregistered, so no endpoint could subscribe and the payload skipped
+  // schema validation entirely (attestation.created was shipping the document
+  // fingerprint, §1.6). `attestation.created` has a reachable producer;
+  // `attestation.revoked` does not yet — its guard reads an org id the
+  // ownership query never selects. Liveness truth lives in
+  // ./webhookEventLiveness CATALOG_DATA.
+  { id: 'attestation.created', label: 'Attestation Created' },
+  { id: 'attestation.revoked', label: 'Attestation Revoked' },
 ];
 
 export function WebhookSettings({
@@ -338,7 +354,11 @@ export function WebhookSettings({
                               }}
                               className="rounded"
                             />
-                            <span className="text-sm">{event.label}</span>
+                            <span className="text-sm">
+                              {event.label}
+                              {!CATALOG_DATA[event.id]?.live &&
+                                WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX}
+                            </span>
                           </label>
                         ))}
                       </div>
