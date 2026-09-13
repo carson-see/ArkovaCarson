@@ -105,6 +105,39 @@ const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
     live: true,
     fields: ['public_id', 'status', 'expires_at', 'days_remaining', 'warning_level', 'credential_type?', 'label?', 'org_public_id?'],
   },
+  // SCRUM-3972: `live: true` for all seven — each has a real emit point in
+  // services/worker/src/api/v1/orgSubOrgs.ts and none is behind a flag
+  // (ENABLE_SUBORG_WEBHOOK_FANOUT gates the separate cross-org fan-out of
+  // anchor.* events, not these). `public_id` is the AFFILIATED organization;
+  // `parent_public_id` is the parent. No UUIDs, no admin email, no domain.
+  'suborg.created': {
+    live: true,
+    fields: ['public_id', 'display_name', 'parent_public_id', 'parent_approval_status', 'occurred_at'],
+  },
+  'suborg.approved': {
+    live: true,
+    fields: ['public_id', 'display_name', 'parent_public_id', 'parent_approval_status', 'occurred_at'],
+  },
+  'suborg.revoked': {
+    live: true,
+    fields: ['public_id', 'display_name', 'parent_public_id', 'parent_approval_status', 'occurred_at'],
+  },
+  'suborg.credits_allocated': {
+    live: true,
+    fields: ['public_id', 'display_name', 'parent_public_id', 'parent_approval_status', 'occurred_at', 'amount', 'parent_balance', 'child_balance', 'note?'],
+  },
+  'suborg.credits_reclaimed': {
+    live: true,
+    fields: ['public_id', 'display_name', 'parent_public_id', 'parent_approval_status', 'occurred_at', 'amount', 'parent_balance', 'child_balance', 'note?'],
+  },
+  'suborg.suspended': {
+    live: true,
+    fields: ['public_id', 'display_name', 'parent_public_id', 'parent_approval_status', 'occurred_at', 'reason?'],
+  },
+  'suborg.offboarded': {
+    live: true,
+    fields: ['public_id', 'display_name', 'parent_public_id', 'parent_approval_status', 'occurred_at', 'reclaimed', 'reason?'],
+  },
 };
 
 /**

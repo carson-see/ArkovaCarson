@@ -33,6 +33,16 @@ export const VALID_EVENTS = [
   // BUG-002: advance 7-day expiry warning. Emitted by the
   // check-credential-expiry cron behind the ENABLE_EXPIRY_ALERTS flag.
   'compliance.document_expiring',
+  // SCRUM-3972 — affiliated-organization lifecycle. Same caveat as
+  // anchor.superseded above: listing them here mirrors the worker allowlist,
+  // it does not by itself give a Zap author a per-event trigger.
+  'suborg.created',
+  'suborg.approved',
+  'suborg.revoked',
+  'suborg.credits_allocated',
+  'suborg.credits_reclaimed',
+  'suborg.suspended',
+  'suborg.offboarded',
 ] as const;
 
 /** Max batch verify size (sync) */

@@ -198,9 +198,12 @@ describe('WebhookSettings', () => {
       await userEvent.click(submitButton);
 
       await waitFor(() => {
+        // SCRUM-3972: `scope` is the third argument. It is passed explicitly
+        // even at its default so the caller never has to infer it.
         expect(defaultProps.onAdd).toHaveBeenCalledWith(
           'https://myapp.com/webhooks',
-          ['anchor.secured', 'anchor.revoked']
+          ['anchor.secured', 'anchor.revoked'],
+          'self'
         );
       });
     });
@@ -572,9 +575,127 @@ describe('WebhookSettings', () => {
         // BUG-002: registered in the worker allowlist so the expiry-alert cron's
         // dispatch can actually reach a subscriber.
         'compliance.document_expiring',
+        // SCRUM-3972: affiliated-organization lifecycle. Appended after
+        // compliance.document_expiring to match the worker declaration order —
+        // check-webhook-event-registration-drift.ts compares this list to
+        // PAYLOAD_SCHEMAS_BY_EVENT_TYPE as an ORDERED sequence.
+        'suborg.created',
+        'suborg.approved',
+        'suborg.revoked',
+        'suborg.credits_allocated',
+        'suborg.credits_reclaimed',
+        'suborg.suspended',
+        'suborg.offboarded',
       ];
       const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
       expect(actualIds).toEqual(EXPECTED_EVENT_IDS);
     });
+  });
+});
+
+// =========================================================================
+// SCRUM-3972 — delivery scope
+// =========================================================================
+
+describe('WebhookSettings delivery scope (SCRUM-3972)', () => {
+  const props = {
+    endpoints: [],
+    onAdd: vi.fn().mockResolvedValue('whsec_scope_test'),
+    onDelete: vi.fn().mockResolvedValue(undefined),
+    onToggle: vi.fn().mockResolvedValue(undefined),
+    loading: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function openDialog() {
+    render(<WebhookSettings {...props} />);
+    await userEvent.click(screen.getByText('Add Endpoint'));
+    await userEvent.type(
+      screen.getByPlaceholderText('https://your-server.com/webhooks'),
+      'https://myapp.com/webhooks',
+    );
+  }
+
+  async function submit() {
+    const buttons = screen.getAllByText('Add Endpoint');
+    await userEvent.click(buttons[buttons.length - 1]);
+  }
+
+  it('offers exactly the two values the database CHECK allows, defaulting to self', async () => {
+    await openDialog();
+
+    const self = screen.getByLabelText(new RegExp(WEBHOOK_LABELS.SCOPE_SELF, 'i'));
+    const descendants = screen.getByLabelText(
+      new RegExp(WEBHOOK_LABELS.SCOPE_SELF_AND_DESCENDANTS, 'i'),
+    );
+    expect(self).toBeChecked();
+    expect(descendants).not.toBeChecked();
+    // A third option would be a value webhook_endpoints_scope_known_values
+    // would reject at write time.
+    expect(screen.getAllByRole('radio', { name: /organization/i })).toHaveLength(2);
+  });
+
+  it('uses copy that never says "sub-org" (CLAUDE.md §1.3)', async () => {
+    await openDialog();
+    for (const label of [
+      WEBHOOK_LABELS.SCOPE_SELF,
+      WEBHOOK_LABELS.SCOPE_SELF_DESC,
+      WEBHOOK_LABELS.SCOPE_SELF_AND_DESCENDANTS,
+      WEBHOOK_LABELS.SCOPE_SELF_AND_DESCENDANTS_DESC,
+      WEBHOOK_LABELS.SCOPE_PENDING_NOTE,
+    ]) {
+      expect(label.toLowerCase()).not.toContain('sub-org');
+      expect(label.toLowerCase()).not.toContain('suborg');
+    }
+  });
+
+  it('passes the chosen scope to onAdd', async () => {
+    await openDialog();
+    await userEvent.click(
+      screen.getByLabelText(new RegExp(WEBHOOK_LABELS.SCOPE_SELF_AND_DESCENDANTS, 'i')),
+    );
+    await submit();
+
+    await waitFor(() => {
+      expect(props.onAdd).toHaveBeenCalledWith(
+        'https://myapp.com/webhooks',
+        ['anchor.secured', 'anchor.revoked'],
+        'self_and_descendants',
+      );
+    });
+  });
+
+  it('tells the admin that affiliated delivery has not been switched on yet', async () => {
+    // Builder contract §7: a dark feature is described in the future tense.
+    // Without this the picker silently promises a feed that does not flow.
+    await openDialog();
+    expect(screen.queryByTestId('webhook-scope-pending-note')).toBeNull();
+
+    await userEvent.click(
+      screen.getByLabelText(new RegExp(WEBHOOK_LABELS.SCOPE_SELF_AND_DESCENDANTS, 'i')),
+    );
+    const note = screen.getByTestId('webhook-scope-pending-note');
+    expect(note).toHaveTextContent(WEBHOOK_LABELS.SCOPE_PENDING_NOTE);
+    expect(note.textContent).toMatch(/will begin/i);
+  });
+
+  it('offers every registered affiliated-organization event, in wire-id form', async () => {
+    await openDialog();
+    for (const id of [
+      'suborg.created',
+      'suborg.approved',
+      'suborg.revoked',
+      'suborg.credits_allocated',
+      'suborg.credits_reclaimed',
+      'suborg.suspended',
+      'suborg.offboarded',
+    ]) {
+      const entry = AVAILABLE_EVENTS.find((e) => e.id === id);
+      expect(entry, `${id} missing from the picker`).toBeDefined();
+      expect(screen.getByLabelText(entry!.label)).toBeInTheDocument();
+    }
   });
 });

@@ -211,6 +211,13 @@ describe('Constants', () => {
       'credential.verified',
       'credential.status_changed',
       'compliance.document_expiring',
+      'suborg.created',
+      'suborg.approved',
+      'suborg.revoked',
+      'suborg.credits_allocated',
+      'suborg.credits_reclaimed',
+      'suborg.suspended',
+      'suborg.offboarded',
     ]);
   });
 });

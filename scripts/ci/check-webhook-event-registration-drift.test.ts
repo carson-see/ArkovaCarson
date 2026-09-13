@@ -172,4 +172,51 @@ describe('check-webhook-event-registration-drift — live repository', () => {
     const drift = collectRegistrationDrift(readAllSurfaces());
     expect(drift).toEqual([]);
   });
+
+  /**
+   * SCRUM-3972. The seven affiliated-organization events are the first family
+   * whose ids are not `anchor.*` / `credential.*` / `compliance.*`, and one of
+   * them (`suborg.credits_allocated`) is the first id with TWO underscores in
+   * its event segment. Both id regexes — `QUOTED_ID_RE` for TS surfaces and
+   * `MD_TABLE_ROW_ID_RE` for the docs table — must actually match them, or the
+   * gate would pass by seeing nothing rather than by seeing agreement.
+   */
+  it('parses the suborg.* family out of every surface, including the docs table', () => {
+    const SUBORG_IDS = [
+      'suborg.created',
+      'suborg.approved',
+      'suborg.revoked',
+      'suborg.credits_allocated',
+      'suborg.credits_reclaimed',
+      'suborg.suspended',
+      'suborg.offboarded',
+    ];
+    const canonical = readSurface(CANONICAL_SURFACE);
+    expect(canonical.ids).toEqual(expect.arrayContaining(SUBORG_IDS));
+
+    for (const spec of MIRROR_SURFACES) {
+      const surface = readSurface(spec);
+      expect(surface.ids, spec.file).toEqual(expect.arrayContaining(SUBORG_IDS));
+    }
+  });
+
+  it('keeps the suborg.* block contiguous and last in the canonical declaration', () => {
+    // Declared land order is SCRUM-3982 -> SCRUM-3972: 3982 appends
+    // attestation.created / attestation.revoked at the same point. Whoever
+    // merges second re-orders both the map and the six ordered mirrors, and
+    // this assertion is what makes a careless union resolution fail loudly
+    // instead of producing a mirror that silently disagrees on order.
+    const ids = readSurface(CANONICAL_SURFACE).ids;
+    const first = ids.indexOf('suborg.created');
+    expect(first).toBeGreaterThan(-1);
+    expect(ids.slice(first)).toEqual([
+      'suborg.created',
+      'suborg.approved',
+      'suborg.revoked',
+      'suborg.credits_allocated',
+      'suborg.credits_reclaimed',
+      'suborg.suspended',
+      'suborg.offboarded',
+    ]);
+  });
 });
