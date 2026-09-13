@@ -14,6 +14,17 @@
 
 ## Now
 
+### 2026-09-13T07:05Z → 07:25Z — CTO release session (Claude Fable): B1 batch merged, Train B3 sealed then re-cut as B3b after same-file drift, #2846 trails
+
+**Read this block first.** The 04:10Z→06:10Z and 02:29Z→03:10Z blocks below stay accurate except where this one supersedes them.
+
+- **Merged 07:05–07:08Z as one Mergify batch:** #2838 (`3a7abd268`), #2835 (`834653ace`), #2836 (`32ca84a64`). Prod deploy-worker runs are serialised by concurrency (3a7abd268 in progress, 834653ace cancelled as superseded, 32ca84a64 pending) — verify `/health` git_sha = `32ca84a64` before closing their Jira tickets. #2839 (`255a76a7d`) and #2840 (`ec6fd54ab`, e2e-only fix: its UAT spec is scoped out of the shared Playwright suite) are ready on the standard T1 path; no file overlap with anything else.
+- **Train B3 sealed at 06:56:21Z** (41/41 on rev `…-00014-car`, rollback rehearsed 07:02Z, evidence on main `9cba210f5`) — **and immediately invalidated for merge**: the B1 batch landed after this train was cut, and the gate's FD-GATE-3 rule refuses same-file T2 drift with no note path. Verified overlap: #2841 ⊃ #2835's keys.ts/docs.ts/…; #2843 ⊃ #2836's delivery.ts/webhooks.ts; #2845/#2846 docs.ts; #2842 config.ts (from #2837). #2842's rig-2 re-soak (06:05Z→07:10Z, 13/13) was stopped for the same reason.
+- **Train B3b = main `9cba210f5` + #2841 `03acb5c48` + #2842 `f1a16ac32` + #2843 `67b9115fe` + #2845 `d876ec413`**, integration head **`143d58d68caf372c237f6fe52da1af7941d59a60`** (`rc/train-b3b-2026-09-13`), image `train-b3b-143d58d6` = `sha256:c3ba5b6f…`, rig 1 rev **`arkova-worker-cto-train-b-0912-staging-00018-ruw`** (deploy-log id 5, lane `train-5`), rig-1 preflight re-run 07:10:47Z `clean_mirror`, precheck + cycle-1 gate **174/174**. **Window start 2026-09-13T07:17:41Z → floor 11:17:42Z**; supervisor PID 82061; evidence `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b3b/window1/`; manifest `docs/staging/rc-manifests/rc-train-b3b-2026-09-13.json` (main `0e9b2505a`). The four are DRAFT until the seal and must merge as ONE batch; nothing else touching worker files may merge into main during the window (#2825 at 11:41Z has no overlap; #2832/#2831 at 14:07Z overlap only on ci.yml/copy.ts, T0/T1).
+- **#2846** conflicts with #2841/#2845 on `services/worker/src/api/v1/docs.ts`; it is draft and trails B3b: merge main after B3b lands, resolve docs.ts, re-soak solo on rig 2 (kept warm, `pdgfbbnrqhojiihtxycd`, currently idle on rev 00008-quh), then merge. Cutover steps unchanged: #2845 grandfather grant before its deploy; #2842 Secret Manager entries + IAM grant before its deploy.
+- **Process rule learned (recorded in memory + `docs/staging/cto-train-b-0912/CLOSEOUT.md` to follow):** compute `comm -12 <(git diff --name-only merge-base..head) <(git diff --name-only evidence-base..origin/main)` for every open soaked PR before sealing; land PRs that share files as one train and one Mergify batch; never seal a later train while an earlier batch is still queued.
+
+
 ### 2026-09-13T04:10Z → 06:10Z — CTO release session (Claude Fable): #2834 + #2837 merged and live, Train B1 sealed and ready, #2842 re-soaking, gate fixes landed
 
 **Read this block first.** The 02:29Z→03:10Z block below stays accurate except where this one supersedes it.
