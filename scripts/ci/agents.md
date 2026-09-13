@@ -4,6 +4,19 @@ _Last updated: 2026-09-07 (ninth closure: approver-class fields now reject a LEA
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
 _Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditions + new do-not-merge body/label parity lint; previously: evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
 
+## 2026-09-12 — soak floors 4h/24h + post-soak T0 delta (CTO decision)
+
+`TIER_SPECS.T2.soakHours` 12→4, `T3` 48→24 (Carson's cost-effectiveness directive). **Duration stopped being the primary evidence; targeted changed-behaviour coverage is.** No soak here ever surfaced a defect after the first full cycle of the changed behaviour — the windows that died, died from observers and environment (Cloud Run min-instance recycles, `$TMPDIR` sweeps, control-plane 5xx, base refreshes; HANDOFF 2026-09-08/09-09), not the code under test. The targeted fields, `Rollback rehearsed:`, and T3's trigger/flush/isolation set are unchanged and still mandatory; 24h still contains exactly one 03:00 UTC daily flush, and a FORCED trigger firing counts when the field cites the log line.
+
+**New field `Post-soak T0 delta: <current head SHA>`** (`headShaEvidenceResult`, shared by the T1/T2/T3 standard, frontend-T2 and unsoakable-T2 paths). Before it, a post-soak commit touching only `e2e/**` or `docs/**` — files `isT0OnlyFile` already calls T0 *because they cannot reach prod runtime* — invalidated exact-head evidence and forced a re-soak of code the soak already covered. Opt-in per PR; every condition fails CLOSED, keeping the original staleness error:
+
+- the field must name the CURRENT head (not some other commit);
+- the soaked SHA must be an ANCESTOR of it — `null` ancestry rejects, so a rebase/force-push cannot pass;
+- the delta list must be computable and non-empty (`changedFilesProvider`, default `changedFilesBetween`);
+- every file must satisfy `isT0OnlyFile` with DEFAULT options — no `diffProvider` carve-outs, which judge T0-ness from a diff against the PR base rather than the post-soak delta. The first non-T0 file is named in the error.
+
+RC-manifest head binding (`validateHeadBindingMode`) is deliberately untouched.
+
 ## 2026-09-05 — a claim rule that could not fire, and a sixth surface nobody checked
 
 **`CLAIM_RULES[retrieval-mechanism-claim]` was DEAD.** Its `tools` still read
