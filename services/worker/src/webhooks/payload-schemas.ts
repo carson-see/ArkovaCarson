@@ -326,6 +326,13 @@ export const ComplianceDocumentExpiringPayloadSchema = z
  * 'APPROVED' or 'REVOKED' — so the payload can never assert a status the
  * database would refuse to store.
  */
+/**
+ * Longest note the offboard route can compose: the `'offboarding: '` prefix
+ * (13 chars) plus `OffboardSchema.reason`'s own `max(500)`. Derived, not
+ * guessed — `payload-schemas.test.ts` pins the arithmetic.
+ */
+export const SUBORG_NOTE_MAX = 513;
+
 const SUBORG_BASE_FIELDS = {
   /** The affiliated (child) organization's public slug. Also the resource key. */
   public_id: z.string().min(1).max(64),
@@ -355,8 +362,17 @@ const SUBORG_CREDIT_FIELDS = {
   amount: z.number().int(),
   parent_balance: z.number().int().nonnegative(),
   child_balance: z.number().int().nonnegative(),
-  /** Operator note recorded with the movement. Free text, bounded. */
-  note: z.string().max(500).nullable().optional(),
+  /**
+   * Operator note recorded with the movement. Free text, bounded.
+   *
+   * CTO review 2026-09-12: the bound is `SUBORG_NOTE_MAX`, not 500. The
+   * offboard route accepts `reason` at up to 500 characters and composes the
+   * note as `'offboarding: ' + reason` — 13 characters longer. At 500 the
+   * composed note is 513, which a 500 bound rejected; since
+   * `dispatchWebhookEvent` THROWS on schema rejection, a maximal-length reason
+   * silently cost the whole `suborg.credits_reclaimed` event.
+   */
+  note: z.string().max(SUBORG_NOTE_MAX).nullable().optional(),
 } as const;
 
 export const SubOrgCreditsAllocatedPayloadSchema = z

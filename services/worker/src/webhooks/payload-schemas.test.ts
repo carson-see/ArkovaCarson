@@ -26,6 +26,7 @@ import {
   ComplianceDocumentExpiringPayloadSchema,
   PAYLOAD_SCHEMAS_BY_EVENT_TYPE,
   validateWebhookPayload,
+  SUBORG_NOTE_MAX,
   WebhookPayloadValidationError,
 } from './payload-schemas.js';
 
@@ -912,6 +913,60 @@ describe('suborg.* payload schemas (SCRUM-3972)', () => {
     expect(validateWebhookPayload('suborg.suspended', BASE).ok).toBe(true);
     expect(validateWebhookPayload('suborg.suspended', { ...BASE, reason: 'x'.repeat(501) }).ok).toBe(false);
     expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, note: null }).ok).toBe(true);
-    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, note: 'x'.repeat(501) }).ok).toBe(false);
+    // `note` is bounded by SUBORG_NOTE_MAX (513), not 500 — see the bound
+    // reconciliation suite at the bottom of this file. `reason` above stays at
+    // 500 because it is passed through uncomposed.
+    expect(
+      validateWebhookPayload('suborg.credits_allocated', {
+        ...CREDIT,
+        note: 'x'.repeat(SUBORG_NOTE_MAX + 1),
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateWebhookPayload('suborg.credits_allocated', {
+        ...CREDIT,
+        note: 'x'.repeat(SUBORG_NOTE_MAX),
+      }).ok,
+    ).toBe(true);
+  });
+});
+
+/**
+ * CTO review 2026-09-12 — bound reconciliation between the REST contract and
+ * the webhook contract.
+ *
+ * `POST /org/suborgs/offboard` accepts `reason: z.string().trim().max(500)` and
+ * the handler emits `suborg.credits_reclaimed` with
+ * `note = 'offboarding: ' + reason` — 13 characters longer. At the maximum
+ * accepted reason the composed note is 513 characters, which the payload
+ * schema rejected, and because `dispatchWebhookEvent` THROWS on schema
+ * rejection the whole event was lost for an entirely valid request.
+ */
+describe('SCRUM-3972 — suborg note bound vs the offboard reason bound', () => {
+  const base = {
+    public_id: 'ORG-CHILD-0001',
+    display_name: 'Affiliate Ltd',
+    parent_public_id: 'ORG-PARENT-0001',
+    parent_approval_status: 'APPROVED' as const,
+    occurred_at: '2026-09-12T10:00:00.000Z',
+    amount: -5,
+    parent_balance: 105,
+    child_balance: 0,
+  };
+
+  it('accepts the longest note the offboard route can compose', () => {
+    const maxReason = 'r'.repeat(500);
+    const note = `offboarding: ${maxReason}`;
+    expect(note.length).toBe(513);
+    const result = validateWebhookPayload('suborg.credits_reclaimed', { ...base, note });
+    expect(result.ok).toBe(true);
+  });
+
+  it('still refuses a note beyond that bound', () => {
+    const result = validateWebhookPayload('suborg.credits_reclaimed', {
+      ...base,
+      note: 'x'.repeat(SUBORG_NOTE_MAX + 1),
+    });
+    expect(result.ok).toBe(false);
   });
 });
