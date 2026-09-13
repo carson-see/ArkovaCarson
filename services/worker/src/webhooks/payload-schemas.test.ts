@@ -775,3 +775,143 @@ describe('ComplianceDocumentExpiringPayloadSchema (BUG-002)', () => {
     if (!leaked.ok) expect(leaked.error.eventType).toBe('compliance.document_expiring');
   });
 });
+
+// ─── SCRUM-3972: affiliated-organization lifecycle events ───────────────────
+
+describe('suborg.* payload schemas (SCRUM-3972)', () => {
+  const BASE = {
+    public_id: 'ORG-CHILD-0001',
+    display_name: 'Nairobi Legal Aid',
+    parent_public_id: 'ORG-PARENT-0001',
+    parent_approval_status: 'APPROVED' as const,
+    occurred_at: '2026-09-12T10:00:00.000Z',
+  };
+
+  const CREDIT = {
+    ...BASE,
+    amount: 100,
+    parent_balance: 900,
+    child_balance: 100,
+    note: 'Q3 allocation',
+  };
+
+  /**
+   * The whole registered set, so a new suborg event added without its own
+   * banned-field cases still gets swept by the shared assertions below.
+   */
+  const SUBORG_CASES: ReadonlyArray<[string, Record<string, unknown>]> = [
+    ['suborg.created', BASE],
+    ['suborg.approved', BASE],
+    ['suborg.revoked', { ...BASE, parent_approval_status: 'REVOKED' }],
+    ['suborg.credits_allocated', CREDIT],
+    ['suborg.credits_reclaimed', { ...CREDIT, amount: -100, child_balance: 0, parent_balance: 1000 }],
+    ['suborg.suspended', { ...BASE, reason: 'contract ended' }],
+    ['suborg.offboarded', { ...BASE, reclaimed: 100, reason: 'contract ended' }],
+  ];
+
+  it('registers all seven, so each is subscribable and none bypasses validation', () => {
+    const registered = Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE);
+    for (const [eventType] of SUBORG_CASES) {
+      expect(registered).toContain(eventType);
+    }
+    expect(SUBORG_CASES).toHaveLength(7);
+  });
+
+  it.each(SUBORG_CASES)('accepts a valid %s payload', (eventType, payload) => {
+    const result = validateWebhookPayload(eventType, payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
+  });
+
+  // CLAUDE.md §6 (internal UUIDs) + §1.6 (fingerprint). `parent_org_id` is the
+  // one this family would most plausibly grow by accident, since it is the
+  // field name the REST surface uses internally.
+  it.each(SUBORG_CASES)(
+    'rejects banned identifier fields on %s',
+    (eventType, payload) => {
+      for (const banned of [
+        'anchor_id',
+        'fingerprint',
+        'user_id',
+        'org_id',
+        'parent_org_id',
+        'child_org_id',
+      ]) {
+        const result = validateWebhookPayload(eventType, {
+          ...payload,
+          [banned]: '550e8400-e29b-41d4-a716-446655440000',
+        });
+        expect(result.ok, `${eventType} accepted banned field ${banned}`).toBe(false);
+      }
+    },
+  );
+
+  it.each(SUBORG_CASES)('rejects an unknown key on %s (strict mode)', (eventType, payload) => {
+    expect(validateWebhookPayload(eventType, { ...payload, admin_email: 'a@b.test' }).ok).toBe(false);
+    expect(validateWebhookPayload(eventType, { ...payload, domain: 'example.test' }).ok).toBe(false);
+  });
+
+  it.each(SUBORG_CASES)('rejects a non-ISO occurred_at on %s', (eventType, payload) => {
+    expect(validateWebhookPayload(eventType, { ...payload, occurred_at: '2026-09-12' }).ok).toBe(false);
+    expect(validateWebhookPayload(eventType, { ...payload, occurred_at: 1757671200000 }).ok).toBe(false);
+  });
+
+  it.each(SUBORG_CASES)('requires both public identifiers on %s', (eventType, payload) => {
+    const { public_id: _p, ...noChild } = payload;
+    expect(validateWebhookPayload(eventType, noChild).ok).toBe(false);
+    const { parent_public_id: _q, ...noParent } = payload;
+    expect(validateWebhookPayload(eventType, noParent).ok).toBe(false);
+  });
+
+  it.each(SUBORG_CASES)(
+    'mirrors organizations_parent_approval_status_check on %s',
+    (eventType, payload) => {
+      // CHECK (parent_approval_status IS NULL OR parent_approval_status = ANY
+      //        (ARRAY['PENDING','APPROVED','REVOKED']))
+      for (const status of ['PENDING', 'APPROVED', 'REVOKED', null]) {
+        expect(
+          validateWebhookPayload(eventType, { ...payload, parent_approval_status: status }).ok,
+          `${eventType} rejected DB-legal status ${String(status)}`,
+        ).toBe(true);
+      }
+      // A value the database would refuse must not be expressible on the wire.
+      expect(
+        validateWebhookPayload(eventType, { ...payload, parent_approval_status: 'SUSPENDED' }).ok,
+      ).toBe(false);
+      // ...and the field is required, not merely nullable: omitting it would
+      // let a consumer read "unknown" as "not affiliated".
+      const { parent_approval_status: _s, ...omitted } = payload;
+      expect(validateWebhookPayload(eventType, omitted).ok).toBe(false);
+    },
+  );
+
+  it('pins the credit sign convention in the schema, not just the emit site', () => {
+    // An "allocation" that moves nothing or moves credits backwards is a
+    // reclaim mislabelled — a consumer reconciling balances would be wrong.
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, amount: 0 }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, amount: -1 }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_reclaimed', { ...CREDIT, amount: 0 }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_reclaimed', { ...CREDIT, amount: 5 }).ok).toBe(false);
+  });
+
+  it('requires integer, non-negative balances', () => {
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, parent_balance: -1 }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, child_balance: 1.5 }).ok).toBe(false);
+  });
+
+  it('treats an offboarding that reclaimed nothing as a real value, not a missing one', () => {
+    expect(validateWebhookPayload('suborg.offboarded', { ...BASE, reclaimed: 0 }).ok).toBe(true);
+    expect(validateWebhookPayload('suborg.offboarded', { ...BASE, reclaimed: -1 }).ok).toBe(false);
+    // `reclaimed` is required — an offboarding that does not say what moved is
+    // not reconcilable.
+    expect(validateWebhookPayload('suborg.offboarded', BASE).ok).toBe(false);
+  });
+
+  it('allows null/absent optional prose and bounds its length', () => {
+    expect(validateWebhookPayload('suborg.suspended', { ...BASE, reason: null }).ok).toBe(true);
+    expect(validateWebhookPayload('suborg.suspended', BASE).ok).toBe(true);
+    expect(validateWebhookPayload('suborg.suspended', { ...BASE, reason: 'x'.repeat(501) }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, note: null }).ok).toBe(true);
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, note: 'x'.repeat(501) }).ok).toBe(false);
+  });
+});
