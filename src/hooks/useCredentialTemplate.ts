@@ -79,7 +79,15 @@ export function useCredentialTemplate(
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!credentialType || !orgId) {
+    // SCRUM-5105: the public/RPC branch still requires both credentialType
+    // AND orgId (get_public_template's contract is unchanged here — no
+    // request from this ticket touches it). The authenticated branch only
+    // requires credentialType now: an individual user with no org (orgId
+    // null) can still resolve a PLATFORM-level template (org_id IS NULL),
+    // which was previously unreachable because this early return cleared
+    // the template before any query ran.
+    const needsOrgId = !credentialType || (options?.public && !orgId);
+    if (needsOrgId) {
       // Clear stale template when inputs are missing — done in async
       // wrapper to satisfy react-hooks/set-state-in-effect lint rule
       async function clear() { setTemplate(null); }
@@ -89,8 +97,35 @@ export function useCredentialTemplate(
 
     let cancelled = false;
     // Capture narrowed values for the async function
-    const ct = credentialType;
+    const ct = credentialType!;
     const oid = orgId;
+
+    // Nested closure (not a module-level helper) so it reads the LIVE
+    // `cancelled` flag via closure, not a boolean value captured at call
+    // time — the cleanup function below reassigns `cancelled` after this
+    // may already be mid-await.
+    async function fetchPlatformTemplate() {
+      const { data: platformData, error: platformError } = await supabase
+        .from('credential_templates')
+        .select('name, default_metadata')
+        .is('org_id', null)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .eq('credential_type', ct as any)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+
+      if (platformError) {
+        if (!cancelled) setError(platformError.message);
+      } else if (platformData && !cancelled) {
+        setTemplate({
+          name: platformData.name,
+          fields: parseTemplateFields(platformData.default_metadata),
+        });
+      } else if (!cancelled) {
+        setTemplate(null);
+      }
+    }
 
     async function fetchTemplate() {
       setLoading(true);
@@ -122,8 +157,8 @@ export function useCredentialTemplate(
           } else if (!cancelled) {
             setTemplate(null);
           }
-        } else {
-          // Authenticated context: direct query, org-scoped first.
+        } else if (oid) {
+          // Authenticated context, org known: direct query, org-scoped first.
           const { data, error: queryError } = await supabase
             .from('credential_templates')
             .select('name, default_metadata')
@@ -156,26 +191,11 @@ export function useCredentialTemplate(
           // template exists (e.g. credential_type='PUBLICATION',
           // org_id IS NULL) — this was previously unreachable, since the hook
           // only ever queried `.eq('org_id', oid)`.
-          const { data: platformData, error: platformError } = await supabase
-            .from('credential_templates')
-            .select('name, default_metadata')
-            .is('org_id', null)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .eq('credential_type', ct as any)
-            .eq('is_active', true)
-            .limit(1)
-            .maybeSingle();
-
-          if (platformError) {
-            if (!cancelled) setError(platformError.message);
-          } else if (platformData && !cancelled) {
-            setTemplate({
-              name: platformData.name,
-              fields: parseTemplateFields(platformData.default_metadata),
-            });
-          } else if (!cancelled) {
-            setTemplate(null);
-          }
+          await fetchPlatformTemplate();
+        } else {
+          // Authenticated context, NO org (individual user): there is no
+          // org-scoped row to try — go straight to the platform template.
+          await fetchPlatformTemplate();
         }
       } catch (err) {
         if (!cancelled) {

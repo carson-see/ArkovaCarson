@@ -5,6 +5,9 @@
 import { describe, it, expect } from 'vitest';
 import { projectPublicRecordToTemplate, formatAuthorsDisplay } from './publicRecordTemplate';
 import openalexFixture from './__fixtures__/public-record-openalex.json';
+import registrySourceFixtures from './__fixtures__/public-record-registry-sources.json';
+
+const FORBIDDEN_VALUE_PATTERN = /555-0100|@example-charity\.org\.au|123 Main St|1 University Way|10 Charity Rd|1 Health Way|Rua Example 100|Jane Officer|Jane Licensee/;
 
 const FORBIDDEN_KEY_PATTERN = /email|phone|ssn|dob|address/i;
 
@@ -350,17 +353,15 @@ describe('projectPublicRecordToTemplate — openstates', () => {
 });
 
 describe('projectPublicRecordToTemplate — unknown/unsupported sources', () => {
+  // npi/finra/calbar/acnc/dapip/uspto/courtlistener/edgar_form_adv/
+  // sec_adv_bulk/sec_iapd/acra_sg/cnpj_br/australia_law/australia_caselaw/
+  // kenya_law/kenya_caselaw/moh_sg are now implemented — see the dedicated
+  // "registry sources" describe block below. Only genuinely unimplemented
+  // sources belong in this list.
   it.each([
-    'npi',
-    'finra',
-    'calbar',
-    'acnc',
-    'dapip',
-    'uspto',
-    'courtlistener',
     'sam_gov',
     'something_totally_unknown',
-  ])('returns {} for %s (deferred pending PII review, or genuinely unknown)', (source) => {
+  ])('returns {} for %s (zero prod rows at time of writing, or genuinely unknown)', (source) => {
     const result = projectPublicRecordToTemplate(source, {
       title: 'Some Title',
       metadata: { name: 'Should never leak', ssn: '000-00-0000' },
@@ -444,5 +445,196 @@ describe('formatAuthorsDisplay', () => {
 
   it('ignores orcid in the display string', () => {
     expect(formatAuthorsDisplay([{ name: 'Jane', orcid: '0000-0001-2345-6789' }])).toBe('Jane');
+  });
+});
+
+// SCRUM-5105 follow-up (2026-09-13): registry / person-adjacent and
+// document/legal sources beyond the original four. See the ALLOW_LIST table
+// at the top of publicRecordTemplate.ts for the exact source -> field
+// mapping this section pins.
+describe('projectPublicRecordToTemplate — registry sources', () => {
+  it('npi: registry-level identifiers only, never provider_name/address/phone/gender/authorized_official', () => {
+    const result = projectPublicRecordToTemplate('npi', registrySourceFixtures.npi);
+    expect(result.licenseNumber).toBe('1234567890');
+    expect(result.issuerName).toBe('NPPES NPI Registry (CMS)');
+    expect(result.issuedDate).toBe('2010-04-01');
+    expect(result.fieldOfStudy).toBe('Family Medicine');
+    expect(JSON.stringify(result)).not.toMatch(/Example Health Clinic|Sacramento|95814|123 Main St|916-555|Jane Officer|\bF\b/);
+    expect(Object.keys(result)).not.toContain('practice_address');
+    expect(Object.keys(result)).not.toContain('gender');
+    expect(Object.keys(result)).not.toContain('authorized_official');
+  });
+
+  it('finra: CRD + firm + registrations, never the broker\'s own name', () => {
+    const result = projectPublicRecordToTemplate('finra', registrySourceFixtures.finra);
+    expect(result.licenseNumber).toBe('987654');
+    expect(result.issuerName).toBe('FINRA BrokerCheck');
+    expect(JSON.stringify(result)).not.toMatch(/Jane Broker|New York/);
+    expect(Object.keys(result)).not.toContain('full_name');
+    expect(Object.keys(result)).not.toContain('first_name');
+    expect(Object.keys(result)).not.toContain('current_location');
+  });
+
+  it('calbar: bar number + status, never the attorney\'s name/city/discipline_history', () => {
+    const result = projectPublicRecordToTemplate('calbar', registrySourceFixtures.calbar);
+    expect(result.licenseNumber).toBe('123456');
+    expect(result.issuerName).toBe('State Bar of California');
+    expect(result.issuedDate).toBe('2005-12-01');
+    expect(JSON.stringify(result)).not.toMatch(/Jane Attorney|San Francisco/);
+    expect(Object.keys(result)).not.toContain('discipline_history');
+    expect(Object.keys(result)).not.toContain('city');
+  });
+
+  it('dapip: OPE id + institution type, never the address', () => {
+    const result = projectPublicRecordToTemplate('dapip', registrySourceFixtures.dapip);
+    expect(result.licenseNumber).toBe('00112200');
+    expect(result.issuerName).toBe('Example University');
+    expect(JSON.stringify(result)).not.toMatch(/1 University Way/);
+    expect(Object.keys(result)).not.toContain('address');
+  });
+
+  it('acnc: ABN + registration date, never the address (not even city/postcode)', () => {
+    const result = projectPublicRecordToTemplate('acnc', registrySourceFixtures.acnc);
+    expect(result.licenseNumber).toBe('12345678901');
+    expect(result.issuerName).toBe('Australian Charities and Not-for-profits Commission');
+    expect(result.issuedDate).toBe('2014-03-01');
+    expect(JSON.stringify(result)).not.toMatch(/10 Charity Rd|Sydney NSW|2000/);
+    expect(Object.keys(result)).not.toContain('address');
+    expect(Object.keys(result)).not.toContain('postcode');
+  });
+
+  it('uspto: patent id/type/date + title, never the abstract, no fabricated authors', () => {
+    const result = projectPublicRecordToTemplate('uspto', registrySourceFixtures.uspto);
+    expect(result.licenseNumber).toBe('11223344');
+    expect(result.issuedDate).toBe('2023-05-16');
+    expect(result.fieldOfStudy).toBe('Method and System for Example Widget');
+    expect(result.authors).toBeUndefined();
+    expect(Object.keys(result)).not.toContain('abstract');
+  });
+
+  it('courtlistener: court + docket + case title, never judges or the syllabus', () => {
+    const result = projectPublicRecordToTemplate('courtlistener', registrySourceFixtures.courtlistener);
+    expect(result.issuerName).toBe('Court of Appeals for the Ninth Circuit');
+    expect(result.licenseNumber).toBe('554433');
+    expect(result.issuedDate).toBe('2021-09-10');
+    expect(result.fieldOfStudy).toBe('Example v. Sample');
+    expect(JSON.stringify(result)).not.toMatch(/Judge A|Judge B/);
+    expect(Object.keys(result)).not.toContain('judges');
+    expect(Object.keys(result)).not.toContain('syllabus');
+  });
+
+  it('edgar_form_adv: CRD + registry, never the organization city', () => {
+    const result = projectPublicRecordToTemplate('edgar_form_adv', registrySourceFixtures.edgar_form_adv);
+    expect(result.licenseNumber).toBe('556677');
+    expect(result.issuerName).toBe('SEC EDGAR Form ADV');
+    expect(result.issuedDate).toBe('2026-03-01');
+    expect(JSON.stringify(result)).not.toMatch(/Boston/);
+    expect(Object.keys(result)).not.toContain('city');
+  });
+
+  it('sec_adv_bulk aliases edgar_form_adv\'s projection (legacy prod source name, same fetcher shape)', () => {
+    const result = projectPublicRecordToTemplate('sec_adv_bulk', registrySourceFixtures.edgar_form_adv);
+    expect(result.licenseNumber).toBe('556677');
+    expect(result.issuerName).toBe('SEC EDGAR Form ADV');
+  });
+
+  it('sec_iapd: CRD + firm-level assets/accounts, no address or person fields', () => {
+    const result = projectPublicRecordToTemplate('sec_iapd', registrySourceFixtures.sec_iapd);
+    expect(result.licenseNumber).toBe('889900');
+    expect(result.issuerName).toBe('SEC Investment Adviser Public Disclosure');
+    expect(result.registrationStatus).toBe('Approved');
+    expect(result.totalAssets).toBe(500000000);
+    expect(result.numberOfAccounts).toBe(1200);
+    expect(result.licenseType).toBe('investment_adviser');
+  });
+
+  it('acra_sg: UEN + entity type, never the entity name', () => {
+    const result = projectPublicRecordToTemplate('acra_sg', registrySourceFixtures.acra_sg);
+    expect(result.licenseNumber).toBe('201234567A');
+    expect(result.issuerName).toBe('Accounting and Corporate Regulatory Authority (ACRA)');
+    expect(result.issuedDate).toBe('2020-01-15');
+    expect(JSON.stringify(result)).not.toMatch(/Example Pte Ltd/);
+    expect(Object.keys(result)).not.toContain('entity_name');
+  });
+
+  it('cnpj_br: CNPJ + registry, never the address', () => {
+    const result = projectPublicRecordToTemplate('cnpj_br', registrySourceFixtures.cnpj_br);
+    expect(result.licenseNumber).toBe('12.345.678/0001-95');
+    expect(result.issuerName).toBe('Receita Federal (CNPJ)');
+    expect(JSON.stringify(result)).not.toMatch(/Rua Example 100/);
+    expect(Object.keys(result)).not.toContain('address');
+    expect(Object.keys(result)).not.toContain('municipio');
+    expect(Object.keys(result)).not.toContain('cep');
+  });
+
+  it('australia_law: statute section id/title, jurisdiction as issuer', () => {
+    const result = projectPublicRecordToTemplate('australia_law', registrySourceFixtures.australia_law);
+    expect(result.licenseNumber).toBe('AU-OAIC-NDB-06');
+    expect(result.issuerName).toBe('Australia');
+    expect(result.fieldOfStudy).toBe('Privacy Act s13G/80W — Civil penalties');
+  });
+
+  it('kenya_law: statute section id/title, jurisdiction as issuer', () => {
+    const result = projectPublicRecordToTemplate('kenya_law', registrySourceFixtures.kenya_law);
+    expect(result.licenseNumber).toBe('KE-EA-2007-S47');
+    expect(result.issuerName).toBe('Kenya');
+    expect(result.fieldOfStudy).toBe('Unfair termination');
+  });
+
+  it('australia_caselaw: court + case title, never the summary', () => {
+    const result = projectPublicRecordToTemplate('australia_caselaw', registrySourceFixtures.australia_caselaw);
+    expect(result.issuerName).toBe('Federal Court of Australia');
+    expect(result.fieldOfStudy).toBe('Example Pty Ltd v OAIC');
+    expect(Object.keys(result)).not.toContain('summary');
+  });
+
+  it('kenya_caselaw: court + case title, never the summary', () => {
+    const result = projectPublicRecordToTemplate('kenya_caselaw', registrySourceFixtures.kenya_caselaw);
+    expect(result.issuerName).toBe('Kenya Courts');
+    expect(result.fieldOfStudy).toBe('Example Ltd v Sample');
+    expect(Object.keys(result)).not.toContain('summary');
+  });
+
+  it('moh_sg: licence number + registry, never premises_address or the licensee\'s name', () => {
+    const result = projectPublicRecordToTemplate('moh_sg', registrySourceFixtures.moh_sg);
+    expect(result.licenseNumber).toBe('HCI-000123');
+    expect(result.issuerName).toBe('Ministry of Health Singapore');
+    expect(result.issuedDate).toBe('2020-01-01');
+    expect(JSON.stringify(result)).not.toMatch(/1 Health Way|Jane Licensee/);
+    expect(Object.keys(result)).not.toContain('premises_address');
+    expect(Object.keys(result)).not.toContain('licensee_name');
+  });
+});
+
+describe('projectPublicRecordToTemplate — forbidden-keys property test across every shipped source', () => {
+  const allSources = Object.keys(registrySourceFixtures) as Array<keyof typeof registrySourceFixtures>;
+
+  it.each(allSources)('never emits a forbidden key or leaks a fixture PII-flavored value for %s', (source) => {
+    const record = registrySourceFixtures[source];
+    const result = projectPublicRecordToTemplate(source, record);
+    for (const key of Object.keys(result)) {
+      expect(FORBIDDEN_KEY_PATTERN.test(key)).toBe(false);
+      expect(key).not.toBe('abstract');
+      expect(key).not.toBe('description');
+      expect(key).not.toBe('summary');
+    }
+    expect(FORBIDDEN_VALUE_PATTERN.test(JSON.stringify(result))).toBe(false);
+  });
+
+  it.each(allSources)('every value is string | number | boolean | string[] for %s (no source here emits authors)', (source) => {
+    const record = registrySourceFixtures[source];
+    const result = projectPublicRecordToTemplate(source, record);
+    expect(result.authors).toBeUndefined();
+    for (const value of Object.values(result)) {
+      if (Array.isArray(value)) {
+        for (const entry of value) expect(typeof entry).toBe('string');
+      } else {
+        expect(['string', 'number', 'boolean']).toContain(typeof value);
+      }
+    }
+  });
+
+  it('sam_gov and any other genuinely unimplemented source still returns {}', () => {
+    expect(projectPublicRecordToTemplate('sam_gov', { title: 'x', metadata: { name: 'y' } })).toEqual({});
   });
 });

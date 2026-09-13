@@ -272,6 +272,18 @@ const METADATA_DISPLAY_HIDDEN_KEYS = new Set([
   'abstract',
   'description',
   'summary',
+  // SCRUM-5105 follow-up: these already have a dedicated render surface one
+  // screen up in AssetDetailView.tsx (which hides them from its OWN generic
+  // metadata dump via ANCHOR_CREDENTIAL_METADATA_HIDDEN_KEYS) — the no-
+  // template fallback here (mode 2) had no equivalent, so they rendered as
+  // raw rows ("Ai Summary:", "Securing Path:", ...) whenever a credential
+  // had no matching template. Note: the `startsWith('_')` guard just below
+  // already covers every `_`-prefixed key (e.g. `_confidence`) — these four
+  // are the ones that are NOT underscore-prefixed.
+  'ai_summary',
+  'ai_document_type',
+  'ai_tags',
+  'securing_path',
 ]);
 
 function isMetadataDisplayHiddenKey(key: string): boolean {

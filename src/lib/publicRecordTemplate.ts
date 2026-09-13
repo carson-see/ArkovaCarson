@@ -10,12 +10,38 @@
  * for why `anchors.metadata` alone is too thin to render (it only carries
  * `{pipeline_source, source_id, source_url, record_type}` plus merkle keys).
  *
- * SCOPE (deliberate, do not widen without review):
- * - Ships `openalex`, `edgar`, `federal_register`, `openstates` in this PR.
- * - Every other source returns `{}` — in particular, person-registry
- *   sources (npi, finra, calbar, acnc, dapip, uspto, courtlistener, sam_gov,
- *   etc.) are EXPLICITLY DEFERRED to a follow-up with a dedicated PII
- *   review. Do not add a source here without one.
+ * SCOPE:
+ * - `SOURCE_FIELD_ALLOW_LIST` below is the audit table: every `source` this
+ *   module projects, and for each template/extras key, the exact
+ *   `metadata` field it is read from (line references are in each
+ *   projector function's own comment, since a table entry going stale
+ *   silently is worse than a slightly longer file). A source not in the
+ *   table returns `{}` — currently that includes `sam_gov` and any source
+ *   with zero rows in prod at the time of writing (fcc, sos_*, ipeds,
+ *   insurance_ca_cdi, cle_*, cert_*, per SCRUM-5045/5046). Do not widen this
+ *   without independently re-reading the fetcher — an earlier draft of
+ *   this table asserted USPTO carries inventor data and that
+ *   australia_law/kenya_law are legacy aliases of the case-law sources;
+ *   neither is true (verified directly against
+ *   services/worker/src/jobs/usptoFetcher.ts and jurisdictionFetcher.ts —
+ *   `australia_law`/`kenya_law` are the CURRENT, active STATUTE sources,
+ *   distinct in both name and shape from `australia_caselaw`/
+ *   `kenya_caselaw`).
+ * - Registry/person-adjacent sources (npi, finra, calbar, acnc, dapip,
+ *   edgar_form_adv, sec_adv_bulk, sec_iapd, acra_sg, cnpj_br, moh_sg)
+ *   project REGISTRY-LEVEL fields only: identifiers, status,
+ *   specialty/practice-area/taxonomy, firm/organisation name, jurisdiction,
+ *   dates, licence type. The practitioner/entity's own name is already the
+ *   anchor filename, so it is never duplicated into a template field here.
+ *   Never emitted: home/mailing address (not even city/postcode — when a
+ *   fetcher stores one, it is dropped entirely), email, phone, date of
+ *   birth, a person's own name (provider_name, full_name, charity_legal_name,
+ *   entity_name, licensee_name, authorized_official, etc.), or any
+ *   free-text notes/disclosure-history field.
+ * - Document/legal sources (uspto, courtlistener, australia_law/
+ *   australia_caselaw, kenya_law/kenya_caselaw) project court/office,
+ *   docket/patent/section number, decision/grant date, and title — never
+ *   party or judge names.
  * - Never emit: abstract, description, summary (those already flow through
  *   `anchor.description` — see `publicRecordDescription()` in
  *   `publicRecordAnchor.ts`), anything email/phone/ssn/dob/address-shaped,
@@ -50,6 +76,108 @@ export interface ProjectablePublicRecord {
   title: string | null;
   metadata: Record<string, unknown>;
 }
+
+/**
+ * Audit table: source -> { output key: source metadata field }. This is the
+ * canonical, human-checkable summary of what each projector below reads —
+ * NOT itself executed (each projector remains hand-written for the
+ * per-field safety logic: capping, stripping, exclusions, aliasing). Keep
+ * this in sync whenever a projector changes; a mismatch here is a doc bug,
+ * not a behavior bug, but review a PR that touches one without the other.
+ * `sec_adv_bulk` and `kenya_law`/`kenya_caselaw` are noted as sharing a
+ * projector rather than repeating identical rows.
+ */
+export const SOURCE_FIELD_ALLOW_LIST: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  openalex: {
+    fieldOfStudy: 'title', issuerName: 'journal', issuedDate: 'publication_date',
+    licenseNumber: 'doi (https://doi.org/ prefix stripped)', authors: 'authors ({name, orcid?}, max 20)',
+    concepts: 'concepts (max 10)', publication_year: 'publication_year', cited_by_count: 'cited_by_count',
+    is_retracted: 'is_retracted', is_open_access: 'is_open_access',
+  },
+  edgar: {
+    issuerName: 'entity_name', issuedDate: 'filing_date', licenseNumber: 'ciks[0]', ciks: 'ciks',
+    formType: 'form_type', periodOfReport: 'period_of_report', tickers: 'tickers',
+    primaryDocument: 'primary_document', fileDescription: 'file_description | primary_doc_description',
+  },
+  federal_register: {
+    fieldOfStudy: 'title', licenseNumber: 'document_number', issuedDate: 'publication_date',
+    issuerName: 'agencies[0]', agencies: 'agencies', documentType: 'type', citation: 'citation', pdfUrl: 'pdf_url',
+  },
+  openstates: {
+    licenseNumber: 'identifier', issuerName: 'state_name', issuedDate: 'latest_action_date',
+    session: 'session', classification: 'classification', subjects: 'subjects', chamber: 'chamber',
+    jurisdiction: 'jurisdiction', latestAction: 'latest_action',
+  },
+  npi: {
+    licenseNumber: 'npi_number', issuerName: 'registry', issuedDate: 'enumeration_date',
+    fieldOfStudy: 'primary_specialty', primaryTaxonomyCode: 'primary_taxonomy_code', credential: 'credential',
+    status: 'status', enumerationType: 'enumeration_type', licenseType: 'license_type',
+  },
+  finra: {
+    licenseNumber: 'crd_number', issuerName: 'registry', issuedDate: 'industry_start_date',
+    currentFirm: 'current_firm', disclosureCount: 'disclosure_count', registrations: 'registrations',
+    licenseType: 'license_type',
+  },
+  calbar: {
+    licenseNumber: 'bar_number', issuerName: 'registry', issuedDate: 'admission_date', status: 'status',
+    state: 'state', advancedSpecializations: 'advanced_specializations', sections: 'sections',
+    licenseType: 'license_type',
+  },
+  dapip: {
+    issuerName: 'institution_name', licenseNumber: 'ope_id | dapip_id', institutionType: 'institution_type',
+    state: 'state', activeStatus: 'active_status',
+  },
+  acnc: {
+    licenseNumber: 'abn', issuerName: 'registry', issuedDate: 'registration_date',
+    charitySize: 'charity_size', pbi: 'pbi', country: 'country', state: 'state',
+    dateEstablished: 'date_established', purposes: 'purposes', operatingCountries: 'operating_countries',
+    responsiblePersonsCount: 'responsible_persons',
+  },
+  uspto: {
+    licenseNumber: 'patent_id', issuedDate: 'patent_date', fieldOfStudy: 'title (public_records.title)',
+    patentType: 'patent_type',
+  },
+  courtlistener: {
+    issuerName: 'court_name', licenseNumber: 'docket_id', issuedDate: 'date_filed',
+    fieldOfStudy: 'case_name', precedentialStatus: 'precedential_status', citationCount: 'citation_count',
+    natureOfSuit: 'nature_of_suit', opinionCount: 'opinion_count', courtId: 'court_id',
+    dateFiledIsApproximate: 'date_filed_is_approximate',
+  },
+  edgar_form_adv: {
+    licenseNumber: 'crd_number', issuerName: 'registry', issuedDate: 'last_filing_date',
+    secNumber: 'sec_number', state: 'state', country: 'country', registrationStatus: 'registration_status',
+    licenseType: 'license_type',
+  },
+  sec_adv_bulk: { '(alias)': 'same projector + fields as edgar_form_adv' },
+  sec_iapd: {
+    licenseNumber: 'crd_number', issuerName: 'registry', registrationStatus: 'registration_status',
+    totalAssets: 'total_assets', numberOfAccounts: 'number_of_accounts', licenseType: 'license_type',
+  },
+  acra_sg: {
+    licenseNumber: 'uen', issuerName: 'registry', issuedDate: 'registration_date',
+    entityType: 'entity_type', uenStatus: 'uen_status', primarySsicCode: 'primary_ssic_code',
+    primarySsicDescription: 'primary_ssic_description', companyType: 'company_type',
+  },
+  cnpj_br: {
+    licenseNumber: 'cnpj_formatted', issuerName: 'registry', issuedDate: 'data_inicio_atividade',
+    status: 'situacao_cadastral', naturezaJuridica: 'natureza_juridica', porte: 'porte', uf: 'uf',
+  },
+  australia_law: {
+    licenseNumber: 'section_id', issuerName: 'jurisdiction', fieldOfStudy: 'section_title',
+    statuteName: 'statute_name', part: 'part', jurisdictionCode: 'jurisdiction_code',
+  },
+  kenya_law: { '(same shape)': 'same projector + fields as australia_law' },
+  australia_caselaw: {
+    issuerName: 'court', fieldOfStudy: 'case_title', jurisdictionCode: 'jurisdiction_code',
+    searchTerm: 'search_term',
+  },
+  kenya_caselaw: { '(same shape)': 'same projector + fields as australia_caselaw' },
+  moh_sg: {
+    licenseNumber: 'licence_no', issuerName: 'registry', issuedDate: 'effective_date',
+    licenceType: 'licence_type', licenceStatus: 'licence_status', expiryDate: 'expiry_date',
+    hciCode: 'hci_code',
+  },
+};
 
 function capString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -366,11 +494,404 @@ function projectOpenStates(record: ProjectablePublicRecord): ProjectedTemplate {
   return out;
 }
 
+/**
+ * `npi` — services/worker/src/jobs/npiFetcher.ts ~L198-237. Excludes
+ * provider_name AND organization_name (either is the entity's own name,
+ * already the anchor filename — for an organization NPI row these are
+ * typically identical strings), gender, sole_proprietor, last_updated, all
+ * practice_* fields (address/phone), state_licenses (complex, ties to a
+ * person), authorized_official (a person's name).
+ */
+function projectNpi(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.npi_number);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const issuedDate = capString(meta.enumeration_date);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const fieldOfStudy = capString(meta.primary_specialty);
+  if (fieldOfStudy) out.fieldOfStudy = fieldOfStudy;
+  const primaryTaxonomyCode = capString(meta.primary_taxonomy_code);
+  if (primaryTaxonomyCode) out.primaryTaxonomyCode = primaryTaxonomyCode;
+  const credential = capString(meta.credential);
+  if (credential) out.credential = credential;
+  const status = capString(meta.status);
+  if (status) out.status = status;
+  const enumerationType = capString(meta.enumeration_type);
+  if (enumerationType) out.enumerationType = enumerationType;
+  const licenseType = capString(meta.license_type);
+  if (licenseType) out.licenseType = licenseType;
+  return out;
+}
+
+/**
+ * `finra` — services/worker/src/jobs/finraBrokerCheckFetcher.ts ~L195-213.
+ * Excludes full_name/first_name/last_name/middle_name/other_names (the
+ * broker's own name), current_location (address-like), current_employments/
+ * previous_employments (complex objects), exams (not required).
+ */
+function projectFinra(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.crd_number);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const issuedDate = capString(meta.industry_start_date);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const currentFirm = capString(meta.current_firm);
+  if (currentFirm) out.currentFirm = currentFirm;
+  const disclosureCount = capNumber(meta.disclosure_count);
+  if (disclosureCount !== null) out.disclosureCount = disclosureCount;
+  const registrations = capStringArray(meta.registrations, 10);
+  if (registrations.length > 0) out.registrations = registrations;
+  const licenseType = capString(meta.license_type);
+  if (licenseType) out.licenseType = licenseType;
+  return out;
+}
+
+/**
+ * `calbar` — services/worker/src/jobs/calbarFetcher.ts ~L135-147. Excludes
+ * full_name (the attorney's own name), city (address component —
+ * "never even city"), discipline_history (sensitive free text about the
+ * person).
+ */
+function projectCalbar(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.bar_number);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const issuedDate = capString(meta.admission_date);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const status = capString(meta.status);
+  if (status) out.status = status;
+  const state = capString(meta.state);
+  if (state) out.state = state;
+  const advancedSpecializations = capStringArray(meta.advanced_specializations, 10);
+  if (advancedSpecializations.length > 0) out.advancedSpecializations = advancedSpecializations;
+  const sections = capStringArray(meta.sections, 10);
+  if (sections.length > 0) out.sections = sections;
+  const licenseType = capString(meta.license_type);
+  if (licenseType) out.licenseType = licenseType;
+  return out;
+}
+
+/**
+ * `dapip` — services/worker/src/jobs/dapipFetcher.ts ~L108-114. Excludes
+ * `address` entirely (explicit ban).
+ */
+function projectDapip(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const issuerName = capString(meta.institution_name);
+  if (issuerName) out.issuerName = issuerName;
+  const opeId = capString(meta.ope_id);
+  const dapipId = typeof meta.dapip_id === 'number' ? String(meta.dapip_id) : capString(meta.dapip_id);
+  const licenseNumber = opeId ?? dapipId;
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const institutionType = capString(meta.institution_type);
+  if (institutionType) out.institutionType = institutionType;
+  const state = capString(meta.state);
+  if (state) out.state = state;
+  const activeStatus = capString(meta.active_status);
+  if (activeStatus) out.activeStatus = activeStatus;
+  return out;
+}
+
+/**
+ * `acnc` — services/worker/src/jobs/acncFetcher.ts ~L138-155. Excludes
+ * charity_legal_name/other_names (entity's own name), `address` + `postcode`
+ * (explicit address ban), `website` (not a requested category).
+ */
+function projectAcnc(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.abn);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const issuedDate = capString(meta.registration_date);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const charitySize = capString(meta.charity_size);
+  if (charitySize) out.charitySize = charitySize;
+  const pbi = capBoolean(meta.pbi);
+  if (pbi !== null) out.pbi = pbi;
+  const country = capString(meta.country);
+  if (country) out.country = country;
+  const state = capString(meta.state);
+  if (state) out.state = state;
+  const dateEstablished = capString(meta.date_established);
+  if (dateEstablished) out.dateEstablished = dateEstablished;
+  const purposes = capStringArray(meta.purposes, 10);
+  if (purposes.length > 0) out.purposes = purposes;
+  const operatingCountries = capStringArray(meta.operating_countries, 10);
+  if (operatingCountries.length > 0) out.operatingCountries = operatingCountries;
+  const responsiblePersonsCount = capNumber(meta.responsible_persons);
+  if (responsiblePersonsCount !== null) out.responsiblePersonsCount = responsiblePersonsCount;
+  return out;
+}
+
+/**
+ * `uspto` — services/worker/src/jobs/usptoFetcher.ts ~L270-273. The fetcher
+ * stores NO inventor data (verified directly — do not add `authors` here
+ * without a real source field to back it). Excludes `abstract` (banned
+ * module-wide).
+ */
+function projectUspto(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.patent_id);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuedDate = capString(meta.patent_date);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const fieldOfStudy = capString(record.title);
+  if (fieldOfStudy) out.fieldOfStudy = fieldOfStudy;
+  const patentType = capString(meta.patent_type);
+  if (patentType) out.patentType = patentType;
+  return out;
+}
+
+/**
+ * `courtlistener` — services/worker/src/jobs/courtlistenerFetcher.ts
+ * ~L366-380. Excludes `judges` (explicit "no judge names"), `syllabus`
+ * (free-text summary, banned category), `case_name_full`/`citations`
+ * (redundant/complex, skipped for minimalism), `cluster_id` (internal id).
+ * `case_name` is the case's own official caption — allowed as "title", the
+ * same allowance used for `fieldOfStudy` elsewhere, not a "party names"
+ * list.
+ */
+function projectCourtlistener(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const issuerName = capString(meta.court_name);
+  if (issuerName) out.issuerName = issuerName;
+  const licenseNumber = typeof meta.docket_id === 'number' ? String(meta.docket_id) : capString(meta.docket_id);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuedDate = capString(meta.date_filed);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const fieldOfStudy = capString(meta.case_name);
+  if (fieldOfStudy) out.fieldOfStudy = fieldOfStudy;
+  const precedentialStatus = capString(meta.precedential_status);
+  if (precedentialStatus) out.precedentialStatus = precedentialStatus;
+  const citationCount = capNumber(meta.citation_count);
+  if (citationCount !== null) out.citationCount = citationCount;
+  const natureOfSuit = capString(meta.nature_of_suit);
+  if (natureOfSuit) out.natureOfSuit = natureOfSuit;
+  const opinionCount = capNumber(meta.opinion_count);
+  if (opinionCount !== null) out.opinionCount = opinionCount;
+  const courtId = capString(meta.court_id);
+  if (courtId) out.courtId = courtId;
+  const dateFiledIsApproximate = capBoolean(meta.date_filed_is_approximate);
+  if (dateFiledIsApproximate !== null) out.dateFiledIsApproximate = dateFiledIsApproximate;
+  return out;
+}
+
+/**
+ * `edgar_form_adv` — services/worker/src/jobs/edgarFormAdvFetcher.ts
+ * ~L101-112. `sec_adv_bulk` is registered as an alias below (same fetcher
+ * shape under a legacy/bulk-import source label — no separate fetcher
+ * writes it today). Excludes organization_name (entity's own name), `city`
+ * (address component).
+ */
+function projectEdgarFormAdv(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.crd_number);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const issuedDate = capString(meta.last_filing_date);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const secNumber = capString(meta.sec_number);
+  if (secNumber) out.secNumber = secNumber;
+  const state = capString(meta.state);
+  if (state) out.state = state;
+  const country = capString(meta.country);
+  if (country) out.country = country;
+  const registrationStatus = capString(meta.registration_status);
+  if (registrationStatus) out.registrationStatus = registrationStatus;
+  const licenseType = capString(meta.license_type);
+  if (licenseType) out.licenseType = licenseType;
+  return out;
+}
+
+/**
+ * `sec_iapd` — services/worker/src/jobs/secIapdFetcher.ts ~L138-160.
+ * Registry-level firm data only — no address/person fields present in this
+ * fetcher's metadata block to begin with.
+ */
+function projectSecIapd(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.crd_number);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const registrationStatus = capString(meta.registration_status);
+  if (registrationStatus) out.registrationStatus = registrationStatus;
+  const totalAssets = capNumber(meta.total_assets);
+  if (totalAssets !== null) out.totalAssets = totalAssets;
+  const numberOfAccounts = capNumber(meta.number_of_accounts);
+  if (numberOfAccounts !== null) out.numberOfAccounts = numberOfAccounts;
+  const licenseType = capString(meta.license_type);
+  if (licenseType) out.licenseType = licenseType;
+  return out;
+}
+
+/**
+ * `acra_sg` — services/worker/src/jobs/singaporeFetcher.ts ~L107-119.
+ * Excludes entity_name (entity's own name).
+ */
+function projectAcraSg(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.uen);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const issuedDate = capString(meta.registration_date);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const entityType = capString(meta.entity_type);
+  if (entityType) out.entityType = entityType;
+  const uenStatus = capString(meta.uen_status);
+  if (uenStatus) out.uenStatus = uenStatus;
+  const primarySsicCode = capString(meta.primary_ssic_code);
+  if (primarySsicCode) out.primarySsicCode = primarySsicCode;
+  const primarySsicDescription = capString(meta.primary_ssic_description);
+  if (primarySsicDescription) out.primarySsicDescription = primarySsicDescription;
+  const companyType = capString(meta.company_type);
+  if (companyType) out.companyType = companyType;
+  return out;
+}
+
+/**
+ * `cnpj_br` — services/worker/src/jobs/brazilFetcher.ts ~L187-204. Excludes
+ * razao_social/nome_fantasia (entity's own names), `address`/`municipio`/
+ * `cep` (address components, explicit ban), `capital_social` (financial
+ * data, not a requested category).
+ */
+function projectCnpjBr(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.cnpj_formatted) ?? capString(meta.cnpj);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const issuedDate = capString(meta.data_inicio_atividade);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const status = capString(meta.situacao_cadastral);
+  if (status) out.status = status;
+  const naturezaJuridica = capString(meta.natureza_juridica);
+  if (naturezaJuridica) out.naturezaJuridica = naturezaJuridica;
+  const porte = capString(meta.porte);
+  if (porte) out.porte = porte;
+  const uf = capString(meta.uf);
+  if (uf) out.uf = uf;
+  return out;
+}
+
+/**
+ * Statute records — services/worker/src/jobs/jurisdictionFetcher.ts
+ * ~L74-82 (shared by australiaLawFetcher.ts's `statuteSource: 'australia_law'`
+ * and kenyaLawFetcher.ts's `statuteSource: 'kenya_law'`). Pure statute-text
+ * references — no person/entity data of any kind is stored here.
+ */
+function projectJurisdictionStatute(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.section_id);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.jurisdiction);
+  if (issuerName) out.issuerName = issuerName;
+  const fieldOfStudy = capString(meta.section_title);
+  if (fieldOfStudy) out.fieldOfStudy = fieldOfStudy;
+  const statuteName = capString(meta.statute_name);
+  if (statuteName) out.statuteName = statuteName;
+  const part = capString(meta.part);
+  if (part) out.part = part;
+  const jurisdictionCode = capString(meta.jurisdiction_code);
+  if (jurisdictionCode) out.jurisdictionCode = jurisdictionCode;
+  return out;
+}
+
+/**
+ * Case-law records — services/worker/src/jobs/jurisdictionFetcher.ts
+ * ~L145-151 (shared by `australia_caselaw` and `kenya_caselaw`, a DIFFERENT
+ * source + shape from the statute path above — confirmed by reading
+ * australiaLawFetcher.ts's `caseLaw: { source: 'australia_caselaw', ... }`
+ * alongside its separate `statuteSource: 'australia_law'`). No docket/case
+ * number field exists in this metadata shape, so `licenseNumber` is left
+ * unset. `case_title` is the case's own official caption ("title"
+ * category), not a party-names list. Excludes `summary` (banned
+ * module-wide) and `search_term` is safe (the fetcher's own query term, not
+ * user or case-party data) but omitted here as low-value; jurisdictionCode
+ * is kept.
+ */
+function projectJurisdictionCaseLaw(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const issuerName = capString(meta.court);
+  if (issuerName) out.issuerName = issuerName;
+  const fieldOfStudy = capString(meta.case_title);
+  if (fieldOfStudy) out.fieldOfStudy = fieldOfStudy;
+  const jurisdictionCode = capString(meta.jurisdiction_code);
+  if (jurisdictionCode) out.jurisdictionCode = jurisdictionCode;
+  return out;
+}
+
+/**
+ * `moh_sg` — services/worker/src/jobs/singaporeHealthFetcher.ts
+ * ~L108-120. Excludes hci_name (entity's own name), `premises_address` +
+ * `postal_code` (explicit address ban), `licensee_name` (may be an
+ * individual responsible person, not the institution itself — treated like
+ * npi's `authorized_official`).
+ */
+function projectMohSg(record: ProjectablePublicRecord): ProjectedTemplate {
+  const meta = record.metadata;
+  const out: ProjectedTemplate = {};
+  const licenseNumber = capString(meta.licence_no);
+  if (licenseNumber) out.licenseNumber = licenseNumber;
+  const issuerName = capString(meta.registry);
+  if (issuerName) out.issuerName = issuerName;
+  const issuedDate = capString(meta.effective_date);
+  if (issuedDate) out.issuedDate = issuedDate;
+  const licenceType = capString(meta.licence_type);
+  if (licenceType) out.licenceType = licenceType;
+  const licenceStatus = capString(meta.licence_status);
+  if (licenceStatus) out.licenceStatus = licenceStatus;
+  const expiryDate = capString(meta.expiry_date);
+  if (expiryDate) out.expiryDate = expiryDate;
+  const hciCode = capString(meta.hci_code);
+  if (hciCode) out.hciCode = hciCode;
+  return out;
+}
+
 const PROJECTORS: Record<string, (record: ProjectablePublicRecord) => ProjectedTemplate> = {
   openalex: projectOpenAlex,
   edgar: projectEdgar,
   federal_register: projectFederalRegister,
   openstates: projectOpenStates,
+  npi: projectNpi,
+  finra: projectFinra,
+  calbar: projectCalbar,
+  dapip: projectDapip,
+  acnc: projectAcnc,
+  uspto: projectUspto,
+  courtlistener: projectCourtlistener,
+  edgar_form_adv: projectEdgarFormAdv,
+  sec_adv_bulk: projectEdgarFormAdv,
+  sec_iapd: projectSecIapd,
+  acra_sg: projectAcraSg,
+  cnpj_br: projectCnpjBr,
+  australia_law: projectJurisdictionStatute,
+  kenya_law: projectJurisdictionStatute,
+  australia_caselaw: projectJurisdictionCaseLaw,
+  kenya_caselaw: projectJurisdictionCaseLaw,
+  moh_sg: projectMohSg,
 };
 
 /**

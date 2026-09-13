@@ -179,4 +179,43 @@ describe('useCredentialTemplate — authenticated platform-template fallback (SC
     expect(result.current.error).toBeNull();
     expect(chain.is).toHaveBeenCalledWith('org_id', null);
   });
+
+  it('null orgId + PUBLICATION queries the platform row directly (no org-scoped query at all)', async () => {
+    mockMaybeSingle.mockResolvedValueOnce({
+      data: { name: 'Publication', default_metadata: { fields: [{ key: 'issuerName', label: 'Publisher / Journal' }] } },
+      error: null,
+    });
+
+    const { useCredentialTemplate } = await import('./useCredentialTemplate');
+    const { result } = renderHook(() => useCredentialTemplate('PUBLICATION', null));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.template?.name).toBe('Publication');
+    // Exactly one round-trip, straight to the platform row — no org-scoped
+    // attempt at all, since there is no org to scope by.
+    expect(mockMaybeSingle).toHaveBeenCalledTimes(1);
+    expect(chain.is).toHaveBeenCalledWith('org_id', null);
+    expect(chain.eq).not.toHaveBeenCalledWith('org_id', expect.anything());
+  });
+
+  it('missing credentialType still early-returns null with no query at all, even with orgId present', async () => {
+    const { useCredentialTemplate } = await import('./useCredentialTemplate');
+    const { result } = renderHook(() => useCredentialTemplate(null, 'org-1'));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.template).toBeNull();
+    expect(mockMaybeSingle).not.toHaveBeenCalled();
+  });
+
+  it('public mode with null orgId still early-returns (unchanged RPC contract)', async () => {
+    const { useCredentialTemplate } = await import('./useCredentialTemplate');
+    const { result } = renderHook(() => useCredentialTemplate('PUBLICATION', null, { public: true }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.template).toBeNull();
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
 });

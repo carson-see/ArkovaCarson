@@ -187,6 +187,37 @@ describe('CredentialRenderer', () => {
       expect(container.textContent?.toLowerCase()).not.toContain('fraud');
     });
 
+    // SCRUM-5105 follow-up: ai_summary/ai_document_type/ai_tags/securing_path
+    // already have a dedicated render surface one screen up in
+    // AssetDetailView.tsx, which hides them from ITS OWN generic dump — this
+    // mode-2 fallback (no template) had no equivalent, so they rendered as
+    // raw "Ai Summary:" / "Securing Path:" rows for any credential with no
+    // matching template.
+    it('skips ai_summary/ai_document_type/ai_tags/securing_path/_confidence, keeping a plain key', () => {
+      render(
+        <CredentialRenderer
+          metadata={{
+            field_of_study: 'Computer Science',
+            ai_summary: 'This document appears to be a diploma.',
+            ai_document_type: 'diploma',
+            ai_tags: ['education', 'degree'],
+            securing_path: 'instant',
+            _confidence: 0.92,
+          }}
+          status="SECURED"
+        />
+      );
+      expect(screen.getByText('Computer Science')).toBeInTheDocument();
+      expect(screen.queryByText('Ai Summary')).not.toBeInTheDocument();
+      expect(screen.queryByText(/appears to be a diploma/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Ai Document Type')).not.toBeInTheDocument();
+      expect(screen.queryByText('diploma')).not.toBeInTheDocument();
+      expect(screen.queryByText('Ai Tags')).not.toBeInTheDocument();
+      expect(screen.queryByText('Securing Path')).not.toBeInTheDocument();
+      expect(screen.queryByText('instant')).not.toBeInTheDocument();
+      expect(screen.queryByText(/0\.92/)).not.toBeInTheDocument();
+    });
+
     it('skips pipeline metadata fields (merkle_proof, batch_id, etc.)', () => {
       render(
         <CredentialRenderer
