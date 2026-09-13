@@ -768,6 +768,25 @@ lookup keyed by external text in this file needs the same guard.
 
 Field, section and proof-line helpers reserve page space before painting. Wrapped values that exceed one printable page continue on subsequent pages with their label repeated; no value or proof step is truncated. Keep the maximum-length filename plus a full batch proof covered together, and exercise a multiline reason long enough to cross pages. The tests read actual PDF text operators and assert both printable bounds and complete text preservation. Certificate QR callers supply the canonical production URL; pointer regression tests reject alternate Arkova domains even when their host begins with `app.`.
 
+## 2026-09-12 — SCRUM-5023: `API_KEY_LABELS` gains the expiry vocabulary
+
+`EXPIRING_SOON` plus the remaining-time fragments (`EXPIRES_TODAY`, `EXPIRES_IN_ONE_DAY`,
+`EXPIRES_IN_DAYS` with a `{days}` placeholder the component interpolates) and the Extend dialog
+strings. Split by plurality on purpose — a single template prints "in 0 days" on the last day and
+"in 1 days" the day before, which reads as a bug in a warning the user is meant to trust.
+
+`EXTEND_FAILED` is the scrubbed message shown when `onExtend` rejects. Like `REVOKE_FAILED` it states
+that **nothing changed**, because the dialog stays open and the key's expiry is untouched. §1.3-clean
+(no banned terms), and `src/lib/copy.ts` IS scanned by `lint:copy` — `EXCLUDE_PATTERNS` in
+`scripts/check-copy-terms.ts` covers tests, `node_modules`, `dist`, `src/components/ui/**` and
+`src/components/admin/treasury/**`, and nothing else.
+
+`EXTEND_CURRENT` / `EXTEND_CURRENT_NONE` state the key's CURRENT expiry inside the Extend dialog, and
+`EXTEND_CONFIRM_*` are the confirmation step. Both exist because every preset REPLACES the expiry
+rather than adding to it: without the current value on screen, "30 days" on a key with eleven months
+left is indistinguishable from an extension.
+
+
 ## PR #2782 — bind certificate metadata to one block
 
 `proofBlockMetadata.ts` is shared by the database proof reader and certificate builder. Confirmed anchor height/time can replace proof metadata only after matching both block hashes. A known mismatch withholds the packet; an unknown identity retains only the proof row's existing metadata and does not establish a fresh measurement. Height values must be nonnegative safe integers. RecordDetailPage supplies the anchor hash to both readers. Regression tests cover mismatches, absent identities, case-normalized matches and the actual page callback. The finite TLA model and interpreter contract cover selection semantics; they do not prove Bitcoin consensus, stored-data accuracy or snapshot freshness.

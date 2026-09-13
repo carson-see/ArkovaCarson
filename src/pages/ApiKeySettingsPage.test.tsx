@@ -46,6 +46,7 @@ vi.mock('@/hooks/useApiKeys', () => ({
     error: null,
     createKey: vi.fn(),
     revokeKey: vi.fn(),
+    extendKey: vi.fn(),
     deleteKey: vi.fn(),
     refresh: vi.fn(),
   }),
