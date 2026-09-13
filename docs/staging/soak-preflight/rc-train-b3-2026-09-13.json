@@ -1,0 +1,821 @@
+{
+  "schedulerJob": null,
+  "treasury": null,
+  "notApplicable": {
+    "schedulerJob": "Train changes no anchoring/scheduler path; no forced-flush job exists on this rig (mock profile)",
+    "treasury": "USE_MOCKS=true rig; no chain path in the train"
+  },
+  "changedPaths": [
+    "pr-2843-webhook-payload",
+    "pr-2845-webhooks-scope",
+    "pr-2846-drive-source"
+  ],
+  "drainLog": [
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-01-00-020Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-01-00-020Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-01-00-020Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-06-51-826Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-06-51-826Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-06-51-826Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-12-42-878Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-12-42-878Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-12-42-878Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-18-36-200Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-18-36-200Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-18-36-200Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-24-29-487Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-24-29-487Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-24-29-487Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-30-22-773Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-30-22-773Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-30-22-773Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-36-13-692Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-36-13-692Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-36-13-692Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-42-07-000Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-42-07-000Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-42-07-000Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-48-00-406Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-48-00-406Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-48-00-406Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-53-52-410Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-53-52-410Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-53-52-410Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T03-59-42-565Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T03-59-42-565Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T03-59-42-565Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-05-33-011Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-05-33-011Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-05-33-011Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-11-24-758Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-11-24-758Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-11-24-758Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-17-18-932Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-17-18-932Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-17-18-932Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-23-09-047Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-23-09-047Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-23-09-047Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-29-01-189Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-29-01-189Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-29-01-189Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-34-51-396Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-34-51-396Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-34-51-396Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-40-42-798Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-40-42-798Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-40-42-798Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-46-33-872Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-46-33-872Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-46-33-872Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-52-24-589Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-52-24-589Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-52-24-589Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T04-58-15-406Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T04-58-15-406Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T04-58-15-406Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-04-06-418Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-04-06-418Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-04-06-418Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-09-56-740Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-09-56-740Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-09-56-740Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-15-49-146Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-15-49-146Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-15-49-146Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-21-43-468Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-21-43-468Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-21-43-468Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-27-36-802Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-27-36-802Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-27-36-802Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-33-31-199Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-33-31-199Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-33-31-199Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-39-21-885Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-39-21-885Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-39-21-885Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-45-18-835Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-45-18-835Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-45-18-835Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-51-08-359Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-51-08-359Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-51-08-359Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T05-56-58-997Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T05-56-58-997Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T05-56-58-997Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-02-48-976Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-02-48-976Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-02-48-976Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-08-40-943Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-08-40-943Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-08-40-943Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-14-31-946Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-14-31-946Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-14-31-946Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-20-23-288Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-20-23-288Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-20-23-288Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-26-13-047Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-26-13-047Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-26-13-047Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-32-04-034Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-32-04-034Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-32-04-034Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-37-53-517Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-37-53-517Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-37-53-517Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-43-43-843Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-43-43-843Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-43-43-843Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-49-35-419Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-49-35-419Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-49-35-419Z: 25/25 probes passed"
+    },
+    {
+      "processed": 27,
+      "skipped": false,
+      "path": "pr-2843-webhook-payload",
+      "reason": "cycle 2026-09-13T06-55-27-545Z: 27/27 probes passed"
+    },
+    {
+      "processed": 88,
+      "skipped": false,
+      "path": "pr-2845-webhooks-scope",
+      "reason": "cycle 2026-09-13T06-55-27-545Z: 88/88 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-13T06-55-27-545Z: 25/25 probes passed"
+    }
+  ],
+  "deployProvenance": {
+    "deployLogRows": [
+      {
+        "head_sha": "f2b95a412bcabbbb4930bad1b425909363b016d7",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-12T21:43:53.733041+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00005-z58"
+      },
+      {
+        "head_sha": "6cb68f88ef27eb3e460bc85d5ce8ec3de15c35f0",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-12T21:55:03.156884+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00007-lis"
+      },
+      {
+        "head_sha": "89dba6baafa1f73311e6885bcb85698d7f3d709d",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-12T22:27:33.475788+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00009-qof"
+      },
+      {
+        "head_sha": "e6bd4a1672626b7b0f924725b855a4edde52a2aa",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-13T02:46:50.337457+00:00",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00014-car"
+      }
+    ],
+    "prHeadSha": "e6bd4a1672626b7b0f924725b855a4edde52a2aa",
+    "service": "arkova-worker-cto-train-b-0912-staging"
+  },
+  "base": {
+    "baseRefName": "main"
+  },
+  "_meta": {
+    "decision": "CTO 2026-09-12 — Confluence 146440221 / SCRUM-5054",
+    "generator": "scripts/staging/targeted/cto-train-b-0912/preflight-from-window.mjs",
+    "generated_at": "2026-09-13T07:02:49.403Z",
+    "rc_id": "RC-2026-09-13-TRAIN-B3",
+    "manifest": "/Volumes/Extreme/offload/cto-review-2026-09-12/wt-gate/docs/staging/rc-manifests/rc-train-b3-2026-09-13.json",
+    "window": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b3/window1",
+    "cycle_files": 41,
+    "cycles_with_per_pr": 41,
+    "cycles_passed": 41,
+    "errored_cycles": [],
+    "per_pr_totals": {
+      "#2843": {
+        "path": "pr-2843-webhook-payload",
+        "cycles": 41,
+        "probes": 1107,
+        "passed": 1107
+      },
+      "#2845": {
+        "path": "pr-2845-webhooks-scope",
+        "cycles": 41,
+        "probes": 3608,
+        "passed": 3608
+      },
+      "#2846": {
+        "path": "pr-2846-drive-source",
+        "cycles": 41,
+        "probes": 1025,
+        "passed": 1025
+      }
+    },
+    "deploy_log_source": "exported staging_deploy_log rows: /Volumes/Extreme/offload/cto-review-2026-09-12/deploy-log-rig1.json",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "preflight_result": "environment_type=clean_mirror"
+  }
+}

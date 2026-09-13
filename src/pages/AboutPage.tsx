@@ -5,6 +5,7 @@
  * Includes Person JSON-LD schema with sameAs links for E-E-A-T signals.
  */
 
+import { toJsonLd } from '@/lib/jsonLd';
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Building2, ExternalLink, Lightbulb, Globe } from 'lucide-react';
@@ -52,7 +53,7 @@ function PersonSchema({ name, role, sameAs }: { name: string; role: string; same
     <script
       type="application/ld+json"
       dangerouslySetInnerHTML={{
-        __html: JSON.stringify({
+        __html: toJsonLd({
           '@context': 'https://schema.org',
           '@type': 'Person',
           name,

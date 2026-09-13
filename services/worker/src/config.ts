@@ -25,6 +25,17 @@ const positiveNumberWithFallback = (def: number) => z.preprocess((v) => {
 // `Math.min(Math.max(min, Number.parseInt(...) || def), max)` idiom in the worker so
 // ad-hoc reads can migrate into config.ts (SCRUM-1258) with identical runtime
 // behavior: parseInt-style leading-int parse, NaN/0 → def, then clamp (not reject).
+// Positive-integer env with a default. Unlike clampedIntWithFallback this does
+// not clamp — an out-of-band value (blank, non-numeric, fractional, zero,
+// negative, Infinity) falls back to `def` rather than being silently coerced to
+// a boundary, because the value it guards (a monthly credit allocation) has no
+// honest ceiling to clamp to (SCRUM-1258 / SCRUM-4939).
+const positiveIntWithFallback = (def: number) => z.preprocess((v) => {
+  if (v === undefined || v === null || v === '') return def;
+  const parsed = Number(v);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : def;
+}, z.number().int().positive());
+
 const clampedIntWithFallback = (def: number, min: number, max: number) =>
   z.preprocess((v) => {
     const parsed = Number.parseInt(String(v ?? ''), 10) || def;
@@ -209,6 +220,16 @@ const ConfigSchema = z.object({
    * the default is higher. Clamped to [1000, 30000] (SCRUM-1258: typed, not ad-hoc).
    */
   aiBatchRowLatencyBudgetMs: clampedIntWithFallback(8_000, 1_000, 30_000),
+  /**
+   * SCRUM-4939 — monthly credit allocation stamped onto an `ai_credits` period
+   * row that `ensureAICreditsPeriod()` auto-provisions for an org that has none.
+   * Default 100 matches the allocation on every operator-seeded prod row
+   * (verified against prod 2026-09-12: 16/16 current-period rows at 100), so
+   * auto-provisioning cannot silently change an existing org's entitlement.
+   * Anything that is not a positive integer falls back to the default
+   * (SCRUM-1258: typed config, never an ad-hoc process.env read).
+   */
+  aiCreditsMonthlyAllocation: positiveIntWithFallback(100),
 
   // Cron job authentication (AUTH-01)
   /** Shared secret for cron job endpoints — alternative to OIDC when Cloud Scheduler is not used */
@@ -1059,6 +1080,7 @@ function loadConfig(): Config {
     aiProvider: process.env.AI_PROVIDER,
     nessieModel: process.env.NESSIE_MODEL,
     aiBatchRowLatencyBudgetMs: process.env.AI_BATCH_ROW_LATENCY_BUDGET_MS,
+    aiCreditsMonthlyAllocation: process.env.AI_CREDITS_MONTHLY_ALLOCATION,
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     healthDetailToken: process.env.HEALTH_DETAIL_TOKEN,

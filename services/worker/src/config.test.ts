@@ -864,6 +864,38 @@ describe('SCRUM-1258 aiBatchRowLatencyBudgetMs (typed config, clamped)', () => {
   });
 });
 
+/**
+ * SCRUM-4939 / SCRUM-1258 — AI_CREDITS_MONTHLY_ALLOCATION is the allocation
+ * stamped on an `ai_credits` period row auto-provisioned by
+ * `ensureAICreditsPeriod()`. It is typed config, not an ad-hoc process.env read
+ * (the Dependency Scanning `check-worker-env-adhoc` gate enforces that).
+ * Unlike the clamped budgets above, an out-of-band value falls back to the
+ * default rather than being clamped to a boundary — a clamp would silently
+ * provision the wrong entitlement instead of the known-safe one.
+ */
+describe('SCRUM-4939 aiCreditsMonthlyAllocation (typed config)', () => {
+  it('defaults to 100 when AI_CREDITS_MONTHLY_ALLOCATION is unset', async () => {
+    await withConfig({ AI_CREDITS_MONTHLY_ALLOCATION: undefined }, (mod) => {
+      expect(mod.config.aiCreditsMonthlyAllocation).toBe(100);
+    });
+  });
+
+  it('passes through a positive integer', async () => {
+    await withConfig({ AI_CREDITS_MONTHLY_ALLOCATION: '250' }, (mod) => {
+      expect(mod.config.aiCreditsMonthlyAllocation).toBe(250);
+    });
+  });
+
+  it.each(['', '   ', '0', '-5', '1.5', 'abc', 'NaN', 'Infinity'])(
+    'falls back to 100 for the out-of-band value %j',
+    async (value) => {
+      await withConfig({ AI_CREDITS_MONTHLY_ALLOCATION: value }, (mod) => {
+        expect(mod.config.aiCreditsMonthlyAllocation).toBe(100);
+      });
+    },
+  );
+});
+
 describe('S3-P0 / DISC-03 — bitcoinUtxoProvider default', () => {
   // Prod deploy (deploy-worker.yml) and both R-5 expected-config JSONs assert
   // "getblock"; the Zod default was the one remaining 'mempool' divergence

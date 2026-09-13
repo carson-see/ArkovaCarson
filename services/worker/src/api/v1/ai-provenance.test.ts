@@ -31,6 +31,8 @@ const VALID_FINGERPRINT = 'a'.repeat(64);
 const TEST_USER_ID = '10000000-1000-4000-8000-000000000001';
 const TEST_ORG_ID = '10000000-1000-4000-8000-000000000099';
 const TEST_ANCHOR_ID = '10000000-1000-4000-8000-000000000042';
+const OTHER_ORG_ID = '10000000-1000-4000-8000-0000000000bb';
+const OTHER_USER_ID = '10000000-1000-4000-8000-000000000002';
 
 function createApp() {
   const app = express();
@@ -113,6 +115,8 @@ describe('ai-provenance endpoint', () => {
     const mockManifest = {
       id: '10000000-1000-4000-8000-000000000010',
       fingerprint: VALID_FINGERPRINT,
+      org_id: TEST_ORG_ID,
+      user_id: OTHER_USER_ID,
       model_id: 'gemini',
       model_version: 'gemini-3-flash-preview',
       extracted_fields: { credentialType: 'DEGREE', issuerName: 'MIT' },
@@ -172,6 +176,8 @@ describe('ai-provenance endpoint', () => {
     const mockManifest = {
       id: '10000000-1000-4000-8000-000000000011',
       fingerprint: VALID_FINGERPRINT,
+      org_id: TEST_ORG_ID,
+      user_id: OTHER_USER_ID,
       model_id: 'nessie',
       model_version: 'nessie-v2',
       extracted_fields: { credentialType: 'LICENSE' },
@@ -197,5 +203,85 @@ describe('ai-provenance endpoint', () => {
     expect(res.status).toBe(200);
     expect(res.body.provenanceChain[0].anchor).toBeNull();
     expect(res.body.provenanceChain[0].extraction.modelId).toBe('nessie');
+  });
+
+  // SCRUM-4984 — fail-closed tenant scoping. Before the fix the org check read
+  // `firstManifest.org_id && orgId && firstManifest.org_id !== orgId`, and the
+  // select list never fetched org_id, so the guard was dead code: any
+  // authenticated user could read any org's manifests by fingerprint.
+  describe('tenant scoping (SCRUM-4984)', () => {
+    const otherOrgManifest = {
+      id: '10000000-1000-4000-8000-000000000020',
+      fingerprint: VALID_FINGERPRINT,
+      org_id: OTHER_ORG_ID,
+      user_id: OTHER_USER_ID,
+      model_id: 'gemini',
+      model_version: 'v',
+      extracted_fields: { secret: 'other-tenant-data' },
+      confidence_scores: { overall: 0.9 },
+      manifest_hash: 'd'.repeat(64),
+      anchor_id: null,
+      extraction_timestamp: '2026-03-29T12:00:00.000Z',
+      prompt_version: null,
+      created_at: '2026-03-29T12:00:00.000Z',
+    };
+
+    function mockDb(profileOrgId: string | null, manifests: unknown[]) {
+      vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+        const table = (args as unknown as string[])[0];
+        if (table === 'profiles') return mockChain({ org_id: profileOrgId }) as unknown as ReturnType<typeof db.from>;
+        if (table === 'extraction_manifests') return mockChain(manifests) as unknown as ReturnType<typeof db.from>;
+        return mockChain([]) as unknown as ReturnType<typeof db.from>;
+      });
+    }
+
+    it("returns 404 (not 403) when every manifest belongs to another org", async () => {
+      mockDb(TEST_ORG_ID, [otherOrgManifest]);
+      const res = await request(app).get(`/${VALID_FINGERPRINT}`);
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('not_found');
+      expect(JSON.stringify(res.body)).not.toContain('other-tenant-data');
+    });
+
+    it('returns 404 when the caller has no org and does not own the manifest (former fail-open path)', async () => {
+      mockDb(null, [otherOrgManifest]);
+      const res = await request(app).get(`/${VALID_FINGERPRINT}`);
+      expect(res.status).toBe(404);
+      expect(JSON.stringify(res.body)).not.toContain('other-tenant-data');
+    });
+
+    it('lets an INDIVIDUAL (no org) read a manifest they own', async () => {
+      mockDb(null, [{ ...otherOrgManifest, org_id: null, user_id: TEST_USER_ID }]);
+      const res = await request(app).get(`/${VALID_FINGERPRINT}`);
+      expect(res.status).toBe(200);
+      expect(res.body.manifestCount).toBe(1);
+    });
+
+    it('filters a mixed result set down to the caller org only', async () => {
+      const ownManifest = { ...otherOrgManifest, id: '10000000-1000-4000-8000-000000000021', org_id: TEST_ORG_ID, extracted_fields: { mine: true } };
+      mockDb(TEST_ORG_ID, [otherOrgManifest, ownManifest]);
+      const res = await request(app).get(`/${VALID_FINGERPRINT}`);
+      expect(res.status).toBe(200);
+      expect(res.body.manifestCount).toBe(1);
+      expect(res.body.provenanceChain[0].extraction.extractedFields).toEqual({ mine: true });
+      expect(JSON.stringify(res.body)).not.toContain('other-tenant-data');
+    });
+
+    it('selects org_id and user_id so the scope check has data to act on', async () => {
+      const selectSpy = vi.fn();
+      vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+        const table = (args as unknown as string[])[0];
+        if (table === 'profiles') return mockChain({ org_id: TEST_ORG_ID }) as unknown as ReturnType<typeof db.from>;
+        const chain = mockChain([]);
+        if (table === 'extraction_manifests') {
+          chain.select = vi.fn((cols: string) => { selectSpy(cols); return chain; });
+        }
+        return chain as unknown as ReturnType<typeof db.from>;
+      });
+      await request(app).get(`/${VALID_FINGERPRINT}`);
+      const cols = String(selectSpy.mock.calls[0]?.[0] ?? '');
+      expect(cols).toMatch(/\borg_id\b/);
+      expect(cols).toMatch(/\buser_id\b/);
+    });
   });
 });

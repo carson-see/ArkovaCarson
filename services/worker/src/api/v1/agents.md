@@ -2,6 +2,29 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
+
+Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI
+extraction for a brand-new org no longer 503s: since PR #2442, `deduct_ai_credits` fails CLOSED when
+no `ai_credits` row covers the current period, and nothing ever provisioned that row. Read
+`ai/agents.md`'s 2026-09-12 entry for the full mechanism (no unique constraint on the table, why the
+lookup window matches `deduct_ai_credits`'s own, race handling).
+
+Both routes provision BEFORE their up-front `checkAICredits` guard, not between that guard and the
+debit. `check_ai_credits`'s WHERE clause is `A OR B AND C AND D`, which Postgres parses as
+`A OR (B AND C AND D)` — given an org id it matches ANY row for that org regardless of period, with
+`LIMIT 1` and no `ORDER BY`. An org whose only row is an exhausted PRIOR period would otherwise get a
+402 from that guard and return before provisioning ever ran, which is the same "stuck org" outcome
+this fix exists to remove. (The precedence bug itself is pre-existing and needs its own migration to
+fix; ordering the calls this way makes it non-blocking.) `ai-extract-batch.ts` additionally must call
+it once before `checkAICredits`, not before
+each per-row `deductAICredits` inside `parallelMap` — the batch route latches `hasFiniteCredits` from
+that one `checkAICredits` result and reuses it for every row, so provisioning has to land before that
+read or the whole batch would treat a freshly-created org as still-unmetered. Both skip the call when
+`orgId` is undefined. A genuine deduction failure (insufficient credits / RPC error) still fails CLOSED
+with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
+check itself.
+
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
 `router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.
@@ -1250,3 +1273,26 @@ ComputeID admission now uses service-only `admit_computeid_agent`: one passport 
 `resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+## 2026-09-12 SCRUM-4984 / SCRUM-4985 — fail-closed tenant scoping on the AI read endpoints; entity-verify stops building filter grammar
+
+**`tenantRowAccess.ts` is the only allowed way to answer "may this caller read this row" on a v1
+handler that scopes by org.** `ai-provenance.ts` and `ai-accountability-report.ts` both used
+`row.org_id && callerOrgId && row.org_id !== callerOrgId` to deny. That is only true when both sides
+are present and differ, so an INDIVIDUAL caller (no `profiles.org_id`), an orphan row, or a select list
+that never fetched `org_id` (ai-provenance never did — the guard was dead code) all fell through to
+"allowed". Sekura Phase 2's LLM pass flagged neither; the CTO verification of its claims did. The rule
+is now positive — same org, or caller owns the row — and both handlers answer **404, not 403**, so
+`public_id` / fingerprint enumeration cannot confirm what other tenants hold. ai-provenance filters the
+manifest list rather than checking only `manifests[0]`, because two orgs can legitimately hold
+manifests for the same fingerprint (same public document, extracted twice). If you add a v1 handler
+that reads a tenant-scoped row under `requireAuth`, select `org_id, user_id` and call
+`callerMayReadRow`; the test files pin that the columns are selected.
+
+**`entity-verify.ts` no longer hand-builds a PostgREST `.or()` string.** The attestation lookup used
+to interpolate the raw `identifier` query param into `subject_identifier.eq.${identifier}`, so a comma
+or operator in it appended clauses and widened a targeted lookup into enumeration (`name` on the line
+above WAS escaped — the inconsistency is the tell). Each term now goes through the query builder
+(`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
+`entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
+filters here; if you need OR semantics across columns, run the terms separately and union.

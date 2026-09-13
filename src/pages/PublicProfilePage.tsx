@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { OrgVerifiedBadge } from '@/components/shared/VerifiedBadge';
+import { resolveSocialLinks } from '@/lib/socialLinks';
 
 function getInitials(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
@@ -28,9 +29,9 @@ function formatRole(role: string): string {
   return 'Member';
 }
 
-function normalizeUrl(url: string): string {
-  return url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`;
-}
+// SCRUM-4989: the old normalizeUrl only prefixed https:// onto values that
+// lacked a scheme; a `javascript:` value survived as-is. resolveSocialLinks
+// keeps only the four known keys and only http(s) hrefs / @handles.
 
 export function PublicProfilePage() {
   const { profileId } = useParams<{ profileId: string }>();
@@ -102,12 +103,11 @@ export function PublicProfilePage() {
                 </p>
               )}
               <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-4">
-                {Object.entries(links)
-                  .filter(([, value]) => typeof value === 'string' && value.trim().length > 0)
-                  .map(([key, value]) => (
+                {Object.entries(resolveSocialLinks(links))
+                  .map(([key, href]) => (
                     <a
                       key={key}
-                      href={normalizeUrl(value)}
+                      href={href}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"

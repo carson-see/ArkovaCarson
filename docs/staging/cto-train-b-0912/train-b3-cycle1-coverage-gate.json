@@ -1,0 +1,1575 @@
+{
+  "rig": "cto-train-b-0912",
+  "candidate_sha": "e6bd4a1672626b7b0f924725b855a4edde52a2aa",
+  "tag_url": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
+  "revision": "arkova-worker-cto-train-b-0912-staging-00014-car",
+  "image": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:18a33a7dbdbe0d12c14d0a19b89abcffdcf3b02b116df7ba17903c3fb168dde6",
+  "train": [
+    "2843",
+    "2845",
+    "2846"
+  ],
+  "cycle_id": "2026-09-13T03-01-00-020Z",
+  "started_at": "2026-09-13T03:01:00.020Z",
+  "finished_at": "2026-09-13T03:01:51.630Z",
+  "per_pr": {
+    "#2843": {
+      "changed_behavior": "Proven here, each against a before/after row count: (1) a stored delivery-log row whose payload carries data.fingerprint is refused by the retry sweep before signing — status='failed', error_message LIKE 'SCRUM-3982%', no delivered_at, zero new DLQ rows (pre-PR that row was DELIVERED, because the event type was unregistered and therefore unvalidated); (2) head-of-line: a leaky seq-100 row and a clean seq-200 row on ONE resource_key — sweep 1 terminates the leaky head, sweep 2 delivers the clean row, which is the liveness half of the change (a refusal left in `retrying` blocks its resource forever); (3) webhook_endpoints.events accepts an unregistered event type written straight through PostgREST — the premise the PR originally got wrong — and a delivery of that type is now refused instead of bypassed; (4) regression control: a schema-valid anchor.secured payload still delivers status='success', and the stored payload->'data' contains no banned key; (5) replay of a leaky row via POST /api/v1/webhooks/deliveries/:id/replay answers 422 payload_refused and inserts NO replay-* row. Receiver: the in-repo Cloud Run sink (shared with #2836 by URL only — this module seeds its own endpoints, since probe 3 mutates a subscription and probe 2 needs a two-row resource group). NOT proven here: anchor.revocation_anchored (needs a real revocation broadcast); attestation.active as a LIVE dispatch (ENABLE_ATTESTATION_ANCHORING is off on this rig, so its payload shape is seeded directly — the refusal branch is identical either way); and the refusal-log rate limiter, which is process-lifetime state and rests on webhooks/delivery.test.ts.",
+      "probes": 27,
+      "passed": 27,
+      "ms": 5521
+    },
+    "#2845": {
+      "changed_behavior": "Proven here: every one of the ten routes under /api/v1/webhooks now requires the webhooks:manage scope. (1) A key holding only the default read:search gets 403 insufficient_scope with required=webhooks:manage on all ten — POST /, GET /, POST /test, GET /deliveries, POST /deliveries/:id/replay, GET /dlq, POST /dlq/:id/resolve, GET /:id, PATCH /:id, DELETE /:id. (2) A key holding the scope is passed through, asserted by DB read-backs and not by a status: an endpoint is created and deleted (webhook_endpoints +1 then back), a description is updated to a cycle-stamped value and read back, a replay inserts a new webhook_delivery_logs row, and a DLQ entry flips to resolved=true. (3) With NO key at all every route still answers 401 authentication_required and never a fall-through 200 — requireScope opens if (!req.apiKey) next(), so the handler-level requireApiKey is the only thing holding that line. (4) An org-B key HOLDING webhooks:manage gets 404, never 403, on an org-A endpoint id: scope is capability, org_id is ownership. (5) The limiter still precedes the guard — an 11th call on a dedicated key is 429 with Retry-After. (6) The JWT surface this PR deliberately left alone still works: GET /api/v1/webhooks/self-service/dlq with an ORG_ADMIN session answers 200 with no API key present. NOT proven here: that enforcement breaks no live integration — that is a claim about prod’s 18 active keys (0 hold webhooks:manage, re-verified read-only 2026-09-12), not about this rig; the grandfather backfill runs at cutover, before the deploy. Outbound delivery behaviour is #2836’s module.",
+      "probes": 88,
+      "passed": 88,
+      "ms": 40967
+    },
+    "#2846": {
+      "changed_behavior": "Proven here: (1) GET /api/v1/verify/:publicId emits additive source: {provider} for an anchor whose metadata.connector_source is a recognised marker (google_drive, docusign) and OMITS the key entirely (never null, never {}) for a plain anchor and for the free-text look-alike 'google_drive_totally_real' — asserted via Object.hasOwn on the live response, not a bare status. (2) The response body (raw text) never contains the Drive file id, any _drive_-prefixed key, drive.google.com, an email-shaped account_label, or the anchor's raw org_id, even when all of those are present on the seeded metadata (defense-in-depth: prod never writes account_label there at all). (3) A publicId this module just created is read twice; both reads carry source (verifyCache KEY_PREFIX is unchanged by this PR — correct for an additive field). (4) The producer seam this PR touches — enqueue_connector_artifact (0343) — is called directly with all four new _drive_* fields present, and again with all four absent (mirroring a legacy pre-SCRUM-4507 job payload); the persisted connector_artifact.metadata row is read back and shown non-null-and-keyed in the first case and present-key-with-null-value (never missing) in the second — proving the exact `?? null` carriage jobs/drive-file-changed.ts added, with no Drive fetch anywhere in this module. NOT proven here: the real Drive fetch path (no rig holds a Google credential, SCRUM-5082) and the further hop from connector_artifact into anchors.metadata via connector-artifact-drain.ts — that drain is a separate, flag-gated (ENABLE_CONNECTOR_ARTIFACT_DRAIN, default false), credit-charging, rig-wide cron this module has no way to confirm is enabled here and will not force, since doing so would spend the shared fixture org’s credits and touch every other org’s pending rows for a claim already provable one layer down at the RPC boundary. This module proves carriage and projection, not producer correctness against a live change.",
+      "probes": 25,
+      "passed": 25,
+      "ms": 3311
+    }
+  },
+  "probes": [
+    {
+      "name": "worker_identity_matches_candidate",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "git_sha": "e6bd4a1672626b7b0f924725b855a4edde52a2aa",
+        "uptime": 864,
+        "revision": "arkova-worker-cto-train-b-0912-staging-00014-car",
+        "imageDigest": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:18a33a7dbdbe0d12c14d0a19b89abcffdcf3b02b116df7ba17903c3fb168dde6",
+        "checks": {
+          "database": "ok",
+          "anchoring": "ok",
+          "kms": "warning"
+        }
+      }
+    },
+    {
+      "name": "2843_endpoints_seeded",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "main": "54c8709c-a7b0-4754-808a-dc2e2da9ff98",
+        "unregistered": "f8408fb6-59e9-4510-920d-5556389ad7ba",
+        "receiver": "https://cft-webhook-sink-kvojbeutfa-uc.a.run.app/"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_snapshot_readable",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "errors": [],
+        "before": {
+          "logRows": 36,
+          "dlqRows": 0,
+          "replayRows": 0,
+          "errors": []
+        }
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_unregistered_event_type_is_subscribable",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "events": [
+          "anchor.secured",
+          "payment.subscription_updated"
+        ],
+        "injectError": null,
+        "readError": null,
+        "note": "the premise the PR body originally denied: webhook_endpoints.events has no allowlist CHECK and the RLS write policies admit any string, so \"unregistered therefore undeliverable\" was false"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_rows_seeded",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "errors": [],
+        "ids": {
+          "leaky": "4e60a29a-2136-481c-9ddd-f20614aa3900",
+          "holLeaky": "7a5662d8-9eea-42c3-8cc5-48a6bda046c4",
+          "holClean": "c9251906-16de-48fb-9af2-6e9b480d867f",
+          "unregistered": "8c3478e2-a6b7-4196-a002-002ddcabce15",
+          "control": "ca221775-9a55-4700-95f2-44b45b8db823",
+          "replaySubject": "59ca3a73-892f-4d2c-ac0d-8601ad9f037b"
+        }
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_rows_armed",
+      "expected": null,
+      "actual": null,
+      "pass": true,
+      "detail": "all sweep-driven rows became eligible in one UPDATE, so no cron can act on a half-seeded head-of-line group",
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_sweep1_authenticated",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "cronSecretPresent": true,
+        "note": "429 = the per-IP /jobs limiter, not a delivery failure"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_sweep1_ran",
+      "expected": 200,
+      "actual": 200,
+      "pass": true,
+      "detail": {
+        "retried": 4
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_leaky_row_terminated_failed",
+      "expected": "failed",
+      "actual": "failed",
+      "pass": true,
+      "detail": {
+        "event_type": "attestation.active",
+        "error_message": "SCRUM-3982: payload refused before signing — 'fingerprint' may never appear in an outbound webhook payload (CLAUDE.md §6 + §1.6)",
+        "delivered_at": null,
+        "regression": "pre-PR this row read status='success': the event type was unregistered, so validateWebhookPayload bypassed it and the document fingerprint was signed and delivered"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_leaky_row_reason_recorded",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "error_message": "SCRUM-3982: payload refused before signing — 'fingerprint' may never appear in an outbound webhook payload (CLAUDE.md §6 + §1.6)",
+        "note": "the refusal is a durable audit fact on the row, not only a log line"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_leaky_row_names_the_key_never_the_value",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "note": "error_message reaches logs, Sentry and job_queue.last_error, so it names the KEY — the value is exactly what is being withheld"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_leaky_row_never_delivered",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "delivered_at": null,
+        "response_status": null,
+        "note": "refused before signPayload, so no socket was opened"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_hol_leaky_head_terminated_after_sweep1",
+      "expected": "failed",
+      "actual": "failed",
+      "pass": true,
+      "detail": {
+        "resource_key": "cto-train-b-0912-2843-2026-09-13T03-01-00-020Z-hol",
+        "error_message": "SCRUM-3982: payload refused before signing — 'fingerprint' may never appear in an outbound webhook payload (CLAUDE.md §6 + §1.6)",
+        "note": "leaving a permanent refusal in 'retrying' would re-read it every sweep AND block every newer event for this resource_key forever — machines/webhookPayloadRefusal.machine.ts refusalIsTerminal"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_hol_clean_row_still_pending_or_delivered_not_lost",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": "retrying",
+        "note": "the newer event is never discarded by the head being refused; it is either still queued or already advanced"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_sweep2_authenticated",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "note": "429 = the per-IP /jobs limiter; two sweeps per cycle is within cadence"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_hol_clean_row_delivered_after_head_cleared",
+      "expected": "success",
+      "actual": "success",
+      "pass": true,
+      "detail": {
+        "response_status": 200,
+        "delivered_at": "2026-09-13T03:01:05.488+00:00",
+        "note": "the resource advanced once its refused head left `retrying` — fail-forward, not livelock"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_unregistered_type_refused_not_bypassed",
+      "expected": "failed",
+      "actual": "failed",
+      "pass": true,
+      "detail": {
+        "event_type": "payment.subscription_updated",
+        "error_message": "SCRUM-3982: payload refused before signing — event type 'payment.subscription_updated' is not registered in PAYLOAD_SCHEMAS_BY_EVENT_TYPE — refusing to dispatch an unvalidated payload. Add a .strict() schema (and the six mirror surfaces) before emitting a new event type.",
+        "regression": "pre-PR: status='success'. The payload carries no banned key, so bypassing was the ONLY thing that delivered it — this probe isolates the fail-closed rule from the ban list"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_unregistered_type_reason_mentions_registration",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "error_message": "SCRUM-3982: payload refused before signing — event type 'payment.subscription_updated' is not registered in PAYLOAD_SCHEMAS_BY_EVENT_TYPE — refusing to dispatch an unvalidated payload. Add a .strict() schema (and the six mirror surfaces) before emitting a new event type."
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_unregistered_type_never_delivered",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "delivered_at": null,
+        "response_status": null
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_registered_clean_payload_delivered",
+      "expected": "success",
+      "actual": "success",
+      "pass": true,
+      "detail": {
+        "response_status": 200,
+        "error_message": null,
+        "note": "the ratchet only refuses; if this reds, fail-closed has over-reached and real subscribers are losing deliveries"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_registered_clean_payload_2xx_and_delivered_at_set",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "response_status": 200,
+        "delivered_at": "2026-09-13T03:01:04.243+00:00"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_delivered_payload_carries_no_banned_key",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "detail": {
+        "leaked": [],
+        "data_keys": [
+          "status",
+          "public_id",
+          "secured_at",
+          "chain_tx_id",
+          "chain_timestamp",
+          "chain_block_height"
+        ],
+        "note": "read back from webhook_delivery_logs.payload->'data' — the exact bytes that were signed and sent"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_replay_leaky_row_422",
+      "expected": 422,
+      "actual": 422,
+      "pass": true,
+      "detail": {
+        "code": "payload_refused",
+        "body": {
+          "error": "payload_refused",
+          "message": "Stored payload contains a field that cannot be delivered; contact support to have this event re-issued"
+        }
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_replay_leaky_row_payload_refused",
+      "expected": "payload_refused",
+      "actual": "payload_refused",
+      "pass": true,
+      "detail": {
+        "status": 422
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_replay_wrote_no_replay_row",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "detail": {
+        "note": "the gate short-circuits before the replay delivery-log insert, so a delta here would mean a refused payload still got a row it could be retried from",
+        "idempotency_key_pattern": "replay-%"
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_replay_left_the_original_row_untouched",
+      "expected": "retrying",
+      "actual": "retrying",
+      "pass": true,
+      "detail": {
+        "note": "a refused replay changes nothing about the audited original",
+        "attempt_number": 1
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_refusals_wrote_no_dlq_rows",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "detail": {
+        "note": "migration 0338 constrains failure_kind to 'http_delivery' | 'log_write'; a payload refusal is neither, so it is recorded on the delivery row instead. DLQ growth here would mean a refusal was filed as a false audit fact (widening failure_kind is SCRUM-5063)."
+      },
+      "pr": "#2843"
+    },
+    {
+      "name": "2843_sweep_updated_in_place_no_duplicate_rows",
+      "expected": 42,
+      "actual": 42,
+      "pass": true,
+      "detail": "one row seeded per case and none added by either sweep or the replay — proof the idempotency keys matched and the sweep UPDATED our rows rather than inserting alongside them, which would make every assertion above vacuous",
+      "pr": "#2843"
+    },
+    {
+      "name": "2845_scope_is_grantable_on_rig",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "scopes": [
+          "read:search",
+          "webhooks:manage"
+        ],
+        "note": "webhooks:manage is in api_keys_scopes_known_values in the baseline — this PR needs no migration."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_dlq_target_rearmed",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_snapshot_readable",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "errors": [],
+        "before": {
+          "endpointRows": 8,
+          "logRows": 1,
+          "errors": []
+        }
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_POST_/_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_POST_/_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_GET_/_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_GET_/_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_POST_/test_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_POST_/test_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_GET_/deliveries_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_GET_/deliveries_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_POST_/deliveries/:id/replay_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_POST_/deliveries/:id/replay_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_GET_/dlq_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_GET_/dlq_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_POST_/dlq/:id/resolve_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_POST_/dlq/:id/resolve_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_GET_/:id_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_GET_/:id_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_PATCH_/:id_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_PATCH_/:id_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_DELETE_/:id_401",
+      "expected": 401,
+      "actual": 401,
+      "pass": true,
+      "detail": {
+        "error": "authentication_required",
+        "note": "A 200 here is the regression: requireScope falls through for an anonymous caller, so the handler-level requireApiKey is the only thing stopping it."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_noauth_DELETE_/:id_error_code",
+      "expected": "authentication_required",
+      "actual": "authentication_required",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_anon_batch_bucket_exhausted",
+      "expected": 0,
+      "actual": 0,
+      "pass": true,
+      "detail": "Anonymous calls key the batch limiter by req.ip, so they share one 10/min bucket with every other anonymous batch-scope call in the cycle. A non-zero count is a driver/bucket condition, NOT a scope-guard defect — the 401 assertions it displaced simply did not run.",
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/test_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/test_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/test_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/deliveries_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/deliveries_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/deliveries_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/deliveries/:id/replay_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/deliveries/:id/replay_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/deliveries/:id/replay_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/dlq_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/dlq_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/dlq_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/dlq/:id/resolve_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/dlq/:id/resolve_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_POST_/dlq/:id/resolve_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/:id_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/:id_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_GET_/:id_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_PATCH_/:id_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_PATCH_/:id_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_PATCH_/:id_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_DELETE_/:id_403",
+      "expected": 403,
+      "actual": 403,
+      "pass": true,
+      "detail": {
+        "error": "insufficient_scope",
+        "required": "webhooks:manage",
+        "granted": [
+          "read:search"
+        ],
+        "keyScopes": [
+          "read:search"
+        ]
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_DELETE_/:id_insufficient_scope",
+      "expected": "insufficient_scope",
+      "actual": "insufficient_scope",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_unscoped_DELETE_/:id_names_required_scope",
+      "expected": "webhooks:manage",
+      "actual": "webhooks:manage",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_refused_calls_wrote_nothing",
+      "expected": "8/1",
+      "actual": "8/1",
+      "pass": true,
+      "detail": "endpointRows/logRows across the ten 403s and the ten 401s. A 403 that still created or deleted an endpoint would pass a status check and fail this.",
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_POST_/_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "needsOrgAdmin": true
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_POST_/_not_forbidden",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "createdByRole": "ORG_ADMIN"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_create_wrote_endpoint_row",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "createdId": "72a8bb0f-1fde-410c-8aef-2d95da471aad",
+        "row": {
+          "id": "72a8bb0f-1fde-410c-8aef-2d95da471aad",
+          "org_id": "6e6017bf-4cce-44d4-bc6a-748df53cd676",
+          "description": "cto-train-b-0912-2845-created-2026-09-13T03-01-00-020Z",
+          "is_active": true
+        },
+        "note": "The read-back, not the status, is the evidence."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_GET_/_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "needsOrgAdmin": false
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_POST_/test_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "needsOrgAdmin": false
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_GET_/deliveries_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "needsOrgAdmin": false
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_POST_/deliveries/:id/replay_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "needsOrgAdmin": false
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_GET_/dlq_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "needsOrgAdmin": true
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_GET_/dlq_not_forbidden",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "createdByRole": "ORG_ADMIN"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_POST_/dlq/:id/resolve_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "needsOrgAdmin": true
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_POST_/dlq/:id/resolve_not_forbidden",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "createdByRole": "ORG_ADMIN"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_GET_/:id_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "needsOrgAdmin": false
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_PATCH_/:id_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "needsOrgAdmin": true
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_PATCH_/:id_not_forbidden",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "createdByRole": "ORG_ADMIN"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_DELETE_/:id_not_insufficient_scope",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 204,
+        "needsOrgAdmin": true
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_DELETE_/:id_not_forbidden",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 204,
+        "createdByRole": "ORG_ADMIN"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_delete_removed_endpoint_row",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 204,
+        "createdId": "72a8bb0f-1fde-410c-8aef-2d95da471aad",
+        "note": "Net-zero on webhook_endpoints: 48h of 5-minute cycles leaves no residue."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_patch_updated_row",
+      "expected": "cto-train-b-0912-2845-patched-2026-09-13T03-01-00-020Z",
+      "actual": "cto-train-b-0912-2845-patched-2026-09-13T03-01-00-020Z",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "endpointId": "f3348993-5ca0-413a-a424-28b6d55bb68c"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_replay_inserted_delivery_log",
+      "expected": 3,
+      "actual": 3,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "newDeliveryId": "a0c17929-7066-4db8-8f31-d3645f71b20d",
+        "replayedFrom": "8b587b8c-be4b-4838-b9a7-a18f9c7e28b2"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_replay_row_belongs_to_org_a_endpoint",
+      "expected": "f3348993-5ca0-413a-a424-28b6d55bb68c",
+      "actual": "f3348993-5ca0-413a-a424-28b6d55bb68c",
+      "pass": true,
+      "detail": {
+        "idempotencyKey": "replay-8b587b8c-be4b-4838-b9a7-a18f9c7e28b2-1789268492988-857e27ea"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_dlq_target_armed_before_resolve",
+      "expected": false,
+      "actual": false,
+      "pass": true,
+      "detail": "A row already resolved would make the flip assertion below vacuous.",
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_dlq_resolve_flipped_row",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "resolvedAt": "2026-09-13T03:01:34.768+00:00"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_scoped_dlq_list_returns_fixture",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "returned": 1,
+        "lookingFor": "65b07914-9bb1-44cf-ab0d-b181f009af4f"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_crossorg_get_404_not_403",
+      "expected": 404,
+      "actual": 404,
+      "pass": true,
+      "detail": {
+        "error": "not_found",
+        "note": "403 here would leak that another org owns this id."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_crossorg_get_not_found_code",
+      "expected": "not_found",
+      "actual": "not_found",
+      "pass": true,
+      "detail": null,
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_crossorg_delete_did_not_delete",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 404,
+        "note": "The read-back is the assertion; a 404 that still deleted the row would pass a status check."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_limiter_refuses_eleventh_call",
+      "expected": 11,
+      "actual": 11,
+      "pass": true,
+      "detail": {
+        "note": "Earlier than 11 means the bucket was not fresh; never means the limiter did not run. Both are limiter conditions, reported separately from the guard."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_limiter_sets_retry_after",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "retryAfter": "52"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_org_admin_signed_in",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "error": null,
+        "email": "cto-train-b-0912-admin-a@staging.invalid.test"
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_selfservice_dlq_jwt_200",
+      "expected": 200,
+      "actual": 200,
+      "pass": true,
+      "detail": {
+        "note": "No API key is sent, so requireScope never sees req.apiKey — this mount is JWT-only by design."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_selfservice_dlq_not_scope_gated",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "error": null
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_selfservice_dlq_returns_fixture",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "returned": 1,
+        "lookingFor": "65b07914-9bb1-44cf-ab0d-b181f009af4f",
+        "note": "Proves the 200 is a real org-scoped listing, not an empty array."
+      },
+      "pr": "#2845"
+    },
+    {
+      "name": "2845_endpoint_count_restored",
+      "expected": 8,
+      "actual": 8,
+      "pass": true,
+      "detail": "Cycle is net-zero on webhook_endpoints, so a 48h soak leaves no residue.",
+      "pr": "#2845"
+    },
+    {
+      "name": "2846_drive_verify_200",
+      "expected": 200,
+      "actual": 200,
+      "pass": true,
+      "detail": {},
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_drive_source_provider",
+      "expected": {
+        "provider": "google_drive"
+      },
+      "actual": {
+        "provider": "google_drive"
+      },
+      "pass": true,
+      "detail": {
+        "source": {
+          "provider": "google_drive"
+        }
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_drive_verify_no_leak_file_id",
+      "expected": false,
+      "actual": false,
+      "pass": true,
+      "detail": null,
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_drive_verify_no_leak_underscore_drive_prefix",
+      "expected": false,
+      "actual": false,
+      "pass": true,
+      "detail": null,
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_drive_verify_no_leak_drive_domain",
+      "expected": false,
+      "actual": false,
+      "pass": true,
+      "detail": null,
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_drive_verify_no_leak_account_label_email",
+      "expected": false,
+      "actual": false,
+      "pass": true,
+      "detail": null,
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_drive_verify_no_leak_org_id",
+      "expected": false,
+      "actual": false,
+      "pass": true,
+      "detail": null,
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_docusign_verify_200",
+      "expected": 200,
+      "actual": 200,
+      "pass": true,
+      "detail": {},
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_docusign_source_provider",
+      "expected": {
+        "provider": "docusign"
+      },
+      "actual": {
+        "provider": "docusign"
+      },
+      "pass": true,
+      "detail": {
+        "source": {
+          "provider": "docusign"
+        }
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_plain_verify_200",
+      "expected": 200,
+      "actual": 200,
+      "pass": true,
+      "detail": {},
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_plain_source_omitted",
+      "expected": false,
+      "actual": false,
+      "pass": true,
+      "detail": {
+        "hasBody": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_unknown_marker_verify_200",
+      "expected": 200,
+      "actual": 200,
+      "pass": true,
+      "detail": {},
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_unknown_marker_source_omitted",
+      "expected": false,
+      "actual": false,
+      "pass": true,
+      "detail": {
+        "note": "'google_drive_totally_real' is not in the closed marker set — must not key source",
+        "hasBody": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_drive_verify_cached_read_200",
+      "expected": 200,
+      "actual": 200,
+      "pass": true,
+      "detail": null,
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_drive_verify_cache_still_carries_source",
+      "expected": {
+        "provider": "google_drive"
+      },
+      "actual": {
+        "provider": "google_drive"
+      },
+      "pass": true,
+      "detail": {
+        "note": "verifyCache KEY_PREFIX (verify:v8:) is unchanged by this PR — correct for an additive field.",
+        "source": {
+          "provider": "google_drive"
+        }
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_full_row_readable",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": null,
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_full__drive_shared_drive_id_present_non_null",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "key": "_drive_shared_drive_id",
+        "value": "cto-train-b-0912-2846-carriage-shared-drive",
+        "present": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_full__drive_folder_id_present_non_null",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "key": "_drive_folder_id",
+        "value": "cto-train-b-0912-2846-carriage-folder",
+        "present": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_full__drive_folder_path_present_non_null",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "key": "_drive_folder_path",
+        "value": "/HR/Fixtures/2846-carriage-full",
+        "present": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_full__drive_revision_kind_present_non_null",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "key": "_drive_revision_kind",
+        "value": "head_revision",
+        "present": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_legacy_row_readable",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": null,
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_legacy__drive_shared_drive_id_present_and_null",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "key": "_drive_shared_drive_id",
+        "value": null,
+        "present": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_legacy__drive_folder_id_present_and_null",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "key": "_drive_folder_id",
+        "value": null,
+        "present": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_legacy__drive_folder_path_present_and_null",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "key": "_drive_folder_path",
+        "value": null,
+        "present": true
+      },
+      "pr": "#2846"
+    },
+    {
+      "name": "2846_carriage_legacy__drive_revision_kind_present_and_null",
+      "expected": true,
+      "actual": true,
+      "pass": true,
+      "detail": {
+        "key": "_drive_revision_kind",
+        "value": null,
+        "present": true
+      },
+      "pr": "#2846"
+    }
+  ],
+  "cycle_pass": true
+}
