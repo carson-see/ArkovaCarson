@@ -11,6 +11,7 @@
  * Cloudflare Worker proxy) can call the same builder for SSR'd HTML.
  */
 
+import { toJsonLd } from '@/lib/jsonLd';
 import type { OrgProfile } from '@/hooks/usePublicSearch';
 
 type OrgProfileForSchema = Pick<
@@ -73,11 +74,9 @@ export interface OrganizationSchemaProps {
 
 export function OrganizationSchema({ profile, pageUrl }: OrganizationSchemaProps) {
   // Escape </script> in user-controlled string fields to prevent JSON-LD
-  // breakout. Same hardening pattern as PublicVerification.tsx:635.
-  const json = JSON.stringify(buildOrganizationSchema(profile, pageUrl)).replace(
-    /<\/script/gi,
-    '<\\/script',
-  );
+  // breakout (shared lib/jsonLd helper; PublicVerification.tsx keeps its own
+  // broader `</` escape).
+  const json = toJsonLd(buildOrganizationSchema(profile, pageUrl));
   return (
     <script
       type="application/ld+json"

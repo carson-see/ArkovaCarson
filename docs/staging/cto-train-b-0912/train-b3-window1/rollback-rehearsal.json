@@ -1,0 +1,18 @@
+{
+  "kind": "rollback_rehearsal",
+  "train": "B3",
+  "service": "arkova-worker-cto-train-b-0912-staging",
+  "rolled_back_to": "arkova-worker-cto-train-b-0912-staging-00009-qof",
+  "rolled_back_health": {
+    "git_sha": "89dba6baafa1f73311e6885bcb85698d7f3d709d",
+    "status": "healthy"
+  },
+  "restored_to": "arkova-worker-cto-train-b-0912-staging-00014-car",
+  "restored_health": {
+    "git_sha": "e6bd4a1672626b7b0f924725b855a4edde52a2aa",
+    "status": "healthy"
+  },
+  "started_at": "2026-09-13T07:01:28Z",
+  "finished_at": "2026-09-13T07:02:12Z",
+  "method": "gcloud run services update-traffic --to-revisions"
+}

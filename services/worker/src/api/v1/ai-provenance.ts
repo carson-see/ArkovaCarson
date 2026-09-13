@@ -16,6 +16,7 @@ import { Router, Request, Response } from 'express';
 import { db } from '../../utils/db.js';
 import { readInChunks } from '../../utils/chunkedRead.js';
 import { logger } from '../../utils/logger.js';
+import { callerMayReadRow, type TenantScopedRow } from './tenantRowAccess.js';
 
 const router = Router();
 
@@ -47,7 +48,7 @@ router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: R
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: manifests, error: manifestError } = await (db as any)
       .from('extraction_manifests')
-      .select('id, fingerprint, model_id, model_version, extracted_fields, confidence_scores, manifest_hash, anchor_id, extraction_timestamp, prompt_version, created_at')
+      .select('id, fingerprint, org_id, user_id, model_id, model_version, extracted_fields, confidence_scores, manifest_hash, anchor_id, extraction_timestamp, prompt_version, created_at')
       .eq('fingerprint', fingerprint.toLowerCase())
       .order('created_at', { ascending: false })
       .limit(10);
@@ -58,7 +59,16 @@ router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: R
       return;
     }
 
-    if (!manifests || manifests.length === 0) {
+    // SCRUM-4984: fail-closed tenant scoping. Two orgs can hold manifests for
+    // the same fingerprint (same public document, extracted twice), so the
+    // caller sees only the rows in their org or that they own. A caller with
+    // no visible rows gets the same 404 as "no manifests" — never a 403 that
+    // would confirm another tenant extracted this document.
+    // An empty result and a result with nothing visible are the same 404.
+    const visibleManifests = (manifests ?? []).filter((m: TenantScopedRow) =>
+      callerMayReadRow(m, { userId, orgId }),
+    );
+    if (visibleManifests.length === 0) {
       res.status(404).json({
         error: 'not_found',
         message: 'No extraction manifests found for this fingerprint',
@@ -66,15 +76,8 @@ router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: R
       return;
     }
 
-    // Verify user has access (must be in same org or own the manifest)
-    const firstManifest = manifests[0];
-    if (firstManifest.org_id && orgId && firstManifest.org_id !== orgId) {
-      res.status(403).json({ error: 'Access denied' });
-      return;
-    }
-
     // Fetch linked anchor details for all manifest anchor_ids
-    const anchorIds = manifests
+    const anchorIds = visibleManifests
       .map((m: { anchor_id?: string }) => m.anchor_id)
       .filter(Boolean) as string[];
 
@@ -91,7 +94,7 @@ router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: R
     // Build provenance chain response
     const anchorMap = new Map(anchors.map((a) => [a.id as string, a]));
 
-    const provenanceChain = manifests.map((m: Record<string, unknown>) => {
+    const provenanceChain = visibleManifests.map((m: Record<string, unknown>) => {
       const linkedAnchor = m.anchor_id ? anchorMap.get(m.anchor_id as string) : null;
 
       return {
@@ -122,7 +125,7 @@ router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: R
 
     res.json({
       fingerprint: fingerprint.toLowerCase(),
-      manifestCount: manifests.length,
+      manifestCount: visibleManifests.length,
       provenanceChain,
     });
   } catch (err) {

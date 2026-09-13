@@ -104,6 +104,34 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       return;
     }
 
+    // SCRUM-4986: membership alone is not authorization. The revoke_anchor RPC
+    // enforces ORG_ADMIN through auth.uid() when called under a user JWT; this
+    // route calls it under the service_role client, so the role check must
+    // live here too. Same 404 as a non-member so the response does not reveal
+    // membership.
+    //
+    // CTO ruling (PR #2835 review, 2026-09-12) — READ BEFORE EDITING:
+    //
+    // 1. This check is DEFENCE IN DEPTH AND CURRENTLY UNREACHABLE IN PROD.
+    //    The lookup above reads `public.memberships`, which holds 0 rows in
+    //    prod (`org_members` holds the real memberships); nothing in this repo
+    //    writes `memberships`, and this is the only worker call site that
+    //    reads it. So the `!membership` 404 fires first for every caller and
+    //    revoke is already non-functional. Do not read this block as "revoke
+    //    requires ORG_ADMIN today" — it does not run today.
+    // 2. Even past it, `db.rpc('revoke_anchor')` runs under service_role, so
+    //    `auth.uid()` is NULL and the RPC's own `SELECT ... FROM profiles
+    //    WHERE id = auth.uid()` raises 'Profile not found' (P0001) -> 500.
+    // 3. THE SOURCE OF TRUTH IS `org_members` (lowercase `org_member_role`),
+    //    matching every other worker authorization call site. The RPC's
+    //    `profiles.role` check is legacy. SCRUM-5004 owns reconciling BOTH
+    //    this route and the RPC onto `org_members`; that is a migration, so it
+    //    is T3 and deliberately NOT folded into this PR.
+    if (membership.role !== 'ORG_ADMIN') {
+      res.status(404).json(NOT_FOUND_RESPONSE);
+      return;
+    }
+
     if (anchor.status !== 'SECURED') {
       res.status(409).json({
         error: 'invalid_state',

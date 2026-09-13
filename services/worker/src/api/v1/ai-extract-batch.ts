@@ -33,7 +33,12 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createExtractionProvider } from '../../ai/factory.js';
-import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
+import {
+  checkAICredits,
+  deductAICredits,
+  ensureAICreditsPeriod,
+  logAIUsageEvent,
+} from '../../ai/cost-tracker.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { submitJob } from '../../utils/jobQueue.js';
@@ -238,6 +243,18 @@ router.post('/', async (req: Request, res: Response) => {
       .single();
 
     const orgId = profile?.org_id ?? undefined;
+
+    // SCRUM-4939: provision the current ai_credits period BEFORE the
+    // hasFiniteCredits check below — hasFiniteCredits is latched once here
+    // and reused for every row in the batch, so a missing row must be fixed
+    // before checkAICredits runs, not just before an individual debit (unlike
+    // the single-item path in ai-extract.ts, where checkAICredits is only
+    // used for the cheap up-front 402 and the debit is its own per-row gate).
+    // Non-fatal on its own failure — checkAICredits/deductAICredits remain
+    // the real gate either way.
+    if (orgId) {
+      await ensureAICreditsPeriod(orgId);
+    }
 
     // RISK-6: Up-front credit check. If the org is provably out of credits,
     // reject the whole batch with 402 (no work, no debit). This is the cheap

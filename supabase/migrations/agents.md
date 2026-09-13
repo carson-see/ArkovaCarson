@@ -98,6 +98,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 |---|---|---|---|---|
 | `0402` | `0402_retire_activate_user_rpc.sql` | branch `worktree-agent-a7c53c44dc75c06bc` (this PR) | **no — file only, pre-soak** | **Launch blocker: account activation was 100% broken.** Retires `public.activate_user(text, text)` — same shape and rationale as `0401` retiring `create_pending_recipient`. Two defects: (1) `ActivateAccountPage.tsx:44` called `activate_user({p_token, p_claim_key})`, but prod has ONLY the `(p_token, p_password)` overload and PostgREST binds by argument NAME, so every call returned PGRST202; the `p_claim_key` variant is in `docs/migrations-archive/0175` and was never deployed (no `activation_tokens` table, no `claim_key` column anywhere in the live schema). (2) The deployed body ACCEPTS `p_password` and never references it — it only flipped `status` to ACTIVE, so no password ever reached `auth.users` and the recipient could not sign in. SQL cannot fix (2): the password hash / `auth.identities` / confirmation state are GoTrue's and need the service_role admin API, which §1.4 bars from the browser — so the function raises `feature_not_supported` pointing at `POST /api/activation/complete` (`services/worker/src/api/activation.ts`, same PR). **Also a security fix:** the baseline granted this SECURITY DEFINER `profiles` writer to `anon` AND `authenticated` (baseline:13479-13481) — revoked here `FROM PUBLIC, anon, authenticated`, `service_role` retained (PUBLIC named explicitly per 0364's no-op-revoke catch). Cannot regress a working caller: 100% of calls already failed. Signature unchanged, so no `database.types.ts` delta. Prefix derived from `git fetch --prune` + full-ref scan (`git log --all --diff-filter=A`): main head `0400`, `0401` claimed by PR #2047 on `fix/create-pending-recipient-fk`, so `0402` is next free. Tier T3. **Next author claims `0403` — re-derive, do not trust this line.** |
 | `0436` | `0436_scrum4035_oauth_email_confirmation.sql` | SCRUM-4035 / UAT-03 | **no — candidate only** | New OAuth mailbox confirmation, restricted pending role and service-only challenge completion. Prefix verified against main/prod 0419 and all open-PR migrations through 0435 on 2026-09-05. Rollout remains disabled until hook and all consumers are verified. |
+| `0443` | `0443_backfill_anchor_proof_block_height.sql` | #2825 / SCRUM-4879; original #2782 / SCRUM-3953 | **no — production held; applied to Owie staging** | Existing reserved prefix, moved intact to `release/scrum-3953-proof-history-0443`. Data-only correction of confirmed proof height/time for matching block identities. Exact SQL SHA-256 `b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`; no renumbering or SQL edit. Production completion requires protected repair, corrected-producer drain, final reconciliation and actual application/ledger proof; see [release record](https://arkova.atlassian.net/wiki/spaces/A/pages/143196161). Older next-prefix statements below record authorship history; this prefix is unavailable. |
 | `0445` | `0445_connector_artifact_materialize_link_atomic.sql` | #2570 / SCRUM-3882 | **no — local candidate only** | Atomic service-only connector anchor creation/reuse and freshness-guarded artifact link. Prevents a broadcaster observing a stale unlinked PENDING anchor. Numeric inventory verified 2026-09-10: main 0440; open PRs 0441/0442; #2572 reserves 0443/0444. Historical unpublished 0437 is intentionally not reused. Local PostgreSQL concurrency/ACL/rollback proof required; full stack T3 staging and production apply remain release gates. |
 | `0448` | `0448_computeid_agent_key_transition_atomic.sql` | #2668 / SCRUM-4535 / SCRUM-4536 | **no — local candidate only** | Service-only agent-row lock and full-snapshot CAS commit ComputeID status/metadata and key enforcement together. Closes the lost restore retry and delayed restore after revoke. Prefix re-derived 2026-09-10 from main, all open PRs, and #2572's local 0446/0447 reservations; coordinated with both parallel agents. Flag remains off. No production apply or soak completion claimed. |
 | `0455` | `0455_scrum5024_partner_referral_attribution.sql` | SCRUM-5024 (branch `feat/scrum-5024-partner-referral-attribution`) | **no — file only, pre-soak, NOT applied to prod or any rig** | Partner referral codes and organization attribution. Two new tables (`referral_codes`, `organization_referrals`), both `ENABLE` + `FORCE ROW LEVEL SECURITY`, SELECT-only policies via the existing `get_user_org_ids()` / `is_current_user_platform_admin()` helpers, and NO write policy for any role — writes are the four SECURITY DEFINER RPCs or `service_role`. **Disclosure boundary, deliberate:** only the REFERRER can read `organization_referrals`; there is no policy matching `referred_org_id`, and `COMMENT ON TABLE` records that the asymmetry is the design. `organization.referred` is audited against the REFERRER's `org_id` for the same reason. **No DDL on `organizations`** — both tables take foreign keys INTO it, so the ShareRowExclusiveLock is bounded by the file-level `SET LOCAL lock_timeout = '5s'`. `audit_events` category `ORG` is already allowed by `0309`, so no constraint change. Prefix derived 2026-09-12 from `max(main head 0450, open-PR claims 0443/0451/0452/0453, 0454 reserved by SCRUM-3972 in flight) + 1`. Tier T3. Rollback in the file header (drops attribution data — export first). **Superseded in part by `0456` — apply both or neither.** |
@@ -1418,3 +1419,36 @@ authority checks in `record_org_referral`. Ratcheted by
 non-service callers to p_source = signup").
 
 **Next author claims `0457` — re-derive, do not trust this line.**
+
+## Recent migrations (PR #2825)
+
+| Prefix | Owner branch | Source file | Release state |
+|---|---|---|---|
+| `0443` | `release/scrum-3953-proof-history-0443` | `0443_backfill_anchor_proof_block_height.sql` | Existing reservation moved intact from the unmerged PR #2782; no new prefix, renumbering or SQL edit. |
+
+The CTO release review separates PR #2782's measured confirmation metadata
+and certificate block-binding code from its large historical data repair.
+The runtime reads and writes existing columns and supports unrepaired rows;
+0443 introduces no schema, function, type or feature-flag dependency. Its exact
+source SHA256 remains
+`b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`.
+The immutable header's same-PR description records its original authoring
+context; the current release scope is this explicitly tracked follow-up.
+
+Owie staging has actually applied 0443 and has 150 canonical ledger rows.
+Production has 149 rows and excludes 0443; it is not applied or reconciled by
+this source commit. The successful protected production pilot corrected 1,487
+rows with separate current-state readbacks, while historical cohort repair
+and durable convergence remain incomplete. Runtime merge/deployment can
+precede this migration without changing the migration drift or soak gates.
+
+The migration's 20,000-row loop iterations share one transaction. The remaining
+release requires fresh protected preimages, bounded full-row/source guarded
+updates, corrected producer deployment and old-work drainage, final tail
+verification, actual unchanged 0443 outcome and numeric ledger readback.
+A successful bounded pilot or observational backup is not a snapshot, full
+backfill, migration application, or completed 48-hour soak. This follow-up
+remains held until its own production and CI requirements are satisfied.
+
+[Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
+retains the staged recovery and separately dated production pilot receipts.

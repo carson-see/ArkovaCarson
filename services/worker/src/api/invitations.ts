@@ -38,6 +38,11 @@ import { sendEmail } from '../email/sender.js';
 import { buildAccountVerificationEmail } from '../email/templates.js';
 import { buildLoginUrl } from '../lib/urls.js';
 
+/** Postgres unique_violation. Same local idiom as credentials-ctdl-registry-anchor.ts / credential-sources.ts. */
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === '23505';
+}
+
 export interface InvitationDeps {
   db: SupabaseClient;
   logger: Pick<Logger, 'info' | 'warn' | 'error'>;
@@ -193,6 +198,7 @@ async function provisionMembership(
     .maybeSingle();
   if (membershipLookupError) throw membershipLookupError;
 
+  let membershipCreatedHere = false;
   if (!existingMembership) {
     const { error: memberInsertError } = await db.from('org_members').insert({
       user_id: userId,
@@ -200,7 +206,23 @@ async function provisionMembership(
       role: PROFILE_ROLE_TO_MEMBER_ROLE[invitation.role],
       invited_by: invitation.invited_by,
     });
-    if (memberInsertError) throw memberInsertError;
+    if (memberInsertError) {
+      // SCRUM-4991: the lookup above is not atomic with the insert. Two
+      // concurrent accepts can both pass it; the UNIQUE(user_id, org_id)
+      // constraint rejects the loser with 23505. That IS the "clean no-op"
+      // the comment promises — the membership exists — so continue rather
+      // than surfacing a 500 to a user whose join succeeded.
+      if (isUniqueViolation(memberInsertError)) {
+        logger.info(
+          { userId, orgId: invitation.org_id },
+          'Invitation accept: membership already present (concurrent accept) — continuing',
+        );
+      } else {
+        throw memberInsertError;
+      }
+    } else {
+      membershipCreatedHere = true;
+    }
   }
 
   // Backfill profiles.org_id/role only when unset — never reassign someone
@@ -223,6 +245,25 @@ async function provisionMembership(
     .eq('id', invitation.id)
     .eq('status', 'pending');
   if (statusError) throw statusError;
+
+  // MEMBER_JOINED is emitted by the accept that CREATED the membership, and
+  // only by that one. A join happened once, so it is recorded once.
+  //
+  // The narrower `!existingMembership && !membershipCreatedHere` guard this
+  // replaces covered only one of the two race interleavings — the one where
+  // both accepts pass the lookup and the loser's INSERT takes the 23505. The
+  // commoner interleaving is that the winner's insert COMMITS BEFORE the
+  // loser's lookup runs: the loser then finds `existingMembership`, skips the
+  // insert, and fell through to write a second MEMBER_JOINED. The train-b
+  // staging probe caught exactly that (cycle 2026-09-13T01-43-26Z: both
+  // accepts 2xx, one org_members row, TWO audit rows). `origin/main` emits in
+  // both interleavings; this closes both.
+  //
+  // It also drops the audit row for an ordinary idempotent replay — a user who
+  // is already a member re-opening an invitation link. That is the correct
+  // record: they did not join again, and a MEMBER_JOINED saying they did is a
+  // false entry in an auditor-facing log (§1.5).
+  if (!membershipCreatedHere) return;
 
   const { error: auditError } = await db.from('audit_events').insert({
     event_type: 'MEMBER_JOINED',

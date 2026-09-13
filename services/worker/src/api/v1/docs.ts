@@ -2562,7 +2562,11 @@ router.get('/spec.json', (_req, res) => {
 router.use('/', swaggerUi.serve, swaggerUi.setup(openApiSpec, {
   customCss: nordicVaultCss,
   customSiteTitle: 'Arkova Verification API Docs',
-  customfavIcon: 'https://arkova-26.vercel.app/favicon.ico',
+  // Review on PR #2838: the previous arkova-26.vercel.app/favicon.ico was a
+  // 404 (verified 2026-09-12). app.arkova.ai serves the brand SVG; the host is
+  // allow-listed in DOCS_CSP img-src (middleware/securityHeaders.ts) — change
+  // both together.
+  customfavIcon: 'https://app.arkova.ai/favicon.svg',
 }));
 
 export { router as docsRouter };

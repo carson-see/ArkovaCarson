@@ -15,7 +15,7 @@
  * signing or replay logic is introduced.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -48,6 +48,12 @@ vi.mock('../../webhooks/delivery.js', async () => {
 });
 
 import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
+import { __setWebhookFetchForTests } from '../../webhooks/egress.js';
+import { createSafeFetchImpl } from '../../lib/safe-fetch.js';
+
+// The pinned dispatch bypasses globalThis.fetch — route it back so the
+// vi.stubGlobal('fetch') assertions below keep working.
+__setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
 import { db } from '../../utils/db.js';
 import { poisonAt, isWellFormedUtf16 } from '../../tests/utf16-poison.js';
 import {
@@ -620,5 +626,30 @@ describe('webhooksSelfServiceRouter', () => {
 
       expect(res.status).toBe(404);
     });
+  });
+});
+
+describe('POST /webhooks/self-service/:id/test — pinned egress (SCRUM-4983)', () => {
+  afterEach(() => __setWebhookFetchForTests((url, init) => globalThis.fetch(url, init)));
+
+  it('refuses a host that passes the pre-check but rebinds to the metadata IP at dispatch', async () => {
+    (db.from as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(mockQuery({ data: PROFILE_ADMIN }))
+      .mockReturnValueOnce(mockQuery({ data: ENDPOINT_ROW }));
+    const dispatch = vi.fn();
+    __setWebhookFetchForTests(
+      createSafeFetchImpl({ resolve: async () => ['169.254.169.254'], dispatch }),
+    );
+
+    const res = await request(createApp())
+      .post('/webhooks/self-service/ep-1/test')
+      .set('x-test-user-id', 'user-1');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_url');
+    expect(dispatch).not.toHaveBeenCalled();
+    // No delivery-log row for a request that never left the process.
+    const tables = (db.from as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(tables).not.toContain('webhook_delivery_logs');
   });
 });

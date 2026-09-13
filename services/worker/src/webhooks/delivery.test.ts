@@ -246,6 +246,12 @@ import {
   resetCircuitBreakers,
   resolveDlqEntry,
 } from './delivery.js';
+import { __setWebhookFetchForTests } from './egress.js';
+
+// SCRUM-4983: production dispatch is IP-pinned through undici's own fetch, which
+// vi.stubGlobal('fetch') cannot intercept. Route the module's dispatch back to
+// the (stubbed) global so every assertion on mockFetch below still holds.
+__setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
 
 // WH-4: the ENABLE_OUTBOUND_WEBHOOKS flag read is now cached in-process for 30s.
 // Reset it before every test so a cached value from a prior case (tests run with
@@ -256,6 +262,7 @@ beforeEach(() => {
 
 // We also need direct access for HMAC verification — import crypto
 import crypto from 'node:crypto';
+import { createSafeFetchImpl } from '../lib/safe-fetch.js';
 
 // ---- Test fixtures ----
 
@@ -1049,6 +1056,132 @@ describe('deliverToEndpoint', () => {
         delivered_at: expect.any(String),
       }),
     );
+  });
+
+  // SCRUM-4983 — the socket must go to the IP that was validated. Before this
+  // fix the pre-check (isPrivateUrlResolved) and the dispatch (plain fetch)
+  // each resolved DNS independently, so a TTL-0 rebind between them reached
+  // the GCE metadata server despite redirect: 'manual'.
+  describe('IP-pinned egress (SCRUM-4983)', () => {
+    afterEach(() => {
+      __setWebhookFetchForTests((url, init) => globalThis.fetch(url, init));
+    });
+
+    function pinnedStub(resolved: string[]) {
+      const resolve = vi.fn(async () => resolved);
+      const dispatch = vi.fn(async (_pinnedIp: string, url: string, _init?: RequestInit) => ({
+        status: 200,
+        headers: new Headers(),
+        url,
+        arrayBuffer: async () => new TextEncoder().encode('OK').buffer as ArrayBuffer,
+      }));
+      __setWebhookFetchForTests(createSafeFetchImpl({ resolve, dispatch }));
+      return { resolve, dispatch };
+    }
+
+    it('connects to the IP it validated, with the original URL and signed headers, never via global fetch', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      const { dispatch } = pinnedStub(['203.0.113.10']);
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      const [pinnedIp, url, init] = dispatch.mock.calls[0] as unknown as [string, string, RequestInit];
+      expect(pinnedIp).toBe('203.0.113.10');
+      expect(url).toBe('https://hooks.example.com/callback');
+      expect(init).toEqual(expect.objectContaining({ method: 'POST', redirect: 'manual' }));
+      expect((init.headers as Record<string, string>)['X-Arkova-Signature']).toMatch(/^[a-f0-9]{64}$/);
+      expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'success', response_status: 200 }),
+      );
+    });
+
+    // CTO review (2026-09-12): `204 No Content` is the most common webhook
+    // acknowledgement. Routing dispatch through createSafeFetchImpl made it
+    // throw `TypeError: Response constructor: Invalid response status code
+    // 204`, which is not a SafeFetchError — so an ACCEPTED delivery was
+    // classified as a transient network error, retried five times and
+    // dead-lettered.
+    it('records a 204 No Content acknowledgement as success, not a retryable network error', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      const resolve = vi.fn(async () => ['203.0.113.10']);
+      const dispatch = vi.fn(async (_pinnedIp: string, url: string) => ({
+        status: 204,
+        headers: new Headers(),
+        url,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }));
+      __setWebhookFetchForTests(createSafeFetchImpl({ resolve, dispatch }));
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'success', response_status: 204 }),
+      );
+      expect(deliveryLogUpdate.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'retrying' }),
+      );
+    });
+
+    it('refuses a host that rebinds to the metadata IP between pre-check and dispatch: no socket, no retry, straight to DLQ', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      dlqUpsert.mockResolvedValue({ data: null, error: null });
+      // The node:dns mock (the pre-check) answers 203.0.113.10, so the guard
+      // passes. The pinned resolver — the second lookup, which is what a
+      // TTL-0 rebind flips — answers the GCE metadata IP.
+      const { dispatch } = pinnedStub(['169.254.169.254']);
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'failed',
+          next_retry_at: null,
+          error_message: expect.stringMatching(/^egress_refused: private_target/),
+        }),
+      );
+      expect(dlqUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ error_message: expect.stringMatching(/private_target/) }),
+        expect.anything(),
+      );
+    });
+
+    // CTO review (2026-09-12): migration 0338 constrains the column —
+    // CHECK (failure_kind IN ('http_delivery', 'log_write')) — verified live on
+    // prod. A row with failure_kind = 'egress_refused' is rejected with 23514,
+    // and the DLQ upsert never checks its PostgREST `{ error }`, so the row is
+    // lost silently while the "Moved to dead letter queue" info line still
+    // fires. The refusal reason belongs in error_message until a migration
+    // widens the CHECK.
+    it('dead-letters a refused delivery with a failure_kind the 0338 CHECK accepts', async () => {
+      deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+      deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+      deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+      dlqUpsert.mockClear();
+      dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-1' }, error: null }));
+      pinnedStub(['169.254.169.254']);
+
+      await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+      expect(dlqUpsert).toHaveBeenCalledTimes(1);
+      const dlqRow = dlqUpsert.mock.calls[0][0] as unknown as {
+        failure_kind: string;
+        error_message: string;
+      };
+      // The ONLY two values migration 0338's CHECK constraint permits.
+      expect(['http_delivery', 'log_write']).toContain(dlqRow.failure_kind);
+      expect(dlqRow.error_message).toMatch(/^egress_refused: private_target/);
+    });
   });
 
   it('sets status to retrying with next_retry_at on HTTP 500 (attempt 1)', async () => {

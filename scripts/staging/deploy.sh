@@ -51,6 +51,13 @@ PROJECT="${STAGING_GCP_PROJECT:-arkova1}"
 REGION="${STAGING_GCP_REGION:-us-central1}"
 SERVICE="${STAGING_CLOUD_RUN_SERVICE:-arkova-worker-staging}"
 STAGING_BATCH_ANCHOR_MAX_SIZE="${STAGING_BATCH_ANCHOR_MAX_SIZE:-10000}"
+# Must match the prod deploy's AI_EXTRACTION_LATENCY_BUDGET_MS. The worker's
+# code default is 4500ms (services/worker/src/api/v1/ai-extract.ts), and every
+# prod extraction since July hit it and degraded to the heuristic
+# `fast-fallback` stub while real Gemini calls measured 3.7-10.2s. A rig that
+# does not carry the prod value soaks the extraction path at a budget prod does
+# not use, so the soak cannot see the behavior it is supposed to evidence.
+STAGING_AI_EXTRACTION_LATENCY_BUDGET_MS="${STAGING_AI_EXTRACTION_LATENCY_BUDGET_MS:-15000}"
 
 # Hard production guard. The script lives in scripts/staging/ and only ever
 # wants to talk to a staging Cloud Run service. Anything that doesn't end in
@@ -453,7 +460,7 @@ fi
 GCLOUD_FLAGS=(
   --image="$IMAGE"
   --tag="$TAG"
-  --update-env-vars=BUILD_SHA="$BUILD_SHA",BATCH_ANCHOR_MAX_SIZE="$STAGING_BATCH_ANCHOR_MAX_SIZE"
+  --update-env-vars=BUILD_SHA="$BUILD_SHA",BATCH_ANCHOR_MAX_SIZE="$STAGING_BATCH_ANCHOR_MAX_SIZE",AI_EXTRACTION_LATENCY_BUDGET_MS="$STAGING_AI_EXTRACTION_LATENCY_BUDGET_MS"
   --update-labels=pr="$PR",lane="$TAG",deployed-by-script=deploy-sh,scrum1803=enforced
   --region="$REGION"
   --project="$PROJECT"

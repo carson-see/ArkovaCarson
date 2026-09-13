@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-13-TRAIN-B3",
+  "created_at": "2026-09-13T02:41:57Z",
+  "created_by": "carson@arkova.io (CTO release session, Claude Fable 5.1)",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": "",
+  "approval_time": "",
+  "train_launch_sha": "e6bd4a1672626b7b0f924725b855a4edde52a2aa",
+  "target_main_sha": "d0a5ffa27",
+  "allowed_base_shas": [
+    "d0a5ffa27"
+  ],
+  "covered_main_shas": [],
+  "included_prs": [
+    {
+      "number": 2843,
+      "head_sha": "9507be51e",
+      "base_sha": "d0a5ffa27",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "worker typecheck/lint/tests green after review fold; only Staging Soak Evidence Gate red pending this manifest.",
+      "rollback_note": "Revert the PR commits; refusal rows in webhook_delivery_log are inert; retry sweep returns to pre-gate behaviour. No migration.",
+      "migration_files": [],
+      "branch": "fix/scrum-3982-webhook-banned-fields"
+    },
+    {
+      "number": 2845,
+      "head_sha": "ebc4c2620",
+      "base_sha": "d0a5ffa27",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "worker 3397 tests green; scope vocabulary + verify:machines 12/12; only the soak gate red.",
+      "rollback_note": "Revert the one router.ts line; keys without webhooks:manage regain webhook management. Grandfather grant (webhooks:manage to active keys of the 3 endpoint-owning orgs) happens BEFORE the prod deploy and is not undone by a code revert.",
+      "migration_files": [],
+      "branch": "fix/scrum-3981-enforce-webhooks-manage-scope"
+    },
+    {
+      "number": 2846,
+      "head_sha": "652ba914a",
+      "base_sha": "d0a5ffa27",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "SonarCloud S2871 fixed in the review fold (985646cb7); worker 2462 + root 336 tests green; Tests/E2E re-run pending on 652ba914a.",
+      "rollback_note": "Revert the feature commits; all new metadata keys are optional end to end and read-only; leftover _drive_* keys are ignored. No backfill.",
+      "migration_files": [],
+      "branch": "feat/scrum-4507-drive-source-linkback"
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-cto-train-b-0912-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-cto-train-b-0912-staging",
+    "revision": "arkova-worker-cto-train-b-0912-staging-00014-car",
+    "deploy_tag": "train-3",
+    "image_digest": "sha256:18a33a7dbdbe0d12c14d0a19b89abcffdcf3b02b116df7ba17903c3fb168dde6",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "deploy_log_id": "4",
+    "preflight_result": "environment_type=clean_mirror"
+  },
+  "soak": {
+    "start": "2026-09-13T03:01:00.020Z",
+    "end": "2026-09-13T06:56:21Z",
+    "duration_hours": 4,
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@7cc125cf8",
+    "result": "green",
+    "evidence_links": [
+      "docs/staging/cto-train-b-0912/train-b3-window1/summary.json",
+      "docs/staging/cto-train-b-0912/train-b3-window1/cycles.sha256",
+      "docs/staging/cto-train-b-0912/train-b3-window1/rollback-rehearsal.json",
+      "docs/staging/soak-preflight/rc-train-b3-2026-09-13.json",
+      "docs/staging/cto-train-b-0912/train-b3-cycle1-coverage-gate.json"
+    ],
+    "expires_at": "2026-09-20T02:46:50Z"
+  },
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "No migration in this train.",
+    "reapply_proof": "n/a",
+    "stop_conditions": [
+      "SHA mismatch",
+      "dirty preflight",
+      "cycle failure not attributable to environment"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "pre_deploy_step": "#2845 grandfather: grant webhooks:manage to the active api_keys of the 3 orgs that own webhook_endpoints rows (prod write; Carson signs off) BEFORE the worker deploy that carries #2845."
+  },
+  "exceptions": [
+    "#2846: probes prove metadata carriage and public projection only — no rig has a Google credential (SCRUM-5082), so the real Drive fetch path is not exercised.",
+    "Rig 1 reused after Train B2: honesty preflight re-run before this train reports clean_mirror (docs/staging/cto-train-b-0912/preflight-b3-*.json); B2 wrote no schema.",
+    "Cycle-1 coverage gate 03:01:00Z: 141/141 probes (#2843 27, #2845 89, #2846 25); prechecks that found and fixed fixture defects are under /Volumes/Extreme/offload/cto-soak-2026-09-12/train-b3/precheck*/ (not window evidence).",
+    "#2846 head moved to d46eec778 after the train cut (652ba914a soaked): docs/uat PNG re-capture only — Post-soak T0 delta at seal.",
+    "Window 1: 41 cycles, 41 pass, 0 fail, 141 probes/cycle, 0 retries; single revision 00014-car across all cycles; last cycle finished 2026-09-13T06:56:21Z.",
+    "Rollback rehearsed 2026-09-13T07:02Z: traffic re-promoted to rev 00009-qof (/health git_sha 89dba6baa, healthy) then restored to 00014-car (/health git_sha e6bd4a167, healthy); artifact rollback-rehearsal.json."
+  ],
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b3-2026-09-13.json",
+  "staging_branch": "rc/train-b3-2026-09-13",
+  "preflight_timestamp": "2026-09-13T02:40:36.870Z"
+}

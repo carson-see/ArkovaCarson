@@ -322,6 +322,15 @@ REPLICATE_API_TOKEN=                # QA only
 AI_BATCH_CONCURRENCY=3
 CF_AI_MODEL=
 
+# SCRUM-4939 — ai_credits auto-provisioning
+AI_CREDITS_MONTHLY_ALLOCATION=100   # allocation for an auto-provisioned ai_credits period row
+                                    # (cost-tracker.ts ensureAICreditsPeriod, via typed config
+                                    # config.aiCreditsMonthlyAllocation). Must be a positive
+                                    # integer; unset/blank/non-numeric/<=0/fractional all fall back
+                                    # to 100 (= every operator-seeded prod row). Only affects a
+                                    # NEWLY-created period row — never overwrites an existing
+                                    # row's monthly_allocation.
+
 # SCRUM-1061 — Vertex AI SDK migration (Gemini Golden only, NOT Nessie)
 ENABLE_VERTEX_AI=false              # when true, Gemini Golden uses Vertex AI SDK + SA auth
 GCP_PROJECT_ID=arkova1              # GCP project for Vertex AI
@@ -717,6 +726,20 @@ fail closed (default false) per CLAUDE.md §0 rule 2.
 
 ```bash
 ENABLE_AI_EXTRACTION=false          # /api/v1/ai/extract — server-side OCR/structuring (CLAUDE.md §1.6 — gated)
+AI_EXTRACTION_LATENCY_BUDGET_MS=15000 # single-extraction latency budget before falling back to the
+                                    # heuristic `fast-fallback` stub (services/worker/src/api/v1/ai-extract.ts).
+                                    # Code default 4500; prod Cloud Run is live at 15000 — verified directly
+                                    # via `gcloud run services describe arkova-worker` on rev
+                                    # arkova-worker-01047-lzx (2026-09-12, 100% traffic). Every extraction
+                                    # since July hit the 4500ms default and degraded to fast-fallback; real
+                                    # Gemini calls measured 3.7-10.2s. The prod value was set directly on
+                                    # the Cloud Run service (not yet in deploy-worker.yml), so it resets to
+                                    # 4500 on the next worker deploy unless deploy-worker.yml's
+                                    # --set-env-vars list carries 15000 too — which it now does.
+                                    # Staging parity: scripts/staging/deploy.sh and
+                                    # scripts/staging/provision-isolated-rig.sh also set 15000, so a
+                                    # soak of the extraction path exercises the budget prod actually
+                                    # runs rather than the 4500 code default.
 ENABLE_SEMANTIC_SEARCH=false        # /api/v1/ai/search semantic embeddings
 ENABLE_AI_FRAUD=false               # /api/v1/ai/integrity, /ai/review (text-based fraud signals)
 ENABLE_FRAUD_DETECTION=false        # Browser-only deterministic fraud Web Worker; sends structured findings only

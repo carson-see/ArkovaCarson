@@ -276,6 +276,65 @@ describe('acceptInvitation — existing-user join path', () => {
       verificationEmailSent: false,
     });
   });
+
+  // SCRUM-4991, second race interleaving — found by the train-b staging probe
+  // (cycle 2026-09-13T01-43-26Z: both accepts 2xx, ONE org_members row, TWO
+  // MEMBER_JOINED rows).
+  //
+  // The 23505 guard only covers the interleaving where BOTH accepts pass the
+  // membership lookup and the loser's INSERT is rejected. The commoner one is
+  // that the winner's insert commits BEFORE the loser's lookup runs — then the
+  // loser finds `existingMembership`, skips the insert entirely, and the
+  // `!existingMembership && !membershipCreatedHere` guard is false, so it falls
+  // through and writes a SECOND MEMBER_JOINED for a join that happened once.
+  // The rule is the one the 23505 comment already states: emit only when THIS
+  // call created the membership.
+  it('does not emit a second MEMBER_JOINED when the membership already exists (race loser whose lookup ran after the winner committed)', async () => {
+    const deps = makeDeps({
+      invitations: [
+        chain({ data: INVITATION_ROW, error: null }),
+        chain({ error: null }), // status -> accepted
+      ],
+      organizations: [chain({ data: ORG_ROW, error: null })],
+      profiles: [
+        chain({ data: { email: 'invitee@example.com' }, error: null }), // caller email check
+        chain({ error: null }), // org_id backfill
+      ],
+      // The winner already committed: the lookup finds the membership, so no
+      // insert is attempted at all.
+      org_members: [chain({ data: { id: 'membership-1' }, error: null })],
+      // No audit_events queue entry: an unconfigured db.from('audit_events')
+      // throws, so a duplicate emit fails loudly rather than silently.
+    });
+
+    const result = await acceptInvitation(deps, { token: TOKEN, callerId: 'user-1' });
+
+    expect(result.orgId).toBe('org-1');
+    expect(deps.db.from).not.toHaveBeenCalledWith('audit_events');
+  });
+
+  // The same rule stated from the other side, so a future edit cannot satisfy
+  // the test above by suppressing the audit event entirely.
+  it('still emits exactly one MEMBER_JOINED for the accept that creates the membership', async () => {
+    const auditChain = chain({ error: null });
+    const deps = makeDeps({
+      invitations: [chain({ data: INVITATION_ROW, error: null }), chain({ error: null })],
+      organizations: [chain({ data: ORG_ROW, error: null })],
+      profiles: [chain({ data: { email: 'invitee@example.com' }, error: null }), chain({ error: null })],
+      org_members: [
+        chain({ data: null, error: null }), // no existing membership
+        chain({ error: null }), // insert wins
+      ],
+      audit_events: [auditChain],
+    });
+
+    await acceptInvitation(deps, { token: TOKEN, callerId: 'user-1' });
+
+    expect(deps.db.from).toHaveBeenCalledWith('audit_events');
+    expect(auditChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'MEMBER_JOINED', target_id: INVITATION_ROW.id }),
+    );
+  });
 });
 
 describe('acceptInvitation — new-account path', () => {
@@ -362,6 +421,50 @@ describe('acceptInvitation — new-account path', () => {
 
     const result = await acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null });
     expect(result.verificationRequired).toBe(true);
+  });
+
+  // SCRUM-4991: the org_members lookup and insert are not atomic. A concurrent
+  // accept can win the race between them; the loser's insert fails 23505.
+  // The membership exists, so that is a success, not a 500.
+  it('treats a duplicate org_members row (23505, concurrent accept) as success', async () => {
+    const deps = makeDeps({
+      invitations: [
+        chain({ data: INVITATION_ROW, error: null }),
+        chain({ error: null }),
+      ],
+      organizations: [chain({ data: ORG_ROW, error: null })],
+      profiles: [
+        chain({ data: null, error: null }),
+        chain({ error: null }),
+        chain({ error: null }),
+      ],
+      org_members: [
+        chain({ data: null, error: null }), // lookup: not yet a member
+        chain({ error: { code: '23505', message: 'duplicate key value violates unique constraint' } }), // insert loses the race
+      ],
+      // No audit_events queue entry: the race loser must not emit a second
+      // MEMBER_JOINED row (an unconfigured db.from('audit_events') throws).
+    });
+
+    const result = await acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null });
+    expect(result.orgId).toBe('org-1');
+    expect(deps.db.auth.admin.deleteUser).not.toHaveBeenCalled();
+    expect(deps.db.from).not.toHaveBeenCalledWith('audit_events');
+  });
+
+  it('still surfaces a non-23505 org_members insert failure', async () => {
+    const deps = makeDeps({
+      invitations: [chain({ data: INVITATION_ROW, error: null })],
+      organizations: [chain({ data: ORG_ROW, error: null })],
+      profiles: [chain({ data: null, error: null }), chain({ error: null })],
+      org_members: [
+        chain({ data: null, error: null }),
+        chain({ error: { code: '23503', message: 'fk violation' } }),
+      ],
+    });
+    await expect(
+      acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null }),
+    ).rejects.toMatchObject({ code: 'internal_error' });
   });
 
   it('rolls back (deletes) the newly created auth user when provisioning fails after account creation', async () => {

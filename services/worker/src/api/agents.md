@@ -462,3 +462,15 @@ leave an operator with a half-created partner. Every outcome is logged (info on
 success, **error** on every non-applied branch, including `rpc_failed` and
 `threw`) and reported additively on the result as `referral_applied` +
 `referral_reason`. Both fields are absent when no code was supplied.
+## 2026-09-12 SCRUM-4986 / SCRUM-4991 — revoke requires ORG_ADMIN in the worker; invitation double-accept is a no-op
+
+- **`anchor-revoke.ts`** selected `memberships.role` and never read it, so any ORG_MEMBER could call
+  `POST /api/anchor/:id/revoke`. The `revoke_anchor` RPC does enforce ORG_ADMIN — but through
+  `auth.uid()`, which is NULL under the service_role client this route uses — so the worker is the
+  only place the role check can actually run for this path. Non-admins get the same 404 as
+  non-members (no membership oracle) and the RPC is never reached. Whether the service_role RPC call
+  succeeds at all is an open [Verify] on SCRUM-4986; do not "fix" it by widening the RPC's grants.
+- **`invitations.ts` `provisionMembership`** is check-then-insert on `org_members`. Its comment
+  promised a concurrent double accept was "a clean no-op"; the code threw the loser's 23505 as a 500.
+  23505 on that insert is now treated as success (the membership exists). Any other insert error
+  still throws and triggers the new-account rollback.

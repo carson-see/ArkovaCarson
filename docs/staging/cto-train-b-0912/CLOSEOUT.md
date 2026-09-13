@@ -21,3 +21,11 @@ Any session can seal a window. Rule set: T2 floor 4 h (CLAUDE.md §1.12 as of `b
 
 ## Standing-rig windows (#2825 #2832 #2831)
 Close times under the 24 h rule: #2825 2026-09-13T11:41:32Z; #2832/#2831 2026-09-13T14:07:00Z. Procedure is in HANDOFF `## Now` (13:13Z block, "Sunday close-out").
+
+## Seal precondition added 2026-09-13 (FD-GATE-3, learned on Train B3)
+Before step 4, for EVERY PR in the train compute the same-file overlap between the PR's own diff and main's movement since the manifest's `target_main_sha`:
+```
+comm -12 <(git diff --name-only $(git merge-base origin/<branch> origin/main) origin/<branch> | sort) \
+         <(git diff --name-only <target_main_sha> origin/main | sort) | grep -vE '\.test\.|agents\.md|^docs/'
+```
+If any listed file classifies T2+ (`requiredTierFor`), the evidence cannot be attested — re-cut the train on the current main (the B1 batch merging at 07:08Z invalidated Train B3 this way). Surface-only drift (no own-file overlap) is covered by a `### Base-drift residual-risk note` that enumerates every intersecting file. Land PRs that share files as ONE train and ONE Mergify batch, and never seal a later train while an earlier batch is still queued.

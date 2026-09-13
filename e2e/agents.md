@@ -1,6 +1,47 @@
 # agents.md — e2e/
 
-_Last updated: 2026-09-03 (MFA enrollment + login-challenge spec added, made fully self-contained for seed-less rigs; auth.setup.ts now injects an enforcement-date override)._
+_Last updated: 2026-09-13 (`uat-pr2840.spec.ts` self-skips outside its own config, CI run 34741690944)._
+
+## 2026-09-13 SCRUM-4989 — `uat-pr2840.spec.ts` was NOT actually excluded from CI; it self-skips now
+
+The 2026-09-12 note below documented the *intent* that this file never runs under the
+shared suite, but nothing enforced it: `playwright.config.ts`'s `testIgnore` only names
+`oauth-email-confirmation.spec.ts`, and `ci.yml`'s "Run E2E tests" step is a bare
+`playwright test --project=chromium` with no file filter, so its default `testDir: './e2e'`
+glob picked this file up anyway. PR #2840's CI run (34741690944, head 647ca9cac) failed the
+"E2E Tests" job on exactly this: every authenticated/profile-reading case (`:179`, `:199`,
+`:224`, `:282`, both viewports) timed out ~16-17s on its first
+`toBeVisible({ timeout: 15_000 })`/`.poll()` against `npm run dev` on :5173 with the `setup`
+project's real seed-user `storageState` already loaded — an environment this spec was never
+written for (it wants `vite preview` on :4173 with a clean context). Only the static
+`/how-it-works` JSON-LD case, which reads no profile data, passed.
+
+Fix (T0, e2e/-only): the spec now self-enforces the boundary instead of relying on the shared
+config to keep excluding it. `uat-pr2840.config.ts` declares no `projects`, so it runs as one
+anonymous (empty-name) project; every project in `playwright.config.ts` is named
+(`chromium`/`firefox`/`webkit`/`mobile-*`/`setup`). A file-level `test.beforeEach` calls
+`test.skip(testInfo.project.name !== '', …)`, so a run under the shared config reports these
+tests skipped (green) instead of failing, while `npx playwright test e2e/uat-pr2840.spec.ts
+--config=e2e/uat-pr2840.config.ts` is unaffected (project name `''`). Adding the file to
+`testIgnore` in root `playwright.config.ts` would also fix the CI failure but was rejected for
+this change: it is a non-`e2e/` config edit, and the tier detector
+(`scripts/ci/check-staging-evidence.ts`) does not carve `playwright.config.ts` into T0. If a
+future edit ever adds `projects` to `uat-pr2840.config.ts`, give it an empty-string project
+name (or update this guard) — do not let the name collide with a shared-config project name.
+
+## 2026-09-12 SCRUM-4989 — `uat-pr2840.spec.ts` runs OUTSIDE the CI suite
+
+`uat-pr2840.spec.ts` + `uat-pr2840.config.ts` are a one-off T1 UAT capture for PR #2840,
+deliberately **not** part of `npm run test:e2e`. They carry their own config because the repo
+config loads `.env.test`, runs `auth.setup.ts` against a real Supabase project, and pulls in all
+of `e2e/` — this capture must touch no rig. It drives a local `vite preview` build with every
+Supabase call stubbed via `page.route` and a session injected at the `sb-127-auth-token`
+localStorage key (see `helpers/supabase-storage-key.ts` for why that key has to be exact).
+
+Its hostile/safe pair is the pattern worth copying: a capture that proves something does NOT
+render is worthless without the control showing the same code path DOES render legitimate values.
+
+Evidence and reproduction steps: `docs/uat/pr-2840/README.md`.
 
 ## 2026-09-08 — every failed E2E job used to discard its own evidence
 
