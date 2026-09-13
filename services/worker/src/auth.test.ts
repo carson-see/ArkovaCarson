@@ -42,7 +42,7 @@ async function createTestJwt(
   secret: string = TEST_SECRET,
 ): Promise<string> {
   const key = new TextEncoder().encode(secret);
-  return new SignJWT(claims)
+  return new SignJWT({ aal: 'aal2', ...claims })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('1h')
@@ -90,7 +90,7 @@ describe('verifyAuthToken', () => {
 
     it('returns null for expired JWT', async () => {
       const key = new TextEncoder().encode(TEST_SECRET);
-      const token = await new SignJWT({ sub: TEST_USER_ID })
+      const token = await new SignJWT({ sub: TEST_USER_ID, aal: 'aal2' })
         .setProtectedHeader({ alg: 'HS256' })
         .setIssuedAt(Math.floor(Date.now() / 1000) - 7200) // 2 hours ago
         .setExpirationTime(Math.floor(Date.now() / 1000) - 3600) // 1 hour ago
@@ -274,7 +274,7 @@ describe('verifyAuthToken', () => {
       const { publicKey, privateKey } = await generateKeyPair('ES256');
       mockJwksKey = publicKey;
 
-      const token = await new SignJWT({ sub: TEST_USER_ID })
+      const token = await new SignJWT({ sub: TEST_USER_ID, aal: 'aal2' })
         .setProtectedHeader({ alg: 'ES256' })
         .setIssuer(`${SUPABASE_URL}/auth/v1`)
         .setIssuedAt()
@@ -298,7 +298,7 @@ describe('verifyAuthToken', () => {
 
       // Correctly signed, but the issuer is another project. Issuer pinning is
       // the only thing preventing cross-project token replay.
-      const token = await new SignJWT({ sub: TEST_USER_ID })
+      const token = await new SignJWT({ sub: TEST_USER_ID, aal: 'aal2' })
         .setProtectedHeader({ alg: 'ES256' })
         .setIssuer('https://attacker-project.supabase.co/auth/v1')
         .setIssuedAt()
@@ -322,7 +322,7 @@ describe('verifyAuthToken', () => {
       const { privateKey: wrongKey } = await generateKeyPair('ES256');
       mockJwksKey = publicKey;
 
-      const token = await new SignJWT({ sub: TEST_USER_ID })
+      const token = await new SignJWT({ sub: TEST_USER_ID, aal: 'aal2' })
         .setProtectedHeader({ alg: 'ES256' })
         .setIssuer(`${SUPABASE_URL}/auth/v1`)
         .setIssuedAt()

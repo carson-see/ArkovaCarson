@@ -49,6 +49,7 @@ function makeJwt(
     aud: AUD,
     iss: ISS,
     role: 'authenticated',
+    aal: 'aal2',
     iat: NOW - 60,
     exp: NOW + 3600,
     ...payloadOverrides,
