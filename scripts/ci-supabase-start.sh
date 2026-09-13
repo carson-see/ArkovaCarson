@@ -185,9 +185,9 @@ echo "Migration filenames fixed."
 # a blocking index build is equivalent here. This rewrite is applied to the CI
 # checkout only and is never committed.
 # Gated: the root vitest suite asserts that these migration files still contain
-# CONCURRENTLY (they are prod migrations), and the test/types-check jobs run this
-# wrapper on CLI 1.123.0 where the rewrite is unnecessary. Only the e2e job (CLI
-# 2.x) opts in via CI_SUPABASE_STRIP_CONCURRENTLY=1.
+# CONCURRENTLY (they are prod migrations). Jobs using CLI 2.x opt in via
+# CI_SUPABASE_STRIP_CONCURRENTLY=1 and restore the committed migrations after
+# their final database reset; types-check remains on CLI 1.123.0.
 if [ "${CI_SUPABASE_STRIP_CONCURRENTLY:-0}" = "1" ]; then
 echo "Stripping CONCURRENTLY from index DDL for the CI stack..."
 concurrently_count=$(grep -l -iE 'INDEX CONCURRENTLY' "$MIGRATIONS_DIR"/*.sql 2>/dev/null | wc -l | tr -d ' ')

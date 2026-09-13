@@ -40,15 +40,31 @@
  * rotation mechanism that upgrades a legacy org-id-token connection to a real
  * secret without requiring the user to reconnect.
  *
- * CRITICAL invariant: renewal NEVER touches `last_page_token`. That column is
- * the live changes-feed cursor, advanced independently by
- * `drive-changes-processor.ts`'s `advancePageToken`. `createChangesWatch`
- * always calls Drive's `changes.getStartPageToken` internally and returns a
- * fresh token — if a renewal persisted that value it would silently reset
- * the cursor and DROP every unprocessed change between the last successful
- * advance and the renewal. We deliberately discard the returned
- * `startPageToken` (mirrors the DRIVE-06 `drive-channel-renewal.ts` sweep,
- * which has the identical rule for its own `initial_page_token` field).
+ * CRITICAL invariant: renewal never OVERWRITES a POPULATED `last_page_token`;
+ * it BOOTSTRAPS a null one. That column is the live changes-feed cursor,
+ * advanced independently by `drive-changes-processor.ts`'s
+ * `advancePageToken`. `createChangesWatch` always calls Drive's
+ * `changes.getStartPageToken` internally and returns a fresh token — if a
+ * renewal persisted that value OVER a live cursor it would silently reset it
+ * and DROP every unprocessed change between the last successful advance and
+ * the renewal. That reasoning holds only for a cursor that exists.
+ *
+ * BUG 2026-09-13: read as "never touches the column, ever", it also stranded
+ * every connection whose cursor was NULL. `drive-changes-runner.ts` skips
+ * such a connection (`skipped: 'no_page_token'`) and deferred recovery to
+ * "the watch-renewal monitor" — i.e. to this module, which discarded the one
+ * value that could have recovered it. Net: the prod Arkova google_drive row
+ * has had `last_page_token IS NULL` since it connected in April, its channel
+ * renewed hourly without a single failure, Google delivering change
+ * notifications the whole time, and not one Drive artifact ever produced.
+ * So: when (and ONLY when) the row's cursor is null/empty AND the freshly
+ * created watch returned a `startPageToken`, the successful-renewal write
+ * carries `last_page_token` + `last_token_advanced_at` — in the SAME
+ * `updateConnection` call as the channel swap, so the cursor and the channel
+ * that feeds it can never disagree. A populated cursor is still never
+ * included in the update at all (the key is ABSENT, not re-sent unchanged).
+ * The DRIVE-06 `drive-channel-renewal.ts` sweep still has the strict rule for
+ * its own `initial_page_token` field; that system has no prod rows.
  *
  * PR #1944 review round 3 (perf + reuse):
  *   - Connections are independent (different orgs/channels), so they are
@@ -82,6 +98,14 @@ export interface DriveSubscriptionRow {
   /** JSON string: `{ email, channel_token, resource_id }` (or null/legacy). */
   account_label: string | null;
   watch_renewal_failure_count: number;
+  /**
+   * The live changes-feed cursor. NULL on a connection that was never
+   * bootstrapped (every row created before migration 0288, plus the prod
+   * Arkova row) — the one case this sweep is allowed to write it. Must be
+   * selected by the DB adapter or the null check below silently reads
+   * `undefined` and bootstraps a live cursor.
+   */
+  last_page_token: string | null;
 }
 
 export interface DriveSubscriptionRenewalDb {
@@ -101,6 +125,13 @@ export interface DriveSubscriptionRenewalDb {
     last_renewal_error: string | null;
     last_renewal_at: string;
     watch_renewal_failure_count: number;
+    /**
+     * Present ONLY on the null-cursor bootstrap path (BUG 2026-09-13). The
+     * key is absent on every other write — including a successful renewal of
+     * a populated cursor.
+     */
+    last_page_token?: string;
+    last_token_advanced_at?: string;
   }): Promise<{ error: boolean }>;
 }
 
@@ -120,7 +151,28 @@ export interface DriveSubscriptionRenewalClient {
     accessToken: string;
     channelId: string;
     channelToken: string;
-  }): Promise<{ resourceId: string; expiration: string }>;
+  }): Promise<{
+    resourceId: string;
+    expiration: string;
+    /**
+     * Drive's `changes.getStartPageToken`, resolved by `createChangesWatch`
+     * on the way to registering the channel. Consumed ONLY to bootstrap a
+     * null cursor (BUG 2026-09-13); optional because a client adapter is not
+     * obliged to surface it, and its absence must degrade to "no bootstrap",
+     * never to a failed renewal.
+     */
+    startPageToken?: string | null;
+  }>;
+}
+
+/**
+ * Minimal logger surface — injected, never imported, so this module stays a
+ * pure orchestrator (see the module doc comment). Optional: logging is
+ * observability, and its absence must never change what gets written.
+ */
+export interface DriveSubscriptionRenewalLogger {
+  info?: (obj: Record<string, unknown>, msg: string) => void;
+  error?: (obj: Record<string, unknown>, msg: string) => void;
 }
 
 export type DriveSubscriptionRenewalAlert = (event: {
@@ -194,6 +246,8 @@ export async function renewDriveSubscriptions(args: {
   channelTokenFactory?: () => string;
   /** Injected for deterministic concurrency tests; defaults to RENEWAL_CONCURRENCY. */
   concurrency?: number;
+  /** Optional observability sink for the null-cursor bootstrap (BUG 2026-09-13). */
+  logger?: DriveSubscriptionRenewalLogger;
 }): Promise<DriveSubscriptionRenewalSummary> {
   const now = args.now?.() ?? new Date();
   const horizonMs = args.horizonMs ?? DEFAULT_HORIZON_MS;
@@ -289,16 +343,29 @@ export async function renewDriveSubscriptions(args: {
           channel_token: newChannelToken,
           resource_id: created.resourceId,
         });
+        // BUG 2026-09-13 — null-cursor bootstrap. A cursor that EXISTS is
+        // never included in this update (the key stays absent, so no future
+        // refactor can send it "unchanged" and get it wrong); a cursor that
+        // is null/empty has nothing to lose and everything to gain from the
+        // startPageToken this very watch was created against, so it rides
+        // along in the SAME write as the channel swap. See the module doc
+        // comment for why the old blanket rule stranded the prod row.
+        const cursorIsUnset = !conn.last_page_token;
+        const bootstrapToken =
+          cursorIsUnset && typeof created.startPageToken === 'string' && created.startPageToken.length > 0
+            ? created.startPageToken
+            : null;
         const res = await args.db.updateConnection({
           id: conn.id,
           subscription_id: newChannelId,
           subscription_expires_at: created.expiration,
           account_label: newLabel,
-          // NOTE: last_page_token is intentionally absent from this update —
-          // see the module doc comment. Never touched by renewal.
           last_renewal_error: null,
           last_renewal_at: now.toISOString(),
           watch_renewal_failure_count: 0,
+          ...(bootstrapToken
+            ? { last_page_token: bootstrapToken, last_token_advanced_at: now.toISOString() }
+            : {}),
         });
         if (res.error) {
           // The new channel exists at Google but we could not persist it —
@@ -318,6 +385,24 @@ export async function renewDriveSubscriptions(args: {
           });
         } else {
           summary.renewed += 1;
+          // Logged only after the write actually landed — a bootstrap that
+          // was not persisted is not a bootstrap. Bounded and id-only: no
+          // token value, no account email, no folder path, nothing from
+          // `account_label` (the row's PII carrier).
+          if (bootstrapToken) {
+            args.logger?.info?.(
+              { integrationId: conn.id, orgId: conn.org_id, bootstrapped: true },
+              'drive subscription renewal: bootstrapped a null changes cursor from the new watch startPageToken',
+            );
+          } else if (cursorIsUnset) {
+            // NOT a silent skip: this connection's cursor is still null, so
+            // every push it receives will keep being dropped as
+            // `no_page_token` until a later sweep gets a startPageToken.
+            args.logger?.error?.(
+              { integrationId: conn.id, orgId: conn.org_id, bootstrapped: false },
+              'drive subscription renewal: cursor is null but the new watch returned no startPageToken — connection stays unprocessable until the next sweep',
+            );
+          }
           // 3. ONLY NOW — new channel live AND persisted — best-effort stop
           //    the old one. A stop failure just means it expires naturally
           //    in ~7 days, which is fine: the NEW channel is already the one

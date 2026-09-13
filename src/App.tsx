@@ -1,4 +1,3 @@
-import { getEmailConfirmationToken, isEmailConfirmationPending } from '@/lib/oauthConfirmation';
 /**
  * Arkova MVP - Main Application
  *
@@ -33,6 +32,8 @@ import { lazyWithRetry } from '@/lib/lazyWithRetry';
 import { TOAST_DURATIONS_MS } from '@/lib/toastConfig';
 import { AuthLinkErrorRedirect } from '@/components/auth/AuthLinkErrorRedirect';
 import { shouldDismissToastsForLocationChange, type ToastLocation } from '@/lib/toastNavigation';
+import { getEmailConfirmationToken, isEmailConfirmationPending } from '@/lib/oauthConfirmation';
+import { sessionHasAal2 } from '@/lib/mfaSessionKey';
 
 // ── Lazy-loaded page components (AUDIT-13: route-level code splitting) ──────
 const SetPasswordPage = lazyWithRetry(() => import('@/pages/SetPasswordPage').then(m => ({ default: m.SetPasswordPage })));
@@ -133,6 +134,12 @@ function PublicOnly({ children }: Readonly<{ children: React.ReactNode }>) {
     return location.pathname === ROUTES.SIGNUP
       ? <>{children}</>
       : <Navigate to={ROUTES.SIGNUP} replace />;
+  }
+
+  // A confirmed AAL1 user must reach an AuthGuard immediately. Profile reads
+  // are intentionally unavailable until AAL2, so they cannot drive this hop.
+  if (user && !sessionHasAal2(session?.access_token ?? null, user.id)) {
+    return <Navigate to={ROUTES.DASHBOARD} replace />;
   }
 
   if (user && profileLoading) return <LoadingScreen />;

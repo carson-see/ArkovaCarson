@@ -333,3 +333,8 @@ fall back to a user entry. No production entries are created by this change.
 with real HS256/ES256 signatures. It covers valid user entries, namespace
 separation, missing/forged subjects, returned-subject mismatch, and terminal
 signed pending-role rejection before any user/KV/tool lookup can rescue it.
+
+## 2026-09-11 — UAT-04 hosted MCP bearer tokens
+
+Hosted MCP Supabase bearer verification requires AAL2 for human JWTs and rejects
+email/MFA pending roles. `X-API-Key` machine authentication is unchanged.

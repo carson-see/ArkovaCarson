@@ -68,7 +68,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { createServiceClient, createAnonClient, type TypedClient } from '../../src/tests/rls/helpers';
+import {
+  createServiceClient,
+  createAnonClient,
+  elevateRlsClientToAal2,
+  type TypedClient,
+} from '../../src/tests/rls/helpers';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const WebSocketTransport = ws as any;
@@ -137,6 +142,7 @@ describe('SCRUM-2940 — folders RLS (cross-tenant isolation + owner-scope join 
     }) as unknown as TypedClient;
     const { error: signInErr } = await client.auth.signInWithPassword({ email, password: RLS_TEST_PASSWORD });
     if (signInErr) throw new Error(`sign-in failed for ${email}: ${signInErr.message}`);
+    await elevateRlsClientToAal2(client, id);
     return { id, email, client };
   }
 

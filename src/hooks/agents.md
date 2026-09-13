@@ -193,3 +193,8 @@ an `else if` so the fallback cannot attribute the same organization twice.
 - **Deliberate non-attribution:** `joinOrgByDomain` and invitation-accept create
   no organization, so nothing is attributed. A partner refers organizations, not
   seats.
+## 2026-09-11 — UAT-04 profile authority
+
+`useProfile` does not fetch or return cached profile data until mailbox proof and
+a same-user `authenticated`/AAL2 token are present. An assurance upgrade resumes
+the query; account switches and AAL downgrades mask cached data immediately.

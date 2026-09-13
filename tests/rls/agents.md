@@ -169,3 +169,18 @@ row, unknown writes one audit row and NO edge, self is refused, blank is
 
 Requires a local Supabase with `0455` applied. It was NOT run in the authoring
 session (no local stack available there) — it is the T3 soak specification.
+## 2026-09-11 — UAT-04 mandatory MFA boundary
+
+`uat04-mfa-enforcement.test.ts` exercises real GoTrue tokens and PostgREST for the
+email-before-MFA transition, AAL1 denial, AAL2 access, private Storage, service
+credentials, and preservation of an existing pre-request hook. Keep its fixture
+IDs and temporary policies suite-owned, and retain the old-token negative controls.
+All other RLS positive clients use a shared, process-locked TOTP factor through
+`elevateRlsClientToAal2()`; keep that real GoTrue elevation instead of weakening
+the production MFA gate or substituting a locally signed token.
+
+SCRUM-4887: committed changes to the singleton OAuth confirmation policy use
+`shared-fixture-lock.ts` across Vitest workers and restore the exact prior
+timestamp in a separate `finally` path. The lock times out instead of evicting
+an apparently stale owner. Keep file parallelism enabled so unrelated fixture
+collisions remain visible.

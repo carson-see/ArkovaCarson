@@ -40,7 +40,7 @@ async function fixture(options: FixtureOptions = {}) {
   const now = Math.floor(Date.now() / 1000);
   const subject = options.subject === undefined ? userId : options.subject;
   const payload = { ...(subject === null ? {} : { sub: subject }),
-    role: options.role ?? 'authenticated', aud: 'authenticated', iss: `${issuer}/auth/v1`,
+    role: options.role ?? 'authenticated', aal: 'aal2', aud: 'authenticated', iss: `${issuer}/auth/v1`,
     iat: now, exp: now + 300 };
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true,
     ['sign', 'verify']) as CryptoKeyPair;

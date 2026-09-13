@@ -6,10 +6,20 @@
     <meta name="description" content="Arkova — Secure document verification platform. Anchor credentials to an immutable record and verify them instantly." />
     <meta name="theme-color" content="#00d4ff" />
 
-    <!-- SEC-008: Content Security Policy (dev fallback — production CSP in vercel.json) -->
+    <!-- SEC-008: Content Security Policy (dev fallback — production CSP in vercel.json).
+         `blob:` in script-src (2026-09-13, nerPiiDetector.ts dev-server bundle-load
+         fix): this meta tag ships into the production build unchanged (verified in
+         dist/index.html), so it is ALSO active in production alongside vercel.json's
+         separate header CSP — and per the CSP spec, multiple delivered policies are
+         each enforced independently (an action must satisfy ALL of them). vercel.json's
+         `script-src 'self' 'wasm-unsafe-eval'` has no `blob:` and is NOT changed by this
+         edit, so the effective production restriction is unchanged; this addition only
+         has effect where THIS meta tag is the sole active CSP — `vite dev` (there is no
+         Vercel edge in front of localhost). Do not treat this as a production-CSP
+         relaxation; it is not one. -->
     <meta http-equiv="Content-Security-Policy"
       content="default-src 'self';
-      script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval';
+      script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:;
       style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
       font-src 'self' https://fonts.gstatic.com;
       img-src 'self' data: blob: https:;

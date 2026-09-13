@@ -1,6 +1,61 @@
 # agents.md — lib
 
-_Last updated: 2026-09-12_
+_Last updated: 2026-09-13 (`nerPiiDetector.ts` dev-server bundle-load fix)_
+
+## 2026-09-13 — Founder report "Secure Document Continue is broken" root-caused to `nerPiiDetector.ts`, not `SecureDocumentDialog.tsx`
+
+`SecureDocumentDialog.tsx`'s two Continue handlers (`handleUploadContinue`,
+`handleExtractionReviewContinue`) were audited against every documented
+failure class (confidence gating removed by design per SCRUM-2914, fail-closed
+privacy screen, extraction-failed recovery, insert failure) and found
+correct — 29 unit tests plus the 60-case `e2e/secure-dialog-layout.spec.ts`
+geometry/actionability suite all pass unchanged. The actual defect was one
+layer down: `nerPiiDetector.ts`'s `defaultTransformersLoader` used a plain
+`import(TRANSFORMERS_BROWSER_MODULE)` (a same-origin `/public` asset). That
+works under static/production serving (the browser just fetches the URL) but
+Vite's **dev server** (`npm run dev`) refuses to serve a `/public` file
+requested via `import()` ("This file is in /public ... should not be
+imported from source code"), so every on-device NER load failed under local
+dev — sending the dialog straight to the §1.6 `privacy-blocked` screen
+instead of running AI extraction on every attempt. Fix: fetch the bundle as
+text (a request Vite's dev server serves `/public` files for normally) and
+`import()` it from a `blob:` URL instead, which never touches Vite's dev
+middleware.
+
+**CORRECTED same-day (review catch): the blob path is DEV-ONLY, gated on
+`import.meta.env.DEV`.** The first version shipped this unconditionally —
+CSP `script-src` refuses `blob:` in production (`vercel.json`: `'self'
+'wasm-unsafe-eval'`, no `blob:`), confirmed by a real Chromium CSP violation
+against the app's own dev-fallback meta tag in `index.html` (which carries
+the same restriction and ships into `dist/index.html` unchanged). Shipping
+it unconditionally would have replaced "fails closed under dev" with "fails
+closed everywhere, in production" — worse than the original bug.
+`index.html`'s dev-fallback CSP meta tag now allows `blob:` in `script-src`
+(comment there explains why that's a no-op in production: multiple delivered
+CSPs are enforced as an intersection, and `vercel.json`'s separate, unchanged
+header CSP remains the binding restriction there). `import.meta.env.DEV` is
+statically known at build time — `vite build` dead-code-eliminates the
+fetch+blob branch entirely (verified: 0 occurrences of `createObjectURL` in
+the built `aiExtraction-*.js` chunk, which compiles down to a single
+unconditional `import(W)`), so production and `vite preview` keep the exact
+original `import()` of the static path. A new unit test
+(`nerPiiDetector.test.ts` "defaultTransformersLoader dev/prod branch") pins
+that `URL.createObjectURL` and `fetch` are never called when
+`import.meta.env.DEV` is stubbed false.
+
+Verified failing (real error text `NERModelLoadError: ... Failed to fetch
+dynamically imported module`) before the fix and passing after, against a
+live `vite dev` server, via `e2e/ner-dev-load.spec.ts` (see `e2e/agents.md`)
+— this class of bug is not reproducible in vitest/jsdom, only in a real
+browser hitting the dev server.
+**Known separate, NOT fixed here:** once the bundle itself loads, a client
+without WebGPU (backend falls back to `wasm`) hits the *same* dev-server
+restriction one level deeper, inside the vendored onnxruntime-web runtime's
+own `import()` of `/vendor/ort/*.mjs` — that code isn't ours to wrap in the
+same blob trick without touching the vendored bundle. `detectMLRuntime()`
+prefers `webgpu` first (most modern desktop browsers), so this narrower
+wasm-only-backend dev-mode gap is lower priority; flagged as a follow-up, not
+fixed in this change.
 
 ## 2026-09-12 SCRUM-4989 — `socialLinks.ts`, `jsonLd.ts` (new, PR #2840)
 
@@ -15,12 +70,41 @@ _Last updated: 2026-09-12_
 
 `jsonLd.ts` — `toJsonLd(value)` is the one serializer for every `<script type="application/ld+json">` rendered through `dangerouslySetInnerHTML`. It escapes every `<` — covering `</script`, `<script` and `<!--`, all three of which steer the HTML tokenizer — plus U+2028/U+2029. It deliberately does **not** use `replace(/<\/script/gi, '<\\/script')`: that substitutes a lowercase literal for whatever it matched, so `</ScRiPt>` in a title stops round-tripping. `src/components/verification/PublicVerification.tsx` still carries its own `replace(/<\//g, '<\\/')` — it is a T2 surface, so folding it in is a separate change.
 
+## 2026-09-13 founder feedback — `SUB_ORG_LABELS` grew an error-translation block
+
+`ManageSubOrgs` used to `toast.error(data.error ?? FALLBACK)`, i.e. echo the worker's reply straight
+to the customer. `services/worker/src/api/v1/orgSubOrgs.ts` replies with a MIX of engineer-facing
+sentences ("Admin permissions required") and bare machine codes (`sub_org_limit_reached`,
+`cap_check_unavailable`, `credit_allocation_unavailable`, `membership_lookup_unavailable`), so both
+kinds reached the interface — see `docs/uat/suborg-ux/before/step8-create-error-toast-1280.png`.
+
+The `ERROR_*` entries in `SUB_ORG_LABELS` are the translation target, keyed from
+`WORKER_ERROR_COPY` in `ManageSubOrgs.tsx`. Rules:
+
+- an unmapped reply falls back to the caller's generic copy **and** is `console.error`-logged with
+  the raw value — it is never silently generalised away;
+- when the worker adds an error code, add the mapping here in the same change. A missing mapping is
+  not a crash, it is a customer reading a slightly vaguer sentence than they should, which is
+  exactly the kind of thing that never gets noticed.
+
+Also promoted here in the same change: `LOAD_ERROR_TITLE` / `LOAD_ERROR_DESC` / `LOAD_ERROR_RETRY`,
+which had been sitting in a local `SUB_ORG_STATE_COPY` constant in `ManageSubOrgs.tsx` since
+`copy.ts` was locked under a concurrent PR. The note there said to promote them the next time this
+file was touched; that has now happened and the local constant is gone.
+
+
 ## PR #2637 MFA assurance identity (2026-09-05)
 
 `mfaSessionKey.ts` derives a UI cache key from a current user's GoTrue session_id
 and AAL; JWT rotation does not destroy enrollment state. New sign-ins and assurance
 downgrades change the key. Unsupported/malformed/cross-user tokens retain their
 whole-token identity. This decoder is not signature verification or authorization.
+
+## 2026-09-11 — UAT-04 session hint
+
+`sessionHasAal2` is a browser routing hint that requires matching `sub`, `aal2`,
+and role `authenticated`. Signed-token verification and authorization remain at
+the worker, edge, Auth hook, PostgREST, and RLS boundaries.
 
 ## 2026-09-03 SCRUM-3167 — `mfaPolicy.ts` (new): MFA enforcement date policy
 
