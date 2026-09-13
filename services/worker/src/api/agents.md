@@ -1,5 +1,19 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-11 — UAT-22 selected-org platform invitations
+
+`admin-invitations.ts` closes the gap between `OrgProfilePage` and the tenant-scoped
+`invite_member` RPC. After a platform-admin check, it loads the selected organization and actor
+display name from trusted rows, rejects an existing target-org member, and inserts the invitation
+with the client UUID as its primary key. A `23505` replay is accepted only when the committed row
+matches actor, org, normalized email, role, pending status, future expiry, and a nonempty UUID
+token. The provider key `invitation/<id>` deduplicates matching Resend payloads for Resend's
+documented 24-hour window; outside that window this handler does not promise exactly-once email.
+Invitation acceptance still owns membership creation: ORG_ADMIN maps to `org_members.admin`,
+INDIVIDUAL maps to `member`, and an existing account's home profile org is preserved.
+`admin-lists.ts` now provides the exact selected-org detail read used by that page; it validates
+the org UUID, rechecks platform-admin authority, and returns 404 rather than a generic empty row.
+
 ## 2026-08-30 — `connector-health.ts`: the `adobe_sign` kind is DERIVED, never asserted
 
 PR #2519 corrected `adobe_sign` from a hardcoded `kind: 'live'` to `'gated'`: the connector had no
@@ -442,6 +456,8 @@ never the not_anchored sentinel reserved for a successful empty lookup.
 `isCallerOrgAdminResult` accepts an optional DB client for routers that inject their client. Both membership and profile fallback use that same client; existing callers retain the shared default. DocuSign inheritance uses this resolver so an own-org profile `ORG_ADMIN` can administer the parent without an `org_members` row, while foreign-org profile roles remain denied.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+The real invitation integration suite runs through `vitest.config.uat22-local.ts`, separately from unit coverage, and is required by the CI Tests aggregate. It has explicit loopback/opt-in guards and never skips conditionally. Cleanup deletes Auth users through GoTrue so factor/identity cascades remain intact.
 
 ## PR #2695 — timestamp helper simplification (2026-09-10)
 

@@ -15,6 +15,7 @@ import { logAuditEvent } from '@/lib/auditLog';
 import { TOAST } from '@/lib/copy';
 import { queryKeys } from '@/lib/queryClient';
 import { OrganizationUpdateSchema } from '@/lib/validators';
+import { workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
 
 type Organization = Database['public']['Tables']['organizations']['Row'];
@@ -27,7 +28,14 @@ type EditableOrgFields = Partial<Pick<Organization,
 >>;
 
 /** Fetch organization from Supabase — extracted for React Query */
-async function fetchOrganizationData(orgId: string): Promise<Organization> {
+async function fetchOrganizationData(orgId: string, platformAdmin: boolean): Promise<Organization> {
+  if (platformAdmin) {
+    const res = await workerFetch(`/api/admin/organizations/${orgId}`, { method: 'GET' });
+    if (!res.ok) throw new Error('Failed to load organization.');
+    const body = await res.json() as { organization?: Organization };
+    if (!body.organization) throw new Error('Organization not found.');
+    return body.organization;
+  }
   const { data, error } = await supabase
     .from('organizations')
     .select('*')
@@ -47,16 +55,17 @@ interface UseOrganizationResult {
   refreshOrganization: () => Promise<void>;
 }
 
-export function useOrganization(orgId: string | null | undefined): UseOrganizationResult {
+export function useOrganization(orgId: string | null | undefined, platformAdmin = false): UseOrganizationResult {
   const qc = useQueryClient();
+  const organizationQueryKey = [...queryKeys.organization(orgId ?? ''), platformAdmin ? 'platform-admin' : 'tenant'] as const;
 
   const {
     data: organization = null,
     isLoading: loading,
     error: queryError,
   } = useQuery({
-    queryKey: queryKeys.organization(orgId ?? ''),
-    queryFn: () => fetchOrganizationData(orgId!),
+    queryKey: organizationQueryKey,
+    queryFn: () => fetchOrganizationData(orgId!, platformAdmin),
     enabled: !!orgId,
     staleTime: 60_000, // Org data rarely changes — 1 min stale
   });
@@ -110,12 +119,15 @@ export function useOrganization(orgId: string | null | undefined): UseOrganizati
       });
 
       // Update cache directly with returned data — no extra round-trip
-      qc.setQueryData(queryKeys.organization(orgId), updatedRows[0]);
+      qc.setQueryData(
+        [...queryKeys.organization(orgId), platformAdmin ? 'platform-admin' : 'tenant'],
+        updatedRows[0],
+      );
 
       toast.success(TOAST.ORG_UPDATED);
       return true;
     },
-    [orgId, qc]
+    [orgId, platformAdmin, qc]
   );
 
   return {

@@ -1,4 +1,3 @@
-/* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT, not manual query scoping */
 /**
  * useOrganization Hook Tests
  *
@@ -16,6 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
 const mockLogAuditEvent = vi.hoisted(() => vi.fn());
+const mockWorkerFetch = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -32,6 +32,8 @@ vi.mock('@/lib/supabase', () => ({
 vi.mock('@/lib/auditLog', () => ({
   logAuditEvent: mockLogAuditEvent,
 }));
+
+vi.mock('@/lib/workerClient', () => ({ workerFetch: mockWorkerFetch }));
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
@@ -81,6 +83,23 @@ describe('useOrganization', () => {
     });
 
     expect(result.current.organization).toEqual(mockOrg);
+  });
+
+  it('fetches a foreign selected org through the platform-admin worker path', async () => {
+    const mockOrg = { id: 'org-1', display_name: 'PlanBook Selected', domain: 'planbook.test' };
+    mockWorkerFetch.mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ organization: mockOrg }),
+    });
+
+    const { useOrganization } = await import('./useOrganization');
+    const { result } = renderHook(() => useOrganization('org-1', true), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.organization).toEqual(mockOrg);
+    expect(mockWorkerFetch).toHaveBeenCalledWith('/api/admin/organizations/org-1', { method: 'GET' });
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
   it('sets error when fetch fails', async () => {
