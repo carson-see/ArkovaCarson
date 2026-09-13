@@ -141,6 +141,29 @@ needed), which reuses the 2026-08-15 e2e sign-out guard's detector:
   `vitest.config.rls.ts`): it would hide this class of collision and slow
   every RLS run; parallel execution is itself part of what the suite proves.
 
+## 2026-09-12 SCRUM-5024 — `referral-attribution.test.ts`
+
+Live-database proof for migration `0455`. Every property here is enforced by SQL
+— an RLS policy, a GRANT, a CHECK, a partial unique index, or a SECURITY DEFINER
+body — so per this file's own rule none of it may live in a mocked suite.
+
+The disclosure boundary is why the file exists: `organization_referrals` has no
+SELECT policy matching `referred_org_id`, so a member of a REFERRED organization
+must read zero rows about it, and the `organization.referred` audit row is filed
+against the REFERRER's `org_id`. Both are asserted directly, because a future
+"let's add the obvious policy" change would quietly undo them.
+
+Also pinned: the format CHECK rejects `I`/`L`/`O`/`0`/`1` even via `service_role`;
+`generate_referral_code` is 42501 for anon AND authenticated; one ACTIVE code per
+org (23505); `ensure_org_referral_code` is idempotent; `record_org_referral` is
+total (lower-case applies, replay is `already_attributed` with still exactly one
+row, unknown writes one audit row and NO edge, self is refused, blank is
+`no_code` and writes NO audit row); and neither table accepts a write from
+`authenticated`.
+
+Requires a local Supabase with `0455` applied. It was NOT run in the authoring
+session (no local stack available there) — it is the T3 soak specification.
+
 ## 2026-09-10 — PR #2694 complete-schema fixture correction
 
 The fingerprint index-plan suite now creates its own organization and required profiles row after auth.users. A complete committed Supabase replay exposed anchors_user_id_fkey during the old setup, before any of the seven plan checks executed. Teardown deletes only this run’s user/org fixture, including partial setup. An overlong fingerprint negative case also pins the unconstrained bpchar cast against accidental character(64) truncation. Migration 0441 remains immutable.

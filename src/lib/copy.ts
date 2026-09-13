@@ -1611,6 +1611,7 @@ export const NAV_POLISH_LABELS = {
   BREADCRUMB_CREDENTIAL_TEMPLATES: 'Document Templates',
   BREADCRUMB_WEBHOOKS: 'Webhooks',
   BREADCRUMB_API_KEYS: 'API Keys',
+  BREADCRUMB_REFERRALS: 'Referrals',
   AUTH_REDIRECT_TOAST: 'Please sign in to access that page',
   SIGN_OUT: 'Sign Out',
   COLLAPSE: 'Collapse',
@@ -1790,6 +1791,8 @@ export const SETTINGS_PAGE_LABELS = {
   WEBHOOKS_DESC: 'Configure event notifications',
   API_KEYS: 'API Keys',
   API_KEYS_DESC: 'Manage verification API access',
+  REFERRALS: 'Referrals',
+  REFERRALS_DESC: 'Share your referral code and see who joined through it',
   TEMPLATES_EMPTY_TITLE: 'No templates yet',
   TEMPLATES_EMPTY_DESC: 'Create your first document template to start securing verifiable documents.',
   TEMPLATES_EMPTY_CTA: 'Create Template',
@@ -4962,4 +4965,55 @@ export const TWO_FACTOR_SETUP_LABELS = {
   // instead once that call fails or times out.
   LOAD_ERROR_TITLE: "Couldn't load your two-factor authentication settings",
   LOAD_ERROR_RETRY: 'Retry',
+} as const;
+
+// =============================================================================
+// PARTNER REFERRALS — SCRUM-5024
+//
+// Terminology: the word "token" is banned in user-visible strings (§1.3), so
+// the shareable string is a "code" and the URL is a "link" throughout.
+//
+// MEASURED vs NOT ASSERTED (§1.5, extended by the R-7 claims gate): this panel
+// states which organizations presented the code when they were created, and
+// when. It does not state, imply or promise a commission, discount, payout or
+// revenue share — commercial terms are a separate decision and no field here
+// feeds billing. REFERRAL_NOT_ASSERTED is that sentence and must stay on the
+// page; do not soften it into marketing language.
+// =============================================================================
+
+export const REFERRAL_LABELS = {
+  PAGE_TITLE: 'Referrals',
+  PAGE_DESCRIPTION: 'Invite other organizations to Arkova and see which ones joined through your link.',
+  LOADING: 'Loading your referrals…',
+
+  CODE_CARD_TITLE: 'Your referral code',
+  CODE_CARD_DESCRIPTION: 'Share the link below. Organizations that sign up through it are recorded against your account.',
+  CODE_LABEL: 'Referral code',
+  SHARE_LINK_LABEL: 'Share link',
+  COPY_LINK: 'Copy link',
+  COPY_LINK_DONE: 'Copied',
+  COPY_LINK_FAILED: 'Could not copy the link. Select it and copy manually.',
+
+  CREATE_TITLE: 'No referral code yet',
+  CREATE_DESCRIPTION: 'Create a code to start inviting organizations. You can create it once; the same code is reused from then on.',
+  CREATE_BUTTON: 'Create referral code',
+  CREATING: 'Creating…',
+  CREATE_FAILED: 'Could not create a referral code. Please try again.',
+
+  TABLE_TITLE: 'Organizations you referred',
+  TABLE_EMPTY_TITLE: 'No referrals yet',
+  TABLE_EMPTY_DESCRIPTION: 'Once an organization signs up through your link, it appears here.',
+  COLUMN_ORGANIZATION: 'Organization',
+  COLUMN_JOINED: 'Joined',
+  COLUMN_STATUS: 'Status',
+
+  LOAD_FAILED_TITLE: 'Could not load your referrals',
+  LOAD_FAILED_RETRY: 'Retry',
+
+  ADMIN_ONLY: 'Only organization administrators can manage the referral code.',
+  NO_ORG: 'Join or create an organization to use referrals.',
+
+  /** The §1.5 measured / not-asserted sentence. Keep it on the page. */
+  NOT_ASSERTED:
+    'What this shows: organizations that entered your code when they created their account, and the date they did. It does not represent any commission, discount or payment.',
 } as const;

@@ -53,6 +53,7 @@ import { aiIntegrityRouter } from './ai-integrity.js';
 import { aiEmbedRouter } from './ai-embed.js';
 import { aiFeedbackRouter } from './ai-feedback.js';
 import { orgSubOrgsApiRouter } from './orgSubOrgsApiKey.js';
+import { referralsRouter } from './referrals.js';
 
 type ExpressMethod = 'get' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -134,6 +135,7 @@ const MOUNTS: MountEntry[] = [
   // on publication (§1.8), so a route that exists but is undocumented is the
   // exact failure this harness exists to catch.
   { varName: 'orgSubOrgsApiRouter', router: orgSubOrgsApiRouter, prefix: '/organizations/sub-orgs' },
+  { varName: 'referralsRouter', router: referralsRouter, prefix: '/referrals' },
 ];
 
 describe('served v1 OpenAPI spec — mounted route parity (pentest-prep)', () => {

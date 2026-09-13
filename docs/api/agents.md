@@ -187,6 +187,15 @@ The canonical scope table in `README.md` gained an `orgs:manage` row and the
 sentence stating that it satisfies `read:orgs`. That table and
 `openapi.yaml`'s `x-arkova-canonical-scopes` are both parity-checked against the
 worker vocabulary by `scripts/ci/check-api-scope-vocabulary.ts`.
+## 2026-09-12 SCRUM-5024 — `GET /api/v1/referrals` documented
+
+Added to `openapi.yaml` (`listReferrals`, `x-arkova-required-scopes: read:orgs`)
+and to the endpoint table in `README.md`. The description states what is
+MEASURED (which organizations entered the code at creation, and when) and what
+is NOT ASSERTED (any commission, payout, discount or revenue share) — the §1.5
+boundary extended by the R-7 claims gate. Schema additions are additive and the
+two nullable fields use `nullable: true`, never `type: 'null'`, which is invalid
+in OpenAPI 3.0.3.
 ## 2026-09-12 — Attestation Lifecycle section added to webhooks.md (SCRUM-3982)
 
 `docs/api/webhooks.md` gained an "Attestation Lifecycle" table for

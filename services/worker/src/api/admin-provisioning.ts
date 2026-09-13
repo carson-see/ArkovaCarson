@@ -123,6 +123,20 @@ const CreateOrganizationSchema = z
     // (migration 0422). The endpoint is new and has no other consumers, so it
     // is required rather than optional — an optional guarantee is not one.
     idempotency_key: z.string().uuid(),
+    // SCRUM-5024. Optional: most admin-provisioned organizations are not
+    // referred, and an absent key must not be an error. The pattern is the
+    // client-side mirror of the database's own authority,
+    //   referral_codes_code_format
+    //     CHECK (code ~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$')
+    // spelled out rather than written `[A-Z2-9]`, which would admit I, L and O
+    // — characters the constraint rejects, so such a code would validate here
+    // and then be a guaranteed `unknown_code` at the RPC.
+    referral_code: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/, 'referral_code must be 8 characters from ABCDEFGHJKMNPQRSTUVWXYZ23456789')
+      .optional(),
   })
   .transform((v) => ({ ...v, legal_name: v.legal_name || v.display_name }));
 
@@ -177,6 +191,73 @@ export interface CreateOrganizationResult {
   anchor_quota: number | null;
   credits_balance: number;
   is_test: boolean;
+  /**
+   * SCRUM-5024, additive and always present once a referral_code was supplied.
+   * `referral_applied` is false and `referral_reason` names why whenever the
+   * attribution did not land, so the operator sees "the code you typed was not
+   * recognised" instead of a silently unreferred organization. Both are absent
+   * when no code was supplied at all.
+   */
+  referral_applied?: boolean;
+  referral_reason?: ReferralOutcomeReason;
+}
+
+/** Total set. The first five are `record_org_referral`'s own verdict reasons;
+ *  the last two are this layer's (the RPC never ran, or it threw). */
+export type ReferralOutcomeReason =
+  | 'no_code'
+  | 'unknown_code'
+  | 'self_referral'
+  | 'already_attributed'
+  | 'recorded'
+  | 'rpc_failed'
+  | 'threw';
+
+/**
+ * Attributes a just-created organization to a partner.
+ *
+ * NEVER throws and never fails the provisioning it follows: the organization
+ * already exists by the time this runs, and a mistyped referral code is not a
+ * reason to leave the operator with a half-created partner. Every outcome is
+ * returned to the caller and counted — `applied` for the one success, `reason`
+ * for each distinct failure — and every non-applied outcome is logged at error
+ * level rather than dropped.
+ */
+async function attributeReferral(
+  deps: AdminProvisioningDeps,
+  orgId: string,
+  code: string,
+): Promise<{ applied: boolean; reason: ReferralOutcomeReason }> {
+  const { db, logger } = deps;
+  try {
+    const { data, error } = await db.rpc('record_org_referral', {
+      p_org_id: orgId,
+      p_code: code,
+      p_source: 'admin_provisioning',
+    });
+    if (error) {
+      logger.error(
+        { error: sanitizeError(error), orgId, reason: 'rpc_failed' },
+        'Admin provisioning: referral attribution RPC failed',
+      );
+      return { applied: false, reason: 'rpc_failed' };
+    }
+    const verdict = data as { applied?: boolean; reason?: string } | null;
+    const applied = verdict?.applied === true;
+    const reason = (verdict?.reason ?? 'rpc_failed') as ReferralOutcomeReason;
+    if (applied) {
+      logger.info({ orgId, reason }, 'Admin provisioning: referral attribution recorded');
+    } else {
+      logger.error({ orgId, reason }, 'Admin provisioning: referral attribution not applied');
+    }
+    return { applied, reason };
+  } catch (err) {
+    logger.error(
+      { error: sanitizeError(err), orgId, reason: 'threw' },
+      'Admin provisioning: referral attribution threw',
+    );
+    return { applied: false, reason: 'threw' };
+  }
 }
 
 export async function createOrganization(
@@ -222,7 +303,18 @@ export async function createOrganization(
     throw new ProvisioningError('Failed to create the organization.', 'internal_error');
   }
   logger.info({ orgId: result.organization.org_id, actorId }, 'Admin provisioning: organization creation committed');
-  return result.organization;
+
+  // SCRUM-5024. AFTER the organization exists — the referral is never threaded
+  // into `admin_provision_organization`, whose idempotency key would then have
+  // to cover two unrelated facts.
+  if (input.referral_code === undefined) return result.organization;
+
+  const referral = await attributeReferral(deps, result.organization.org_id, input.referral_code);
+  return {
+    ...result.organization,
+    referral_applied: referral.applied,
+    referral_reason: referral.reason,
+  };
 }
 
 export interface CreateUserAccountResult {

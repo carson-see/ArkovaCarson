@@ -139,3 +139,12 @@ DEFAULT in the same migration, and the generator marks a field optional when the
 column is nullable OR has a default. Without that default the field becomes
 mandatory and `src/hooks/useOnboarding.ts:161`/`:217` stop typechecking — which is
 how the default came to exist. Do not "tidy" the DEFAULT away.
+## 2026-09-12 SCRUM-5024 — `database.types.ts` entries hand-written
+
+`referral_codes`, `organization_referrals` and the four `0455` functions
+(`ensure_org_referral_code`, `generate_referral_code`, `get_org_referrals`,
+`record_org_referral`) were added BY HAND, in the generator's alphabetical
+positions and shape. `npm run gen:types` needs a live local Supabase, and the
+authoring session had none and was barred from touching a rig. Re-run the
+generator against a database with `0455` applied before relying on these as
+generated output; a diff there is the authoritative correction.
