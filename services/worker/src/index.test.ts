@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import type { Express } from 'express';
 import supertest from 'supertest';
 import { DOCS_CSP } from './middleware/securityHeaders.js';
+import { ORIGIN_AUTH_HEADER, _resetOriginGuardStats } from './middleware/requireCloudflareOrigin.js';
 
 // ---- Hoisted mocks ----
 
@@ -64,6 +65,10 @@ const {
     useMocks: true,
     frontendUrl: 'http://localhost:5173',
     apiKeyHmacSecret: 'test-hmac-secret',
+    // SCRUM-3888: default off, matching config.ts's default — mutated per-test
+    // in the "origin guard mount" describe block and restored in its afterEach.
+    cloudflareOriginGuardMode: 'off' as 'off' | 'observe' | 'enforce',
+    cloudflareOriginSecret: undefined as string | undefined,
   };
   const mockDbFrom = vi.fn();
   const mockSupabaseGetUser = vi.fn();
@@ -421,6 +426,70 @@ describe('worker server', () => {
       expect(res.status).toBe(404);
       expect(res.headers['X-Frame-Options']).toBe('DENY');
       expect(res.headers['Strict-Transport-Security']).toBeDefined();
+    });
+  });
+
+  describe('origin guard mount (SCRUM-3888) — real app, real mount order', () => {
+    const SECRET = 'a'.repeat(32);
+
+    afterEach(() => {
+      mockConfig.cloudflareOriginGuardMode = 'off';
+      mockConfig.cloudflareOriginSecret = undefined;
+      _resetOriginGuardStats();
+    });
+
+    it('mode off (default): an unmounted /api/v1 path 404s normally with no header', async () => {
+      const res = await request(app, 'GET', '/definitely-not-mounted-scrum3888');
+      expect(res.status).toBe(404);
+    });
+
+    it('mode enforce: exempt paths (/health, /jobs/*, /webhooks/*) pass through with no header', async () => {
+      mockConfig.cloudflareOriginGuardMode = 'enforce';
+      mockConfig.cloudflareOriginSecret = SECRET;
+
+      mockDbFrom.mockReturnValue(mockDbChain({ data: [{ id: '1' }], error: null }));
+      const health = await request(app, 'GET', '/health');
+      expect(health.status).toBe(200);
+
+      const jobs = await request(app, 'POST', '/jobs/process-anchors');
+      expect(jobs.status).not.toBe(403);
+
+      const webhook = await request(app, 'POST', '/webhooks/microsoft-graph');
+      expect(webhook.status).not.toBe(403);
+    });
+
+    it('mode enforce: a non-exempt path with no header is rejected BEFORE reaching the 404 catch-all', async () => {
+      mockConfig.cloudflareOriginGuardMode = 'enforce';
+      mockConfig.cloudflareOriginSecret = SECRET;
+
+      const res = await request(app, 'GET', '/definitely-not-mounted-scrum3888');
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({
+        error: { code: 'origin_not_allowed', message: expect.any(String) },
+      });
+    });
+
+    it('mode enforce: the same path with the correct header reaches the real 404 catch-all', async () => {
+      mockConfig.cloudflareOriginGuardMode = 'enforce';
+      mockConfig.cloudflareOriginSecret = SECRET;
+
+      const res = await request(
+        app,
+        'GET',
+        '/definitely-not-mounted-scrum3888',
+        undefined,
+        { [ORIGIN_AUTH_HEADER]: SECRET },
+      );
+      expect(res.status).toBe(404);
+      expect(res.body).toMatchObject({ error: 'not_found' });
+    });
+
+    it('mode observe: the same missing-header request is NOT blocked, still 404s', async () => {
+      mockConfig.cloudflareOriginGuardMode = 'observe';
+      mockConfig.cloudflareOriginSecret = SECRET;
+
+      const res = await request(app, 'GET', '/definitely-not-mounted-scrum3888');
+      expect(res.status).toBe(404);
     });
   });
 
