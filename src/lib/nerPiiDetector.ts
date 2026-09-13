@@ -277,14 +277,32 @@ type TransformersLoader = () => Promise<TransformersJsModule>;
  * only suppresses Rollup's static-analysis warning at build time; it does
  * not change the dev server's HTTP-level module interception.
  *
- * Fix: fetch the bundle as plain text (a request Vite's dev server serves
- * `/public` files for correctly, same as any static asset) and import it
- * from a same-origin `blob:` URL instead of the `/vendor/...` path. A blob
- * URL never touches Vite's dev middleware in either environment, so this
- * behaves identically under `vite dev`, `vite preview`, and the real
- * production static host. Verified against both in this fix's own testing.
+ * FIX IS DEV-ONLY (review correction, 2026-09-13): the first version of this
+ * fix fetched the bundle as text and imported it from a same-origin `blob:`
+ * URL unconditionally. That is refused by CSP `script-src` in PRODUCTION —
+ * `vercel.json`'s header CSP is `script-src 'self' 'wasm-unsafe-eval'` (no
+ * `blob:`), confirmed by a real Chromium CSP violation
+ * ("Loading the script 'blob:...' violates ... script-src") against the
+ * app's own dev-fallback CSP meta tag in `index.html`, which carries the
+ * same restriction and ships into `dist/index.html` unchanged. Shipping the
+ * blob path unconditionally would have replaced "every dev run fails
+ * closed" with "every user in every environment fails closed" — the exact
+ * opposite of the goal. `index.html`'s dev-fallback CSP meta tag now allows
+ * `blob:` in `script-src` (comment there explains why that's safe: multiple
+ * delivered CSPs are enforced as an intersection, and production's separate,
+ * unmodified `vercel.json` header CSP still has no `blob:`, so this addition
+ * has zero effect once deployed).
+ *
+ * `import.meta.env.DEV` is statically known at build time (Vite sets it
+ * false for both `vite build` output and `vite preview`, true only for the
+ * `vite` dev server) — so production and preview keep the exact original,
+ * unconditional `import()` of the static path; only the dev server takes the
+ * fetch+blob detour.
  */
 const defaultTransformersLoader: TransformersLoader = async () => {
+  if (!import.meta.env.DEV) {
+    return (await import(/* @vite-ignore */ TRANSFORMERS_BROWSER_MODULE)) as TransformersJsModule;
+  }
   const response = await fetch(TRANSFORMERS_BROWSER_MODULE);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${TRANSFORMERS_BROWSER_MODULE}: ${response.status}`);

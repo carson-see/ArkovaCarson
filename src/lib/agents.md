@@ -20,11 +20,34 @@ dev — sending the dialog straight to the §1.6 `privacy-blocked` screen
 instead of running AI extraction on every attempt. Fix: fetch the bundle as
 text (a request Vite's dev server serves `/public` files for normally) and
 `import()` it from a `blob:` URL instead, which never touches Vite's dev
-middleware in any environment. Verified failing (real error text
-`NERModelLoadError: ... Failed to fetch dynamically imported module`) before
-the fix and passing after, against a live `vite dev` server, via
-`e2e/ner-dev-load.spec.ts` (see `e2e/agents.md`) — this class of bug is not
-reproducible in vitest/jsdom, only in a real browser hitting the dev server.
+middleware.
+
+**CORRECTED same-day (review catch): the blob path is DEV-ONLY, gated on
+`import.meta.env.DEV`.** The first version shipped this unconditionally —
+CSP `script-src` refuses `blob:` in production (`vercel.json`: `'self'
+'wasm-unsafe-eval'`, no `blob:`), confirmed by a real Chromium CSP violation
+against the app's own dev-fallback meta tag in `index.html` (which carries
+the same restriction and ships into `dist/index.html` unchanged). Shipping
+it unconditionally would have replaced "fails closed under dev" with "fails
+closed everywhere, in production" — worse than the original bug.
+`index.html`'s dev-fallback CSP meta tag now allows `blob:` in `script-src`
+(comment there explains why that's a no-op in production: multiple delivered
+CSPs are enforced as an intersection, and `vercel.json`'s separate, unchanged
+header CSP remains the binding restriction there). `import.meta.env.DEV` is
+statically known at build time — `vite build` dead-code-eliminates the
+fetch+blob branch entirely (verified: 0 occurrences of `createObjectURL` in
+the built `aiExtraction-*.js` chunk, which compiles down to a single
+unconditional `import(W)`), so production and `vite preview` keep the exact
+original `import()` of the static path. A new unit test
+(`nerPiiDetector.test.ts` "defaultTransformersLoader dev/prod branch") pins
+that `URL.createObjectURL` and `fetch` are never called when
+`import.meta.env.DEV` is stubbed false.
+
+Verified failing (real error text `NERModelLoadError: ... Failed to fetch
+dynamically imported module`) before the fix and passing after, against a
+live `vite dev` server, via `e2e/ner-dev-load.spec.ts` (see `e2e/agents.md`)
+— this class of bug is not reproducible in vitest/jsdom, only in a real
+browser hitting the dev server.
 **Known separate, NOT fixed here:** once the bundle itself loads, a client
 without WebGPU (backend falls back to `wasm`) hits the *same* dev-server
 restriction one level deeper, inside the vendored onnxruntime-web runtime's
