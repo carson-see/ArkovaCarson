@@ -568,9 +568,28 @@ describe('attestation webhook payloads carry public ids only (SCRUM-3982)', () =
   it('the revoke handler stamps ONE revoked_at across row, webhook and response', () => {
     // Was three separate `new Date().toISOString()` calls — the stored value,
     // the delivered value and the returned value were all different instants.
-    const handler = SOURCE.slice(SOURCE.indexOf("router.patch('/:publicId/revoke'"))
-      // Strip line comments — the rationale comment names the old call.
-      .replace(/\/\/[^\n]*/g, '');
+    //
+    // CTO review (finding C8/RA6): the assertion is scoped to the revoke
+    // handler's OWN body, brace-balanced. It used to slice from the handler to
+    // EOF, so it counted every `new Date()` in every route declared after it —
+    // a test that would have gone red for a change in an unrelated handler,
+    // reporting a clock bug that did not exist.
+    const start = SOURCE.indexOf("router.patch('/:publicId/revoke'");
+    expect(start, 'revoke handler not found').toBeGreaterThan(-1);
+    const bodyOpen = SOURCE.indexOf('{', SOURCE.indexOf('=>', start));
+    let depth = 0;
+    let bodyClose = -1;
+    for (let i = bodyOpen; i < SOURCE.length; i++) {
+      if (SOURCE[i] === '{') depth++;
+      else if (SOURCE[i] === '}' && --depth === 0) {
+        bodyClose = i;
+        break;
+      }
+    }
+    expect(bodyClose, 'unbalanced revoke handler body').toBeGreaterThan(bodyOpen);
+
+    // Strip line comments — the rationale comment names the old call.
+    const handler = SOURCE.slice(bodyOpen, bodyClose + 1).replace(/\/\/[^\n]*/g, '');
     expect(handler).toContain('const revokedAt = new Date().toISOString();');
     expect(handler.match(/new Date\(\)\.toISOString\(\)/g)).toHaveLength(1);
     expect(handler.match(/revoked_at: revokedAt/g)).toHaveLength(3);

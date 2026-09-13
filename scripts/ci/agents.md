@@ -890,3 +890,18 @@ The script's own test gained a tail-order assertion
 so the declaration order the five order-sensitive mirrors must match is pinned
 by name, not only by count. SCRUM-3972 appends seven `suborg.*` entries after
 these — declared land order is 3982 then 3972.
+
+## SCRUM-3982 CTO review — the drift test's tail assertion (2026-09-12)
+
+`check-webhook-event-registration-drift.test.ts` asserted the registry's last
+three entries with `canonical.ids.slice(-3)`. That pins `attestation.revoked`
+as the final entry of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` **forever**, so
+SCRUM-3972 — which appends seven `suborg.*` entries after these, to the same
+six ordered mirrors — would have turned a green test red on a clean union
+merge, with a failure message that reads like drift.
+
+Replaced with relative ordering: `attestation.created` sits immediately after
+`compliance.document_expiring`, and `attestation.revoked` immediately after
+that. Same guarantee about where SCRUM-3982's entries go, indifferent to what
+lands after them. Prefer relative-position assertions over tail slices whenever
+the thing being ordered is an append-only list that other PRs also append to.

@@ -688,3 +688,15 @@ and neither description reaches for a chain word. Note the descriptions state
 what the event means, not whether it is delivered — liveness lives in
 `WebhookEventCatalog.tsx` `CATALOG_DATA`, and `attestation.revoked` is not live
 (its worker producer is unreachable today).
+
+## CTO ruling Z5 (2026-09-12) — webhook event copy
+
+- `WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX` is the ONE place the
+  subscribable-but-not-emitted suffix is spelled. It used to be typed inline in
+  `AVAILABLE_EVENTS` labels, where it could disagree with the catalog badge.
+  Anything that needs it reads `CATALOG_DATA[id].live` from
+  `src/components/webhooks/webhookEventLiveness.ts` and appends this string.
+- `WEBHOOK_EVENT_DESCRIPTIONS['attestation.created']` is deliberately scoped to
+  single creation: `POST /api/v1/attestations` dispatches the event,
+  `POST /api/v1/attestations/batch-create` does not. Do not generalise the
+  wording back without making batch-create emit (§1.13 R-7).

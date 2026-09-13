@@ -120,3 +120,27 @@ Liveness, verified against the dispatch sites and not inferred:
 the producer was shipping the document-derived hash (§1.6) on an unregistered
 event, so nothing checked it. `WebhookEventCatalog.test.tsx` gained a pin
 keeping `attestation.revoked` deferred, mirroring the `credential.verified` one.
+
+## CTO ruling Z5 (2026-09-12) — one liveness table, two surfaces
+
+`CATALOG_DATA` moved out of `WebhookEventCatalog.tsx` into
+`webhookEventLiveness.ts`. Before, the catalog owned the `live` flags and the
+subscription picker in `WebhookSettings.tsx` spelled `(coming soon)` directly
+into individual `AVAILABLE_EVENTS` labels — two hand-maintained claims about the
+same fact, which is a §1.13 R-7 drift waiting to happen. It had already
+happened: `anchor.batch_secured` was badged Active in the catalog and carried no
+suffix in the picker, while `git grep -n "dispatchWebhookEvent(" services/worker/src`
+finds no call site that emits it at all. The suffix is now derived at render
+time from `CATALOG_DATA[id].live`, and both directions are test-pinned (no label
+may hardcode a suffix; every non-live event must show one).
+
+The new module is a third file rather than the picker importing the catalog
+because `WebhookEventCatalog.tsx` imports `AVAILABLE_EVENTS` from
+`WebhookSettings.tsx` and evaluates it at module scope — importing back the
+other way forms a cycle and leaves `AVAILABLE_EVENTS` in its temporal dead zone
+on one of the two load orders.
+
+**Rule for `live: true`:** a real, reachable `dispatchWebhookEvent(...)` call
+site in the worker. Not registration in `payload-schemas.ts`, not a payload
+schema existing, and not an `audit_events` row carrying the same `event_type`
+string — that last one is exactly what made `anchor.batch_secured` look live.
