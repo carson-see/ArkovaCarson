@@ -43,6 +43,9 @@ useDefault = true
     # Documented Stripe TEST/placeholder keys in bug/investigation docs
     '''sk_test[_…]''',
     '''whsec_plac''',
+    # SCRUM-4988: Sekura Phase 2 generic-api-key hit on a frozen enum constant
+    # (services/worker/src/ai/eval/s33-wave1-dual-dag.ts) — an authority label, not a key
+    '''CTO_R12_TAXONOMY_AND_DEPTH_ADJUDICATION''',
   ]
   paths = [
     # API documentation contains example curl commands with placeholder credentials
