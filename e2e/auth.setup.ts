@@ -18,13 +18,8 @@
  *     out at 30s and burning CI minutes.
  *   - Verify the storageState file was actually written and contains
  *     a Supabase session — catches silent state-save failures.
- *   - SCRUM-3167 / SCRUM-3584: inject a far-future MFA enforcement-date
- *     override into every saved storageState so the ~100 existing specs
- *     that reuse these files keep passing in the grace state once the
- *     2026-09-21 default enforcement date (`src/lib/mfaPolicy.ts`, sibling
- *     branch security/mfa-enforcement-3167) passes. A plain UI login never
- *     writes this key itself, so it is patched into the file after
- *     Playwright saves it — not read back from the live page.
+ *   - UAT-04: complete real TOTP enrollment before saving state, so every
+ *     reused browser session carries signed AAL2 authority.
  *
  * @created 2026-04-26
  * @updated 2026-04-28 — SCRUM-1302 follow-up hardening
@@ -35,17 +30,12 @@ import { test as setup, expect, errors as playwrightErrors } from '@playwright/t
 import fs from 'fs';
 import { getServiceClient, SEED_USERS } from './fixtures/supabase';
 import { acceptDisclaimerIfVisible } from './helpers/dashboard';
-import { MFA_ENFORCE_DATE_OVERRIDE_KEY } from './helpers/mfa';
-import { resolveE2EFrontendOrigin } from './helpers/supabase-storage-key';
+import { submitTotpCodeWithBoundaryRetry } from './helpers/mfa';
 
 const STORAGE_DIR = '.auth';
 const POST_LOGIN_URL_PATTERN =
   /\/(vault|dashboard|onboarding|organization|records|settings|review-pending)/;
 const LOGIN_FAILURE_TIMEOUT_MS = 15_000;
-// Far enough past the 2026-09-21 default that every pre-existing spec stays
-// in the grace state (nudge, not a block) for the foreseeable life of the
-// suite, regardless of the real wall-clock date a run happens on.
-const MFA_ENFORCE_OVERRIDE_ISO = '2099-01-01T00:00:00Z';
 const serviceClient = getServiceClient();
 
 interface StorageStateFile {
@@ -85,51 +75,32 @@ function storageStateHasSupabaseSession(storagePath: string): boolean {
   );
 }
 
-/**
- * Patch the MFA enforcement-date override into a saved storageState file,
- * under the origin the browser actually visits (`resolveE2EFrontendOrigin`
- * — the dev server locally, `E2E_BASE_URL` on a rig; matters because
- * Playwright matches storageState origins by ORIGIN, same reasoning as
- * `createProfileSession` in `helpers/profile-session.ts`). Creates the
- * origin entry if the saved state had none for it (an empty-localStorage
- * login could, in principle, produce zero origins).
- */
-function injectMfaEnforcementOverride(storagePath: string): void {
+function storageStateHasAal2Session(storagePath: string, userId: string): boolean {
   const parsed = JSON.parse(fs.readFileSync(storagePath, 'utf8')) as StorageStateFile;
-  const targetOrigin = resolveE2EFrontendOrigin();
-  const origins = parsed.origins ?? [];
-
-  let originEntry = origins.find((entry) => entry.origin === targetOrigin);
-  if (!originEntry) {
-    originEntry = { origin: targetOrigin, localStorage: [] };
-    origins.push(originEntry);
+  for (const origin of parsed.origins ?? []) {
+    for (const entry of origin.localStorage ?? []) {
+      if (!entry.name?.startsWith('sb-') || !entry.name.includes('auth-token') || !entry.value) continue;
+      try {
+        const session = JSON.parse(entry.value) as { access_token?: string };
+        const encoded = session.access_token?.split('.')[1];
+        if (!encoded) continue;
+        const claims = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Record<string, unknown>;
+        if (claims.sub === userId && claims.aal === 'aal2' && claims.role === 'authenticated') return true;
+      } catch {
+        // Keep searching other persisted entries.
+      }
+    }
   }
-  originEntry.localStorage = originEntry.localStorage ?? [];
-
-  const existingEntry = originEntry.localStorage.find(
-    (entry) => entry.name === MFA_ENFORCE_DATE_OVERRIDE_KEY,
-  );
-  if (existingEntry) {
-    existingEntry.value = MFA_ENFORCE_OVERRIDE_ISO;
-  } else {
-    originEntry.localStorage.push({
-      name: MFA_ENFORCE_DATE_OVERRIDE_KEY,
-      value: MFA_ENFORCE_OVERRIDE_ISO,
-    });
-  }
-
-  parsed.origins = origins;
-  fs.writeFileSync(storagePath, JSON.stringify(parsed));
+  return false;
 }
 
-function storageStateHasMfaOverride(storagePath: string): boolean {
-  const parsed = JSON.parse(fs.readFileSync(storagePath, 'utf8')) as StorageStateFile;
-  return (parsed.origins ?? []).some((origin) =>
-    (origin.localStorage ?? []).some(
-      (entry) =>
-        entry.name === MFA_ENFORCE_DATE_OVERRIDE_KEY && entry.value === MFA_ENFORCE_OVERRIDE_ISO,
-    ),
-  );
+async function clearSeedMfaFactors(userId: string): Promise<void> {
+  const { data, error } = await serviceClient.auth.admin.mfa.listFactors({ userId });
+  if (error) throw new Error(`Failed to list E2E MFA factors for ${userId}: ${error.message}`);
+  for (const factor of data?.factors ?? []) {
+    const deleted = await serviceClient.auth.admin.mfa.deleteFactor({ userId, id: factor.id });
+    if (deleted.error) throw new Error(`Failed to reset E2E MFA factor ${factor.id}: ${deleted.error.message}`);
+  }
 }
 
 /**
@@ -141,8 +112,10 @@ async function loginAndSave(
   page: import('@playwright/test').Page,
   email: string,
   password: string,
+  userId: string,
   storagePath: string,
 ) {
+  await clearSeedMfaFactors(userId);
   await page.goto('/login');
 
   // Use ID locators (not getByLabel) — see file header on why.
@@ -204,6 +177,16 @@ async function loginAndSave(
   // Belt-and-suspenders: confirm we're not parked on /login or /auth.
   await expect(page).not.toHaveURL(/\/(login|auth)(\/|$)/);
 
+  const enrollment = page.getByTestId('mfa-enrollment-required');
+  await enrollment.waitFor({ state: 'visible', timeout: LOGIN_FAILURE_TIMEOUT_MS });
+  const secret = (await page.getByTestId('mfa-enrollment-secret').innerText()).trim();
+  await submitTotpCodeWithBoundaryRetry(page, secret, {
+    codeTestId: 'mfa-enrollment-code',
+    submitTestId: 'mfa-enrollment-submit',
+    errorTestId: 'mfa-enrollment-error',
+  });
+  await expect(enrollment).toBeHidden();
+
   await page.waitForFunction(() =>
     Object.entries(localStorage).some(([key, value]) =>
       key.startsWith('sb-') &&
@@ -240,17 +223,10 @@ async function loginAndSave(
       'persistence and the post-submit redirect race.',
     );
   }
-
-  // SCRUM-3167 / SCRUM-3584: keep every existing spec in the MFA grace
-  // state past the 2026-09-21 default enforcement date.
-  injectMfaEnforcementOverride(storagePath);
-  if (!storageStateHasMfaOverride(storagePath)) {
-    throw new Error(
-      `storageState file ${storagePath} is missing the MFA enforcement-date override ` +
-      `(${MFA_ENFORCE_DATE_OVERRIDE_KEY}) after injection. Check injectMfaEnforcementOverride() ` +
-      'and resolveE2EFrontendOrigin().',
-    );
+  if (!storageStateHasAal2Session(storagePath, userId)) {
+    throw new Error(`storageState file ${storagePath} does not contain a same-user authenticated AAL2 token.`);
   }
+
 }
 
 // ── Setup tests — one per distinct seed user ──────────────────────────
@@ -261,6 +237,7 @@ setup('authenticate as individual (demo-user)', async ({ page }) => {
     page,
     SEED_USERS.individual.email,
     SEED_USERS.individual.password,
+    SEED_USERS.individual.id,
     `${STORAGE_DIR}/individual.json`,
   );
 });
@@ -271,6 +248,7 @@ setup('authenticate as orgAdmin (demo-admin)', async ({ page }) => {
     page,
     SEED_USERS.orgAdmin.email,
     SEED_USERS.orgAdmin.password,
+    SEED_USERS.orgAdmin.id,
     `${STORAGE_DIR}/orgAdmin.json`,
   );
 });
@@ -281,6 +259,7 @@ setup('authenticate as orgBAdmin (sarah)', async ({ page }) => {
     page,
     SEED_USERS.orgBAdmin.email,
     SEED_USERS.orgBAdmin.password,
+    SEED_USERS.orgBAdmin.id,
     `${STORAGE_DIR}/orgBAdmin.json`,
   );
 });

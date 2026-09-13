@@ -8,8 +8,8 @@ vi.mock('./utils/db.js', () => ({ getDb: () => ({ auth: { getUser } }) }));
 const secret = 'uat03-pending-role-test-key-that-is-not-a-real-secret';
 const userId = 'ce69b21d-d188-433f-a9eb-450bff79101e';
 const logger = { warn: vi.fn(), error: vi.fn() };
-async function token(role: string) {
-  return new SignJWT({ sub: userId, role })
+async function token(role: string, aal: 'aal1' | 'aal2' = 'aal1') {
+  return new SignJWT({ sub: userId, role, aal })
     .setProtectedHeader({ alg: 'HS256' }).setIssuedAt().setExpirationTime('1h')
     .sign(new TextEncoder().encode(secret));
 }
@@ -38,8 +38,13 @@ describe('SCRUM-4035 pending email identity', () => {
     expect(await auth.verifyEmailConfirmationToken(bearer, config, logger)).toBe(userId);
     expect(jwks).toHaveBeenCalled();
   });
-  it('retains normal authenticated access', async () => {
-    expect(await auth.verifyAuthToken(await token('authenticated'), { supabaseJwtSecret: secret }, logger)).toBe(userId);
+  it('requires AAL2 for normal authenticated product access', async () => {
+    expect(await auth.verifyAuthToken(await token('authenticated', 'aal1'), { supabaseJwtSecret: secret }, logger)).toBeNull();
+    expect(await auth.verifyAuthToken(await token('authenticated', 'aal2'), { supabaseJwtSecret: secret }, logger)).toBe(userId);
+  });
+  it('rejects a custom-hook MFA-pending token even if it carries AAL2', async () => {
+    expect(await auth.verifyAuthToken(await token('arkova_mfa_pending', 'aal2'),
+      { supabaseJwtSecret: secret }, logger)).toBeNull();
   });
   it('allows the separately named confirmation verifier to identify a pending caller', async () => {
     expect(await auth.verifyEmailConfirmationToken(await token('arkova_email_pending'),

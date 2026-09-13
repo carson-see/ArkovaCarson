@@ -51,4 +51,29 @@ describe('independent-node guard', () => {
       expect(() => assertIndependentEndpoint(endpoint), endpoint).toThrow(/Arkova-operated/);
     }
   });
+
+  // SCRUM-4463: the trailing-root-dot normalization and the case-insensitive
+  // host match must both be scoped to the operator-host policy, not turn into
+  // a blanket "reject any host with a root dot / any-case host" rule. A
+  // third-party host that merely LOOKS like an Arkova host after case-folding
+  // or dot-stripping (it doesn't here — these are plain non-Arkova examples)
+  // must still be accepted, and an all-uppercase Arkova host must still be
+  // refused so the `/i` flag on ARKOVA_HOST_RE is exercised directly (the
+  // pre-existing REFUSES tests above are all lowercase).
+  it('accepts a third-party host with a DNS root dot (example.com.)', () => {
+    const url = assertIndependentEndpoint('https://example.com./api');
+    expect(url.hostname).toBe('example.com.');
+  });
+
+  it('accepts an upper-case third-party host (EXAMPLE.COM)', () => {
+    // WHATWG URL parsing lower-cases hostname on the way in — the input is
+    // 'EXAMPLE.COM' (per the ticket), the assertion is on the parsed,
+    // normalized form the guard actually evaluates.
+    const url = assertIndependentEndpoint('https://EXAMPLE.COM/api');
+    expect(url.hostname).toBe('example.com');
+  });
+
+  it('REFUSES an upper-case Arkova host, root dot and all (EXAMPLE case: APP.ARKOVA.AI.)', () => {
+    expect(() => assertIndependentEndpoint('https://APP.ARKOVA.AI./api')).toThrow(/Arkova-operated/);
+  });
 });

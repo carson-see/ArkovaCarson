@@ -8,7 +8,7 @@
  *   - re-grant but make the subscription period STALE (SCRUM-1791)
  *     → { entitled: false } (must never gate on a stale period)
  *
- * Auth: signs the seed individual in against local Supabase to mint a real
+ * Auth: borrows auth.setup.ts’s real MFA-verified seed individual session for a
  * worker Bearer token (the endpoint uses verifyAuthToken). DB rows are seeded
  * via the service client (bypasses RLS, test-data only).
  *
@@ -27,18 +27,15 @@
  * no-op unless the live-worker env is wired (anon key + seed password — both
  * are present in the CI E2E job and during a staging soak, absent on a bare
  * local checkout). The skip is evaluated at the `test.describe` top so it short-
- * circuits BEFORE `beforeAll` runs — the bespoke `createClient(...)` (which on
- * Node < 22 needs the `ws` realtime-transport polyfill) is never constructed
+ * circuits BEFORE `beforeAll` runs — the saved session is never read
  * when the env is missing, instead of throwing in a hook and red-failing CI.
  */
 
-import { createClient } from '@supabase/supabase-js';
 import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
-import { WS_CLIENT_OPTIONS } from './fixtures/supabase';
+import { readSeedAal2Token } from './helpers/seed-session';
 import { captureRows, supabaseRowStore, type RowSnapshot } from './helpers/row-snapshot';
 
 const WORKER_URL = process.env.E2E_WORKER_URL || 'http://localhost:3001';
-const SUPABASE_URL = process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321';
 const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
 const SEED_PASSWORD = process.env.E2E_SEED_PASSWORD || '';
 const VERIFIED_IDENTITY_ENTITLEMENT = 'identity_verified';
@@ -58,7 +55,7 @@ function iso(offsetMs: number): string {
 test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
   // Skip-guard at the describe level so it runs before `beforeAll`: with no
   // live-worker env (normal local run / non-app-affecting CI), the suite is
-  // reported SKIPPED and the `createClient(...)` below never executes. In CI's
+  // reported SKIPPED and the saved setup session is never read. In CI's
   // E2E job and in a staging soak the env IS wired, so every test runs for real.
   test.skip(
     !LIVE_WORKER_ENV,
@@ -95,22 +92,8 @@ test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
   let entitlementSnapshot: RowSnapshot<Record<string, unknown>> | null = null;
 
   test.beforeAll(async () => {
-    // Mint a real worker token for the seed individual. Pass WS_CLIENT_OPTIONS
-    // (the `ws` realtime transport) like getServiceClient()/profile-session.ts —
-    // without it @supabase/realtime-js throws "Node.js 20 detected without
-    // native WebSocket support" at construction on the Node 20 CI runner.
-    const anon = createClient(SUPABASE_URL, ANON_KEY, {
-      auth: { autoRefreshToken: false, persistSession: false },
-      ...WS_CLIENT_OPTIONS,
-    });
-    const { data, error } = await anon.auth.signInWithPassword({
-      email: USER.email,
-      password: SEED_PASSWORD,
-    });
-    if (error || !data.session) {
-      throw new Error(`beforeAll: failed to sign in seed individual: ${error?.message}`);
-    }
-    accessToken = data.session.access_token;
+    // Reuse setup's real verified bearer; do not create an AAL1-only login.
+    accessToken = await readSeedAal2Token('individual');
 
     // subscriptions.plan_id is NOT NULL — use any existing plan.
     const { data: plan } = await service.from('plans').select('id').limit(1).maybeSingle();

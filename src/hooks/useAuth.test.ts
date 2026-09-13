@@ -408,49 +408,6 @@ describe('useAuth', () => {
     expect(mockSessionStorage.removeItem).toHaveBeenCalledWith('arkova_signed_out');
   });
 
-  it('R17(c) (PR #2637 review round 2): signOut clears the current user\'s MFA capability cooldown before the redirect', async () => {
-    const { armMfaCapabilityCooldown, isMfaCapabilityCooldownActive, __resetMfaCapabilityCooldownForTests } =
-      await import('../lib/mfaCapabilityCooldown');
-    __resetMfaCapabilityCooldownForTests();
-
-    const mockUser = { id: 'user-being-signed-out', email: 'test@test.com' };
-    mockGetSession.mockResolvedValue({
-      data: { session: { user: mockUser } },
-      error: null,
-    });
-    mockSignOut.mockResolvedValue({ error: null });
-
-    const originalLocation = window.location;
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, href: '' },
-      writable: true,
-      configurable: true,
-    });
-
-    armMfaCapabilityCooldown(mockUser.id);
-    expect(isMfaCapabilityCooldownActive(mockUser.id)).toBe(true);
-
-    const { useAuth } = await import('./useAuth');
-    const { result } = renderHook(() => useAuth());
-
-    await waitFor(() => {
-      expect(result.current.user).toEqual(mockUser);
-    });
-
-    await act(async () => {
-      await result.current.signOut();
-    });
-
-    expect(isMfaCapabilityCooldownActive(mockUser.id)).toBe(false);
-
-    Object.defineProperty(window, 'location', {
-      value: originalLocation,
-      writable: true,
-      configurable: true,
-    });
-    __resetMfaCapabilityCooldownForTests();
-  });
-
   it('R11 (PR #2637 review round 2): signOut clears the module-scope MFA assurance cache before the redirect', async () => {
     const { useMfaAssurance, clearMfaAssuranceCache, __resetMfaAssuranceCacheForTests } = await import(
       './useMfaAssurance'

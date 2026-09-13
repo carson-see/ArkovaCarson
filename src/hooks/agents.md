@@ -165,3 +165,8 @@ _Restored 2026-07-28 — same union-merge-driver incident as the Recent Changes 
 ## 2026-09-13 — SCRUM-3864: `useAffiliateListingConsent.ts` (new) + `useOrganization.ts` gains `sub_org_listing_child_optin`
 
 Migration 0429 (already on `origin/main` — merged well before this session) added `organizations.sub_org_listing_parent_optin` / `sub_org_listing_child_optin`, both living on the CHILD org's row, plus the `protect_org_tenancy_fields()` trigger that is the real authority over who may write which column. `useOrganization`'s `EditableOrgFields` now includes `sub_org_listing_child_optin` because that write IS a same-row self-update (a child consenting on its own row). `sub_org_listing_parent_optin` is deliberately NOT added there — the parent's consent lives on a row it does not own, so `useAffiliateListingConsent().setParentListingOptin(childOrgId, next)` exists for that asymmetric write. Both paths are direct authenticated `supabase.from('organizations').update()` calls (no worker involvement) — RLS (`organizations_update_admin`) + the 0429 trigger are the entire authorization surface; duplicating that logic in the worker via a service-role write was deliberately avoided. See `src/hooks/useAffiliateListingConsent.ts`'s own header for the full authority chain, and `docs/uat/suborg-listing/SURFACES.md` for the public-surface inventory this consent gates.
+## 2026-09-11 — UAT-04 profile authority
+
+`useProfile` does not fetch or return cached profile data until mailbox proof and
+a same-user `authenticated`/AAL2 token are present. An assurance upgrade resumes
+the query; account switches and AAL downgrades mask cached data immediately.

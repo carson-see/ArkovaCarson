@@ -4734,18 +4734,7 @@ export const OAUTH_EMAIL_CONFIRMATION_LABELS = {
   WORKING: 'Please wait…',
 } as const;
 
-// ── MFA enforcement (SCRUM-3167) ──
-//
-// Phase 1, role-based only (CTO ruling A4-3 — org-level enforcement is
-// dropped for now, see src/hooks/useMfaEnrollmentRequirement.ts). Four
-// blocks, one per surface AuthGuard can render in place of protected
-// children: the every-login challenge for anyone with a verified factor,
-// the non-skippable forced-enrollment screen for ORG_ADMIN/platform-admin
-// once enforcement is active, the fail-open capability-unavailable notice
-// (a platform misconfiguration must never wall anyone out — see
-// AuthGuard.tsx), and the dismissible grace-period nudge shown before the
-// enforcement date. §1.3-clean: no Wallet/Gas/Hash/Block/Transaction/
-// Crypto/Blockchain/Bitcoin/Testnet/Mainnet/UTXO/Broadcast/token.
+// ── MFA enforcement ──
 
 // R5 (PR #2637 review round 2): MFA_CHALLENGE_LABELS.GENERIC_ERROR and
 // MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR were byte-identical strings
@@ -4771,7 +4760,7 @@ export const MFA_CHALLENGE_LABELS = {
 
 export const MFA_ENROLLMENT_REQUIRED_LABELS = {
   TITLE: 'Two-factor authentication required',
-  DESCRIPTION: 'Your role has elevated access to organization data, so two-factor authentication is required before you can continue. Scan the QR code below with an authenticator app, then enter the 6-digit code it generates.',
+  DESCRIPTION: 'Two-factor authentication is required before you can continue. Scan the QR code below with an authenticator app, then enter the 6-digit code it generates.',
   SCAN_INSTRUCTION: 'Scan this QR code with your authenticator app',
   QR_ALT: 'QR code for authenticator app',
   MANUAL_ENTRY_LABEL: 'Manual entry code',
@@ -4780,6 +4769,7 @@ export const MFA_ENROLLMENT_REQUIRED_LABELS = {
   SUBMIT: 'Verify & continue',
   VERIFYING: 'Verifying...',
   SIGN_OUT: 'Sign out',
+  RETRY: 'Try again',
   GENERIC_ERROR: MFA_GENERIC_VERIFY_ERROR,
 } as const;
 

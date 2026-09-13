@@ -150,3 +150,18 @@ The same full-schema run showed a second fixture defect: enable_seqscan=off stil
 ## 2026-09-13 — SCRUM-3864: `suborg-listing-consent.test.ts` (new)
 
 Behavioural proof for the `protect_org_tenancy_fields()` trigger (migration 0429, already on `origin/main`) — the first CI-tracked automated test for it; the migration previously had only a hand-run `docs/staging/hakichain-suborgs-2026-09/verify-0429.sql` proof against a throwaway cluster. Uses `demo-admin@arkova.local` as the parent persona and `demo-user@arkova.local` as the child persona, NOT `carson@arkova.ai` — Carson is a platform admin (`profiles.is_platform_admin = true`, `supabase/seed.sql`), which makes the trigger's entire column-guard block a no-op for him and would silently pass every negative-path assertion for the wrong reason. See the test file's own header for the full personas/setup rationale.
+## 2026-09-11 — UAT-04 mandatory MFA boundary
+
+`uat04-mfa-enforcement.test.ts` exercises real GoTrue tokens and PostgREST for the
+email-before-MFA transition, AAL1 denial, AAL2 access, private Storage, service
+credentials, and preservation of an existing pre-request hook. Keep its fixture
+IDs and temporary policies suite-owned, and retain the old-token negative controls.
+All other RLS positive clients use a shared, process-locked TOTP factor through
+`elevateRlsClientToAal2()`; keep that real GoTrue elevation instead of weakening
+the production MFA gate or substituting a locally signed token.
+
+SCRUM-4887: committed changes to the singleton OAuth confirmation policy use
+`shared-fixture-lock.ts` across Vitest workers and restore the exact prior
+timestamp in a separate `finally` path. The lock times out instead of evicting
+an apparently stale owner. Keep file parallelism enabled so unrelated fixture
+collisions remain visible.
