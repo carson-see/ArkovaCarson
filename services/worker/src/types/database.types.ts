@@ -6815,6 +6815,7 @@ export type Database = {
           is_active: boolean
           org_id: string
           public_id: string
+          scope: string
           secret_hash: string
           updated_at: string
           url: string
@@ -6828,6 +6829,7 @@ export type Database = {
           is_active?: boolean
           org_id: string
           public_id: string
+          scope?: string
           secret_hash: string
           updated_at?: string
           url: string
@@ -6841,6 +6843,7 @@ export type Database = {
           is_active?: boolean
           org_id?: string
           public_id?: string
+          scope?: string
           secret_hash?: string
           updated_at?: string
           url?: string
@@ -7337,7 +7340,7 @@ export type Database = {
         Returns: string
       }
       create_webhook_endpoint: {
-        Args: { p_events: string[]; p_url: string }
+        Args: { p_events: string[]; p_scope?: string; p_url: string }
         Returns: Json
       }
       debit_and_enqueue_anchor: {
