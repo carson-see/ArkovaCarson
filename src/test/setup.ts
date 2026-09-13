@@ -2,7 +2,7 @@
  * Vitest Setup
  */
 
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 import { randomUUID as nodeRandomUUID } from 'node:crypto';
 
 // Polyfill File.arrayBuffer for jsdom
