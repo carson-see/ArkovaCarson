@@ -476,6 +476,9 @@ describe('OrgProfilePage — cancelling a pending affiliation request', () => {
     expect(reloadSpy).not.toHaveBeenCalled();
     // No debug channel stands in for user-facing feedback.
     expect(consoleLogSpy).not.toHaveBeenCalled();
+    // `Failed to cancel request` is the worker's own 500 text and is mapped, so
+    // it is not an anomaly to log either.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it('translates a recognised worker code instead of echoing it', async () => {
@@ -490,16 +493,60 @@ describe('OrgProfilePage — cancelling a pending affiliation request', () => {
   });
 
   it('falls back to the generic copy for an unmapped worker reply, and logs the raw value', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse(400, { error: 'No pending affiliation request to cancel' }),
-    );
+    // Deliberately a code the map does not carry — every reply this endpoint
+    // actually sends is mapped below, and this test exists to pin what happens
+    // to the next one somebody adds on the worker side.
+    fetchMock.mockResolvedValue(jsonResponse(500, { error: 'affiliation_state_unavailable' }));
 
     await clickCancel();
 
     expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.CANCEL_FAILED);
     // translateWorkerError surfaces the unrecognised reply to the console so a
     // new worker code is visible to engineers without reaching the user.
-    expect(consoleErrorSpy).toHaveBeenCalledWith('[sub-orgs] unmapped worker error', 'No pending affiliation request to cancel');
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[sub-orgs] unmapped worker error', 'affiliation_state_unavailable');
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+  });
+
+  // Every reply POST /api/v1/org/sub-orgs/cancel can send, mapped. Unmapped,
+  // each one showed the generic "please try again" and logged a console.error
+  // on every occurrence — wrong for the already-resolved case, where retrying
+  // cannot succeed, and noise for the rest.
+  it('tells a user whose request was already resolved elsewhere to reload, not to retry', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(400, { error: 'No pending affiliation request to cancel' }),
+    );
+
+    await clickCancel();
+
+    expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.ERROR_REQUEST_NO_LONGER_PENDING);
+    expect(String(vi.mocked(toast.error).mock.calls[0]?.[0])).toContain('no longer pending');
+    // Retrying is futile, so the copy must not invite it.
+    expect(String(vi.mocked(toast.error).mock.calls[0]?.[0])).not.toContain('try again');
+    // A known reply, so nothing to log.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+  });
+
+  it('tells a signed-out user to sign in again rather than to retry blindly', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(401, { error: 'Authentication required' }));
+
+    await clickCancel();
+
+    expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.ERROR_SIGNED_OUT);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+  });
+
+  it('maps the worker\'s generic 500 to the temporarily-unavailable copy', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(500, { error: 'Internal server error' }));
+
+    await clickCancel();
+
+    expect(toast.error).toHaveBeenCalledWith(SUB_ORG_LABELS.ERROR_TEMPORARILY_UNAVAILABLE);
+    // Says the service is at fault and that retrying is worth it — the worker's
+    // own 'Internal server error' text never reaches the user.
+    expect(String(vi.mocked(toast.error).mock.calls[0]?.[0])).toContain('temporarily unavailable');
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(consoleLogSpy).not.toHaveBeenCalled();
   });
 

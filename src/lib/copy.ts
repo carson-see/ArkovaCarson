@@ -3172,6 +3172,13 @@ export const SUB_ORG_LABELS = {
   ERROR_PARENT_NOT_FOUND: 'We could not find that organization.',
   ERROR_PARENT_IS_CHILD:
     'That organization is already affiliated with another one, so it cannot take on affiliates.',
+  // The cancel endpoint's own replies. Left unmapped these fell through to the
+  // generic "please try again", which is wrong for the first one — the request
+  // is gone, so retrying can never succeed — and noisy for the rest, since
+  // translateWorkerError logs every unmapped reply.
+  ERROR_REQUEST_NO_LONGER_PENDING:
+    'That affiliation request is no longer pending. It may have just been approved or declined. Reload the page to see where it stands.',
+  ERROR_SIGNED_OUT: 'Your session has expired. Sign in again and retry.',
 
   // A child whose affiliation was revoked kept `parent_org_id`, so the
   // "Request Affiliation" control (gated on "not a child") disappeared and the

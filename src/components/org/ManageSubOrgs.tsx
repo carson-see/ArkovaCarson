@@ -105,6 +105,15 @@ const WORKER_ERROR_COPY: Record<string, string> = {
   'Parent organization not found': SUB_ORG_LABELS.ERROR_PARENT_NOT_FOUND,
   'Cannot affiliate with a sub-organization': SUB_ORG_LABELS.ERROR_PARENT_IS_CHILD,
   'Invalid affiliate organization details': SUB_ORG_LABELS.CREATE_MISSING_FIELDS,
+  // POST /api/v1/org/sub-orgs/cancel, reached from the child-side "Cancel
+  // Request" button on OrgProfilePage. `No pending affiliation request to
+  // cancel` is the 400 the worker returns when the parent approved or revoked
+  // the request in another tab: the generic fallback told that user to try
+  // again, which can never succeed, so it gets copy that says to reload.
+  'No pending affiliation request to cancel': SUB_ORG_LABELS.ERROR_REQUEST_NO_LONGER_PENDING,
+  'Failed to cancel request': SUB_ORG_LABELS.CANCEL_FAILED,
+  'Authentication required': SUB_ORG_LABELS.ERROR_SIGNED_OUT,
+  'Internal server error': SUB_ORG_LABELS.ERROR_TEMPORARILY_UNAVAILABLE,
 };
 
 export function translateWorkerError(raw: unknown, fallback: string): string {
