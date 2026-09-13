@@ -3,6 +3,11 @@
   "_history": [
     {
       "date": "2026-09-13",
+      "author": "CTO release session (Claude Fable 5.1) — post-#2825 hygiene",
+      "note": "REMOVED 0443: PR #2825 merged 2026-09-13T13:23:51Z (a07ffc208) so 0443_backfill_anchor_proof_block_height.sql is on main AND its numeric row is in the prod ledger (list_migrations MCP tool re-read 15:22Z). The Full-ledger numeric-integrity audit was warning ledger-stale-exemption on every PR run. The duplicate timestamp-style prod row 20260912143110 for the same migration is NOT touched here: deleting a ledger row is a §1.11A operator write and stays with Carson."
+    },
+    {
+      "date": "2026-09-13",
       "author": "CTO release session (Claude Fable 5.1) — standing-rig close",
       "note": "ADDED 0451 (0451_uat04_mandatory_mfa, PR #2832, SCRUM-4832/UAT-04) and 0452 (0452_scrum4888_provision_org_quota_enforcement, PR #2831, SCRUM-4888/UAT-22) immediately ahead of applying both to prod vzwyaatejekddvltxyye via MCP apply_migration at the 24 h T3 window close (2026-09-13T14:07Z, standing rig fizyjojbebyalirtjjht; targeted drivers 256/256 MFA and 254/254 invite cycles; common identity/uptime monitor 24 h clean). Per CLAUDE.md §0 rule 10 the apply and this exemption land in the same motion; each ledger row is reconciled to its numeric version in-session and list_migrations re-read before either PR merges."
     },
@@ -223,7 +228,6 @@
     }
   ],
   "exemptPrefixes": [
-    "0443",
     "0451",
     "0452"
   ]
