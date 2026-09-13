@@ -1,25 +1,19 @@
 # agents.md — lib
 
-_Last updated: 2026-09-03_
+_Last updated: 2026-09-12_
 
-## 2026-09-12 — SCRUM-5023: `API_KEY_LABELS` gains the expiry vocabulary
+## 2026-09-12 SCRUM-4989 — `socialLinks.ts`, `jsonLd.ts` (new, PR #2840)
 
-`EXPIRING_SOON` plus the remaining-time fragments (`EXPIRES_TODAY`, `EXPIRES_IN_ONE_DAY`,
-`EXPIRES_IN_DAYS` with a `{days}` placeholder the component interpolates) and the Extend dialog
-strings. Split by plurality on purpose — a single template prints "in 0 days" on the last day and
-"in 1 days" the day before, which reads as a bug in a warning the user is meant to trust.
+`socialLinks.ts` is the single source of truth for `profiles.social_links`, on BOTH sides. The column was unvalidated `jsonb` for its whole history, so the read side is not optional — it is what protects rows written before the validator existed.
 
-`EXTEND_FAILED` is the scrubbed message shown when `onExtend` rejects. Like `REVOKE_FAILED` it states
-that **nothing changed**, because the dialog stays open and the key's expiry is untouched. §1.3-clean
-(no banned terms), and `src/lib/copy.ts` IS scanned by `lint:copy` — `EXCLUDE_PATTERNS` in
-`scripts/check-copy-terms.ts` covers tests, `node_modules`, `dist`, `src/components/ui/**` and
-`src/components/admin/treasury/**`, and nothing else.
+- `safeSocialHref(key, raw)` — resolves one stored value, or `null` when it must not become an `href` (the caller then renders no `<a>` at all). Accepted: an http(s) URL, a bare domain (prefixed `https://`), or an `@handle` for `twitter` only. Rejected: every other scheme; protocol-relative `//` and `/\`-style authorities; any control character or whitespace **anywhere** in the value (browsers strip several of those before parsing, which is how `java<TAB>script:` becomes a live scheme — the `\s` class also covers NBSP, BOM and U+2028/2029); a host with no dot; >200 chars; and **userinfo** — `https://linkedin.com@evil.example/` has hostname `evil.example`, so the recognisable part is not the host.
+- `resolveSocialLinks(raw)` — the render-path entry point: every known key resolved, unsafe ones absent. Use this, not a hand-rolled `Object.entries` loop, in any new render path.
+- `pickSocialLinks(raw)` — narrows a stored blob to the four known keys, string values only.
+- `parseSocialLinksForWrite(input)` — the write validator (Zod, Constitution §1.1). Unknown keys are **stripped, not rejected** (`.strip()`): a legacy key the user never touched must not make the form un-saveable. `{ok:false,key}` names the offending field so the caller can show `PROFILE_LABELS.socialLinks.invalid[key]`.
 
-`EXTEND_CURRENT` / `EXTEND_CURRENT_NONE` state the key's CURRENT expiry inside the Extend dialog, and
-`EXTEND_CONFIRM_*` are the confirmation step. Both exist because every preset REPLACES the expiry
-rather than adding to it: without the current value on screen, "30 days" on a key with eleven months
-left is indistinguishable from an extension.
+**The write validator is UX, not a security boundary.** There is no CHECK constraint and no RLS predicate on the contents of `profiles.social_links`, so any user can `PATCH` the column directly through PostgREST with a `javascript:` value. `safeSocialHref` / `resolveSocialLinks` on the render path is the actual control — never remove it on the grounds that the write path already validates (CTO ruling, PR #2840 review).
 
+`jsonLd.ts` — `toJsonLd(value)` is the one serializer for every `<script type="application/ld+json">` rendered through `dangerouslySetInnerHTML`. It escapes every `<` — covering `</script`, `<script` and `<!--`, all three of which steer the HTML tokenizer — plus U+2028/U+2029. It deliberately does **not** use `replace(/<\/script/gi, '<\\/script')`: that substitutes a lowercase literal for whatever it matched, so `</ScRiPt>` in a title stops round-tripping. `src/components/verification/PublicVerification.tsx` still carries its own `replace(/<\//g, '<\\/')` — it is a T2 surface, so folding it in is a separate change.
 
 ## PR #2637 MFA assurance identity (2026-09-05)
 
@@ -689,6 +683,25 @@ lookup keyed by external text in this file needs the same guard.
 ## 2026-09-05 — Certificate pagination at supported input limits
 
 Field, section and proof-line helpers reserve page space before painting. Wrapped values that exceed one printable page continue on subsequent pages with their label repeated; no value or proof step is truncated. Keep the maximum-length filename plus a full batch proof covered together, and exercise a multiline reason long enough to cross pages. The tests read actual PDF text operators and assert both printable bounds and complete text preservation. Certificate QR callers supply the canonical production URL; pointer regression tests reject alternate Arkova domains even when their host begins with `app.`.
+
+## 2026-09-12 — SCRUM-5023: `API_KEY_LABELS` gains the expiry vocabulary
+
+`EXPIRING_SOON` plus the remaining-time fragments (`EXPIRES_TODAY`, `EXPIRES_IN_ONE_DAY`,
+`EXPIRES_IN_DAYS` with a `{days}` placeholder the component interpolates) and the Extend dialog
+strings. Split by plurality on purpose — a single template prints "in 0 days" on the last day and
+"in 1 days" the day before, which reads as a bug in a warning the user is meant to trust.
+
+`EXTEND_FAILED` is the scrubbed message shown when `onExtend` rejects. Like `REVOKE_FAILED` it states
+that **nothing changed**, because the dialog stays open and the key's expiry is untouched. §1.3-clean
+(no banned terms), and `src/lib/copy.ts` IS scanned by `lint:copy` — `EXCLUDE_PATTERNS` in
+`scripts/check-copy-terms.ts` covers tests, `node_modules`, `dist`, `src/components/ui/**` and
+`src/components/admin/treasury/**`, and nothing else.
+
+`EXTEND_CURRENT` / `EXTEND_CURRENT_NONE` state the key's CURRENT expiry inside the Extend dialog, and
+`EXTEND_CONFIRM_*` are the confirmation step. Both exist because every preset REPLACES the expiry
+rather than adding to it: without the current value on screen, "30 days" on a key with eleven months
+left is indistinguishable from an extension.
+
 
 ## PR #2782 — bind certificate metadata to one block
 

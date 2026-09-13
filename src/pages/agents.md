@@ -1,13 +1,14 @@
 # agents.md — pages
-_Last updated: 2026-08-31_
+_Last updated: 2026-09-12_
 
-## 2026-09-12 — SCRUM-5023: `ApiKeySettingsPage` passes `extendKey` through
+## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
 
-`useApiKeys().extendKey` → `<ApiKeySettings onExtend>`. No page-level logic: the page is a pass-through
-for the hook, as it already is for create/revoke/delete. `ApiKeySettingsPage.test.tsx` mocks the whole
-hook, so a new hook member must be added to that mock or the page renders an `undefined` handler that
-only fails when a user clicks.
+`SettingsPage` writes `profiles.social_links`; `PublicProfilePage` is its cross-user render surface. Both go through `src/lib/socialLinks.ts`.
 
+- `SettingsPage` validates with `parseSocialLinksForWrite` and seeds its form state with `pickSocialLinks(profile.social_links)`, **not** the raw blob, so a legacy key cannot reach the write schema. The rejection uses its own `socialError` state rendered **inside the Social Profiles card** — the page-level `error` Alert lives in the profile card far above it, where a rejection from this form is off screen and Save just looks inert.
+- `PublicProfilePage` renders `resolveSocialLinks(links)`. Its old `normalizeUrl` prefixed `https://` onto scheme-less values, which happened to defang `javascript:` into an unparseable `https://javascript:alert(1)` — accidental, not a guarantee, and it did nothing for protocol-relative `//evil.example`. Do not reintroduce a prefix-only normaliser here.
+
+`AboutPage`, `EnterprisePage`, `HowItWorksPage`, `IndependentVerifyPage` and `UseCasesPage` each emit a JSON-LD block via `dangerouslySetInnerHTML` and had **no** escape at all; all five now use `toJsonLd` from `src/lib/jsonLd.ts`. Their payloads are static constants today — use the helper anyway in any new one.
 
 ## 2026-08-31 — `IndependentVerifyPage` told readers to run a file that does not exist
 
@@ -649,6 +650,14 @@ One-line addition to the `<AssetDetailView anchor={{...}}>` object literal: `fin
 ## 2026-09-05 — PR #2525 attestation actions on narrow screens
 
 Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Attestation outside the viewport. Document scrollWidth did not detect it because the shell clips overflow. Stack the heading and action group below lg and allow the actions to wrap. The staging browser regression checks every action bounding box at 375px and 1280px; it failed before this fix. Preserve this geometry check alongside actual database loading/error/retry and tenant-isolation checks.
+
+## 2026-09-12 — SCRUM-5023: `ApiKeySettingsPage` passes `extendKey` through
+
+`useApiKeys().extendKey` → `<ApiKeySettings onExtend>`. No page-level logic: the page is a pass-through
+for the hook, as it already is for create/revoke/delete. `ApiKeySettingsPage.test.tsx` mocks the whole
+hook, so a new hook member must be added to that mock or the page renders an `undefined` handler that
+only fails when a user clicks.
+
 
 ## PR #2782 — proof download block identity
 
