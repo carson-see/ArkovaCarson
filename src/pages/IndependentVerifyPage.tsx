@@ -6,6 +6,7 @@
  * Proves vendor independence — a critical trust differentiator.
  */
 
+import { toJsonLd } from '@/lib/jsonLd';
 import { Link } from 'react-router-dom';
 import { Terminal, Package, ArrowRight, HelpCircle } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
@@ -131,7 +132,7 @@ export function IndependentVerifyPage() {
       </main>
 
       {/* HowTo JSON-LD */}
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: toJsonLd({
         '@context': 'https://schema.org',
         '@type': 'HowTo',
         name: 'How to Verify an Arkova Credential Without Arkova',

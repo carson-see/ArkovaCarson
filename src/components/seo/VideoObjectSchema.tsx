@@ -7,6 +7,7 @@
  * marketing-site inventory model and the canonical Organization `@id`.
  */
 
+import { toJsonLd } from '@/lib/jsonLd';
 import { buildVideoObjectsJsonLd, type VideoInventoryEntry } from '../../lib/geo/videos';
 
 export interface VideoObjectProps {
@@ -26,10 +27,14 @@ export interface VideoObjectProps {
 export function VideoObjectSchema(props: VideoObjectProps) {
   const entry: VideoInventoryEntry = props;
   const [schema] = buildVideoObjectsJsonLd([entry]);
+  // SCRUM-4989: escape </script in every string field so a value can never
+  // close the JSON-LD block and start a live script (shared lib/jsonLd helper;
+  // the inventory is static today, the gap was real regardless).
+  const json = toJsonLd(schema);
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      dangerouslySetInnerHTML={{ __html: json }}
     />
   );
 }
