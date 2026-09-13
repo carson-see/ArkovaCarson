@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-09-13T15:20Z → 15:50Z — edge lane (Claude Fable): SCRUM-5110 built, branch held under the 16-PR ceiling
+
+- **SCRUM-5110 (Bug, epic SCRUM-3894, In Progress):** after SCRUM-3906 (worker `fix/verify-search-lexical-fallback` `5ee7a01fc`, no PR yet) the worker answers `/api/v1/verify/search` **200 + `search_mode: lexical_substring`** on flag-off / embed / RPC failure; the hosted MCP tool `arkova_search_anchors` (`services/edge/src/mcp-tools.ts`) would have relabelled those rows `semantic_vector`. Fixed on **`fix/scrum-5110-edge-search-mode-propagation`** head **`94e1e06c6`** (pushed): a worker 200 is semantic only when its own `search_mode` is exactly `semantic_vector`; lexical / absent / unknown → `null` → the edge's existing lexical path (same as the old 503). TDD (i)(j)(k) red→green; edge 128/128, tsc clean, parity gate OK, root mcp infra 103/103. Detector tier **T2** (edge worker).
+- **Not a PR (16 open non-Mergify PRs at 15:22Z).** Body for the PR-owning session: `docs/staging/pr-bodies/scrum-5110-edge-search-mode.md` on the branch. Land with or right after SCRUM-3906 and deploy prod `arkova-edge` with `wrangler` (no edge deploy pipeline — SCRUM-3907); the gate has no edge-only evidence mode (SCRUM-3427), so T2 evidence = rig edge via `wrangler.soak.toml` against a rig worker carrying SCRUM-3906.
+- Docs: Confluence [147324931](https://arkova.atlassian.net/wiki/spaces/A/pages/147324931); Bug Tracker — Master Log v90 section added; Jira comment + remote link on SCRUM-5110; `services/edge/agents.md` section added. No rig, soak, or prod state touched.
+
 ### 2026-09-13T11:17Z → 14:20Z — CTO release session (Claude Fable): B3b sealed, #2842 merged, standing-rig windows closed with 0451/0452 applied to prod, gate mechanics corrected
 
 **Read this block first.** Earlier blocks below stay accurate except where this one supersedes them.
