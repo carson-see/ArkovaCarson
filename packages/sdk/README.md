@@ -281,6 +281,8 @@ Retries are built in for `429`, `500`, `502`, `503`, and `504`. **A request is r
 
 > **🔥 New in INT-09 (April 2026)** — full programmable CRUD over webhook endpoints. You no longer need to use the Arkova web UI to manage webhooks.
 
+> **The API key must hold the `webhooks:manage` scope** (SCRUM-3981). Every method in this namespace goes to `/api/v1/webhooks*`, which requires it; no other scope implies it, and a key minted with the default `read:search` gets `403 insufficient_scope`. Re-issue the key with `webhooks:manage` selected. `create`, `update` and `delete` additionally require the key's actor to be an ORG_ADMIN.
+
 The `arkova.webhooks` namespace has six methods:
 
 > Webhook CRUD is a legacy v1 management surface. Its `id` values are webhook endpoint identifiers scoped to the authenticated org, not API v2 public resource identifiers. API v2 agent/search/detail surfaces use `public_id`/`publicId` and do not expose internal database UUIDs.

@@ -2,6 +2,43 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-12 — `/webhooks` mount order: limiter -> scope -> handler key + ORG_ADMIN (SCRUM-3981)
+
+`router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter)`.
+Read the chain left to right, because each layer answers a different question and none of them
+is redundant:
+
+1. **`batchRateLimiter`** (10 req/min, `scope: 'batch'`) — cheapest, so it is first. An unscoped
+   flood is rejected before anything reads a key.
+2. **`requireScope('webhooks:manage')`** — the capability gate, added by SCRUM-3981. Before it,
+   the mount carried the limiter alone: handlers checked that *an* API key was present and the
+   five ORG_ADMIN routes (create, patch, delete, both DLQ) checked the actor's role, but nothing
+   read `scopes`. `webhooks:manage` was in
+   `apiScopes.ts`, in `docs/api/README.md`, and in the dashboard's scope picker, and gated
+   nothing — so a key minted with the default `['read:search']` could list, read, test-ping,
+   replay and DLQ-manage an org's endpoints.
+3. **`requireApiKey` inside `webhooks.ts`** — still there, and it is load-bearing.
+   `requireScope` opens with `if (!req.apiKey) { next(); return; }` (`middleware/apiKeyAuth.ts`),
+   i.e. it does NOT authenticate: it narrows a caller that is already authenticated. On this
+   mount nothing upstream requires a key, so the guard falls through for an anonymous request
+   and the handler-level check is the only thing between that request and a 200. Delete
+   `requireApiKey` "because the mount is guarded now" and every route becomes anonymous.
+   `webhooks-scope.test.ts` pins exactly that: no key -> 401 `authentication_required`, and the
+   marker middleware records that the scope guard did pass control on.
+
+Scope is capability, not ownership: each handler still filters `.eq('org_id', req.apiKey.orgId)`,
+so an org-B key holding `webhooks:manage` gets **404** on an org-A endpoint id, never 403.
+
+Route coverage is read off `webhooksRouter.stack`, not transcribed — all ten routes today. The
+served spec (`docs.ts`, canonical per `docs/api/canonical-sources.md`) declares
+`x-arkova-required-scopes: ['webhooks:manage']` and a 403 on each of them.
+
+Deliberately NOT changed: the PHI/FERPA mounts at the bottom of `router.ts`. `requireAuth` runs
+first there and rejects any caller whose Authorization header is absent or starts with
+`Bearer ak_`, so an API key never reaches `requireScopeAnyAuth('compliance:read')` — fail-closed
+today. Whether a key SHOULD be able to reach those routes is a product decision, filed as
+SCRUM-5070 rather than decided in a webhooks PR.
+
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
 `router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.
