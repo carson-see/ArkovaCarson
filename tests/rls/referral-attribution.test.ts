@@ -237,6 +237,75 @@ describe('SCRUM-5024 referral codes and attribution (live DB)', () => {
       // The referred org's own audit export must not disclose the attribution.
       expect(onReferred).toBe(0);
     });
+
+    it('9d. an authenticated caller cannot record an attribution for an org it is not a member of', async () => {
+      // CTO review, 0456. `authenticated` holds EXECUTE and the function is
+      // SECURITY DEFINER, so the body is the only authority check that runs.
+      // Without the membership guard, anyone holding an org uuid could
+      // permanently attribute that org to their own code (referred_org_id is the
+      // PRIMARY KEY, first write wins, no revoke surface) and could inject
+      // organization.referral_code_invalid rows into that org's audit stream.
+      const outsider = await withUser(DEMO_CREDENTIALS.betaAdminEmail, 'ORG_ADMIN');
+      try {
+        const beforeAudit = await service
+          .from('audit_events')
+          .select('*', { count: 'exact', head: true })
+          .eq('event_type', 'organization.referral_code_invalid')
+          .eq('org_id', REFERRED_ORG);
+
+        const { error } = await outsider.rpc('record_org_referral', {
+          p_org_id: REFERRED_ORG,
+          p_code: referrerCode,
+          p_source: 'signup',
+        });
+        expect(error).not.toBeNull();
+        // 42501 = insufficient_privilege, raised by the guard rather than
+        // surfaced as a permissive verdict.
+        expect(error?.code).toBe('42501');
+
+        // A bogus code must not reach the audit branch either.
+        const { error: bogusError } = await outsider.rpc('record_org_referral', {
+          p_org_id: REFERRED_ORG,
+          p_code: 'QQQQ7777',
+          p_source: 'signup',
+        });
+        expect(bogusError?.code).toBe('42501');
+
+        const afterAudit = await service
+          .from('audit_events')
+          .select('*', { count: 'exact', head: true })
+          .eq('event_type', 'organization.referral_code_invalid')
+          .eq('org_id', REFERRED_ORG);
+        expect(afterAudit.count).toBe(beforeAudit.count);
+      } finally {
+        await cleanupClient(outsider);
+      }
+    });
+
+    it('9e. an oversized code is a bounded unknown_code, not a raise', async () => {
+      // audit_events CHECKs char_length(details) <= 10000. An unbounded p_code
+      // made a function contracted to return a TOTAL verdict raise instead.
+      const oversized = 'Q'.repeat(20000);
+      const { data, error } = await service.rpc('record_org_referral', {
+        p_org_id: OTHER_ORG,
+        p_code: oversized,
+        p_source: 'signup',
+      });
+      expect(error).toBeNull();
+      expect(data).toMatchObject({ applied: false, reason: 'unknown_code' });
+
+      const { data: rows } = await service
+        .from('audit_events')
+        .select('details')
+        .eq('event_type', 'organization.referral_code_invalid')
+        .eq('org_id', OTHER_ORG)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const details = (rows ?? [])[0]?.details ?? '';
+      expect(details.length).toBeLessThanOrEqual(10000);
+      expect(details).toContain('Q'.repeat(32));
+      expect(details).not.toContain('Q'.repeat(33));
+    });
   });
 
   describe('disclosure boundary', () => {
