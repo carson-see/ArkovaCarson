@@ -1,5 +1,85 @@
 # agents.md — pages
-_Last updated: 2026-09-12_
+_Last updated: 2026-09-13_
+
+## 2026-09-13 — "Cancel Request" failed in total silence (pre-existing, fixed on top of PR #2907)
+
+The child-side cancel handler in `OrgProfilePage.tsx` toasted only on `response.ok` and ended in
+`catch { // Handle silently }`. A 500 from `POST /api/v1/org/sub-orgs/cancel`, a 403 for a
+non-admin, the 400 the worker returns when the parent already approved the request in another tab,
+and a dropped connection all produced no toast, no console output and no state change: the button
+looked inert while the request stayed pending. The founder-feedback pass in #2907 relocated this
+block from Settings to the Affiliates tab without changing its logic, so the silence predates it.
+
+DO route the reply through `translateWorkerError(data.error, SUB_ORG_LABELS.CANCEL_FAILED)` — the
+same shape `ManageSubOrgs.tsx`'s own handlers use, so a machine code (`sub_org_limit_reached`) or an
+engineer-facing sentence never reaches an operator, and an unmapped reply is `console.error`-logged
+rather than swallowed. DON'T let `await response.json()` be the only body read on an error path: a
+5xx can answer with an HTML error page, and a throw there is indistinguishable from a network drop —
+`.catch(() => ({}))` keeps it on the generic-failure path.
+
+`translateWorkerError` is exported from `@/components/org/ManageSubOrgs`, which
+`OrgProfilePageAffiliates.test.tsx` also `vi.mock`s for the panel component. That factory MUST
+spread `await importOriginal()`; a factory that only returns `ManageSubOrgs` leaves the import
+`undefined`, the handler throws into its catch, and every mapped worker code silently degrades to
+the generic fallback — which is the exact distinction those tests exist to pin.
+
+## 2026-09-13 CTO review (PR #2907) — `fetchParentOrgName` is RLS-blocked in the common case
+
+Verified, not assumed: `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` gives
+`organizations` exactly one SELECT policy, `organizations_select_member`, scoped to
+`get_user_org_ids()` (the CALLER's own `org_members` rows). A child org's members are never added
+to the parent's `org_members` — only the reverse happens, when a parent creates a new affiliate
+(`buildAffiliateMembershipRows`, `services/worker/src/api/v1/orgSubOrgs.ts`). So for a child that
+requested affiliation into an existing parent (the common path, as opposed to being created BY that
+parent), `OrgProfilePage.tsx`'s direct `.from('organizations').select('display_name').eq('id',
+parentOrgId).single()` is RLS-denied: PostgREST returns zero rows, no thrown error, `data: null`.
+
+This is **not a leak** — RLS is doing its job — but it does mean the "pending/revoked children see
+the parent's real name" behaviour below does not reach most real users: it silently falls back to
+the generic `SUB_ORG_LABELS.PARENT_ORGANIZATION` ("parent organization") label, same as before this
+PR. The two mocked-success tests in `OrgProfilePageAffiliates.test.tsx` ("names the parent
+organization for a REVOKED/PENDING child…") are a fair test of the render logic given data, but they
+resolve the Supabase mock unconditionally and so prove nothing about whether the data ever arrives —
+the `docs/uat/suborg-ux` E2E capture has the same gap (Supabase is stubbed via `page.route`, not run
+against real RLS). Added `describe('when the parent-name read is RLS-blocked (the common real
+case)')` in that file, using the shape PostgREST actually returns, to pin the graceful-fallback
+behaviour and stop the existing tests from reading as proof of something they do not cover.
+
+Fixing this for real needs a child-scoped SECURITY DEFINER RPC (narrower than
+`search_organizations_public`, which searches by name/domain, not by id) returning only
+`display_name` for the caller's own `parent_org_id` — a backend/DB change, out of scope for this
+frontend-only T1 PR. Flagged as a follow-up rather than fixed here.
+
+## 2026-09-13 founder feedback — `OrgProfilePage` gained an **Affiliates** tab
+
+Founder: "when I try and use sub orgs it's clunky and confusing". Full walk and evidence:
+`docs/uat/suborg-ux/FINDINGS.md`.
+
+`ManageSubOrgs` and the child-side affiliation status used to be the last block inside the
+**Settings** `TabsContent`, below fifteen profile fields, the verification card and four connector
+cards. Measured on an empty org, its heading sat **2,396 px** down the scrolling column at 1280 px
+and **2,996 px** at 375 px (`docs/uat/suborg-ux/before/discoverability-*.json`) — and the tab row
+said only Home / People / Settings, so a parent admin with a request waiting had nothing anywhere
+telling them so. It is now its own `TabsContent value="affiliates"`, 476 px / 490 px down.
+
+- **`?tab=` accepts `affiliates` as well as `settings`.** Anything else falls back to `home`. The
+  connector-card specs (`integrations-*.spec.ts`) still deep-link `?tab=settings` — the connector
+  cards did NOT move, only the sub-org block did.
+- **The tab badge comes from the panel.** `ManageSubOrgs` reports `{ pending, approved }` through
+  `onCountsChange`, or `null` when its load failed. Render the badge only for a known, non-zero
+  pending count: a "0" after a failed fetch claims there is nothing waiting when we do not know.
+- **`TAB_TRIGGER_CLASS`** is the shared trigger styling. Four copies of that 160-character class
+  string had already begun to drift; the row is `overflow-x-auto` with `whitespace-nowrap` labels
+  because four tabs no longer fit one 375 px row.
+- **Request Affiliation is gated on `!isChildOrg || parentApprovalStatus === 'REVOKED'`.** A revoked
+  child KEEPS its `parent_org_id`, so the old `!isChildOrg` gate hid the control from the one
+  organization that needed it — a permanent dead end. Do not "simplify" this back.
+- **`fetchParentOrgName` runs for any child with a parent**, not only APPROVED ones. Gated on
+  APPROVED, the PENDING and REVOKED screens rendered the literal fallback string, i.e. "Affiliation
+  revoked by parent organization".
+
+Tests: `OrgProfilePageAffiliates.test.tsx` (13 cases as of the 2026-09-13 CTO review above — 10
+original + a PENDING-cannot-re-request gate test + 2 RLS-blocked fallback tests).
 
 ## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
 
