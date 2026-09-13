@@ -520,3 +520,28 @@ The helper uses a direct PENDING comparison and has no test-only export. Behavio
   promised a concurrent double accept was "a clean no-op"; the code threw the loser's 23505 as a 500.
   23505 on that insert is now treated as success (the membership exists). Any other insert error
   still throws and triggers the new-account rollback.
+
+## 2026-09-13 — `rules-crud.ts`: adopt-vs-create race guard, second gap (PR #2912 CTO review)
+
+`handleCreateRule`'s race check (documented above) only covers the INSERT. The Connectors page's
+create flow is actually **two** worker calls — `POST /api/rules` (SEC-02 forces `enabled=false` on
+every create) then `PATCH /api/rules/:id {enabled:true}` to activate it — and `docusign-rule-seed.ts`
+can land in the gap BETWEEN those two calls exactly as easily as in the gap the create-time check
+narrows. Nothing guarded that second gap: `validatePatchAgainstCurrent` doesn't even read the
+current row for a bare `{enabled:true}` patch (no `trigger_config`/`action_config` in the body), so
+a plain enable-toggle had zero connector awareness — a seed landing in that window produced two
+enabled rules on the same `trigger_type` (the exact double-fire PM-5 exists to prevent), silently.
+
+Fix: `checkConnectorEnableRace` runs whenever a PATCH sets `enabled: true`. It reads the current row;
+if it's already enabled (no-op patch) or not connector-tagged (`action_config.tag` doesn't match
+`connector-<provider>` — a RulesPage/RuleBuilderPage admin's plain toggle), it's a no-op. Otherwise it
+re-checks for another enabled rule of the same `trigger_type` and refuses with the same `409
+rule_exists` + `existing_rule_id` shape the create-time guard uses. `useConnectorRule.ts`'s `save()`
+handles this 409 on the enable step the same way it already handled the create-time 409 — PATCHes the
+winning rule instead of surfacing an error, leaving its own just-created (still-disabled, harmless)
+rule behind rather than a duplicate enabled rule.
+
+Same disclosed limit as the create-time guard: check-then-update, not a DB-level unique constraint —
+narrows the window, does not close it to zero. A true fix needs a partial unique index on
+`(org_id, trigger_type) WHERE enabled` (or similar), which is a migration and out of scope for a
+worker-only PR.

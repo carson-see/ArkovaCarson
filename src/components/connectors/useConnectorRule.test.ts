@@ -175,6 +175,47 @@ describe('useConnectorRule — save (create path)', () => {
     expect(patchBody.action_type).toBe('INSTANT_SECURE');
     expect(patchBody.action_config).toEqual({ tag: 'connector-google_drive' });
   });
+
+  it('adopts the winning rule on a 409 rule_exists race that lands on the enable step (second gap, CTO pre-mortem 2026-09-13)', async () => {
+    // Unlike the previous test, the create POST itself wins cleanly — the
+    // seeder lands in the SECOND gap, between create (disabled) and the
+    // follow-up enable PATCH.
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [] })); // load: 0 at page-load time
+    const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
+    await waitFor(() => expect(result.current.state.status).toBe('none'));
+
+    workerFetch.mockResolvedValueOnce(jsonRes(201, { id: 'my-new-rule' })); // POST creates cleanly
+    workerFetch.mockResolvedValueOnce(
+      jsonRes(409, { error: { code: 'rule_exists', existing_rule_id: 'seeded-rule' } }),
+    ); // PATCH enable races and loses
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { ok: true })); // PATCH adopt the winner
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [{ id: 'seeded-rule', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: true }] })); // reload
+    workerFetch.mockResolvedValueOnce(
+      jsonRes(200, {
+        item: {
+          id: 'seeded-rule',
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: {},
+          action_type: 'INSTANT_SECURE',
+          action_config: { tag: 'connector-google_drive' },
+          enabled: true,
+        },
+      }),
+    );
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.save({ name: 'Google Drive', triggerConfig: {}, actionType: 'INSTANT_SECURE' });
+    });
+
+    expect(ok).toBe(true);
+    // My own just-created (disabled) rule is left behind, never adopted.
+    const patchCall = workerFetch.mock.calls[3];
+    expect(patchCall[0]).toBe('/api/rules/seeded-rule');
+    const patchBody = JSON.parse(patchCall[1].body);
+    expect(patchBody.action_type).toBe('INSTANT_SECURE');
+    expect(patchBody.action_config).toEqual({ tag: 'connector-google_drive' });
+  });
 });
 
 describe('useConnectorRule — save (adopt path)', () => {

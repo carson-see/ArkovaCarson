@@ -828,13 +828,29 @@ describe('handleUpdateRule', () => {
     );
   });
 
+  // A plain (non-connector) row, disabled — used by every enabled:true test
+  // below to feed `checkConnectorEnableRace`'s current-row read a realistic
+  // answer instead of leaning on tableMock's op defaults. `action_config`
+  // has no `connector-<provider>` tag, so the race-check reads this ONE row
+  // and stops (no second query) — matching a RulesPage/RuleBuilderPage
+  // admin's plain toggle, which the guard must not affect.
+  function plainDisabledRuleRead() {
+    return tableMock({
+      select: {
+        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'ds' }, enabled: false },
+        error: null,
+      },
+    });
+  }
+
   it('happy path: partial update returns ok:true', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
     const membership = adminMembership();
+    const currentRuleRead = plainDisabledRuleRead();
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res, json } = mockRes();
@@ -844,15 +860,17 @@ describe('handleUpdateRule', () => {
       res,
     );
     expect(json).toHaveBeenCalledWith({ ok: true });
+    expect(rulesUpdate.calls.some((c) => c.method === 'update')).toBe(true);
   });
 
   it('emits ORG_RULE_ENABLED audit when toggling enabled=true (SEC-02)', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
     const membership = adminMembership();
+    const currentRuleRead = plainDisabledRuleRead();
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res } = mockRes();
@@ -868,6 +886,97 @@ describe('handleUpdateRule', () => {
     expect(auditInsertCall).toBeDefined();
     const payload = auditInsertCall!.args[0] as { event_type: string };
     expect(payload.event_type).toBe('ORG_RULE_ENABLED');
+  });
+
+  // -- Connectors-page adopt-vs-create race guard, second half (CTO
+  // pre-mortem, 2026-09-13): the enable-PATCH step of the create flow ------
+
+  it('refuses to enable a connector-tagged rule with 409 rule_exists when another enabled rule of that trigger_type already exists (seeder race, second gap)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: false },
+        error: null,
+      },
+    });
+    const raceCheck = tableMock({ select: { data: { id: 'seeded-rule-id' }, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), raceCheck.from('')),
+    );
+
+    const { res, status, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: true } }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith({
+      error: expect.objectContaining({ code: 'rule_exists', existing_rule_id: 'seeded-rule-id' }),
+    });
+    // The update must never fire when the race-check refuses.
+    expect(raceCheck.calls.some((c) => c.method === 'update')).toBe(false);
+  });
+
+  it('enables a connector-tagged rule normally when the enable race-check finds no other enabled rule', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: false },
+        error: null,
+      },
+    });
+    const raceCheck = tableMock({ select: { data: null, error: null } });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(
+        profiles.from(''),
+        membership.from(''),
+        currentRuleRead.from(''),
+        raceCheck.from(''),
+        rulesUpdate.from(''),
+        audit.from(''),
+      ),
+    );
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: true } }),
+      res,
+    );
+    expect(json).toHaveBeenCalledWith({ ok: true });
+  });
+
+  it('does NOT run the enable race-check a second time when the rule is already enabled (idempotent re-patch)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: true },
+        error: null,
+      },
+    });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    // Only 4 scripted handlers: if the already-enabled short-circuit didn't
+    // fire, a second SELECT would consume the `rulesUpdate` slot and this
+    // test would fail on the update-shape assertion below.
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
+    );
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: true } }),
+      res,
+    );
+    expect(json).toHaveBeenCalledWith({ ok: true });
+    expect(rulesUpdate.calls.some((c) => c.method === 'update')).toBe(true);
   });
 
   it('emits ORG_RULE_DISABLED audit when toggling enabled=false (SEC-02)', async () => {

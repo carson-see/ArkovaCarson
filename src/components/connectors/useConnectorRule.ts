@@ -197,8 +197,37 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
               body: JSON.stringify({ enabled: true }),
             });
             if (!enableRes.ok) {
-              setSaveError(CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
-              return false;
+              const enableBody = await enableRes.json().catch(() => ({})) as {
+                error?: { code?: string; existing_rule_id?: string };
+              };
+              // Race guard, second half: the seeder (or a parallel admin) won
+              // in the gap between this create and this enable call, not the
+              // earlier create-vs-create gap. Same "adopt the winner" recovery
+              // as the create-time 409 above — the just-created rule this
+              // hook made is left behind disabled (harmless; RulesPage still
+              // shows it) rather than left half-enabled with a duplicate.
+              if (
+                enableRes.status === 409 &&
+                enableBody?.error?.code === 'rule_exists' &&
+                enableBody.error.existing_rule_id
+              ) {
+                const patchRes = await workerFetch(`/api/rules/${enableBody.error.existing_rule_id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    trigger_config: input.triggerConfig,
+                    action_type: input.actionType,
+                    action_config: actionConfig,
+                  }),
+                });
+                if (!patchRes.ok) {
+                  setSaveError(CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+                  return false;
+                }
+              } else {
+                setSaveError(CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+                return false;
+              }
             }
           }
         } else {

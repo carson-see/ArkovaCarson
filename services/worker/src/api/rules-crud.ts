@@ -853,6 +853,75 @@ async function validatePatchAgainstCurrent(
   }
 }
 
+/**
+ * Adopt-vs-create race guard, second half (CTO pre-mortem, 2026-09-13).
+ *
+ * `handleCreateRule`'s race check only covers the INSERT: the Connectors
+ * page's create flow is actually two calls — `POST /api/rules`
+ * (SEC-02 forces `enabled=false` on every create, connector or not) then
+ * `PATCH /api/rules/:id {enabled:true}` to activate it. A rule seeded by
+ * `docusign-rule-seed.ts` can land in the gap BETWEEN those two calls just
+ * as easily as in the gap the create-time check narrows — and nothing
+ * guarded that second gap until now: `validatePatchAgainstCurrent` doesn't
+ * even read the current row for a bare `{enabled:true}` patch (no
+ * trigger_config/action_config in the body), so a plain enable-toggle had
+ * zero connector awareness. Same scoping as the create-time guard —
+ * connector-tagged rules only, `enabled: false -> true` transitions only
+ * (an already-enabled rule being re-patched is a no-op for this check) —
+ * and same limit: check-then-update, not a DB-level constraint, so this
+ * narrows the residual window rather than closing it to zero.
+ */
+async function checkConnectorEnableRace(
+  ruleId: string,
+  orgId: string,
+): Promise<PatchValidationResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: current, error: readErr } = await (db as any)
+    .from('organization_rules')
+    .select('trigger_type, action_config, enabled')
+    .eq('id', ruleId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (readErr) {
+    logger.warn({ error: readErr, orgId }, 'connector rule enable race-check read failed');
+    return { kind: 'error', status: 500, body: { error: { code: 'internal', message: 'Internal server error' } } };
+  }
+  if (!current || current.enabled === true || !isConnectorManagedActionConfig(current.action_config)) {
+    return { kind: 'ok' };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: existingEnabled, error: existingErr } = await (db as any)
+    .from('organization_rules')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('trigger_type', current.trigger_type)
+    .eq('enabled', true)
+    .limit(1)
+    .maybeSingle();
+  if (existingErr) {
+    logger.warn({ error: existingErr, orgId }, 'connector rule enable race-check lookup failed');
+    return { kind: 'error', status: 500, body: { error: { code: 'internal', message: 'Internal server error' } } };
+  }
+  // The row being enabled is still `enabled=false` as of the read above, so
+  // it can never match its own id in this second query — no self-exclusion
+  // needed.
+  if (existingEnabled?.id) {
+    return {
+      kind: 'error',
+      status: 409,
+      body: {
+        error: {
+          code: 'rule_exists',
+          message: 'An enabled rule for this trigger already exists — adopt it instead of enabling a second one.',
+          existing_rule_id: existingEnabled.id,
+        },
+      },
+    };
+  }
+  return { kind: 'ok' };
+}
+
 export async function handleUpdateRule(
   userId: string,
   req: Request,
@@ -882,6 +951,14 @@ export async function handleUpdateRule(
     if (validation.kind === 'error') {
       res.status(validation.status).json(validation.body);
       return;
+    }
+
+    if (parsed.patch.enabled === true) {
+      const raceCheck = await checkConnectorEnableRace(parsed.ruleId, orgId);
+      if (raceCheck.kind === 'error') {
+        res.status(raceCheck.status).json(raceCheck.body);
+        return;
+      }
     }
 
     // CIBA-HARDEN-05: rely on the DB trigger `set_organization_rules_updated_at`
