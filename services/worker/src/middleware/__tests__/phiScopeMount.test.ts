@@ -77,7 +77,16 @@ describe('PHI / student-PII mounts carry a scope guard that cannot no-op', () =>
   it('router.ts requireAuth rejects an API-key caller before the scope guard can run', () => {
     const start = routerSource.indexOf('async function requireAuth(');
     expect(start, 'requireAuth is no longer declared in router.ts').toBeGreaterThan(-1);
-    const body = routerSource.slice(start, routerSource.indexOf('// ─── Batch rate limiter', start));
+    // The end delimiter is a decorative banner. If it is reworded or moved,
+    // indexOf returns -1 and slice(start, -1) would silently widen `body` to
+    // (almost) the whole file — which DOES contain `req.apiKey` and
+    // `X-API-Key`, so the negative assertions below would fail claiming
+    // requireAuth accepts API keys when requireAuth never changed.
+    const end = routerSource.indexOf('// ─── Batch rate limiter', start);
+    expect(end, 'the banner that delimits requireAuth moved — re-anchor this slice').toBeGreaterThan(
+      start,
+    );
+    const body = routerSource.slice(start, end);
 
     // No Authorization header, or one carrying an API key, is a 401.
     expect(body).toContain("!authHeader?.startsWith('Bearer ')");

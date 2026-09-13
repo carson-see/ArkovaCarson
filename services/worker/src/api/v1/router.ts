@@ -501,7 +501,7 @@ router.use('/webhooks/self-service', requireAuth, webhooksSelfServiceRateLimiter
 // SCRUM-3981: `webhooks:manage` is enforced HERE, at the mount. Until this
 // guard existed the scope was grantable, documented, offered in the dashboard
 // picker — and checked by nothing: the handlers verify that *an* API key is
-// present (`requireApiKey`) and the four mutating routes additionally verify
+// present (`requireApiKey`) and the five ORG_ADMIN routes additionally verify
 // ORG_ADMIN, but no layer looked at scopes. A key minted with the default
 // `['read:search']` could list, read, test, replay and DLQ-manage an org's
 // endpoints.

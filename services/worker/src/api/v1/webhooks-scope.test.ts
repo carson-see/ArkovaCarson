@@ -4,8 +4,9 @@
  *
  * Before this test existed, `router.ts` mounted `webhooksRouter` behind
  * `batchRateLimiter` only. Every handler checked that *an* API key was
- * present (`requireApiKey`), and the four mutating routes additionally
- * checked ORG_ADMIN, but nothing checked a scope — so a key minted with the
+ * present (`requireApiKey`), and the five ORG_ADMIN routes (create, patch,
+ * delete, and both DLQ routes) additionally checked the actor's role, but
+ * nothing checked a scope — so a key minted with the
  * default `['read:search']` could list an org's endpoints, read a single
  * endpoint, fire test pings, read delivery logs, replay a delivery, and work
  * the dead-letter queue. `webhooks:manage` existed in `apiScopes.ts`, in the
@@ -199,7 +200,17 @@ describe('SCRUM-3981 — router.ts actually mounts the guard', () => {
   it('keeps the rate limiter ahead of the scope guard', () => {
     // Cheapest check first: an unscoped flood is rejected before a DB-backed
     // key lookup is worth anything to the caller.
-    const mount = routerSource.slice(routerSource.indexOf("router.use('/webhooks', "));
+    //
+    // Slice to the END OF THE MOUNT STATEMENT, not to end-of-file: router.ts
+    // carries ten other `requireScope(` call sites, six of them BELOW this
+    // mount, so an open-ended slice finds one of those and the assertion holds
+    // even when this mount has no scope guard at all.
+    const start = routerSource.indexOf("router.use('/webhooks', ");
+    expect(start, "the broad '/webhooks' mount is no longer a single statement").toBeGreaterThan(-1);
+    const mount = routerSource.slice(start, routerSource.indexOf('\n', start));
+
+    expect(mount).toContain('batchRateLimiter');
+    expect(mount).toContain("requireScope('webhooks:manage')");
     expect(mount.indexOf('batchRateLimiter')).toBeLessThan(mount.indexOf('requireScope('));
   });
 

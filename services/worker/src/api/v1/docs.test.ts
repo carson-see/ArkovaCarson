@@ -178,13 +178,24 @@ describe('OpenAPI spec', () => {
   // (docs/api/canonical-sources.md: docs.ts is canonical for v1, openapi.yaml
   // is demoted). Every /webhooks* operation now declares the scope it requires
   // and the 403 it answers without it.
-  it('documents webhooks:manage and a 403 on every /webhooks* operation', () => {
-    const webhookPaths = Object.keys(openApiSpec.paths).filter((p) => p.startsWith('/webhooks'));
+  it('documents webhooks:manage and a 403 on every webhook-management operation', () => {
+    // Deliberately NOT `startsWith('/webhooks')`: `/webhooks/self-service/*`
+    // (dashboard JWT), `/webhooks/drive` (channel token) and `/webhooks/ats/*`
+    // (HMAC) share that prefix, carry their own auth, and are mounted ahead of
+    // the scope-gated management router. When `docs.routeParity.test.ts` widens
+    // the served spec to them, this test must keep saying the truth about them
+    // rather than pressure someone into declaring a scope that is not required.
+    const MANAGEMENT_PREFIX = /^\/webhooks(\/(\{id\}|test|deliveries|dlq)(\/.*)?)?$/;
+    const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
+    const webhookPaths = Object.keys(openApiSpec.paths).filter((p) => MANAGEMENT_PREFIX.test(p));
     expect(webhookPaths.length).toBeGreaterThan(0);
 
     let operationCount = 0;
     for (const path of webhookPaths) {
       for (const [method, operation] of Object.entries(openApiSpec.paths[path])) {
+        // Path items may also carry `parameters` / `summary` keys, which are
+        // not operations and must not be counted toward the ten.
+        if (!HTTP_METHODS.has(method)) continue;
         const op = operation as Record<string, unknown>;
         operationCount += 1;
         expect(op['x-arkova-required-scopes'], `${method.toUpperCase()} ${path}`).toEqual(['webhooks:manage']);

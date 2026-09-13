@@ -25,6 +25,17 @@
  * `phiScopeMount.test.ts` and `webhooks-scope.test.ts` carry that weight for
  * the surfaces they cover. Lines whose first non-space character is `//` or
  * `*` are skipped so a scope named only in prose does not read as a mount.
+ *
+ * ONE narrowing is applied, and it is the whole point of the census rather
+ * than an exception to it: a `requireScope('X')` that sits on the SAME mount
+ * as `requireAuth` is NOT counted. `requireScope` is API-key-only and opens
+ * `if (!req.apiKey) { next(); return; }` (`middleware/apiKeyAuth.ts`), while
+ * `requireAuth` (`api/v1/router.ts`) 401s any caller whose Authorization
+ * header is absent or starts with `Bearer ak_` and never reads `X-API-Key`.
+ * Chained together they enforce nothing for the JWT callers such a mount is
+ * built for — `apiScopes.ts`'s own header and `api/v1/agents.md` both say so
+ * about `/keys`. Counting that pairing as enforcement would have the census
+ * certify exactly the documented-but-inert state it exists to detect.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -58,6 +69,8 @@ const KNOWN_UNENFORCED: Record<string, string> = {
     'GET /attestations is public by design (attestations are a public verification registry, docs/api/README.md); scopeSatisfies maps verify -> attestations:read for a required side that does not exist.',
   'keys:read':
     'The /keys mount requires keys:manage for both reads and writes; keys:read is granted by nobody and required by nobody.',
+  'keys:manage':
+    'Its only guard site is router.ts /keys, where requireAuth 401s every API-key caller first, so requireScope never sees req.apiKey. Real gate is the in-handler ORG_ADMIN check in keys.ts.',
 };
 
 /** Every `.ts` file under services/worker/src that is not a test. */
@@ -75,7 +88,7 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-const GUARD_CALL = /require(?:Scope|ScopeAnyAuth|ScopeV2)\(\s*['"]([^'"]+)['"]\s*\)/g;
+const GUARD_CALL = /require(Scope|ScopeAnyAuth|ScopeV2)\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 /** Scope strings passed to a request-time scope guard, with where they were found. */
 function collectRequiredScopes(): Map<string, string[]> {
@@ -86,7 +99,10 @@ function collectRequiredScopes(): Map<string, string[]> {
       const trimmed = line.trimStart();
       if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return;
       for (const match of line.matchAll(GUARD_CALL)) {
-        const scope = match[1];
+        const [, variant, scope] = match;
+        // API-key-only guard behind a JWT-only gate: enforces nothing. See the
+        // header. `requireScopeAnyAuth` is the dual-mode guard and is exempt.
+        if (variant === 'Scope' && /\brequireAuth\b/.test(line)) continue;
         const sites = found.get(scope) ?? [];
         sites.push(`${file.slice(WORKER_SRC.length + 1)}:${index + 1}`);
         found.set(scope, sites);
@@ -133,6 +149,15 @@ describe('API key scope vocabulary — enforcement census (SCRUM-3981)', () => {
     for (const [scope, reason] of Object.entries(KNOWN_UNENFORCED)) {
       expect(reason.trim().length, `${scope} needs a reason`).toBeGreaterThan(10);
     }
+  });
+
+  it('does not count an API-key-only requireScope that sits behind requireAuth', () => {
+    // `router.use('/keys', requireAuth, requireScope('keys:manage'), keysRouter)`
+    // is the live instance. Pinned both halves so the narrowing cannot rot into
+    // a no-op: the mount still looks like this, AND the scan does not count it.
+    const routerSource = readFileSync(join(WORKER_SRC, 'api', 'v1', 'router.ts'), 'utf8');
+    expect(routerSource).toMatch(/requireAuth,\s*requireScope\('keys:manage'\)/);
+    expect(required.has('keys:manage')).toBe(false);
   });
 
   it('requires webhooks:manage on at least one mount (SCRUM-3981)', () => {

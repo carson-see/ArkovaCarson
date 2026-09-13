@@ -12,7 +12,8 @@ is redundant:
    flood is rejected before anything reads a key.
 2. **`requireScope('webhooks:manage')`** — the capability gate, added by SCRUM-3981. Before it,
    the mount carried the limiter alone: handlers checked that *an* API key was present and the
-   four mutating routes checked ORG_ADMIN, but nothing read `scopes`. `webhooks:manage` was in
+   five ORG_ADMIN routes (create, patch, delete, both DLQ) checked the actor's role, but nothing
+   read `scopes`. `webhooks:manage` was in
    `apiScopes.ts`, in `docs/api/README.md`, and in the dashboard's scope picker, and gated
    nothing — so a key minted with the default `['read:search']` could list, read, test-ping,
    replay and DLQ-manage an org's endpoints.
