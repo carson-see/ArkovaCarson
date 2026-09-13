@@ -74,3 +74,26 @@ Run locally:
 - unit tests: `npx vitest run scripts/ci/anti-hollow-soak/guards.test.ts`
 - CLI report-only: `npx tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input <preflight.json>`
 - CLI as CI runs it (fail-closed): `npx tsx scripts/ci/anti-hollow-soak/guards.ts --input <preflight.json>`
+
+## G-5 — honest N/A for the two anchoring-specific checks (2026-09-12, SCRUM-5054)
+CTO decision 2026-09-12 (Confluence 146440221): every T2/T3 soak commits its
+preflight JSON under `docs/staging/soak-preflight/` so this fail-closed job
+evaluates something real — the directory was empty on main, so the gate was
+green by vacuum. But `AntiHollowSoakInput` is anchoring-shaped: `schedulerJob`
+(forced-flush OIDC) and `treasury` are meaningless for a train that changes no
+anchoring path, and FABRICATING them to fill the file would be worse than the
+empty directory.
+
+So `AntiHollowSoakInput.notApplicable?: { schedulerJob?, treasury? }` carries a
+written reason, adjudicated by the exported `notApplicableAccepted(reason,
+changedPaths)`. An N/A claim is accepted ONLY when all three hold:
+1. the reason is a non-empty string,
+2. `changedPaths` is non-empty — an undeclared change set can never buy an
+   exemption, and
+3. NO changed path matches `/anchor|batch|drain|flush|chain|treasury/i`.
+
+Anything else REFUSES the claim: the real check runs and its message is
+prefixed `N/A REFUSED: …`, so a refused exemption is visible in the CI log
+rather than silent. Accepted N/A passes with the message `N/A: <reason>`.
+Checks 1, 4 and 5 (drain attribution, deploy provenance, base-is-main) have no
+N/A path — they apply to every soak. `formatReport` is unchanged.

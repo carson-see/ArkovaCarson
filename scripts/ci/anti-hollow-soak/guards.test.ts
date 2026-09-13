@@ -471,3 +471,122 @@ describe('main (CLI)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// notApplicable — honest N/A for the two anchoring-specific checks
+// (CTO decision 2026-09-12, Confluence 146440221 / SCRUM-5054)
+// ---------------------------------------------------------------------------
+
+const NON_ANCHORING_PATHS = ['pr-2841-api-keys', 'pr-2837-ai-credits'];
+const NO_FLUSH_JOB = 'Train changes no anchoring/scheduler path; no forced-flush job exists on this rig (mock profile)';
+const MOCK_TREASURY = 'USE_MOCKS=true rig; no chain path in the train';
+
+describe('notApplicable — scheduler-oidc-audience', () => {
+  it('accepts N/A when a reason is given and no changed path is anchoring-related', () => {
+    const result = checkSchedulerOidcAudience(
+      {} as SchedulerJob,
+      NO_FLUSH_JOB,
+      NON_ANCHORING_PATHS,
+    );
+    expect(result.pass).toBe(true);
+    expect(result.name).toBe('scheduler-oidc-audience');
+    expect(result.message).toBe(`N/A: ${NO_FLUSH_JOB}`);
+  });
+
+  it('REFUSES N/A when changedPaths is empty — fails closed and runs the real check', () => {
+    const empty = checkSchedulerOidcAudience({} as SchedulerJob, NO_FLUSH_JOB, []);
+    expect(empty.pass).toBe(false);
+    expect(empty.message).toMatch(/N\/A REFUSED/);
+    expect(empty.message).toMatch(/httpTarget\.uri/);
+
+    const absent = checkSchedulerOidcAudience({} as SchedulerJob, NO_FLUSH_JOB);
+    expect(absent.pass).toBe(false);
+    expect(absent.message).toMatch(/N\/A REFUSED/);
+  });
+
+  it('REFUSES N/A when a changed path looks anchoring-related ("batch-anchor-drain")', () => {
+    const result = checkSchedulerOidcAudience({} as SchedulerJob, NO_FLUSH_JOB, [
+      'pr-2841-api-keys',
+      'batch-anchor-drain',
+    ]);
+    expect(result.pass).toBe(false);
+    expect(result.message).toMatch(/N\/A REFUSED/);
+    expect(result.message).toMatch(/batch-anchor-drain/);
+  });
+
+  it('ignores an empty/whitespace reason and runs the real check', () => {
+    const result = checkSchedulerOidcAudience(HEALTHY_SCHEDULER, '   ', NON_ANCHORING_PATHS);
+    expect(result.pass).toBe(true);
+    expect(result.message).toMatch(/Scheduler OIDC OK/);
+  });
+});
+
+describe('notApplicable — treasury-funded', () => {
+  it('accepts N/A when a reason is given and no changed path is anchoring-related', () => {
+    const result = checkTreasuryFunded(
+      { treasuryBalanceSats: 0, minRequiredSats: 100_000 },
+      MOCK_TREASURY,
+      NON_ANCHORING_PATHS,
+    );
+    expect(result.pass).toBe(true);
+    expect(result.name).toBe('treasury-funded');
+    expect(result.message).toBe(`N/A: ${MOCK_TREASURY}`);
+  });
+
+  it('REFUSES N/A when changedPaths is empty — fails closed and runs the real check', () => {
+    const result = checkTreasuryFunded({ treasuryBalanceSats: 0, minRequiredSats: 100_000 }, MOCK_TREASURY, []);
+    expect(result.pass).toBe(false);
+    expect(result.message).toMatch(/N\/A REFUSED/);
+    expect(result.message).toMatch(/signature #3/);
+  });
+
+  it('REFUSES N/A when a changed path looks anchoring-related ("batch-anchor-drain")', () => {
+    const result = checkTreasuryFunded(
+      { treasuryBalanceSats: 0, minRequiredSats: 100_000 },
+      MOCK_TREASURY,
+      ['batch-anchor-drain'],
+    );
+    expect(result.pass).toBe(false);
+    expect(result.message).toMatch(/N\/A REFUSED/);
+  });
+});
+
+describe('runAntiHollowSoakGuards — notApplicable pass-through', () => {
+  function nonAnchoringInput(): AntiHollowSoakInput {
+    return {
+      drainLog: [{ processed: 43, skipped: false, path: 'pr-2841-api-keys' }],
+      schedulerJob: {} as SchedulerJob,
+      treasury: { treasuryBalanceSats: 0, minRequiredSats: 100_000 },
+      deployProvenance: {
+        deployLogRows: [
+          { head_sha: PR_HEAD_SHA, service: 'arkova-worker-cto-train-b-0912-staging' },
+        ],
+        prHeadSha: PR_HEAD_SHA,
+        service: 'arkova-worker-cto-train-b-0912-staging',
+      },
+      base: { baseRefName: 'main' },
+      changedPaths: NON_ANCHORING_PATHS,
+      notApplicable: { schedulerJob: NO_FLUSH_JOB, treasury: MOCK_TREASURY },
+    };
+  }
+
+  it('passes all five guards with the two anchoring checks marked N/A', () => {
+    const report = runAntiHollowSoakGuards(nonAnchoringInput());
+    expect(report.allPassed).toBe(true);
+    expect(report.results.find((r) => r.name === 'scheduler-oidc-audience')?.message).toBe(
+      `N/A: ${NO_FLUSH_JOB}`,
+    );
+    expect(report.results.find((r) => r.name === 'treasury-funded')?.message).toBe(
+      `N/A: ${MOCK_TREASURY}`,
+    );
+  });
+
+  it('refuses both N/A claims when an anchoring-related path is in changedPaths', () => {
+    const input = nonAnchoringInput();
+    input.changedPaths = [...NON_ANCHORING_PATHS, 'batch-anchor-drain'];
+    const report = runAntiHollowSoakGuards(input);
+    expect(report.allPassed).toBe(false);
+    const failed = report.results.filter((r) => !r.pass).map((r) => r.name);
+    expect(failed).toEqual(['scheduler-oidc-audience', 'treasury-funded']);
+  });
+});
