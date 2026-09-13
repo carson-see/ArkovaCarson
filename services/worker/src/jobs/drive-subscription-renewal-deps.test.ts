@@ -113,6 +113,79 @@ describe('makeDriveSubscriptionRenewalDb', () => {
     expect(rows[0]).toMatchObject({ id: INT, org_id: ORG, subscription_id: 'chan-1' });
   });
 
+  // BUG 2026-09-13: the sweep decides whether to bootstrap by reading
+  // `conn.last_page_token`. If the column ever falls out of the select list,
+  // that check reads `undefined` — indistinguishable from NULL — and the
+  // sweep would clobber a LIVE cursor on every renewal. The select list and
+  // the mapped row are both pinned here.
+  it('selects last_page_token and surfaces it on the mapped row (the bootstrap null-check depends on it)', async () => {
+    const chain = mockQuery({
+      data: [{
+        id: INT,
+        org_id: ORG,
+        subscription_id: 'chan-1',
+        subscription_expires_at: '2026-08-04T00:00:00.000Z',
+        account_label: null,
+        watch_renewal_failure_count: 0,
+        encrypted_tokens: 'ct',
+        token_kms_key_id: 'key-1',
+        last_page_token: 'pt-live',
+      }],
+      error: null,
+    });
+    const from = vi.fn().mockReturnValue(chain);
+    const dbDeps = makeDriveSubscriptionRenewalDb({ db: { from } });
+    const rows = await dbDeps.listRenewableConnections({ now: '2026-08-03T00:00:00.000Z', horizonMs: 1000 });
+
+    expect(chain.select).toHaveBeenCalledWith(expect.stringContaining('last_page_token'));
+    expect(rows[0].last_page_token).toBe('pt-live');
+  });
+
+  it('a NULL last_page_token stays null on the mapped row (never coerced to a falsy-but-present default)', async () => {
+    const chain = mockQuery({
+      data: [{
+        id: INT,
+        org_id: ORG,
+        subscription_id: null,
+        subscription_expires_at: null,
+        account_label: null,
+        watch_renewal_failure_count: null,
+        encrypted_tokens: 'ct',
+        token_kms_key_id: 'key-1',
+        last_page_token: null,
+      }],
+      error: null,
+    });
+    const dbDeps = makeDriveSubscriptionRenewalDb({ db: { from: vi.fn().mockReturnValue(chain) } });
+    const rows = await dbDeps.listRenewableConnections({ now: '2026-08-03T00:00:00.000Z', horizonMs: 1000 });
+    expect(rows[0].last_page_token).toBeNull();
+  });
+
+  it('updateConnection forwards an optional last_page_token/last_token_advanced_at patch unchanged (bootstrap write)', async () => {
+    const eqMock = vi.fn().mockResolvedValue({ error: null });
+    const updateMock = vi.fn().mockReturnValue({ eq: eqMock });
+    const from = vi.fn().mockReturnValue({ update: updateMock });
+    const dbDeps = makeDriveSubscriptionRenewalDb({ db: { from } });
+
+    const res = await dbDeps.updateConnection({
+      id: INT,
+      subscription_id: 'chan-new',
+      subscription_expires_at: '2026-08-10T00:00:00.000Z',
+      account_label: null,
+      last_renewal_error: null,
+      last_renewal_at: '2026-08-03T00:00:00.000Z',
+      watch_renewal_failure_count: 0,
+      last_page_token: 'stp-1',
+      last_token_advanced_at: '2026-08-03T00:00:00.000Z',
+    });
+
+    expect(res).toEqual({ error: false });
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ last_page_token: 'stp-1', last_token_advanced_at: '2026-08-03T00:00:00.000Z' }),
+    );
+    expect(eqMock).toHaveBeenCalledWith('id', INT);
+  });
+
   it('throws on a DB error rather than silently returning an empty list', async () => {
     const chain = mockQuery({ data: null, error: { message: 'connection lost' } });
     const from = vi.fn().mockReturnValue(chain);
@@ -224,17 +297,25 @@ describe('makeDriveSubscriptionRenewalClient', () => {
     );
   });
 
-  it('createChannel registers a fresh watch at the canonical webhook path with the NEW channel token, discarding startPageToken', async () => {
+  // BUG 2026-09-13: this adapter used to DROP the startPageToken, and this
+  // test used to assert that dropping as a feature. That is precisely what
+  // left the prod connection's null cursor unbootstrappable — the sweep can
+  // only bootstrap a value it is handed. The adapter now threads it through;
+  // the decision to write it (null cursor only) stays in the pure module.
+  it('createChannel registers a fresh watch at the canonical webhook path with the NEW channel token, threading startPageToken back to the sweep', async () => {
     createChangesWatchMock.mockResolvedValueOnce({
       resourceId: 'res-2',
       expiration: '2026-08-10T00:00:00.000Z',
-      startPageToken: 'DANGEROUS-if-persisted',
+      startPageToken: 'stp-1',
     });
     const client = makeDriveSubscriptionRenewalClient({ db: { from: vi.fn() } });
     const result = await client.createChannel({ accessToken: 'at', channelId: 'chan-new', channelToken: 'tok-new' });
 
-    expect(result).toEqual({ resourceId: 'res-2', expiration: '2026-08-10T00:00:00.000Z' });
-    expect(result).not.toHaveProperty('startPageToken');
+    expect(result).toEqual({
+      resourceId: 'res-2',
+      expiration: '2026-08-10T00:00:00.000Z',
+      startPageToken: 'stp-1',
+    });
     expect(createChangesWatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
         accessToken: 'at',
