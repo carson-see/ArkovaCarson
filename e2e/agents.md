@@ -1,6 +1,20 @@
 # agents.md — e2e/
 
-_Last updated: 2026-09-03 (MFA enrollment + login-challenge spec added, made fully self-contained for seed-less rigs; auth.setup.ts now injects an enforcement-date override)._
+_Last updated: 2026-09-12 (PR #2840 UAT capture added — runs outside the CI suite)._
+
+## 2026-09-12 SCRUM-4989 — `uat-pr2840.spec.ts` runs OUTSIDE the CI suite
+
+`uat-pr2840.spec.ts` + `uat-pr2840.config.ts` are a one-off T1 UAT capture for PR #2840,
+deliberately **not** part of `npm run test:e2e`. They carry their own config because the repo
+config loads `.env.test`, runs `auth.setup.ts` against a real Supabase project, and pulls in all
+of `e2e/` — this capture must touch no rig. It drives a local `vite preview` build with every
+Supabase call stubbed via `page.route` and a session injected at the `sb-127-auth-token`
+localStorage key (see `helpers/supabase-storage-key.ts` for why that key has to be exact).
+
+Its hostile/safe pair is the pattern worth copying: a capture that proves something does NOT
+render is worthless without the control showing the same code path DOES render legitimate values.
+
+Evidence and reproduction steps: `docs/uat/pr-2840/README.md`.
 
 ## 2026-09-08 — every failed E2E job used to discard its own evidence
 
