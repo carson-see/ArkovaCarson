@@ -1,3 +1,18 @@
+## 2026-09-13 — SCRUM-4514: `webhook-dlq-report.ts` — first reader of `webhook_dlq`
+
+New job, `POST /jobs/webhook-dlq-report` (Cloud Scheduler HTTP trigger only, same shape as
+`queue-digest-cron.ts` — no in-process registration). Report-only: counts unresolved
+`webhook_dlq` rows by provider and the oldest unresolved age, logs at `warn` when non-empty /
+`info` when clean, never mutates a row. The actual claim/replay/resolve path is the operator
+endpoint `api/admin-webhook-dlq.ts` (`POST /api/admin/webhook-dlq/replay`), not this job — keep
+them separate; this job exists so a growing backlog is visible in logs/Sentry between operator
+drain runs. Selects only `provider, created_at` — never `reason`, `payload_hash`,
+`external_id`, or `webhook_id` in the query, so there is nothing PII-adjacent to accidentally
+log. See `api/v1/webhooks/agents.md`'s 2026-09-13 entry for the replayability finding this pair
+of changes is built around: none of the four inbound writers (`docusign`, `adobe_sign`,
+`checkr`, `computeid`) persist a raw body, so nothing in this table is actually replayable
+today — the drain claims and resolves every row, but every outcome is `not_replayable`.
+
 ## 2026-09-10 — PR #2570 unknown debit response recovery
 
 A lost/malformed debit RPC response can follow a committed charge. The default

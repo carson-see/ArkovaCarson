@@ -1,6 +1,31 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-09-07 (SCRUM-4493: ComputeID AgentPassport revocation receiver)_
+_Last updated: 2026-09-13 (SCRUM-4514: inbound webhook_dlq is now drained)_
+
+## 2026-09-13 — SCRUM-4514: `webhook_dlq` is now drained — update the "drained by nobody" claim below
+
+The 2026-08-23 entry below (and this folder's earlier agents.md snapshots) states
+"Nothing under `services/worker/src/jobs/` reads that table ... drained by nobody. Treat a
+DLQ insert as a record of the loss, never as a recovery path." That is now stale for the
+"drained by nobody" half: `api/admin-webhook-dlq.ts` (`GET /api/admin/webhook-dlq`,
+`POST /api/admin/webhook-dlq/replay`, platform-admin only) and the report-only
+`POST /jobs/webhook-dlq-report` cron (`jobs/webhook-dlq-report.ts`) both read it now.
+
+The "treat a DLQ insert as a record of the loss" half is **still correct** — do not remove it.
+None of the four inbound writers into this table (`docusign.ts`, `adobe-sign.ts`, `checkr.ts`,
+and `computeid.ts` via `integrations/computeid/passport-transition.ts`'s
+`recordPassportFailure` -> `enqueue_computeid_failure` RPC) persist the raw webhook body — by
+design, per this folder's own "DO NOT persist raw webhook payloads" rule below. So the operator
+drain claims and resolves every row, but cannot actually re-invoke any handler: every row is
+reported `not_replayable` today. See `api/admin-webhook-dlq.ts`'s module doc comment for the
+full per-provider replayability matrix and the reasoning. If a future change wants real replay,
+it has to start by deciding to retain enough data to reprocess a delivery — which is a bigger
+privacy/§1.6A conversation, not something this drain endpoint can quietly opt into.
+
+`computeid.ts` was found to be a fourth writer into this table (not three, as this ticket's
+brief assumed) by grepping the actual writers instead of trusting the brief — it writes through
+an RPC rather than a direct `.from('webhook_dlq')` call, which is why a literal string grep for
+`webhook_dlq` in `computeid.ts` itself finds nothing.
 
 ## 2026-09-07 — SCRUM-4493: `computeid.ts` — ComputeID AgentPassport revocation receiver (flag-gated dark)
 

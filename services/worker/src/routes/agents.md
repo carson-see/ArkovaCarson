@@ -2,6 +2,17 @@
 
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
+## 2026-09-13 — SCRUM-4514: two `admin.ts` routes + one `cron.ts` job for the inbound webhook DLQ
+
+`admin.ts` gained `GET /admin/webhook-dlq` and `POST /admin/webhook-dlq/replay` (handlers in
+`api/admin-webhook-dlq.ts`) — no `admin-paths.ts` change needed, both paths already match the
+existing `/admin` prefix. `cron.ts` gained `POST /webhook-dlq-report` (HTTP-triggered only, no
+in-process registration, same shape as `/queue-digest`) wrapped in `withCronMonitoring`. Neither
+route mutates anything a concurrent Cloud Run instance could double-apply unsafely: the report
+job only reads+logs, and the replay route's claim is a single guarded `UPDATE ... WHERE
+resolved_at IS NULL ... RETURNING` — see `api/agents.md`'s 2026-09-13 entry for why nothing it
+claims is actually replayable today.
+
 ## 2026-09-02 — a /health mock that omits `getAnchoringRpcStatus` is now a live cold-cache test
 
 `buildHealthResponse` falls back to the module-local `UNPROBED` constant

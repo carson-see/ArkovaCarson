@@ -39,6 +39,7 @@ import { runPlatformHealthDigest } from '../jobs/platform-health-digest-cron.js'
 import { COMPUTEID_RECHECK_CRON, runComputeIdPassportRecheck } from '../jobs/computeid-passport-recheck.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
+import { runWebhookDlqReport } from '../jobs/webhook-dlq-report.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
 import { processPendingReports } from '../jobs/report.js';
 import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
@@ -854,6 +855,26 @@ cronRouter.post('/webhook-retries', async (_req, res) => {
     res.json({ retried });
   } catch (error) {
     logger.error({ error }, 'Webhook retry processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// SCRUM-4514: report-only visibility for the inbound webhook_dlq backlog.
+// Never replays or resolves rows — that's the operator-triggered
+// POST /api/admin/webhook-dlq/replay endpoint (api/admin-webhook-dlq.ts).
+// This job exists so a growing DLQ is visible in logs/Sentry between
+// operator drain runs, per api/v1/webhooks/agents.md's "drained by nobody"
+// gap.
+cronRouter.post('/webhook-dlq-report', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'webhook-dlq-report',
+      '0 * * * *',
+      () => runWebhookDlqReport(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Webhook DLQ report failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

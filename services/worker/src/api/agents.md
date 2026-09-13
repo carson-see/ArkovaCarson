@@ -1,5 +1,34 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-13 — SCRUM-4514: `admin-webhook-dlq.ts` — inbound webhook DLQ operator drain
+
+New: `handleWebhookDlqList` (`GET /api/admin/webhook-dlq` — counts by provider + oldest age,
+ids only, never `reason`/`payload_hash` in bulk) and `handleWebhookDlqReplay`
+(`POST /api/admin/webhook-dlq/replay` — claims up to `limit`, default 20, max 50, oldest-first
+unresolved rows). Both are session-auth + `isPlatformAdmin` only, mounted on `adminRouter` in
+`routes/admin.ts` next to `treasury`/`rules`/`queue` — never API-key auth, this is an internal
+operator surface, not part of the public verification API, and deliberately not added to
+`api/v1/docs.ts` / `docs/api/openapi.yaml` / `docs.routeParity.test.ts` for the same reason none
+of the other `adminRouter` endpoints (treasury, rules, queue, admin/*) are — see that router's
+existing routes for the precedent.
+
+Claim atomicity: `UPDATE webhook_dlq SET resolved_at = now() WHERE id IN (...) AND
+resolved_at IS NULL RETURNING *` — the `resolved_at IS NULL` guard, not the preceding ordering
+SELECT, is what makes two concurrent callers (Cloud Run `minScale >= 2` double-firing this
+route, a retried operator request, or two operators) unable to both claim the same row.
+
+Replayability: every row is reported `not_replayable` today, for every one of the four
+providers that write into `webhook_dlq` (`docusign`, `adobe_sign`, `checkr`, and `computeid` —
+see `api/v1/webhooks/agents.md`'s 2026-09-13 entry). None of the four writers persist the raw
+webhook body, so there is nothing to hand back into the original handler. `assessReplayability()`
+in this file is the single extension point if that ever changes; see its doc comment before
+copying this pattern for a different DLQ that DOES have a real body to replay.
+
+No `claimed_at` / `attempt_count` / `last_error` column exists on `webhook_dlq` — adding one is
+a migration, deliberately not done here (T3 boundary this SCRUM-4514 change stays under; the
+path detector's `requiredTierFor()` returns T2 for this change's full file set).
+`resolved_at` is reused as both the claim marker and the terminal marker instead.
+
 ## 2026-09-12 — `apiScopeEnforcementCensus.test.ts`: a grantable scope must gate something (SCRUM-3981)
 
 `apiScopes.ts` is the vocabulary; it was never a claim that any of it is enforced.

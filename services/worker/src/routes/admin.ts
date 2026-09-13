@@ -29,6 +29,7 @@ import { handleProofPacketExport } from '../api/proof-packet.js';
 import { handleCollisionContext } from '../api/collision-context.js';
 import { handleListRules, handleGetRule, handleListRuleExecutions, handleRunRuleNow, handleTestRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
 import { handleInjectDemoEvent } from '../api/demo-event-injector.js';
+import { handleWebhookDlqList, handleWebhookDlqReplay } from '../api/admin-webhook-dlq.js';
 import { handleComplianceInboxSummary } from '../api/compliance-inbox-summary.js';
 import { handleMarkNotificationsRead, handleUnreadNotificationCount } from '../api/notifications.js';
 import { getQueryStats } from '../utils/queryMonitor.js';
@@ -655,6 +656,32 @@ adminRouter.post('/notifications/mark-read', async (req, res) => {
     await handleMarkNotificationsRead(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Notification mark-read request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── SCRUM-4514: Inbound webhook DLQ — operator drain, replay, visibility ───
+// Session auth only (extractAuthUserId + isPlatformAdmin inside the handler),
+// same guard as every other route in this router. Never API-key auth — this
+// is an internal operator surface, not part of the public verification API.
+adminRouter.get('/admin/webhook-dlq', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleWebhookDlqList(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Webhook DLQ list request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/admin/webhook-dlq/replay', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleWebhookDlqReplay(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Webhook DLQ replay request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
