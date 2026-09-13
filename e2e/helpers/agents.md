@@ -62,3 +62,15 @@ auto-prefix trigger checks then inserts, so two simultaneous E2E-prefixed names
 can otherwise race on `idx_organizations_org_prefix`. The MFA suite exercises
 role isolation; it does not test that separate prefix allocator. Live batches
 must also respect shared-IP GoTrue MFA/token burst limits;429 remains a failure.
+
+## Mandatory MFA session fixtures
+
+`profile-session.ts` enrolls and verifies a real TOTP factor for its disposable
+user before injecting the current AAL2 session. Preserve the requested profile
+state (including no role, no organization and manual review), and attempt owned
+user cleanup even when setup or browser-context cleanup fails.
+
+`seed-session.ts` borrows the setup-produced AAL2 access token after checking the
+origin, storage key, user identity and expiry. API tests use that bearer directly
+and must never refresh, sign out or reset factors on the borrowed seed session.
+Keep password-only helpers used by explicit MFA rejection/enrollment tests at AAL1.

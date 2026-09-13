@@ -18,6 +18,13 @@ The DocuSign model now includes anchor publication and an independently schedula
 
 TLA+ PreCheck formal verification models for critical state machines.
 
+## 2026-09-11 — UAT-04 authority model
+
+`mandatoryMfaAuthority.machine.ts` models mailbox precedence, MFA enrollment and
+verification before or after mailbox proof, AAL1 session resets with and without
+a factor, and product/key-provision authority. TLC proves the modeled invariants;
+adapter correctness is established separately by runtime tests.
+
 ## 2026-09-07 — `agentPassport.machine.ts` (SCRUM-4493 / SCRUM-4494): ComputeID AgentPassport ↔ agent lifecycle
 
 New machine for the ComputeID partner integration (epic SCRUM-4492). Models the per-agent-row state driven by `api/v1/agents-computeid.ts` (admit), `api/v1/webhooks/computeid.ts` (`passport.suspended` / `reinstated` / `revoked`) and `api/v1/agents.ts` (mint key, admin revoke): `NONE → ACTIVE ⇄ SUSPENDED`, `ACTIVE|SUSPENDED → REVOKED` (terminal), plus a per-agent `keyActive` bool.
