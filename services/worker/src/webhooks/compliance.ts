@@ -44,19 +44,32 @@ export async function checkCertificateExpiry(): Promise<number> {
 
       if (certs) {
         for (const cert of certs) {
-          await dispatchWebhookEvent(
-            cert.org_id,
-            'compliance.certificate_expiring',
-            crypto.randomUUID(),
-            {
-              certificate_id: cert.id,
-              subject: cert.subject_cn,
-              expires_at: cert.not_after,
-              warning_level: threshold.label,
-              days_remaining: threshold.days,
-            },
-          );
-          eventsEmitted++;
+          // SCRUM-3982 (CTO review ruling Z6): per-dispatch isolation. These
+          // sweeps `await` inside a `for` under ONE outer try/catch, so a
+          // single throwing dispatch abandoned every remaining org in the
+          // batch. That was latent while dispatch could only throw on a DB
+          // error; a payload refusal is a deterministic, permanent throw, so
+          // one bad org would have silently stopped alerting all the others.
+          try {
+            await dispatchWebhookEvent(
+              cert.org_id,
+              'compliance.certificate_expiring',
+              crypto.randomUUID(),
+              {
+                certificate_id: cert.id,
+                subject: cert.subject_cn,
+                expires_at: cert.not_after,
+                warning_level: threshold.label,
+                days_remaining: threshold.days,
+              },
+            );
+            eventsEmitted++;
+          } catch (dispatchErr) {
+            logger.error(
+              { error: dispatchErr, orgId: cert.org_id, eventType: 'compliance.certificate_expiring' },
+              'Compliance webhook dispatch failed — continuing with the remaining certificates',
+            );
+          }
         }
       }
     } catch (err) {
@@ -93,20 +106,30 @@ export async function checkAnchorDelays(): Promise<number> {
     }
 
     for (const [orgId, count] of orgMap) {
-      await dispatchWebhookEvent(
-        orgId,
-        'compliance.anchor_delayed',
-        crypto.randomUUID(),
-        {
-          pending_count: count,
-          oldest_pending_since: staleAnchors
-            .filter(a => a.org_id === orgId)
-            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0]
-            ?.created_at,
-          threshold_minutes: 60,
-        },
-      );
-      eventsEmitted++;
+      // SCRUM-3982 (ruling Z6): per-org isolation — see the comment in
+      // checkCertificateExpiry. One org's refused payload must not stop the
+      // delay alert for every org after it in the map.
+      try {
+        await dispatchWebhookEvent(
+          orgId,
+          'compliance.anchor_delayed',
+          crypto.randomUUID(),
+          {
+            pending_count: count,
+            oldest_pending_since: staleAnchors
+              .filter(a => a.org_id === orgId)
+              .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0]
+              ?.created_at,
+            threshold_minutes: 60,
+          },
+        );
+        eventsEmitted++;
+      } catch (dispatchErr) {
+        logger.error(
+          { error: dispatchErr, orgId, eventType: 'compliance.anchor_delayed' },
+          'Compliance webhook dispatch failed — continuing with the remaining organizations',
+        );
+      }
     }
   } catch (err) {
     logger.error({ error: err }, 'Anchor delay check failed');
@@ -175,19 +198,27 @@ export async function checkTimestampCoverage(): Promise<number> {
       if (totalSigs && totalSigs > 0) {
         const coverage = Math.round(((timestampedSigs || 0) / totalSigs) * 100);
         if (coverage < 80) {
-          await dispatchWebhookEvent(
-            orgId,
-            'compliance.timestamp_coverage_low',
-            crypto.randomUUID(),
-            {
-              coverage_pct: coverage,
-              threshold_pct: 80,
-              total_signatures: totalSigs,
-              timestamped_signatures: timestampedSigs || 0,
-              period_days: 30,
-            },
-          );
-          eventsEmitted++;
+          // SCRUM-3982 (ruling Z6): per-org isolation — see checkCertificateExpiry.
+          try {
+            await dispatchWebhookEvent(
+              orgId,
+              'compliance.timestamp_coverage_low',
+              crypto.randomUUID(),
+              {
+                coverage_pct: coverage,
+                threshold_pct: 80,
+                total_signatures: totalSigs,
+                timestamped_signatures: timestampedSigs || 0,
+                period_days: 30,
+              },
+            );
+            eventsEmitted++;
+          } catch (dispatchErr) {
+            logger.error(
+              { error: dispatchErr, orgId, eventType: 'compliance.timestamp_coverage_low' },
+              'Compliance webhook dispatch failed — continuing with the remaining organizations',
+            );
+          }
         }
       }
     }

@@ -715,3 +715,28 @@ partner referral attribution — there is no second capture point.
   emailed link on their phone is recorded as unreferred. `sessionStorage` would
   lose it far more often; a server-side cookie is a larger privacy surface than
   a referral code justifies. There is no recovery path.
+## 2026-09-12 — WEBHOOK_EVENT_DESCRIPTIONS gained the attestation events (SCRUM-3982)
+
+`attestation.created` and `attestation.revoked` were appended after
+`compliance.document_expiring`. This map is one of the six ordered mirrors that
+`scripts/ci/check-webhook-event-registration-drift.ts` compares against the
+worker's `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, so the key order here is not
+cosmetic — it is `toEqual`-compared against the worker declaration order.
+
+Copy is §1.3-clean (`npm run lint:copy`): "attestation" is not a banned term,
+and neither description reaches for a chain word. Note the descriptions state
+what the event means, not whether it is delivered — liveness lives in
+`WebhookEventCatalog.tsx` `CATALOG_DATA`, and `attestation.revoked` is not live
+(its worker producer is unreachable today).
+
+## CTO ruling Z5 (2026-09-12) — webhook event copy
+
+- `WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX` is the ONE place the
+  subscribable-but-not-emitted suffix is spelled. It used to be typed inline in
+  `AVAILABLE_EVENTS` labels, where it could disagree with the catalog badge.
+  Anything that needs it reads `CATALOG_DATA[id].live` from
+  `src/components/webhooks/webhookEventLiveness.ts` and appends this string.
+- `WEBHOOK_EVENT_DESCRIPTIONS['attestation.created']` is deliberately scoped to
+  single creation: `POST /api/v1/attestations` dispatches the event,
+  `POST /api/v1/attestations/batch-create` does not. Do not generalise the
+  wording back without making batch-create emit (§1.13 R-7).
