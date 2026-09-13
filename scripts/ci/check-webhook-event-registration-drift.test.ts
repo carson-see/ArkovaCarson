@@ -200,16 +200,20 @@ describe('check-webhook-event-registration-drift — live repository', () => {
     }
   });
 
-  it('keeps the suborg.* block contiguous and last in the canonical declaration', () => {
-    // Declared land order is SCRUM-3982 -> SCRUM-3972: 3982 appends
-    // attestation.created / attestation.revoked at the same point. Whoever
-    // merges second re-orders both the map and the six ordered mirrors, and
-    // this assertion is what makes a careless union resolution fail loudly
-    // instead of producing a mirror that silently disagrees on order.
+  it('keeps the suborg.* block contiguous, without pinning it as the last family', () => {
+    // CTO review 2026-09-12. The earlier form asserted `ids.slice(first)`
+    // equals exactly the seven — i.e. that `suborg.*` is LAST in the registry
+    // forever. That is the same trap SCRUM-3982 removed under CTO ruling Z7
+    // when its own `slice(-3)` pin would have reddened on this PR's clean
+    // union merge. Re-pinning it here would break the very next family to be
+    // registered, and would break SCRUM-3982 itself if the union resolution
+    // orders `attestation.*` after `suborg.*` rather than before.
+    //
+    // What THIS PR is entitled to assert is that its own seven stay together
+    // and in their declared order. Where the block sits relative to other
+    // families is not its business.
     const ids = readSurface(CANONICAL_SURFACE).ids;
-    const first = ids.indexOf('suborg.created');
-    expect(first).toBeGreaterThan(-1);
-    expect(ids.slice(first)).toEqual([
+    const SUBORG_ORDER = [
       'suborg.created',
       'suborg.approved',
       'suborg.revoked',
@@ -217,6 +221,11 @@ describe('check-webhook-event-registration-drift — live repository', () => {
       'suborg.credits_reclaimed',
       'suborg.suspended',
       'suborg.offboarded',
-    ]);
+    ];
+    const first = ids.indexOf('suborg.created');
+    expect(first).toBeGreaterThan(-1);
+    expect(ids.slice(first, first + SUBORG_ORDER.length)).toEqual(SUBORG_ORDER);
+    // Contiguous: no other id may be interleaved into the block.
+    expect(ids.filter((id) => id.startsWith('suborg.'))).toEqual(SUBORG_ORDER);
   });
 });
