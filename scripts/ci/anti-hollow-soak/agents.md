@@ -97,3 +97,20 @@ prefixed `N/A REFUSED: …`, so a refused exemption is visible in the CI log
 rather than silent. Accepted N/A passes with the message `N/A: <reason>`.
 Checks 1, 4 and 5 (drain attribution, deploy provenance, base-is-main) have no
 N/A path — they apply to every soak. `formatReport` is unchanged.
+
+Preflight generator for the CTO Train B rig:
+`scripts/staging/targeted/cto-train-b-0912/preflight-from-window.mjs`
+(`--window <cycle dir> --manifest <rc json> --deploy-log <json> --base main
+--out <path>`). It derives `drainLog` and `changedPaths` from the real
+`cycle-*.json` per-PR probe counts — one drain entry per cycle per PR, the
+drain path being the probe module that exercised it (`pr-2841-api-keys`) — so
+no number in the committed preflight is hand-written. `schedulerJob` and
+`treasury` are emitted as `null` with N/A reasons rather than invented; if the
+N/A is ever refused, a null job/treasury fails its check, which is the intended
+fail-closed direction. When no exported `staging_deploy_log` rows are supplied
+it synthesizes ONE row from the manifest's `train_launch_sha` +
+`environment.revision` and says so in `_meta.deploy_log_source`.
+
+First committed preflight: `docs/staging/soak-preflight/rc-train-b2-2026-09-12.json`
+(RC-2026-09-12-TRAIN-B2) — the directory is no longer empty, so the
+fail-closed job now evaluates a real file.
