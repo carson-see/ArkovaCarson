@@ -830,8 +830,10 @@ export async function verifyCredentialRecord(
  *      `credential_embeddings` index, so this is the only path that can return
  *      a true vector match. Emits `search_mode: 'semantic_vector'`.
  *   2. Lexical fallback (`search_public_credentials` RPC, then a direct-table
- *      ILIKE query) when the worker is unconfigured, unreachable, or the
- *      `ENABLE_SEMANTIC_SEARCH` gate returns 503. Emits
+ *      ILIKE query) when the worker is unconfigured, unreachable, returns a
+ *      non-2xx, or answers 200 with its own `search_mode` set to anything
+ *      other than `'semantic_vector'` (since SCRUM-3906 the worker serves a
+ *      labelled lexical fallback instead of a 503 — SCRUM-5110). Emits
  *      `search_mode: 'lexical_substring'`.
  *
  * Do NOT "fix" step 2 by embedding the query at the edge with Workers AI: the
@@ -976,17 +978,36 @@ async function searchCredentialsFallback(
   }
 }
 
-/** One worker `/api/v1/verify/search` hit (mirror of aiVerifySearchRouter). */
+/**
+ * One worker `/api/v1/verify/search` hit (mirror of aiVerifySearchRouter's
+ * `VerificationSearchResult`). The worker's lexical fallback omits
+ * `issuer_name` / `issued_date` / `expiry_date` / `anchor_timestamp` /
+ * `similarity` rather than backfilling them, so those are optional here;
+ * this module only ever maps the semantic shape, where they are all present.
+ */
 interface WorkerVerifySearchResult {
   verified: boolean;
   status: string;
-  issuer_name: string | null;
+  issuer_name?: string | null;
   credential_type: string | null;
-  issued_date: string | null;
-  expiry_date: string | null;
-  anchor_timestamp: string;
+  issued_date?: string | null;
+  expiry_date?: string | null;
+  anchor_timestamp?: string;
   record_uri: string;
-  similarity: number;
+  similarity?: number;
+}
+
+/**
+ * Worker `/api/v1/verify/search` response body. `search_mode` is the worker's
+ * OWN attribution of which path answered (SCRUM-3906): `'semantic_vector'` or
+ * `'lexical_substring'`, the same vocabulary as `SEARCH_MODE_*` above. It is
+ * optional in the type only because a worker built before SCRUM-3906 never
+ * sent it — see `searchCredentialsWorkerSemantic` for how absence is treated.
+ */
+interface WorkerVerifySearchBody {
+  results?: WorkerVerifySearchResult[];
+  count?: number;
+  search_mode?: string;
 }
 
 /**
@@ -1001,11 +1022,20 @@ interface WorkerVerifySearchResult {
  *
  * Returns `null` — never a thrown error and never a fabricated empty result —
  * on ANY condition that means "semantic search did not actually run":
- * unconfigured worker/key, 503 from the `ENABLE_SEMANTIC_SEARCH` gate,
- * any other non-2xx, a network/timeout failure, or an unrecognised body shape.
- * `null` makes the caller degrade to the labelled lexical path. A zero-hit
- * semantic response is NOT null — that is a real semantic answer of "no
- * matches" and is returned as such.
+ * unconfigured worker/key, any non-2xx (a pre-SCRUM-3906 worker 503s when
+ * the `ENABLE_SEMANTIC_SEARCH` gate is closed), a network/timeout failure,
+ * an unrecognised body shape, OR a 2xx whose own `search_mode` is anything
+ * other than `'semantic_vector'`. That last case is the SCRUM-3906 /
+ * SCRUM-5110 contract: the worker now answers HTTP 200 with a lexical
+ * fallback (flag off, embedding failure, embeddings-RPC failure) and stamps
+ * `search_mode: 'lexical_substring'` on it, so "2xx == semantic" is no longer
+ * true. The worker's attribution outranks the status code; an absent or
+ * unknown `search_mode` is treated as "not confirmed semantic" (understate,
+ * never overstate). `null` makes the caller degrade to the labelled lexical
+ * path — the edge re-runs the same `search_public_credentials` RPC the
+ * worker's fallback used, so every lexical answer keeps one output shape.
+ * A zero-hit semantic response is NOT null — that is a real semantic answer
+ * of "no matches" and is returned as such.
  *
  * NEVER logs `config.callerApiKey`.
  */
@@ -1039,23 +1069,37 @@ async function searchCredentialsWorkerSemantic(
     });
 
     if (!response.ok) {
-      // 503 = ENABLE_SEMANTIC_SEARCH gate closed. Status only — never the key
-      // or the full URL with params.
+      // Pre-SCRUM-3906 workers 503 when the ENABLE_SEMANTIC_SEARCH gate is
+      // closed. Status only — never the key or the full URL with params.
       console.warn(
         `[arkova_search_anchors] worker semantic proxy HTTP ${response.status}; falling back to lexical search`,
       );
       return null;
     }
 
-    const body = (await response.json()) as {
-      results?: WorkerVerifySearchResult[];
-      count?: number;
-    };
+    const body = (await response.json()) as WorkerVerifySearchBody;
 
     // Unrecognised shape — treat as "semantic did not run" rather than
     // reporting a misleading total:0 under a semantic label.
     if (!Array.isArray(body.results)) {
       console.warn('[arkova_search_anchors] worker semantic proxy returned an unexpected shape; falling back to lexical search');
+      return null;
+    }
+
+    // SCRUM-5110: the worker's own attribution outranks the 2xx. A 200 with
+    // `search_mode: 'lexical_substring'` is the worker's fallback (flag off /
+    // embed or RPC failure) and must NOT be relabelled as vector similarity.
+    // Absent (pre-SCRUM-3906 worker) or unknown values are not confirmed
+    // semantic either — fall back exactly as we do on a 503.
+    if (body.search_mode !== SEARCH_MODE_SEMANTIC) {
+      // Bound the logged value: it is worker-supplied, so keep it to a short
+      // identifier-shaped token rather than echoing an arbitrary string.
+      const mode = typeof body.search_mode === 'string'
+        ? body.search_mode.replaceAll(/[^\w-]/g, '').slice(0, 40) || 'unknown'
+        : 'absent';
+      console.warn(
+        `[arkova_search_anchors] worker answered search_mode=${mode}; not semantic, falling back to lexical search`,
+      );
       return null;
     }
 

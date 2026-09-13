@@ -924,7 +924,14 @@ describe('handleSearchCredentials — semantic path + search_mode labelling', ()
   it('(a) proxies to the worker /api/v1/verify/search with the caller X-API-Key and reports semantic_vector', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ results: [workerHit], count: 1, query: 'michigan cs degree' }),
+      json: async () => ({
+        results: [workerHit],
+        count: 1,
+        query: 'michigan cs degree',
+        // SCRUM-3906: the worker now attributes every 200 to the path that
+        // actually answered. Only THIS value may be relabelled semantic.
+        search_mode: SEARCH_MODE_SEMANTIC,
+      }),
     });
 
     const result = await handleSearchCredentials(
@@ -956,7 +963,12 @@ describe('handleSearchCredentials — semantic path + search_mode labelling', ()
     mockFetch.mockReset();
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ results: [], count: 0, query: 'nothing' }),
+      json: async () => ({
+        results: [],
+        count: 0,
+        query: 'nothing',
+        search_mode: SEARCH_MODE_SEMANTIC,
+      }),
     });
 
     const result = await handleSearchCredentials({ query: 'nothing' }, SEARCH_PROXY_CONFIG);
@@ -1039,7 +1051,7 @@ describe('handleSearchCredentials — semantic path + search_mode labelling', ()
     mockFetch.mockReset();
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ results: [], count: 0 }),
+      json: async () => ({ results: [], count: 0, search_mode: SEARCH_MODE_SEMANTIC }),
     });
 
     await handleSearchCredentials({ query: 'q', max_results: 50 }, SEARCH_PROXY_CONFIG);
@@ -1076,6 +1088,122 @@ describe('handleSearchCredentials — semantic path + search_mode labelling', ()
     expect(def!.description).toContain('search_mode');
     expect(def!.description).toContain('lexical_substring');
     expect(def!.description).toContain('semantic_vector');
+  });
+
+  // ─── SCRUM-5110: the worker's own search_mode outranks the HTTP status ────
+  //
+  // SCRUM-3906 made GET /api/v1/verify/search answer HTTP 200 with a lexical
+  // fallback (flag off, embedding failure, embeddings RPC failure) instead of
+  // 503, and stamps `search_mode` on every body. "2xx == semantic" is no
+  // longer true, so a 200 is relabelled semantic ONLY when the worker itself
+  // says `semantic_vector`. Anything else is treated exactly like the old
+  // 503: the edge runs its own labelled lexical path.
+
+  it('(i) worker 200 carrying search_mode lexical_substring is NOT relabelled semantic — the edge runs its own lexical path', async () => {
+    mockFetch.mockReset();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          // The worker's lexical shape: no similarity, no issuer/timestamps.
+          results: [
+            {
+              verified: true,
+              status: 'SECURED',
+              credential_type: 'DEGREE',
+              record_uri: 'https://app.arkova.ai/verify/ARK-DEG-010',
+            },
+          ],
+          count: 1,
+          query: 'transcript',
+          search_mode: SEARCH_MODE_LEXICAL,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            public_id: 'ARK-DEG-010',
+            title: 'transcript.pdf',
+            credential_type: 'DEGREE',
+            status: 'SECURED',
+            created_at: '2026-02-03T10:00:00Z',
+          },
+        ],
+      });
+
+    const result = await handleSearchCredentials({ query: 'transcript' }, SEARCH_PROXY_CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.search_mode).toBe(SEARCH_MODE_LEXICAL);
+    expect(parsed.search_mode).not.toBe(SEARCH_MODE_SEMANTIC);
+    expect(parsed.total).toBe(1);
+    // Same output shape as every other lexical answer (title from the RPC,
+    // no fabricated relevance score) — one lexical contract, not two.
+    expect(parsed.results[0].title).toBe('transcript.pdf');
+    expect(parsed.results[0].similarity).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(String(mockFetch.mock.calls[1][0])).toContain('/rest/v1/rpc/search_public_credentials');
+  });
+
+  it('(j) worker 200 with NO search_mode (pre-SCRUM-3906 worker) is not assumed semantic', async () => {
+    // Deploy-ordering guard: an edge that ships ahead of the worker must
+    // understate, never overstate. A body with results but no attribution
+    // cannot be sold as vector similarity.
+    mockFetch.mockReset();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ results: [workerHit], count: 1, query: 'michigan' }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    const result = await handleSearchCredentials({ query: 'michigan' }, SEARCH_PROXY_CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.search_mode).toBe(SEARCH_MODE_LEXICAL);
+    expect(parsed.results).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('(k) an unrecognised worker search_mode value is not relabelled semantic either', async () => {
+    mockFetch.mockReset();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ results: [workerHit], count: 1, search_mode: 'hybrid_bm25' }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    const result = await handleSearchCredentials({ query: 'michigan' }, SEARCH_PROXY_CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.search_mode).toBe(SEARCH_MODE_LEXICAL);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('(l) the lexical-attributed worker path never logs the caller API key', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    mockFetch.mockReset();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ results: [], count: 0, search_mode: SEARCH_MODE_LEXICAL }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    await handleSearchCredentials({ query: 'q' }, SEARCH_PROXY_CONFIG);
+
+    const allLogged = [...warnSpy.mock.calls, ...errSpy.mock.calls]
+      .flat()
+      .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
+      .join(' ');
+    expect(allLogged).not.toContain('ak_live_search_caller_secret');
+
+    warnSpy.mockRestore();
+    errSpy.mockRestore();
   });
 });
 

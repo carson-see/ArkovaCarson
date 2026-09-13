@@ -1,5 +1,5 @@
 # agents.md — services/edge
-_Last updated: 2026-07-28 (L2-A6 MCP discovery-manifest parity)._
+_Last updated: 2026-09-13 (SCRUM-5110 worker search_mode propagation)._
 
 ## L2-A6 — MCP discovery-manifest parity + drift guard (2026-07-28)
 
@@ -73,7 +73,7 @@ surface undercounts by 8x.
   named `server-card.json` specifically; markdown isn't mechanically
   diffable against `TOOL_DEFINITIONS` the way JSON is), flagged in the PR
   body as a fast-follow.
-_Last updated: 2026-08-01 (MCP official-registry publish fix)._
+_Last updated: 2026-09-13 (SCRUM-5110 worker search_mode propagation)._
 
 ## MCP official-registry publish fix — schema drift + missing connection info (2026-08-01)
 
@@ -489,3 +489,40 @@ the legacy ordinary control remains. Retain all imported verifier tests for
 shared JWKS fetches, cooldown on failures, timeout, cache and key rotation. The
 separate `supabase-jwt.ts` helper has no runtime importer; preserve its existing
 pending guard without inventing an unused ES256 implementation.
+
+## SCRUM-5110 — `arkova_search_anchors` trusts the worker's `search_mode`, not the HTTP status (2026-09-13)
+
+Trigger: SCRUM-3906 (worker branch `fix/verify-search-lexical-fallback`) makes
+`GET /api/v1/verify/search` answer **HTTP 200 with a lexical fallback** when
+`ENABLE_SEMANTIC_SEARCH` is off or the embed / `search_public_credential_embeddings`
+RPC fails, and stamps `search_mode: 'semantic_vector' | 'lexical_substring'` on
+every body. `searchCredentialsWorkerSemantic()` in `mcp-tools.ts` had assumed
+"2xx == semantic" and would have relabelled the worker's substring matches as
+vector similarity to every agent on the hosted MCP server.
+
+- **Rule:** a worker 200 is relabelled `semantic_vector` ONLY when the body's
+  own `search_mode` is exactly `'semantic_vector'`. `lexical_substring`, an
+  absent field (pre-SCRUM-3906 worker) or an unknown value all return `null`
+  from the proxy — the same path as the old 503 — so `handleSearchCredentials`
+  runs its own labelled lexical fallback. Understate, never overstate.
+- **Why re-run lexical instead of passing the worker's lexical rows through:**
+  one lexical output shape. The worker's lexical rows omit `title`,
+  `issuer_name` and `anchor_timestamp`; the edge's `search_public_credentials`
+  path fills `title`. Two lexical shapes would be a second contract to document.
+  Cost is one extra RPC on the fallback path — identical to today's 503 path.
+- **Vocabulary is duplicated, not shared:** the worker defines the same two
+  strings in `services/worker/src/api/v1/ai-verify-search.ts`; there is no
+  shared module across the Cloud Run / Cloudflare builds. If either side
+  changes the string, the edge silently falls back to lexical (safe direction)
+  — the `(a)`/`(i)`/`(j)`/`(k)` tests in `mcp-tools.test.ts` pin the contract.
+- **Logging:** the worker-supplied `search_mode` is reduced to a `[\w-]{0,40}`
+  token before it reaches `console.warn`; the caller API key is never logged
+  (test `(l)`).
+- **Deploy note:** prod `arkova-edge` still has no deploy pipeline
+  (SCRUM-3907 / SCRUM-3797). Once SCRUM-3906 merges, the *currently deployed*
+  edge mislabels until this change is deployed with `wrangler` — land the two
+  together or this one immediately after.
+
+Verification: edge suite 128/128 (`mcp-tools.test.ts` 63/63, +4 new),
+`tsc --noEmit` clean, `check-mcp-claim-parity` OK (16 tools × 6 surfaces),
+root `tests/infra/mcp-*.test.ts` 103/103.
