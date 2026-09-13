@@ -21,6 +21,17 @@ const dbAny = db as any;
 
 const router = Router();
 
+/**
+ * SCRUM-4985: strip the LIKE metacharacters before a caller-supplied term is
+ * wrapped in `%...%`. `%` and `_` are LIKE wildcards; `\` is LIKE's escape
+ * character, so leaving it in lets a caller neutralise the surrounding
+ * wildcards. Three call sites shared this expression by copy — one helper so a
+ * later edit cannot fix one copy and miss the others.
+ */
+function stripLikeWildcards(term: string): string {
+  return term.replace(/[%_\\]/g, '');
+}
+
 const EntityVerifySchema = z.object({
   name: z.string().min(1).max(200).optional(),
   domain: z.string().min(1).max(200).optional(),
@@ -43,18 +54,25 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     // Search across public records for entity mentions
      
+    // `anchor_id` is selected for the anchor-proof lookup below and is NOT in
+    // the response shape — the payload exposes only the derived `anchor_proof`
+    // (Constitution §6: never surface internal ids). It was missing from this
+    // list, so the proof lookup never ran and `anchor_proof` was `null` on
+    // every row of a paid endpoint documented as returning anchor proofs.
+    // Additive to the frozen schema (§1.8): a field that was always null now
+    // carries a value. CTO ruling, PR #2835 review.
     let query = dbAny
       .from('public_records')
-      .select('id, source, source_id, source_url, record_type, title, content_hash, metadata, created_at')
+      .select('id, source, source_id, source_url, record_type, title, content_hash, metadata, anchor_id, created_at')
       .order('created_at', { ascending: false })
       .limit(limit);
 
     // Build search filter
     if (name) {
-      query = query.ilike('title', `%${name.replace(/[%_]/g, '')}%`);
+      query = query.ilike('title', `%${stripLikeWildcards(name)}%`);
     }
     if (domain) {
-      query = query.ilike('source_url', `%${domain.replace(/[%_]/g, '')}%`);
+      query = query.ilike('source_url', `%${stripLikeWildcards(domain)}%`);
     }
     if (identifier) {
       query = query.eq('source_id', identifier);
@@ -72,22 +90,58 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Also search attestations
+    // Also search attestations.
+    //
+    // SCRUM-4985: this used to hand-build a PostgREST `.or()` string with the
+    // raw `identifier` interpolated (`subject_identifier.eq.${identifier}`).
+    // A comma or operator inside `identifier` appended extra OR clauses and
+    // widened a targeted lookup into enumeration. Each term now goes through
+    // the query builder as its own filter, so no filter grammar is ever
+    // assembled from caller input. The two terms are queried separately and
+    // unioned by id, preserving the previous OR semantics.
+    //
+    // Percent-encoding is NOT what closes this, and a future edit must not
+    // assume it is: postgrest-js encoded the `.or()` payload too
+    // (`or=%28subject_identifier.eq.x%2Cattester_name.neq.zzz%29`), and
+    // PostgREST decodes a query-parameter value before parsing it, so the
+    // comma was still read as an OR separator. What closes it is the
+    // *position*: in `subject_identifier=eq.<value>` everything after `eq.`
+    // is a literal value and commas carry no grammar. Never interpolate
+    // caller input into `.or()` / `.and()` / `.in()` payloads — encoded or
+    // not. Pinned by entity-verify.test.ts.
     const attestationResults: unknown[] = [];
     if (name || identifier) {
-      // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
-      const { data: attestations } = await dbAny
-        .from('attestations')
-        .select('id, public_id, attestation_type, subject_identifier, subject_type, status, attester_name, claims, created_at')
-        .or([
-          name ? `subject_identifier.ilike.%${name.replace(/[%_]/g, '')}%` : null,
-          identifier ? `subject_identifier.eq.${identifier}` : null,
-        ].filter(Boolean).join(','))
-        .eq('status', 'ACTIVE')
-        .limit(limit);
+      const seen = new Set<string>();
+      const attestationQuery = () =>
+        // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
+        dbAny
+          .from('attestations')
+          .select('id, public_id, attestation_type, subject_identifier, subject_type, status, attester_name, claims, created_at')
+          .eq('status', 'ACTIVE')
+          .limit(limit);
+      const collect = (rows: Array<{ id: string }> | null | undefined) => {
+        for (const row of rows ?? []) {
+          if (attestationResults.length >= limit) break;
+          if (seen.has(row.id)) continue;
+          seen.add(row.id);
+          attestationResults.push(row);
+        }
+      };
 
-      if (attestations) {
-        attestationResults.push(...attestations);
+      // Exact identifier matches take the first claim on `limit`; the fuzzy
+      // name search only runs for whatever budget is left. The old single
+      // .or() query had no defined priority (DB order), so this is a
+      // deterministic narrowing, not a widening.
+      if (identifier) {
+        const { data } = await attestationQuery().eq('subject_identifier', identifier);
+        collect(data);
+      }
+      if (name && attestationResults.length < limit) {
+        const { data } = await attestationQuery().ilike(
+          'subject_identifier',
+          `%${stripLikeWildcards(name)}%`,
+        );
+        collect(data);
       }
     }
 
