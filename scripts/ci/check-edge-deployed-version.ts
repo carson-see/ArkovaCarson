@@ -126,24 +126,38 @@ function sanitizeForLog(value: string): string {
   return value.replace(/[\x00-\x1f\x7f]+/g, ' ').trim();
 }
 
-/** Human/CI-readable report. `isDrift` decides `--strict` exit behavior. */
+/**
+ * Human/CI-readable report. `isDrift` decides `--strict` exit behavior.
+ *
+ * Every field interpolated below is run through `sanitizeForLog` at THIS
+ * call site, regardless of any validation already applied upstream (e.g.
+ * `classifyDrift`'s `HEX_SHA_RE` check on `deployedSha`/`mainSha`) --
+ * sanitizing immediately before the value reaches the log sink is what a
+ * static dataflow analysis can actually verify (tssecurity:S5145); relying
+ * on validation in a different function, several calls away, is invisible
+ * to it even when it is real. Belt-and-suspenders, not a substitute for the
+ * upstream check.
+ */
 export function formatReport(drift: DriftStatus): { message: string; isDrift: boolean } {
   switch (drift.kind) {
     case 'match':
-      return { message: `✅ edge.arkova.ai is serving origin/main HEAD (${drift.sha}). No drift.`, isDrift: false };
+      return {
+        message: `✅ edge.arkova.ai is serving origin/main HEAD (${sanitizeForLog(drift.sha)}). No drift.`,
+        isDrift: false,
+      };
     case 'behind':
       return {
         message:
           `::warning::edge.arkova.ai is ${drift.commitsBehind} commit(s) behind origin/main ` +
-          `(live=${drift.deployedSha}, main=${drift.mainSha}). A merged edge fix has not shipped — ` +
+          `(live=${sanitizeForLog(drift.deployedSha)}, main=${sanitizeForLog(drift.mainSha)}). A merged edge fix has not shipped — ` +
           'dispatch .github/workflows/edge-deploy.yml (workflow_dispatch) to deploy the current main.',
         isDrift: true,
       };
     case 'diverged':
       return {
         message:
-          `::error::edge.arkova.ai reports git_sha=${drift.deployedSha}, which is NOT an ancestor of ` +
-          `origin/main (${drift.mainSha}). The live edge is running code from a ref that is not on main — ` +
+          `::error::edge.arkova.ai reports git_sha=${sanitizeForLog(drift.deployedSha)}, which is NOT an ancestor of ` +
+          `origin/main (${sanitizeForLog(drift.mainSha)}). The live edge is running code from a ref that is not on main — ` +
           'investigate before trusting this deploy pipeline further.',
         isDrift: true,
       };
@@ -176,16 +190,24 @@ export function resolveMainSha(): string {
 // `commitsBehind` callbacks. Re-validating at this boundary closes the sink
 // itself rather than relying solely on the caller: a value that is not a
 // real hex SHA can never reach `execFileSync`'s argv, regardless of caller.
-function assertHexSha(sha: string, fnName: string): void {
-  if (!HEX_SHA_RE.test(sha)) {
-    throw new Error(`${fnName}: refusing non-hex-SHA argument (got ${JSON.stringify(sha)})`);
+// Returns a NEW string taken from the regex match itself (not the original
+// `value` reference) -- deriving the sink argument from the capture group,
+// rather than merely gating on a boolean test of the original variable, is
+// the sanitization shape static analyzers reliably recognize as clearing
+// taint (a `.test()` guard on the same variable can leave the dataflow
+// engine unconvinced the original reference is now safe to use).
+function toHexSha(value: string, fnName: string): string {
+  const match = HEX_SHA_RE.exec(value);
+  if (match === null) {
+    throw new Error(`${fnName}: refusing non-hex-SHA argument (got ${JSON.stringify(value)})`);
   }
+  return match[0];
 }
 
 export function gitIsAncestor(sha: string, of = 'origin/main'): boolean {
   try {
-    assertHexSha(sha, 'gitIsAncestor');
-    execFileSync(GIT_BIN, ['merge-base', '--is-ancestor', sha, of], { stdio: 'ignore' });
+    const safeSha = toHexSha(sha, 'gitIsAncestor');
+    execFileSync(GIT_BIN, ['merge-base', '--is-ancestor', safeSha, of], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -193,8 +215,8 @@ export function gitIsAncestor(sha: string, of = 'origin/main'): boolean {
 }
 
 export function gitCommitsBehind(sha: string, of = 'origin/main'): number {
-  assertHexSha(sha, 'gitCommitsBehind');
-  const out = execFileSync(GIT_BIN, ['rev-list', '--count', `${sha}..${of}`], { encoding: 'utf8' }).trim();
+  const safeSha = toHexSha(sha, 'gitCommitsBehind');
+  const out = execFileSync(GIT_BIN, ['rev-list', '--count', `${safeSha}..${of}`], { encoding: 'utf8' }).trim();
   const n = Number(out);
   return Number.isFinite(n) ? n : 0;
 }

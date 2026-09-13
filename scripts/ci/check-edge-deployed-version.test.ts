@@ -46,13 +46,18 @@ describe('classifyDrift', () => {
     expect(result.kind).toBe('missing-field');
   });
 
-  it('reports missing-field for the "local-dev" placeholder (never deployed through the generator)', () => {
-    const result = classify({ health: { git_sha: 'local-dev' } });
-    expect(result.kind).toBe('missing-field');
-  });
-
-  it('reports missing-field for the "unknown" sentinel (generator could not resolve a SHA)', () => {
-    const result = classify({ health: { git_sha: 'unknown' } });
+  // typescript:S5976 -- these four all exercise the same
+  // "unusable git_sha value -> missing-field" branch and differ only in
+  // WHY the value is unusable: the two checked-in sentinels from
+  // build-info.ts, and the two untrusted-input shapes (tssecurity:S6350 --
+  // never let a value that isn't a real hex SHA reach a git argv position).
+  it.each([
+    ['local-dev', 'the checked-in placeholder (never deployed through the generator)'],
+    ['unknown', 'the unresolvable-SHA sentinel (generator could not resolve a SHA)'],
+    ['--upload-pack=/bin/sh', 'a command-line-flag shape (tssecurity:S6350)'],
+    ['not-a-real-sha', 'a short/non-hex shape (untrusted-input guard)'],
+  ])('reports missing-field for git_sha %j (%s)', (gitSha) => {
+    const result = classify({ health: { git_sha: gitSha } });
     expect(result.kind).toBe('missing-field');
   });
 
@@ -63,16 +68,6 @@ describe('classifyDrift', () => {
 
   it('reports missing-field when health is null (e.g. a 200 with an unparseable body)', () => {
     const result = classify({ health: null });
-    expect(result.kind).toBe('missing-field');
-  });
-
-  it('reports missing-field for a git_sha shaped as a command-line flag instead of a hex SHA (tssecurity:S6350 -- never let untrusted input reach a git argv position)', () => {
-    const result = classify({ health: { git_sha: '--upload-pack=/bin/sh' } });
-    expect(result.kind).toBe('missing-field');
-  });
-
-  it('reports missing-field for a short/non-hex git_sha (untrusted-input shape guard)', () => {
-    const result = classify({ health: { git_sha: 'not-a-real-sha' } });
     expect(result.kind).toBe('missing-field');
   });
 
