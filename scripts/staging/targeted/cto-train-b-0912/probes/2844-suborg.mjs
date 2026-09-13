@@ -235,7 +235,7 @@ export async function seed(admin, state, ctx) {
   // else is needed — there is no subscription row in that lookup.
   const { error: payErr } = await admin
     .from('organizations')
-    .update({ payment_state: 'active' })
+    .update({ payment_state: 'ok' })
     .eq('id', state.orgA);
   if (payErr) throw new Error(`#2844 payment_state orgA: ${payErr.message}`);
 
@@ -349,7 +349,7 @@ async function resetFixtures(admin, state, s) {
   errs.push(await restore(s.childApprovedId, 'APPROVED', 0));
   const { error: parentErr } = await admin
     .from('organizations')
-    .update({ max_sub_orgs: CAP_RESTORED, payment_state: 'active' })
+    .update({ max_sub_orgs: CAP_RESTORED, payment_state: 'ok' })
     .eq('id', state.orgA);
   if (parentErr) errs.push(`parent org: ${parentErr.message}`);
   const { error: balErr } = await admin
