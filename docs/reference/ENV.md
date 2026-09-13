@@ -142,6 +142,13 @@ CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_API_TOKEN=
 CLOUDFLARE_TUNNEL_TOKEN=            # never logged (INFRA-01, ADR-002)
 ```
+`CLOUDFLARE_API_TOKEN` is NOT a GitHub Actions secret (verified via `gh secret
+list` — SCRUM-3907). `.github/workflows/edge-deploy.yml` reads it at deploy
+time from GCP Secret Manager (`cloudflare-api-token`, project `arkova1`) via
+the same WIF auth `deploy-worker.yml` uses, masked with `::add-mask::` before
+it touches `$GITHUB_ENV`. See `.github/workflows/agents.md` for the
+`vars.DEPLOY_EDGE_PAUSED` pause gate (same contract as `DEPLOY_WORKER_PAUSED`)
+and `services/edge/agents.md` for the deploy pipeline itself.
 
 ## x402 payments (worker only)
 ```bash
