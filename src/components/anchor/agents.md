@@ -1,5 +1,34 @@
 # agents.md — components/anchor
 
+
+## SCRUM-4507 — Drive source link-back on `AssetDetailView`
+
+`connector_source` is now resolved ONCE, by `resolveRecordSourceProvider`, into a closed
+`'docusign' | 'google_drive' | null`, and that one value drives every source-specific link on the
+page. `buildDocusignMetadataHref` became `buildSourceMetadataHref(provider, …)` and `MetadataRow`
+takes `provider` instead of an `isDocusign` boolean. Exact string equality, never a prefix or a
+case-insensitive compare.
+
+**What makes the gate worth anything:** migration 0423 STRIPS `connector_source` from any INSERT by
+a caller other than `service_role` and reverts any UPDATE that tampers with it, so on a row written
+after 0423 the marker can only have come from the worker connector pipeline. Rows written BEFORE
+0423 could carry an org-authored marker — which is why what a marker unlocks is bounded to rendering
+identifiers the org itself supplied, back at a system the org itself controls. No trust badge, no
+verification claim, and nothing that reaches a public surface, hangs off this gate. Do not widen it.
+
+**`DriveSourceChips` is a dedicated block, not links in the generic metadata dump** (which is how
+the DocuSign account/envelope links render). Three of the four Drive identifiers are `_`-prefixed
+and `isAnchorMetadataVisible` hides `_`-prefixed keys (BUG-2026-07-17-010), so routing them through
+the dump would mean either weakening that filter or showing half the block. `buildSourceMetadataHref`
+therefore maps NO key for `google_drive` — a decision, not an omission.
+
+Every element degrades independently: a malformed id omits its own chip (the builders return `null`),
+and if nothing is renderable the block self-hides INCLUDING the §1.5 note — a statement about links
+that are not on screen would be a claim about nothing. The revision is plain text and never a link.
+Anything whose `_drive_revision_kind` is not exactly `head_revision` (legacy records with no kind
+recorded included) gets the weaker "Source modification time" label, because calling a synthetic
+`mtime:` token a revision names something that was never measured.
+
 ## SCRUM-4448 — securing dialog layout
 
 `SecureDocumentDialog` keeps a 16px viewport gutter and a dynamic viewport height limit. Its single grid column and body can shrink below intrinsic text widths; long references wrap, and the whole dialog scrolls vertically. Mobile success actions stack. Attestation labels sit above wrapping values on mobile and never shrink beside values on desktop. `TemplateSelector` cards explicitly shrink within the picker. Keep these constraints local to the securing flow; global dialog primitives are unchanged. Real browser geometry and actionability are covered by `e2e/secure-dialog-layout.spec.ts` across desktop, phone and reduced heights. No securing state, request, capability or authorization changes.

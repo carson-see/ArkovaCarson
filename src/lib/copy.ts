@@ -3947,6 +3947,38 @@ export const DOCUSIGN_RECORD_LINKS_LABELS = {
   MORE_SIGNED_SUFFIX: 'more signed via DocuSign',
 } as const;
 
+// ─── Google Drive record source link-back (SCRUM-4507) ───────────────────────
+
+/**
+ * Labels for the Drive source block on the authenticated record-detail page.
+ *
+ * SOURCE_NOTE follows §1.5: it separates what Arkova measured from what it
+ * does NOT assert. The distinction matters here specifically because these are
+ * links into a system the record owner controls and Arkova does not re-read:
+ * the file can be moved, renamed, replaced or deleted after securing, and none
+ * of that touches the fingerprint or the anchor receipt. A note that implied
+ * the link proves anything about the document's current state would be exactly
+ * the R-7 over-claim the claims gate exists to catch.
+ */
+export const DRIVE_RECORD_LINKS_LABELS = {
+  SECTION_LABEL: 'Source',
+  FILE_LABEL: 'Source file',
+  OPEN_IN_DRIVE: 'Open in Google Drive',
+  FOLDER_LABEL: 'Folder',
+  SHARED_DRIVE_LABEL: 'Shared drive',
+  REVISION_LABEL: 'Source revision',
+  MODIFIED_TIME_LABEL: 'Source modification time',
+  SOURCE_NOTE:
+    'Recorded: this record was secured from a file in your organization\'s connected '
+    + 'Google Drive, and the identifiers shown here are the ones Arkova recorded for '
+    + 'that file at the moment it retrieved the document. '
+    + 'Not asserted: that the linked item still exists, still holds the same '
+    + 'content, or is reachable by you now. Anyone with access in Google Drive can '
+    + 'move, rename, replace or delete it afterwards, and Arkova does not re-read '
+    + 'it. Nothing that happens in Google Drive after securing changes this '
+    + 'record\'s fingerprint or its anchor receipt.',
+} as const;
+
 // ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────
 
 export const LINKEDIN_SHARE_LABELS = {

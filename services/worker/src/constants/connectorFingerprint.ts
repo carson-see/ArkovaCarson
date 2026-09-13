@@ -43,6 +43,31 @@ export const CONNECTOR_FETCH_SOURCE_MARKERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * SCRUM-4507: the same closed vocabulary as {@link CONNECTOR_FETCH_SOURCE_MARKERS},
+ * as an ordered, frozen array — the ONE place the published `source.provider`
+ * enum is materialised.
+ *
+ * Derived here rather than in each consumer so the served OpenAPI spec
+ * (`api/v1/docs.ts`) and the response contract (`api/v1/verify.ts`) cannot
+ * order the members differently, and so the sort happens exactly once. A `Set`
+ * preserves insertion order, which is an authoring accident rather than a
+ * contract, so it is sorted into a stated order instead.
+ *
+ * The comparator is EXPLICIT, not a bare `.sort()`: a no-argument sort
+ * coerces via `String()` and its intent is unstated (SonarQube typescript:S2871
+ * reads it as a reliability defect). `localeCompare` is pinned to `'en'` so the
+ * published order cannot vary with the host's default locale — the members are
+ * ASCII, so this is the same order a code-unit sort gives, just written down.
+ *
+ * Frozen because the array is module-scope shared state handed to a long-lived
+ * `openApiSpec` object: `readonly` is a compile-time claim only, and one stray
+ * mutation would silently change a FROZEN v1 published schema (§1.8).
+ */
+export const CONNECTOR_FETCH_SOURCE_MARKERS_SORTED: readonly string[] = Object.freeze(
+  [...CONNECTOR_FETCH_SOURCE_MARKERS].sort((a, b) => a.localeCompare(b, 'en')),
+);
+
+/**
  * Value-level predicate: is this a recognised connector-fetch marker?
  * A closed set, never free text (the value gates a public §1.5 statement).
  */

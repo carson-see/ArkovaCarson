@@ -487,6 +487,15 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
         mime_type: payload.mime_type ?? undefined,
         modified_time: payload.modified_time ?? undefined,
         rule_event_id: payload.rule_event_id ?? undefined,
+        // SCRUM-4507 source link-back — same null -> undefined conversion as
+        // every field above. `revision_kind` is never null (the processor
+        // always resolves one) so it passes through unchanged; it still goes
+        // through safeParse, which fails CLOSED on an unrecognised value
+        // rather than enqueueing a job the record page cannot render.
+        shared_drive_id: payload.shared_drive_id ?? undefined,
+        folder_id: payload.folder_id ?? undefined,
+        folder_path: payload.folder_path ?? undefined,
+        revision_kind: payload.revision_kind,
       };
       const parsed = DriveFileChangedJobPayload.safeParse(candidate);
       if (!parsed.success) {
