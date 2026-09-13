@@ -217,6 +217,128 @@ describe('createOrganization', () => {
     const deps = rpcDeps(null, { code: 'P0001', message: 'transaction failed' });
     await expect(createOrganization(deps, ACTOR, orgInput())).rejects.toMatchObject({ code: 'internal_error' });
   });
+
+  // ── SCRUM-5024 referral attribution ────────────────────────────────────────
+
+  /** Routes `admin_provision_organization` to the success shape and
+   *  `record_org_referral` to `verdict`, and asserts the code the caller sends
+   *  is one `referral_codes_code_format` would accept. */
+  function referralDeps(verdict: { data: unknown; error?: unknown } | { throws: Error }) {
+    const deps = makeDeps({});
+    vi.mocked(deps.db.rpc).mockImplementation((async (fn: string, args: Record<string, unknown>) => {
+      if (fn === 'record_org_referral') {
+        // Mirrors the DB CHECK exactly:
+        //   CHECK (code ~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$')
+        expect(String(args.p_code)).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/);
+        expect(args.p_source).toBe('admin_provisioning');
+        if ('throws' in verdict) throw verdict.throws;
+        return { data: verdict.data, error: verdict.error ?? null };
+      }
+      return { data: { success: true, organization }, error: null };
+    }) as never);
+    return deps;
+  }
+
+  it('does not call the referral RPC when no code was supplied', async () => {
+    const deps = referralDeps({ data: null });
+    const result = await createOrganization(deps, ACTOR, orgInput());
+
+    expect(vi.mocked(deps.db.rpc).mock.calls.map((c) => c[0])).toEqual(['admin_provision_organization']);
+    expect(result).not.toHaveProperty('referral_applied');
+    expect(result).not.toHaveProperty('referral_reason');
+  });
+
+  it('records the attribution and reports it additively on the result', async () => {
+    const deps = referralDeps({ data: { applied: true, reason: 'recorded', referrer_public_id: 'org_partner' } });
+    const result = await createOrganization(deps, ACTOR, orgInput({ referral_code: 'abcd2345' }));
+
+    expect(vi.mocked(deps.db.rpc)).toHaveBeenCalledWith('record_org_referral', {
+      // Uppercased by the schema before it ever reaches the RPC.
+      p_org_id: ORG_ROW.id, p_code: 'ABCD2345', p_source: 'admin_provisioning',
+    });
+    expect(result.referral_applied).toBe(true);
+    expect(result.referral_reason).toBe('recorded');
+    // Every pre-existing field is untouched.
+    expect(result.org_id).toBe(ORG_ROW.id);
+    expect(result.credits_balance).toBe(18);
+  });
+
+  it.each(['unknown_code', 'self_referral', 'already_attributed'] as const)(
+    'a %s verdict logs at error level, is reported, and never fails the provisioning',
+    async (reason) => {
+      const deps = referralDeps({ data: { applied: false, reason } });
+      const result = await createOrganization(deps, ACTOR, orgInput({ referral_code: 'ABCD2345' }));
+
+      expect(result.org_id).toBe(ORG_ROW.id);
+      expect(result.referral_applied).toBe(false);
+      expect(result.referral_reason).toBe(reason);
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: ORG_ROW.id, reason }),
+        'Admin provisioning: referral attribution not applied',
+      );
+    },
+  );
+
+  it('an RPC error is rpc_failed, logged, and still returns the created organization', async () => {
+    const deps = referralDeps({ data: null, error: { code: '42883', message: 'function does not exist' } });
+    const result = await createOrganization(deps, ACTOR, orgInput({ referral_code: 'ABCD2345' }));
+
+    expect(result.org_id).toBe(ORG_ROW.id);
+    expect(result.referral_reason).toBe('rpc_failed');
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG_ROW.id, reason: 'rpc_failed' }),
+      'Admin provisioning: referral attribution RPC failed',
+    );
+  });
+
+  it('a thrown referral RPC is threw, logged, and does not propagate', async () => {
+    const deps = referralDeps({ throws: new Error('connection reset') });
+    const result = await createOrganization(deps, ACTOR, orgInput({ referral_code: 'ABCD2345' }));
+
+    expect(result.org_id).toBe(ORG_ROW.id);
+    expect(result.referral_reason).toBe('threw');
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG_ROW.id, reason: 'threw' }),
+      'Admin provisioning: referral attribution threw',
+    );
+  });
+
+  it('a verdict with no reason is rpc_failed, never a silent success', async () => {
+    const deps = referralDeps({ data: {} });
+    const result = await createOrganization(deps, ACTOR, orgInput({ referral_code: 'ABCD2345' }));
+    expect(result.referral_applied).toBe(false);
+    expect(result.referral_reason).toBe('rpc_failed');
+  });
+});
+
+describe('CreateOrganizationSchema — referral_code (SCRUM-5024)', () => {
+  it('is optional', () => {
+    const r = validateCreateOrganizationInput({
+      display_name: 'PlanBook', idempotency_key: '99999999-9999-4999-8999-999999999999',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.referral_code).toBeUndefined();
+  });
+
+  it('trims and uppercases before validating', () => {
+    const r = validateCreateOrganizationInput({
+      display_name: 'PlanBook', idempotency_key: '99999999-9999-4999-8999-999999999999',
+      referral_code: '  abcd2345  ',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.referral_code).toBe('ABCD2345');
+  });
+
+  it.each(['IBCD2345', 'LBCD2345', 'OBCD2345', '0BCD2345', '1BCD2345', 'ABCD234', 'ABCD23456', ''])(
+    'rejects %j — the same class referral_codes_code_format rejects',
+    (code) => {
+      const r = validateCreateOrganizationInput({
+        display_name: 'PlanBook', idempotency_key: '99999999-9999-4999-8999-999999999999',
+        referral_code: code,
+      });
+      expect(r.ok).toBe(false);
+    },
+  );
 });
 
 // ─────────────────────────── createUserAccount ───────────────────────────
