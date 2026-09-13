@@ -1,5 +1,14 @@
 # agents.md — pages
-_Last updated: 2026-08-31_
+_Last updated: 2026-09-12_
+
+## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
+
+`SettingsPage` writes `profiles.social_links`; `PublicProfilePage` is its cross-user render surface. Both go through `src/lib/socialLinks.ts`.
+
+- `SettingsPage` validates with `parseSocialLinksForWrite` and seeds its form state with `pickSocialLinks(profile.social_links)`, **not** the raw blob, so a legacy key cannot reach the write schema. The rejection uses its own `socialError` state rendered **inside the Social Profiles card** — the page-level `error` Alert lives in the profile card far above it, where a rejection from this form is off screen and Save just looks inert.
+- `PublicProfilePage` renders `resolveSocialLinks(links)`. Its old `normalizeUrl` prefixed `https://` onto scheme-less values, which happened to defang `javascript:` into an unparseable `https://javascript:alert(1)` — accidental, not a guarantee, and it did nothing for protocol-relative `//evil.example`. Do not reintroduce a prefix-only normaliser here.
+
+`AboutPage`, `EnterprisePage`, `HowItWorksPage`, `IndependentVerifyPage` and `UseCasesPage` each emit a JSON-LD block via `dangerouslySetInnerHTML` and had **no** escape at all; all five now use `toJsonLd` from `src/lib/jsonLd.ts`. Their payloads are static constants today — use the helper anyway in any new one.
 
 ## 2026-08-31 — `IndependentVerifyPage` told readers to run a file that does not exist
 
