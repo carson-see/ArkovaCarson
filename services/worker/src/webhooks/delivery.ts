@@ -11,6 +11,13 @@ import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
 import { logger } from '../utils/logger.js';
 import { Sentry } from '../utils/sentry.js';
 import { validateWebhookPayload } from './payload-schemas.js';
+// SCRUM-3972 (R17): the ONLY widening of the flat `.eq('org_id')` endpoint
+// selection below. Kept in its own module so this file's dispatch/fetch path is
+// untouched and the diff here stays confined to endpoint selection.
+import {
+  resolveDescendantFanout,
+  type FanoutFailure,
+} from './suborg-fanout.js';
 // ─── SSRF Protection (INJ-02) ─────────────────────────────────────────
 // SCRUM-2483: the private-IP classifier + hostname blocklist + DNS-resolution
 // helper were lifted verbatim into ../lib/ssrf-guard.js so this webhook guard
@@ -885,6 +892,32 @@ function assertPayloadDeliverable(
 }
 
 /**
+ * What one dispatch actually did (SCRUM-3972).
+ *
+ * `dispatchWebhookEvent` used to return `void`, which left every non-throwing
+ * failure on this path — an endpoint-lookup error, and now a parent-lookup
+ * error — as a log line nothing could count. Builder contract §1: a deliberate
+ * fallback must make the run non-ok. Callers that only fire-and-forget are
+ * unaffected (the value is simply ignored); callers that care can assert `ok`.
+ */
+export interface WebhookDispatchResult {
+  /** False when any lookup failed, even though delivery may have proceeded. */
+  ok: boolean;
+  /** Endpoints of the event-owning organization that were delivered to. */
+  ownEndpointCount: number;
+  /** Parent endpoints additionally delivered to via `self_and_descendants`. */
+  descendantEndpointCount: number;
+  failures: Array<FanoutFailure | { kind: 'own_endpoint_lookup' | 'cross_org_payload_rejected'; message: string }>;
+}
+
+function dispatchOk(
+  ownEndpointCount = 0,
+  descendantEndpointCount = 0,
+): WebhookDispatchResult {
+  return { ok: true, ownEndpointCount, descendantEndpointCount, failures: [] };
+}
+
+/**
  * Dispatch an event to all matching endpoints
  */
 export async function dispatchWebhookEvent(
@@ -892,7 +925,7 @@ export async function dispatchWebhookEvent(
   eventType: string,
   eventId: string,
   data: Record<string, unknown>
-): Promise<void> {
+): Promise<WebhookDispatchResult> {
   // SCRUM-1268 (R2-5): validate the data block against the canonical schema
   // for known event types. Banned fields (anchor_id, fingerprint, user_id,
   // org_id) trigger a structured warn log + Sentry breadcrumb (via logger),
@@ -925,7 +958,7 @@ export async function dispatchWebhookEvent(
   // Check if webhooks are enabled (WH-4: 30s cached, fail-closed).
   if (!(await isOutboundWebhooksEnabled())) {
     logger.debug({ eventType }, 'Outbound webhooks disabled');
-    return;
+    return dispatchOk();
   }
 
   // Get active endpoints for this org and event type
@@ -938,12 +971,31 @@ export async function dispatchWebhookEvent(
 
   if (error) {
     logger.error({ error }, 'Failed to fetch webhook endpoints');
-    return;
+    return {
+      ok: false,
+      ownEndpointCount: 0,
+      descendantEndpointCount: 0,
+      failures: [{ kind: 'own_endpoint_lookup', message: error.message }],
+    };
   }
 
-  if (!endpoints || endpoints.length === 0) {
+  // ── SCRUM-3972: parent fan-out (dark behind ENABLE_SUBORG_WEBHOOK_FANOUT) ──
+  // Resolved BEFORE the "no endpoints" early return on purpose: a child with no
+  // endpoints of its own can still owe its parent this event. One clock for
+  // this whole decision (builder contract §4); the fan-out module re-validates
+  // both cache TTLs against it.
+  const fanout = await resolveDescendantFanout({ orgId, eventType, now: Date.now() });
+  const failures: WebhookDispatchResult['failures'] = [...fanout.failures];
+
+  const ownEndpoints = (endpoints ?? []) as WebhookEndpoint[];
+  const ownEndpointIds = new Set(ownEndpoints.map((e) => e.id));
+  // Dedupe by endpoint id: an endpoint must receive one copy of an event, never
+  // two, even if both selections somehow returned it.
+  const descendantEndpoints = fanout.endpoints.filter((e) => !ownEndpointIds.has(e.id));
+
+  if (ownEndpoints.length === 0 && descendantEndpoints.length === 0) {
     logger.debug({ orgId, eventType }, 'No webhook endpoints configured');
-    return;
+    return { ok: failures.length === 0, ownEndpointCount: 0, descendantEndpointCount: 0, failures };
   }
 
   const payload: WebhookPayload = {
@@ -961,14 +1013,70 @@ export async function dispatchWebhookEvent(
     sequence: await nextSequence(),
   };
 
+  // SCRUM-3972: a payload crossing an organization boundary MUST name the
+  // organization it belongs to, otherwise the parent receives an event it
+  // cannot attribute. `org_public_id` is an existing optional field on the
+  // anchor/credential schemas — but NOT on all of them (`anchor.batch_secured`
+  // is `.strict()` without it), so the stamped copy is RE-VALIDATED and, if the
+  // schema refuses it, the cross-org delivery is dropped and counted rather
+  // than sent unattributed or sent in a shape the contract forbids. The
+  // own-organization payload is never touched, so behaviour for existing
+  // endpoints is bit-identical.
+  let crossOrgPayload: WebhookPayload | null = null;
+  let deliverableDescendants = descendantEndpoints;
+  if (descendantEndpoints.length > 0) {
+    const crossOrgData = { ...data, org_public_id: fanout.ownerOrgPublicId };
+    const crossOrgValidation = validateWebhookPayload(eventType, crossOrgData);
+    if (crossOrgValidation.ok) {
+      crossOrgPayload = { ...payload, data: crossOrgData };
+    } else {
+      logger.error(
+        {
+          eventType,
+          eventId,
+          orgId,
+          issues: crossOrgValidation.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          })),
+        },
+        'Cross-organization webhook payload rejected by its own schema after stamping org_public_id — refusing the fan-out copy (own-organization delivery is unaffected)',
+      );
+      Sentry.captureMessage('suborg_webhook_cross_org_payload_rejected', {
+        level: 'error',
+        tags: { subsystem: 'webhooks', stage: 'suborg_fanout' },
+        extra: { eventType, eventId, orgId },
+      });
+      failures.push({
+        kind: 'cross_org_payload_rejected',
+        message: `event type ${eventType} has no org_public_id field; cannot attribute a cross-organization delivery`,
+      });
+      deliverableDescendants = [];
+    }
+  }
+
   // Deliver to all endpoints. Different resources, and multiple endpoints for
   // the same event, still fan out concurrently — the ordering guarantee is
   // enforced per-resource in the retry sweep, not by serializing the happy-path
   // dispatch. WH-5: concurrency is bounded (DISPATCH_CONCURRENCY) so a
   // many-endpoint burst cannot exhaust the socket pool.
-  await mapWithConcurrency(endpoints, DISPATCH_CONCURRENCY, (endpoint) =>
+  await mapWithConcurrency(ownEndpoints, DISPATCH_CONCURRENCY, (endpoint) =>
     deliverToEndpoint(endpoint, payload),
   );
+
+  if (crossOrgPayload && deliverableDescendants.length > 0) {
+    const outbound = crossOrgPayload;
+    await mapWithConcurrency(deliverableDescendants, DISPATCH_CONCURRENCY, (endpoint) =>
+      deliverToEndpoint(endpoint as WebhookEndpoint, outbound),
+    );
+  }
+
+  return {
+    ok: failures.length === 0,
+    ownEndpointCount: ownEndpoints.length,
+    descendantEndpointCount: deliverableDescendants.length,
+    failures,
+  };
 }
 
 // ─── Dead Letter Queue (DH-12) ─────────────────────────────────────────

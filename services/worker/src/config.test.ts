@@ -954,3 +954,56 @@ describe('S3-P0 / DISC-03 — bitcoinUtxoProvider default', () => {
     });
   });
 });
+
+describe('ENABLE_SUBORG_WEBHOOK_FANOUT (SCRUM-3972)', () => {
+  /**
+   * `webhooks/suborg-fanout.ts` reads this flag straight from `process.env`
+   * rather than from `config`, because importing `config.ts` from a module that
+   * `delivery.ts` depends on would make six existing webhook suites fail at
+   * import with "Invalid worker configuration" (the rationale is written out in
+   * that file's header). `config.ts` is still the declared home of the flag —
+   * `flagRegistry.ENV_FLAG_GETTERS` and `scripts/ci/config-drift/flag-inventory.json`
+   * both point at `config.enableSubOrgWebhookFanout`.
+   *
+   * This test is what keeps the two readings from drifting: it compares the
+   * fan-out module's reader against the REAL, fully-loaded config object across
+   * every input shape, so a change to `boolFlag`'s coercion fails here instead
+   * of silently giving the kill switch two different answers.
+   */
+  it('resolves identically through config and through the fan-out reader', async () => {
+    const { isSubOrgFanoutEnabled } = await import('./webhooks/suborg-fanout.js');
+    const saved = process.env.ENABLE_SUBORG_WEBHOOK_FANOUT;
+
+    try {
+      for (const value of ['true', 'false', 'TRUE', '1', '', 'yes', undefined]) {
+        if (value === undefined) delete process.env.ENABLE_SUBORG_WEBHOOK_FANOUT;
+        else process.env.ENABLE_SUBORG_WEBHOOK_FANOUT = value;
+
+        vi.resetModules();
+        const fresh = await import('./config.js');
+        expect(
+          isSubOrgFanoutEnabled(),
+          `disagreement for ENABLE_SUBORG_WEBHOOK_FANOUT=${String(value)}`,
+        ).toBe(fresh.config.enableSubOrgWebhookFanout);
+      }
+    } finally {
+      if (saved === undefined) delete process.env.ENABLE_SUBORG_WEBHOOK_FANOUT;
+      else process.env.ENABLE_SUBORG_WEBHOOK_FANOUT = saved;
+      vi.resetModules();
+    }
+  });
+
+  it('is OFF unless the env var is exactly "true" (D2 stays reversed by default)', async () => {
+    const { isSubOrgFanoutEnabled } = await import('./webhooks/suborg-fanout.js');
+    const saved = process.env.ENABLE_SUBORG_WEBHOOK_FANOUT;
+    try {
+      delete process.env.ENABLE_SUBORG_WEBHOOK_FANOUT;
+      expect(isSubOrgFanoutEnabled()).toBe(false);
+      process.env.ENABLE_SUBORG_WEBHOOK_FANOUT = 'true';
+      expect(isSubOrgFanoutEnabled()).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.ENABLE_SUBORG_WEBHOOK_FANOUT;
+      else process.env.ENABLE_SUBORG_WEBHOOK_FANOUT = saved;
+    }
+  });
+});

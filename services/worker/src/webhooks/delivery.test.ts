@@ -864,9 +864,14 @@ describe('deliverToEndpoint', () => {
     setupDbRouting();
 
     // Must not throw — dispatch fans out best-effort.
+    // SCRUM-3972 changed the return from `void` to a WebhookDispatchResult so
+    // non-throwing failures (an endpoint-lookup error, a parent-lookup error)
+    // become countable instead of log-only. The property this case asserts is
+    // unchanged — no throw escapes — and the result additionally records that
+    // the ONE endpoint was attempted.
     await expect(
       dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-outage-001', MOCK_PAYLOAD_DATA),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: true, ownEndpointCount: 1, descendantEndpointCount: 0 });
 
     // No HTTP delivery (log row never committed).
     expect(mockFetch).not.toHaveBeenCalled();
