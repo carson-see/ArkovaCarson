@@ -123,13 +123,14 @@ An endpoint's `scope` decides whether it also receives events **owned by** the o
 | `scope` | Endpoint receives |
 |---|---|
 | `self` (default) | Only events owned by the endpoint's own organization. This is the behaviour every endpoint had before this field existed, and it is what an unset `scope` means. |
-| `self_and_descendants` | Additionally, events owned by organizations whose parent is this organization **and** whose affiliation is `APPROVED`. |
+| `self_and_descendants` | Additionally, events owned by organizations whose parent is this organization, whose affiliation is `APPROVED`, and which are not suspended. |
 
 Rules that hold regardless of `scope`:
 
-- **One hop.** Only direct affiliates. An affiliate of an affiliate is not included, and Arkova does not create such chains.
+- **One hop.** Only direct affiliates. An affiliate of an affiliate is **not** included. Deeper chains are possible in principle, so do not assume the feed covers a whole tree — subscribe at each level you need.
 - **One direction.** An affiliated organization's endpoint never receives its parent's events. `scope` on a child endpoint widens toward *that* child's own affiliates, never upward.
-- **Approval is live, not remembered.** Revoking an affiliation stops the feed from the next dispatch; it does not require the endpoint to be edited.
+- **Approval is live, not remembered — within 60 seconds.** Revoking an affiliation stops the feed; it does not require the endpoint to be edited. Affiliation state is cached for up to 60 seconds per organization, so the last cross-organization event may arrive up to a minute after the revocation. Build reconciliation that tolerates that window rather than treating the revocation timestamp as a hard cut-off.
+- **Suspension stops it too.** Suspending or offboarding an affiliated organization stops its events reaching the parent, on the same 60-second bound, even though the affiliation record itself still reads `APPROVED`.
 - **Cross-organization payloads name their owner.** An event delivered to a parent because of `self_and_descendants` carries `org_public_id` identifying the organization the event belongs to. An event that cannot carry that field is not delivered across the boundary at all.
 - The seven `suborg.*` events above are **not** affected by `scope` — they are the parent's own events on the parent's own organization.
 

@@ -624,8 +624,12 @@ export const WEBHOOK_LABELS = {
   SCOPE_LABEL: 'Which organizations’ events',
   SCOPE_SELF: 'This organization only',
   SCOPE_SELF_DESC: 'Receive events for records and activity belonging to this organization. This is the default and matches how every existing endpoint behaves.',
-  SCOPE_SELF_AND_DESCENDANTS: 'This organization and its affiliated organizations',
-  SCOPE_SELF_AND_DESCENDANTS_DESC: 'Also receive events belonging to organizations affiliated to this one, once their affiliation is approved. Affiliated organizations never receive this organization’s events.',
+  SCOPE_SELF_AND_DESCENDANTS: 'This organization and its direct affiliated organizations',
+  // CTO review 2026-09-12: "direct" is load-bearing, not decoration. Affiliation
+  // chains deeper than one level are reachable (proved in
+  // machines/subOrgWebhookFanout.machine.ts) and this option does NOT include
+  // them, so the copy must not imply a whole subtree.
+  SCOPE_SELF_AND_DESCENDANTS_DESC: 'Also receive events belonging to organizations directly affiliated to this one, once their affiliation is approved. Organizations further down a chain are not included, an affiliation that is suspended stops, and affiliated organizations never receive this organization’s events.',
   SCOPE_PENDING_NOTE: 'Delivery of affiliated organizations’ events will begin once Arkova enables it; until then this endpoint receives this organization’s events only.',
 
   // ── WH-03 (SCRUM-2398): delivery history + failed deliveries ─────────────
