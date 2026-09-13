@@ -35,14 +35,14 @@ source-tagged output (`fetch-certifications`, `fetch-sos`) omit it and render
 no freshness caption.
 
 **Per-source freshness (SCRUM-5044)** reads `public_records` directly —
-`fetchStats` runs one `Promise.allSettled` over `DISTINCT_SOURCE_KEYS`, two
-lightweight queries per source (a `head:true` count filtered to the last 30
-days, and an `order(created_at desc).limit(1)`), both backed by
-`idx_public_records_source_created (source, created_at DESC)`. **This is
-deliberately NOT the unindexed full-table query already ruled out** for this
-table (see the "direct public_records query times out on 1.4M rows" comment
-a few hundred lines below in the records-browser fallback) — per-source +
-per-index-key scoping is what makes it safe. `count_public_records_by_source`
+`fetchSourceFreshness` runs one `Promise.allSettled` over
+`DISTINCT_SOURCE_KEYS`, two lightweight queries per source (a `head:true`
+count filtered to the last 30 days, and an `order(created_at desc).limit(1)`),
+both backed by `idx_public_records_source_created (source, created_at DESC)`.
+**This is deliberately NOT the unindexed full-table query already ruled out**
+for this table (see the "direct public_records query times out on 1.4M rows"
+comment a few hundred lines below in the records-browser fallback) —
+per-source + per-index-key scoping is what makes it safe. `count_public_records_by_source`
 (→ `bySource`) is a periodically-refreshed cache of **total** counts only, no
 last-insert timestamp and no 30-day window, and no existing RPC covers either
 — per the spec this reads the table directly rather than adding a migration
@@ -52,11 +52,35 @@ existing `byCredentialType` fetch); it never gets rendered as "No records
 yet" — that phrase means the query succeeded and found zero rows, not that
 the query failed.
 
-Known trade-off, not fixed here: freshness is fetched on every `fetchStats`
-call, including the 30s visible-tab poll (same cadence as `byCredentialType`)
-— not gated behind the CollapsibleSection's open state. ~26 distinct sources
-× 2 queries per poll cycle per open admin tab. Cheap per-query (index-backed,
-`head:true`/`limit:1`), but worth revisiting if the source count grows a lot.
+**Freshness is gated behind the section's own open state, not fired
+unconditionally on every poll** (2026-09-13 coordinator follow-up, same
+ticket). It is deliberately decoupled from `fetchStats`/`stats` into its own
+state (`sourceFreshness`) and its own callback (`fetchSourceFreshness`):
+- `PipelineJobControl`s' `CollapsibleSection` for "Pipeline Controls" is the
+  one instance in this file with a controlled `open`/`onOpenChange` pair
+  (`pipelineControlsOpen` lifted to the page component); every other
+  `CollapsibleSection` call stays fully uncontrolled — `open`/`onOpenChange`
+  are optional props that default to the section's own internal `useState`.
+- `fetchSourceFreshness(opts?: { force?: boolean })` no-ops immediately
+  (before issuing any query) unless `pipelineControlsOpen` is true — this is
+  the hard "never fetch while collapsed" rule, and it applies even to the
+  manual Refresh button.
+- A `sourceFreshnessFetchedAtRef` timestamp throttles re-fetches to at most
+  once per `SOURCE_FRESHNESS_TTL_MS` (5 minutes) — "a timestamp guard around
+  the fetch, not a second interval." Three things call it: an effect that
+  fires once when the section transitions to open (satisfies "fetch
+  immediately on expand if empty/stale" — the emptiness/staleness check lives
+  in the guard itself, not in the effect), the same 30s `pollFetchStats` tick
+  that already drives `fetchStats` (a no-op whenever collapsed or still
+  fresh), and `handleRefresh` with `{ force: true }` (bypasses the 5-minute
+  throttle only — not the collapsed gate, since a collapsed section still
+  can't show the result).
+- `pipelineControlsOpen` is read via closure (in `fetchSourceFreshness`'s own
+  `useCallback` deps), not via a ref's `.current` read during render — the
+  latter trips the `react-hooks/refs` lint rule now. `useVisibilityPolling`'s
+  cb-ref discipline (see that hook's own doc) means `pollFetchStats` picking
+  up a new `fetchSourceFreshness` identity on every toggle never restarts its
+  interval/listener.
 
 ## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
 

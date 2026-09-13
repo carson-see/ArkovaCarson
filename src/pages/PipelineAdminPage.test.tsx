@@ -767,6 +767,53 @@ describe('PipelineAdminPage', () => {
     expect(screen.queryByTestId('pipeline-job-freshness-fetch-certifications')).not.toBeInTheDocument();
     expect(screen.queryByTestId('pipeline-job-freshness-fetch-sos')).not.toBeInTheDocument();
   });
+
+  // ─── Coordinator follow-up: gate the freshness fetch behind the section's
+  // open state and a 5-minute throttle, instead of firing on every 30s poll
+  // regardless of whether anyone can see the captions. ───────────────────
+
+  it('does not issue any public_records freshness queries while Pipeline Controls is collapsed', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+
+    // Pipeline Controls defaults closed and is never clicked in this test —
+    // the mount-time poll must not have queried public_records at all.
+    const fromCalls = (supabase.from as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(fromCalls.some((call) => call[0] === 'public_records')).toBe(false);
+  });
+
+  it('fetches per-source freshness once on expand, and not again on a second expand within the 5-minute window', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+
+    const header = screen.getByText('Pipeline Controls');
+    fireEvent.click(header); // expand
+    await screen.findByTestId('pipeline-job-freshness-fetch-edgar');
+
+    const countPublicRecordsCalls = () =>
+      (supabase.from as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((call: unknown[]) => call[0] === 'public_records').length;
+
+    const callsAfterFirstExpand = countPublicRecordsCalls();
+    expect(callsAfterFirstExpand).toBeGreaterThan(0);
+
+    // Collapse and re-expand immediately — still well inside the 5-minute
+    // throttle window, so this must NOT issue a second round of queries.
+    await act(async () => {
+      fireEvent.click(header); // collapse
+      fireEvent.click(header); // expand again
+      await Promise.resolve();
+    });
+
+    expect(countPublicRecordsCalls()).toBe(callsAfterFirstExpand);
+  });
 });
 
 // ─── SCRUM-2245 (HARDEN-1-B): get_distinct_record_types thenable .catch crash ──

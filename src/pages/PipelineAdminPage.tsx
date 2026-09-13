@@ -61,8 +61,6 @@ interface PipelineStats {
   bySource: Record<string, number>;
   byCredentialType: Record<string, { total: number; secured: number; submitted: number; pending: number; broadcasting: number }>;
   recentErrors: number;
-  /** SCRUM-5044: keyed by public_records.source. */
-  sourceFreshness: Record<string, SourceFreshnessEntry>;
 }
 
 interface PublicRecord {
@@ -325,6 +323,8 @@ const PIPELINE_CONTROL_LABELS = {
 } as const;
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+/** SCRUM-5044 (coordinator follow-up): throttle for the per-source freshness fetch — "a timestamp guard around the fetch, not a second interval." */
+const SOURCE_FRESHNESS_TTL_MS = 5 * 60 * 1000;
 
 /** "3m ago" / "2h ago" / "5d ago" — coarser than formatCacheFreshness (which only handles minutes). */
 function formatRelativeAge(iso: string): string {
@@ -623,47 +623,6 @@ export function PipelineAdminPage() {
         // Type counts are non-critical — don't let this fail the whole page
       }
 
-      // SCRUM-5044: per-source freshness ("Last: … · n rows / 30d" under each
-      // pipeline control). count_public_records_by_source (used for `bySource`
-      // above) is a periodically-refreshed cache of TOTAL counts only — no
-      // last-insert timestamp, no 30-day window — and there is no existing RPC
-      // for either, so per the spec this reads public_records directly rather
-      // than adding a migration or worker route. Both queries are backed by
-      // idx_public_records_source_created (source, created_at DESC) — a
-      // per-source head-count with a date filter and a per-source
-      // order-by-created_at-desc limit-1 — NOT the unindexed full-table scan
-      // that was previously ruled out for this table (see the "Fallback
-      // removed — direct public_records query times out on 1.4M rows" comment
-      // on the records-browser fallback below). Isolated per-source: one
-      // source's failed query renders "Freshness unavailable" for just that
-      // source rather than failing the whole page (byCredentialType pattern).
-      const sourceFreshness: Record<string, SourceFreshnessEntry> = {};
-      try {
-        const cutoffIso = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
-        const results = await Promise.allSettled(DISTINCT_SOURCE_KEYS.map(async (key) => {
-          const [countRes, lastRes] = await Promise.all([
-            dbAny.from('public_records').select('id', { count: 'exact', head: true }).eq('source', key).gte('created_at', cutoffIso),
-            dbAny.from('public_records').select('created_at').eq('source', key).order('created_at', { ascending: false }).limit(1),
-          ]);
-          if (countRes?.error || lastRes?.error) {
-            throw new Error(countRes?.error?.message || lastRes?.error?.message || 'freshness query failed');
-          }
-          const lastInsertAt = Array.isArray(lastRes?.data) && lastRes.data[0]?.created_at
-            ? lastRes.data[0].created_at as string
-            : null;
-          const rows30d = typeof countRes?.count === 'number' ? countRes.count : null;
-          return { lastInsertAt, rows30d };
-        }));
-        results.forEach((r, i) => {
-          const key = DISTINCT_SOURCE_KEYS[i];
-          sourceFreshness[key] = r.status === 'fulfilled'
-            ? { lastInsertAt: r.value.lastInsertAt, rows30d: r.value.rows30d }
-            : { lastInsertAt: null, rows30d: null, error: r.reason instanceof Error ? r.reason.message : 'freshness query failed' };
-        });
-      } catch {
-        // Non-critical — controls with a sourceKey just render no caption below.
-      }
-
       setStats({
         totalRecords: totalRecords ?? 0,
         anchoredRecords,
@@ -681,7 +640,6 @@ export function PipelineAdminPage() {
         bySource,
         byCredentialType,
         recentErrors: 0,
-        sourceFreshness,
       });
       // SCRUM-1260 (R1-6): clear error state on successful refresh so the
       // banner disappears once the worker recovers.
@@ -706,15 +664,105 @@ export function PipelineAdminPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // SCRUM-5044 (coordinator follow-up): per-source freshness ("Last: … · n
+  // rows / 30d" under each Pipeline Controls entry) is gated on the section
+  // actually being open — nobody sees these captions while it's collapsed
+  // (it defaults closed), so there is no reason to run ~26 sources × 2
+  // indexed queries every 30s poll cycle for a closed panel. Decoupled from
+  // `stats`/fetchStats: its own state, its own timestamp-guarded fetch,
+  // invoked (a) once immediately when the section expands, (b)
+  // opportunistically from the same 30s visible-tab poll and the manual
+  // Refresh button below — both throttled to at most once per
+  // SOURCE_FRESHNESS_TTL_MS unless `force` is passed. Refresh is an explicit
+  // user action and may bypass the throttle, but never the "must be open"
+  // gate — a collapsed section still can't show the result.
+  const [sourceFreshness, setSourceFreshness] = useState<Record<string, SourceFreshnessEntry>>({});
+  const [pipelineControlsOpen, setPipelineControlsOpen] = useState(false);
+  const sourceFreshnessFetchedAtRef = useRef(0);
+
+  // `pipelineControlsOpen` is a dependency (not a ref read at call time) —
+  // reading a ref's `.current` during render is disallowed (react-hooks/refs);
+  // closing over the state value via the dependency array gets the same
+  // "no-op while collapsed" behavior without that anti-pattern. This callback
+  // is only ever invoked from event handlers/effects (never during render),
+  // so a fresh identity on every `pipelineControlsOpen` change is cheap and
+  // safe — `useVisibilityPolling`'s cb-ref discipline means pollFetchStats's
+  // resulting identity churn never restarts that hook's interval/listener.
+  const fetchSourceFreshness = useCallback(async (opts?: { force?: boolean }) => {
+    if (!isAdmin || !pipelineControlsOpen) return;
+    const age = Date.now() - sourceFreshnessFetchedAtRef.current;
+    if (!opts?.force && sourceFreshnessFetchedAtRef.current !== 0 && age < SOURCE_FRESHNESS_TTL_MS) return;
+
+    // SCRUM-5044: count_public_records_by_source (used for `bySource` in
+    // fetchStats) is a periodically-refreshed cache of TOTAL counts only —
+    // no last-insert timestamp, no 30-day window — and there is no existing
+    // RPC for either, so per the spec this reads public_records directly
+    // rather than adding a migration or worker route. Both queries are
+    // backed by idx_public_records_source_created (source, created_at DESC)
+    // — a per-source head-count with a date filter and a per-source
+    // order-by-created_at-desc limit-1 — NOT the unindexed full-table scan
+    // that was previously ruled out for this table (see the "Fallback
+    // removed — direct public_records query times out on 1.4M rows" comment
+    // on the records-browser fallback below). Isolated per-source: one
+    // source's failed query renders "Freshness unavailable" for just that
+    // source rather than failing the whole page (byCredentialType pattern).
+    sourceFreshnessFetchedAtRef.current = Date.now();
+    try {
+      const cutoffIso = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
+      const results = await Promise.allSettled(DISTINCT_SOURCE_KEYS.map(async (key) => {
+        const [countRes, lastRes] = await Promise.all([
+          dbAny.from('public_records').select('id', { count: 'exact', head: true }).eq('source', key).gte('created_at', cutoffIso),
+          dbAny.from('public_records').select('created_at').eq('source', key).order('created_at', { ascending: false }).limit(1),
+        ]);
+        if (countRes?.error || lastRes?.error) {
+          throw new Error(countRes?.error?.message || lastRes?.error?.message || 'freshness query failed');
+        }
+        const lastInsertAt = Array.isArray(lastRes?.data) && lastRes.data[0]?.created_at
+          ? lastRes.data[0].created_at as string
+          : null;
+        const rows30d = typeof countRes?.count === 'number' ? countRes.count : null;
+        return { lastInsertAt, rows30d };
+      }));
+      const next: Record<string, SourceFreshnessEntry> = {};
+      results.forEach((r, i) => {
+        const key = DISTINCT_SOURCE_KEYS[i];
+        next[key] = r.status === 'fulfilled'
+          ? { lastInsertAt: r.value.lastInsertAt, rows30d: r.value.rows30d }
+          : { lastInsertAt: null, rows30d: null, error: r.reason instanceof Error ? r.reason.message : 'freshness query failed' };
+      });
+      setSourceFreshness(next);
+    } catch {
+      // Non-critical — the per-source isolation above already degrades
+      // individual sources to "Freshness unavailable"; a failure out here
+      // (e.g. Promise.allSettled itself throwing) just leaves the last-known
+      // (or empty) map in place rather than failing the whole page.
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- dbAny is a same-render `supabase as any` cast (stable underlying singleton), same convention as fetchStats's own empty-deps useCallback above.
+  }, [isAdmin, pipelineControlsOpen]);
+
+  // "once immediately on expand if the cached map is empty or older than 5
+  // minutes" — the empty/stale check lives inside fetchSourceFreshness
+  // itself (the timestamp guard), so expanding just asks it to try.
+  useEffect(() => {
+    if (isAdmin && pipelineControlsOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- deliberate: expanding the section is exactly the "external signal" fetchSourceFreshness's own throttle/open guard is designed to answer; it no-ops instantly when collapsed or still fresh.
+      fetchSourceFreshness();
+    }
+  }, [isAdmin, pipelineControlsOpen, fetchSourceFreshness]);
+
   // SCRUM-1260 (R1-6): visibility-aware polling so backgrounded admin tabs
   // don't hammer the worker /api/admin/pipeline-stats route on a 30s clock.
   // Centralised in useVisibilityPolling — see the hook for the contract.
   // We pass a no-op when !isAdmin so the hook's mount-time fire is harmless;
   // the `loading=false` for non-admins is set in a separate effect below.
+  // The unforced fetchSourceFreshness() riding along here is the "b)
+  // opportunistic" trigger described above — a no-op whenever the section is
+  // collapsed or the 5-minute throttle hasn't elapsed.
   const pollFetchStats = useCallback(async () => {
     if (!isAdmin) return;
     await fetchStats();
-  }, [isAdmin, fetchStats]);
+    fetchSourceFreshness();
+  }, [isAdmin, fetchStats, fetchSourceFreshness]);
   useVisibilityPolling(pollFetchStats, 30_000);
 
   useEffect(() => {
@@ -724,8 +772,11 @@ export function PipelineAdminPage() {
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchStats().finally(() => setRefreshing(false));
-  }, [fetchStats]);
+    // Manual refresh is an explicit user action: bypass the 5-minute
+    // freshness throttle (force: true) — but fetchSourceFreshness still
+    // no-ops when the section is collapsed, since nobody could see the result.
+    Promise.all([fetchStats(), fetchSourceFreshness({ force: true })]).finally(() => setRefreshing(false));
+  }, [fetchStats, fetchSourceFreshness]);
 
   const [triggerStatus, setTriggerStatus] = useState<Record<string, JobRunStatus>>({});
   const [triggerMessages, setTriggerMessages] = useState<Record<string, string>>({});
@@ -1360,7 +1411,7 @@ export function PipelineAdminPage() {
         </CollapsibleSection>
 
         {/* Pipeline Controls — grouped by category, fully data-driven (SCRUM-5044/5045) */}
-        <CollapsibleSection title="Pipeline Controls" defaultOpen={false}>
+        <CollapsibleSection title="Pipeline Controls" defaultOpen={false} open={pipelineControlsOpen} onOpenChange={setPipelineControlsOpen}>
           <div className="space-y-5">
             {PIPELINE_JOB_GROUPS.map(({ heading, jobs }) => (
               <div key={heading}>
@@ -1373,7 +1424,7 @@ export function PipelineAdminPage() {
                       status={triggerStatus}
                       messages={triggerMessages}
                       onTrigger={triggerJob}
-                      freshness={aggregateSourceFreshness(stats?.sourceFreshness ?? {}, job.sourceKey)}
+                      freshness={aggregateSourceFreshness(sourceFreshness, job.sourceKey)}
                     />
                   ))}
                 </div>
@@ -1909,19 +1960,34 @@ export function PipelineAdminPage() {
   );
 }
 
-function CollapsibleSection({ title, icon, defaultOpen = false, badge, children }: {
+function CollapsibleSection({ title, icon, defaultOpen = false, badge, children, open: openProp, onOpenChange }: {
   title: string;
   icon?: React.ReactNode;
   defaultOpen?: boolean;
   badge?: string;
   children: React.ReactNode;
+  /**
+   * Optional controlled open state (coordinator follow-up to SCRUM-5044): the
+   * Pipeline Controls instance lifts its open state to the parent so the
+   * per-source freshness fetch can be gated on it. Every other
+   * CollapsibleSection usage omits these props and stays fully uncontrolled,
+   * exactly as before.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = openProp ?? internalOpen;
+  const toggle = () => {
+    const next = !open;
+    if (openProp === undefined) setInternalOpen(next);
+    onOpenChange?.(next);
+  };
   return (
     <Card className="border-[#00d4ff]/10 bg-transparent">
       <CardHeader
         className="cursor-pointer select-none hover:bg-[#00d4ff]/5 transition-colors"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
       >
         <CardTitle className="text-base flex items-center gap-2">
           {icon}
