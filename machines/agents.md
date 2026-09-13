@@ -319,6 +319,16 @@ The original `agentPassport.machine.ts` prose claimed graph equivalence but omit
 
 The current `agentKeyAuthority.machine.ts` removes the retired compensating-cleanup path: admission now commits agent, key and audits in one transaction. The remaining direct-mint/PATCH model passes at 20 states / 32 edges. New `passportAdmission.machine.ts` models absent-row serialization, two organizations, terminal provider authority, rollback, unknown responses and mandatory audits; its PR proof and graph equivalence pass at 525 states / 1681 edges. Five negative controls reproduce missing sentinel locks, global-revocation bypass, missing audits, late mint and stale PATCH. These are bounded design proofs with real SQL tests, not generated runtime adapters.
 
+## subOrgAffiliationLifecycle.machine.ts (SCRUM-3971, review U1)
+
+- Models `parent_approval_status` x `suspended` x "still holds parent credits", per child, and the five transitions that move them: `request` (JWT child-side), `approve`, `revoke`, `allocate`, `offboard`. Written during the CTO review of PR #2844 because that PR introduced a per-ACTION child predicate set and had no formal model of it.
+- Verified 2026-09-12: `proofPassed: true`, `equivalent: true`, 49 distinct states, depth 11. Invariants `noCreditsStrandedInASuspendedAffiliate`, `creditsOnlyOnRealAffiliates`, `affiliateCapNeverExceeded`, `suspensionImpliesAffiliationHistory`.
+- **TLC disproved the first draft's cap guard in five steps.** It was written `count(APPROVED) <= CAP`; `resolveSubOrgCap` returns `ok: current < limit`. `approve(c1)` then `approve(c2)` both passed the guard because the count was still within the cap when each was checked, and `affiliateCapNeverExceeded` fell over. The guard is `count(APPROVED) <= CAP - 1`. An off-by-one in a cap guard is the shape this machine exists to catch and it caught one in its own first draft.
+- **`request` accepts REVOKED -> PENDING, not just NONE -> PENDING.** Without it REVOKED is terminal and `approve`'s PENDING-only predicate is a trap rather than a transition. This matches the code comment: re-approving a revoked affiliation "is a new decision that goes through request again".
+- **Reachability of the wind-down is NOT asserted and cannot be.** That is a liveness/enabledness claim: a child that is APPROVED and suspended is a legitimate state for the instant between `offboard` and `revoke`, so no state invariant can forbid it. What the file pins instead is the exact guard set — narrow `revoke` to exclude suspended children, or `offboard` to demand APPROVED, and the guards here stop matching the code. The two documented orders are covered empirically in `services/worker/src/api/v1/orgSubOrgsApiKey.test.ts`.
+- Authority (`_suborg_api_key_authorized`, the `FOR UPDATE` compare-and-set) is out of scope — actor identity is not in this state. Pinned by `src/tests/sec-0453-suborg-api-key-authority.test.ts`.
+- Documentation-only, like `subOrgListingConsent`: no `runtimeAdapter`. These columns live on `organizations`, a table this machine does not own.
+
 ## subOrgListingConsent.machine.ts (SCRUM-3864)
 
 - Models the two-party listing-consent lifecycle added by migration `0429`: `parentOf`, `parentOptin`, `childOptin` per org. Proves that a consent pair can never outlive the affiliation it was given for — the failure that would publish an edge nobody agreed to.

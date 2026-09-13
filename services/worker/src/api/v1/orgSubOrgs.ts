@@ -20,8 +20,12 @@ import { sendEmail } from '../../email/sender.js';
 import { buildInvitationEmail } from '../../email/templates.js';
 import { logger } from '../../utils/logger.js';
 import { db as _db } from '../../utils/db.js';
-import { isCallerOrgAdminResult } from '../_org-auth.js';
 import { callRpc } from '../../utils/rpc.js';
+import {
+  resolveParentAdminOrg,
+  subOrgAuditActor,
+  type SubOrgCaller,
+} from './orgSubOrgsCaller.js';
 
 // Sub-org columns from migration 0128 are not yet in generated types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,7 +63,20 @@ type CreateAffiliateOrgInput = z.infer<typeof CreateAffiliateOrgSchema>;
 interface RouteFailure {
   ok: false;
   status: number;
+  /**
+   * The human-readable half. The JWT dashboard mount sends this verbatim and
+   * has done since SCRUM-3865, so it is frozen there by its own consumers.
+   */
   error: string;
+  /**
+   * The machine-readable half (review U6). The API-key mount is a PUBLISHED,
+   * §1.8-frozen surface: an English sentence in `error` is not something an
+   * integration can branch on, and "Affiliated-organization limit reached (3 of
+   * 3)." would freeze a count into the contract. Every failure a key caller can
+   * reach carries a code; the key mount sends the code (and its own status for
+   * it) while the JWT mount keeps the prose and the status it has always sent.
+   */
+  code?: string;
 }
 
 interface RouteSuccess<T> {
@@ -96,16 +113,18 @@ interface AffiliateActionChildOrg {
   display_name: string;
 }
 
-interface AffiliateActionContext {
-  userId: string;
+export interface AffiliateActionContext {
+  caller: SubOrgCaller;
   orgId: string;
   childOrgId: string;
   childOrg: AffiliateActionChildOrg;
 }
 
-interface AffiliateActionSpec {
+export interface AffiliateActionSpec {
   targetStatus: 'APPROVED' | 'REVOKED';
   alreadyStatusError: string;
+  /** Machine code for `alreadyStatusError` on the published key surface (U6). */
+  alreadyStatusCode: 'already_approved' | 'already_revoked';
   updateFailureError: string;
   auditEventType: 'SUB_ORG_APPROVED' | 'SUB_ORG_REVOKED';
   auditVerb: 'Approved' | 'Revoked';
@@ -117,18 +136,18 @@ function routeSuccess<T>(value: T): RouteSuccess<T> {
   return { ok: true, value };
 }
 
-function routeFailure(status: number, error: string): RouteFailure {
-  return { ok: false, status, error };
+function routeFailure(status: number, error: string, code?: string): RouteFailure {
+  return code === undefined ? { ok: false, status, error } : { ok: false, status, error, code };
 }
 
 /** SCRUM-4467: distinguish definitive cap rejection from retryable write conflicts. */
 function subOrgCapWriteFailure(error: { code?: string; message?: string } | null): RouteFailure | null {
   if (error?.code === '23514' && error.message === 'sub_org_limit_reached') {
-    return routeFailure(409, 'sub_org_limit_reached');
+    return routeFailure(409, 'sub_org_limit_reached', 'sub_org_limit_reached');
   }
   // Lock waits and transaction conflicts are retryable, never successful writes.
   if (error?.code && ['55P03', '40001', '40P01'].includes(error.code)) {
-    return routeFailure(503, 'cap_check_unavailable');
+    return routeFailure(503, 'cap_check_unavailable', 'cap_check_unavailable');
   }
   return null;
 }
@@ -525,7 +544,12 @@ async function resolveAffiliateActionContext(
     return routeFailure(403, 'This organization is not affiliated with yours');
   }
 
-  return routeSuccess({ userId, orgId, childOrgId, childOrg });
+  return routeSuccess({
+    caller: { kind: 'user', userId, orgId },
+    orgId,
+    childOrgId,
+    childOrg,
+  });
 }
 
 function buildAffiliateStatusUpdate(status: AffiliateActionSpec['targetStatus']) {
@@ -544,7 +568,7 @@ async function updateAffiliateStatus(
   action: AffiliateActionSpec,
 ): Promise<RouteResult<void>> {
   if (context.childOrg.parent_approval_status === action.targetStatus) {
-    return routeFailure(400, action.alreadyStatusError);
+    return routeFailure(400, action.alreadyStatusError, action.alreadyStatusCode);
   }
 
   // D3 — the cap applies to BOTH paths that add a sub-org. Approving a pending
@@ -558,6 +582,7 @@ async function updateAffiliateStatus(
         cap.unavailable
           ? 'Could not verify the affiliated-organization limit. Try again.'
           : `Affiliated-organization limit reached (${cap.current} of ${cap.limit}).`,
+        cap.unavailable ? 'cap_check_unavailable' : 'sub_org_limit_reached',
       );
     }
   }
@@ -578,28 +603,108 @@ async function updateAffiliateStatus(
     const capFailure = subOrgCapWriteFailure(updateError);
     if (capFailure) return capFailure;
     logger.error({ error: updateError }, action.failureLog);
-    return routeFailure(500, action.updateFailureError);
+    return routeFailure(500, action.updateFailureError, 'status_update_failed');
   }
   if (!updatedOrg) {
-    return routeFailure(409, 'Affiliation changed. Refresh and try again.');
+    return routeFailure(409, 'Affiliation changed. Refresh and try again.', 'affiliation_changed');
   }
 
   return routeSuccess(undefined);
 }
 
+/**
+ * SCRUM-3971 (R13). `details` was a prose sentence — fine while the only actor
+ * was a logged-in user whose id sat in `actor_id`, useless once an API key can
+ * act: `audit_events.actor_id` is `REFERENCES public.profiles(id)`, so a key
+ * has nothing it can legally put there, and the sentence had nowhere to record
+ * which key acted. JSON with an `actor` block carries it.
+ *
+ * **Who actually reads `audit_events.details`** (grepped, review U5 — an earlier
+ * version of this comment named a `renderAuditDetails` fallback in
+ * `audit-export.ts`; no such symbol exists and `audit-export.ts` exports
+ * ANCHORS, not audit events):
+ *
+ *   - `audit/cloud-logging-sink.ts:127` `safeParseDetails` — `JSON.parse` with a
+ *     `{ raw }` fallback, so it handles both shapes. Prose rows keep flowing.
+ *   - `api/account-export.ts:126` — the GDPR subject-access export selects
+ *     `details` and emits it VERBATIM, with no parse. A user's own export
+ *     therefore now shows a JSON string rather than an English sentence for the
+ *     four `SUB_ORG_*` events they authored. Accepted and documented: the
+ *     export is a faithful copy of the stored column, the JSON is
+ *     self-describing, and it carries strictly MORE than the sentence did.
+ *     Key-driven rows have `actor_id = NULL` and so never appear in any user's
+ *     subject-access export at all.
+ *
+ * Historical prose rows are left exactly as they are.
+ *
+ * **The insert error is NOT discarded (review U4).** It used to be: the write
+ * was fire-and-forget, so approve/revoke answered 200 with no audit record
+ * whenever the insert failed. On the key path that is worse than on the JWT
+ * path — `actor_id` is NULL by construction there, so `details.actor` is the
+ * only attribution that exists. A failure now answers `500 audit_write_failed`
+ * on BOTH mounts. The status change is already committed at that point and
+ * cannot be undone from here, so the error names the audit write specifically
+ * rather than pretending the action failed; a retry is safe and answers
+ * `already_approved` / `already_revoked`.
+ */
 async function auditAffiliateStatus(
   context: AffiliateActionContext,
   action: AffiliateActionSpec,
-): Promise<void> {
-  await db.from('audit_events').insert({
-    actor_id: context.userId,
+): Promise<RouteResult<void>> {
+  const { actorId, actor } = subOrgAuditActor(context.caller);
+  const { error: auditError } = await db.from('audit_events').insert({
+    actor_id: actorId,
     event_type: action.auditEventType,
     event_category: 'ORG',
     target_type: 'organization',
     target_id: context.childOrgId,
     org_id: context.orgId,
-    details: `${action.auditVerb} sub-org affiliation: ${context.childOrg.display_name}`,
+    details: JSON.stringify({
+      action: action.auditVerb.toLowerCase(),
+      summary: `${action.auditVerb} sub-org affiliation: ${context.childOrg.display_name}`,
+      parent_org_id: context.orgId,
+      child_org_id: context.childOrgId,
+      child_display_name: context.childOrg.display_name,
+      actor,
+    }),
   });
+
+  if (auditError) {
+    // The status HAS already changed — this is a separate statement, not the
+    // same transaction, and there is nothing to roll back into. Reporting 200
+    // anyway would be the worse answer: on the key path `actor_id` is NULL by
+    // construction, so `details.actor` is the ONLY record of which key acted,
+    // and a silently-missing row is an affiliation that changed with no
+    // attributable actor at all. 0453's `suspend_suborg_as_api_key` makes the
+    // same call the only way SQL can — it fails the transaction.
+    logger.error(
+      { error: auditError, orgId: context.orgId, childOrgId: context.childOrgId, event: action.auditEventType },
+      'suborg_status_audit_write_failed',
+    );
+    return routeFailure(500, 'audit_write_failed', 'audit_write_failed');
+  }
+
+  return routeSuccess(undefined);
+}
+
+/**
+ * The approve / revoke transition, shared by the JWT mount and the API-key
+ * mount (SCRUM-3971 R9). Everything mount-specific — how the caller was
+ * identified, how the child was named, what the response looks like — stays
+ * with the mount; the compare-and-set write and its audit row live here once.
+ */
+export async function applyAffiliateStatusAction(
+  context: AffiliateActionContext,
+  action: AffiliateActionSpec,
+): Promise<RouteResult<void>> {
+  const updateResult = await updateAffiliateStatus(context, action);
+  if (!updateResult.ok) return updateResult;
+
+  const auditResult = await auditAffiliateStatus(context, action);
+  if (!auditResult.ok) return auditResult;
+
+  logger.info({ orgId: context.orgId, childOrgId: context.childOrgId }, action.successLog);
+  return routeSuccess(undefined);
 }
 
 async function handleAffiliateStatusAction(
@@ -620,14 +725,12 @@ async function handleAffiliateStatusAction(
       return;
     }
 
-    const updateResult = await updateAffiliateStatus(context.value, action);
-    if (!updateResult.ok) {
-      res.status(updateResult.status).json({ error: updateResult.error });
+    const actionResult = await applyAffiliateStatusAction(context.value, action);
+    if (!actionResult.ok) {
+      res.status(actionResult.status).json({ error: actionResult.error });
       return;
     }
 
-    await auditAffiliateStatus(context.value, action);
-    logger.info({ orgId: context.value.orgId, childOrgId: context.value.childOrgId }, action.successLog);
     res.json({ status: action.targetStatus, childOrgId: context.value.childOrgId });
   } catch (error) {
     logger.error({ error }, action.failureLog);
@@ -635,9 +738,10 @@ async function handleAffiliateStatusAction(
   }
 }
 
-const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
+export const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
   targetStatus: 'APPROVED',
   alreadyStatusError: 'Organization is already approved',
+  alreadyStatusCode: 'already_approved',
   updateFailureError: 'Failed to approve organization',
   auditEventType: 'SUB_ORG_APPROVED',
   auditVerb: 'Approved',
@@ -645,9 +749,10 @@ const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
   failureLog: 'Failed to approve sub-org',
 };
 
-const REVOKE_AFFILIATE_ACTION: AffiliateActionSpec = {
+export const REVOKE_AFFILIATE_ACTION: AffiliateActionSpec = {
   targetStatus: 'REVOKED',
   alreadyStatusError: 'Affiliation is already revoked',
+  alreadyStatusCode: 'already_revoked',
   updateFailureError: 'Failed to revoke affiliation',
   auditEventType: 'SUB_ORG_REVOKED',
   auditVerb: 'Revoked',
@@ -966,7 +1071,14 @@ orgSubOrgsRouter.post('/request', async (req: Request, res: Response) => {
       target_type: 'organization',
       target_id: parentOrgId,
       org_id: orgId,
-      details: `Requested affiliation with ${parentOrg.display_name}`,
+      details: JSON.stringify({
+        action: 'requested',
+        summary: `Requested affiliation with ${parentOrg.display_name}`,
+        parent_org_id: parentOrgId,
+        child_org_id: orgId,
+        parent_display_name: parentOrg.display_name,
+        actor: subOrgAuditActor({ kind: 'user', userId, orgId }).actor,
+      }),
     });
 
     logger.info({ orgId, parentOrgId }, 'Sub-org affiliation requested');
@@ -1038,7 +1150,12 @@ orgSubOrgsRouter.post('/cancel', async (req: Request, res: Response) => {
       target_type: 'organization',
       target_id: orgId,
       org_id: orgId,
-      details: 'Cancelled pending affiliation request',
+      details: JSON.stringify({
+        action: 'cancelled',
+        summary: 'Cancelled pending affiliation request',
+        child_org_id: orgId,
+        actor: subOrgAuditActor({ kind: 'user', userId, orgId }).actor,
+      }),
     });
 
     logger.info({ orgId }, 'Sub-org affiliation request cancelled');
@@ -1119,15 +1236,33 @@ orgSubOrgsRouter.post('/max', async (req: Request, res: Response) => {
 // child really is a sub-org of that parent, so authorization does not depend on
 // this layer being correct.
 
-/** suspend_suborg error code -> HTTP status. Anything unlisted is a 500. */
+/**
+ * `suspend_suborg` / `suspend_suborg_as_api_key` error code -> HTTP status.
+ *
+ * Anything unlisted is `RPC_UNEXPECTED_STATUS` (502), NOT 500: an unmapped code
+ * is a structured refusal the RPC chose to return, so the request did not fail
+ * *here* — it was answered by an upstream we do not have a mapping for. A 500
+ * tells an integrator "retry, this is our bug"; a 502 tells them "the call was
+ * refused for a reason this version does not name", which is what actually
+ * happened and is what the key surface needs when SQL grows a new code before
+ * the worker learns it (review U7).
+ */
 const SUSPEND_RPC_STATUS: Record<string, number> = {
   unauthenticated: 401,
   parent_admin_required: 403,
   not_a_child_of_parent: 404,
+  // 0453. `api_keys.created_by` is NOT NULL, so this is unreachable for a key
+  // that exists; it fires only if that column ever becomes nullable. 503, not
+  // 403: the key IS authorized, the RPC just could not resolve the principal
+  // it must stamp on the row — an operational gap, and a retry is meaningful.
+  api_key_principal_unresolved: 503,
 };
 
+/** See SUSPEND_RPC_STATUS: an unmapped structured refusal is upstream, not ours. */
+const RPC_UNEXPECTED_STATUS = 502;
+
 /** Credits are whole units; the bound is a sanity rail, not a business limit. */
-const MAX_CREDIT_TRANSFER = 100_000_000;
+export const MAX_CREDIT_TRANSFER = 100_000_000;
 
 const AllocateCreditsSchema = z.object({
   childOrgId: z.string().uuid(),
@@ -1149,10 +1284,16 @@ interface AllocateCreditsRpcResult {
   error?: string;
 }
 
-interface CreditRollupRpcResult {
+export interface CreditRollupRpcResult {
   parent_org_id?: string;
   parent_balance?: number;
-  children?: { child_org_id: string; balance: number; monthly_allocation: number }[];
+  children?: {
+    child_org_id: string;
+    /** Added by migration 0453's `*_as_api_key` sibling; absent on the user overload. */
+    child_public_id?: string | null;
+    balance: number;
+    monthly_allocation: number;
+  }[];
   error?: string;
 }
 
@@ -1170,6 +1311,8 @@ const CREDIT_RPC_STATUS: Record<string, number> = {
   // unlike the anchor path nothing here is purchasable in the moment.
   insufficient_parent_balance: 409,
   insufficient_child_balance: 409,
+  // 0453 — see SUSPEND_RPC_STATUS for why this is a 503 (review U7).
+  api_key_principal_unresolved: 503,
 };
 
 /**
@@ -1183,6 +1326,11 @@ const CREDIT_RPC_STATUS: Record<string, number> = {
  * this resolved to would decide which balance a transfer debits. When the
  * caller is ambiguous we make them say which org, rather than guessing on a
  * money-moving path.
+ *
+ * The resolution itself now lives in `orgSubOrgsCaller.ts` so the JWT mount and
+ * the API-key mount cannot drift, and so the SCRUM-5031 profile-only ORG_ADMIN
+ * fix exists in one place. The status codes and bodies this route returns are
+ * unchanged.
  */
 async function requireParentAdmin(
   req: Request,
@@ -1195,61 +1343,206 @@ async function requireParentAdmin(
   }
 
   const requestedOrgId = typeof req.query.orgId === 'string' ? req.query.orgId : undefined;
-
-  // Explicit org: defer to the shared resolver rather than this file's local
-  // `getUserOrgInfo` + `isOrgAdmin` pair. `isCallerOrgAdminResult` carries the
-  // precedence rules the rest of the worker uses — org_members owner/admin,
-  // then the own-org-scoped profile `ORG_ADMIN` and platform-admin fallbacks —
-  // and distinguishes a DB fault from a definitive "not an admin" so a fault
-  // surfaces as 503 instead of masquerading as 403. The local pair silently
-  // drops both, which is exactly the drift `_org-auth.ts` exists to prevent;
-  // the RPC accepts legacy `ORG_ADMIN` too, so without this the route was the
-  // narrower gate.
-  if (requestedOrgId) {
-    const admin = await isCallerOrgAdminResult(userId, requestedOrgId);
-    if (admin.error) {
-      res.status(503).json({ error: 'membership_lookup_unavailable' });
-      return null;
-    }
-    if (!admin.value) {
-      res.status(403).json({ error: 'Admin permissions required' });
-      return null;
-    }
-    return { userId, orgId: requestedOrgId };
+  const resolved = await resolveParentAdminOrg(userId, requestedOrgId, db);
+  if (!resolved.ok) {
+    const body: Record<string, string> = { error: resolved.error };
+    if (resolved.message) body.message = resolved.message;
+    res.status(resolved.status).json(body);
+    return null;
   }
 
-  // No explicit org: the caller may administer several. The affiliate flow
-  // writes the parent admin into every child's `org_members` as `owner`, so a
-  // partner admin belongs to the parent AND to each client org, and whichever
-  // row we picked would decide which balance a transfer debits. Refuse rather
-  // than guess.
-  const { data: memberships, error } = await db
-    .from('org_members')
-    .select('org_id, role')
-    .eq('user_id', userId);
+  return { userId, orgId: resolved.value };
+}
+
+/**
+ * Which credit RPC a caller reaches, and with which identity argument.
+ *
+ * A user caller reaches migration 0430/0444's `p_caller_user_id` overload; an
+ * API-key caller reaches migration 0453's distinctly-named `*_as_api_key`
+ * sibling. NOT an overload of the same name (R2): PostgREST resolves overloads
+ * by argument NAMES, and two same-arity signatures differing only in the
+ * identity argument is an ambiguity waiting for the first caller that omits an
+ * optional argument.
+ */
+function creditRpcName(caller: SubOrgCaller): string {
+  return caller.kind === 'api_key'
+    ? 'allocate_credits_to_sub_org_as_api_key'
+    : 'allocate_credits_to_sub_org';
+}
+
+function callerRpcArg(caller: SubOrgCaller): Record<string, string> {
+  return caller.kind === 'api_key'
+    ? { p_caller_api_key_id: caller.apiKeyId }
+    : { p_caller_user_id: caller.userId };
+}
+
+export interface SubOrgCoreResponse {
+  status: number;
+  body: Record<string, unknown>;
+}
+
+/**
+ * Credit allocation, shared by both mounts (R9). Positive allocates, negative
+ * reclaims. `childOrgId` is already resolved and authorized as far as the route
+ * layer can — the RPC re-verifies parent authority under `FOR UPDATE`, which is
+ * where authority actually lives.
+ */
+export async function allocateSubOrgCreditsCore(
+  caller: SubOrgCaller,
+  childOrgId: string,
+  amount: number,
+  note: string | null,
+): Promise<SubOrgCoreResponse> {
+  const { data, error } = await callRpc<AllocateCreditsRpcResult>(db, creditRpcName(caller), {
+    p_parent_org_id: caller.orgId,
+    p_child_org_id: childOrgId,
+    p_amount: amount,
+    p_note: note,
+    ...callerRpcArg(caller),
+  });
 
   if (error) {
-    logger.error({ err: error.message }, 'suborg_credit_membership_lookup_failed');
-    res.status(503).json({ error: 'membership_lookup_unavailable' });
-    return null;
+    logger.error({ err: error.message, orgId: caller.orgId }, 'suborg_credit_allocation_rpc_failure');
+    return { status: 503, body: { error: 'credit_allocation_unavailable' } };
   }
 
-  const adminOrgs = (memberships ?? []).filter(
-    (m: { role: string | null }) => isOrgAdmin(m.role),
+  if (!data || data.error) {
+    const code = data?.error ?? 'unknown_error';
+    return { status: CREDIT_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS, body: { error: code } };
+  }
+
+  logger.info(
+    { orgId: caller.orgId, childOrgId, amount, actorKind: caller.kind },
+    amount > 0 ? 'suborg_credits_allocated' : 'suborg_credits_reclaimed',
   );
 
-  if (adminOrgs.length === 0) {
-    res.status(403).json({ error: 'Admin permissions required' });
-    return null;
+  return {
+    status: 200,
+    body: {
+      parentBalance: data.parent_balance,
+      childBalance: data.child_balance,
+      amount,
+    },
+  };
+}
+
+/** Raw rollup rows for either mount; each mount applies its own serializer. */
+export async function subOrgCreditRollupCore(
+  caller: SubOrgCaller,
+): Promise<{ status: number; body?: Record<string, unknown>; rollup?: CreditRollupRpcResult }> {
+  const rpcName = caller.kind === 'api_key'
+    ? 'get_parent_credit_rollup_as_api_key'
+    : 'get_parent_credit_rollup';
+
+  const { data, error } = await callRpc<CreditRollupRpcResult>(db, rpcName, {
+    p_parent_org_id: caller.orgId,
+    ...callerRpcArg(caller),
+  });
+
+  if (error) {
+    logger.error({ err: error.message, orgId: caller.orgId }, 'suborg_credit_rollup_rpc_failure');
+    return { status: 503, body: { error: 'credit_rollup_unavailable' } };
   }
-  if (adminOrgs.length > 1) {
-    res.status(400).json({
-      error: 'org_id_required',
-      message: 'You administer more than one organization. Specify which one with ?orgId=.',
-    });
-    return null;
+
+  if (!data || data.error) {
+    const code = data?.error ?? 'unknown_error';
+    return { status: CREDIT_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS, body: { error: code } };
   }
-  return { userId, orgId: adminOrgs[0].org_id };
+
+  return { status: 200, rollup: data };
+}
+
+/**
+ * Offboarding, shared by both mounts (R9).
+ *
+ * ORDER IS THE DESIGN: reclaim, then suspend. If the suspend fails after a
+ * successful reclaim the credits are safely back with the parent and the
+ * sub-org is merely still active, so a retry finishes the job. Suspending first
+ * would strand the parent's credits inside an org nobody can act in.
+ */
+export async function offboardSubOrgCore(
+  caller: SubOrgCaller,
+  childOrgId: string,
+  reason: string | null,
+): Promise<SubOrgCoreResponse> {
+  // What is left to return? Read before moving anything: a balance we cannot
+  // read is a reclaim we cannot size, and guessing would either strand
+  // credits or attempt an over-reclaim the RPC would refuse anyway.
+  const { data: credits, error: creditsError } = await db
+    .from('org_credits')
+    .select('balance')
+    .eq('org_id', childOrgId)
+    .maybeSingle();
+
+  if (creditsError) {
+    logger.error({ err: creditsError.message, childOrgId }, 'suborg_offboard_balance_read_failed');
+    return { status: 503, body: { error: 'balance_lookup_unavailable' } };
+  }
+
+  const balance: number = credits?.balance ?? 0;
+  let reclaimed = 0;
+
+  if (balance > 0) {
+    const { data: reclaimData, error: reclaimError } = await callRpc<AllocateCreditsRpcResult>(
+      db,
+      creditRpcName(caller),
+      {
+        p_parent_org_id: caller.orgId,
+        p_child_org_id: childOrgId,
+        p_amount: -balance,
+        p_note: reason ? `offboarding: ${reason}` : 'offboarding',
+        ...callerRpcArg(caller),
+      },
+    );
+
+    if (reclaimError) {
+      logger.error({ err: reclaimError.message, childOrgId }, 'suborg_offboard_reclaim_rpc_failure');
+      return { status: 503, body: { error: 'credit_allocation_unavailable' } };
+    }
+    if (!reclaimData || reclaimData.error) {
+      // Stop here. Suspending an org whose credits we failed to reclaim
+      // strands them somewhere nobody can spend or recover them.
+      const code = reclaimData?.error ?? 'unknown_error';
+      return {
+        status: CREDIT_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS,
+        body: { error: code, reclaimed: 0, suspended: false },
+      };
+    }
+    reclaimed = balance;
+  }
+
+  const suspendRpc = caller.kind === 'api_key' ? 'suspend_suborg_as_api_key' : 'suspend_suborg';
+  const { data: suspendData, error: suspendError } = await callRpc<SuspendRpcResult>(db, suspendRpc, {
+    p_parent_org_id: caller.orgId,
+    p_sub_org_id: childOrgId,
+    p_reason: reason,
+    ...callerRpcArg(caller),
+  });
+
+  if (suspendError) {
+    logger.error({ err: suspendError.message, childOrgId, reclaimed }, 'suborg_offboard_suspend_rpc_failure');
+    return { status: 503, body: { error: 'suspend_unavailable', reclaimed, suspended: false } };
+  }
+  if (!suspendData || suspendData.success !== true) {
+    // The reclaim already happened. Say so — a retry is safe, but only if the
+    // caller knows not to expect the credits to move a second time.
+    const code = suspendData?.error ?? 'unknown_error';
+    logger.warn({ childOrgId, reclaimed, code }, 'suborg_offboard_partial');
+    return {
+      status: SUSPEND_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS,
+      body: { error: code, reclaimed, suspended: false },
+    };
+  }
+
+  logger.info({ orgId: caller.orgId, childOrgId, reclaimed, actorKind: caller.kind }, 'suborg_offboarded');
+  return {
+    status: 200,
+    body: {
+      reclaimed,
+      suspended: true,
+      alreadySuspended: suspendData.already_suspended === true,
+    },
+  };
 }
 
 orgSubOrgsRouter.post('/credits', async (req: Request, res: Response) => {
@@ -1267,37 +1560,13 @@ orgSubOrgsRouter.post('/credits', async (req: Request, res: Response) => {
     }
 
     const { childOrgId, amount, note } = parsed.data;
-
-    const { data, error } = await callRpc<AllocateCreditsRpcResult>(db, 'allocate_credits_to_sub_org', {
-      p_parent_org_id: ctx.orgId,
-      p_child_org_id: childOrgId,
-      p_amount: amount,
-      p_note: note ?? null,
-      p_caller_user_id: ctx.userId,
-    });
-
-    if (error) {
-      logger.error({ err: error.message, orgId: ctx.orgId }, 'suborg_credit_allocation_rpc_failure');
-      res.status(503).json({ error: 'credit_allocation_unavailable' });
-      return;
-    }
-
-    if (!data || data.error) {
-      const code = data?.error ?? 'unknown_error';
-      res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code });
-      return;
-    }
-
-    logger.info(
-      { orgId: ctx.orgId, childOrgId, amount },
-      amount > 0 ? 'suborg_credits_allocated' : 'suborg_credits_reclaimed',
-    );
-
-    res.json({
-      parentBalance: data.parent_balance,
-      childBalance: data.child_balance,
+    const result = await allocateSubOrgCreditsCore(
+      { kind: 'user', userId: ctx.userId, orgId: ctx.orgId },
+      childOrgId,
       amount,
-    });
+      note ?? null,
+    );
+    res.status(result.status).json(result.body);
   } catch (error) {
     logger.error({ error }, 'Failed to allocate sub-org credits');
     res.status(500).json({ error: 'Internal server error' });
@@ -1309,28 +1578,17 @@ orgSubOrgsRouter.get('/credits', async (req: Request, res: Response) => {
     const ctx = await requireParentAdmin(req, res);
     if (!ctx) return;
 
-    const { data, error } = await callRpc<CreditRollupRpcResult>(db, 'get_parent_credit_rollup', {
-      p_parent_org_id: ctx.orgId,
-      p_caller_user_id: ctx.userId,
-    });
-
-    if (error) {
-      logger.error({ err: error.message, orgId: ctx.orgId }, 'suborg_credit_rollup_rpc_failure');
-      res.status(503).json({ error: 'credit_rollup_unavailable' });
-      return;
-    }
-
-    if (!data || data.error) {
-      const code = data?.error ?? 'unknown_error';
-      res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code });
+    const result = await subOrgCreditRollupCore({ kind: 'user', userId: ctx.userId, orgId: ctx.orgId });
+    if (!result.rollup) {
+      res.status(result.status).json(result.body ?? { error: 'unknown_error' });
       return;
     }
 
     // Balances only. Per decision D2 a parent sees what its sub-orgs SPEND,
     // never what they secured — no record contents cross the boundary.
     res.json({
-      parentBalance: data.parent_balance,
-      children: (data.children ?? []).map(
+      parentBalance: result.rollup.parent_balance,
+      children: (result.rollup.children ?? []).map(
         (c) => ({
           childOrgId: c.child_org_id,
           balance: c.balance,
@@ -1388,83 +1646,12 @@ orgSubOrgsRouter.post('/offboard', async (req: Request, res: Response) => {
     }
     const { childOrgId, reason } = parsed.data;
 
-    // What is left to return? Read before moving anything: a balance we cannot
-    // read is a reclaim we cannot size, and guessing would either strand
-    // credits or attempt an over-reclaim the RPC would refuse anyway.
-    const { data: credits, error: creditsError } = await db
-      .from('org_credits')
-      .select('balance')
-      .eq('org_id', childOrgId)
-      .maybeSingle();
-
-    if (creditsError) {
-      logger.error({ err: creditsError.message, childOrgId }, 'suborg_offboard_balance_read_failed');
-      res.status(503).json({ error: 'balance_lookup_unavailable' });
-      return;
-    }
-
-    const balance: number = credits?.balance ?? 0;
-    let reclaimed = 0;
-
-    if (balance > 0) {
-      const { data: reclaimData, error: reclaimError } = await callRpc<AllocateCreditsRpcResult>(
-        db,
-        'allocate_credits_to_sub_org',
-        {
-          p_parent_org_id: ctx.orgId,
-          p_child_org_id: childOrgId,
-          p_amount: -balance,
-          p_note: reason ? `offboarding: ${reason}` : 'offboarding',
-          p_caller_user_id: ctx.userId,
-        },
-      );
-
-      if (reclaimError) {
-        logger.error({ err: reclaimError.message, childOrgId }, 'suborg_offboard_reclaim_rpc_failure');
-        res.status(503).json({ error: 'credit_allocation_unavailable' });
-        return;
-      }
-      if (!reclaimData || reclaimData.error) {
-        // Stop here. Suspending an org whose credits we failed to reclaim
-        // strands them somewhere nobody can spend or recover them.
-        const code = reclaimData?.error ?? 'unknown_error';
-        res.status(CREDIT_RPC_STATUS[code] ?? 500).json({ error: code, reclaimed: 0, suspended: false });
-        return;
-      }
-      reclaimed = balance;
-    }
-
-    const { data: suspendData, error: suspendError } = await callRpc<SuspendRpcResult>(
-      db,
-      'suspend_suborg',
-      {
-        p_parent_org_id: ctx.orgId,
-        p_sub_org_id: childOrgId,
-        p_reason: reason ?? null,
-        p_caller_user_id: ctx.userId,
-      },
+    const result = await offboardSubOrgCore(
+      { kind: 'user', userId: ctx.userId, orgId: ctx.orgId },
+      childOrgId,
+      reason ?? null,
     );
-
-    if (suspendError) {
-      logger.error({ err: suspendError.message, childOrgId, reclaimed }, 'suborg_offboard_suspend_rpc_failure');
-      res.status(503).json({ error: 'suspend_unavailable', reclaimed, suspended: false });
-      return;
-    }
-    if (!suspendData || suspendData.success !== true) {
-      // The reclaim already happened. Say so — a retry is safe, but only if the
-      // caller knows not to expect the credits to move a second time.
-      const code = suspendData?.error ?? 'unknown_error';
-      logger.warn({ childOrgId, reclaimed, code }, 'suborg_offboard_partial');
-      res.status(SUSPEND_RPC_STATUS[code] ?? 500).json({ error: code, reclaimed, suspended: false });
-      return;
-    }
-
-    logger.info({ orgId: ctx.orgId, childOrgId, reclaimed }, 'suborg_offboarded');
-    res.json({
-      reclaimed,
-      suspended: true,
-      alreadySuspended: suspendData.already_suspended === true,
-    });
+    res.status(result.status).json(result.body);
   } catch (error) {
     logger.error({ error }, 'Failed to offboard sub-org');
     res.status(500).json({ error: 'Internal server error' });
