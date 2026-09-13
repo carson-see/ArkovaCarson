@@ -147,12 +147,18 @@ export interface ResolveResponse {
   already_resolved: number;
 }
 
+// webhook_dlq.id is a `uuid` column (baseline migration). Validating shape
+// here means a malformed id 400s instead of reaching Postgres as a raw
+// filter value, where an invalid uuid literal raises `22P02` and surfaces
+// to the caller as an undifferentiated 500.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function isValidIdsArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
     value.length >= 1 &&
     value.length <= MAX_RESOLVE_IDS &&
-    value.every((v) => typeof v === 'string' && v.length > 0)
+    value.every((v) => typeof v === 'string' && UUID_RE.test(v))
   );
 }
 
@@ -179,7 +185,7 @@ export async function handleWebhookDlqResolve(userId: string, req: Request, res:
   const { ids, note } = (req.body ?? {}) as { ids?: unknown; note?: unknown };
 
   if (!isValidIdsArray(ids)) {
-    res.status(400).json({ error: `ids must be a non-empty array of strings, max ${MAX_RESOLVE_IDS}` });
+    res.status(400).json({ error: `ids must be a non-empty array of UUID strings, max ${MAX_RESOLVE_IDS}` });
     return;
   }
   if (typeof note !== 'string' || note.length === 0 || note.length > NOTE_MAX) {

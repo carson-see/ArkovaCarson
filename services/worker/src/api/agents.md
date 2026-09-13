@@ -1,5 +1,19 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-13 (CTO review, PR #2911) — `admin-webhook-dlq.ts` resolve now validates `ids` as UUIDs
+
+`isValidIdsArray` checked `typeof v === 'string' && v.length > 0` only — no shape check.
+`webhook_dlq.id` is a `uuid` column, so a non-UUID string in `ids` reached Postgres as a raw
+`.in('id', uniqueIds)` filter value, which Postgres 22P02-errors on an invalid uuid literal; the
+handler's generic `catch` then reported that as an undifferentiated `500` instead of the `400`
+every other malformed-input case in this handler gets. Fixed with a `UUID_RE` shape check ahead
+of the DB call, TDD (`admin-webhook-dlq.test.ts`'s "rejects a non-UUID id with 400" — red before,
+green after). All fixture ids across `admin-webhook-dlq.test.ts` and
+`routes/admin-webhook-dlq-route.test.ts` were non-UUID placeholders (`'r1'`, `'id-0'`, ...) and
+passed only because the old check accepted any non-empty string; they are now valid-format UUIDs
+so the suite still exercises real behavior instead of accidentally relying on the gap it was
+supposed to catch.
+
 ## 2026-09-13 — SCRUM-4514: `admin-webhook-dlq.ts` — inbound webhook DLQ visibility + resolve (CTO-revised same day)
 
 Shipped twice in one day. First cut: `handleWebhookDlqList` (GET) + `handleWebhookDlqReplay`

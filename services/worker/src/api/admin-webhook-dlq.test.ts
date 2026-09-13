@@ -50,6 +50,14 @@ function mockRes(): Response & { statusCode: number; body: unknown } {
 const ADMIN = 'admin-user-id';
 const NOTE = 'Resent via DocuSign Connect logs 2026-09-13; delivery confirmed 202.';
 
+/** Deterministic valid-format UUIDs for resolve-body fixtures (webhook_dlq.id is uuid). */
+function fixtureUuid(n: number): string {
+  return `11111111-1111-1111-1111-${String(n).padStart(12, '0')}`;
+}
+const ID_1 = fixtureUuid(1);
+const ID_2 = fixtureUuid(2);
+const ID_MISSING = fixtureUuid(999); // valid UUID shape, matches no row
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsPlatformAdmin.mockResolvedValue(true);
@@ -174,13 +182,13 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
 
   it('resolves unresolved rows and returns resolved count, already_resolved 0', async () => {
     const rows = [
-      { id: 'r1', resolved_at: null },
-      { id: 'r2', resolved_at: null },
+      { id: ID_1, resolved_at: null },
+      { id: ID_2, resolved_at: null },
     ];
     mockFrom.mockImplementation(() => makeTable(rows)());
 
     const res = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r2'], note: NOTE }), res);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1, ID_2], note: NOTE }), res);
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ resolved: 2, already_resolved: 0 });
@@ -189,38 +197,38 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
 
   it('idempotency: calling resolve twice on the same ids reports already_resolved on the second call, never double-counts', async () => {
     const rows = [
-      { id: 'r1', resolved_at: null },
-      { id: 'r2', resolved_at: null },
+      { id: ID_1, resolved_at: null },
+      { id: ID_2, resolved_at: null },
     ];
     mockFrom.mockImplementation(() => makeTable(rows)());
 
     const first = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r2'], note: NOTE }), first);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1, ID_2], note: NOTE }), first);
     expect(first.body).toEqual({ resolved: 2, already_resolved: 0 });
 
     const second = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r2'], note: NOTE }), second);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1, ID_2], note: NOTE }), second);
     expect(second.body).toEqual({ resolved: 0, already_resolved: 2 });
   });
 
   it('mixed batch: some ids already resolved, some not — both counts correct in one call', async () => {
     const rows = [
-      { id: 'r1', resolved_at: new Date().toISOString() }, // already resolved
-      { id: 'r2', resolved_at: null }, // fresh
+      { id: ID_1, resolved_at: new Date().toISOString() }, // already resolved
+      { id: ID_2, resolved_at: null }, // fresh
     ];
     mockFrom.mockImplementation(() => makeTable(rows)());
 
     const res = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r2'], note: NOTE }), res);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1, ID_2], note: NOTE }), res);
     expect(res.body).toEqual({ resolved: 1, already_resolved: 1 });
   });
 
   it('an id that matches no row contributes to neither count', async () => {
-    const rows = [{ id: 'r1', resolved_at: null }];
+    const rows = [{ id: ID_1, resolved_at: null }];
     mockFrom.mockImplementation(() => makeTable(rows)());
 
     const res = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'does-not-exist'], note: NOTE }), res);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1, ID_MISSING], note: NOTE }), res);
     expect(res.body).toEqual({ resolved: 1, already_resolved: 0 });
   });
 
@@ -232,46 +240,54 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
   });
 
   it('rejects more than 100 ids with 400', async () => {
-    const ids = Array.from({ length: 101 }, (_, i) => `id-${i}`);
+    const ids = Array.from({ length: 101 }, (_, i) => fixtureUuid(i));
     const res = mockRes();
     await handleWebhookDlqResolve(ADMIN, mockReq({ ids, note: NOTE }), res);
     expect(res.statusCode).toBe(400);
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
+  it('rejects a non-UUID id with 400 (webhook_dlq.id is a uuid column — a malformed id would ' +
+    'otherwise reach Postgres as a raw filter value and 500 instead of 400)', async () => {
+    const res = mockRes();
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1, 'not-a-uuid'], note: NOTE }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-array ids field with 400', async () => {
     const res = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: 'r1', note: NOTE }), res);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ID_1, note: NOTE }), res);
     expect(res.statusCode).toBe(400);
   });
 
   it('rejects a missing note with 400', async () => {
     const res = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1'] }), res);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1] }), res);
     expect(res.statusCode).toBe(400);
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
   it('rejects a note over 500 chars with 400', async () => {
     const res = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1'], note: 'x'.repeat(501) }), res);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1], note: 'x'.repeat(501) }), res);
     expect(res.statusCode).toBe(400);
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
   it('accepts a note at exactly 500 chars', async () => {
-    const rows = [{ id: 'r1', resolved_at: null }];
+    const rows = [{ id: ID_1, resolved_at: null }];
     mockFrom.mockImplementation(() => makeTable(rows)());
     const res = mockRes();
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1'], note: 'x'.repeat(500) }), res);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1], note: 'x'.repeat(500) }), res);
     expect(res.statusCode).toBe(200);
   });
 
   it('never logs the note content, payload_hash, or reason — only ids/counts', async () => {
-    const rows = [{ id: 'r1', resolved_at: null }];
+    const rows = [{ id: ID_1, resolved_at: null }];
     mockFrom.mockImplementation(() => makeTable(rows)());
     const secretishNote = 'contact: jane.doe@example.com re: envelope 12345';
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1'], note: secretishNote }), mockRes());
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1], note: secretishNote }), mockRes());
 
     const allLoggedText = [...mockLogger.info.mock.calls, ...mockLogger.warn.mock.calls, ...mockLogger.error.mock.calls]
       .map((call) => JSON.stringify(call))
@@ -282,7 +298,7 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
   });
 
   it('de-duplicates repeated ids in the request before claiming', async () => {
-    const rows = [{ id: 'r1', resolved_at: null }];
+    const rows = [{ id: ID_1, resolved_at: null }];
     let capturedIds: string[] = [];
     mockFrom.mockImplementation(() => ({
       update: () => ({
@@ -297,7 +313,7 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
       }),
       select: () => ({ in: () => ({ not: () => ({ data: [], error: null }) }) }),
     }));
-    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: ['r1', 'r1', 'r1'], note: NOTE }), mockRes());
-    expect(capturedIds).toEqual(['r1']);
+    await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1, ID_1, ID_1], note: NOTE }), mockRes());
+    expect(capturedIds).toEqual([ID_1]);
   });
 });

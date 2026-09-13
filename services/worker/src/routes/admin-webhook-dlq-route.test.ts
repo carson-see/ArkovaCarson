@@ -128,12 +128,13 @@ describe('SCRUM-4514: GET/POST /api/admin/webhook-dlq* authz envelope', () => {
   });
 
   it('POST resolve: platform admin -> real 200 round-trip resolving a row', async () => {
+    const rowId = '11111111-1111-1111-1111-111111111111'; // webhook_dlq.id is uuid
     extractAuthUserIdMock.mockResolvedValue('platform-admin-id');
     isPlatformAdminMock.mockResolvedValue(true);
     mockFrom.mockImplementation(() => ({
       update: () => ({
         in: () => ({
-          is: () => ({ select: () => ({ data: [{ id: 'r1' }], error: null }) }),
+          is: () => ({ select: () => ({ data: [{ id: rowId }], error: null }) }),
         }),
       }),
       select: () => ({ in: () => ({ not: () => ({ data: [], error: null }) }) }),
@@ -141,7 +142,7 @@ describe('SCRUM-4514: GET/POST /api/admin/webhook-dlq* authz envelope', () => {
     const app = buildApp();
     const res = await request(app)
       .post('/api/admin/webhook-dlq/resolve')
-      .send({ ids: ['r1'], note: 'resent via DocuSign Connect logs' });
+      .send({ ids: [rowId], note: 'resent via DocuSign Connect logs' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ resolved: 1, already_resolved: 0 });
   });

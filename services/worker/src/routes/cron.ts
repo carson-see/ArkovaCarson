@@ -861,10 +861,13 @@ cronRouter.post('/webhook-retries', async (_req, res) => {
 
 // SCRUM-4514: report-only visibility for the inbound webhook_dlq backlog.
 // Never replays or resolves rows — that's the operator-triggered
-// POST /api/admin/webhook-dlq/replay endpoint (api/admin-webhook-dlq.ts).
-// This job exists so a growing DLQ is visible in logs/Sentry between
-// operator drain runs, per api/v1/webhooks/agents.md's "drained by nobody"
-// gap.
+// POST /api/admin/webhook-dlq/resolve endpoint (api/admin-webhook-dlq.ts).
+// CTO decision 2026-09-13: an earlier /replay endpoint was removed the same
+// day it shipped — Arkova does not retain raw webhook bodies, so nothing
+// here was ever server-side replayable (see api/admin-webhook-dlq.ts's
+// module doc comment). This job exists so a growing DLQ is visible in
+// logs/Sentry between operator drain runs, per api/v1/webhooks/agents.md's
+// "drained by nobody" gap.
 cronRouter.post('/webhook-dlq-report', async (_req, res) => {
   try {
     const result = await withCronMonitoring(
