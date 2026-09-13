@@ -22,6 +22,12 @@ and AAL; JWT rotation does not destroy enrollment state. New sign-ins and assura
 downgrades change the key. Unsupported/malformed/cross-user tokens retain their
 whole-token identity. This decoder is not signature verification or authorization.
 
+## 2026-09-11 — UAT-04 session hint
+
+`sessionHasAal2` is a browser routing hint that requires matching `sub`, `aal2`,
+and role `authenticated`. Signed-token verification and authorization remain at
+the worker, edge, Auth hook, PostgREST, and RLS boundaries.
+
 ## 2026-09-03 SCRUM-3167 — `mfaPolicy.ts` (new): MFA enforcement date policy
 
 New module, the single source of truth `AuthGuard`/`useMfaEnrollmentRequirement`/`MfaGraceNudge` all read for "is MFA required, and from when." Phase 1 is role-based only — see `src/components/auth/agents.md` and `src/hooks/agents.md`'s dated SCRUM-3167 entries for the full gate design; this entry covers the policy module itself.

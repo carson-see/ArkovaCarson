@@ -41,6 +41,7 @@ interface JwtPayload {
   exp?: number;
   iat?: number;
   role?: string;
+  aal?: string;
   email?: string;
   scope?: unknown;
   scopes?: unknown;
@@ -326,6 +327,9 @@ export async function verifySupabaseJwt(
 
   if (payload.role === 'arkova_email_pending') {
     return { ok: false, reason: 'email_confirmation_required' };
+  }
+  if (payload.role === 'arkova_mfa_pending' || payload.aal !== 'aal2') {
+    return { ok: false, reason: 'mfa_required' };
   }
 
   const now = nowSec ?? Math.floor(Date.now() / 1000);

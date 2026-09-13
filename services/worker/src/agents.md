@@ -262,6 +262,12 @@ When mocking Supabase rows in this suite, use columns the table actually has.
 - `anchor.status = 'SECURED'` is worker-only via service_role.
 
 
+## 2026-09-11 — UAT-04 human bearer tokens
+
+`verifyAuthToken` rejects verified human JWTs below AAL2 and both Arkova pending
+roles before route authorization. Service OIDC, webhook credentials, and API-key
+paths remain separate.
+
 ## 2026-09-10 — ComputeID historical review closure
 
 The current ComputeID mount is gate → per-IP limiter → shared `computeidWebhookBody` → receiver. The shared parser rejects suffix paths before buffering and maps oversize payloads to 413. Tests use this production middleware; disabled requests still return 503 before parsing. This supersedes the original global-bucket note above.
