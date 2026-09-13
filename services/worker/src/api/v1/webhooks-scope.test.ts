@@ -111,14 +111,14 @@ const API_KEY_BASE = {
  * state is irrelevant here): key → scope guard → router. The marker records
  * whether the guard passed control on.
  */
-function buildApp(scopes: string[] | null) {
+function buildApp(scopes: string[] | null, orgId: string = API_KEY_BASE.orgId) {
   const reached = { value: false };
   const app = express();
   app.use(express.json());
   app.use(
     '/api/v1/webhooks',
     (req: Request, _res, next) => {
-      if (scopes) req.apiKey = { ...API_KEY_BASE, scopes };
+      if (scopes) req.apiKey = { ...API_KEY_BASE, orgId, scopes };
       next();
     },
     requireScope('webhooks:manage'),
@@ -201,17 +201,21 @@ describe('SCRUM-3981 — router.ts actually mounts the guard', () => {
     // Cheapest check first: an unscoped flood is rejected before a DB-backed
     // key lookup is worth anything to the caller.
     //
-    // Slice to the END OF THE MOUNT STATEMENT, not to end-of-file: router.ts
-    // carries ten other `requireScope(` call sites, six of them BELOW this
-    // mount, so an open-ended slice finds one of those and the assertion holds
-    // even when this mount has no scope guard at all.
-    const start = routerSource.indexOf("router.use('/webhooks', ");
-    expect(start, "the broad '/webhooks' mount is no longer a single statement").toBeGreaterThan(-1);
-    const mount = routerSource.slice(start, routerSource.indexOf('\n', start));
+    // The statement is matched paren-balanced (same technique as
+    // `middleware/__tests__/phiScopeMount.test.ts` `mountStatement()`) rather
+    // than sliced open-ended: router.ts carries ten other `requireScope(` call
+    // sites, six of them BELOW this mount, so a slice to end-of-file finds one
+    // of those and this assertion holds even when the mount has no scope guard
+    // at all. Slicing to the next newline would fix that but break the day the
+    // mount wraps across lines, as four other mounts in router.ts already do.
+    const mount = routerSource.match(
+      /router\.use\((?:[^()]|\([^()]*\))*\bwebhooksRouter\b(?:[^()]|\([^()]*\))*\)/,
+    )?.[0];
+    expect(mount, 'no router.use(...) statement mounts webhooksRouter').toBeDefined();
 
     expect(mount).toContain('batchRateLimiter');
     expect(mount).toContain("requireScope('webhooks:manage')");
-    expect(mount.indexOf('batchRateLimiter')).toBeLessThan(mount.indexOf('requireScope('));
+    expect(mount!.indexOf('batchRateLimiter')).toBeLessThan(mount!.indexOf('requireScope('));
   });
 
   it('leaves the handler-level API-key check in webhooks.ts in place', () => {
@@ -258,22 +262,10 @@ describe('SCRUM-3981 — webhooks:manage is capability, not cross-org authority'
 
   it('answers 404 (not 403) when org B holds webhooks:manage and asks for org A’s endpoint', async () => {
     mockEndpointOwnedBy('org-A');
-    const reached = { value: false };
-    const app = express();
-    app.use(express.json());
-    app.use(
-      '/api/v1/webhooks',
-      (req: Request, _res, next) => {
-        req.apiKey = { ...API_KEY_BASE, orgId: 'org-B', scopes: ['webhooks:manage'] };
-        next();
-      },
-      requireScope('webhooks:manage'),
-      (_req, _res, next) => {
-        reached.value = true;
-        next();
-      },
-      webhooksRouter,
-    );
+    // Same mount as every other case — only the key's org differs, which is
+    // the whole point. Building it inline would put a second copy of the
+    // production chain in this file for one changed field.
+    const { app, reached } = buildApp(['webhooks:manage'], 'org-B');
 
     const res = await request(app).get(`/api/v1/webhooks/${ENDPOINT_ID}`);
 

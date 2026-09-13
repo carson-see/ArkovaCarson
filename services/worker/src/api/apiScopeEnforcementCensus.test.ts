@@ -37,7 +37,7 @@
  * about `/keys`. Counting that pairing as enforcement would have the census
  * certify exactly the documented-but-inert state it exists to detect.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -64,7 +64,7 @@ const KNOWN_UNENFORCED: Record<string, string> = {
   'anchor:read':
     'No mount requires it; scopeSatisfies maps verify -> anchor:read for a required side that does not exist yet. Anchor reads are public-projection routes gated by `verify`.',
   'attestations:write':
-    'router.ts mounts /attestations with no scope guard; the write handlers check only that an API key is present. Out of scope for SCRUM-3981 (webhooks only) — stated, not fixed.',
+    'router.ts mounts /attestations with no scope guard; the write handlers check only that an API key is present. A real gap, owned by SCRUM-3993 (the parent build subtask), not by this webhooks PR — stated, not fixed.',
   'attestations:read':
     'GET /attestations is public by design (attestations are a public verification registry, docs/api/README.md); scopeSatisfies maps verify -> attestations:read for a required side that does not exist.',
   'keys:read':
@@ -75,20 +75,41 @@ const KNOWN_UNENFORCED: Record<string, string> = {
 
 /** Every `.ts` file under services/worker/src that is not a test. */
 function sourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === 'dist') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const name = entry.name;
+    if (name === 'node_modules' || name === 'dist') continue;
+    const full = join(dir, name);
+    if (entry.isDirectory()) {
       sourceFiles(full, acc);
       continue;
     }
-    if (!entry.endsWith('.ts') || entry.endsWith('.test.ts') || entry.endsWith('.d.ts')) continue;
+    if (!name.endsWith('.ts') || name.endsWith('.test.ts') || name.endsWith('.d.ts')) continue;
     acc.push(full);
   }
   return acc;
 }
 
 const GUARD_CALL = /require(Scope|ScopeAnyAuth|ScopeV2)\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+/**
+ * The `.use(...)` mount statement enclosing a guard call, or just the line if
+ * the call is not inside one. Bounded lookback so a WRAPPED mount —
+ * `router.use(\n  '/keys',\n  requireAuth,\n  requireScope('keys:manage'),\n...`
+ * — is read as one statement; four mounts in router.ts are already wrapped,
+ * and a line-only test would silently stop discounting `/keys` the day it
+ * grows a fifth argument.
+ */
+function enclosingMount(lines: string[], index: number): string {
+  for (let i = index; i >= Math.max(0, index - 12); i -= 1) {
+    if (lines[i].includes('.use(')) return lines.slice(i, index + 1).join('\n');
+    // A route handler or a closed statement above us means we are not inside a
+    // mount; stop rather than reaching into the previous one.
+    if (i < index && /^\s*(?:\}|\);|(?:router|app)\.(?:get|post|patch|put|delete)\()/.test(lines[i])) {
+      break;
+    }
+  }
+  return lines[index];
+}
 
 /** Scope strings passed to a request-time scope guard, with where they were found. */
 function collectRequiredScopes(): Map<string, string[]> {
@@ -102,7 +123,7 @@ function collectRequiredScopes(): Map<string, string[]> {
         const [, variant, scope] = match;
         // API-key-only guard behind a JWT-only gate: enforces nothing. See the
         // header. `requireScopeAnyAuth` is the dual-mode guard and is exempt.
-        if (variant === 'Scope' && /\brequireAuth\b/.test(line)) continue;
+        if (variant === 'Scope' && /\brequireAuth\b/.test(enclosingMount(lines, index))) continue;
         const sites = found.get(scope) ?? [];
         sites.push(`${file.slice(WORKER_SRC.length + 1)}:${index + 1}`);
         found.set(scope, sites);
@@ -134,7 +155,8 @@ describe('API key scope vocabulary — enforcement census (SCRUM-3981)', () => {
     const stale = Object.keys(KNOWN_UNENFORCED).filter((scope) => required.has(scope));
     expect(
       stale,
-      `These scopes are now enforced — delete their KNOWN_UNENFORCED entries: ${stale.join(', ')}`,
+      'These scopes are now enforced — delete their KNOWN_UNENFORCED entries: ' +
+        stale.map((scope) => `${scope} (${required.get(scope)?.join(', ')})`).join('; '),
     ).toEqual([]);
   });
 
