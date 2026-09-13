@@ -508,8 +508,13 @@ nor the 403 body ever includes the header value or the configured secret — onl
 boolean `headerPresent`, and a keyed IP hash (`lib/ip-hash.ts`).
 
 **Allowlist is evidence-driven, not assumed.** `/health`, `/api/health`, `/jobs/*` (Cloud
-Scheduler — already CRON_SECRET/OIDC authenticated) and every `/webhooks/*` + `/api/v1/webhooks/*`
-inbound partner receiver bypass the guard in every mode. Three of those — DocuSign, Adobe Sign, and
+Scheduler — already CRON_SECRET/OIDC authenticated), every `/webhooks/*` receiver, and the two
+provably partner-inbound sub-paths `/api/v1/webhooks/drive` + `/api/v1/webhooks/ats` bypass the
+guard in every mode. **Not** the bare `/api/v1/webhooks` or `/api/v1/webhooks/self-service` —
+those are the customer-facing webhook-management API (`api/v1/router.ts:495,515`), gated on
+`webhooks:manage` scope or a dashboard JWT; an earlier draft of the allowlist swept them in by
+prefix and a CTO review caught it before the flag ever left `off`. Three of the true receivers —
+DocuSign, Adobe Sign, and
 the Google Drive `changes.watch` webhook — are **provably** registered against the bare run.app
 host: their registration URLs are built in code from `config.workerPublicUrl`
 (`integrations/oauth/docusign.ts`, `integrations/oauth/adobe-sign.ts`,

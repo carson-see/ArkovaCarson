@@ -60,7 +60,11 @@ pseudonymisation `verify.ts` already applies to anonymous public traffic).
 
 `isOriginGuardExemptPath()` (`middleware/requireCloudflareOrigin.ts`) bypasses
 the guard, case-insensitively, for path prefixes `/health`, `/api/health`,
-`/jobs`, `/webhooks`, and `/api/v1/webhooks`. Per-path evidence:
+`/jobs`, `/webhooks`, and the two provably partner-inbound sub-paths
+`/api/v1/webhooks/drive` and `/api/v1/webhooks/ats` — **not** the bare
+`/api/v1/webhooks` prefix, which is the customer-facing webhook-management
+API (CTO review, SCRUM-3888) and stays gated like the rest of `/api/v1`.
+Per-path evidence:
 
 | Path | Why exempt | Evidence |
 |---|---|---|

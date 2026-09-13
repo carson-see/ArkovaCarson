@@ -117,8 +117,26 @@ describe('isOriginGuardExemptPath — allowlist', () => {
     '/api/badge/pub-1',
     '/orgs/pub-1/did.json',
     '/.well-known/did.json',
+    // CTO review (SCRUM-3888): `/api/v1/webhooks` and `/api/v1/webhooks/self-service`
+    // are the CUSTOMER-facing webhook-management API (api/v1/router.ts:495,515
+    // — CRUD/test/replay/DLQ, gated on `webhooks:manage` scope or a dashboard
+    // JWT) — NOT an inbound partner webhook receiver. Only the two sub-paths
+    // that are provably registered against the bare run.app host (Drive,
+    // ATS) belong on this allowlist; the broad `/api/v1/webhooks` prefix
+    // swept these in by accident and let an authenticated, mutating surface
+    // bypass the origin check for no operational reason.
+    '/api/v1/webhooks',
+    '/api/v1/webhooks/self-service',
+    '/api/v1/webhooks/self-service/test',
   ])('%s is NOT exempt', (path) => {
     expect(isOriginGuardExemptPath(path)).toBe(false);
+  });
+
+  it.each([
+    '/api/v1/webhooks/drive',
+    '/api/v1/webhooks/ats/greenhouse/abc',
+  ])('%s (the actual partner-inbound sub-paths) is exempt', (path) => {
+    expect(isOriginGuardExemptPath(path)).toBe(true);
   });
 
   it('is case-insensitive, matching Express\'s default case-insensitive routing', () => {
@@ -132,6 +150,25 @@ describe('isOriginGuardExemptPath — allowlist', () => {
     expect(isOriginGuardExemptPath('/jobsxyz')).toBe(false);
     expect(isOriginGuardExemptPath('/api/v1/webhooksxyz')).toBe(false);
     expect(isOriginGuardExemptPath('/healthcheck')).toBe(false);
+  });
+
+  it('normalizes dot-segments before matching, so a traversal-shaped path cannot borrow an exemption meant for a different route', () => {
+    // CTO review (SCRUM-3888): Express itself never collapses `..` when
+    // matching mount paths (verified against the real express@5 router), so
+    // `isOriginGuardExemptPath` must normalize before comparing — otherwise
+    // a literal `/api/v1/webhooks/../keys` string starts with the
+    // `/api/v1/webhooks/` prefix and reads as an exempt partner webhook, even
+    // though its real target (`/api/v1/keys`) is the guarded API-key surface.
+    expect(isOriginGuardExemptPath('/api/v1/webhooks/../keys')).toBe(false);
+    expect(isOriginGuardExemptPath('/api/v1/webhooks/../../v1/anchor')).toBe(false);
+    // A traversal that resolves INTO a genuinely exempt path is still exempt
+    // — normalization must be consistent, not a blanket "any dot-segment
+    // fails closed" rule that would also break legitimate normalized callers.
+    expect(isOriginGuardExemptPath('/api/v1/webhooks/drive/../drive')).toBe(true);
+    // Repeated slashes collapse the same way `path.posix.normalize` collapses
+    // them everywhere else in Node — both forms land on the same real path.
+    expect(isOriginGuardExemptPath('//jobs/batch-anchor')).toBe(true);
+    expect(isOriginGuardExemptPath('/jobs//batch-anchor')).toBe(true);
   });
 });
 

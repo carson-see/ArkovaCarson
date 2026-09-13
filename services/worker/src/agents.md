@@ -19,10 +19,13 @@ field is registered in `middleware/flagRegistry.ts`'s boolean `ENV_FLAG_GETTERS`
 selector, not a flag — same precedent as `bitcoinFeeStrategy`), confirmed not to trip
 `scripts/ci/check-config-drift.ts`'s flag-inventory reconciliation.
 
-Allowlist (`/health`, `/api/health`, `/jobs/*`, `/webhooks/*`, `/api/v1/webhooks/*`) is
-evidence-driven — three webhook paths (DocuSign, Adobe Sign, Drive) are **provably** registered
-against the bare run.app host via `config.workerPublicUrl` in code; the rest are exempted
-conservatively for lack of registration-host evidence. Full inventory with citations, the rollout
+Allowlist (`/health`, `/api/health`, `/jobs/*`, `/webhooks/*`, `/api/v1/webhooks/drive`,
+`/api/v1/webhooks/ats`) is evidence-driven — three webhook paths (DocuSign, Adobe Sign, Drive) are
+**provably** registered against the bare run.app host via `config.workerPublicUrl` in code; the
+rest are exempted conservatively for lack of registration-host evidence. **Not** the bare
+`/api/v1/webhooks` prefix — that mount is the customer-facing webhook-management API
+(CRUD/self-service, `api/v1/router.ts:495,515`), not a partner receiver, and stays gated like the
+rest of `/api/v1` (CTO review correction, same date). Full inventory with citations, the rollout
 procedure (`off` → wire secret + Transform Rule → `observe` ≥24h → `enforce`), and the rollback
 (env-var flip to `off`, no redeploy): `docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`. See also
 `middleware/agents.md` (2026-09-13 entry) and `routes/agents.md` (2026-09-13 entry, the

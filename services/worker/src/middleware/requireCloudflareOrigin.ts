@@ -52,9 +52,10 @@
  *      shared-secret header, a platform-admin Supabase JWT, or a
  *      Google-signed OIDC bearer token). This guard must not add a second,
  *      redundant gate in front of an already-authenticated system caller.
- *   3. `/webhooks/*` and `/api/v1/webhooks/*` — every inbound partner webhook
- *      receiver. Three are PROVABLY registered directly against the run.app
- *      host, not `api.arkova.ai`: `integrations/oauth/docusign.ts`
+ *   3. `/webhooks/*` (bare) and the two provably-inbound sub-paths under
+ *      `/api/v1/webhooks/*` — every inbound partner webhook receiver. Three
+ *      are PROVABLY registered directly against the run.app host, not
+ *      `api.arkova.ai`: `integrations/oauth/docusign.ts`
  *      (`buildArkovaConnectConfig`), `integrations/oauth/adobe-sign.ts`, and
  *      `jobs/drive-subscription-renewal-deps.ts` (Drive `changes.watch`) all
  *      build their registered callback URL by concatenating
@@ -77,14 +78,27 @@
  *      moment `enforce` ships. ComputeID is the one exception with GOOD
  *      evidence the other way — `docs/partners/computeid-integration-guide.md`
  *      documents `POST https://api.arkova.ai/webhooks/computeid`, i.e.
- *      already Cloudflare-proxied — but it is still covered by this same
+ *      already Cloudflare-proxied — but it is still covered by the bare
  *      `/webhooks/*` prefix rather than carved out individually, because a
  *      narrower allowlist here would depend on an operator not changing that
  *      registration without also updating this file. See the runbook for the
  *      full per-path inventory table with evidence citations.
  *
+ *      IMPORTANT: `/api/v1/webhooks` (bare) and `/api/v1/webhooks/self-service`
+ *      are NOT on this exemption, despite the shared prefix. `api/v1/router.ts`
+ *      mounts those two as the CUSTOMER-facing webhook-management API — CRUD,
+ *      test-ping, replay, DLQ management, gated on `webhooks:manage` scope or
+ *      a dashboard JWT (SCRUM-3981). That surface is Arkova's own, called by
+ *      Arkova customers against `api.arkova.ai`, not a partner receiver
+ *      registered against run.app — an earlier draft of this allowlist
+ *      exempted the whole `/api/v1/webhooks` prefix and accidentally swept
+ *      this mutating, authenticated surface in with it (CTO review,
+ *      SCRUM-3888). Only the two literal sub-paths with run.app registration
+ *      evidence — `/api/v1/webhooks/drive` and `/api/v1/webhooks/ats` — are
+ *      exempt.
+ *
  * WHAT IS DELIBERATELY NOT EXEMPT. The REST surfaces this guard is FOR:
- * `/api/v1/*` (excluding the webhooks sub-path above) and `/api/v2/*`. Some
+ * `/api/v1/*` (excluding the webhook sub-paths above) and `/api/v2/*`. Some
  * partner documentation (`docs/api/README.md`, `docs/api/webhooks.md`,
  * `docs/api/openapi.yaml`) states the v1 base URL as the bare run.app host
  * rather than `api.arkova.ai` — that is exactly the customer-impact risk
@@ -104,6 +118,7 @@
  */
 import type { Request, Response, NextFunction } from 'express';
 import { timingSafeEqual } from 'node:crypto';
+import { posix } from 'node:path';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { auditIpHash } from '../lib/ip-hash.js';
@@ -119,17 +134,54 @@ export const ORIGIN_AUTH_HEADER = 'x-arkova-origin-auth';
  * `routes/admin-paths.ts`'s `isAdminRouterPath` — Express's `case sensitive
  * routing` is off by default, so `/JOBS/foo` reaches the real cron router
  * just like `/jobs/foo` does and must get the same exemption.
+ *
+ * CTO review (SCRUM-3888): the original list here exempted the whole
+ * `/api/v1/webhooks` prefix on the theory that everything under it is an
+ * inbound partner receiver. It is not — `api/v1/router.ts` mounts
+ * `/webhooks` (bare) and `/webhooks/self-service` under `/api/v1` as the
+ * CUSTOMER-facing webhook-MANAGEMENT API (CRUD, test-ping, replay, DLQ
+ * management; gated on `webhooks:manage` scope or a dashboard JWT). That
+ * surface is Arkova's own, called by Arkova customers against
+ * `api.arkova.ai` like any other v1 endpoint — it has no reason to bypass
+ * the origin guard, and the broad prefix swept it in only because its mount
+ * path happens to start with the same segment as the two paths that ARE
+ * partner-inbound: Drive (`/api/v1/webhooks/drive`, WEBHOOK_PATHS.GOOGLE_DRIVE)
+ * and ATS (`/api/v1/webhooks/ats`, mounted directly in index.ts). Only those
+ * two literal sub-paths are exempt now; `/api/v1/webhooks` and
+ * `/api/v1/webhooks/self-service` fall through to the normal v1 gating.
  */
 const EXEMPT_PREFIXES = [
   '/health',
   '/api/health',
   '/jobs',
   '/webhooks',
-  '/api/v1/webhooks',
+  '/api/v1/webhooks/drive',
+  '/api/v1/webhooks/ats',
 ] as const;
 
+/**
+ * Collapse `.`/`..` segments and repeated slashes before any allowlist or
+ * route-family comparison.
+ *
+ * CTO review (SCRUM-3888): Express never normalizes a request path before
+ * matching a mounted router — verified directly against express@5.2.1 (the
+ * version pinned here), a request for `/api/v1/webhooks/../keys` reaches the
+ * REAL `/api/v1` → `/webhooks` mount (the customer webhook-management router
+ * above) with `req.url` still carrying the literal `../keys`. Comparing the
+ * allowlist against the raw, unnormalized `req.path` would let a request
+ * shaped like that read as an exempt partner-webhook call — via the
+ * `/api/v1/webhooks/` string prefix — while it is actually addressed to a
+ * different route one dot-segment away. Normalizing first makes the
+ * allowlist check answer the same question Express's own routing will
+ * eventually answer: "what path does this request resolve to."
+ */
+function normalizePath(rawPath: string): string {
+  const normalized = posix.normalize(rawPath);
+  return normalized === '.' ? '/' : normalized;
+}
+
 export function isOriginGuardExemptPath(path: string): boolean {
-  const lower = path.toLowerCase();
+  const lower = normalizePath(path).toLowerCase();
   return EXEMPT_PREFIXES.some((prefix) => lower === prefix || lower.startsWith(`${prefix}/`));
 }
 
@@ -154,7 +206,7 @@ const ROUTE_FAMILIES: ReadonlyArray<readonly [string, string]> = [
 ];
 
 export function routeFamily(path: string): string {
-  const lower = path.toLowerCase();
+  const lower = normalizePath(path).toLowerCase();
   for (const [prefix, name] of ROUTE_FAMILIES) {
     if (lower === prefix || lower.startsWith(`${prefix}/`)) return name;
   }
