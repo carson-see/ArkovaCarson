@@ -271,3 +271,7 @@ Note `scripts/staging/fullsoak-cron-exerciser.sh` documented the old 30/min glob
 RATE LIMIT header; that comment is corrected in the same change. Its 6 s pacing across distinct job
 paths is still safe under both new limiters, but `--only <one-path>` at that interval would now
 exhaust that single job's 10/min bucket.
+
+## 2026-09-12 — `POST /jobs/computeid-passport-recheck` (SCRUM-4495)
+
+New cron route delegating to `jobs/computeid-passport-recheck.ts`. Dark unless `ENABLE_COMPUTEID_INTEGRATION=true`, and it answers `200 {skipped:true}` rather than an error when dark, so a scheduled trigger against a dark flag is quiet. Listed in `scripts/gcp-setup/cloud-scheduler.sh`'s `NOT_SCHEDULED` with the schedule to bind (`17 * * * *` — hourly but off the top of the hour, because every `/jobs/*` route shares one per-IP burst guard, and spreading hourly jobs off `:00` is prevention rather than a fix for live 429s (SCRUM-4475 replaced the global bucket)); bind it in the same motion as the flag flip, per `docs/partners/computeid-activation-runbook.md`.

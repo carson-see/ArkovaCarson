@@ -153,6 +153,16 @@ const scheduledPaths = new Set(jobEntries.map((j) => j.endpointPath.split('?')[0
 const notScheduledPaths = new Set(notScheduledEntries.map((entry) => entry.split('|')[0]));
 const jobsByName = new Map(jobEntries.map((j) => [j.name, j]));
 
+/**
+ * Read out of SOURCE, not imported: `jobs/computeid-passport-recheck.ts` pulls
+ * in `config.ts`, which throws `Invalid worker configuration` under this
+ * suite's env. Every other cross-file assertion in this file reads text the
+ * same way.
+ */
+const computeidRecheckCron = /export const COMPUTEID_RECHECK_CRON = '([^']+)'/.exec(
+  fs.readFileSync(path.join(repoRoot, 'services/worker/src/jobs/computeid-passport-recheck.ts'), 'utf8'),
+)?.[1];
+
 describe('cloud-scheduler.sh — every cron route is scheduled or documented as not-scheduled', () => {
   it('sanity: route extraction sees the full cron surface (>=100 POST routes)', () => {
     expect(postRoutePaths.length).toBeGreaterThanOrEqual(100);
@@ -195,6 +205,23 @@ describe('cloud-scheduler.sh — every cron route is scheduled or documented as 
       const [path, reason] = entry.split('|');
       expect(reason?.trim(), `NOT_SCHEDULED entry for ${path} must state a reason`).toBeTruthy();
     }
+  });
+
+  // SCRUM-4495. The re-check's schedule was written out three times — the
+  // Sentry monitor's declared crontab in cron.ts, this script's NOT_SCHEDULED
+  // reason, and the runbook — with NOTHING binding them. A Sentry monitor whose
+  // crontab disagrees with the gcloud binding alerts on a schedule the job does
+  // not run on, which is worse than no monitor. `COMPUTEID_RECHECK_CRON` is now
+  // the single source and this pins the reason string to it.
+  it('the ComputeID re-check NOT_SCHEDULED reason quotes COMPUTEID_RECHECK_CRON', () => {
+    const entry = notScheduledEntries.find((e) => e.startsWith('/jobs/computeid-passport-recheck|'));
+    expect(entry, 'ComputeID re-check must stay in NOT_SCHEDULED until the flag flip').toBeTruthy();
+    expect(computeidRecheckCron, 'COMPUTEID_RECHECK_CRON must be exported from the job module').toBeTruthy();
+    expect(computeidRecheckCron!.trim().split(/\s+/)).toHaveLength(5);
+    expect(
+      entry,
+      `NOT_SCHEDULED reason must quote the schedule the code declares (${computeidRecheckCron})`,
+    ).toContain(computeidRecheckCron!);
   });
 
   it('every JOBS entry is well-formed: 5-field cron, valid retry, optional PAUSED state', () => {

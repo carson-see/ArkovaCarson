@@ -176,3 +176,76 @@ describe('Deploy Worker traffic-safety contract', () => {
     }
   });
 });
+
+/**
+ * Secret Manager preflight coverage ratchet (SCRUM-4495 review).
+ *
+ * `--set-secrets` names Secret Manager secrets by id. A name that does not
+ * exist is not a warning — `gcloud run deploy` rejects the whole revision, so
+ * the deploy dies AFTER the image build, the Trivy scan and the push, with an
+ * error that reads as a Cloud Run problem rather than "nobody created the
+ * secret yet". The preflight step exists to catch that in seconds, and it can
+ * only do so for names it actually checks.
+ *
+ * Pre-existing ids are proven to exist by every green deploy on `main`, so the
+ * preflight lists only the NEWLY-introduced ones — which means the coverage
+ * decision is invisible in the diff and silently rots. This pins it: any id
+ * added to `--set-secrets` from here on must either be listed in the preflight
+ * loop or added to the grandfathered baseline below, in the same change.
+ */
+describe('Deploy Worker Secret Manager preflight coverage', () => {
+  const setSecrets = /--set-secrets\s+"([^"]+)"/.exec(workflow)?.[1];
+  const preflight = /Preflight required Secret Manager entries[\s\S]*?\n      - name:/.exec(workflow)?.[0]
+    ?? /Preflight required Secret Manager entries[\s\S]*/.exec(workflow)?.[0];
+
+  /**
+   * Every secret id already live before the preflight step existed. Each is
+   * proven present by the green deploy history on `main`; they are exempt so
+   * the ratchet applies to NEW risk only. Do not extend this list to dodge the
+   * check — add the id to the preflight loop instead.
+   */
+  const GRANDFATHERED = new Set([
+    'supabase-url', 'supabase-service-role-key', 'supabase-jwt-secret', 'stripe-secret-key',
+    'stripe-webhook-secret', 'bitcoin-treasury-wif', 'sentry-dsn', 'api-key-hmac-secret',
+    'gemini-api-key', 'cron-secret', 'resend-api-key', 'together-api-key',
+    'courtlistener-api-token', 'openstates-api-key', 'bitcoin-rpc-url',
+    'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'runpod-api-key',
+    'edgar-user-agent', 'sam-gov-api-key', 'cloudflare-api-token', 'cloudflare-tunnel-token',
+    'google-oauth-client-id', 'google-oauth-client-secret', 'docusign_integration_key',
+    'docusign_secretkey_prod', 'docusign_connect_hmac_secret_prod',
+    'INTEGRATION_STATE_HMAC_SECRET', 'HEALTH_DETAIL_TOKEN', 'ip-hash-pepper',
+  ]);
+
+  it('sanity: both the --set-secrets list and the preflight step are parseable', () => {
+    expect(setSecrets, '--set-secrets "..." must be present').toBeTruthy();
+    expect(preflight, 'the preflight step must be present').toBeTruthy();
+  });
+
+  it('every newly-introduced --set-secrets id is covered by the preflight loop', () => {
+    // "ENV_NAME=secret-id:latest" → "secret-id"
+    const ids = setSecrets!.split(',').map((pair) => pair.split('=')[1]?.split(':')[0]).filter(Boolean) as string[];
+    expect(ids.length).toBeGreaterThan(30);
+    const uncovered = ids.filter((id) => !GRANDFATHERED.has(id) && !preflight!.includes(id));
+    expect(
+      uncovered,
+      `--set-secrets ids with no preflight coverage (add them to the preflight loop in the SAME commit): ${uncovered.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('the preflight reads existence only — it must never access a secret VALUE', () => {
+    // `describe` returns metadata; `versions access` returns the payload. The
+    // payload must never be fetched here: it would land in an Actions log.
+    expect(preflight).toContain('gcloud secrets describe');
+    expect(preflight).not.toContain('versions access');
+  });
+
+  it('only an unambiguous NOT_FOUND fails the deploy', () => {
+    // The deploy SA (github-actions-deploy@arkova1, verified 2026-09-12) holds
+    // no Secret Manager role, so `describe` returns PERMISSION_DENIED. A
+    // preflight that treats every gcloud failure as "missing" reds EVERY prod
+    // deploy with a remediation that cannot work — it becomes the outage it
+    // exists to prevent.
+    expect(preflight).toContain('NOT_FOUND');
+    expect(preflight).toContain('::warning title=');
+  });
+});

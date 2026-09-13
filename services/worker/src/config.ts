@@ -438,6 +438,20 @@ const ConfigSchema = z.object({
   computeidWebhookSecret: z.string().optional(),
   /** Pinned ComputeID CA — X.509 certificate PEM (prod) or bare SPKI public-key PEM (staging/tests). Never fetched at runtime. */
   computeidCaCertPem: z.string().optional(),
+  /**
+   * Base origin for the ONE outbound ComputeID call we make: the scheduled
+   * passport re-check's `GET /v1/agents/{id}/verify` (SCRUM-4495). It lives in
+   * config, never in request or row data, so no caller can steer the request
+   * (SSRF). Admission stays fully offline — it never calls the partner.
+   */
+  computeidApiBaseUrl: z.string().url().default('https://api.aicomputeid.com'),
+  /**
+   * Arkova's ComputeID partner API key (`X-API-Key`), used ONLY by the
+   * scheduled re-check. Optional on purpose: the re-check reports itself
+   * skipped rather than failing the worker, so the key can be provisioned
+   * after the integration is otherwise live.
+   */
+  computeidApiKey: z.string().optional(),
   /** Microsoft Graph subscription clientState. Required when ENABLE_MICROSOFT_GRAPH_WEBHOOK=true. */
   microsoftGraphClientState: z.string().optional(),
   enableMicrosoftGraphWebhook: boolFlag(false),
@@ -877,6 +891,22 @@ const ConfigSchema = z.object({
         });
       }
     }
+  } else if (cfg.computeidCaCertPem?.trim()) {
+    // VALIDATE-IF-PRESENT (SCRUM-4495 review). Since 2026-09-12 the pin is
+    // wired into deploy-worker.yml `--set-secrets` while the flag is still
+    // false, so a malformed or rotated PEM now sits in prod completely
+    // unexercised — and is first parsed by the activation deploy, i.e. the one
+    // moment nobody wants a surprise. Warn (never `addIssue`) while the flag is
+    // off: a dark integration must not be able to fail the worker's boot.
+    try {
+      loadPinnedCa(cfg.computeidCaCertPem);
+    } catch (err) {
+      console.warn(
+        '[config] COMPUTEID_CA_CERT_PEM is set but is NOT a usable CA pin '
+        + `(${err instanceof Error ? err.message : String(err)}). The ComputeID integration is dark, so this is not fatal — `
+        + 'but flipping ENABLE_COMPUTEID_INTEGRATION=true will fail the boot until it is fixed.',
+      );
+    }
   }
 
   // Veremark: when the webhook is enabled, the HMAC secret must be set.
@@ -1110,6 +1140,8 @@ function loadConfig(): Config {
     enableComputeidIntegration: process.env.ENABLE_COMPUTEID_INTEGRATION,
     computeidWebhookSecret: process.env.COMPUTEID_WEBHOOK_SECRET,
     computeidCaCertPem: process.env.COMPUTEID_CA_CERT_PEM,
+    computeidApiBaseUrl: process.env.COMPUTEID_API_BASE_URL,
+    computeidApiKey: process.env.COMPUTEID_API_KEY,
     microsoftGraphClientState: process.env.MICROSOFT_GRAPH_CLIENT_STATE,
     enableMicrosoftGraphWebhook: process.env.ENABLE_MICROSOFT_GRAPH_WEBHOOK,
     middeskApiKey: process.env.MIDDESK_API_KEY,

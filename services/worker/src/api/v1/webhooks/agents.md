@@ -241,3 +241,9 @@ Historical review repairs reject provider timestamps beyond five minutes, canoni
 ## 2026-09-10 — Cross-organization revocation pagination
 
 A single PostgREST select silently stops at the configured 1000-row cap. The receiver now streams ID-ordered keyset pages of 200 and requires an empty page before success. A shorter hosted cap cannot cause early completion; deleting earlier rows cannot shift later rows out of the scan. A failed later page returns 500 so the provider retries, and the terminal authority write still runs on that retry. Signed HTTP regressions reproduce the old 1001-binding truncation and verify page failure, smaller caps and deletion between pages. Concurrent new suspension-time admissions remain a separate activation concern; terminal revocation blocks new admission through its authority sentinel.
+
+## 2026-09-12 — SCRUM-4495: `computeid.ts` no longer owns the transition
+
+The receiver kept its authentication, parsing, privacy and HTTP behaviour, but `findBoundAgents`, the `apply_computeid_agent_transition` call, the DLQ insert and the terminal revocation write now live in `integrations/computeid/passport-transition.ts`. The scheduled re-check (`jobs/computeid-passport-recheck.ts`, added the same day) is a SECOND producer of `passport.*` events, and two copies of the lifecycle would drift in exactly one direction — keys staying live on a revoked passport.
+
+What stays here is only the HTTP mapping: a `conflict` outcome becomes `409 conflict_retry` so ComputeID redelivers, a `failed` outcome becomes `500`. If you change the receiver's behaviour, change `passport-transition.ts` — otherwise the cron path keeps the old behaviour and nothing tells you.
