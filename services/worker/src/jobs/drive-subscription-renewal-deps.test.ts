@@ -186,6 +186,54 @@ describe('makeDriveSubscriptionRenewalDb', () => {
     expect(eqMock).toHaveBeenCalledWith('id', INT);
   });
 
+  // CTO review 2026-09-13 (PR #2903, focus item 1 — TOCTOU): the bootstrap
+  // decision ("is this cursor null?") is made in the PURE module from the row
+  // snapshot `listRenewableConnections` returned at the START of the sweep,
+  // not re-validated against the row's CURRENT state at write time. This test
+  // pins that the adapter's `updateConnection` issues an unconditional
+  // `UPDATE ... SET last_page_token = X WHERE id = Y` — no
+  // `WHERE last_page_token IS NULL` compare-and-swap guard. Given the current
+  // architecture this is provably NOT exploitable by
+  // `drive-changes-processor.ts` (`runDriveChanges` refuses to run at all
+  // without an already-non-null cursor — see drive-changes-runner.ts's
+  // bootstrap guard — so the processor can never be the one that populates a
+  // null cursor out from under a concurrent renewal). It COULD race
+  // `drive-oauth.ts`'s reconnect callback, which unconditionally re-seeds
+  // `last_page_token` from its own fresh `startPageToken` on every successful
+  // re-watch (upsert, not gated on the prior value) — a pre-existing writer
+  // this PR does not touch. Flagged as a follow-up, not fixed here: closing it
+  // requires a CAS-guarded write, and the renewal's `subscription_id` /
+  // `account_label` fields already carry the identical stale-snapshot
+  // exposure today, independent of this PR's two new columns — a narrower fix
+  // scoped to `last_page_token` alone would not close the real gap.
+  it('updateConnection has no compare-and-swap guard — the write is unconditional on row id alone (TOCTOU note, see comment)', async () => {
+    const eqMock = vi.fn().mockResolvedValue({ error: null });
+    const updateMock = vi.fn().mockReturnValue({ eq: eqMock });
+    const from = vi.fn().mockReturnValue({ update: updateMock });
+    const dbDeps = makeDriveSubscriptionRenewalDb({ db: { from } });
+
+    await dbDeps.updateConnection({
+      id: INT,
+      subscription_id: 'chan-new',
+      subscription_expires_at: '2026-08-10T00:00:00.000Z',
+      account_label: null,
+      last_renewal_error: null,
+      last_renewal_at: '2026-08-03T00:00:00.000Z',
+      watch_renewal_failure_count: 0,
+      last_page_token: 'stp-from-this-sweeps-watch',
+      last_token_advanced_at: '2026-08-03T00:00:00.000Z',
+    });
+
+    // The only filter on the update chain is `.eq('id', ...)`. No `.is(
+    // 'last_page_token', null)` or any other current-state guard is applied
+    // — if another writer populated the row's cursor between the sweep's
+    // SELECT and this UPDATE, this write still lands and clobbers it.
+    expect(from).toHaveBeenCalledWith('org_integrations');
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(eqMock).toHaveBeenCalledTimes(1);
+    expect(eqMock).toHaveBeenCalledWith('id', INT);
+  });
+
   it('throws on a DB error rather than silently returning an empty list', async () => {
     const chain = mockQuery({ data: null, error: { message: 'connection lost' } });
     const from = vi.fn().mockReturnValue(chain);
