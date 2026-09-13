@@ -856,6 +856,46 @@ describe('AssetDetailView', () => {
       expect(queryByTestId('drive-source-note')).not.toBeInTheDocument();
     });
 
+    /**
+     * BUG-2026-09-12-001 (found in CTO review of this PR, in its OWN 375px UAT
+     * screenshot: `docs/uat/scrum-4507/drive-source-block-native-doc-375px.png`
+     * renders "Source modification time" butted directly against
+     * "mtime:2026-09-10T09:12:00Z", with no gap).
+     *
+     * The label span is `whitespace-nowrap min-w-[120px]` inside a
+     * `flex gap-4` row. `min-width` stops the flex item shrinking BELOW 120px
+     * but does not stop it being sized AT 120px while `nowrap` keeps its text
+     * one line — so a label wider than 120px (every label added by this block
+     * except "Folder") overflows its own box and lands on top of the value.
+     * `shrink-0` is what makes the label keep its natural width, which is the
+     * property the layout actually depends on.
+     *
+     * Asserted structurally rather than by pixel measurement: jsdom does no
+     * layout, so a class ratchet over EVERY label in the block is the only
+     * check that catches the next long label somebody adds.
+     */
+    it('keeps every source label at its natural width so it cannot overlap its value', () => {
+      const { getByTestId } = render(
+        <AssetDetailView
+          anchor={{
+            ...driveAnchor,
+            // The longest label in the block ("Source modification time"), i.e.
+            // the exact case the 375px screenshot caught.
+            metadata: { ...driveAnchor.metadata, _drive_revision_kind: 'modified_time' },
+          }}
+        />,
+      );
+
+      const labels = getByTestId('drive-source-section').querySelectorAll('span.whitespace-nowrap');
+      expect(labels.length).toBeGreaterThan(0);
+      for (const label of labels) {
+        expect(
+          label.className,
+          `label "${label.textContent}" can be squeezed to its min-width and overlap its value at 375px`,
+        ).toContain('shrink-0');
+      }
+    });
+
     it('never renders the _drive_* keys as raw generic metadata rows', () => {
       const { queryByText } = render(<AssetDetailView anchor={driveAnchor} />);
 

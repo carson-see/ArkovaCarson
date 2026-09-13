@@ -535,6 +535,33 @@ function MetadataRow({ metaKey, value, provider, docusignEnv }: Readonly<Metadat
  * self-hides, including the note: a §1.5 statement about links that are not on
  * screen would be a claim about nothing.
  */
+/**
+ * One `label: value` row in the Drive source block.
+ *
+ * Factored out because all four rows were byte-identical apart from label and
+ * body, and the label's class list is load-bearing: `shrink-0` is what stops a
+ * `whitespace-nowrap` label wider than its `min-w-[120px]` from overflowing its
+ * own flex item and landing on top of the value at narrow viewports
+ * (BUG-2026-09-12-001, visible at 375px in this story's own UAT capture).
+ * One component means one place that property can be got right — and one place
+ * the class ratchet in AssetDetailView.test.tsx has to hold.
+ */
+interface DriveSourceRowProps {
+  label: string;
+  children: React.ReactNode;
+}
+
+function DriveSourceRow({ label, children }: Readonly<DriveSourceRowProps>) {
+  return (
+    <div className="flex gap-4">
+      <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px] shrink-0">
+        {label}:
+      </span>
+      {children}
+    </div>
+  );
+}
+
 interface DriveSourceChipsProps {
   metadata: Record<string, unknown> | null | undefined;
 }
@@ -569,43 +596,31 @@ function DriveSourceChips({ metadata }: Readonly<DriveSourceChipsProps>) {
         </span>
         <div className="space-y-2">
           {fileHref && (
-            <div className="flex gap-4">
-              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
-                {DRIVE_RECORD_LINKS_LABELS.FILE_LABEL}:
-              </span>
+            <DriveSourceRow label={DRIVE_RECORD_LINKS_LABELS.FILE_LABEL}>
               <DocusignLinkChip href={fileHref} testId="drive-file-link">
                 {DRIVE_RECORD_LINKS_LABELS.OPEN_IN_DRIVE}
               </DocusignLinkChip>
-            </div>
+            </DriveSourceRow>
           )}
           {folderHref && (
-            <div className="flex gap-4">
-              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
-                {DRIVE_RECORD_LINKS_LABELS.FOLDER_LABEL}:
-              </span>
+            <DriveSourceRow label={DRIVE_RECORD_LINKS_LABELS.FOLDER_LABEL}>
               {/* The resolved human path is what an owner recognises; the
                   opaque folder id is the fallback when the path walk never
                   ran or failed. */}
               <DocusignLinkChip href={folderHref} testId="drive-folder-link">
                 {folderPath ?? folderId}
               </DocusignLinkChip>
-            </div>
+            </DriveSourceRow>
           )}
           {sharedDriveHref && (
-            <div className="flex gap-4">
-              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
-                {DRIVE_RECORD_LINKS_LABELS.SHARED_DRIVE_LABEL}:
-              </span>
+            <DriveSourceRow label={DRIVE_RECORD_LINKS_LABELS.SHARED_DRIVE_LABEL}>
               <DocusignLinkChip href={sharedDriveHref} testId="drive-shared-drive-link">
                 {sharedDriveId}
               </DocusignLinkChip>
-            </div>
+            </DriveSourceRow>
           )}
           {revision && (
-            <div className="flex gap-4">
-              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
-                {revisionLabel}:
-              </span>
+            <DriveSourceRow label={revisionLabel}>
               {/* NEVER a link. The stored value is not always a Drive revision
                   id, and the deep-link shape for one has not been verified
                   against the live product — a link that works for some records
@@ -613,7 +628,7 @@ function DriveSourceChips({ metadata }: Readonly<DriveSourceChipsProps>) {
               <span className="text-xs font-mono break-all" data-testid="drive-revision-plain">
                 {revision}
               </span>
-            </div>
+            </DriveSourceRow>
           )}
         </div>
         <p className="text-xs text-muted-foreground" data-testid="drive-source-note">
