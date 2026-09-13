@@ -100,6 +100,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0436` | `0436_scrum4035_oauth_email_confirmation.sql` | SCRUM-4035 / UAT-03 | **no — candidate only** | New OAuth mailbox confirmation, restricted pending role and service-only challenge completion. Prefix verified against main/prod 0419 and all open-PR migrations through 0435 on 2026-09-05. Rollout remains disabled until hook and all consumers are verified. |
 | `0445` | `0445_connector_artifact_materialize_link_atomic.sql` | #2570 / SCRUM-3882 | **no — local candidate only** | Atomic service-only connector anchor creation/reuse and freshness-guarded artifact link. Prevents a broadcaster observing a stale unlinked PENDING anchor. Numeric inventory verified 2026-09-10: main 0440; open PRs 0441/0442; #2572 reserves 0443/0444. Historical unpublished 0437 is intentionally not reused. Local PostgreSQL concurrency/ACL/rollback proof required; full stack T3 staging and production apply remain release gates. |
 | `0448` | `0448_computeid_agent_key_transition_atomic.sql` | #2668 / SCRUM-4535 / SCRUM-4536 | **no — local candidate only** | Service-only agent-row lock and full-snapshot CAS commit ComputeID status/metadata and key enforcement together. Closes the lost restore retry and delayed restore after revoke. Prefix re-derived 2026-09-10 from main, all open PRs, and #2572's local 0446/0447 reservations; coordinated with both parallel agents. Flag remains off. No production apply or soak completion claimed. |
+| `0455` | `0455_scrum5024_partner_referral_attribution.sql` | SCRUM-5024 (branch `feat/scrum-5024-partner-referral-attribution`) | **no — file only, pre-soak, NOT applied to prod or any rig** | Partner referral codes and organization attribution. Two new tables (`referral_codes`, `organization_referrals`), both `ENABLE` + `FORCE ROW LEVEL SECURITY`, SELECT-only policies via the existing `get_user_org_ids()` / `is_current_user_platform_admin()` helpers, and NO write policy for any role — writes are the four SECURITY DEFINER RPCs or `service_role`. **Disclosure boundary, deliberate:** only the REFERRER can read `organization_referrals`; there is no policy matching `referred_org_id`, and `COMMENT ON TABLE` records that the asymmetry is the design. `organization.referred` is audited against the REFERRER's `org_id` for the same reason. **No DDL on `organizations`** — both tables take foreign keys INTO it, so the ShareRowExclusiveLock is bounded by the file-level `SET LOCAL lock_timeout = '5s'`. `audit_events` category `ORG` is already allowed by `0309`, so no constraint change. Prefix derived 2026-09-12 from `max(main head 0450, open-PR claims 0443/0451/0452/0453, 0454 reserved by SCRUM-3972 in flight) + 1`. Tier T3. Rollback in the file header (drops attribution data — export first). **Next author claims `0456` — re-derive, do not trust this line.** |
 | baseline | `00000000000000_baseline_at_main_HEAD.sql` | ? | yes | Path C baseline. Atomic with `docs/migrations-archive/`. |
 | `0290` | `0290_suborg_suspension_audit_and_service_role_fix.sql` | ? | presumed | |
 | `0292` | `0292_microsoft_graph_webhook_nonces.sql` | #695 | presumed | Graph notification replay protection (SCRUM-1135). |
@@ -1319,3 +1320,39 @@ requires protected fresh preimages, bounded source/full-row guarded updates,
 corrected producer deployment and old-work drainage, final reconciliation,
 actual unchanged 0443 outcome and canonical numeric ledger readback. Runtime
 delivery alone does not close the broader SCRUM-3953 historical defect.
+
+## Recent migrations (SCRUM-5024)
+
+`0455_scrum5024_partner_referral_attribution.sql` — partner referral codes and
+organization attribution. Placed at the end of this file deliberately, not
+blindly: the surrounding titled blocks run in ascending PR order and this is the
+newest work, so the end IS the ordered position. The heading is `SCRUM-5024`
+rather than `PR #NNNN` because this branch ships without a PR (founder
+directive, 2026-09-12); `check-agents-md-migration-collision.ts` only requires
+the heading be unique in the file, which it is.
+
+**What the migration owns.** `referral_codes` (one ACTIVE row per organization,
+enforced by the partial unique index `referral_codes_one_active_per_org`) and
+`organization_referrals` (`referred_org_id` is the PRIMARY KEY, so "an
+organization is referred at most once, forever" is a constraint rather than a
+read-then-write race). Four SECURITY DEFINER functions, each
+`SET search_path = public` and `SET lock_timeout = '5s'`:
+`generate_referral_code()` (service_role only — a code oracle callable by any
+signed-in user is reconnaissance on the code space), `ensure_org_referral_code`
+(idempotent mint, `service_role OR is_org_admin_of`), `record_org_referral`
+(TOTAL jsonb verdict: `no_code` / `unknown_code` / `self_referral` /
+`already_attributed` / `recorded`; never raises for a bad code because every
+caller runs after the organization already exists), and `get_org_referrals`
+(the referrer's read, projecting four fields).
+
+**Two things a later change must not quietly undo.** (1) There is no SELECT
+policy on `organization_referrals` matching `referred_org_id` — the referred
+organization is not told it was attributed, and the `organization.referred`
+audit row is filed against the REFERRER's `org_id` for the same reason. (2) The
+code alphabet excludes `I`, `L`, `O`, `0` and `1`; a client regex written
+`[A-Z2-9]` would admit three of those and park codes the CHECK guarantees to
+reject, so every mirror spells the alphabet out.
+
+Not applied to prod or to any rig. No soak run in the authoring session. Tier
+T3: 48 h soak, multiple trigger cycles, clean-mirror or isolated staging, per
+CLAUDE.md §1.12 — none of that is asserted here.
