@@ -508,6 +508,20 @@ export const OrganizationUpdateSchema = z.object({
   founded_date: z.string().optional().nullable(),
   org_type: z.string().optional().nullable(),
   industry_tag: z.string().optional().nullable(),
+
+  /**
+   * SCRUM-3864 — two-party sub-org listing consent (migration 0429).
+   * Both columns live on the CHILD org's row: `sub_org_listing_parent_optin`
+   * is the PARENT's consent to publish THIS affiliation and is writable only
+   * by an admin of `parent_org_id` (never "on its own row" — a parent admin
+   * reaches it by updating the child row it is a member of); the DB trigger
+   * `protect_org_tenancy_fields()` is the actual authority, this is just the
+   * shape check before the request leaves the browser. `credit_enforcement_enabled`
+   * is deliberately NOT here — it is service_role/platform-admin only and the
+   * trigger rejects a self-serve write regardless of what this schema allows.
+   */
+  sub_org_listing_parent_optin: z.boolean().optional(),
+  sub_org_listing_child_optin: z.boolean().optional(),
 });
 
 export type OrganizationUpdate = z.infer<typeof OrganizationUpdateSchema>;

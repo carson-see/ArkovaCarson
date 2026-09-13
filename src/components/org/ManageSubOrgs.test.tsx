@@ -1,3 +1,4 @@
+/* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT (organizations_update_admin + protect_org_tenancy_fields trigger, migration 0429), not manual org_id/user_id query scoping. The row is targeted by primary key (`.eq('id', childOrgId)`, asserted below); Postgres RLS decides who may touch it. */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -8,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  // SCRUM-3864 — `useAffiliateListingConsent` drives the parent-side listing
+  // toggle through `supabase.from('organizations').update().eq().select()`.
+  from: vi.fn(),
 }));
 
 vi.mock('@/lib/workerClient', () => ({
@@ -19,7 +23,12 @@ vi.mock('@/lib/supabase', () => ({
     auth: {
       getSession: mocks.getSession,
     },
+    from: mocks.from,
   },
+}));
+
+vi.mock('@/lib/auditLog', () => ({
+  logAuditEvent: vi.fn(),
 }));
 
 vi.mock('sonner', () => ({
@@ -47,6 +56,9 @@ const subOrgs = [
     parent_approval_status: 'APPROVED',
     created_at: '2026-05-05T13:01:00.000Z',
     logo_url: null,
+    // SCRUM-3864 — we have opted in, the child has not yet.
+    sub_org_listing_parent_optin: true,
+    sub_org_listing_child_optin: false,
   },
 ];
 
@@ -314,5 +326,78 @@ describe('ManageSubOrgs', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByText('Approved Clinic')).toBeInTheDocument();
     expect(getCount).toBe(2);
+  });
+
+  // SCRUM-3864 — parent's half of the two-party public-listing consent.
+  describe('public listing consent', () => {
+    it('shows the waiting-on-child status when we have opted in but the child has not', async () => {
+      const fetchMock = setupFetch();
+      await renderLoaded();
+      void fetchMock;
+
+      expect(screen.getByTestId('listing-consent-child-approved-status'))
+        .toHaveTextContent('Waiting on the affiliated organization to also allow this.');
+    });
+
+    it('does not render the listing toggle for a PENDING affiliation', async () => {
+      const fetchMock = setupFetch();
+      await renderLoaded();
+      void fetchMock;
+
+      expect(screen.queryByTestId('listing-consent-child-pending-status')).toBeNull();
+    });
+
+    it('toggling off calls supabase.from("organizations").update on the CHILD org id and updates the row optimistically on success', async () => {
+      const fetchMock = setupFetch();
+      const eqMock = vi.fn().mockReturnValue({
+        select: vi.fn().mockResolvedValue({
+          data: [{ id: 'child-approved', sub_org_listing_parent_optin: false }],
+          error: null,
+        }),
+      });
+      const updateMock = vi.fn().mockReturnValue({ eq: eqMock });
+      mocks.from.mockReturnValue({ update: updateMock });
+
+      const user = userEvent.setup();
+      await renderLoaded();
+      void fetchMock;
+
+      await user.click(screen.getByRole('switch'));
+
+      await waitFor(() => {
+        expect(mocks.from).toHaveBeenCalledWith('organizations');
+      });
+      expect(updateMock).toHaveBeenCalledWith({ sub_org_listing_parent_optin: false });
+      expect(eqMock).toHaveBeenCalledWith('id', 'child-approved');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('listing-consent-child-approved-status'))
+          .toHaveTextContent('Not shown on public pages');
+      });
+    });
+
+    it('a zero-row response (RLS/trigger rejection) leaves the switch unchanged and surfaces a toast', async () => {
+      const fetchMock = setupFetch();
+      mocks.from.mockReturnValue({
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        }),
+      });
+
+      const user = userEvent.setup();
+      await renderLoaded();
+      void fetchMock;
+
+      await user.click(screen.getByRole('switch'));
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalled();
+      });
+      // Status text is unchanged — the optimistic write never landed.
+      expect(screen.getByTestId('listing-consent-child-approved-status'))
+        .toHaveTextContent('Waiting on the affiliated organization to also allow this.');
+    });
   });
 });

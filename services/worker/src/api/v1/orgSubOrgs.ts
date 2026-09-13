@@ -675,9 +675,15 @@ orgSubOrgsRouter.get('/', async (req: Request, res: Response) => {
       return;
     }
 
+    // SCRUM-3864: sub_org_listing_parent_optin / sub_org_listing_child_optin
+    // (migration 0429) are returned here because this route is scoped to the
+    // CALLING parent's own children (`.eq('parent_org_id', orgId)`) — never
+    // to an anonymous caller. Never add these two columns to a route that
+    // does not have that same ownership scope; that is exactly the leak
+    // 0429's get_public_org_profile / get_org_subtree fix closed.
     const { data: subOrgs, error } = await db
       .from('organizations')
-      .select('id, display_name, domain, verification_status, parent_approval_status, created_at, logo_url')
+      .select('id, display_name, domain, verification_status, parent_approval_status, created_at, logo_url, sub_org_listing_parent_optin, sub_org_listing_child_optin')
       .eq('parent_org_id', orgId)
       .order('created_at', { ascending: false });
 

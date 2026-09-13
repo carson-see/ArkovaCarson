@@ -1380,3 +1380,7 @@ above WAS escaped — the inconsistency is the tell). Each term now goes through
 (`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
 `entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
 filters here; if you need OR semantics across columns, run the terms separately and union.
+
+## 2026-09-13 — SCRUM-3864: `GET /api/v1/org/sub-orgs` returns the two listing-consent flags
+
+`orgSubOrgs.ts`'s `select()` in the GET list handler gained `sub_org_listing_parent_optin, sub_org_listing_child_optin` (migration 0429, already on `origin/main` before this session). Additive per §1.8. This is safe because the route is already strictly scoped to the caller's own children (`.eq('parent_org_id', orgId)`, `orgId` derived from the caller's own membership) — never add these two columns to a route without that same ownership scope; that is exactly the public leak 0429's `get_public_org_profile` / `get_org_subtree` fix closed (see `docs/uat/suborg-listing/SURFACES.md`). The dashboard toggle that reads this field is `src/components/org/ManageSubOrgs.tsx` (see its folder's 2026-09-13 entry). The API-key sub-org list router (SCRUM-3971/#2844) does not exist on `origin/main` yet — not touched here; when it lands, it should expose the same two fields to the owning org only, per the same scoping rule.

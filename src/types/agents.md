@@ -120,3 +120,7 @@ current SQL files and canonical seed replayed on a fresh isolated Supabase
 schema. Catalog regeneration confirmed the same RPC entry in both canonical
 files. This includes current0444/0446/0447 filenames and all merged migrations;
 it does not claim staging qualification or a full-file type resynchronization.
+
+## 2026-09-13 — SCRUM-3864: `organizations` gains three columns (hand-edited, not a full replay)
+
+Migration 0429 (already on `origin/main`, merged well before this session) added `organizations.credit_enforcement_enabled`, `sub_org_listing_child_optin`, `sub_org_listing_parent_optin` (all `boolean NOT NULL DEFAULT false`), but the generated types were never updated for it. Added by hand to the `organizations` `Row`/`Insert`/`Update` blocks only, alphabetically ordered among the existing keys, matching `services/worker/src/types/database.types.ts` byte-for-byte in that block (diffed to confirm before and after). This was NOT a full `npm run gen:types` / fresh-replay regeneration — only the one table's three missing columns were added. A future full regeneration should produce an identical `organizations` block; if it does not, something else changed these three columns' shape between 0429 and whatever migration prompted the regeneration.

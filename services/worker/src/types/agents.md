@@ -125,3 +125,7 @@ current SQL files and canonical seed replayed on a fresh isolated Supabase
 schema. Catalog regeneration confirmed the same RPC entry in both canonical
 files. This includes current0444/0446/0447 filenames and all merged migrations;
 it does not claim staging qualification or a full-file type resynchronization.
+
+## 2026-09-13 — SCRUM-3864: `organizations` gains three columns (hand-edited, mirrors src/types/database.types.ts)
+
+Same change as the `src/types/agents.md` 2026-09-13 entry, applied identically to this copy — `credit_enforcement_enabled`, `sub_org_listing_child_optin`, `sub_org_listing_parent_optin` added to the `organizations` `Row`/`Insert`/`Update` blocks, diffed against the frontend copy to confirm byte-identical after the edit.

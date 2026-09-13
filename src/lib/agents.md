@@ -713,3 +713,7 @@ what the event means, not whether it is delivered — liveness lives in
   single creation: `POST /api/v1/attestations` dispatches the event,
   `POST /api/v1/attestations/batch-create` does not. Do not generalise the
   wording back without making batch-create emit (§1.13 R-7).
+
+## 2026-09-13 — SCRUM-3864: `OrganizationUpdateSchema` gains the two listing-consent fields; `SUB_ORG_LABELS`/`TOAST` gain listing-consent copy
+
+`sub_org_listing_parent_optin` / `sub_org_listing_child_optin` (both `z.boolean().optional()`) validate the shape of a listing-consent write before it leaves the browser — actual authority is the DB trigger (see `src/hooks/agents.md` 2026-09-13 entry), this is only the pre-flight shape check. `credit_enforcement_enabled` is deliberately NOT in the schema: it is service_role/platform-admin only and the trigger rejects a self-serve write of it regardless of what any client-side schema would allow. New `SUB_ORG_LABELS.LISTING_CONSENT_*` / `TOAST.LISTING_CONSENT_*` strings are §1.3-clean (verified via `npm run lint:copy` and the `copy-scrum-2938-terminology-s2.test.ts` contract test).

@@ -379,6 +379,10 @@ export const TOAST = {
   ORG_UPDATED: 'Organization updated successfully.',
   ORG_UPDATE_FAILED: 'Failed to update organization. Please try again.',
 
+  // Sub-org public listing consent (SCRUM-3864)
+  LISTING_CONSENT_UPDATE_FAILED: 'Could not update the public listing setting. Please try again.',
+  LISTING_CONSENT_NOT_AUTHORIZED: 'You do not have permission to change that setting.',
+
   // Anchoring
   ANCHOR_SUBMITTED: 'Your document has been submitted for securing.',
   ANCHOR_FAILED: 'Failed to secure document. Please try again.',
@@ -3090,6 +3094,16 @@ export const SUB_ORG_LABELS = {
   CANCEL_REQUEST: 'Cancel Request',
   CANCEL_SUCCESS: 'Affiliation request cancelled.',
   NO_RESULTS: 'No verified organizations found.',
+  // SCRUM-3864 — two-party public listing consent. The affiliation itself
+  // (who this org's parent or child is) is never shown on any public page
+  // unless BOTH organizations turn this on; either side can turn it back off
+  // at any time. Confidential is the default.
+  LISTING_CONSENT_LABEL: 'Public listing',
+  LISTING_CONSENT_HELP: 'Show this affiliation on public pages. Both organizations must allow it — this stays off until they do.',
+  LISTING_CONSENT_ON: 'Listed on public pages',
+  LISTING_CONSENT_OFF: 'Not shown on public pages',
+  LISTING_CONSENT_WAITING_ON_CHILD: 'Waiting on the affiliated organization to also allow this.',
+  LISTING_CONSENT_WAITING_ON_PARENT: 'Waiting on your parent organization to also allow this.',
 } as const;
 
 // =============================================================================

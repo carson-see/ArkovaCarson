@@ -654,3 +654,7 @@ Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Atte
 ## PR #2782 — proof download block identity
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
+
+## 2026-09-13 — SCRUM-3864: `OrgProfilePage.tsx` renders the child's public-listing-consent toggle
+
+Inside the existing "Sub-Organization Affiliation" section's `isChildOrg && parentApprovalStatus === 'APPROVED'` block: a `SubOrgListingConsentToggle` for `sub_org_listing_child_optin`, wired to `useOrganization().updateOrganization` (same-row self-update — both 0429 consent columns live on the CHILD's own row, so `sub_org_listing_parent_optin` is also read straight off `organization` here, read-only). Local `listingConsentBusy` state tracks the in-flight write since `useOrganization`'s own `updating` field is hardcoded `false` (pre-existing, not fixed here). Note for whoever lands branch `feat/scrum-suborg-dashboard-ux` (PR #2907): that branch relocates this entire block into a new "Affiliates" tab and is expected to conflict with this insertion — see `PR-BODY-3864.md`'s pre-mortem for the reconciliation plan (keep the toggle, follow the block to wherever it lands).

@@ -199,6 +199,51 @@ describe('GET /api/v1/org/sub-orgs (HAKI-REQ-01)', () => {
     expect(res.body.subOrgs).toHaveLength(2);
     expect(res.body.maxSubOrgs).toBe(5);
   });
+
+  // SCRUM-3864 — the parent's own private list may see its own consent state
+  // (and the child's, for context) for each affiliate. This is NOT a public
+  // surface: the route is scoped by `.eq('parent_org_id', orgId)` to the
+  // caller's own children (see orgSubOrgs.ts GET handler comment).
+  it('includes both sub_org_listing_*_optin flags per child (SCRUM-3864)', async () => {
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'org_members') {
+        return makeBuilder({
+          maybeSingleData: { org_id: 'parent-1', role: 'owner' },
+        }) as unknown as never;
+      }
+      if (table === 'organizations') {
+        return makeBuilder({
+          data: [
+            {
+              id: 'child-1', display_name: 'Child A', verification_status: 'approved',
+              parent_approval_status: 'approved',
+              sub_org_listing_parent_optin: true, sub_org_listing_child_optin: false,
+            },
+            {
+              id: 'child-2', display_name: 'Child B', verification_status: 'pending',
+              parent_approval_status: 'pending',
+              sub_org_listing_parent_optin: false, sub_org_listing_child_optin: false,
+            },
+          ],
+          singleData: { max_sub_orgs: 5 },
+        }) as unknown as never;
+      }
+      return makeBuilder() as unknown as never;
+    });
+
+    const app = buildApp('user-1');
+    const res = await request(app).get('/api/v1/org/sub-orgs').expect(200);
+    expect(res.body.subOrgs[0]).toMatchObject({
+      id: 'child-1',
+      sub_org_listing_parent_optin: true,
+      sub_org_listing_child_optin: false,
+    });
+    expect(res.body.subOrgs[1]).toMatchObject({
+      id: 'child-2',
+      sub_org_listing_parent_optin: false,
+      sub_org_listing_child_optin: false,
+    });
+  });
 });
 
 describe('POST /api/v1/org/sub-orgs/approve (HAKI-REQ-01)', () => {

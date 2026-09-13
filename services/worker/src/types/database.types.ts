@@ -4897,6 +4897,7 @@ export type Database = {
           banner_url: string | null
           created_at: string
           creation_idempotency_key: string | null
+          credit_enforcement_enabled: boolean
           description: string | null
           directory_info_fields: string[]
           display_name: string
@@ -4930,6 +4931,8 @@ export type Database = {
           payment_state_updated_at: string | null
           public_id: string | null
           session_timeout_minutes: number
+          sub_org_listing_child_optin: boolean
+          sub_org_listing_parent_optin: boolean
           suspended: boolean
           suspended_at: string | null
           suspended_by: string | null
@@ -4947,6 +4950,7 @@ export type Database = {
           banner_url?: string | null
           created_at?: string
           creation_idempotency_key?: string | null
+          credit_enforcement_enabled?: boolean
           description?: string | null
           directory_info_fields?: string[]
           display_name: string
@@ -4980,6 +4984,8 @@ export type Database = {
           payment_state_updated_at?: string | null
           public_id?: string | null
           session_timeout_minutes?: number
+          sub_org_listing_child_optin?: boolean
+          sub_org_listing_parent_optin?: boolean
           suspended?: boolean
           suspended_at?: string | null
           suspended_by?: string | null
@@ -4997,6 +5003,7 @@ export type Database = {
           banner_url?: string | null
           created_at?: string
           creation_idempotency_key?: string | null
+          credit_enforcement_enabled?: boolean
           description?: string | null
           directory_info_fields?: string[]
           display_name?: string
@@ -5030,6 +5037,8 @@ export type Database = {
           payment_state_updated_at?: string | null
           public_id?: string | null
           session_timeout_minutes?: number
+          sub_org_listing_child_optin?: boolean
+          sub_org_listing_parent_optin?: boolean
           suspended?: boolean
           suspended_at?: string | null
           suspended_by?: string | null

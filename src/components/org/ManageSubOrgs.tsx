@@ -23,6 +23,8 @@ import {
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 import { SUB_ORG_LABELS } from '@/lib/copy';
+import { useAffiliateListingConsent } from '@/hooks/useAffiliateListingConsent';
+import { SubOrgListingConsentToggle } from '@/components/org/SubOrgListingConsentToggle';
 
 interface SubOrg {
   id: string;
@@ -34,6 +36,17 @@ interface SubOrg {
   logo_url: string | null;
   /** SCRUM-3867 — is this sub-org running on OUR DocuSign connection? */
   docusignInherited?: boolean;
+  /**
+   * SCRUM-3864 — two-party public listing consent (migration 0429). Both
+   * columns live on THIS (the child's) row. `sub_org_listing_parent_optin` is
+   * OUR half, set from this panel; `sub_org_listing_child_optin` is theirs,
+   * read-only here. The affiliation is listed on any public surface only when
+   * both are true. Optional because older cached responses (before this
+   * field existed) may not carry it — treated as `false`, matching the
+   * column's own DEFAULT.
+   */
+  sub_org_listing_parent_optin?: boolean;
+  sub_org_listing_child_optin?: boolean;
 }
 
 /**
@@ -91,6 +104,9 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   // SCRUM-3868 — the sub-org awaiting an offboard confirmation, if any.
   const [offboarding, setOffboarding] = useState<SubOrg | null>(null);
   const [offboardBusy, setOffboardBusy] = useState(false);
+  // SCRUM-3864 — our half of the public-listing consent, per sub-org.
+  const { busyChildOrgId: listingConsentBusyId, setParentListingOptin } =
+    useAffiliateListingConsent();
 
   // `isInitialLoad` gates the full-panel error state to the mount fetch and the
   // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
@@ -625,6 +641,23 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                   (or no longer) accepted. Reclaim is the same endpoint with a
                   negative amount, which is also the offboarding lever.
                 */}
+                {sub.parent_approval_status === 'APPROVED' && (
+                  <div className="mt-3 pt-3 border-t border-border/40">
+                    <SubOrgListingConsentToggle
+                      id={`listing-consent-${sub.id}`}
+                      ownValue={sub.sub_org_listing_parent_optin ?? false}
+                      otherPartyValue={sub.sub_org_listing_child_optin ?? false}
+                      busy={listingConsentBusyId === sub.id}
+                      waitingLabel={SUB_ORG_LABELS.LISTING_CONSENT_WAITING_ON_CHILD}
+                      onToggle={(next) => setParentListingOptin(sub.id, next)}
+                      onChanged={(next) => {
+                        setSubOrgs((prev) => prev.map((s) =>
+                          s.id === sub.id ? { ...s, sub_org_listing_parent_optin: next } : s));
+                      }}
+                    />
+                  </div>
+                )}
+
                 {sub.parent_approval_status === 'APPROVED' && (
                   <div className="mt-3 pt-3 border-t border-border/40 flex flex-wrap items-end gap-2">
                     <div className="w-28 shrink-0">

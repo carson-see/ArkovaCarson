@@ -19,11 +19,22 @@ import type { Database } from '@/types/database.types';
 
 type Organization = Database['public']['Tables']['organizations']['Row'];
 
-/** All editable org profile fields */
+/**
+ * All editable org profile fields.
+ *
+ * `sub_org_listing_child_optin` (SCRUM-3864) is included because it IS a
+ * same-row self-update — a child org's own admin consenting to being listed
+ * as a sub-org of its parent. `sub_org_listing_parent_optin` is deliberately
+ * NOT here: that column also lives on the child's row, but the PARENT admin
+ * sets it on a row that is not their own (`useAffiliateListingConsent`
+ * handles that asymmetric case). `credit_enforcement_enabled` is excluded on
+ * purpose — the DB trigger rejects a self-serve write of it regardless.
+ */
 type EditableOrgFields = Partial<Pick<Organization,
   'display_name' | 'domain' | 'description' | 'website_url' |
   'logo_url' | 'founded_date' | 'org_type' | 'linkedin_url' |
-  'twitter_url' | 'industry_tag' | 'location'
+  'twitter_url' | 'industry_tag' | 'location' |
+  'sub_org_listing_child_optin'
 >>;
 
 /** Fetch organization from Supabase — extracted for React Query */

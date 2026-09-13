@@ -37,6 +37,7 @@ import { isPlatformAdmin } from '@/lib/platform';
 import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
 import { ManageSubOrgs } from '@/components/org/ManageSubOrgs';
+import { SubOrgListingConsentToggle } from '@/components/org/SubOrgListingConsentToggle';
 import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
 import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedBadge';
 import { DriveConnectorCard } from '@/components/integrations/DriveConnectorCard';
@@ -112,6 +113,8 @@ export function OrgProfilePage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [affiliationDialogOpen, setAffiliationDialogOpen] = useState(false);
   const [subOrgRefreshKey, setSubOrgRefreshKey] = useState(0);
+  // SCRUM-3864 — our half (the child's) of the public-listing consent.
+  const [listingConsentBusy, setListingConsentBusy] = useState(false);
 
   // Org records count
   const [recordsCount, setRecordsCount] = useState<number | null>(null);
@@ -885,11 +888,38 @@ export function OrgProfilePage() {
               {isChildOrg && (
                 <div className="mb-6 p-4 rounded-lg border border-border/50 bg-card">
                   {parentApprovalStatus === 'APPROVED' && (
-                    <div className="flex items-center gap-3">
-                      <AffiliatedBadge parentName={parentOrgDisplayName} />
-                      <span className="text-sm text-muted-foreground">
-                        {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgDisplayName}</strong>
-                      </span>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <AffiliatedBadge parentName={parentOrgDisplayName} />
+                        <span className="text-sm text-muted-foreground">
+                          {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgDisplayName}</strong>
+                        </span>
+                      </div>
+                      {/*
+                        SCRUM-3864 — our (the child's) half of the two-party
+                        public-listing consent. Both consent columns live on
+                        THIS org's own row (migration 0429), so both values
+                        come straight off `organization` with no extra fetch.
+                      */}
+                      <div className="pt-3 border-t border-border/40">
+                        <SubOrgListingConsentToggle
+                          id="listing-consent-child"
+                          ownValue={orgAny?.sub_org_listing_child_optin ?? false}
+                          otherPartyValue={orgAny?.sub_org_listing_parent_optin ?? false}
+                          busy={listingConsentBusy}
+                          waitingLabel={SUB_ORG_LABELS.LISTING_CONSENT_WAITING_ON_PARENT}
+                          onToggle={async (next) => {
+                            setListingConsentBusy(true);
+                            try {
+                              const ok = await updateOrganization({ sub_org_listing_child_optin: next });
+                              return ok ? next : null;
+                            } finally {
+                              setListingConsentBusy(false);
+                            }
+                          }}
+                          onChanged={() => { /* updateOrganization already refreshed the org cache */ }}
+                        />
+                      </div>
                     </div>
                   )}
                   {parentApprovalStatus === 'PENDING' && (
