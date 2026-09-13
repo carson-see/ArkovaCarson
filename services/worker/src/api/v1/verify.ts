@@ -29,7 +29,7 @@ import {
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
 import {
-  CONNECTOR_FETCH_SOURCE_MARKERS,
+  CONNECTOR_FETCH_SOURCE_MARKERS_SORTED,
   connectorFingerprintRederivabilityFields,
   isConnectorFetchSource,
   resolveConnectorFetchSource,
@@ -309,14 +309,16 @@ export interface PublicIdLookup {
 /**
  * SCRUM-4507: the closed vocabulary `source.provider` may take.
  *
- * DERIVED from {@link CONNECTOR_FETCH_SOURCE_MARKERS}, never restated, so the
- * public enum and the runtime gate can NEVER disagree — an enum member the
- * gate would reject is a documented value the API can't produce, and a marker
- * the gate accepts but the enum omits is an undocumented value on a frozen
- * schema (§1.8). Sorted so the served OpenAPI enum is stable across restarts.
+ * DERIVED from the recognised-marker set, never restated, so the public enum
+ * and the runtime gate can NEVER disagree — an enum member the gate would
+ * reject is a documented value the API can't produce, and a marker the gate
+ * accepts but the enum omits is an undocumented value on a frozen schema
+ * (§1.8). The ordering and the freeze live with the vocabulary itself
+ * ({@link CONNECTOR_FETCH_SOURCE_MARKERS_SORTED}) so this surface and the
+ * served OpenAPI spec materialise one array rather than two.
  */
 export const VERIFICATION_SOURCE_PROVIDERS: readonly string[] =
-  [...CONNECTOR_FETCH_SOURCE_MARKERS].sort();
+  CONNECTOR_FETCH_SOURCE_MARKERS_SORTED;
 
 /**
  * SCRUM-4507: WHERE this record's document came from. Deliberately a bare

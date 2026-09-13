@@ -13,11 +13,11 @@ import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
 // marker set the verify endpoint gates on (constants/connectorFingerprint.ts).
 // Imported from the constants module rather than from `verify.ts` on purpose:
 // `verify.ts` pulls in the db client and config at module scope, and this
-// module is imported by tests that deliberately do not stand those up.
-import { CONNECTOR_FETCH_SOURCE_MARKERS } from '../../constants/connectorFingerprint.js';
-
-/** Sorted so the served enum is stable across restarts. */
-const SOURCE_PROVIDER_ENUM = [...CONNECTOR_FETCH_SOURCE_MARKERS].sort();
+// module is imported by tests that deliberately do not stand those up. Both
+// surfaces therefore reference ONE frozen, already-ordered array rather than
+// each materialising its own — see the constant's own header for why the
+// order is stated and the array is frozen.
+import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js';
 
 const router = Router();
 
@@ -1810,15 +1810,16 @@ export const openApiSpec: Record<string, any> = {
               + 'and that its absence is not evidence the record is invalid.',
           },
           source: {
-            // SCRUM-4507. Enum members come from VERIFICATION_SOURCE_PROVIDERS
-            // (verify.ts), which is itself derived from the runtime
-            // recognised-marker set — the served spec can never document a
-            // value the endpoint would refuse to emit, or omit one it emits.
+            // SCRUM-4507. Enum members are the runtime recognised-marker set
+            // itself — the same array `verify.ts` re-exports as
+            // VERIFICATION_SOURCE_PROVIDERS — so the served spec can never
+            // document a value the endpoint would refuse to emit, or omit one
+            // it emits.
             type: 'object',
             properties: {
               provider: {
                 type: 'string',
-                enum: SOURCE_PROVIDER_ENUM,
+                enum: CONNECTOR_FETCH_SOURCE_MARKERS_SORTED,
                 description:
                   'The connected system this record\'s document was retrieved from.',
               },

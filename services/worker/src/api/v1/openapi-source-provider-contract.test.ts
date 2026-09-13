@@ -20,6 +20,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { openApiSpec } from './docs.js';
+import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // services/worker/src/api/v1 -> repo root
@@ -79,6 +80,26 @@ describe('source.provider parity between docs.ts and docs/api/openapi.yaml', () 
 
     expect(yamlEnum.length).toBeGreaterThan(0);
     expect([...yamlEnum].sort()).toEqual([...servedEnum].sort());
+  });
+
+  /**
+   * The served spec object is built ONCE at module scope and handed out to
+   * every `/api/v1/docs` request, so the enum array it holds is long-lived
+   * shared state. Frozen rather than merely `readonly`-typed: `readonly` is
+   * erased at runtime and says nothing to a JS caller, and a single stray
+   * `push`/`sort` anywhere in the process would silently change the published
+   * contract for every later reader of a FROZEN v1 schema (§1.8). Pinned here
+   * because the same array now backs both published surfaces.
+   */
+  it('the served provider enum is the shared vocabulary, frozen and deterministically ordered', () => {
+    const servedEnum = openApiSpec.components.schemas.VerificationResult.properties.source
+      .properties.provider.enum as string[];
+
+    expect(servedEnum).toEqual([...CONNECTOR_FETCH_SOURCE_MARKERS_SORTED]);
+    expect(Object.isFrozen(CONNECTOR_FETCH_SOURCE_MARKERS_SORTED)).toBe(true);
+    // Explicit, not "whatever .sort() did": the order is part of the published
+    // contract, so it is written down where a diff will show a change to it.
+    expect(servedEnum).toEqual(['connector', 'docusign', 'google_drive', 'microsoft_365']);
   });
 
   it('the YAML source block documents no identifier or deep link', () => {
