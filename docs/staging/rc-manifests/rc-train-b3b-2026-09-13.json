@@ -8,16 +8,16 @@
   "approval_actor": "",
   "approval_time": "",
   "train_launch_sha": "143d58d68caf372c237f6fe52da1af7941d59a60",
-  "target_main_sha": "9cba210f5",
+  "target_main_sha": "9cba210f5450c2f98b657ab1b12d187a59b86fa0",
   "allowed_base_shas": [
-    "9cba210f5"
+    "9cba210f5450c2f98b657ab1b12d187a59b86fa0"
   ],
   "covered_main_shas": [],
   "included_prs": [
     {
       "number": 2843,
-      "head_sha": "9507be51e",
-      "base_sha": "9cba210f5",
+      "head_sha": "67b9115fead0b67ac557d2a525a88f1f011d2d10",
+      "base_sha": "1172fc2825338e96e2d201972576399f9d2a7554",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "worker typecheck/lint/tests green after review fold; only Staging Soak Evidence Gate red pending this manifest.",
@@ -27,8 +27,8 @@
     },
     {
       "number": 2845,
-      "head_sha": "ebc4c2620",
-      "base_sha": "9cba210f5",
+      "head_sha": "d876ec413892afec612530a8d0ca9ac3b8bac471",
+      "base_sha": "5510cd694f8278e58639c3fa7199e84764972c86",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "worker 3397 tests green; scope vocabulary + verify:machines 12/12; only the soak gate red.",
@@ -37,20 +37,9 @@
       "branch": "fix/scrum-3981-enforce-webhooks-manage-scope"
     },
     {
-      "number": 2841,
-      "head_sha": "03acb5c48",
-      "base_sha": "9cba210f5",
-      "risk_tier": "T2",
-      "owner": "carson@arkova.io",
-      "ci_summary": "Train B2 evidence (492260d03) superseded by same-file drift from #2835 (keys.ts/docs.ts); re-soaked on the current main in B3b.",
-      "rollback_note": "Revert the PR commits; no migration; pause the api-key-expiry-notice Scheduler job if partial.",
-      "migration_files": [],
-      "branch": "feat/scrum-5023-api-key-expiry-visibility"
-    },
-    {
       "number": 2842,
-      "head_sha": "f1a16ac32",
-      "base_sha": "9cba210f5",
+      "head_sha": "f1a16ac3242937bdf68372f8dd79a274f41999fc",
+      "base_sha": "1f471113b25e2291ac84c8feff7ebbe8bb96fe6a",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "Train B2 evidence superseded (deploy-worker.yml/#2834) and the rig-2 re-soak stopped (config.ts/#2837); re-soaked on the current main in B3b.",
@@ -63,6 +52,18 @@
     {
       "number": 2846,
       "reason": "conflicts with #2841/#2845 on services/worker/src/api/v1/docs.ts; trails B3b — merges main and re-soaks solo after B3b lands"
+    },
+    {
+      "number": 2841,
+      "head_sha": "03acb5c488d37788abba6d1f9d8fd296606cc850",
+      "base_sha": "d0a5ffa276eeda7f8a983ef0b3154111a70c95bd",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Train B2 evidence (492260d03) superseded by same-file drift from #2835 (keys.ts/docs.ts); re-soaked on the current main in B3b.",
+      "rollback_note": "Revert the PR commits; no migration; pause the api-key-expiry-notice Scheduler job if partial.",
+      "migration_files": [],
+      "branch": "feat/scrum-5023-api-key-expiry-visibility",
+      "reason": "criss-cross merge-bases (d0a5ffa27 and e283b42bf: the branch merged #2835 which main also merged) make GitHub report a conflict that git resolves; it merges main after the B3b batch lands and re-soaks with #2846 (Train B5)"
     }
   ],
   "environment": {
@@ -79,11 +80,16 @@
   },
   "soak": {
     "start": "2026-09-13T07:17:41.404Z",
-    "end": "",
+    "end": "2026-09-13T11:17:59Z",
     "duration_hours": 4,
     "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@7cc125cf8",
-    "result": "",
-    "evidence_links": [],
+    "result": "green",
+    "evidence_links": [
+      "docs/staging/cto-train-b-0912/train-b3b-window1/summary.json",
+      "docs/staging/cto-train-b-0912/train-b3b-window1/cycles.sha256",
+      "docs/staging/cto-train-b-0912/train-b3b-window1/rollback-rehearsal.json",
+      "docs/staging/soak-preflight/rc-train-b3b-2026-09-13.json"
+    ],
     "expires_at": "2026-09-20T07:15:00Z"
   },
   "migration_plan": {
@@ -108,7 +114,11 @@
   "exceptions": [
     "Re-cut of Train B3 (#2843 #2845) plus #2841 and #2842 on main 9cba210f5 after the Train B1 batch (#2835 #2836 #2838) merged at 07:08Z and created same-file T2 drift (FD-GATE-3) for all four. The four PRs land as ONE Mergify batch after this window.",
     "Rig 1 honesty preflight re-run 2026-09-13T07:10:47Z: clean_mirror (docs/staging/cto-train-b-0912/preflight-b3b-20260913T071047Z.json).",
-    "Cycle-1 coverage gate 07:17:41Z: 174/174 probes (#2841 43, #2842 15, #2843 27, #2845 89); precheck 07:16:31Z 174/174."
+    "Cycle-1 coverage gate 07:17:41Z: 174/174 probes (#2841 43, #2842 15, #2843 27, #2845 89); precheck 07:16:31Z 174/174.",
+    "Window 1: 41 cycles, 41 pass, 0 fail, 174 probes/cycle, 0 retries; single revision 00018-ruw; last completed cycle finished 11:15:10Z; the supervisor stayed live until it was stopped for the rollback rehearsal at 11:17:59Z, after the 4 h floor cleared at 11:17:42Z — soak.end is the stop time.",
+    "Rollback rehearsed 2026-09-13T11:18Z: traffic re-promoted to rev 00014-car (/health git_sha e6bd4a167, healthy) then restored to 00018-ruw (/health git_sha 143d58d68, healthy); artifact rollback-rehearsal.json.",
+    "Base drift during the window: #2840 (frontend, 19129c38d) and #2839 (dependency pins, merge 11:05Z) landed; own-file overlap with train members is T1 only (src/lib/copy.ts) — covered by the per-PR residual-risk notes.",
+    "Per-PR base_sha is the base GitHub records for the PR (baseRefOid — what the gate compares against); the train integration head merged every head onto main 9cba210f5, so the interval between each merge-base and 9cba210f5 was inside the soaked tree."
   ],
   "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b3b-2026-09-13.json",
   "staging_branch": "rc/train-b3b-2026-09-13",
