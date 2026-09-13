@@ -1,18 +1,30 @@
 # agents.md — services/worker/src/api/
 
-## 2026-09-11 — UAT-22 selected-org platform invitations
+## 2026-09-12 — `apiScopeEnforcementCensus.test.ts`: a grantable scope must gate something (SCRUM-3981)
 
-`admin-invitations.ts` closes the gap between `OrgProfilePage` and the tenant-scoped
-`invite_member` RPC. After a platform-admin check, it loads the selected organization and actor
-display name from trusted rows, rejects an existing target-org member, and inserts the invitation
-with the client UUID as its primary key. A `23505` replay is accepted only when the committed row
-matches actor, org, normalized email, role, pending status, future expiry, and a nonempty UUID
-token. The provider key `invitation/<id>` deduplicates matching Resend payloads for Resend's
-documented 24-hour window; outside that window this handler does not promise exactly-once email.
-Invitation acceptance still owns membership creation: ORG_ADMIN maps to `org_members.admin`,
-INDIVIDUAL maps to `member`, and an existing account's home profile org is preserved.
-`admin-lists.ts` now provides the exact selected-org detail read used by that page; it validates
-the org UUID, rechecks platform-admin authority, and returns 404 rather than a generic empty row.
+`apiScopes.ts` is the vocabulary; it was never a claim that any of it is enforced.
+`webhooks:manage` shipped in `API_KEY_SCOPES`, in `docs/api/README.md`, and in the dashboard's
+scope picker, and no route required it — an operator who withheld it from a key withheld nothing.
+The failure mode is structural, not a one-off: a scope is added to the vocabulary in one PR and
+wired to a mount in another, and nothing notices when the second PR never lands.
+
+The census test closes it in both directions. Every `API_KEY_SCOPES` entry must be the argument of
+a `requireScope` / `requireScopeAnyAuth` / `requireScopeV2` call somewhere under
+`services/worker/src`, OR carry a one-line entry in `KNOWN_UNENFORCED` saying what is actually
+true. A new scope therefore arrives with a mount or with an admission; and once a scope IS
+enforced, its `KNOWN_UNENFORCED` entry has to be deleted or the test fails.
+
+Nine scopes are listed as unenforced today, and the list is worth reading rather than trusting:
+`write:anchors` is a grant-side alias of `anchor:write`, `attestations:write` is a genuine gap
+(the `/attestations` mount carries no scope guard), `keys:read` is required by nobody and granted
+by nobody, and the rest are either pre-GA or exist only as the `required` side of a back-compat
+branch in `scopeSatisfies` that no mount reaches.
+
+Honest limits, so nobody over-reads a green run: the scan is lexical. It counts guard call sites;
+it does not prove the guard is reachable, that the router it guards is mounted, or that a handler
+does not bypass it. Lines beginning `//` or `*` are skipped so a scope named in prose does not
+read as enforcement. Reachability is `docs.routeParity.test.ts`, `phiScopeMount.test.ts` and
+`api/v1/webhooks-scope.test.ts`, each for its own surface.
 
 ## 2026-08-30 — `connector-health.ts`: the `adobe_sign` kind is DERIVED, never asserted
 
@@ -38,6 +50,21 @@ live handshake. A wrong secret, or an account tier that does not grant `webhook_
 real status attached), not on this dashboard. Tests:
 `describe('resolveConnectorKind — adobe_sign')` in `connector-health.test.ts` pins both directions
 plus the whitespace-only-credential case.
+
+## 2026-09-11 — UAT-22 selected-org platform invitations
+
+`admin-invitations.ts` closes the gap between `OrgProfilePage` and the tenant-scoped
+`invite_member` RPC. After a platform-admin check, it loads the selected organization and actor
+display name from trusted rows, rejects an existing target-org member, and inserts the invitation
+with the client UUID as its primary key. A `23505` replay is accepted only when the committed row
+matches actor, org, normalized email, role, pending status, future expiry, and a nonempty UUID
+token. The provider key `invitation/<id>` deduplicates matching Resend payloads for Resend's
+documented 24-hour window; outside that window this handler does not promise exactly-once email.
+Invitation acceptance still owns membership creation: ORG_ADMIN maps to `org_members.admin`,
+INDIVIDUAL maps to `member`, and an existing account's home profile org is preserved.
+`admin-lists.ts` now provides the exact selected-org detail read used by that page; it validates
+the org UUID, rechecks platform-admin authority, and returns 404 rather than a generic empty row.
+
 ## 2026-08-23 — `queue-resolution.ts`: `GET /api/queue/pending` had NO role gate (SCRUM-3569, SEC)
 
 Any authenticated member of an org could list every PENDING_RESOLUTION anchor in that org — `public_id`, **`filename`** and **`fingerprint`** for each. Not cross-tenant (the query was org-scoped), but a rank-and-file member enumerating what their coworkers uploaded is exactly the disclosure this surface was documented not to allow.
@@ -456,8 +483,6 @@ never the not_anchored sentinel reserved for a successful empty lookup.
 `isCallerOrgAdminResult` accepts an optional DB client for routers that inject their client. Both membership and profile fallback use that same client; existing callers retain the shared default. DocuSign inheritance uses this resolver so an own-org profile `ORG_ADMIN` can administer the parent without an `org_members` row, while foreign-org profile roles remain denied.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
-
-The real invitation integration suite runs through `vitest.config.uat22-local.ts`, separately from unit coverage, and is required by the CI Tests aggregate. It has explicit loopback/opt-in guards and never skips conditionally. Cleanup deletes Auth users through GoTrue so factor/identity cascades remain intact.
 
 ## PR #2695 — timestamp helper simplification (2026-09-10)
 
