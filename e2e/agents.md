@@ -546,3 +546,10 @@ positive access checks must pass before a negative isolation result is meaningfu
 The sign-out test uses its own real UI login and MFA enrollment, so signing out
 cannot revoke a later test's saved seed session. Intentional AAL1 rejection tests
 and `loginViaUi` retain their original authentication level.
+## 2026-09-12 SCRUM-5024 — `signup-entry.spec.ts`: partner `?ref` capture
+
+Two cases added at 1280 px and 375 px: a valid `?ref` is stripped from the URL
+(while an unrelated `utm_source` survives) and parked upper-cased under the
+canonical `localStorage` key `arkova.referral`; a malformed `?ref` is stripped
+AND discarded, because parking it would only ever produce `unknown_code` at
+`record_org_referral`.

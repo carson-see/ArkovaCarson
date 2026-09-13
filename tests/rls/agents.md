@@ -162,3 +162,25 @@ SCRUM-4887: committed changes to the singleton OAuth confirmation policy use
 timestamp in a separate `finally` path. The lock times out instead of evicting
 an apparently stale owner. Keep file parallelism enabled so unrelated fixture
 collisions remain visible.
+## 2026-09-12 SCRUM-5024 — `referral-attribution.test.ts`
+
+Live-database proof for migration `0455`. Every property here is enforced by SQL
+— an RLS policy, a GRANT, a CHECK, a partial unique index, or a SECURITY DEFINER
+body — so per this file's own rule none of it may live in a mocked suite.
+
+The disclosure boundary is why the file exists: `organization_referrals` has no
+SELECT policy matching `referred_org_id`, so a member of a REFERRED organization
+must read zero rows about it, and the `organization.referred` audit row is filed
+against the REFERRER's `org_id`. Both are asserted directly, because a future
+"let's add the obvious policy" change would quietly undo them.
+
+Also pinned: the format CHECK rejects `I`/`L`/`O`/`0`/`1` even via `service_role`;
+`generate_referral_code` is 42501 for anon AND authenticated; one ACTIVE code per
+org (23505); `ensure_org_referral_code` is idempotent; `record_org_referral` is
+total (lower-case applies, replay is `already_attributed` with still exactly one
+row, unknown writes one audit row and NO edge, self is refused, blank is
+`no_code` and writes NO audit row); and neither table accepts a write from
+`authenticated`.
+
+Requires a local Supabase with `0455` applied. It was NOT run in the authoring
+session (no local stack available there) — it is the T3 soak specification.

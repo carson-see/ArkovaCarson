@@ -52,6 +52,7 @@ import { aiReviewRouter } from './ai-review.js';
 import { aiIntegrityRouter } from './ai-integrity.js';
 import { aiEmbedRouter } from './ai-embed.js';
 import { aiFeedbackRouter } from './ai-feedback.js';
+import { referralsRouter } from './referrals.js';
 
 type ExpressMethod = 'get' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -129,6 +130,7 @@ const MOUNTS: MountEntry[] = [
   { varName: 'aiIntegrityRouter', router: aiIntegrityRouter, prefix: '/ai/integrity' },
   { varName: 'aiEmbedRouter', router: aiEmbedRouter, prefix: '/ai/embed' },
   { varName: 'aiFeedbackRouter', router: aiFeedbackRouter, prefix: '/ai/feedback' },
+  { varName: 'referralsRouter', router: referralsRouter, prefix: '/referrals' },
 ];
 
 describe('served v1 OpenAPI spec — mounted route parity (pentest-prep)', () => {
