@@ -204,10 +204,24 @@ function toHexSha(value: string, fnName: string): string {
   return match[0];
 }
 
+// `of` (the ref to compare against) is the OTHER argv position at both
+// `execFileSync` call sites below. In practice it is always either the
+// hardcoded default `'origin/main'` or `--expected-sha=<40-hex>` validated
+// by `parseArgs()` -- but that validation lives in a different function too,
+// so the same S6350 reasoning applies: derive a trusted value at THIS
+// boundary rather than passing the parameter through. `'origin/main'` is
+// checked by exact literal match (it is a fixed, known-safe ref name, not
+// user input); anything else must be a real hex SHA.
+function toSafeRef(value: string, fnName: string): string {
+  if (value === 'origin/main') return value;
+  return toHexSha(value, fnName);
+}
+
 export function gitIsAncestor(sha: string, of = 'origin/main'): boolean {
   try {
     const safeSha = toHexSha(sha, 'gitIsAncestor');
-    execFileSync(GIT_BIN, ['merge-base', '--is-ancestor', safeSha, of], { stdio: 'ignore' });
+    const safeOf = toSafeRef(of, 'gitIsAncestor');
+    execFileSync(GIT_BIN, ['merge-base', '--is-ancestor', safeSha, safeOf], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -216,7 +230,8 @@ export function gitIsAncestor(sha: string, of = 'origin/main'): boolean {
 
 export function gitCommitsBehind(sha: string, of = 'origin/main'): number {
   const safeSha = toHexSha(sha, 'gitCommitsBehind');
-  const out = execFileSync(GIT_BIN, ['rev-list', '--count', `${safeSha}..${of}`], { encoding: 'utf8' }).trim();
+  const safeOf = toSafeRef(of, 'gitCommitsBehind');
+  const out = execFileSync(GIT_BIN, ['rev-list', '--count', `${safeSha}..${safeOf}`], { encoding: 'utf8' }).trim();
   const n = Number(out);
   return Number.isFinite(n) ? n : 0;
 }
