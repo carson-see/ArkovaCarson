@@ -1,6 +1,28 @@
 # agents.md — lib
 
-_Last updated: 2026-09-12_
+_Last updated: 2026-09-13_
+
+## 2026-09-13 founder feedback — `SUB_ORG_LABELS` grew an error-translation block
+
+`ManageSubOrgs` used to `toast.error(data.error ?? FALLBACK)`, i.e. echo the worker's reply straight
+to the customer. `services/worker/src/api/v1/orgSubOrgs.ts` replies with a MIX of engineer-facing
+sentences ("Admin permissions required") and bare machine codes (`sub_org_limit_reached`,
+`cap_check_unavailable`, `credit_allocation_unavailable`, `membership_lookup_unavailable`), so both
+kinds reached the interface — see `docs/uat/suborg-ux/before/step8-create-error-toast-1280.png`.
+
+The `ERROR_*` entries in `SUB_ORG_LABELS` are the translation target, keyed from
+`WORKER_ERROR_COPY` in `ManageSubOrgs.tsx`. Rules:
+
+- an unmapped reply falls back to the caller's generic copy **and** is `console.error`-logged with
+  the raw value — it is never silently generalised away;
+- when the worker adds an error code, add the mapping here in the same change. A missing mapping is
+  not a crash, it is a customer reading a slightly vaguer sentence than they should, which is
+  exactly the kind of thing that never gets noticed.
+
+Also promoted here in the same change: `LOAD_ERROR_TITLE` / `LOAD_ERROR_DESC` / `LOAD_ERROR_RETRY`,
+which had been sitting in a local `SUB_ORG_STATE_COPY` constant in `ManageSubOrgs.tsx` since
+`copy.ts` was locked under a concurrent PR. The note there said to promote them the next time this
+file was touched; that has now happened and the local constant is gone.
 
 ## 2026-09-12 SCRUM-4989 — `socialLinks.ts`, `jsonLd.ts` (new, PR #2840)
 
