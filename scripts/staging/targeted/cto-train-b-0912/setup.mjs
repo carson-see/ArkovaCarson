@@ -68,6 +68,11 @@ async function main() {
   state.memberA = await ensureUser({ local: `${PREFIX}-member-a`, role: 'ORG_MEMBER', orgId: state.orgA });
   state.adminB = await ensureUser({ local: `${PREFIX}-admin-b`, role: 'ORG_ADMIN', orgId: state.orgB });
   state.individual = await ensureUser({ local: `${PREFIX}-individual`, role: 'INDIVIDUAL', orgId: null });
+  // #2911 (webhook DLQ admin drain): a platform-admin fixture, org-less like a
+  // real Arkova staff account. isPlatformAdmin is the ONLY gate handleWebhookDlqList
+  // / handleWebhookDlqResolve check (utils/platformAdmin.ts's is_platform_admin
+  // column) — org membership is irrelevant to this surface.
+  state.platformAdmin = await ensureUser({ local: `${PREFIX}-platform-admin`, role: 'INDIVIDUAL', orgId: null, isPlatformAdmin: true });
   state.apiKey = await ensureApiKey(state.orgA, state.adminA.userId);
   const ctx = { admin, state, ANON_KEY, SERVICE_KEY, API_KEY_HMAC_SECRET, hashApiKey, probe, workerFetch, restFetch, SUPABASE_URL, TAG_URL, PREFIX, env: process.env };
   for (const f of readdirSync(new URL('./probes/', import.meta.url)).filter((x) => x.endsWith('.mjs')).sort()) {
