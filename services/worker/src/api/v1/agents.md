@@ -2,42 +2,28 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
-## 2026-09-12 — `/webhooks` mount order: limiter -> scope -> handler key + ORG_ADMIN (SCRUM-3981)
+## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
 
-`router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter)`.
-Read the chain left to right, because each layer answers a different question and none of them
-is redundant:
+Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI
+extraction for a brand-new org no longer 503s: since PR #2442, `deduct_ai_credits` fails CLOSED when
+no `ai_credits` row covers the current period, and nothing ever provisioned that row. Read
+`ai/agents.md`'s 2026-09-12 entry for the full mechanism (no unique constraint on the table, why the
+lookup window matches `deduct_ai_credits`'s own, race handling).
 
-1. **`batchRateLimiter`** (10 req/min, `scope: 'batch'`) — cheapest, so it is first. An unscoped
-   flood is rejected before anything reads a key.
-2. **`requireScope('webhooks:manage')`** — the capability gate, added by SCRUM-3981. Before it,
-   the mount carried the limiter alone: handlers checked that *an* API key was present and the
-   five ORG_ADMIN routes (create, patch, delete, both DLQ) checked the actor's role, but nothing
-   read `scopes`. `webhooks:manage` was in
-   `apiScopes.ts`, in `docs/api/README.md`, and in the dashboard's scope picker, and gated
-   nothing — so a key minted with the default `['read:search']` could list, read, test-ping,
-   replay and DLQ-manage an org's endpoints.
-3. **`requireApiKey` inside `webhooks.ts`** — still there, and it is load-bearing.
-   `requireScope` opens with `if (!req.apiKey) { next(); return; }` (`middleware/apiKeyAuth.ts`),
-   i.e. it does NOT authenticate: it narrows a caller that is already authenticated. On this
-   mount nothing upstream requires a key, so the guard falls through for an anonymous request
-   and the handler-level check is the only thing between that request and a 200. Delete
-   `requireApiKey` "because the mount is guarded now" and every route becomes anonymous.
-   `webhooks-scope.test.ts` pins exactly that: no key -> 401 `authentication_required`, and the
-   marker middleware records that the scope guard did pass control on.
-
-Scope is capability, not ownership: each handler still filters `.eq('org_id', req.apiKey.orgId)`,
-so an org-B key holding `webhooks:manage` gets **404** on an org-A endpoint id, never 403.
-
-Route coverage is read off `webhooksRouter.stack`, not transcribed — all ten routes today. The
-served spec (`docs.ts`, canonical per `docs/api/canonical-sources.md`) declares
-`x-arkova-required-scopes: ['webhooks:manage']` and a 403 on each of them.
-
-Deliberately NOT changed: the PHI/FERPA mounts at the bottom of `router.ts`. `requireAuth` runs
-first there and rejects any caller whose Authorization header is absent or starts with
-`Bearer ak_`, so an API key never reaches `requireScopeAnyAuth('compliance:read')` — fail-closed
-today. Whether a key SHOULD be able to reach those routes is a product decision, filed as
-SCRUM-5070 rather than decided in a webhooks PR.
+Both routes provision BEFORE their up-front `checkAICredits` guard, not between that guard and the
+debit. `check_ai_credits`'s WHERE clause is `A OR B AND C AND D`, which Postgres parses as
+`A OR (B AND C AND D)` — given an org id it matches ANY row for that org regardless of period, with
+`LIMIT 1` and no `ORDER BY`. An org whose only row is an exhausted PRIOR period would otherwise get a
+402 from that guard and return before provisioning ever ran, which is the same "stuck org" outcome
+this fix exists to remove. (The precedence bug itself is pre-existing and needs its own migration to
+fix; ordering the calls this way makes it non-blocking.) `ai-extract-batch.ts` additionally must call
+it once before `checkAICredits`, not before
+each per-row `deductAICredits` inside `parallelMap` — the batch route latches `hasFiniteCredits` from
+that one `checkAICredits` result and reuses it for every row, so provisioning has to land before that
+read or the whole batch would treat a freshly-created org as still-unmetered. Both skip the call when
+`orgId` is undefined. A genuine deduction failure (insufficient credits / RPC error) still fails CLOSED
+with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
+check itself.
 
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
@@ -1282,8 +1268,68 @@ Migration `0448` checks every active agent-key INSERT/reactivation against the a
 
 ComputeID admission now uses service-only `admit_computeid_agent`: one passport sentinel lock, global terminal-revocation check, agent, hashed key and both audit events in a single transaction. The prior `agent-keys.ts` helper and compensation deletion are removed. An unknown reply returns an error while preserving any committed agent/key; retries report the existing binding. Raw keys never reach the RPC. The OpenAPI surface documents org-key authority and admission errors. SCRUM-4570 covers cross-organization replay; durable tenant binding ownership remains SCRUM-4497.
 
+## 2026-09-12 — `/webhooks` mount order: limiter -> scope -> handler key + ORG_ADMIN (SCRUM-3981)
+
+`router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter)`.
+Read the chain left to right, because each layer answers a different question and none of them
+is redundant:
+
+1. **`batchRateLimiter`** (10 req/min, `scope: 'batch'`) — cheapest, so it is first. An unscoped
+   flood is rejected before anything reads a key.
+2. **`requireScope('webhooks:manage')`** — the capability gate, added by SCRUM-3981. Before it,
+   the mount carried the limiter alone: handlers checked that *an* API key was present and the
+   five ORG_ADMIN routes (create, patch, delete, both DLQ) checked the actor's role, but nothing
+   read `scopes`. `webhooks:manage` was in
+   `apiScopes.ts`, in `docs/api/README.md`, and in the dashboard's scope picker, and gated
+   nothing — so a key minted with the default `['read:search']` could list, read, test-ping,
+   replay and DLQ-manage an org's endpoints.
+3. **`requireApiKey` inside `webhooks.ts`** — still there, and it is load-bearing.
+   `requireScope` opens with `if (!req.apiKey) { next(); return; }` (`middleware/apiKeyAuth.ts`),
+   i.e. it does NOT authenticate: it narrows a caller that is already authenticated. On this
+   mount nothing upstream requires a key, so the guard falls through for an anonymous request
+   and the handler-level check is the only thing between that request and a 200. Delete
+   `requireApiKey` "because the mount is guarded now" and every route becomes anonymous.
+   `webhooks-scope.test.ts` pins exactly that: no key -> 401 `authentication_required`, and the
+   marker middleware records that the scope guard did pass control on.
+
+Scope is capability, not ownership: each handler still filters `.eq('org_id', req.apiKey.orgId)`,
+so an org-B key holding `webhooks:manage` gets **404** on an org-A endpoint id, never 403.
+
+Route coverage is read off `webhooksRouter.stack`, not transcribed — all ten routes today. The
+served spec (`docs.ts`, canonical per `docs/api/canonical-sources.md`) declares
+`x-arkova-required-scopes: ['webhooks:manage']` and a 403 on each of them.
+
+Deliberately NOT changed: the PHI/FERPA mounts at the bottom of `router.ts`. `requireAuth` runs
+first there and rejects any caller whose Authorization header is absent or starts with
+`Bearer ak_`, so an API key never reaches `requireScopeAnyAuth('compliance:read')` — fail-closed
+today. Whether a key SHOULD be able to reach those routes is a product decision, filed as
+SCRUM-5070 rather than decided in a webhooks PR.
+
 ## PR #2572 — cap faults and affiliation write races (SCRUM-4467 / SCRUM-4468)
 
 `resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+## 2026-09-12 SCRUM-4984 / SCRUM-4985 — fail-closed tenant scoping on the AI read endpoints; entity-verify stops building filter grammar
+
+**`tenantRowAccess.ts` is the only allowed way to answer "may this caller read this row" on a v1
+handler that scopes by org.** `ai-provenance.ts` and `ai-accountability-report.ts` both used
+`row.org_id && callerOrgId && row.org_id !== callerOrgId` to deny. That is only true when both sides
+are present and differ, so an INDIVIDUAL caller (no `profiles.org_id`), an orphan row, or a select list
+that never fetched `org_id` (ai-provenance never did — the guard was dead code) all fell through to
+"allowed". Sekura Phase 2's LLM pass flagged neither; the CTO verification of its claims did. The rule
+is now positive — same org, or caller owns the row — and both handlers answer **404, not 403**, so
+`public_id` / fingerprint enumeration cannot confirm what other tenants hold. ai-provenance filters the
+manifest list rather than checking only `manifests[0]`, because two orgs can legitimately hold
+manifests for the same fingerprint (same public document, extracted twice). If you add a v1 handler
+that reads a tenant-scoped row under `requireAuth`, select `org_id, user_id` and call
+`callerMayReadRow`; the test files pin that the columns are selected.
+
+**`entity-verify.ts` no longer hand-builds a PostgREST `.or()` string.** The attestation lookup used
+to interpolate the raw `identifier` query param into `subject_identifier.eq.${identifier}`, so a comma
+or operator in it appended clauses and widened a targeted lookup into enumeration (`name` on the line
+above WAS escaped — the inconsistency is the tell). Each term now goes through the query builder
+(`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
+`entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
+filters here; if you need OR semantics across columns, run the terms separately and union.
