@@ -1337,6 +1337,23 @@ carries an optional `code` beside `error`; `orgSubOrgsApiKey.ts`'s
 byte-unchanged. A core failure with no `code` degrades to
 `status_update_failed` rather than leaking a sentence.
 
+**Both OpenAPI documents are diffed by a test now** (review U8). `docs.ts`
+(served at `/api/docs/spec.json`) and `docs/api/openapi.yaml` (handed to
+integrators) describe the same v1 surface and nothing compared their component
+schemas. They had drifted twice on ONE object: `SubOrganization.verification_status`
+carried the PRE-0407 three-value enum in `docs.ts` while
+`organizations_verification_status_valid` has admitted `REJECTED` and
+`REQUIRES_INPUT` since migration 0407, and the YAML carried no enum at all.
+Both now publish the post-0407 list, an identical property set and required
+list, and the same `parent_approval_status` enum;
+`openapi-suborg-schema-parity.test.ts` fails on any future divergence. The
+403 / 409 / 503 bodies the caller layer can actually produce
+(`acting_org_not_found`, `sub_org_cannot_manage_sub_orgs`, `ambiguous_caller`,
+`org_lookup_unavailable` and the rest of the `*_unavailable` family) are
+documented on all six operations in both documents. §1.8 freezes this shape on
+publication, so a drift found after publication can only be documented, never
+narrowed — which is why it is caught here.
+
 **An unmapped RPC code is a 502, not a 500** (review U7).
 `CREDIT_RPC_STATUS` / `SUSPEND_RPC_STATUS` did not list
 `api_key_principal_unresolved` — a code only 0453's `*_as_api_key` functions can

@@ -979,11 +979,27 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Insufficient scope, or the key's own organization is itself an affiliate
+          description: >-
+            Refused, named by a machine code in `error`: insufficient_scope (the key
+            lacks orgs:manage), acting_org_not_found (the key's own organization no
+            longer exists), or sub_org_cannot_manage_sub_orgs (the key belongs to an
+            affiliated organization, which cannot administer affiliates of its own).
+        "409":
+          description: >-
+            ambiguous_caller - the request presented both a verified session and an
+            API key. Neither credential may be allowed to pick which organization is
+            acting, so the request is refused rather than resolved.
         "429":
           description: Rate limit exceeded
         "503":
-          description: A required lookup was unavailable
+          description: >-
+            A required lookup or RPC was unavailable, named by a machine code in
+            `error`: org_lookup_unavailable, sub_org_lookup_unavailable,
+            sub_org_list_unavailable, rollup_projection_unavailable,
+            credit_allocation_unavailable, credit_rollup_unavailable,
+            balance_lookup_unavailable, suspend_unavailable, cap_check_unavailable,
+            or api_key_principal_unresolved (the key is authorized, but the
+            principal it must stamp on the row could not be resolved).
 
   /organizations/sub-orgs/approve:
     post:
@@ -1015,7 +1031,11 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Insufficient scope
+          description: >-
+            Refused, named by a machine code in `error`: insufficient_scope (the key
+            lacks orgs:manage), acting_org_not_found (the key's own organization no
+            longer exists), or sub_org_cannot_manage_sub_orgs (the key belongs to an
+            affiliated organization, which cannot administer affiliates of its own).
         "404":
           description: No addressable affiliate answers to this public id
         "409":
@@ -1023,6 +1043,9 @@ paths:
             A state conflict, named by a machine code in `error`: already_approved,
             sub_org_limit_reached (the affiliate cap), or affiliation_changed (the
             affiliation moved under the request - re-read and retry).
+            Also ambiguous_caller: the request presented both a verified session and
+            an API key, and neither credential may pick which organization is acting.
+            Send exactly one.
         "422":
           description: Request body failed validation
         "429":
@@ -1034,9 +1057,13 @@ paths:
             the request was answered, not dropped.
         "503":
           description: >-
-            A required lookup or RPC was unavailable, including
-            api_key_principal_unresolved (the key is authorized, but the principal
-            it must stamp on the row could not be resolved).
+            A required lookup or RPC was unavailable, named by a machine code in
+            `error`: org_lookup_unavailable, sub_org_lookup_unavailable,
+            sub_org_list_unavailable, rollup_projection_unavailable,
+            credit_allocation_unavailable, credit_rollup_unavailable,
+            balance_lookup_unavailable, suspend_unavailable, cap_check_unavailable,
+            or api_key_principal_unresolved (the key is authorized, but the
+            principal it must stamp on the row could not be resolved).
         "500":
           description: >-
             audit_write_failed — the affiliation status WAS changed and the audit
@@ -1075,7 +1102,11 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Insufficient scope
+          description: >-
+            Refused, named by a machine code in `error`: insufficient_scope (the key
+            lacks orgs:manage), acting_org_not_found (the key's own organization no
+            longer exists), or sub_org_cannot_manage_sub_orgs (the key belongs to an
+            affiliated organization, which cannot administer affiliates of its own).
         "404":
           description: No addressable affiliate answers to this public id
         "409":
@@ -1083,6 +1114,9 @@ paths:
             A state conflict, named by a machine code in `error`: already_revoked
             or affiliation_changed (the affiliation moved under the request -
             re-read and retry).
+            Also ambiguous_caller: the request presented both a verified session and
+            an API key, and neither credential may pick which organization is acting.
+            Send exactly one.
         "422":
           description: Request body failed validation
         "429":
@@ -1094,9 +1128,13 @@ paths:
             the request was answered, not dropped.
         "503":
           description: >-
-            A required lookup or RPC was unavailable, including
-            api_key_principal_unresolved (the key is authorized, but the principal
-            it must stamp on the row could not be resolved).
+            A required lookup or RPC was unavailable, named by a machine code in
+            `error`: org_lookup_unavailable, sub_org_lookup_unavailable,
+            sub_org_list_unavailable, rollup_projection_unavailable,
+            credit_allocation_unavailable, credit_rollup_unavailable,
+            balance_lookup_unavailable, suspend_unavailable, cap_check_unavailable,
+            or api_key_principal_unresolved (the key is authorized, but the
+            principal it must stamp on the row could not be resolved).
         "500":
           description: >-
             audit_write_failed — the affiliation status WAS changed and the audit
@@ -1154,11 +1192,20 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Insufficient scope
+          description: >-
+            Refused, named by a machine code in `error`: insufficient_scope (the key
+            lacks orgs:manage), acting_org_not_found (the key's own organization no
+            longer exists), or sub_org_cannot_manage_sub_orgs (the key belongs to an
+            affiliated organization, which cannot administer affiliates of its own).
         "404":
           description: No addressable approved affiliate answers to this public id
         "409":
-          description: insufficient_parent_balance or insufficient_child_balance
+          description: >-
+            insufficient_parent_balance or insufficient_child_balance - a conflict
+            with the current balance, not a payment prompt.
+            Also ambiguous_caller: the request presented both a verified session and
+            an API key, and neither credential may pick which organization is acting.
+            Send exactly one.
         "422":
           description: Request body failed validation
         "429":
@@ -1170,9 +1217,13 @@ paths:
             the request was answered, not dropped.
         "503":
           description: >-
-            A required lookup or RPC was unavailable, including
-            api_key_principal_unresolved (the key is authorized, but the principal
-            it must stamp on the row could not be resolved).
+            A required lookup or RPC was unavailable, named by a machine code in
+            `error`: org_lookup_unavailable, sub_org_lookup_unavailable,
+            sub_org_list_unavailable, rollup_projection_unavailable,
+            credit_allocation_unavailable, credit_rollup_unavailable,
+            balance_lookup_unavailable, suspend_unavailable, cap_check_unavailable,
+            or api_key_principal_unresolved (the key is authorized, but the
+            principal it must stamp on the row could not be resolved).
     get:
       operationId: getSubOrganizationCreditRollup
       summary: Affiliate credit rollup
@@ -1212,7 +1263,16 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Insufficient scope
+          description: >-
+            Refused, named by a machine code in `error`: insufficient_scope (the key
+            lacks orgs:manage), acting_org_not_found (the key's own organization no
+            longer exists), or sub_org_cannot_manage_sub_orgs (the key belongs to an
+            affiliated organization, which cannot administer affiliates of its own).
+        "409":
+          description: >-
+            ambiguous_caller - the request presented both a verified session and an
+            API key. Neither credential may be allowed to pick which organization is
+            acting, so the request is refused rather than resolved.
         "429":
           description: Rate limit exceeded
         "502":
@@ -1222,9 +1282,13 @@ paths:
             the request was answered, not dropped.
         "503":
           description: >-
-            A required lookup or RPC was unavailable, including
-            api_key_principal_unresolved (the key is authorized, but the principal
-            it must stamp on the row could not be resolved).
+            A required lookup or RPC was unavailable, named by a machine code in
+            `error`: org_lookup_unavailable, sub_org_lookup_unavailable,
+            sub_org_list_unavailable, rollup_projection_unavailable,
+            credit_allocation_unavailable, credit_rollup_unavailable,
+            balance_lookup_unavailable, suspend_unavailable, cap_check_unavailable,
+            or api_key_principal_unresolved (the key is authorized, but the
+            principal it must stamp on the row could not be resolved).
 
   /organizations/sub-orgs/offboard:
     post:
@@ -1278,11 +1342,19 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Insufficient scope
+          description: >-
+            Refused, named by a machine code in `error`: insufficient_scope (the key
+            lacks orgs:manage), acting_org_not_found (the key's own organization no
+            longer exists), or sub_org_cannot_manage_sub_orgs (the key belongs to an
+            affiliated organization, which cannot administer affiliates of its own).
         "404":
           description: No addressable affiliate answers to this public id
         "409":
-          description: insufficient_child_balance — nothing is suspended when the reclaim fails
+          description: >-
+            insufficient_child_balance - nothing is suspended when the reclaim fails.
+            Also ambiguous_caller: the request presented both a verified session and
+            an API key, and neither credential may pick which organization is acting.
+            Send exactly one.
         "422":
           description: Request body failed validation
         "429":
@@ -1294,9 +1366,13 @@ paths:
             the request was answered, not dropped.
         "503":
           description: >-
-            A required lookup or RPC was unavailable, including
-            api_key_principal_unresolved (the key is authorized, but the principal
-            it must stamp on the row could not be resolved).
+            A required lookup or RPC was unavailable, named by a machine code in
+            `error`: org_lookup_unavailable, sub_org_lookup_unavailable,
+            sub_org_list_unavailable, rollup_projection_unavailable,
+            credit_allocation_unavailable, credit_rollup_unavailable,
+            balance_lookup_unavailable, suspend_unavailable, cap_check_unavailable,
+            or api_key_principal_unresolved (the key is authorized, but the
+            principal it must stamp on the row could not be resolved).
 
   /jobs/{jobId}:
     get:
@@ -1362,16 +1438,25 @@ components:
         domain:
           type: string
           nullable: true
+        # organizations_verification_status_valid as widened by migration 0407
+        # (AUDIT-0424-10). The served spec published the pre-0407 three-value
+        # list; a partner validating against it would have rejected REJECTED and
+        # REQUIRES_INPUT, values the database has stored since 0407 landed.
         verification_status:
           type: string
           nullable: true
+          enum: [UNVERIFIED, PENDING, VERIFIED, REJECTED, REQUIRES_INPUT, null]
         parent_approval_status:
           type: string
           nullable: true
+          enum: [PENDING, APPROVED, REVOKED, null]
         suspended:
           type: boolean
         docusign_inherited:
           type: boolean
+          description: >-
+            Whether this affiliate currently runs on the parent organization
+            DocuSign connection.
         created_at:
           type: string
           format: date-time

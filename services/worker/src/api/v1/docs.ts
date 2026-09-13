@@ -64,9 +64,19 @@ const SUB_ORG_SELECTOR_PROPERTY = {
   example: 'k7mqx3ptr9wz',
 } as const;
 
+const SUB_ORG_AMBIGUOUS_CALLER_409 = {
+  description:
+    'ambiguous_caller — the request presented both a verified session and an API key. Neither credential may be allowed to pick which organization is acting, so the request is refused rather than resolved.',
+  content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+} as const;
+
 const SUB_ORG_COMMON_RESPONSES = {
   '401': { $ref: '#/components/responses/Unauthorized' },
-  '403': { $ref: '#/components/responses/Forbidden' },
+  '403': {
+    description:
+      'Refused, named by a machine code in `error`: `insufficient_scope` (the key lacks orgs:manage), `acting_org_not_found` (the key\'s own organization no longer exists), or `sub_org_cannot_manage_sub_orgs` (the key belongs to an affiliated organization, which cannot administer affiliates of its own).',
+    content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+  },
   '404': {
     description:
       'No affiliated organization the caller may address answers to this public id. Deliberately indistinguishable from "belongs to another parent", "not approved yet" and "suspended" — this endpoint is not an existence oracle.',
@@ -80,7 +90,7 @@ const SUB_ORG_COMMON_RESPONSES = {
   },
   '503': {
     description:
-      'A required lookup or RPC was unavailable — including `api_key_principal_unresolved`, where the key is authorized but the principal it must stamp on the row could not be resolved. Never returned in place of a definitive answer.',
+      'A required lookup or RPC was unavailable, named by a machine code in `error`: `org_lookup_unavailable` (the acting-organization read failed), `sub_org_lookup_unavailable`, `sub_org_list_unavailable`, `rollup_projection_unavailable`, `credit_allocation_unavailable`, `credit_rollup_unavailable`, `balance_lookup_unavailable`, `suspend_unavailable`, `cap_check_unavailable`, or `api_key_principal_unresolved` (the key is authorized but the principal it must stamp on the row could not be resolved). Never returned in place of a definitive answer.',
     content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
   },
 } as const;
@@ -1564,6 +1574,7 @@ export const openApiSpec: Record<string, any> = {
               },
             },
           },
+          '409': SUB_ORG_AMBIGUOUS_CALLER_409,
           ...SUB_ORG_COMMON_RESPONSES,
         },
       },
@@ -1587,7 +1598,7 @@ export const openApiSpec: Record<string, any> = {
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
             description:
-              'A state conflict, named by a machine code in `error`: `already_approved`, `sub_org_limit_reached` (the affiliate cap), or `affiliation_changed` (the affiliation moved under the request — re-read and retry).',
+              'A state conflict, named by a machine code in `error`: `already_approved`, `sub_org_limit_reached` (the affiliate cap), or `affiliation_changed` (the affiliation moved under the request — re-read and retry). Also `409 ambiguous_caller`: the request presented both a verified session and an API key, and neither credential may be allowed to pick which organization is acting. Send exactly one.',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '500': {
@@ -1619,7 +1630,7 @@ export const openApiSpec: Record<string, any> = {
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
             description:
-              'A state conflict, named by a machine code in `error`: `already_revoked` or `affiliation_changed` (the affiliation moved under the request — re-read and retry).',
+              'A state conflict, named by a machine code in `error`: `already_revoked` or `affiliation_changed` (the affiliation moved under the request — re-read and retry). Also `409 ambiguous_caller`: the request presented both a verified session and an API key, and neither credential may be allowed to pick which organization is acting. Send exactly one.',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '500': {
@@ -1677,7 +1688,7 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
-            description: 'insufficient_parent_balance or insufficient_child_balance. A conflict with the current balance, not a payment prompt — nothing here is purchasable in the moment.',
+            description: 'insufficient_parent_balance or insufficient_child_balance. A conflict with the current balance, not a payment prompt — nothing here is purchasable in the moment. Also `409 ambiguous_caller`: the request presented both a verified session and an API key, and neither credential may be allowed to pick which organization is acting. Send exactly one.',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
@@ -1720,6 +1731,7 @@ export const openApiSpec: Record<string, any> = {
               },
             },
           },
+          '409': SUB_ORG_AMBIGUOUS_CALLER_409,
           ...SUB_ORG_COMMON_RESPONSES,
         },
       },
@@ -1768,7 +1780,7 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
-            description: 'insufficient_child_balance — the reclaim conflicts with the current balance. Nothing is suspended when the reclaim fails.',
+            description: 'insufficient_child_balance — the reclaim conflicts with the current balance. Nothing is suspended when the reclaim fails. Also `409 ambiguous_caller`: the request presented both a verified session and an API key, and neither credential may be allowed to pick which organization is acting. Send exactly one.',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
@@ -2716,7 +2728,12 @@ export const openApiSpec: Record<string, any> = {
           public_id: { type: 'string', description: 'Public identifier. The internal uuid is never returned.' },
           display_name: { type: 'string' },
           domain: { type: 'string', nullable: true },
-          verification_status: { type: 'string', nullable: true, enum: ['UNVERIFIED', 'PENDING', 'VERIFIED', null] },
+          // The `organizations_verification_status_valid` CHECK as widened by
+          // migration 0407 (AUDIT-0424-10). The pre-0407 three-value list
+          // published here omitted REJECTED and REQUIRES_INPUT, so a partner
+          // validating against this schema would have rejected a value the
+          // database has been able to store since 0407 landed.
+          verification_status: { type: 'string', nullable: true, enum: ['UNVERIFIED', 'PENDING', 'VERIFIED', 'REJECTED', 'REQUIRES_INPUT', null] },
           parent_approval_status: { type: 'string', nullable: true, enum: ['PENDING', 'APPROVED', 'REVOKED', null] },
           suspended: { type: 'boolean' },
           docusign_inherited: { type: 'boolean', description: 'Whether this affiliate currently runs on the parent organization DocuSign connection.' },
