@@ -1,6 +1,14 @@
 # agents.md — pages
 _Last updated: 2026-08-31_
 
+## 2026-09-12 — SCRUM-5023: `ApiKeySettingsPage` passes `extendKey` through
+
+`useApiKeys().extendKey` → `<ApiKeySettings onExtend>`. No page-level logic: the page is a pass-through
+for the hook, as it already is for create/revoke/delete. `ApiKeySettingsPage.test.tsx` mocks the whole
+hook, so a new hook member must be added to that mock or the page renders an `undefined` handler that
+only fails when a user clicks.
+
+
 ## 2026-08-31 — `IndependentVerifyPage` told readers to run a file that does not exist
 
 The public "Verify Without Arkova" page — the page whose entire job is proving

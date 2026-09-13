@@ -1,3 +1,83 @@
+## 2026-09-12 — SCRUM-5023: `status` / `days_until_expiry` on `/keys`, and expiry is now PATCHable
+
+**Read `keyExpiryStatus.ts` before touching any key-status logic. It is the one derivation for every
+REPORTED status — with one documented exception, `middleware/apiKeyAuth.ts`, which still decides
+ENFORCEMENT for itself (see the caveat at the end of this entry).**
+`api_keys` stores `is_active`, `revoked_at` and `expires_at` as three independent columns, and every
+consumer used to combine them itself. `middleware/apiKeyAuth.ts` has refused expired keys since it was
+written (`api_key_expired`); GET `/keys` returned the raw columns and left the caller to guess. Prod
+(read-only, 2026-09-12) held 19 keys, **13 of them `is_active = true` with an expiry already past** —
+HakiChain's two among them, created 2026-06-01 with a 30-day expiry and lapsed 2026-07-01. `status`
+(`active` | `expiring_soon` | `expired` | `revoked`) and `days_until_expiry` are §1.8-additive; the raw
+columns are byte-unchanged, so `is_active` still reads `true` on an expired key and clients must
+prefer `status`. **DO NOT** re-derive either field anywhere else — `keys.ts`, the expiry-notice cron
+(`jobs/api-key-expiry-notice.ts`) and the dashboard badge all read this one module's answer.
+
+**CAVEAT — `middleware/apiKeyAuth.ts` is a SECOND, independent expiry check and this story did not
+consolidate it.** Line ~211 still runs its own `new Date(apiKey.expires_at) < new Date()`. It is not a
+stale copy left by accident; routing it through `isExpiredAt` is **not** a no-op and would change
+authentication behaviour in two ways (verified 2026-09-12):
+
+| `expires_at` | middleware | `isExpiredAt` |
+|---|---|---|
+| unparseable (`'not-a-date'`) | authenticates — fails **OPEN** | refuses — fails closed |
+| exactly `now` to the millisecond | authenticates | refuses |
+
+Both differences would make auth *stricter*, which is the right direction but is a change to the
+credential path, not to a display field — it needs its own change, its own tests and its own soak, and
+it must also keep the distinct `api_key_revoked` / `api_key_expired` codes that `deriveKeyStatus`
+collapses into one `revoked` ranking. Until that lands: `keyExpiryStatus.ts` is what every surface
+REPORTS, `apiKeyAuth.ts` is what actually REFUSES, and the two can disagree on exactly the two rows
+above. Do not describe the derivation as universal while this line exists.
+
+Two judgement calls it encodes, both load-bearing:
+- **`revoked` outranks `expired`** when a row is both. A revoke is a deliberate act and the admin must
+  see it stuck; "expired" would invite an extend on a key PATCH permanently 409s.
+- **An unparseable `expires_at` fails CLOSED to `expired`.** `new Date('x') < now` is `false`, so the
+  naive comparison reports a corrupt row `active`.
+
+`POST /keys` now caps `expires_in_days` at `MAX_EXPIRES_IN_DAYS` (3650). `.positive()` already made a
+past expiry impossible here, so prod's one born-expired row (expiry BEFORE creation) did **not** come
+from this route — it is still unattributed; do not "fix" it by loosening this bound.
+
+**The response field is `days_until_expiry`, NOT `expires_in_days`.** `expires_in_days` is the REQUEST
+field on POST/PATCH and means "set the expiry this many days from now"; the response field is a
+countdown that goes negative. One name for two opposite meanings invites a client to read one and PUT
+the other. Renamed before publication.
+
+`PATCH /keys/:keyId` takes ONE expiry field: `{ expires_in_days: n }` sets it n days out,
+`{ expires_in_days: null }` removes it. **Expiry is set by DURATION, never by timestamp** — an
+accepted client `expires_at` would trust the caller's clock and re-open the past-expiry door, so
+`expires_at` survives in the schema only as a REJECTER (`z.null()`): any value is a loud 400, because
+without it the field would be stripped as unknown and the request would 200 having changed nothing.
+
+The new expiry counts from **now**, never from the old one: `old + 30d` on HakiChain's key lands back
+in the past, an extend that visibly succeeds and changes nothing.
+
+**Because it REPLACES rather than adds, an "extend" can shorten.** `{expires_in_days: 30}` on a key
+with eleven months left cuts ten of them; on a key with no expiry it invents one — and the request is
+byte-identical to a genuine extend. The route answers **409 `api_key_expiry_would_shorten`** unless
+`allow_shorten: true` is sent. An already-EXPIRED key is exempt: every forward move improves it, and
+that is the remedy path the dashboard offers from the failure itself.
+
+An expiry may not be combined with a REACTIVATION (`is_active: true`) — no safe ordering. It **may**
+accompany a revoke (`is_active: false`), which is honoured with the expiry DROPPED: refusing the whole
+request would turn the call that stops a leaked credential into a 400 that revokes nothing.
+
+A revoked key 409s `api_key_already_revoked` (checked via `deriveKeyStatus`, so a pre-FD-P7
+withdrawn-but-unstamped row is covered). Every change writes `api_key.expiry_changed` carrying the
+PERSISTED old/new values.
+
+**Both routes read the clock ONCE** for the write and the response. Reading it twice makes `now + 30d`
+fall milliseconds short of 30 whole days by the time the countdown is floored, so a 30-day key reports
+29 and a 1-day key reports "expires today".
+
+`docs.ts` declares OpenAPI **3.0.3**, where the only types are string/number/integer/boolean/array/
+object. `type: 'null'` and type ARRAYS are 3.1 syntax and are invalid here — use `nullable: true`.
+`docs.openapi30.test.ts` walks the whole spec and fails the build on either.
+
+Suites: `keyExpiryStatus.test.ts`, `keys-expiry.test.ts`, `docs.openapi30.test.ts`.
+
 # services/worker/src/api/v1/agents.md
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
@@ -1250,3 +1330,26 @@ ComputeID admission now uses service-only `admit_computeid_agent`: one passport 
 `resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
+
+## 2026-09-12 SCRUM-4984 / SCRUM-4985 — fail-closed tenant scoping on the AI read endpoints; entity-verify stops building filter grammar
+
+**`tenantRowAccess.ts` is the only allowed way to answer "may this caller read this row" on a v1
+handler that scopes by org.** `ai-provenance.ts` and `ai-accountability-report.ts` both used
+`row.org_id && callerOrgId && row.org_id !== callerOrgId` to deny. That is only true when both sides
+are present and differ, so an INDIVIDUAL caller (no `profiles.org_id`), an orphan row, or a select list
+that never fetched `org_id` (ai-provenance never did — the guard was dead code) all fell through to
+"allowed". Sekura Phase 2's LLM pass flagged neither; the CTO verification of its claims did. The rule
+is now positive — same org, or caller owns the row — and both handlers answer **404, not 403**, so
+`public_id` / fingerprint enumeration cannot confirm what other tenants hold. ai-provenance filters the
+manifest list rather than checking only `manifests[0]`, because two orgs can legitimately hold
+manifests for the same fingerprint (same public document, extracted twice). If you add a v1 handler
+that reads a tenant-scoped row under `requireAuth`, select `org_id, user_id` and call
+`callerMayReadRow`; the test files pin that the columns are selected.
+
+**`entity-verify.ts` no longer hand-builds a PostgREST `.or()` string.** The attestation lookup used
+to interpolate the raw `identifier` query param into `subject_identifier.eq.${identifier}`, so a comma
+or operator in it appended clauses and widened a targeted lookup into enumeration (`name` on the line
+above WAS escaped — the inconsistency is the tell). Each term now goes through the query builder
+(`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
+`entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
+filters here; if you need OR semantics across columns, run the terms separately and union.
