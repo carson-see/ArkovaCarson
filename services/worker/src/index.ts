@@ -67,6 +67,7 @@ import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
 import { startHeapMonitor, logHeapStatus } from './utils/heapMonitor.js';
 import { flagRegistry } from './middleware/flagRegistry.js';
 import { correlationIdMiddleware } from './utils/correlationId.js';
+import { securityHeaders } from './middleware/securityHeaders.js';
 import { requirePaymentCurrent } from './middleware/requirePaymentCurrent.js';
 import { initUpstashRateLimiting } from './utils/upstashRateLimit.js';
 import { createUpstashIdempotencyStore } from './middleware/upstashIdempotency.js';
@@ -131,6 +132,11 @@ if (config.nodeEnv === 'production') {
 
 // ─── X-Request-Id on every response (DX-6) ───
 app.use(correlationIdMiddleware);
+
+// ─── SCRUM-4987: browser-enforced security headers on EVERY response ───
+// Before CORS so OPTIONS preflights and every 4xx/5xx carry them too. The prod
+// origin bypasses Cloudflare (SCRUM-3888), so this cannot live at the edge.
+app.use(securityHeaders);
 
 // ─── Global CORS (BUG-UAT-12 / SCRUM-499) ───
 // Apply CORS middleware globally so OPTIONS preflights are handled
