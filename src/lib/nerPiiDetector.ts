@@ -258,10 +258,45 @@ interface TransformersJsModule {
  */
 type TransformersLoader = () => Promise<TransformersJsModule>;
 
-const defaultTransformersLoader: TransformersLoader = async () =>
-  // Keep the large, on-demand NER runtime out of the homepage bundle.
-  // Vite serves `public/` files at the site root in both dev and prod.
-  (await import(/* @vite-ignore */ TRANSFORMERS_BROWSER_MODULE)) as TransformersJsModule;
+/**
+ * Founder-reported bug (2026-09-13): the Secure Document dialog's Continue
+ * flow fails closed to the loud §1.6 `privacy-blocked` screen on every run
+ * under `vite dev` (the local dev server started by `npm run dev`). Root
+ * cause was here, not in SecureDocumentDialog.tsx itself.
+ *
+ * A plain `import(TRANSFORMERS_BROWSER_MODULE)` — a native ESM dynamic
+ * import of a same-origin `/public` path — works under a static/production
+ * server (the browser just fetches the URL), but Vite's DEV server
+ * middleware intercepts any request for a `/public` asset that arrives
+ * shaped as a module import and refuses to serve it ("This file is in
+ * /public and will be copied as-is during build ... and therefore should
+ * not be imported from source code"), rejecting the import outright. The
+ * comment this replaces ("Vite serves `public/` files at the site root in
+ * both dev and prod") was true for plain `fetch()`/`<script src>` but false
+ * for `import()` specifically — that gap is the whole bug. `@vite-ignore`
+ * only suppresses Rollup's static-analysis warning at build time; it does
+ * not change the dev server's HTTP-level module interception.
+ *
+ * Fix: fetch the bundle as plain text (a request Vite's dev server serves
+ * `/public` files for correctly, same as any static asset) and import it
+ * from a same-origin `blob:` URL instead of the `/vendor/...` path. A blob
+ * URL never touches Vite's dev middleware in either environment, so this
+ * behaves identically under `vite dev`, `vite preview`, and the real
+ * production static host. Verified against both in this fix's own testing.
+ */
+const defaultTransformersLoader: TransformersLoader = async () => {
+  const response = await fetch(TRANSFORMERS_BROWSER_MODULE);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${TRANSFORMERS_BROWSER_MODULE}: ${response.status}`);
+  }
+  const source = await response.text();
+  const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+  try {
+    return (await import(/* @vite-ignore */ blobUrl)) as TransformersJsModule;
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+};
 
 let _transformersLoader: TransformersLoader = defaultTransformersLoader;
 
@@ -273,6 +308,20 @@ export function __setTransformersLoaderForTesting(loader: TransformersLoader): v
 /** TEST-ONLY: restore the real dynamic-import loader. */
 export function __resetTransformersLoaderForTesting(): void {
   _transformersLoader = defaultTransformersLoader;
+}
+
+/**
+ * E2E-ONLY: exercise the REAL `defaultTransformersLoader` (never the
+ * test-injected one) against the real vendored bundle. Used by
+ * `e2e/ner-dev-load.spec.ts` to pin the 2026-09-13 dev-server regression at
+ * exactly the layer it was fixed — loading the bundle module — without
+ * pulling in on-device inference (backend selection, WASM/WebGPU, model
+ * weights), which is a separate concern this loader fix does not touch.
+ * Not reachable from any production code path.
+ */
+export async function __loadRealTransformersModuleForE2E(): Promise<{ hasPipeline: boolean; hasEnv: boolean }> {
+  const mod = await defaultTransformersLoader();
+  return { hasPipeline: typeof mod.pipeline === 'function', hasEnv: typeof mod.env === 'object' };
 }
 
 // Singleton pipeline — loaded once, reused across calls

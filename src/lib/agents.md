@@ -1,6 +1,38 @@
 # agents.md — lib
 
-_Last updated: 2026-09-12_
+_Last updated: 2026-09-13 (`nerPiiDetector.ts` dev-server bundle-load fix)_
+
+## 2026-09-13 — Founder report "Secure Document Continue is broken" root-caused to `nerPiiDetector.ts`, not `SecureDocumentDialog.tsx`
+
+`SecureDocumentDialog.tsx`'s two Continue handlers (`handleUploadContinue`,
+`handleExtractionReviewContinue`) were audited against every documented
+failure class (confidence gating removed by design per SCRUM-2914, fail-closed
+privacy screen, extraction-failed recovery, insert failure) and found
+correct — 29 unit tests plus the 60-case `e2e/secure-dialog-layout.spec.ts`
+geometry/actionability suite all pass unchanged. The actual defect was one
+layer down: `nerPiiDetector.ts`'s `defaultTransformersLoader` used a plain
+`import(TRANSFORMERS_BROWSER_MODULE)` (a same-origin `/public` asset). That
+works under static/production serving (the browser just fetches the URL) but
+Vite's **dev server** (`npm run dev`) refuses to serve a `/public` file
+requested via `import()` ("This file is in /public ... should not be
+imported from source code"), so every on-device NER load failed under local
+dev — sending the dialog straight to the §1.6 `privacy-blocked` screen
+instead of running AI extraction on every attempt. Fix: fetch the bundle as
+text (a request Vite's dev server serves `/public` files for normally) and
+`import()` it from a `blob:` URL instead, which never touches Vite's dev
+middleware in any environment. Verified failing (real error text
+`NERModelLoadError: ... Failed to fetch dynamically imported module`) before
+the fix and passing after, against a live `vite dev` server, via
+`e2e/ner-dev-load.spec.ts` (see `e2e/agents.md`) — this class of bug is not
+reproducible in vitest/jsdom, only in a real browser hitting the dev server.
+**Known separate, NOT fixed here:** once the bundle itself loads, a client
+without WebGPU (backend falls back to `wasm`) hits the *same* dev-server
+restriction one level deeper, inside the vendored onnxruntime-web runtime's
+own `import()` of `/vendor/ort/*.mjs` — that code isn't ours to wrap in the
+same blob trick without touching the vendored bundle. `detectMLRuntime()`
+prefers `webgpu` first (most modern desktop browsers), so this narrower
+wasm-only-backend dev-mode gap is lower priority; flagged as a follow-up, not
+fixed in this change.
 
 ## 2026-09-12 SCRUM-4989 — `socialLinks.ts`, `jsonLd.ts` (new, PR #2840)
 

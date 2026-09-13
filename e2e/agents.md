@@ -1,6 +1,21 @@
 # agents.md — e2e/
 
-_Last updated: 2026-09-13 (`uat-pr2840.spec.ts` self-skips outside its own config, CI run 34741690944)._
+_Last updated: 2026-09-13 (`ner-dev-load.spec.ts` added)._
+
+## 2026-09-13 — `ner-dev-load.spec.ts` / `ner-dev-load.config.ts` (new)
+
+Pins the founder-reported "Secure Document Continue is broken" regression at
+its real layer: `src/lib/nerPiiDetector.ts`'s bundle loader, not
+`SecureDocumentDialog.tsx` (see `src/lib/agents.md` for the full mechanism).
+Run with `-c e2e/ner-dev-load.config.ts`. No seeded account or Supabase
+needed. Like `secure-dialog-layout.spec.ts`, this MUST run against a real
+`vite dev` server, not vitest/jsdom — the defect is in how Vite's dev server
+serves a `/public` asset requested via `import()`, which jsdom cannot
+reproduce. Drives `__loadRealTransformersModuleForE2E` (the real loader,
+never `__setTransformersLoaderForTesting`) against the real vendored
+`public/vendor/transformers.bundle.min.js`; stops at "module loaded" rather
+than running full on-device inference, since backend/WASM/WebGPU selection is
+a separate concern from the bundle-loading bug this fix addresses.
 
 ## 2026-09-13 SCRUM-4989 — `uat-pr2840.spec.ts` was NOT actually excluded from CI; it self-skips now
 
