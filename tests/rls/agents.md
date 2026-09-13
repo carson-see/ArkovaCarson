@@ -141,12 +141,6 @@ needed), which reuses the 2026-08-15 e2e sign-out guard's detector:
   `vitest.config.rls.ts`): it would hide this class of collision and slow
   every RLS run; parallel execution is itself part of what the suite proves.
 
-## 2026-09-10 — PR #2694 complete-schema fixture correction
-
-The fingerprint index-plan suite now creates its own organization and required profiles row after auth.users. A complete committed Supabase replay exposed anchors_user_id_fkey during the old setup, before any of the seven plan checks executed. Teardown deletes only this run’s user/org fixture, including partial setup. An overlong fingerprint negative case also pins the unconstrained bpchar cast against accidental character(64) truncation. Migration 0441 remains immutable.
-
-The same full-schema run showed a second fixture defect: enable_seqscan=off still permits the planner to choose another index. With only one SECURED row it legitimately chose the status index. The suite now seeds 2,048 owned SECURED background rows so the fingerprint is selective, still asserting Index Cond and the uncast negative control without a latency threshold.
-
 ## 2026-09-12 SCRUM-5024 — `referral-attribution.test.ts`
 
 Live-database proof for migration `0455`. Every property here is enforced by SQL
@@ -169,6 +163,13 @@ row, unknown writes one audit row and NO edge, self is refused, blank is
 
 Requires a local Supabase with `0455` applied. It was NOT run in the authoring
 session (no local stack available there) — it is the T3 soak specification.
+
+## 2026-09-10 — PR #2694 complete-schema fixture correction
+
+The fingerprint index-plan suite now creates its own organization and required profiles row after auth.users. A complete committed Supabase replay exposed anchors_user_id_fkey during the old setup, before any of the seven plan checks executed. Teardown deletes only this run’s user/org fixture, including partial setup. An overlong fingerprint negative case also pins the unconstrained bpchar cast against accidental character(64) truncation. Migration 0441 remains immutable.
+
+The same full-schema run showed a second fixture defect: enable_seqscan=off still permits the planner to choose another index. With only one SECURED row it legitimately chose the status index. The suite now seeds 2,048 owned SECURED background rows so the fingerprint is selective, still asserting Index Cond and the uncast negative control without a latency threshold.
+
 ## 2026-09-11 — UAT-04 mandatory MFA boundary
 
 `uat04-mfa-enforcement.test.ts` exercises real GoTrue tokens and PostgREST for the

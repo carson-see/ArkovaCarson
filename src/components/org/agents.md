@@ -14,28 +14,6 @@ Organization management components: sub-org hierarchy, org verification, and aff
 - `@/lib/workerClient` (WORKER_URL) — worker endpoints for verification and sub-org management
 - `@/lib/supabase` — direct Supabase queries for org data
 
-## Do / Don't Rules
-- DO: Use dev bypass endpoints in development mode for auto-completing verification steps
-- DO: Use copy from `SUB_ORG_LABELS` for all sub-org UI strings
-- DO: Route every worker `{ error }` through `translateWorkerError()`. NEVER `toast.error(data.error)` — the worker replies with a mix of engineer-facing sentences and machine codes (`sub_org_limit_reached`, `credit_allocation_unavailable`), and all of them used to reach the customer. An unmapped code falls back to the generic copy AND is `console.error`-logged; it is never swallowed.
-- DO: Add a `WORKER_ERROR_COPY` entry for every reply an endpoint you wire up can actually send, not just the interesting ones. Unmapped is a working state, not a finished one: it shows generic "please try again" copy and `console.error`s on every occurrence. The cancel endpoint's four replies were mapped on 2026-09-13 for that reason — `No pending affiliation request to cancel` (the 400 when the parent approved or revoked in another tab) was the worst of them, because "try again" is advice that cannot work once the request is gone. Read the route's `res.status(...).json({ error })` calls and map what you find. The map is keyed on the reply string, so an endpoint-specific sentence is fine alongside the shared machine codes.
-- DO: Name the organization in every destructive confirmation. At 375 px the row name wraps but the dialog has no row to read from.
-- DON'T: Report `{ pending: 0 }` through `onCountsChange` when the list failed to load — pass `null`. A tab badge reading zero is a reassurance we have not earned.
-- DO: On the initial sub-orgs fetch failure, set the `loadError` state and render the error banner with Retry — never silently `return` on `!response.ok` or swallow the `catch` and fall through to the empty state (SCRUM-1999 sibling). Create/approve/revoke action errors stay on toast.
-
-## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
-
-OrgVerification verified-badge helper text scrubbed ("shown on all your records"). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
-
-## Sub-org credit control (SCRUM-3865)
-
-- `ManageSubOrgs.tsx` gained the credit provisioning control: parent balance in the header, per-sub-org balance, an amount field, and **Add Credits** / **Reclaim**. Both buttons drive one endpoint — the worker treats a negative amount as a reclaim, which is also the offboarding lever.
-- The control is offered **only for an APPROVED affiliation**. Funding an org whose affiliation is pending or revoked would move credits across a boundary the parent has not (or no longer) accepted.
-- `fetchCredits` is deliberately independent of `fetchSubOrgs` and swallows its failures: credit provisioning is additive to a panel that already worked, so a rollup outage degrades to "no balances shown" rather than taking approve/revoke down with it. `ManageSubOrgsCredits.test.tsx` pins that.
-- Copy lives in `SUB_ORG_LABELS` (§1.3). The older local `SUB_ORG_STATE_COPY` block in this file is a leftover from when `copy.ts` was locked under a concurrent PR — new strings go in `copy.ts`.
-- The row header is `flex-wrap`: with the actions pinned on one line the org name truncated to a single character at 375px.
-- UAT: `uat-harness/` renders this component with stubbed supabase/worker modules, so the visual pass needs no local Supabase — the local stack is shared across worktrees and a concurrent `stop` would wipe the run. Screenshots at 1280 and 375 in `docs/staging/hakichain-suborgs-2026-09/`.
-
 ## 2026-09-12 SCRUM-5024 — `ReferralPanel.tsx` (new)
 
 The organization's referral code, the share link, and the organizations that
@@ -57,6 +35,29 @@ public id — never to an internal identifier, because none is fetched.
 - The row stacks (`flex-col sm:flex-row`) and the name wraps: pinned on one line the org name truncated to ~8 characters at 375 px, which identified the organization worse than its own status chip did (2026-09-13 UAT finding 10).
 - UAT (superseded 2026-09-13 by `e2e/uat-suborg-ux.spec.ts`, which drives the real router in a browser at 1280 and 375 with Supabase and the worker stubbed via `page.route`; the `uat-harness/` directory this line described is no longer in the tree): the visual pass needs no local Supabase — the local stack is shared across worktrees and a concurrent `stop` would wipe the run. Screenshots at 1280 and 375 in `docs/staging/hakichain-suborgs-2026-09/`.
 
+
+
+## Do / Don't Rules
+- DO: Use dev bypass endpoints in development mode for auto-completing verification steps
+- DO: Use copy from `SUB_ORG_LABELS` for all sub-org UI strings
+- DO: Route every worker `{ error }` through `translateWorkerError()`. NEVER `toast.error(data.error)` — the worker replies with a mix of engineer-facing sentences and machine codes (`sub_org_limit_reached`, `credit_allocation_unavailable`), and all of them used to reach the customer. An unmapped code falls back to the generic copy AND is `console.error`-logged; it is never swallowed.
+- DO: Add a `WORKER_ERROR_COPY` entry for every reply an endpoint you wire up can actually send, not just the interesting ones. Unmapped is a working state, not a finished one: it shows generic "please try again" copy and `console.error`s on every occurrence. The cancel endpoint's four replies were mapped on 2026-09-13 for that reason — `No pending affiliation request to cancel` (the 400 when the parent approved or revoked in another tab) was the worst of them, because "try again" is advice that cannot work once the request is gone. Read the route's `res.status(...).json({ error })` calls and map what you find. The map is keyed on the reply string, so an endpoint-specific sentence is fine alongside the shared machine codes.
+- DO: Name the organization in every destructive confirmation. At 375 px the row name wraps but the dialog has no row to read from.
+- DON'T: Report `{ pending: 0 }` through `onCountsChange` when the list failed to load — pass `null`. A tab badge reading zero is a reassurance we have not earned.
+- DO: On the initial sub-orgs fetch failure, set the `loadError` state and render the error banner with Retry — never silently `return` on `!response.ok` or swallow the `catch` and fall through to the empty state (SCRUM-1999 sibling). Create/approve/revoke action errors stay on toast.
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+OrgVerification verified-badge helper text scrubbed ("shown on all your records"). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## Sub-org credit control (SCRUM-3865)
+
+- `ManageSubOrgs.tsx` gained the credit provisioning control: parent balance in the header, per-sub-org balance, an amount field, and **Add Credits** / **Reclaim**. Both buttons drive one endpoint — the worker treats a negative amount as a reclaim, which is also the offboarding lever.
+- The control is offered **only for an APPROVED affiliation**. Funding an org whose affiliation is pending or revoked would move credits across a boundary the parent has not (or no longer) accepted.
+- `fetchCredits` is deliberately independent of `fetchSubOrgs` and swallows its failures: credit provisioning is additive to a panel that already worked, so a rollup outage degrades to "no balances shown" rather than taking approve/revoke down with it. `ManageSubOrgsCredits.test.tsx` pins that.
+- Copy lives in `SUB_ORG_LABELS` (§1.3). The older local `SUB_ORG_STATE_COPY` block in this file is a leftover from when `copy.ts` was locked under a concurrent PR — new strings go in `copy.ts`.
+- The row header is `flex-wrap`: with the actions pinned on one line the org name truncated to a single character at 375px.
+- UAT: `uat-harness/` renders this component with stubbed supabase/worker modules, so the visual pass needs no local Supabase — the local stack is shared across worktrees and a concurrent `stop` would wipe the run. Screenshots at 1280 and 375 in `docs/staging/hakichain-suborgs-2026-09/`.
 
 ## 2026-09-13 founder feedback — sub-org findability (UAT: `docs/uat/suborg-ux/FINDINGS.md`)
 
