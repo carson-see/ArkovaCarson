@@ -1,5 +1,35 @@
 # agents.md — pages
-_Last updated: 2026-09-12_
+_Last updated: 2026-09-13_
+
+## 2026-09-13 founder feedback — `OrgProfilePage` gained an **Affiliates** tab
+
+Founder: "when I try and use sub orgs it's clunky and confusing". Full walk and evidence:
+`docs/uat/suborg-ux/FINDINGS.md`.
+
+`ManageSubOrgs` and the child-side affiliation status used to be the last block inside the
+**Settings** `TabsContent`, below fifteen profile fields, the verification card and four connector
+cards. Measured on an empty org, its heading sat **2,396 px** down the scrolling column at 1280 px
+and **2,996 px** at 375 px (`docs/uat/suborg-ux/before/discoverability-*.json`) — and the tab row
+said only Home / People / Settings, so a parent admin with a request waiting had nothing anywhere
+telling them so. It is now its own `TabsContent value="affiliates"`, 476 px / 490 px down.
+
+- **`?tab=` accepts `affiliates` as well as `settings`.** Anything else falls back to `home`. The
+  connector-card specs (`integrations-*.spec.ts`) still deep-link `?tab=settings` — the connector
+  cards did NOT move, only the sub-org block did.
+- **The tab badge comes from the panel.** `ManageSubOrgs` reports `{ pending, approved }` through
+  `onCountsChange`, or `null` when its load failed. Render the badge only for a known, non-zero
+  pending count: a "0" after a failed fetch claims there is nothing waiting when we do not know.
+- **`TAB_TRIGGER_CLASS`** is the shared trigger styling. Four copies of that 160-character class
+  string had already begun to drift; the row is `overflow-x-auto` with `whitespace-nowrap` labels
+  because four tabs no longer fit one 375 px row.
+- **Request Affiliation is gated on `!isChildOrg || parentApprovalStatus === 'REVOKED'`.** A revoked
+  child KEEPS its `parent_org_id`, so the old `!isChildOrg` gate hid the control from the one
+  organization that needed it — a permanent dead end. Do not "simplify" this back.
+- **`fetchParentOrgName` runs for any child with a parent**, not only APPROVED ones. Gated on
+  APPROVED, the PENDING and REVOKED screens rendered the literal fallback string, i.e. "Affiliation
+  revoked by parent organization".
+
+Tests: `OrgProfilePageAffiliates.test.tsx` (10 cases).
 
 ## 2026-09-12 SCRUM-4989 — social links + JSON-LD on the public pages (PR #2840)
 
