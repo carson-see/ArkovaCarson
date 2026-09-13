@@ -12,7 +12,9 @@
  *   Then call useProfile() in any component to get profile state.
  */
 
-import { createElement, createContext, useContext, useCallback, useMemo, type ReactNode } from 'react';
+import {
+  createElement, createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode,
+} from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '../lib/supabase';
@@ -20,6 +22,7 @@ import { logAuditEvent } from '../lib/auditLog';
 import { TOAST } from '../lib/copy';
 import { queryKeys } from '../lib/queryClient';
 import { isEmailConfirmationPending } from '../lib/oauthConfirmation';
+import { sessionHasAal2 } from '../lib/mfaSessionKey';
 import { useAuth } from './useAuth';
 import type { Database } from '../types/database.types';
 
@@ -100,25 +103,39 @@ async function fetchProfileData(userId: string): Promise<Profile> {
 function useProfileInternal(): ProfileState & ProfileActions {
   const { user, session, loading: authLoading } = useAuth();
   const awaitingEmail = isEmailConfirmationPending(session);
+  const hasProductAuthority = !awaitingEmail
+    && sessionHasAal2(session?.access_token ?? null, user?.id ?? null);
   const qc = useQueryClient();
+  const previousAuthority = useRef({ userId: user?.id ?? null, allowed: hasProductAuthority });
+
+  useEffect(() => {
+    const currentUserId = user?.id ?? null;
+    const previous = previousAuthority.current;
+    previousAuthority.current = { userId: currentUserId, allowed: hasProductAuthority };
+
+    if (currentUserId && previous.userId === currentUserId && !previous.allowed && hasProductAuthority) {
+      void qc.invalidateQueries({ queryKey: queryKeys.profile(currentUserId) });
+    }
+  }, [user?.id, hasProductAuthority, qc]);
 
   const {
-    data: profile = null,
+    data: cachedProfile = null,
     isLoading: queryLoading,
     error: queryError,
   } = useQuery({
     queryKey: queryKeys.profile(user?.id ?? ''),
     queryFn: () => fetchProfileData(user!.id),
-    enabled: !!user && !awaitingEmail,
+    enabled: !!user && !awaitingEmail && hasProductAuthority,
     staleTime: 60_000, // Profile rarely changes — 1 min stale time
   });
 
-  const loading = authLoading || (!!user && !awaitingEmail && queryLoading);
-  const error = queryError ? (queryError as Error).message : null;
+  const loading = authLoading || (!!user && !awaitingEmail && hasProductAuthority && queryLoading);
+  const profile = hasProductAuthority ? cachedProfile : null;
+  const error = hasProductAuthority && queryError ? (queryError as Error).message : null;
 
   // Compute destination based on auth and profile state
   const destination = useMemo((): RouteDestination => {
-    if (authLoading || loading) return '/auth';
+    if (authLoading || loading || (user && !hasProductAuthority)) return '/auth';
     if (!user) return '/auth';
 
     // Fixes SCRUM-350: auth resolves before profile fetch completes,
@@ -134,17 +151,17 @@ function useProfileInternal(): ProfileState & ProfileActions {
     if (profile.role === 'ORG_MEMBER') return '/dashboard';
 
     return '/vault';
-  }, [authLoading, loading, user, profile]);
+  }, [authLoading, loading, user, profile, hasProductAuthority]);
 
   const refreshProfile = useCallback(async () => {
-    if (user) {
+    if (user && hasProductAuthority) {
       await qc.invalidateQueries({ queryKey: queryKeys.profile(user.id) });
     }
-  }, [user, qc]);
+  }, [user, hasProductAuthority, qc]);
 
   const updateProfile = useCallback(
     async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>>): Promise<boolean> => {
-      if (!user) return false;
+      if (!user || !hasProductAuthority) return false;
 
       const { error: updateError } = await supabase
         .from('profiles')
@@ -170,7 +187,7 @@ function useProfileInternal(): ProfileState & ProfileActions {
       toast.success(TOAST.PROFILE_UPDATED);
       return true;
     },
-    [user, qc]
+    [user, hasProductAuthority, qc]
   );
 
   return {

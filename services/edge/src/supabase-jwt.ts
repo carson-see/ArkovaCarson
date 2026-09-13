@@ -9,6 +9,7 @@ export interface SupabaseJwtClaims {
   iss: string;
   exp: number;
   iat: number;
+  aal: 'aal2';
 }
 
 function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> | null {
@@ -65,8 +66,13 @@ function hasExpectedAudience(aud: string | string[]): boolean {
 }
 
 function coerceClaims(payload: unknown): SupabaseJwtClaims | null {
-  if (!isRecord(payload) || payload.role === 'arkova_email_pending') return null;
-  const { sub, aud, iss, exp, iat } = payload;
+  if (
+    !isRecord(payload)
+    || payload.role === 'arkova_email_pending'
+    || payload.role === 'arkova_mfa_pending'
+    || payload.aal !== 'aal2'
+  ) return null;
+  const { sub, aud, iss, exp, iat, aal } = payload;
 
   if (typeof sub !== 'string' || !sub) return null;
   if (!(typeof aud === 'string' || (Array.isArray(aud) && aud.every((item) => typeof item === 'string')))) {
@@ -76,7 +82,7 @@ function coerceClaims(payload: unknown): SupabaseJwtClaims | null {
   if (typeof exp !== 'number' || !Number.isFinite(exp)) return null;
   if (typeof iat !== 'number' || !Number.isFinite(iat)) return null;
 
-  return { sub, aud, iss, exp, iat };
+  return { sub, aud, iss, exp, iat, aal };
 }
 
 function claimsAreCurrent(claims: SupabaseJwtClaims, nowSeconds: number): boolean {
