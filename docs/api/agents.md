@@ -2,6 +2,26 @@
 
 Developer-facing API documentation. Engineering mirrors and guides for the Arkova Verification API.
 
+## 2026-09-12 — documenting `webhooks:manage` enforcement, and why openapi.yaml was not the place (SCRUM-3981)
+
+`/api/v1/webhooks*` now requires the `webhooks:manage` scope. Three documentation surfaces changed
+and one deliberately did not:
+
+- **`README.md`** — the Webhooks row of the surface matrix now lists all ten routes and names the
+  scope, and the paragraph under the canonical scope table says plainly that a scope being listed
+  there is not a claim that it is enforced, pointing at the census test that says which are.
+- **`webhooks.md`** — Authentication section states the scope requirement, the ORG_ADMIN overlay on
+  the five mutating routes, and that a cross-org read is 404 rather than 403; both error tables gain
+  the two 403 rows.
+- **`services/worker/src/api/v1/docs.ts`** — the served spec: `x-arkova-required-scopes` plus a 403
+  on each of the ten operations, pinned by `docs.test.ts`.
+- **`openapi.yaml` — untouched, on purpose.** It documents no `/webhooks` path at all, so "add the
+  403" would have meant authoring ten operations into a file `canonical-sources.md` demoted on
+  2026-07-28 for having drifted 12+ routes behind the runtime spec. Writing a fresh, second
+  description of this surface there would recreate the drift the demotion was meant to end. It is
+  still parse-checked by `scripts/ci/check-api-scope-vocabulary.ts` for scope VOCABULARY parity, and
+  the vocabulary did not change here — no scope was added, renamed, or removed.
+
 ## 2026-09-05 — the `arkova_` rename vs §1.8: what moved and what did not (SCRUM-4465 / BUG-2026-09-02-001)
 
 §1.8 freezes the published verification API schema: no breaking changes without a `v2+`
