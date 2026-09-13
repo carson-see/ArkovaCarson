@@ -1,5 +1,40 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-13 — `rules-crud.ts`: D4 (`action_type` on PATCH) + connector adopt-vs-create race guard
+
+**D4 (Connectors page, SPEC-CONNECTORS §1.5).** `UpdateOrgRuleInput` gained an optional
+`action_type` (same 7-value enum as `CreateOrgRuleInput`), paired with a Zod `superRefine`: present
+`action_type` WITHOUT `action_config` in the same PATCH is a 400 `invalid_config` (NOT the generic
+`invalid_request` a plain schema-shape failure gets — `parseUpdateRuleRequest` inspects the specific
+Zod issue and remaps the code). Reason for the pairing: `action_config` left over from the OLD
+action would otherwise validate as a syntactically-fine-but-semantically-mismatched pair (an
+`INSTANT_SECURE` row keeping a `NOTIFY` config, say). `validatePatchAgainstCurrent` merges
+`patch.action_type ?? current.action_type` against `patch.action_config ?? current.action_config`
+and re-runs `validateRuleConfigs` on the MERGED shape before writing. `buildRuleUpdate` added
+`action_type` to its column allowlist — PM-6 (SPEC-CONNECTORS §7): without that one line, a
+`action_type` patch would silently no-op (200, "Saved", rule unchanged), because the update column
+list was a fixed allowlist. `trigger_type` stays absent from the schema on purpose — connector rules
+never change trigger type, and test 26 pins that an unknown `trigger_type` key in the body is
+stripped by Zod, never applied.
+
+**`ORG_RULE_UPDATED` audit detail** for an `action_type` patch is `{from: <old action_type>, to:
+<new action_type>}` — NOT the generic `{patch}` dump every other PATCH gets. `currentActionType`
+comes from the SAME row read `validatePatchAgainstCurrent` already did (no extra query).
+
+**Adopt-vs-create race guard (CTO pre-mortem, 2026-09-13).** The Connectors page's
+`useConnectorRule` hook reads the org's enabled-rule count for a trigger_type at page load and
+decides create-vs-adopt client-side (D5) — but `docusign-rule-seed.ts` seeds a rule asynchronously
+on every DocuSign connect, on its own trigger, so a seed can land in the gap between that read and
+the page's Save click. `handleCreateRule` re-checks SERVER-SIDE, immediately before the INSERT: when
+the incoming `action_config.tag` matches `connector-<provider>` (`isConnectorManagedActionConfig` —
+the Connectors page's own marker, §1.4), it SELECTs for an existing ENABLED rule of the same
+`trigger_type` and, if one exists, refuses with `409 rule_exists` + `existing_rule_id` instead of
+inserting a second one. Deliberately scoped to connector-tagged creates ONLY — a RulesPage/
+RuleBuilderPage admin building a second, differently-filtered rule on the same `trigger_type` on
+purpose is legitimate existing use of this endpoint and must not be blocked by a check that exists
+to protect one UI's adopt-vs-create invariant. The frontend hook treats `409 rule_exists` as "adopt
+the winner" (a follow-up PATCH to `existing_rule_id`), not a raw error.
+
 ## 2026-09-12 — `apiScopeEnforcementCensus.test.ts`: a grantable scope must gate something (SCRUM-3981)
 
 `apiScopes.ts` is the vocabulary; it was never a claim that any of it is enforced.
