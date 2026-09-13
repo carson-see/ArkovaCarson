@@ -80,7 +80,7 @@
     "@types/tiny-secp256k1": "2.0.1",
     "@types/unzipper": "0.10.11",
     "@types/ws": "8.18.1",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "5.0.0",
     "bip32": "5.0.1",
     "bip39": "3.1.0",
     "eslint": "10.10.0",
