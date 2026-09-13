@@ -197,4 +197,60 @@ describe('check-webhook-event-registration-drift — live repository', () => {
     const drift = collectRegistrationDrift(readAllSurfaces());
     expect(drift).toEqual([]);
   });
+
+  /**
+   * SCRUM-3972. The seven affiliated-organization events are the first family
+   * whose ids are not `anchor.*` / `credential.*` / `compliance.*`, and one of
+   * them (`suborg.credits_allocated`) is the first id with TWO underscores in
+   * its event segment. Both id regexes — `QUOTED_ID_RE` for TS surfaces and
+   * `MD_TABLE_ROW_ID_RE` for the docs table — must actually match them, or the
+   * gate would pass by seeing nothing rather than by seeing agreement.
+   */
+  it('parses the suborg.* family out of every surface, including the docs table', () => {
+    const SUBORG_IDS = [
+      'suborg.created',
+      'suborg.approved',
+      'suborg.revoked',
+      'suborg.credits_allocated',
+      'suborg.credits_reclaimed',
+      'suborg.suspended',
+      'suborg.offboarded',
+    ];
+    const canonical = readSurface(CANONICAL_SURFACE);
+    expect(canonical.ids).toEqual(expect.arrayContaining(SUBORG_IDS));
+
+    for (const spec of MIRROR_SURFACES) {
+      const surface = readSurface(spec);
+      expect(surface.ids, spec.file).toEqual(expect.arrayContaining(SUBORG_IDS));
+    }
+  });
+
+  it('keeps the suborg.* block contiguous, without pinning it as the last family', () => {
+    // CTO review 2026-09-12. The earlier form asserted `ids.slice(first)`
+    // equals exactly the seven — i.e. that `suborg.*` is LAST in the registry
+    // forever. That is the same trap SCRUM-3982 removed under CTO ruling Z7
+    // when its own `slice(-3)` pin would have reddened on this PR's clean
+    // union merge. Re-pinning it here would break the very next family to be
+    // registered, and would break SCRUM-3982 itself if the union resolution
+    // orders `attestation.*` after `suborg.*` rather than before.
+    //
+    // What THIS PR is entitled to assert is that its own seven stay together
+    // and in their declared order. Where the block sits relative to other
+    // families is not its business.
+    const ids = readSurface(CANONICAL_SURFACE).ids;
+    const SUBORG_ORDER = [
+      'suborg.created',
+      'suborg.approved',
+      'suborg.revoked',
+      'suborg.credits_allocated',
+      'suborg.credits_reclaimed',
+      'suborg.suspended',
+      'suborg.offboarded',
+    ];
+    const first = ids.indexOf('suborg.created');
+    expect(first).toBeGreaterThan(-1);
+    expect(ids.slice(first, first + SUBORG_ORDER.length)).toEqual(SUBORG_ORDER);
+    // Contiguous: no other id may be interleaved into the block.
+    expect(ids.filter((id) => id.startsWith('suborg.'))).toEqual(SUBORG_ORDER);
+  });
 });

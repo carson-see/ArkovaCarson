@@ -26,6 +26,11 @@ import {
   subOrgAuditActor,
   type SubOrgCaller,
 } from './orgSubOrgsCaller.js';
+// SCRUM-3972: one-line emission per transition. Payload assembly, public-id
+// projection and recipient selection all live in the emitter, so the call sites
+// below stay a single `void` statement (and union-resolve cleanly against
+// PR #2844, which is refactoring this file into extracted handlers).
+import { emitSubOrgEvent } from '../../webhooks/subOrgEvents.js';
 
 // Sub-org columns from migration 0128 are not yet in generated types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -121,6 +126,8 @@ export interface AffiliateActionContext {
 }
 
 export interface AffiliateActionSpec {
+  /** SCRUM-3972: which affiliated-organization event this transition emits. */
+  webhookEventType: 'suborg.approved' | 'suborg.revoked';
   targetStatus: 'APPROVED' | 'REVOKED';
   alreadyStatusError: string;
   /** Machine code for `alreadyStatusError` on the published key surface (U6). */
@@ -731,6 +738,17 @@ async function handleAffiliateStatusAction(
       return;
     }
 
+    // audit write + success log already happened inside
+    // applyAffiliateStatusAction (SCRUM-3971 R9 extraction) — do not repeat
+    // them here.
+    // SCRUM-3972 (R20): emitted AFTER every response-determining step, and
+    // void-dispatched — emitSubOrgEvent never throws and never rejects, so no
+    // dispatch outcome can change this HTTP status.
+    void emitSubOrgEvent({
+      eventType: action.webhookEventType,
+      parentOrgId: context.value.orgId,
+      childOrgId: context.value.childOrgId,
+    });
     res.json({ status: action.targetStatus, childOrgId: context.value.childOrgId });
   } catch (error) {
     logger.error({ error }, action.failureLog);
@@ -739,6 +757,7 @@ async function handleAffiliateStatusAction(
 }
 
 export const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
+  webhookEventType: 'suborg.approved',
   targetStatus: 'APPROVED',
   alreadyStatusError: 'Organization is already approved',
   alreadyStatusCode: 'already_approved',
@@ -750,6 +769,7 @@ export const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
 };
 
 export const REVOKE_AFFILIATE_ACTION: AffiliateActionSpec = {
+  webhookEventType: 'suborg.revoked',
   targetStatus: 'REVOKED',
   alreadyStatusError: 'Affiliation is already revoked',
   alreadyStatusCode: 'already_revoked',
@@ -930,6 +950,15 @@ orgSubOrgsRouter.post('/create', async (req: Request, res: Response) => {
     );
 
     logger.info({ orgId, childOrgId: childOrg.id }, 'Affiliate org created');
+
+    // SCRUM-3972 (R20): last thing before the response; parent-only (the
+    // affiliate has no endpoints yet at creation time, and nothing it owns has
+    // changed).
+    void emitSubOrgEvent({
+      eventType: 'suborg.created',
+      parentOrgId: orgId,
+      childOrgId: childOrg.id,
+    });
 
     res.status(201).json({
       affiliateOrg: childOrg,
@@ -1481,6 +1510,11 @@ export async function offboardSubOrgCore(
 
   const balance: number = credits?.balance ?? 0;
   let reclaimed = 0;
+  // SCRUM-3972 (R20): captured so the route layer can emit
+  // `suborg.credits_reclaimed` with the same balances the RPC returned,
+  // without re-querying. Undefined when nothing was reclaimed.
+  let reclaimParentBalance: number | undefined;
+  let reclaimChildBalance: number | undefined;
 
   if (balance > 0) {
     const { data: reclaimData, error: reclaimError } = await callRpc<AllocateCreditsRpcResult>(
@@ -1509,6 +1543,8 @@ export async function offboardSubOrgCore(
       };
     }
     reclaimed = balance;
+    reclaimParentBalance = reclaimData.parent_balance;
+    reclaimChildBalance = reclaimData.child_balance;
   }
 
   const suspendRpc = caller.kind === 'api_key' ? 'suspend_suborg_as_api_key' : 'suspend_suborg';
@@ -1541,6 +1577,8 @@ export async function offboardSubOrgCore(
       reclaimed,
       suspended: true,
       alreadySuspended: suspendData.already_suspended === true,
+      reclaimParentBalance,
+      reclaimChildBalance,
     },
   };
 }
@@ -1566,6 +1604,27 @@ orgSubOrgsRouter.post('/credits', async (req: Request, res: Response) => {
       amount,
       note ?? null,
     );
+
+    // SCRUM-3972 (R20). The sign of `amount` picks the event — the shared
+    // core's own log line uses the same test, and AllocateCreditsSchema
+    // rejects 0, so there is no third case. Emitted on the parent AND the
+    // affiliate: a budget move is a fact the affiliate owns and cannot
+    // otherwise observe. Only on success (R9's shared core already logged
+    // and returns 200 with both balances in `result.body` in that case).
+    if (result.status === 200) {
+      void emitSubOrgEvent({
+        eventType: amount > 0 ? 'suborg.credits_allocated' : 'suborg.credits_reclaimed',
+        parentOrgId: ctx.orgId,
+        childOrgId,
+        data: {
+          amount,
+          parent_balance: result.body.parentBalance,
+          child_balance: result.body.childBalance,
+          note: note ?? null,
+        },
+      });
+    }
+
     res.status(result.status).json(result.body);
   } catch (error) {
     logger.error({ error }, 'Failed to allocate sub-org credits');
@@ -1646,12 +1705,65 @@ orgSubOrgsRouter.post('/offboard', async (req: Request, res: Response) => {
     }
     const { childOrgId, reason } = parsed.data;
 
-    const result = await offboardSubOrgCore(
+const result = await offboardSubOrgCore(
       { kind: 'user', userId: ctx.userId, orgId: ctx.orgId },
       childOrgId,
       reason ?? null,
     );
-    res.status(result.status).json(result.body);
+
+    if (result.status !== 200) {
+      res.status(result.status).json(result.body);
+      return;
+    }
+
+    const { reclaimed, alreadySuspended, reclaimParentBalance, reclaimChildBalance } = result.body as {
+      reclaimed: number;
+      suspended: true;
+      alreadySuspended: boolean;
+      reclaimParentBalance?: number;
+      reclaimChildBalance?: number;
+    };
+
+    // SCRUM-3972 (R20) — the ONLY other producer of suborg.credits_reclaimed.
+    // There is no double-emit risk with POST /credits: that route and this
+    // one are separate requests, each calling the RPC directly (via the
+    // shared R9 core here) and each emitting exactly once for its own call.
+    if (reclaimed > 0) {
+      void emitSubOrgEvent({
+        eventType: 'suborg.credits_reclaimed',
+        parentOrgId: ctx.orgId,
+        childOrgId,
+        data: {
+          amount: -reclaimed,
+          parent_balance: reclaimParentBalance,
+          child_balance: reclaimChildBalance,
+          note: reason ? `offboarding: ${reason}` : 'offboarding',
+        },
+      });
+    }
+
+    // `suborg.suspended` is emitted only when THIS call did the suspending:
+    // `alreadySuspended` means the RPC succeeded without a transition, and
+    // announcing a transition that did not happen is exactly the false-claim
+    // class CLAUDE.md §1.13 R-7 forbids. `suborg.offboarded` is emitted
+    // either way — the offboarding operation did complete.
+    if (!alreadySuspended) {
+      void emitSubOrgEvent({
+        eventType: 'suborg.suspended',
+        parentOrgId: ctx.orgId,
+        childOrgId,
+        data: { reason: reason ?? null },
+      });
+    }
+    void emitSubOrgEvent({
+      eventType: 'suborg.offboarded',
+      parentOrgId: ctx.orgId,
+      childOrgId,
+      data: { reclaimed, reason: reason ?? null },
+    });
+
+    res.json({ reclaimed, suspended: true, alreadySuspended });
+
   } catch (error) {
     logger.error({ error }, 'Failed to offboard sub-org');
     res.status(500).json({ error: 'Internal server error' });

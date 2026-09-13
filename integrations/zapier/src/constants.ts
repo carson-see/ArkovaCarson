@@ -40,6 +40,16 @@ export const VALID_EVENTS = [
   // delivery has happened.
   'attestation.created',
   'attestation.revoked',
+  // SCRUM-3972 — affiliated-organization lifecycle. Same caveat as
+  // anchor.superseded above: listing them here mirrors the worker allowlist,
+  // it does not by itself give a Zap author a per-event trigger.
+  'suborg.created',
+  'suborg.approved',
+  'suborg.revoked',
+  'suborg.credits_allocated',
+  'suborg.credits_reclaimed',
+  'suborg.suspended',
+  'suborg.offboarded',
 ] as const;
 
 /** Max batch verify size (sync) */
