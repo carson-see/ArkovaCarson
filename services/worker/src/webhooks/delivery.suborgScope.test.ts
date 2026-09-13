@@ -487,6 +487,41 @@ describe('cross-organization webhook fan-out (SCRUM-3972)', () => {
     expect(mockSentry.captureMessage).not.toHaveBeenCalled();
   });
 
+  /**
+   * CTO review 2026-09-13. The test above proves fan-out is skipped for
+   * `suborg.*`; it does not prove the OWN-organization path still works,
+   * because CHILD_ORG has no endpoint of its own there. This one runs a real
+   * `suborg.*` payload — the same shape `emitSubOrgEvent` composes — through
+   * the actual `validateWebhookPayload` gate (#2843, not mocked) and the real
+   * `deliverToEndpoint` signing/fetch path, on the PARENT's own endpoint that
+   * these events are actually addressed to.
+   */
+  it('delivers a suborg.* event to the parent\'s own endpoint through the real #2843 validation gate', async () => {
+    setFanoutFlag(true);
+    install({
+      endpoints: [endpoint('ep_parent', PARENT_ORG, 'self', ['suborg.credits_allocated'])],
+      orgs: APPROVED_TREE,
+    });
+
+    const result = await dispatchWebhookEvent(PARENT_ORG, 'suborg.credits_allocated', 'evt_so_own', {
+      public_id: CHILD_PUBLIC_ID,
+      display_name: 'Affiliate Ltd',
+      parent_public_id: PARENT_PUBLIC_ID,
+      parent_approval_status: 'APPROVED',
+      occurred_at: '2026-09-12T10:00:00.000Z',
+      amount: 10,
+      parent_balance: 90,
+      child_balance: 10,
+    });
+
+    expect(deliveredUrls()).toEqual([expect.stringContaining('ep_parent')]);
+    expect(deliveredBodies()[0]?.data).toMatchObject({ public_id: CHILD_PUBLIC_ID, amount: 10 });
+    expect(result.ok).toBe(true);
+    expect(result.ownEndpointCount).toBe(1);
+    expect(result.descendantEndpointCount).toBe(0);
+    expect(mockSentry.captureMessage).not.toHaveBeenCalled();
+  });
+
   it('does not reach an unrelated organization that happens to subscribe to descendants', async () => {
     setFanoutFlag(true);
     install({
