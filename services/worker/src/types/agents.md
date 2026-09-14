@@ -125,3 +125,8 @@ current SQL files and canonical seed replayed on a fresh isolated Supabase
 schema. Catalog regeneration confirmed the same RPC entry in both canonical
 files. This includes current0444/0446/0447 filenames and all merged migrations;
 it does not claim staging qualification or a full-file type resynchronization.
+
+
+## 2026-09-14 — UAT12 full-schema generated contracts
+
+The three instant-credit tables and six submission/claim/settlement/retry RPC entries are copied verbatim from Supabase generation against the reused full-schema B4 project after exact 0451 and 0460–0464 application. The reviewed historical 0453 ledger is preserved. Generated source SHA256: `543d81f12c03ada06b99a3c72941cac70b16d463cbcf69455c5c5b2f10583bdd`. This commits only the owned generated entries, preserving unrelated baseline contracts and excluding staging-only tables; it does not claim a fresh full replay or completed qualification. Both frontend and worker files contain identical generated entries.

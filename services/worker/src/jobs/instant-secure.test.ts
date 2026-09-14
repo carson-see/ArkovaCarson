@@ -23,7 +23,7 @@ describe('durable instant-secure consumer', () => {
     seed(); anchorRead.current = { id: 'anchor-1', status: 'SUBMITTED', chain_tx_id: 'tx-1' };
     await processInstantSecureIntent({ intent_id: INTENT_ID });
     expect(mockProcessBatchAnchors).toHaveBeenCalledWith({ force: true, instantIntentId: INTENT_ID });
-    expect(mockRpc).toHaveBeenCalledWith('settle_anchor_instant_intent', { p_intent_id: INTENT_ID, p_outcome: 'SUBMITTED', p_expected_attempt: 1, p_error_code: null });
+    expect(mockRpc).toHaveBeenCalledWith('settle_anchor_instant_intent', { p_intent_id: INTENT_ID, p_outcome: 'SUBMITTED', p_expected_attempt: 1, p_error_code: undefined });
   });
   it('holds ambiguous broadcast evidence and never requests a refund', async () => {
     seed(); anchorRead.current = { id: 'anchor-1', status: 'BROADCASTING', chain_tx_id: 'tx-ambiguous' };
