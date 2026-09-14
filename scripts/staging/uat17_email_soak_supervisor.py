@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, build_opener
 
 import uat17_email_confirmation_driver as driver
@@ -27,6 +28,17 @@ REQUIRED_CREDENTIALS = (
     'UAT17_WORKER_ID_TOKEN',
 )
 REPO_ROOT = Path(__file__).resolve().parents[2]
+APPROVED_CREDENTIALS_HELPER = Path(
+    '/Volumes/Extreme/Arkova/_scratch/cto-uat-20260914/uat17-credentials.py')
+APPROVED_CREDENTIALS_HELPER_SHA256 = (
+    '85d3a000556fa34e10021cc8554f73dc6d59119074fbf1ca215ea88ff290aa43')
+OWNED_WORKER_PROJECT = 'arkova1'
+OWNED_WORKER_REGION = 'us-central1'
+OWNED_WORKER_SERVICE = 'arkova-worker-uat17-0914-staging'
+OWNED_WORKER_URL = 'https://arkova-worker-uat17-0914-staging-kvojbeutfa-uc.a.run.app'
+OWNED_GCP_OBSERVATION_BASE = (
+    'https://us-central1-run.googleapis.com/apis/serving.knative.dev/v1/'
+    'namespaces/arkova1')
 
 
 def utc_now():
@@ -41,21 +53,18 @@ def validate_settings(manifest, duration_hours, interval_seconds):
     driver.validate_manifest(manifest)
     if not re.fullmatch(r'[a-f0-9]{64}', manifest.get('frontendContentSha256', '')):
         raise ValueError('Exact SHA-256 frontendContentSha256 required')
-    if manifest.get('workerService') != 'arkova-worker-uat17-0914-staging':
+    if manifest.get('workerService') != OWNED_WORKER_SERVICE:
         raise ValueError('Exact owned UAT-17 worker service required')
-    if not re.fullmatch(r'[a-z][a-z0-9-]{4,62}', manifest.get('workerGcpProject', '')):
-        raise ValueError('Worker GCP project required')
-    if not re.fullmatch(r'[a-z]+-[a-z]+[0-9]', manifest.get('workerRegion', '')):
-        raise ValueError('Worker region required')
+    if manifest.get('workerGcpProject') != OWNED_WORKER_PROJECT:
+        raise ValueError('Exact owned UAT-17 worker GCP project required')
+    if manifest.get('workerRegion') != OWNED_WORKER_REGION:
+        raise ValueError('Exact owned UAT-17 worker region required')
     if not re.fullmatch(r'arkova-worker-uat17-0914-staging-[0-9]{5}-[a-z0-9]{3}',
                         manifest.get('workerRevision', '')):
         raise ValueError('Exact owned UAT-17 worker revision required')
     if not re.fullmatch(r'sha256:[a-f0-9]{64}', manifest.get('workerImageDigest', '')):
         raise ValueError('Exact worker image digest required')
-    worker_url = driver.urlparse(manifest.get('workerUrl', ''))
-    if (worker_url.scheme != 'https' or not worker_url.hostname
-            or not worker_url.hostname.endswith('.run.app')
-            or worker_url.path not in ('', '/') or worker_url.query or worker_url.fragment):
+    if manifest.get('workerUrl') != OWNED_WORKER_URL:
         raise ValueError('Exact isolated worker URL required')
     if duration_hours < MIN_DURATION_HOURS:
         raise ValueError('UAT-17 migration soak must run for at least 24 hours')
@@ -65,15 +74,23 @@ def validate_settings(manifest, duration_hours, interval_seconds):
 
 
 def validate_helper(path_value):
-    path = Path(path_value)
-    if not path.is_absolute() or path.is_symlink() or not path.is_file() or not os.access(path, os.X_OK):
-        raise ValueError('Credentials helper must be an absolute executable regular file')
-    return path
+    requested = Path(path_value)
+    if (not requested.is_absolute() or requested.is_symlink()
+            or requested.resolve() != APPROVED_CREDENTIALS_HELPER.resolve()
+            or not APPROVED_CREDENTIALS_HELPER.is_file()
+            or APPROVED_CREDENTIALS_HELPER.is_symlink()
+            or not os.access(APPROVED_CREDENTIALS_HELPER, os.X_OK)):
+        raise ValueError('Exact approved credentials helper path required')
+    digest = hashlib.sha256(APPROVED_CREDENTIALS_HELPER.read_bytes()).hexdigest()
+    if digest != APPROVED_CREDENTIALS_HELPER_SHA256:
+        raise ValueError('Approved credentials helper hash mismatch')
+    return APPROVED_CREDENTIALS_HELPER
 
 
 def refresh_credentials(helper):
+    validate_helper(str(helper))
     result = subprocess.run(
-        [str(helper)], capture_output=True, text=True, timeout=60, check=False,
+        [str(APPROVED_CREDENTIALS_HELPER)], capture_output=True, text=True, timeout=60, check=False,
     )
     if result.returncode != 0:
         raise RuntimeError('credential_refresh_failed')
@@ -106,8 +123,8 @@ def source_is_clean():
     return result.returncode == 0 and not result.stdout.strip()
 
 
-def frontend_content_sha256(url):
-    request = Request(url, method='GET', headers={
+def frontend_content_sha256():
+    request = Request(driver.OWNED_APP_ORIGIN, method='GET', headers={
         'Cache-Control': 'no-cache',
         'User-Agent': 'Arkova-UAT17-Soak/1.0',
     })
@@ -120,8 +137,20 @@ def frontend_content_sha256(url):
         raise RuntimeError('frontend_content_unreadable') from None
 
 
+def trusted_observation_url(url):
+    service_url = f'{OWNED_GCP_OBSERVATION_BASE}/services/{OWNED_WORKER_SERVICE}'
+    revision_prefix = f'{OWNED_GCP_OBSERVATION_BASE}/revisions/{OWNED_WORKER_SERVICE}-'
+    if url in (service_url, f'{OWNED_WORKER_URL}/health'):
+        return url
+    if url.startswith(revision_prefix) and re.fullmatch(
+            r'arkova-worker-uat17-0914-staging-[0-9]{5}-[a-z0-9]{3}',
+            url.removeprefix(f'{OWNED_GCP_OBSERVATION_BASE}/revisions/')):
+        return url
+    raise ValueError('Exact owned UAT-17 observation URL required')
+
+
 def json_get(url, bearer, serverless=False):
-    request = Request(url, method='GET', headers={
+    request = Request(trusted_observation_url(url), method='GET', headers={
         'X-Serverless-Authorization' if serverless else 'Authorization': f'Bearer {bearer}',
         'User-Agent': 'Arkova-UAT17-Soak/1.0',
     })
@@ -136,9 +165,8 @@ def json_get(url, bearer, serverless=False):
 
 
 def worker_identity_observation(manifest, access_token, id_token):
-    base = (f'https://{manifest["workerRegion"]}-run.googleapis.com/'
-            f'apis/serving.knative.dev/v1/namespaces/{manifest["workerGcpProject"]}')
-    service = json_get(f'{base}/services/{manifest["workerService"]}', access_token)
+    base = OWNED_GCP_OBSERVATION_BASE
+    service = json_get(f'{base}/services/{OWNED_WORKER_SERVICE}', access_token)
     status = service.get('status') if isinstance(service.get('status'), dict) else {}
     traffic = status.get('traffic') if isinstance(status.get('traffic'), list) else []
     revision_name = status.get('latestReadyRevisionName')
@@ -147,7 +175,7 @@ def worker_identity_observation(manifest, access_token, id_token):
             or not any(row.get('revisionName') == revision_name and row.get('percent') == 100
                        for row in traffic if isinstance(row, dict))):
         return None
-    revision = json_get(f'{base}/revisions/{revision_name}', access_token)
+    revision = json_get(f'{base}/revisions/{quote(revision_name, safe="")}', access_token)
     revision_status = revision.get('status') if isinstance(revision.get('status'), dict) else {}
     labels = revision.get('metadata', {}).get('labels', {})
     image_digest = revision_status.get('imageDigest', '')
@@ -156,7 +184,7 @@ def worker_identity_observation(manifest, access_token, id_token):
         return None
     if labels.get('arkova-source-head') != manifest['head']:
         return None
-    health = json_get(f'{manifest["workerUrl"].rstrip("/")}/health', id_token, serverless=True)
+    health = json_get(f'{OWNED_WORKER_URL}/health', id_token, serverless=True)
     uptime = health.get('uptime')
     if (health.get('git_sha') != manifest['head'] or health.get('status') != 'healthy'
             or not isinstance(uptime, (int, float)) or uptime < 0):
@@ -211,7 +239,7 @@ def main():
 
     if not re.fullmatch(r'uat17-[a-z0-9-]{6,48}', args.run_id):
         raise SystemExit('run-id must be a unique uat17-* label')
-    manifest_path = Path(args.manifest).resolve()
+    manifest_path = driver.validate_manifest_path(args.manifest)
     manifest = validate_settings(
         json.loads(manifest_path.read_text()), args.duration_hours, args.interval_seconds)
     helper = validate_helper(args.credentials_helper)
@@ -257,7 +285,7 @@ def main():
             if not source_is_clean():
                 failure = 'source_worktree_drift'
                 break
-            if frontend_content_sha256(manifest['appUrl']) != manifest['frontendContentSha256']:
+            if frontend_content_sha256() != manifest['frontendContentSha256']:
                 failure = 'frontend_content_drift'
                 break
 

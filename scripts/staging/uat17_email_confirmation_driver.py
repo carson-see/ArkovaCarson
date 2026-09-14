@@ -21,7 +21,12 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 PROD_REF = 'vzwyaatejekddvltxyye'
 SHARED_REFS = {'ujtlwnoqfhtitcmsnrpq', 'gnkuaywlpmsaezwvlvhk', PROD_REF}
+OWNED_PROJECT_REF = 'vaarxclqdxnwoxziolmp'
 OWNED_PROJECT_NAME = 'arkova-soak-uat17-0914'
+OWNED_SUPABASE_ORIGIN = f'https://{OWNED_PROJECT_REF}.supabase.co'
+OWNED_APP_ORIGIN = 'https://arkova-uat17-0914.vercel.app'
+APPROVED_MANIFEST_PATH = Path(
+    '/Volumes/Extreme/Arkova/_scratch/cto-uat-20260914/uat17-manifest.json')
 AUTH_LINK_EXPIRY_SECONDS = 900
 AUTH_LINK_EXPIRY_GRACE_SECONDS = 5
 ARTIFACT_ROOT = Path(__file__).resolve().parents[2] / 'artifacts' / 'uat17-email'
@@ -45,25 +50,62 @@ def artifact_path(value):
     return path
 
 
+def validate_manifest_path(path_value):
+    requested = Path(path_value)
+    if (not requested.is_absolute() or requested.is_symlink()
+            or requested.resolve() != APPROVED_MANIFEST_PATH.resolve()
+            or not APPROVED_MANIFEST_PATH.is_file()
+            or APPROVED_MANIFEST_PATH.is_symlink()):
+        raise ValueError('Exact approved UAT-17 manifest path required')
+    return APPROVED_MANIFEST_PATH
+
+
 def validate_manifest(value):
     ref = value.get('projectRef', '')
     name = value.get('projectName', '')
-    if not re.fullmatch(r'[a-z]{20}', ref) or ref in SHARED_REFS:
-        raise ValueError('Owned isolated project reference required')
+    if ref != OWNED_PROJECT_REF or ref in SHARED_REFS:
+        raise ValueError('Exact owned UAT-17 project reference required')
     if name != OWNED_PROJECT_NAME:
         raise ValueError(f'Exact owned project name {OWNED_PROJECT_NAME} required')
     if not re.fullmatch(r'[a-f0-9]{40}', value.get('head', '')):
         raise ValueError('Exact candidate head required')
-    supabase = urlparse(value.get('supabaseUrl', ''))
-    if (supabase.scheme != 'https' or supabase.hostname != f'{ref}.supabase.co'
-            or supabase.path not in ('', '/') or supabase.query or supabase.fragment):
-        raise ValueError('Supabase URL must match the isolated project reference')
-    app = urlparse(value.get('appUrl', ''))
-    if (app.scheme != 'https' or not app.hostname or app.hostname in ('app.arkova.ai', 'arkova.ai')
-            or app.username or app.password or app.port or app.path not in ('', '/')
-            or app.query or app.fragment):
-        raise ValueError('Isolated app origin required')
+    if value.get('supabaseUrl') != OWNED_SUPABASE_ORIGIN:
+        raise ValueError('Exact owned UAT-17 Supabase origin required')
+    if value.get('appUrl') != OWNED_APP_ORIGIN:
+        raise ValueError('Exact owned UAT-17 app origin required')
     return value
+
+
+def trusted_request_url(url):
+    if not isinstance(url, str):
+        raise ValueError('Trusted UAT-17 request URL required')
+    parsed = urlparse(url)
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValueError('Trusted UAT-17 request URL required') from None
+    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
+            or port is not None or parsed.fragment):
+        raise ValueError('Trusted UAT-17 request URL required')
+    decoded_path = unquote(parsed.path)
+    if '\\' in decoded_path or any(part in ('.', '..') for part in decoded_path.split('/')):
+        raise ValueError('Trusted UAT-17 request path required')
+
+    origin = f'https://{parsed.hostname}'
+    if origin == OWNED_SUPABASE_ORIGIN:
+        allowed = ('/auth/v1', '/rest/v1')
+        if not any(decoded_path == prefix or decoded_path.startswith(prefix + '/') for prefix in allowed):
+            raise ValueError('Trusted UAT-17 Supabase path required')
+    elif origin == 'https://api.supabase.com':
+        project_path = f'/v1/projects/{OWNED_PROJECT_REF}'
+        if decoded_path not in (project_path, project_path + '/config/auth', project_path + '/database/query'):
+            raise ValueError('Trusted UAT-17 management path required')
+    elif origin == RESEND:
+        if decoded_path != '/emails' and not re.fullmatch(r'/emails/[^/]+', decoded_path):
+            raise ValueError('Trusted UAT-17 Resend path required')
+    else:
+        raise ValueError('Trusted UAT-17 request host required')
+    return url
 
 
 def validate_auth_config(value):
@@ -145,7 +187,7 @@ def extract_confirmation_url(message, supabase_origin, callback):
 
 def request(method, url, headers=None, body=None, no_redirect=False):
     data = None if body is None else json.dumps(body).encode()
-    req = Request(url, method=method, data=data, headers={
+    req = Request(trusted_request_url(url), method=method, data=data, headers={
         'Content-Type': 'application/json',
         'User-Agent': 'Arkova-UAT17/1.0',
         **(headers or {}),
@@ -178,7 +220,7 @@ def poll_message(resend_key, recipient, issued_after, excluded_ids=frozenset(), 
         if status == 200:
             match = select_fixture_message(payload, recipient, issued_after, excluded_ids)
             if match:
-                status, message, _ = request('GET', f'{RESEND}/emails/{quote(match["id"])}', headers)
+                status, message, _ = request('GET', f'{RESEND}/emails/{quote(match["id"], safe="")}', headers)
                 if status == 200:
                     return match['id'], message
         time.sleep(2)
@@ -224,6 +266,8 @@ def cleanup_fixture_user(origin, user_id, admin_headers):
 
 
 def read_trigger_catalog(project_ref, management_headers, database_url=''):
+    if project_ref != OWNED_PROJECT_REF:
+        raise RuntimeError('Auth trigger catalog target is not the exact owned project')
     query = TRIGGER_CATALOG_QUERY
     status, catalog, _ = request(
         'POST', f'{MANAGEMENT}{project_ref}/database/query', management_headers, {'query': query})
@@ -233,9 +277,11 @@ def read_trigger_catalog(project_ref, management_headers, database_url=''):
         raise RuntimeError('Auth trigger catalog read failed and no read-only database fallback was supplied')
 
     parsed = urlparse(database_url)
-    if (parsed.scheme not in ('postgres', 'postgresql') or not parsed.hostname
+    if (parsed.scheme not in ('postgres', 'postgresql')
+            or parsed.hostname != f'db.{OWNED_PROJECT_REF}.supabase.co'
             or not parsed.username or not parsed.password or not parsed.path.strip('/')
-            or (project_ref not in parsed.hostname and project_ref not in parsed.username)):
+            or parsed.port not in (None, 5432)
+            or parse_qs(parsed.query).get('sslmode', ['require']) != ['require']):
         raise RuntimeError('Database fallback does not identify the owned project')
     command_env = {
         **os.environ,
@@ -313,7 +359,8 @@ def main():
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--browser', action='store_true')
     args = parser.parse_args()
-    manifest = validate_manifest(json.loads(Path(args.manifest).read_text()))
+    manifest_path = validate_manifest_path(args.manifest)
+    manifest = validate_manifest(json.loads(manifest_path.read_text()))
     out = artifact_path(args.evidence_out)
     if out.exists():
         raise SystemExit('Refusing to overwrite UAT-17 evidence')
@@ -331,8 +378,9 @@ def main():
     label = secrets.token_hex(10)
     recipient = f'delivered+uat17-{label}@resend.dev'
     password = secrets.token_urlsafe(24)
-    supabase_origin = manifest['supabaseUrl'].rstrip('/')
-    app_origin = manifest['appUrl'].rstrip('/')
+    project_ref = OWNED_PROJECT_REF
+    supabase_origin = OWNED_SUPABASE_ORIGIN
+    app_origin = OWNED_APP_ORIGIN
     callback = f'{app_origin}/auth/callback'
     auth_headers = {'apikey': env['UAT17_ANON_KEY'], 'Authorization': f'Bearer {env["UAT17_ANON_KEY"]}'}
     admin_headers = {'apikey': env['UAT17_SERVICE_ROLE_KEY'], 'Authorization': f'Bearer {env["UAT17_SERVICE_ROLE_KEY"]}'}
@@ -341,19 +389,19 @@ def main():
     created_user_ids = []
     complete = False
     try:
-        status, project, _ = request('GET', f'{MANAGEMENT}{manifest["projectRef"]}', management_headers)
+        status, project, _ = request('GET', f'{MANAGEMENT}{project_ref}', management_headers)
         if status != 200 or not isinstance(project, dict) or project.get('name') != manifest['projectName']:
             raise RuntimeError('Management API did not confirm the owned project identity')
         checks.append({'name': 'owned_project', 'passed': True})
 
-        status, config, _ = request('GET', f'{MANAGEMENT}{manifest["projectRef"]}/config/auth', management_headers)
+        status, config, _ = request('GET', f'{MANAGEMENT}{project_ref}/config/auth', management_headers)
         if status != 200 or not isinstance(config, dict):
             raise RuntimeError('Auth configuration read failed')
         validate_auth_config(config)
         checks.append({'name': 'auth_config_900_90_hourly_30', 'passed': True})
 
         catalog = read_trigger_catalog(
-            manifest['projectRef'], management_headers, os.environ.get('UAT17_DATABASE_URL', ''))
+            project_ref, management_headers, os.environ.get('UAT17_DATABASE_URL', ''))
         if not trigger_catalog_is_canonical(catalog):
             raise RuntimeError('Canonical auth.users triggers are not deployed')
         checks.append({'name': 'deployed_auth_triggers', 'passed': True})
@@ -464,7 +512,7 @@ def main():
 
         if args.browser:
             run_hosted_browser(
-                app_origin, manifest['projectRef'], location, consumed_location, recipient)
+                app_origin, project_ref, location, consumed_location, recipient)
             checks.append({'name': 'hosted_browser_mfa_and_consumed_link', 'passed': True})
 
         expiry_wait = AUTH_LINK_EXPIRY_SECONDS + AUTH_LINK_EXPIRY_GRACE_SECONDS - (time.monotonic() - expiry_started)

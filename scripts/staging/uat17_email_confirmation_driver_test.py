@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -13,10 +14,10 @@ SPEC.loader.exec_module(driver)
 class Uat17DriverTest(unittest.TestCase):
     def manifest(self):
         return {
-            'projectRef': 'abcdefghijklmnopqrst',
+            'projectRef': driver.OWNED_PROJECT_REF,
             'projectName': 'arkova-soak-uat17-0914',
-            'supabaseUrl': 'https://abcdefghijklmnopqrst.supabase.co',
-            'appUrl': 'https://arkova-uat17-candidate.vercel.app',
+            'supabaseUrl': driver.OWNED_SUPABASE_ORIGIN,
+            'appUrl': driver.OWNED_APP_ORIGIN,
             'head': 'a' * 40,
         }
 
@@ -34,20 +35,57 @@ class Uat17DriverTest(unittest.TestCase):
 
     def test_accepts_only_owned_isolated_targets(self):
         self.assertEqual(driver.validate_manifest(self.manifest())['projectName'], 'arkova-soak-uat17-0914')
-        for ref in driver.SHARED_REFS:
+        for ref in (*driver.SHARED_REFS, 'attackerprojectrefxx'):
             invalid = self.manifest()
             invalid['projectRef'] = ref
             invalid['supabaseUrl'] = f'https://{ref}.supabase.co'
-            with self.assertRaisesRegex(ValueError, 'Owned isolated'):
+            with self.assertRaisesRegex(ValueError, 'Exact owned'):
                 driver.validate_manifest(invalid)
         invalid = self.manifest()
-        invalid['appUrl'] = 'https://app.arkova.ai'
-        with self.assertRaisesRegex(ValueError, 'Isolated app'):
+        invalid['appUrl'] = 'https://attacker.example'
+        with self.assertRaisesRegex(ValueError, 'app origin'):
+            driver.validate_manifest(invalid)
+        invalid = self.manifest()
+        invalid['supabaseUrl'] = 'https://attackerprojectrefxx.supabase.co'
+        with self.assertRaisesRegex(ValueError, 'Supabase origin'):
             driver.validate_manifest(invalid)
         invalid = self.manifest()
         invalid['projectName'] = 'arkova-uat17-almost-owned'
         with self.assertRaisesRegex(ValueError, 'Exact owned project name'):
             driver.validate_manifest(invalid)
+
+    def test_accepts_only_the_exact_regular_manifest_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            approved = root / 'uat17-manifest.json'
+            approved.write_text(json.dumps(self.manifest()))
+            attacker = root / 'attacker.json'
+            attacker.write_text(json.dumps(self.manifest()))
+            symlink = root / 'manifest-link.json'
+            symlink.symlink_to(approved)
+            with patch.object(driver, 'APPROVED_MANIFEST_PATH', approved):
+                self.assertEqual(driver.validate_manifest_path(str(approved)), approved)
+                with self.assertRaisesRegex(ValueError, 'Exact approved'):
+                    driver.validate_manifest_path(str(attacker))
+                with self.assertRaisesRegex(ValueError, 'Exact approved'):
+                    driver.validate_manifest_path(str(symlink))
+                with self.assertRaisesRegex(ValueError, 'Exact approved'):
+                    driver.validate_manifest_path('uat17-manifest.json')
+
+    def test_request_url_allowlist_rejects_attacker_hosts_and_traversal(self):
+        trusted = f'{driver.OWNED_SUPABASE_ORIGIN}/auth/v1/user'
+        self.assertEqual(driver.trusted_request_url(trusted), trusted)
+        rejected = (
+            'https://attacker.example/auth/v1/user',
+            'https://attackerprojectrefxx.supabase.co/auth/v1/user',
+            f'{driver.OWNED_SUPABASE_ORIGIN}/auth/v1/../admin',
+            f'{driver.OWNED_SUPABASE_ORIGIN}/auth/v1/%2e%2e/admin',
+            f'{driver.OWNED_SUPABASE_ORIGIN}:444/auth/v1/user',
+            f'https://api.supabase.com/v1/projects/{driver.OWNED_PROJECT_REF}/unknown',
+        )
+        for url in rejected:
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, 'Trusted UAT-17'):
+                driver.trusted_request_url(url)
 
     def test_distinguishes_interval_from_hourly_quota(self):
         self.assertTrue(driver.validate_auth_config(self.config()))
@@ -82,16 +120,16 @@ class Uat17DriverTest(unittest.TestCase):
             driver.select_fixture_message(payload, 'delivered+uat17-owned@resend.dev', 'not-a-time')
 
     def test_extracts_only_bound_arkova_confirmation_link(self):
-        callback = 'https://arkova-uat17-candidate.vercel.app/auth/callback'
-        link = ('https://abcdefghijklmnopqrst.supabase.co/auth/v1/verify?token=secret'
-                '&amp;type=signup&amp;redirect_to=https%3A%2F%2Farkova-uat17-candidate.vercel.app%2Fauth%2Fcallback')
+        callback = f'{driver.OWNED_APP_ORIGIN}/auth/callback'
+        link = (f'{driver.OWNED_SUPABASE_ORIGIN}/auth/v1/verify?token=secret'
+                '&amp;type=signup&amp;redirect_to=https%3A%2F%2Farkova-uat17-0914.vercel.app%2Fauth%2Fcallback')
         message = {
             'from': 'Arkova <noreply@arkova.ai>',
             'subject': 'Confirm your Arkova account',
             'html': f'<a href="{link}">Confirm</a>',
         }
         extracted = driver.extract_confirmation_url(
-            message, 'https://abcdefghijklmnopqrst.supabase.co', callback)
+            message, driver.OWNED_SUPABASE_ORIGIN, callback)
         self.assertIn('token=secret', extracted)
         message['html'] += '<p>Supabase</p>'
         with self.assertRaisesRegex(ValueError, 'branded'):
@@ -104,10 +142,10 @@ class Uat17DriverTest(unittest.TestCase):
         })()
         with patch.object(driver.subprocess, 'run', return_value=completed) as run:
             self.assertTrue(driver.run_hosted_browser(
-                'https://arkova-uat17-candidate.vercel.app',
-                'abcdefghijklmnopqrst',
-                'https://arkova-uat17-candidate.vercel.app/auth/callback#access_token=secret',
-                'https://arkova-uat17-candidate.vercel.app/auth/callback#error_code=otp_expired',
+                driver.OWNED_APP_ORIGIN,
+                driver.OWNED_PROJECT_REF,
+                f'{driver.OWNED_APP_ORIGIN}/auth/callback#access_token=secret',
+                f'{driver.OWNED_APP_ORIGIN}/auth/callback#error_code=otp_expired',
                 'delivered+uat17-aabbcc@resend.dev',
             ))
         command, = run.call_args.args
@@ -121,11 +159,11 @@ class Uat17DriverTest(unittest.TestCase):
                      (204, None, {}), (204, None, {}), (200, [], {}),
                      (200, [{'deleted_at': '2026-09-14T00:00:00Z'}], {})]
         with patch.object(driver, 'request', side_effect=responses) as request:
-            self.assertTrue(driver.cleanup_fixture_user('https://fixture.supabase.co', 'owned-id', {}))
+            self.assertTrue(driver.cleanup_fixture_user(driver.OWNED_SUPABASE_ORIGIN, 'owned-id', {}))
             self.assertEqual(request.call_args_list[0].args[3], {'should_soft_delete': True})
             self.assertFalse(any('audit_events' in str(call) for call in request.call_args_list))
         with patch.object(driver, 'request', side_effect=[(200, {}, {}), (200, {}, {})]):
-            self.assertFalse(driver.cleanup_fixture_user('https://fixture.supabase.co', 'owned-id', {}))
+            self.assertFalse(driver.cleanup_fixture_user(driver.OWNED_SUPABASE_ORIGIN, 'owned-id', {}))
 
     def test_evidence_contains_no_fixture_identity_or_message(self):
         report = driver.evidence('a' * 40, [{'name': 'owned_project', 'passed': True}], True, 92)
