@@ -139,6 +139,16 @@ try:
     migration = checkout/'supabase/migrations/0460_scrum3971_atomic_suborg_offboard.sql'
     source = migration.read_text()
     sql(source)
+    # The migration does not make an old worker's two HTTP RPCs atomic. This
+    # release control proves why the old route must be drained during rollout.
+    for mode, other in [('key','user'),('user','key')]:
+        reset()
+        a = concurrent(alloc(mode,-40) + ' SELECT pg_sleep(0.8); ' + suspend(mode), 'old_worker_after_migration')
+        sleeping('old_worker_after_migration')
+        assert json.loads(sql(alloc(other,10)))['success'] is True
+        assert all(r['success'] is True for r in finish(a))
+        assert state() == {'parent':130,'child':10,'suspended':True}
+        checks.append(f'ROLLOUT NEGATIVE CONTROL: 0460 alone cannot fix an old {mode} two-call worker; old traffic must drain')
     for mode, other in [('key','user'),('user','key'),('key','key'),('user','user')]:
         reset()
         a = concurrent('BEGIN; ' + offboard(mode) + ' SELECT pg_sleep(0.8); COMMIT;', 'offboard_first')
@@ -220,7 +230,19 @@ try:
             assert sql(f"SELECT has_function_privilege('{role}','public.{function}','EXECUTE');") == 'f'
         assert sql(f"SELECT has_function_privilege('service_role','public.{function}','EXECUTE');") == 't'
         checks.append(function+': service-only execute ACL')
+    # Execute the migration's exact documented containment block, then prove
+    # service admission is disabled and an unchanged reapply restores it.
+    rollback_comments = source.split('-- ROLLBACK:', 1)[1].split('\nBEGIN;', 1)[0]
+    rollback = '\n'.join(line[3:] for line in rollback_comments.splitlines()
+                         if line.startswith('-- '))
+    rollback = rollback[rollback.index('BEGIN;'):rollback.index('COMMIT;')+len('COMMIT;')]
+    sql(rollback)
+    for function in ['offboard_suborg(uuid,uuid,text,uuid)','offboard_suborg_as_api_key(uuid,uuid,text,uuid)']:
+        assert sql(f"SELECT has_function_privilege('service_role','public.{function}','EXECUTE');") == 'f'
+    checks.append('exact documented containment SQL revokes both service offboard entrypoints')
     sql(source)
+    for function in ['offboard_suborg(uuid,uuid,text,uuid)','offboard_suborg_as_api_key(uuid,uuid,text,uuid)']:
+        assert sql(f"SELECT has_function_privilege('service_role','public.{function}','EXECUTE');") == 't'
     checks.append('compensating migration reapplies without changing function ACLs')
     receipt = {'checked_at':datetime.now(timezone.utc).isoformat(),'migration_sha256':hashlib.sha256(source.encode()).hexdigest(),'immutable_0453_sha256':hashlib.sha256(old_key.encode()).hexdigest(),'scope':'Actual 0444/0453 functions and entire 0460 migration on fresh isolated native PostgreSQL fixture tables. Not a full Arkova migration replay, live RLS, staging qualification or soak.', 'checks':checks}
     (out/'receipt.json').write_text(json.dumps(receipt,indent=2))

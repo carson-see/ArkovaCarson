@@ -13,13 +13,17 @@
 -- remain service_role-only, including the legacy auth.uid() allocation wrapper.
 -- Credit-row locks retain the existing LEAST/GREATEST order; no table DDL is used.
 --
--- ROLLBACK / CONTAINMENT: roll back the worker to the pre-feature release and
--- stop new offboard/allocation traffic before removing this correction. Revoke
--- EXECUTE on both offboard_suborg(uuid,uuid,text,uuid) and
--- offboard_suborg_as_api_key(uuid,uuid,text,uuid) from service_role; retain the
--- guarded allocation definitions. Reapply this file to re-enable. Restoring
--- the old two-call worker or the unguarded 0444/0453 writers reopens the proven
--- race and is not a safe rollback. Existing records and 0453 stay untouched.
+-- ROLLBACK: containment, after stopping new offboard traffic and reverting the
+-- worker to the pre-feature release. Retain the guarded allocation definitions.
+-- BEGIN;
+-- SET LOCAL lock_timeout = '5s';
+-- REVOKE EXECUTE ON FUNCTION public.offboard_suborg(uuid, uuid, text, uuid) FROM service_role;
+-- REVOKE EXECUTE ON FUNCTION public.offboard_suborg_as_api_key(uuid, uuid, text, uuid) FROM service_role;
+-- NOTIFY pgrst, 'reload schema';
+-- COMMIT;
+-- Reapply this file to re-enable. Restoring the old two-call worker or the
+-- unguarded 0444/0453 writers reopens the proven race and is not a safe rollback.
+-- Existing records and 0453 stay untouched.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';

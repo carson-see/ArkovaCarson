@@ -1633,3 +1633,9 @@ PostgreSQL concurrency proof and a split-step TLA negative control reproduce
 the former race. Existing 0453 stays immutable; 0460 and the worker require fresh
 live qualification before admission. The top-level-only key management policy
 is explicit: the underlying organization tree can already reach depth 3.
+
+Rollout qualification must apply 0460 before the atomic worker and drain old
+two-call offboard traffic sharing the database. The native harness preserves
+a negative control proving that migration application alone does not close
+the old worker's transaction gap. Existing unsafe offboard handlers must not
+be restored as a rollback target.

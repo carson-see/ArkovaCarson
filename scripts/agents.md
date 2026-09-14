@@ -111,3 +111,8 @@ It first reproduces the immutable 0444/0453 two-transaction defect, then applies
 on suspension-audit failure, existing authority denials and service-only ACLs.
 Queries, server/stop logs, source hashes and results remain in the output directory.
 This is a scoped actual-SQL fixture, not full Arkova replay, live RLS or soak.
+
+The offboard harness also reproduces the old two-call protocol after 0460 is
+applied: migration-only deployment still races. That negative release control
+requires draining old handlers before claiming the new runtime is qualified.
+The exact documented revoke/re-enable containment SQL is rehearsed locally.
