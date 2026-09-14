@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T15:58:27.711Z",
+  "generatedAt": "2026-09-14T17:34:15.522Z",
   "generalDependencies": [
     {
       "name": "@babel/runtime",
@@ -486,7 +486,7 @@
     },
     {
       "name": "@sentry/browser",
-      "version": "10.73.0",
+      "version": "10.74.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2019 Functional Software, Inc. dba Sentry",
@@ -494,7 +494,7 @@
     },
     {
       "name": "@sentry/browser-utils",
-      "version": "10.73.0",
+      "version": "10.74.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2020 Functional Software, Inc. dba Sentry",
@@ -510,7 +510,7 @@
     },
     {
       "name": "@sentry/core",
-      "version": "10.73.0",
+      "version": "10.74.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2019 Functional Software, Inc. dba Sentry",
@@ -518,7 +518,7 @@
     },
     {
       "name": "@sentry/feedback",
-      "version": "10.73.0",
+      "version": "10.74.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2023 Functional Software, Inc. dba Sentry",
@@ -526,7 +526,7 @@
     },
     {
       "name": "@sentry/react",
-      "version": "10.73.0",
+      "version": "10.74.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2019 Functional Software, Inc. dba Sentry",
@@ -534,7 +534,7 @@
     },
     {
       "name": "@sentry/replay",
-      "version": "10.73.0",
+      "version": "10.74.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2022 Functional Software, Inc. dba Sentry",
@@ -542,7 +542,7 @@
     },
     {
       "name": "@sentry/replay-canvas",
-      "version": "10.73.0",
+      "version": "10.74.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2024 Functional Software, Inc. dba Sentry",
@@ -550,7 +550,7 @@
     },
     {
       "name": "@stripe/stripe-js",
-      "version": "9.15.0",
+      "version": "9.16.0",
       "license": "MIT",
       "repository": "https://github.com/stripe/stripe-js",
       "copyright": "Copyright (c) 2017 Stripe",
@@ -558,7 +558,7 @@
     },
     {
       "name": "@supabase/auth-js",
-      "version": "2.115.0",
+      "version": "2.116.0",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -566,7 +566,7 @@
     },
     {
       "name": "@supabase/functions-js",
-      "version": "2.115.0",
+      "version": "2.116.0",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -582,7 +582,7 @@
     },
     {
       "name": "@supabase/postgrest-js",
-      "version": "2.115.0",
+      "version": "2.116.0",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -590,7 +590,7 @@
     },
     {
       "name": "@supabase/realtime-js",
-      "version": "2.115.0",
+      "version": "2.116.0",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -598,7 +598,7 @@
     },
     {
       "name": "@supabase/storage-js",
-      "version": "2.115.0",
+      "version": "2.116.0",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -606,7 +606,7 @@
     },
     {
       "name": "@supabase/supabase-js",
-      "version": "2.115.0",
+      "version": "2.116.0",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -630,7 +630,7 @@
     },
     {
       "name": "@tanstack/react-virtual",
-      "version": "3.14.10",
+      "version": "3.14.12",
       "license": "MIT",
       "repository": "https://github.com/TanStack/virtual",
       "copyright": "Copyright (c) 2021-present Tanner Linsley",
@@ -638,7 +638,7 @@
     },
     {
       "name": "@tanstack/virtual-core",
-      "version": "3.17.8",
+      "version": "3.17.10",
       "license": "MIT",
       "repository": "https://github.com/TanStack/virtual",
       "copyright": "Copyright (c) 2021-present Tanner Linsley",
@@ -646,7 +646,7 @@
     },
     {
       "name": "@types/node",
-      "version": "26.4.1",
+      "version": "26.5.1",
       "license": "MIT",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
       "licenseText": "MIT License\n\n    Copyright (c) Microsoft Corporation.\n\n    Permission is hereby granted, free of charge, to any person obtaining a copy\n    of this software and associated documentation files (the \"Software\"), to deal\n    in the Software without restriction, including without limitation the rights\n    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n    copies of the Software, and to permit persons to whom the Software is\n    furnished to do so, subject to the following conditions:\n\n    The above copyright notice and this permission notice shall be included in all\n    copies or substantial portions of the Software.\n\n    THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n    SOFTWARE"
@@ -667,14 +667,14 @@
     },
     {
       "name": "@types/react",
-      "version": "19.2.18",
+      "version": "19.3.0",
       "license": "MIT",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
       "licenseText": "MIT License\n\n    Copyright (c) Microsoft Corporation.\n\n    Permission is hereby granted, free of charge, to any person obtaining a copy\n    of this software and associated documentation files (the \"Software\"), to deal\n    in the Software without restriction, including without limitation the rights\n    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n    copies of the Software, and to permit persons to whom the Software is\n    furnished to do so, subject to the following conditions:\n\n    The above copyright notice and this permission notice shall be included in all\n    copies or substantial portions of the Software.\n\n    THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n    SOFTWARE"
     },
     {
       "name": "@types/react-dom",
-      "version": "19.2.7",
+      "version": "19.3.0",
       "license": "MIT",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
       "licenseText": "MIT License\n\n    Copyright (c) Microsoft Corporation.\n\n    Permission is hereby granted, free of charge, to any person obtaining a copy\n    of this software and associated documentation files (the \"Software\"), to deal\n    in the Software without restriction, including without limitation the rights\n    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n    copies of the Software, and to permit persons to whom the Software is\n    furnished to do so, subject to the following conditions:\n\n    The above copyright notice and this permission notice shall be included in all\n    copies or substantial portions of the Software.\n\n    THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n    SOFTWARE"
@@ -1148,7 +1148,7 @@
     },
     {
       "name": "lucide-react",
-      "version": "1.41.0",
+      "version": "1.45.0",
       "license": "ISC",
       "repository": "https://github.com/lucide-icons/lucide",
       "copyright": "Copyright (c) 2026 Lucide Icons and Contributors*",
@@ -1320,7 +1320,7 @@
     },
     {
       "name": "react",
-      "version": "19.2.8",
+      "version": "19.3.0",
       "license": "MIT",
       "repository": "https://github.com/react/react",
       "copyright": "Copyright (c) Meta Platforms, Inc. and affiliates.",
@@ -1328,7 +1328,7 @@
     },
     {
       "name": "react-dom",
-      "version": "19.2.8",
+      "version": "19.3.0",
       "license": "MIT",
       "repository": "https://github.com/react/react",
       "copyright": "Copyright (c) Meta Platforms, Inc. and affiliates.",
@@ -1436,9 +1436,9 @@
     },
     {
       "name": "scheduler",
-      "version": "0.27.0",
+      "version": "0.28.0",
       "license": "MIT",
-      "repository": "https://github.com/facebook/react",
+      "repository": "https://github.com/react/react",
       "copyright": "Copyright (c) Meta Platforms, Inc. and affiliates.",
       "licenseText": "MIT License\n\nCopyright (c) Meta Platforms, Inc. and affiliates.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
     },
@@ -1611,7 +1611,7 @@
     },
     {
       "name": "undici-types",
-      "version": "8.3.0",
+      "version": "8.9.0",
       "license": "MIT",
       "repository": "https://github.com/nodejs/undici",
       "copyright": "Copyright (c) Matteo Collina and Undici contributors",
@@ -1740,7 +1740,7 @@
     },
     {
       "name": "zod",
-      "version": "4.5.4",
+      "version": "4.6.2",
       "license": "MIT",
       "repository": "https://github.com/colinhacks/zod",
       "copyright": "Copyright (c) 2025 Colin McDonnell",
@@ -1766,15 +1766,15 @@
     },
     {
       "name": "jszip",
-      "version": "3.10.1",
+      "version": "3.10.2",
       "license": "MIT OR GPL-3.0-or-later",
       "repository": "https://github.com/Stuk/jszip",
-      "sourceUrl": "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz",
+      "sourceUrl": "https://registry.npmjs.org/jszip/-/jszip-3.10.2.tgz",
       "status": "active",
       "statusNote": "Ships today in the lazy 'vendor-zip' Vite chunk, as a transitive dependency of mammoth.js (.docx text extraction on the client-side OCR path). Dual-licensed; Arkova USES IT UNDER MIT, per scripts/security/license-denylist.allowlist.json. Added 2026-08-01: because jszip is allowlist-cleared copyleft, the generator excluded it from the general list on the assumption its notice lived here — and it did not, so it received NO attribution anywhere on this page. That is the one case where the omission matters most: electing MIT is exactly what makes the MIT attribution requirement load-bearing. The generator now fails when an allowlisted copyleft dependency has no pinned notice.",
       "unmodified": true,
       "licenseTextUrls": [
-        "https://raw.githubusercontent.com/Stuk/jszip/main/LICENSE.markdown"
+        "https://raw.githubusercontent.com/Stuk/jszip/v3.10.2/LICENSE.markdown"
       ],
       "licenseTextNote": "Used under the MIT option of the MIT-or-GPLv3 dual license. The linked file contains both license texts as published by the project.",
       "copyright": "Copyright (c) 2009-2016 Stuart Knightley, David Duponchel, Franz Buchinger, António Afonso",
