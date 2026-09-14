@@ -20,6 +20,11 @@ const migration = readFileSync(
   'utf8',
 ).replace(/^BEGIN;$/m, '').replace(/^COMMIT;$/m, '');
 
+const hostedCatalogQuery = readFileSync(
+  resolve(process.cwd(), 'scripts/staging/uat17_trigger_catalog.sql'),
+  'utf8',
+);
+
 const setup = `
   CREATE SCHEMA IF NOT EXISTS auth;
   CREATE TABLE IF NOT EXISTS auth.users (
@@ -117,5 +122,19 @@ describe('SCRUM-5145 auth.users trigger restoration', () => {
         EXECUTE FUNCTION public.handle_auth_user_email_verified_org_join();
       ${migration}`))
       .toThrow('0459 refuses divergent auth.users trigger zz_auth_user_auto_associate_org');
+  });
+
+  it('executes the hosted driver catalog query against native PostgreSQL', () => {
+    const output = sql(`${setup}
+      DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+      DROP TRIGGER IF EXISTS zz_auth_user_auto_associate_org ON auth.users;
+      CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users
+        FOR EACH ROW EXECUTE FUNCTION public.create_profile_for_new_user();
+      CREATE TRIGGER zz_auth_user_auto_associate_org
+        AFTER INSERT OR UPDATE OF email_confirmed_at, email ON auth.users
+        FOR EACH ROW EXECUTE FUNCTION public.handle_auth_user_email_verified_org_join();
+      ${hostedCatalogQuery}`);
+
+    expect(output).toContain('\nt\n');
   });
 });

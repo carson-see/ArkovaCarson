@@ -27,6 +27,7 @@ AUTH_LINK_EXPIRY_GRACE_SECONDS = 5
 ARTIFACT_ROOT = Path(__file__).resolve().parents[2] / 'artifacts' / 'uat17-email'
 MANAGEMENT = 'https://api.supabase.com/v1/projects/'
 RESEND = 'https://api.resend.com'
+TRIGGER_CATALOG_QUERY = Path(__file__).with_name('uat17_trigger_catalog.sql').read_text(encoding='utf-8').strip()
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -203,19 +204,7 @@ def evidence(head, checks, complete, elapsed):
 
 
 def read_trigger_catalog(project_ref, management_headers, database_url=''):
-    query = ("SELECT count(*) = 2 "
-             "AND bool_and(t.tgenabled='O' AND t.tgqual IS NULL AND t.tgnargs=0 "
-             "AND t.tgconstraint=0 AND NOT t.tgdeferrable AND NOT t.tginitdeferred) "
-             "AND bool_or(t.tgname='on_auth_user_created' AND t.tgtype=5 "
-             "AND t.tgfoid='public.create_profile_for_new_user()'::regprocedure) "
-             "AND bool_or(t.tgname='zz_auth_user_auto_associate_org' AND t.tgtype=21 "
-             "AND t.tgfoid='public.handle_auth_user_email_verified_org_join()'::regprocedure "
-             "AND (SELECT array_agg(a.attname ORDER BY a.attname) FROM pg_attribute a "
-             "WHERE a.attrelid=t.tgrelid AND a.attnum=ANY(t.tgattr::smallint[])) "
-             "IS NOT DISTINCT FROM ARRAY['email','email_confirmed_at']::text[]) "
-             "AS canonical_auth_user_triggers FROM pg_trigger t "
-             "WHERE t.tgrelid='auth.users'::regclass AND NOT t.tgisinternal "
-             "AND t.tgname IN ('on_auth_user_created','zz_auth_user_auto_associate_org')")
+    query = TRIGGER_CATALOG_QUERY
     status, catalog, _ = request(
         'POST', f'{MANAGEMENT}{project_ref}/database/query', management_headers, {'query': query})
     if status in (200, 201):
