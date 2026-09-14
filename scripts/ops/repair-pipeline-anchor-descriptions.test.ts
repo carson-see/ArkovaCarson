@@ -210,7 +210,7 @@ function fakeClient(
     async fetchSourceRows(ids, sources) {
       return records
         .filter((r) => ids.includes(r.anchor_id) && sources.includes(r.source))
-        .map((r) => ({ anchor_id: r.anchor_id, metadata: r.metadata }));
+        .map((r, i) => ({ id: `source-${i.toString().padStart(4, '0')}`, anchor_id: r.anchor_id, metadata: r.metadata }));
     },
     async updateDescription(id, description) {
       const row = state.find((a) => a.id === id);
@@ -371,7 +371,7 @@ describe('review regressions — complete and bounded repair planning', () => {
     expect(fetchCandidateIds).toHaveBeenNthCalledWith(2, 'a1', 5000);
   });
   it('prints an executable-parameter plan with the selected date bound and no source text', async () => {
-    const client = { fetchCandidateIds: vi.fn().mockResolvedValueOnce([{ id: 'a1' }]).mockResolvedValueOnce([]), fetchSourceRows: async () => [{ anchor_id: 'a1', metadata: { abstract: 'private source text' } }], updateDescription: vi.fn() };
+    const client = { fetchCandidateIds: vi.fn().mockResolvedValueOnce([{ id: 'a1' }]).mockResolvedValueOnce([]), fetchSourceRows: async () => [{ id: 'source-1', anchor_id: 'a1', metadata: { abstract: 'private source text' } }], updateDescription: vi.fn() };
     const log = vi.fn(); await runRepair(client, opts, log);
     const line = log.mock.calls.map(([line]) => line as string).find((line) => line.startsWith('sql_plan='));
     expect(line).toBeDefined();
@@ -399,5 +399,19 @@ describe('review regressions — complete and bounded repair planning', () => {
     expect(rows).toHaveLength(201);
     expect(chunks.every((chunk) => chunk.length <= 200)).toBe(true);
     expect(ranges).toContain(200);
+  });
+});
+
+
+describe('deterministic source selection review', () => {
+  it('uses the lowest source id containing usable text rather than the last returned row', async () => {
+    const write = vi.fn().mockResolvedValue({ updated: true });
+    const sourceRows = [
+      { id: '001', anchor_id: 'a1', metadata: { abstract: 123 } },
+      { id: '002', anchor_id: 'a1', metadata: { abstract: 123, description: 'chosen fallback' } },
+      { id: '003', anchor_id: 'a1', metadata: { abstract: 'later source' } },
+    ];
+    await runRepair({ fetchCandidateIds: vi.fn().mockResolvedValueOnce([{ id: 'a1' }]).mockResolvedValueOnce([]), fetchSourceRows: async () => sourceRows, updateDescription: write }, { sources: ['openalex'], since: '2026-08-17', batchSize: 1000, maxBatches: null, allowProd: false, apply: true }, vi.fn());
+    expect(write).toHaveBeenCalledWith('a1', 'chosen fallback');
   });
 });

@@ -114,10 +114,9 @@
  *     is expected to pass it deliberately).
  *   - Never truncates via `.slice()` — see above.
  *   - Never uses `LIMIT`/`OFFSET` for candidate selection — see above.
- *   - Statement-equivalent scope is bounded by `--sources`/`--since` on
- *     BOTH the candidate SELECT and (in the reference SQL) the UPDATE's own
- *     `pr.source = ANY($2)` clause — belt and suspenders, not just an index
- *     hint.
+ *   - Source records and the reference SQL both honor `--sources`/`--since`.
+ *     If several records reference one anchor, the lowest source id with
+ *     usable string text wins; non-string JSON values are not descriptions.
  *
  * THIS SCRIPT MUST NOT BE RUN AGAINST ANY DATABASE OTHER THAN A LOCAL STACK
  * IN DRY-RUN MODE by an agent session. A real `--apply` run against staging
@@ -208,26 +207,28 @@ export function computeDescription(metadata: Record<string, unknown> | null | un
  * path this script does not itself take.
  */
 export function buildBatchUpdateSql(ids: string[], sources: string[], since = DEFAULT_SINCE): { text: string; values: [string[], string[], string] } {
+  const sourceText = ['abstract', 'description', 'summary'].map((field) =>
+    `CASE WHEN jsonb_typeof(pr.metadata->'${field}') = 'string' THEN nullif(pr.metadata->>'${field}', '') END`,
+  ).join(', ');
   const text = [
     "SET LOCAL lock_timeout = '5s';",
     "SET LOCAL statement_timeout = '30s';",
+    'WITH source_rows AS (',
+    '  SELECT DISTINCT ON (pr.anchor_id) pr.anchor_id,',
+    `    left(coalesce(${sourceText}), 500) AS description`,
+    '  FROM public_records pr',
+    '  WHERE pr.anchor_id = ANY($1)',
+    '    AND pr.source = ANY($2)',
+    '    AND pr.created_at >= $3',
+    `    AND coalesce(${sourceText}) IS NOT NULL`,
+    '  ORDER BY pr.anchor_id, pr.id ASC',
+    ')',
     'UPDATE anchors a',
-    "SET description = left(coalesce(",
-    "  nullif(pr.metadata->>'abstract', ''),",
-    "  nullif(pr.metadata->>'description', ''),",
-    "  nullif(pr.metadata->>'summary', '')",
-    '), 500)',
-    'FROM public_records pr',
+    'SET description = pr.description',
+    'FROM source_rows pr',
     'WHERE pr.anchor_id = a.id',
     '  AND a.id = ANY($1)',
-    '  AND a.description IS NULL',
-    '  AND pr.source = ANY($2)',
-    '  AND pr.created_at >= $3',
-    "  AND coalesce(",
-    "    nullif(pr.metadata->>'abstract', ''),",
-    "    nullif(pr.metadata->>'description', ''),",
-    "    nullif(pr.metadata->>'summary', '')",
-    '  ) IS NOT NULL;',
+    '  AND a.description IS NULL;',
   ].join('\n');
   return { text, values: [ids, sources, since] };
 }
@@ -292,6 +293,12 @@ export function parseCliArgs(argv: string[]): CliOptions {
   };
 }
 
+export interface RepairSourceRow {
+  id: string;
+  anchor_id: string;
+  metadata: Record<string, unknown> | null;
+}
+
 /** Narrow surface this tool needs from Postgres — real wiring is `createSupabaseRepairClient`, tests inject a fake. */
 export interface RepairClient {
   /** Keyset page of candidate anchor ids: `description IS NULL`, has a `pipeline_source`, `id > lastId ORDER BY id LIMIT limit`. */
@@ -301,7 +308,7 @@ export interface RepairClient {
     ids: string[],
     sources: string[],
     since: string,
-  ): Promise<Array<{ anchor_id: string; metadata: Record<string, unknown> | null }>>;
+  ): Promise<RepairSourceRow[]>;
   /** One targeted, idempotent write: only takes effect if the row's description is still NULL. Returns whether it updated a row. */
   updateDescription(id: string, description: string): Promise<{ updated: boolean }>;
 }
@@ -325,10 +332,9 @@ export function createSupabaseRepairClient(client: SupabaseClient): RepairClient
       return data as Array<{ id: string }>;
     },
     async fetchSourceRows(ids, sources, since) {
-      type SourceRow = { anchor_id: string; metadata: Record<string, unknown> | null };
-      const rows: SourceRow[] = [];
+      const rows: RepairSourceRow[] = [];
       for (const chunk of chunkForInFilter(ids)) {
-        const scan = await scanAllPages<SourceRow>(async (offset, limit) => {
+        const scan = await scanAllPages<RepairSourceRow>(async (offset, limit) => {
           const result = await client.from('public_records')
             .select('id, anchor_id, metadata')
             .in('anchor_id', chunk.values)
@@ -401,14 +407,24 @@ export async function runRepair(
     candidatesSeen += ids.length;
 
     const sourceRows = await client.fetchSourceRows(ids, options.sources, options.since);
-    const byAnchorId = new Map(sourceRows.map((r) => [r.anchor_id, r]));
+    // Multiple source records may reference one anchor. Match the SQL's
+    // lowest-id choice among eligible rows with usable string text.
+    const byAnchorId = new Map<string, { sourceId: string; description: string }>();
+    for (const row of sourceRows) {
+      if (typeof row.id !== 'string' || !row.id) throw new Error('Source row missing stable id');
+      const description = computeDescription(row.metadata);
+      if (description === null) continue;
+      const previous = byAnchorId.get(row.anchor_id);
+      if (!previous || row.id < previous.sourceId) {
+        byAnchorId.set(row.anchor_id, { sourceId: row.id, description });
+      }
+    }
 
     let batchUpdated = 0;
     for (const id of ids) {
       const row = byAnchorId.get(id);
       if (!row) continue;
-      const description = computeDescription(row.metadata);
-      if (description === null) continue;
+      const description = row.description;
 
       if (options.apply) {
         const result = await client.updateDescription(id, description);

@@ -34,3 +34,5 @@ Operational scripts for database maintenance and production infrastructure.
 ## 2026-09-14 — SCRUM-5120 repair planning review
 
 `repair-pipeline-anchor-descriptions.ts` emits parameterized SQL plans scoped to the chosen source/date bounds, with lock and statement timeouts. Candidate keysets continue through short server-capped pages; source filters use the shared URL-budget helper and bounded pagination. Read failures/incomplete scans reject, and dry-run prints no source text. Immutable0458 remains unchanged; run production repair only through the separately reviewed operator plan.
+
+When several public_records reference one anchor (anchor_id is not unique), both JavaScript planning and SQL choose the lowest eligible source id with usable string text. JSON numbers/objects are ignored before applying abstract/description/summary priority. Native SQL and duplicate-source regression controls pin the agreement.
