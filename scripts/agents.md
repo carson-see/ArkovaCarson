@@ -116,3 +116,11 @@ The offboard harness also reproduces the old two-call protocol after 0460 is
 applied: migration-only deployment still races. That negative release control
 requires draining old handlers before claiming the new runtime is qualified.
 The exact documented revoke/re-enable containment SQL is rehearsed locally.
+
+
+### Atomic offboard balance proof — 2026-09-14
+
+`verify-suborg-offboard.py` now asserts the final parent/child balances in both
+RPC return values across both concurrent serialization orders, an idempotent
+retry and an initial zero-credit offboard. This regression failed on the prior
+0460 result shape before the SQL correction. No remote database is used.

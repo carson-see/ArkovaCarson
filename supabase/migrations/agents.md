@@ -1489,3 +1489,17 @@ the release owners confirmed no hosted application; fresh production/C2 ledger
 and function-existence reads showed no 0460 or either new offboard function.
 The exact corrected file is rerun through the native concurrency harness before
 its final source hash can enter C3. This note does not amend applied 0453.
+
+
+### 0460 atomic offboard balance result — 2026-09-14
+
+Before any hosted application, both offboard RPCs now also return numeric
+`parent_balance` and `child_balance` from the transaction's locked credit rows
+after reclaim and suspension. A missing credit row reads as its zero balance.
+The values remain present for the first zero-credit call and an idempotent retry,
+where no allocation result exists. These additive internal RPC fields support
+the separately reviewed SCRUM-4483 reclaim event union without an HTTP-side
+balance read; the existing public offboard HTTP shape stays unchanged.
+The native harness asserts exact balances across both serialization orders and
+zero/retry outcomes. 0453 remains immutable; 0460 is still unapplied and held
+for the final C3 source review and fresh qualification.

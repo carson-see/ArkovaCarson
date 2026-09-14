@@ -303,6 +303,10 @@ BEGIN
   END IF;
   RETURN jsonb_build_object(
     'success', true, 'reclaimed', v_balance,
+    -- Read the final values while the credit-row locks are still held. This
+    -- includes zero-credit retries, where there was no allocation result.
+    'parent_balance', COALESCE((SELECT balance FROM org_credits WHERE org_id = p_parent_org_id), 0),
+    'child_balance', COALESCE((SELECT balance FROM org_credits WHERE org_id = p_sub_org_id), 0),
     'already_suspended', COALESCE((v_result->>'already_suspended')::boolean, false)
   );
 END;
@@ -355,6 +359,10 @@ BEGIN
   END IF;
   RETURN jsonb_build_object(
     'success', true, 'reclaimed', v_balance,
+    -- Read the final values while the credit-row locks are still held. This
+    -- includes zero-credit retries, where there was no allocation result.
+    'parent_balance', COALESCE((SELECT balance FROM org_credits WHERE org_id = p_parent_org_id), 0),
+    'child_balance', COALESCE((SELECT balance FROM org_credits WHERE org_id = p_sub_org_id), 0),
     'already_suspended', COALESCE((v_result->>'already_suspended')::boolean, false)
   );
 END;

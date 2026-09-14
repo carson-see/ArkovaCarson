@@ -156,7 +156,7 @@ try:
         b = concurrent(alloc(other,10), 'allocation_waiter')
         time.sleep(.08)
         assert b.poll() is None, 'allocation did not wait for the offboard child lock'
-        assert finish(a)[0]['reclaimed'] == 40
+        assert finish(a)[0] == {'success':True,'reclaimed':40,'already_suspended':False,'parent_balance':140,'child_balance':0}
         assert finish(b)[0]['error'] == 'sub_org_not_active'
         assert state() == {'parent':140,'child':0,'suspended':True}
         checks.append(f'{mode} offboard commits first: waiting {other} allocation rechecks suspension and is refused')
@@ -167,21 +167,25 @@ try:
         time.sleep(.08)
         assert b.poll() is None, 'offboard did not wait for the allocation child lock'
         assert finish(a)[0]['success'] is True
-        assert finish(b)[0]['reclaimed'] == 50
+        assert finish(b)[0] == {'success':True,'reclaimed':50,'already_suspended':False,'parent_balance':140,'child_balance':0}
         assert state() == {'parent':140,'child':0,'suspended':True}
         checks.append(f'{other} allocation commits first: waiting {mode} offboard reclaims the current 50-credit balance')
     for mode in ['key','user']:
         reset()
         result = json.loads(sql(offboard(mode)))
-        assert result == {'success':True,'reclaimed':40,'already_suspended':False}
-        assert json.loads(sql(offboard(mode))) == {'success':True,'reclaimed':0,'already_suspended':True}
+        assert result == {'success':True,'reclaimed':40,'already_suspended':False,'parent_balance':140,'child_balance':0}
+        assert json.loads(sql(offboard(mode))) == {'success':True,'reclaimed':0,'already_suspended':True,'parent_balance':140,'child_balance':0}
         assert sql('SELECT count(*) FROM org_credit_allocations;') == '1'
         assert sql('SELECT count(*) FROM audit_events;') == '2'
         actor_predicate = f"actor_id IS NULL AND details::jsonb #>> '{{actor,actor_api_key_id}}' = '{K}'" if mode == 'key' else f"actor_id = '{U}'"
         assert sql('SELECT count(*) FROM audit_events WHERE ' + actor_predicate + ';') == '2'
         checks.append(f'{mode}: retry is idempotent; one transfer and two correctly attributed audit rows')
+        reset(balance=0)
+        assert json.loads(sql(offboard(mode))) == {'success':True,'reclaimed':0,'already_suspended':False,'parent_balance':100,'child_balance':0}
+        assert sql('SELECT count(*) FROM org_credit_allocations;') == '0'
+        checks.append(f'{mode}: a zero-credit first offboard reports current balances without a transfer')
         reset(suspended=True)
-        assert json.loads(sql(offboard(mode))) == {'success':True,'reclaimed':40,'already_suspended':True}
+        assert json.loads(sql(offboard(mode))) == {'success':True,'reclaimed':40,'already_suspended':True,'parent_balance':140,'child_balance':0}
         assert state() == {'parent':140,'child':0,'suspended':True}
         checks.append(f'{mode}: recovery drains an already-suspended child without requiring APPROVED')
         for status in ['PENDING','REVOKED']:
