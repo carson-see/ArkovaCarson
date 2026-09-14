@@ -25,7 +25,8 @@
       "rollback_note": "Revert the PR's commits; no migration. Additive response fields; older worker/frontend fall back cleanly. Cron disabled via pausing api-key-expiry-notice Cloud Scheduler job (writes only append-only audit_events).",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
-      "post_soak_t0_delta_sha": "8715d5574d22ad55cb126ca29b6e2e02d1a79aa6"
+      "post_soak_t0_delta_sha": "8715d5574d22ad55cb126ca29b6e2e02d1a79aa6",
+      "final_state_2026_09_14": "OPEN, mergeable=CONFLICTING (real content conflict on services/worker/src/api/v1/docs.ts vs already-merged main content; not resolved -- would require a non-T0 fix + re-soak). Evidence T0 delta remains valid for this head."
     },
     {
       "head_sha": "6d28c3a40ce3193662b2b30fa9e9db031090e6d0",
@@ -36,7 +37,8 @@
       "rollback_note": "Pure additive change, no migration. Revert the commits; new metadata keys are read-only/optional end to end, no backfill needed on rollback.",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
-      "post_soak_t0_delta_sha": "a3d5a605bb0f64006e38c1ddc7c38ea5aa866342"
+      "post_soak_t0_delta_sha": "a3d5a605bb0f64006e38c1ddc7c38ea5aa866342",
+      "final_state_2026_09_14": "MERGED 2026-09-14T06:48:29Z (merge commit 1f75f5180ece8171ea0e56c330ff54de6479e89e)."
     },
     {
       "head_sha": "3bd8eebc4cc0263813b783515d834c98f535214e",
@@ -47,7 +49,8 @@
       "rollback_note": "Revert both commits \u2014 no migration/schema/RLS/deployed-state dependency. Restores prior aiSemanticSearchGate()-gated 503 behavior exactly; docs/openapi/README revert with it.",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
-      "post_soak_t0_delta_sha": "75c1b105888facb6f053eeb91250199cc90ab789"
+      "post_soak_t0_delta_sha": "045c8d6daf3439acc8c5323b315c8bf9c835e36e",
+      "final_state_2026_09_14": "OPEN, mergeable=MERGEABLE but Evidence-identity gate / Staging Soak Evidence Gate red -- the conflict-resolution commit that made it git-mergeable also touched docs/api/agents.md, which is T2-tier (public API contract doc, NOT covered by the generic agents.md T0 carve-out), invalidating the Post-soak T0 delta allowance. Documented on the PR; needs re-soak or Carson-approved residual-risk exception."
     },
     {
       "head_sha": "f22a50f15288ad957d6de72155aee01b3a9a0f9c",
@@ -58,7 +61,8 @@
       "rollback_note": "Revert this PR. No migration; organization_rules rows it creates/adopts are identical shape to hand-built rules and remain manageable via RulesPage/RuleBuilderPage after rollback. action_type on PATCH /api/rules/:id is additive/optional.",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
-      "post_soak_t0_delta_sha": "b5e57b1afa5714a34897954ce529bb2fab12d836"
+      "post_soak_t0_delta_sha": "b5e57b1afa5714a34897954ce529bb2fab12d836",
+      "final_state_2026_09_14": "OPEN, Draft (not attempted for ready tonight -- SonarCloud Quality Gate blocker, see exceptions). mergeable currently CONFLICTING again (agents.md drift recurred as main kept advancing); not chased further since not on the path to merging tonight regardless."
     }
   ],
   "excluded_prs": [],
