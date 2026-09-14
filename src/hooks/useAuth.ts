@@ -25,6 +25,9 @@ interface AuthActions {
     password: string,
     fullName?: string
   ) => Promise<{ error: import('@supabase/supabase-js').AuthError | null; session: Session | null }>;
+  resendSignUpConfirmation: (
+    email: string
+  ) => Promise<{ error: import('@supabase/supabase-js').AuthError | null }>;
   signInWithGoogle: () => Promise<void>;
   signInWithLinkedIn: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -161,6 +164,34 @@ export function useAuth(): AuthState & AuthActions {
     []
   );
 
+  const resendSignUpConfirmation = useCallback(async (email: string) => {
+    setError(null);
+
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (error) {
+        const msg = error.message?.toLowerCase() ?? '';
+        if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed')) {
+          setError('Unable to reach the server. Please check your connection and try again.');
+        } else {
+          setError(error.message);
+        }
+      }
+
+      return { error };
+    } catch (err) {
+      setError('Unable to reach the server. Please check your connection and try again.');
+      return { error: err as import('@supabase/supabase-js').AuthError };
+    }
+  }, []);
+
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
     setLoading(true);
     setError(null);
@@ -256,6 +287,7 @@ export function useAuth(): AuthState & AuthActions {
     error,
     signIn,
     signUp,
+    resendSignUpConfirmation,
     signInWithGoogle,
     signInWithLinkedIn,
     signOut,

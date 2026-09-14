@@ -821,3 +821,7 @@ Two differences from the DocuSign module, both deliberate:
 Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
 verification page and the anonymous verify API must never import it.
 
+
+## 2026-09-14 — SCRUM-5145 signup email policy
+
+`authEmailPolicy.ts` is the application authority for the 15-minute link lifetime and 90-second resend cooldown. `supabase/config.toml` mirrors both values; the hosted Auth configuration must match before release.
