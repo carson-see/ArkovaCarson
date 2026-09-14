@@ -2,6 +2,18 @@
 
 Shared library code for CI gate scripts.
 
+## Queue PR authentication (2026-09-14, PR #2938 review)
+
+Queue-shaped branch names are not authority. The resolver now always reads the
+queue PR through GitHub's authenticated API and requires the immutable author
+`mergify[bot]`, the expected head ref, and the same head repository. It reads the
+original PR number from that same response, ignoring `PR_AUTHOR`, `PR_TITLE`, and
+`PR_BODY` environment shortcuts. Failed authentication returns no borrowed labels,
+including when the speculative PR's environment contains an override. The prior
+branch-prefix-only and environment-first description below is superseded.
+`ciContext.queue-auth.test.ts` covers forged authors, branches, repositories,
+metadata, and API failures; existing normal-PR and queue-resolution tests remain.
+
 ## Files
 - **`ciContext.ts`** — single source of truth for CI env vars (`BASE_REF_SHA`, `PR_LABELS`, `PR_BODY`), the `GH_BIN`/`GIT_BIN` fixed-path binary constants, `getBaseRef()` resolver, `changedFiles()` helper, `hasLabel()` predicate, and the `LABELS` object mapping override label names. Replaces duplicated env-var declarations across CI scripts.
   - **Fixed-path binaries (Sonar S4036):** `gh`/`git` are spawned via `GH_BIN` (`process.env.GH_BIN ?? '/usr/bin/gh'`) and `GIT_BIN` (`process.env.GIT_BIN ?? '/usr/bin/git'`), never the bare name — a writable `$PATH` entry could shadow the real binary. All `execFileSync(GIT_BIN, …)` calls in `tryResolveCommit`/`changedFiles` and the `getDiff()` in `check-handoff-claims` / the `git grep` in `check-count-exact-baseline` use the constant. The rev-parse + 40-hex validation lives once in private `tryResolveCommit(ref): string | null` (pure: never exits/warns); `resolveCommitOrFail` wraps it with the exit, and `getBaseRef`'s optional path wraps it with null+warning — keeping cognitive complexity low.

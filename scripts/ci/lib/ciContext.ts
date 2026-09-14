@@ -295,18 +295,15 @@ export function fetchLiveLabels(env: NodeJS.ProcessEnv = process.env): string[] 
 
 const QUEUE_HEAD_REF_RE = /^mergify\/merge-queue\//;
 
-/**
- * True when this run is one of Mergify's own speculative merge-queue checks,
- * detected from `GITHUB_HEAD_REF` — a default Actions env var populated for
- * every `pull_request` run, so no workflow wiring is required. Mergify names
- * every speculative PR's head branch `mergify/merge-queue/<hash>` (verified
- * against queue PRs #2936 and #2933); a real contributor branch happening to
- * start with that exact prefix is not a case worth defending against here —
- * worst case it is treated as a queue PR and its labels are (correctly, if
- * oddly) resolved from a linked "original" PR parsed out of its own body.
- */
-export function isMergifyQueuePr(env: NodeJS.ProcessEnv = process.env): boolean {
+function hasQueueHeadRef(env: NodeJS.ProcessEnv): boolean {
   return QUEUE_HEAD_REF_RE.test(env.GITHUB_HEAD_REF ?? '');
+}
+
+/** A queue branch name is contributor-controlled; authenticate its immutable author. */
+export function isMergifyQueuePr(env: NodeJS.ProcessEnv = process.env): boolean {
+  const number = parsePrNumber(env);
+  if (!hasQueueHeadRef(env) || number === null) return false;
+  return fetchQueuePrMeta(env, number) !== null;
 }
 
 /**
@@ -377,7 +374,8 @@ function warnQueueOriginalUnresolvable(queuePrNumber: number, reason: string): v
 }
 
 /**
- * Fetch a queue PR's title + body live via `gh`. Mirrors
+ * Fetch a queue PR's title + body live via `gh`, requiring the Mergify bot
+ * author and the expected same-repository queue branch. Mirrors
  * {@link fetchLiveLabelsForNumber}: synchronous, short timeout, never throws.
  */
 function fetchQueuePrMeta(
@@ -389,12 +387,15 @@ function fetchQueuePrMeta(
   try {
     const out = execFileSync(
       GH_BIN,
-      ['api', `repos/${repo}/pulls/${queuePrNumber}`, '--jq', '{title: .title, body: (.body // "")}'],
+      ['api', `repos/${repo}/pulls/${queuePrNumber}`, '--jq', '{title: .title, body: (.body // ""), author: .user.login, headRef: .head.ref, headRepository: .head.repo.full_name}'],
       { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 },
     );
     const parsed: unknown = JSON.parse(out);
     if (typeof parsed !== 'object' || parsed === null) return null;
-    const { title, body } = parsed as { title?: unknown; body?: unknown };
+    const { title, body, author, headRef, headRepository } = parsed as Record<string, unknown>;
+    // All fields come from one authenticated GitHub API response. Never trust
+    // PR_AUTHOR, PR_TITLE or PR_BODY env to authorize borrowing another PR's labels.
+    if (author !== 'mergify[bot]' || headRef !== env.GITHUB_HEAD_REF || headRepository !== repo) return null;
     if (typeof title !== 'string' || typeof body !== 'string') return null;
     return { title, body };
   } catch {
@@ -408,32 +409,23 @@ function fetchQueuePrMeta(
  * Outside a Mergify queue context this is exactly {@link parsePrNumber} —
  * unchanged behavior for ordinary PR runs, push builds, and local runs.
  *
- * Inside a queue context ({@link isMergifyQueuePr}), `parsePrNumber` would
- * return the EPHEMERAL speculative PR's own number, which carries none of the
- * real PR's labels. This resolves the real PR instead, preferring
- * `PR_TITLE`/`PR_BODY` when a workflow already wired them (no extra `gh`
- * call), else fetching the queue PR's title/body live. Returns `null` — fail
- * CLOSED — when the queue PR cannot be identified or its title/body cannot be
- * parsed; callers must treat `null` as "no labels available", never as
- * "same as the raw PR number".
+ * A queue-shaped branch must first authenticate through GitHub's live PR API:
+ * the immutable author must be mergify[bot], and the head branch and repository
+ * must match this run. Only then may its live body/title identify another PR.
+ * Unverifiable metadata fails closed; environment body/title/author cannot
+ * substitute for that authentication.
  */
 export function resolveOriginalPrNumber(env: NodeJS.ProcessEnv = process.env): number | null {
   const rawNumber = parsePrNumber(env);
   if (rawNumber === null) return null;
-  if (!isMergifyQueuePr(env)) return rawNumber;
+  if (!hasQueueHeadRef(env)) return rawNumber;
 
-  let title = env.PR_TITLE ?? '';
-  let body = env.PR_BODY ?? '';
-  if (!title && !body) {
-    const meta = fetchQueuePrMeta(env, rawNumber);
-    if (meta === null) {
-      warnQueueOriginalUnresolvable(rawNumber, 'the `gh` API fetch for the queue PR itself failed');
-      return null;
-    }
-    ({ title, body } = meta);
+  const meta = fetchQueuePrMeta(env, rawNumber);
+  if (meta === null) {
+    warnQueueOriginalUnresolvable(rawNumber, 'the GitHub PR metadata could not authenticate the Mergify bot and expected head');
+    return null;
   }
-
-  const original = parseOriginalPrNumberFromQueuePr(title, body);
+  const original = parseOriginalPrNumberFromQueuePr(meta.title, meta.body);
   if (original === null) {
     warnQueueOriginalUnresolvable(rawNumber, 'neither the body\'s YAML block nor the title matched the expected Mergify format');
     return null;
@@ -454,7 +446,7 @@ export function resolveOriginalPrNumber(env: NodeJS.ProcessEnv = process.env): n
  * than falling back to the speculative PR's labels.
  */
 export function resolvePrLabels(env: NodeJS.ProcessEnv = process.env): string[] {
-  if (isMergifyQueuePr(env)) {
+  if (hasQueueHeadRef(env)) {
     const originalNumber = resolveOriginalPrNumber(env);
     if (originalNumber === null) return [];
     return fetchLiveLabelsForNumber(env, originalNumber);

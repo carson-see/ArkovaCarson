@@ -49,6 +49,9 @@ beforeEach(async () => {
   delete process.env.GITHUB_REPOSITORY;
   delete process.env.PR_NUMBER;
   delete process.env.PR_LABELS;
+  delete process.env.GITHUB_HEAD_REF;
+  delete process.env.PR_TITLE;
+  delete process.env.PR_BODY;
   // Pin the gh/git binaries to the bare names so the existing `cmd === 'gh'` /
   // `cmd === 'git'` mock matchers stay valid. Production resolves `GH_BIN` /
   // `GIT_BIN` to fixed absolute paths (Sonar S4036) defaulting to /usr/bin/gh
@@ -734,10 +737,22 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
   ].join('\n');
   const REAL_QUEUE_TITLE = 'merge queue: checking #2841 on main (6cb0006), stacked on #2909';
 
+  function queueMeta(title = REAL_QUEUE_TITLE, body = REAL_QUEUE_BODY): string {
+    return JSON.stringify({ title, body, author: 'mergify[bot]',
+      headRef: QUEUE_ENV_BASE.GITHUB_HEAD_REF, headRepository: QUEUE_ENV_BASE.GITHUB_REPOSITORY });
+  }
+
+  beforeEach(() => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return queueMeta();
+      return gitPassthrough(cmd, args);
+    });
+  });
+
   describe('isMergifyQueuePr', () => {
-    it('detects the mergify/merge-queue/* head ref', async () => {
+    it('authenticates the Mergify author and queue head ref', async () => {
       mod = await import('./ciContext.js');
-      expect(mod.isMergifyQueuePr({ GITHUB_HEAD_REF: 'mergify/merge-queue/abc123' })).toBe(true);
+      expect(mod.isMergifyQueuePr(QUEUE_ENV_BASE)).toBe(true);
     });
 
     it('is false for an ordinary PR branch or no PR context', async () => {
@@ -782,7 +797,7 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
       expect(mod.resolveOriginalPrNumber({ GITHUB_REF: 'refs/pull/2841/merge' })).toBe(2841);
     });
 
-    it('resolves the real PR from PR_TITLE/PR_BODY already wired by the workflow (no gh call)', async () => {
+    it('authenticates live metadata even when PR_TITLE/PR_BODY are wired by the workflow', async () => {
       mod = await import('./ciContext.js');
       const result = mod.resolveOriginalPrNumber({
         ...QUEUE_ENV_BASE,
@@ -790,12 +805,12 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
         PR_BODY: REAL_QUEUE_BODY,
       });
       expect(result).toBe(2841);
-      expect(execFileSyncMock.mock.calls.some((c) => c[0] === 'gh')).toBe(false);
+      expect(execFileSyncMock.mock.calls.some((c) => c[0] === 'gh')).toBe(true);
     });
 
     it('fetches the queue PR title/body live via gh when not wired in env', async () => {
       execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
-        if (cmd === 'gh') return JSON.stringify({ title: REAL_QUEUE_TITLE, body: REAL_QUEUE_BODY });
+        if (cmd === 'gh') return queueMeta();
         return gitPassthrough(cmd, args);
       });
       mod = await import('./ciContext.js');
@@ -818,6 +833,7 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
     });
 
     it('fails closed (null) when title/body cannot be parsed — never guesses the speculative PR is the target', async () => {
+      execFileSyncMock.mockReturnValue(queueMeta('unparseable', 'unparseable'));
       mod = await import('./ciContext.js');
       const result = mod.resolveOriginalPrNumber({
         ...QUEUE_ENV_BASE,
@@ -829,6 +845,7 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
     });
 
     it('annotates the fail-closed case with a ::warning (not silent)', async () => {
+      execFileSyncMock.mockReturnValue(queueMeta('unparseable', 'unparseable'));
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       mod = await import('./ciContext.js');
       mod.resolveOriginalPrNumber({ ...QUEUE_ENV_BASE, PR_TITLE: 'x', PR_BODY: 'y' });
@@ -841,6 +858,7 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
   describe('resolvePrLabels inside a queue context', () => {
     it("reads the ORIGINAL PR's live labels, not the speculative PR's frozen/live labels", async () => {
       execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return queueMeta();
         if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/issues/2841/labels')) {
           return 'agents-md-deletion-approved\ncount-exact-allowed\n';
         }
@@ -861,6 +879,7 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
 
     it('a queue PR whose original does NOT carry the label resolves without it', async () => {
       execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return queueMeta();
         if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/issues/2841/labels')) {
           return 'backend\ninfra\n';
         }
@@ -877,6 +896,7 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
     });
 
     it('fails CLOSED to no labels when the original PR cannot be identified — never falls back to the speculative PR\'s own labels', async () => {
+      execFileSyncMock.mockReturnValue(queueMeta('unparseable', 'unparseable'));
       vi.spyOn(console, 'warn').mockImplementation(() => {});
       mod = await import('./ciContext.js');
       const labels = mod.resolvePrLabels({
@@ -914,6 +934,7 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
 
     it('the queue PR #2936 run resolves TRUE via #2841 — this is the reported bug, now fixed', async () => {
       execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return queueMeta();
         if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/issues/2841/labels')) {
           return 'agents-md-deletion-approved\n';
         }
@@ -930,6 +951,7 @@ describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
     });
 
     it('a queue PR whose title/body cannot be parsed fails closed to false, never true', async () => {
+      execFileSyncMock.mockReturnValue(queueMeta('unparseable', 'unparseable'));
       vi.spyOn(console, 'warn').mockImplementation(() => {});
       mod = await import('./ciContext.js');
       // Contrived: even if the SPECULATIVE PR's own frozen PR_LABELS happens to
