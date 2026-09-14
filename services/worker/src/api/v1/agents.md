@@ -2,6 +2,66 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+
+## 2026-09-12 — SCRUM-4507: `source.provider` on the verification response, and what it deliberately omits
+
+`GET /api/v1/verify/:publicId` gained an additive `source: { provider }` — a bare vocabulary word
+saying WHICH connected system a record's document came from. Additive and omitted when unknown, so
+§1.8 is satisfied without a version bump.
+
+**What it does NOT carry, and why.** No file id, folder id, shared-drive id, revision or deep link.
+This route answers ANONYMOUSLY (`router.ts` lets an unauthenticated GET through), so a Drive file id
+here would let any holder of a public record id probe the source system for that object — and open
+the document outright if it is link-shared. Those identifiers go to the record OWNER on the
+authenticated record page and nowhere else. `verify-pii-projection.test.ts` walks the whole response
+RECURSIVELY for Drive ids, UUIDs and `@`, so a future nested addition fails there without anyone
+remembering to extend an allowlist.
+
+**Gated on `connector_source`, NOT `server_fetched_connector_source`.** The two answer different
+questions. `server_fetched_…` keys the "Measured: Arkova retrieved these bytes" claim and must stay
+gated on real fetch evidence. The provider says only where the record originated — a declared-hash
+inbound DocuSign record did originate at DocuSign even though Arkova fetched nothing, and its weaker
+evidence class is already stated by `fingerprint_rederivability`. Suppressing the provider there
+would hide true provenance to protect a claim something else already makes.
+
+**One vocabulary, three surfaces, no drift.** `VERIFICATION_SOURCE_PROVIDERS` (verify.ts) is DERIVED
+from `CONNECTOR_FETCH_SOURCE_MARKERS`, `docs.ts` derives its enum from the same constant, and
+`openapi-source-provider-contract.test.ts` asserts the published `docs/api/openapi.yaml` enum equals
+the served one. An enum member the runtime gate would reject is a documented value the API cannot
+produce; a marker the gate accepts but the enum omits is an undocumented value on a frozen schema.
+Both are impossible by construction rather than by review.
+
+**Residual, disclosed:** `connector_source` is server-stamped and, since migration 0423, stripped
+from any non-`service_role` write — but rows written BEFORE 0423 could carry an org-authored marker.
+That is precisely why this stays a bare word with no identifier attached and never keys a
+"Measured:" sentence.
+
+`docs.ts` imports the vocabulary from `constants/connectorFingerprint.js` rather than from
+`verify.js` on purpose: `verify.ts` stands up the db client and config at module scope, and
+`docs.test.ts` deliberately does not.
+## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
+
+Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI
+extraction for a brand-new org no longer 503s: since PR #2442, `deduct_ai_credits` fails CLOSED when
+no `ai_credits` row covers the current period, and nothing ever provisioned that row. Read
+`ai/agents.md`'s 2026-09-12 entry for the full mechanism (no unique constraint on the table, why the
+lookup window matches `deduct_ai_credits`'s own, race handling).
+
+Both routes provision BEFORE their up-front `checkAICredits` guard, not between that guard and the
+debit. `check_ai_credits`'s WHERE clause is `A OR B AND C AND D`, which Postgres parses as
+`A OR (B AND C AND D)` — given an org id it matches ANY row for that org regardless of period, with
+`LIMIT 1` and no `ORDER BY`. An org whose only row is an exhausted PRIOR period would otherwise get a
+402 from that guard and return before provisioning ever ran, which is the same "stuck org" outcome
+this fix exists to remove. (The precedence bug itself is pre-existing and needs its own migration to
+fix; ordering the calls this way makes it non-blocking.) `ai-extract-batch.ts` additionally must call
+it once before `checkAICredits`, not before
+each per-row `deductAICredits` inside `parallelMap` — the batch route latches `hasFiniteCredits` from
+that one `checkAICredits` result and reuses it for every row, so provisioning has to land before that
+read or the whole batch would treat a freshly-created org as still-unmetered. Both skip the call when
+`orgId` is undefined. A genuine deduction failure (insufficient credits / RPC error) still fails CLOSED
+with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
+check itself.
+
 ## 2026-09-13 — `ai-verify-search.ts`: `GET /verify/search` no longer 503s when `ENABLE_SEMANTIC_SEARCH` is off (SCRUM-3906)
 
 This route used to be mounted behind `aiSemanticSearchGate()` in `router.ts` — with
@@ -43,29 +103,6 @@ this field. That is an edge-owned fix; flagged via a spawned follow-up task, not
 
 `ENABLE_VERIFICATION_API` (the router-wide gate applied above every `/api/v1/*` mount) is unchanged
 and remains the only way this route now 503s.
-
-## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
-
-Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI
-extraction for a brand-new org no longer 503s: since PR #2442, `deduct_ai_credits` fails CLOSED when
-no `ai_credits` row covers the current period, and nothing ever provisioned that row. Read
-`ai/agents.md`'s 2026-09-12 entry for the full mechanism (no unique constraint on the table, why the
-lookup window matches `deduct_ai_credits`'s own, race handling).
-
-Both routes provision BEFORE their up-front `checkAICredits` guard, not between that guard and the
-debit. `check_ai_credits`'s WHERE clause is `A OR B AND C AND D`, which Postgres parses as
-`A OR (B AND C AND D)` — given an org id it matches ANY row for that org regardless of period, with
-`LIMIT 1` and no `ORDER BY`. An org whose only row is an exhausted PRIOR period would otherwise get a
-402 from that guard and return before provisioning ever ran, which is the same "stuck org" outcome
-this fix exists to remove. (The precedence bug itself is pre-existing and needs its own migration to
-fix; ordering the calls this way makes it non-blocking.) `ai-extract-batch.ts` additionally must call
-it once before `checkAICredits`, not before
-each per-row `deductAICredits` inside `parallelMap` — the batch route latches `hasFiniteCredits` from
-that one `checkAICredits` result and reuses it for every row, so provisioning has to land before that
-read or the whole batch would treat a freshly-created org as still-unmetered. Both skip the call when
-`orgId` is undefined. A genuine deduction failure (insufficient credits / RPC error) still fails CLOSED
-with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
-check itself.
 
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
