@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-14-train-e",
+  "created_at": "2026-09-14T15:56:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "approval_status": "not_yet_approved — pending Carson's CODEOWNERS review of this PR (docs/staging/rc-manifests/ @carson-see); this manifest's own PR review is the approval action",
+  "train_launch_sha": "a481d9c878ffa8cc1c75dc94aa806fc2f83c1bac",
+  "target_main_sha": "471b3008460196b333189b169937ced775040460",
+  "risk_tier": "T2",
+  "allowed_base_shas": [
+    "471b3008460196b333189b169937ced775040460"
+  ],
+  "covered_main_shas": [
+    "471b3008460196b333189b169937ced775040460"
+  ],
+  "included_prs": [
+    {
+      "number": 2934,
+      "head_sha": "cb05ddeab413f8045ba2a16d0004582e8ebb2768",
+      "base_sha": "471b3008460196b333189b169937ced775040460",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Fully clean at this head prior to train work; no changes made. Merged into train cleanly (no conflicts).",
+      "rollback_note": "Revert the ConnectorCardStatusRow extraction; AdobeSignConnectorCard.tsx / MemberDocusignConnectorCard.tsx revert to their pre-extraction inline status-row blocks. No schema/migration/flag state to unwind.",
+      "migration_files": []
+    },
+    {
+      "number": 2912,
+      "head_sha": "0e4c4a5f48012970616a5f643aef46b7fbdb034e",
+      "base_sha": "471b3008460196b333189b169937ced775040460",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Was CONFLICTING + failing Dependency Scanning, E2E Tests, Policy Lints, SonarCloud at original head b5e57b1af. Fixed in this session: (1) agents.md append-only false-deletion in services/worker/src/middleware/agents.md (a prior sync commit had reflowed one line mid-sentence; restored verbatim) — commit d6da523d3; (2) genuine content conflict in e2e/agents.md (three other PRs had landed notes at the same insertion point) — driver-bypassed 3-way git merge-file confirmed this was the ONLY real conflict across 14 files GitHub flagged 'changed in both'; union-resolved, doc-only — commit f5ab4c85e; (3) SonarCloud new-code duplication (~4.2% vs 3% gate, Carson-rejected override) — refactored DriveConnectorCard.tsx/DocusignConnectorCard.tsx onto PR #2934's ConnectorCardStatusRow.tsx instead of re-duplicating the status-row block a 3rd/4th time; DriveConnectorCard.test.tsx updated for the resulting generic button copy — commit 0e4c4a5f4. Verified locally after each fix: tsc --noEmit clean, eslint clean, vitest 66/66 (src/components/connectors, ConnectorCardStatusRow, ConnectorsPage). E2E Tests and Policy Lints not independently re-verified post-fix (E2E Tests failure traced to a pre-existing gap, see exceptions). Merges into train cleanly (verified via legacy 3-arg `git merge-tree`, 0 conflict markers, before merging).",
+      "rollback_note": "Revert commits d6da523d3, f5ab4c85e, 0e4c4a5f4 plus the original PR range. No schema/migration/flag state; ConnectorsPage/DriveFolderPicker/useConnectorRule are new files with no prior consumers to break.",
+      "migration_files": [],
+      "residual_risk_note": "e2e/integrations-drive.spec.ts (pre-existing, not touched by this PR's own diff) still targets the OrgProfilePage settings-tab Drive card this PR moved to a dedicated ConnectorsPage on 2026-09-13 — it was already orphaned by that move before this session started, not caused by the duplication fix. Not fixed here (out of stated scope); flagged for the PR author."
+    },
+    {
+      "number": 2930,
+      "head_sha": "46d206d80f0c5bf73d26f2a901a30caa90162490",
+      "base_sha": "471b3008460196b333189b169937ced775040460",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Clean except the (expected) Staging Soak Evidence Gate at this head; no changes made. Merged into train cleanly.",
+      "rollback_note": "Revert the bounded-read change in services/worker/src/integrations/oauth/drive.ts. No schema/migration/flag state.",
+      "migration_files": []
+    },
+    {
+      "number": 2937,
+      "head_sha": "6dc33cc8a425b43a2c72175988b2778469960194",
+      "base_sha": "471b3008460196b333189b169937ced775040460",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Tests and Dependency Scanning both failing at original head 50de3480c — both were the SAME root cause: connector-health.ts:481 does one read-only `.select('status')` job_queue query for the fetch-job-failure health signal (never enqueues/claims/completes), which check-job-queue-parity.ts's rule 4 (nothing outside queue-internals modules touches job_queue directly) flagged as an unmanaged write. Added the module to QUEUE_INTERNALS_ALLOWLIST with the same justification shape as the existing platform-health-digest-cron.ts entry — commit 6dc33cc8a. Verified locally: npx tsx scripts/ci/check-job-queue-parity.ts passes, and the corresponding vitest suite (13/13) passes.",
+      "rollback_note": "Revert commit 6dc33cc8a (the allowlist entry) plus the original PR range. No schema/migration/flag state.",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "isolated staging rig, freshly provisioned via scripts/staging/provision-isolated-rig.sh --profile mock (per operator authorization after the b1 rig was destroyed — see exceptions for that history; b1 and b4 were both abandoned, this is a NEW rig on neither)",
+    "supabase_project_ref": "woaezvrhkanfwseexaga",
+    "cloud_run_service": "arkova-worker-train-e-0914-staging",
+    "cloud_run_revision": "arkova-worker-train-e-0914-staging-00002-k8q",
+    "staging_api_base": "https://arkova-worker-train-e-0914-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-train-e-0914-staging-270018525501.us-central1.run.app",
+    "image_digest": "sha256:c010d7b19a8658bc1a99f2c973a97a938cb0f80ba2fdcc6d0d73ec2a7716d4c0",
+    "deploy_tag": "none — dedicated single-train rig, service default URL IS the train endpoint (no shared-service tag routing needed)",
+    "soak_window": "2026-09-14T16:18:34Z to 2026-09-14T20:18:34Z (4h T2 floor)",
+    "preflight_result": "environment_type=clean_mirror (8/8 checks) at 2026-09-14T16:10:47.409Z, run against woaezvrhkanfwseexaga with --prod-project-ref vzwyaatejekddvltxyye — BEFORE soak start, on a freshly-provisioned project (schema replayed from repo migrations + baseline fixture seeded by the provisioner itself, so clean_mirror was the expected first-try result, not a repair). Artifact: docs/staging/train-e-0914/isolated-rig-provision-train-e-0914.json.",
+    "revision": "arkova-worker-train-e-0914-staging-00002-k8q",
+    "deploy_log_id": "provision-isolated-rig.sh run, then gcloud run services update revision train-e-0914-staging-00002-k8q for the flag/secret wiring below"
+  },
+  "soak": {
+    "start": "2026-09-14T16:18:34Z",
+    "end": "2026-09-14T20:18:34Z",
+    "duration_hours": 4,
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/supervisor.sh + train-cycle.mjs @ cto/train-b-2026-09-12-driver head 3caee7c95",
+    "result": "IN_PROGRESS — cycle 1 clean (54/54 probes, TRAIN_PROBES=2912,2930,2937) at soak start; supervisor pid 40755 (wrapped in nohup caffeinate -i, self-written PID lock verified). Not sealed; do not treat as merge-grade until the full 4h floor closes with a clean rollup.",
+    "evidence_links": [
+      "/Volumes/Extreme/offload/cto-soak-2026-09-14/train-e/window1/SOAK_START",
+      "/Volumes/Extreme/offload/cto-soak-2026-09-14/train-e/window1/supervisor.log",
+      "/Volumes/Extreme/offload/cto-soak-2026-09-14/train-e/manual-test/cycle-2026-09-14T16-17-24-801Z.json"
+    ],
+    "expires_at": "PENDING_CLOSE"
+  },
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "N/A — no migrations in this train (#2912, #2930, #2934, #2937 each touch zero supabase/migrations/ paths).",
+    "reapply_proof": "N/A",
+    "stop_conditions": [
+      "SHA mismatch against train_launch_sha",
+      "dirty preflight (environment_type != clean_mirror)",
+      "target rig no longer exists"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "RIG DESTROYED MID-SESSION (2026-09-14T15:55:33Z): the isolated rig pdgfbbnrqhojiihtxycd / arkova-worker-cto-train-b1-0912-staging — assigned to this train per operator instruction as the idle fallback rig — was deleted by principal 270018525501-compute@developer.gserviceaccount.com (Cloud Run audit log: google.cloud.run.v1.Services.DeleteService at 15:55:32-33Z; the Supabase project pdgfbbnrqhojiihtxycd is also gone from list_projects). This happened seconds after this session finished deploying the train image to a tagged revision (arkova-worker-cto-train-b1-0912-staging-00012-quk, deployed ~15:54:19Z) and roughly 12 minutes after enabling ENABLE_DRIVE_OAUTH/ENABLE_DOCUSIGN_OAUTH on it. The deleting principal is the shared compute service account, not this session's own gcloud user identity, so this was NOT an action this session took — it is consistent with a concurrent automated hygiene sweep (CLAUDE.md §7 / infra-hygiene-sweep skill) or another session reaping what it read as an idle/orphaned rig at the exact moment this session made it non-idle. No soak was launched; no probes were written or exercised. This session did not attempt to recreate the rig (provisioning a new project is out of scope per operator instruction, and the operator instruction named b4 as the primary rig with b1 as fallback only) and did not touch the standing rig or rig 1 (train-d) which the operator explicitly protected.",
+    "b4 rig (dlfcwhljvkomeouykcwk / arkova-worker-cto-train-b4-0913-staging) preflight at 2026-09-14T15:40:14Z reported environment_type=soak_artifact, not clean_mirror: an orphaned ledger row (version 0453, name 'scrum3971_orgs_manage_scope_api_key_suborg_authority', not in scripts/ci/snapshots/ledger-numeric-exemptions.json's exemptPrefixes, not present in the repo or in prod's own ledger) left over from the prior Train B4 soak. Reaching clean_mirror on b4 needs that row deleted, which is a §1.11A ledger write this session is not authorized to perform unilaterally — it needs Carson/operator approval for the exact delete. b4 still exists and is healthy; it was not used because b1's preflight was cleaner (only additive migrations needed) and matched the operator's own stated fallback order.",
+    "RECOVERY (confirmed by the operator, 2026-09-14, after the b1 destruction above): the operator identified themselves as the actor that deleted pdgfbbnrqhojiihtxycd — an approved cleanup that did not account for a provision in progress on it, operator error, not a sweep or an error by this session. The operator explicitly authorized provisioning a FRESH isolated rig (prior standing authorization: 'provision a new rig so these can get done') rather than repairing either b1 (gone) or b4 (see the orphan-ledger entry above, still true and still not touched — the operator declined to spend a ledger-repair approval when a clean rig costs one command). This session provisioned a NEW rig via scripts/staging/provision-isolated-rig.sh --name train-e-0914 --profile mock: Supabase project woaezvrhkanfwseexaga (us-east-2, schema replayed via the CONCURRENTLY-safe psql fallback — 69 migrations, one expected CONCURRENTLY-in-pipeline notice the fallback exists to handle), Cloud Run service arkova-worker-train-e-0914-staging (us-central1, same pinned image digest already built for this train, sha256:c010d7b1…). clean_mirror reached on the first preflight (8/8) since the rig was freshly seeded, not repaired. STAGING_NEW_SUPABASE_DB_PASSWORD, STAGING_CHANGED_BEHAVIOR, STAGING_DRIVER_PATH (pointed at services/worker/src/api/connector-health.ts, the closest single tracked file to this train's actual multi-PR scope — the provisioner's integrity check requires ONE tracked driver path byte-identical to the declared source head; this train's real harness is the separate probes/ directory on cto/train-b-2026-09-12-driver, not a single embedded driver script, so this field is an admission-tracking pointer only and should not be read as describing the full test surface) and STAGING_TIER=T2 (the provisioner's own default REQUIRED_UPTIME_MIN floor is T3/1440min; overridden to match this train's actual T2/240min assignment) were all required env the provisioner does not default.",
+    "Flags enabled on the new rig (arkova-worker-train-e-0914-staging), same set as previously wired on the now-destroyed b1, reapplied here: ENABLE_DRIVE_OAUTH=true, ENABLE_DRIVE_WEBHOOK=true, ENABLE_DRIVE_CHANGES_RUNNER=true, ENABLE_DOCUSIGN_OAUTH=true, ENABLE_DOCUSIGN_WEBHOOK=true, DOCUSIGN_DEMO=false, GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens (plain value, matching prod), plus secret-backed GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, DOCUSIGN_INTEGRATION_KEY, DOCUSIGN_CLIENT_SECRET, DOCUSIGN_CONNECT_HMAC_SECRET, INTEGRATION_STATE_HMAC_SECRET (all reusing prod's existing Secret Manager entries — the rig's service account is identical to prod's, 270018525501-compute@developer.gserviceaccount.com, so no new IAM grant was needed). This unblocks the previously-OFF Drive OAuth path (the Train B5b gap noted in the task brief): #2912's own probe now exercises the real org-admin/not-connected/insufficient-scope/reconnect-required gated branches on GET /api/v1/integrations/google_drive/folders instead of skipping them behind the kill-switch-off branch.",
+    "NOT ASSERTED (explicit, per operator instruction — do not read anything above as implying these): (1) real end-to-end Google/DocuSign OAuth consent completion was never exercised or verified on this or any rig in this fleet. Google's and DocuSign's own redirect-URI allowlists are console-side settings this session did not check or modify, so POST /oauth/start constructs a valid authorization URL but actual consent completion against this rig's callback host is unknown — it may redirect_uri_mismatch at the provider. (2) The Drive folder-picker's real positive path (GET /api/v1/integrations/google_drive/folders returning an actual {folders:[...]} list from a live Google grant) is unexercised and unexercisable on any current rig (SCRUM-5082 — no rig holds a real Google OAuth grant); #2912's probe proves only the negative/gated branches ahead of that call. (3) #2930's bounded-body-read timeout (DRIVE_BODY_READ_TIMEOUT_MS=10s) firing on an actually-parked response is not exercised live — no safe, single-org, non-rig-wide trigger exists for it (see the #2930 probe's own module doc comment); it is unit-proven only (229 assertions, drive-body-timeout.test.ts). (4) #2937's Sentry delivery path (reportDriveProcessingFailure) is not exercised — no rig in this fleet carries a Sentry DSN; it is unit-proven only (drive-connect-health.test.ts).",
+    "Probes written and verified against the live rig before launch (cto/train-b-2026-09-12-driver, commits c7063b812 then 3caee7c95 fixing two bugs this session's own manual cycle run caught): scripts/staging/targeted/cto-train-b-0912/probes/2937-connector-health-signals.mjs (proves cursor_stale and fetch_job_failures fire on the real deployed GET /api/connectors/health, plus the P0-2 false-positive guard) and probes/2930-drive-bounded-reads.mjs (documents why the real timeout can't be triggered live per (3) above; runs a liveness/latency-floor smoke check on the OAuth callback route instead, explicitly not conflated with the real fix). #2912 already had a probe (2912-connectors.mjs, written for the earlier Train B5b attempt) which needed no changes to its own assertions — only a fixture-collision fix in #2937's module (see the commit message on 3caee7c95) so the two probes stop racing the same org_integrations row. Full TRAIN_PROBES=2912,2930,2937 manual cycle: 54/54 passing before the supervisor was launched."
+  ]
+}

@@ -700,6 +700,44 @@ jobs:
       - name: Run agent harness guard tests
         run: npm run test:hooks
 
+  # SCRUM-3907 — out-of-band drift observability for the edge deploy
+  # pipeline: is the LIVE edge.arkova.ai actually running origin/main, or is
+  # it the merged-but-undeployed state SCRUM-3797 found (prod was a pre-June
+  # manual `wrangler deploy` for months)? Warn-only by design — TWICE
+  # warn-only, in fact: the script itself defaults to exit 0 without
+  # `--strict` (see scripts/ci/check-edge-deployed-version.ts), and this job
+  # additionally sets `continue-on-error: true` so a known-stale prod edge
+  # cannot block unrelated PRs while the edge-deploy.yml pipeline is new and
+  # has not yet run once. `fetch-depth: 0` is required — the script computes
+  # git ancestry (`merge-base --is-ancestor`, `rev-list --count`) against
+  # whatever SHA the live worker reports, which may be many months old and
+  # invisible to a shallow clone. This step makes exactly one outbound HTTPS
+  # GET to the public, unauthenticated https://edge.arkova.ai/health — no
+  # credentials, no write path.
+  edge-deployed-version-check:
+    name: Edge Deployed-Version Drift (warn-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check edge deployed-version drift
+        run: node_modules/.bin/tsx scripts/ci/check-edge-deployed-version.ts
+
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
   # PRs being merged, not a retroactive check on main. On push events the

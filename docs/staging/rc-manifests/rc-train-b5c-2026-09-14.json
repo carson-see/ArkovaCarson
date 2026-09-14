@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "rc_id": "rc-train-b5c-2026-09-14",
+  "created_at": "2026-09-14T07:15:54Z",
+  "created_by": "CTO release session (Claude Sonnet 5) for carson@arkova.io",
+  "release_owner": "CTO release session",
+  "approval_status": "approved",
+  "approval_actor": "carson@arkova.io (session directive 2026-09-14, \"Train B5b sealed. #2846 merged. #2841 and #2909 are open and blocked... Cut Train B5c for them\")",
+  "approval_time": "2026-09-14T07:11:04Z",
+  "train_launch_sha": "aaaa0d7bad30af5e781d52370e0d5479a003089f",
+  "target_main_sha": "a62671abddaed263e70402f9d8baec498c58daf9",
+  "allowed_base_shas": [
+    "a62671abddaed263e70402f9d8baec498c58daf9"
+  ],
+  "covered_main_shas": [
+    "a62671abddaed263e70402f9d8baec498c58daf9"
+  ],
+  "included_prs": [
+    {
+      "head_sha": "ec8895a2ca4dabe9f04a9e5f2f2583930c8836df",
+      "base_sha": "a62671abddaed263e70402f9d8baec498c58daf9",
+      "ticket": "SCRUM-5023",
+      "number": 2841,
+      "ci_summary": "gh pr checks 2841: all required checks pass (Build/TypeCheck&Lint/TLA+/Verifier/SonarCloud/sonatype-sca/E2E/Tests/Lighthouse/Policy Lints/Merge Authority/Anti-hollow-soak guards all green); mergeable=MERGEABLE, mergeStateStatus=UNSTABLE solely because Evidence-identity gate and Staging Soak Evidence Gate are red pending this manifest + PR body update, as expected pre-seal. [Updated at seal 2026-09-14T12:32:48Z]: Train B5c soak sealed 57/57 cycles green (this manifest); head unchanged at ec8895a2ca4dabe9f04a9e5f2f2583930c8836df since the pre-deploy manifest — no post-soak T0 delta needed.",
+      "rollback_note": "Revert the PR's commits; no migration. Additive response fields; older worker/frontend fall back cleanly. Cron disabled via pausing api-key-expiry-notice Cloud Scheduler job (writes only append-only audit_events).",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "conflict_resolution": "GitHub reported a real one-line collision in services/worker/src/api/v1/docs.ts: this PR's `import { EXPIRING_SOON_WINDOW_DAYS, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js'` vs origin/main's (post-#2846) `import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js'` at the same anchor. Verified with a driver-bypassed local `git merge --no-ff` (not `git merge-tree` alone, which does not reproduce GitHub's plain 3-way check against .gitattributes union drivers) that this is the ONLY conflicting path -- every agents.md file plus cloud-scheduler.sh/cron.ts/copy.ts auto-merged clean. Resolved by keeping both import lines (both are referenced later in the same file: MAX_EXPIRES_IN_DAYS ~L482, CONNECTOR_FETCH_SOURCE_MARKERS_SORTED ~L1871, EXPIRING_SOON_WINDOW_DAYS ~L2121). Verified 0 unmerged paths and a scoped tsc pass on the touched file."
+    },
+    {
+      "head_sha": "ca2256c043b37f533996e7a10112ed4b593f4a7a",
+      "base_sha": "a62671abddaed263e70402f9d8baec498c58daf9",
+      "ticket": "SCRUM-3906/SCRUM-3843",
+      "number": 2909,
+      "ci_summary": "gh pr checks 2909: all required checks pass (Build/TypeCheck&Lint/TLA+/Verifier/SonarCloud/sonatype-sca/E2E/Tests/Lighthouse/Policy Lints/Merge Authority/Anti-hollow-soak guards all green); mergeable=MERGEABLE, mergeStateStatus=UNSTABLE solely because Evidence-identity gate and Staging Soak Evidence Gate are red pending this manifest + PR body update, as expected pre-seal. [Updated at seal 2026-09-14T12:32:48Z]: Train B5c soak sealed 57/57 cycles green (this manifest); head unchanged at ca2256c043b37f533996e7a10112ed4b593f4a7a since the pre-deploy manifest — no post-soak T0 delta needed.",
+      "rollback_note": "Revert both commits — no migration/schema/RLS/deployed-state dependency. Restores prior aiSemanticSearchGate()-gated 503 behavior exactly; docs/openapi/README revert with it.",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "conflict_resolution": "GitHub reported mergeable=MERGEABLE already (no real content conflict), but its evidence gates failed because the PR's prior head carried a commit labeled [T0] that edited docs/api/agents.md. Confirmed live via requiredTierFor(['docs/api/agents.md']) => {tier:'T2', reason:'docs/api/agents.md — public API contract / SDK surface'} -- NOT covered by the generic agents.md T0 carve-out. Deliberate decision: KEPT the docs/api/agents.md edit rather than reverting it, for two reasons verified before deciding: (1) this PR is independently T2 via its own code diff regardless of this file -- it touches services/worker/src/api/v1/{ai-verify-search.ts,ai-verify-search.test.ts,docs.ts,router.ts,docs.routeParity.test.ts} and services/worker/src/api/v1/webhooks/docusign.test.ts, all on the T2 worker-code path, so reverting the doc would not move the tier; (2) the file's 2026-09-13 SCRUM-3906 entry is this PR's OWN substantive documentation of its OWN behavior change (the /verify/search lexical fallback + search_mode field), required by the CLAUDE.md Doc Update Matrix -- reverting it would undocument a real, shipped API behavior change. (The file's other new section, dated 2026-09-12 SCRUM-4507, is inherited verbatim from origin/main via this merge -- already landed there by #2846 -- and is not new content from this PR.) Re-merged origin/main on top of the existing conflict-resolution head: 0 conflicts, 0 unmerged paths, scoped tsc pass clean on the touched worker files."
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://train-8---arkova-worker-cto-train-b-0912-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://train-8---arkova-worker-cto-train-b-0912-staging-kvojbeutfa-uc.a.run.app",
+    "cloud_run_service": "arkova-worker-cto-train-b-0912-staging",
+    "revision": "arkova-worker-cto-train-b-0912-staging-00026-teq",
+    "deploy_tag": "train-8",
+    "image_digest": "sha256:c1c5ac3f6dafc79547e721578375e091b6b7a86123bba280d2941da05772db0e",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "deploy_log_id": "8",
+    "preflight_result": "environment_type=clean_mirror (pre-deploy: docs/staging/cto-train-b-0912/preflight-b5c-20260914T071847Z.json, 8/8 checks pass; post-close: docs/staging/cto-train-b-0912/preflight-b5c-postclose-20260914T123023Z.json, 8/8 checks pass, run 2026-09-14T12:30:23.398Z). missing_from_staging notes 0452 and 20260912143110 as informational both times -- neither migration file exists on current main and neither is owned by #2841/#2909.",
+    "origin_guard_mode": "n/a for this train's changed surfaces",
+    "deploy_note": "Deployed --force (no active staging_lease row for #2841/#2909 on rig 1 at deploy time; staging_deploy_log id 8 records forced=true, reason cites SCRUM-5023). Tag-routed (0% default traffic) as tag train-8 -> revision arkova-worker-cto-train-b-0912-staging-00026-teq via scripts/staging/deploy.sh. /health confirmed git_sha=aaaa0d7bad30af5e781d52370e0d5479a003089f both pre-soak and post-close (rollback-rehearsal.json)."
+  },
+  "soak": {
+    "tier": "T2 (4 h floor, CLAUDE.md §1.12)",
+    "start": "2026-09-14T07:26:35.773Z",
+    "end": "2026-09-14T12:24:17.271Z",
+    "cycles": 57,
+    "failures": 0,
+    "evidence_dir": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/window1",
+    "notes": "4.96h elapsed (2026-09-14T07:26:35.773Z -> 12:24:17.271Z; T2 4h floor, closed 11:26:35Z, supervisor left running past its own close and was stopped at seal time), revision/candidate_sha identity held across all 57 supervisor-clock cycles (train-8 tag URL / aaaa0d7bad30af5e781d52370e0d5479a003089f). 65 probes/cycle (identity + #2841 + #2909 modules) x 57 = 3705 total probe assertions, 0 failed. One additional manual pre-launch cycle (07:25:52.086Z, also 65/65 clean) is recorded in the window and in cycles.sha256 for continuity but is NOT counted in the 57 cycles / 4.96h above, per SOAK_START. Anti-hollow-soak guard set (SCRUM-2977) green against docs/staging/soak-preflight/rc-train-b5c-2026-09-14.json. Post-close staging-honesty-preflight clean_mirror at docs/staging/cto-train-b-0912/preflight-b5c-postclose-20260914T123023Z.json. Rollback rehearsal (non-disruptive tag-URL method): candidate (train-8) and rollback target (train-7) both verified healthy at docs/staging/cto-train-b-0912/train-b5c-window1/rollback-rehearsal.json.",
+    "result": "green",
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs@aaaa0d7ba",
+    "evidence_links": [
+      "docs/staging/cto-train-b-0912/train-b5c-window1/summary.json",
+      "docs/staging/cto-train-b-0912/train-b5c-window1/cycles.sha256",
+      "docs/staging/cto-train-b-0912/train-b5c-window1/rollback-rehearsal.json",
+      "docs/staging/cto-train-b-0912/preflight-b5c-postclose-20260914T123023Z.json",
+      "docs/staging/soak-preflight/rc-train-b5c-2026-09-14.json"
+    ],
+    "expires_at": "2026-09-21T12:24:17.271Z"
+  },
+  "migration_plan": {
+    "migrations": [],
+    "note": "no member carries a migration (confirmed via gh pr diff <N> --name-only for both #2841 and #2909, 0 supabase/migrations/ paths each)"
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "pre_deploy_step": ""
+  },
+  "exceptions": [],
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b5c-2026-09-14.json",
+  "staging_branch": "rc/train-b5c-2026-09-14",
+  "preflight_timestamp": "2026-09-14T07:18:47.667Z"
+}

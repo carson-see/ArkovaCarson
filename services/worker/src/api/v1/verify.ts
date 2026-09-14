@@ -29,6 +29,7 @@ import {
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
 import {
+  CONNECTOR_FETCH_SOURCE_MARKERS_SORTED,
   connectorFingerprintRederivabilityFields,
   isConnectorFetchSource,
   resolveConnectorFetchSource,
@@ -251,6 +252,12 @@ export interface VerificationResult {
    * is, so the class never travels without its meaning.
    */
   fingerprint_rederivability_note?: string;
+  /**
+   * SCRUM-4507: which connected system this record's document came from.
+   * Additive, omitted when unknown (§1.8). See {@link VerificationSource} for
+   * why it carries no identifier and no link.
+   */
+  source?: VerificationSource;
   error?: string;
 }
 
@@ -297,6 +304,42 @@ function mapStatus(status: string): VerificationResult['status'] {
  */
 export interface PublicIdLookup {
   lookupByPublicId(publicId: string): Promise<AnchorByPublicId | null>;
+}
+
+/**
+ * SCRUM-4507: the closed vocabulary `source.provider` may take.
+ *
+ * DERIVED from the recognised-marker set, never restated, so the public enum
+ * and the runtime gate can NEVER disagree — an enum member the gate would
+ * reject is a documented value the API can't produce, and a marker the gate
+ * accepts but the enum omits is an undocumented value on a frozen schema
+ * (§1.8). The ordering and the freeze live with the vocabulary itself
+ * ({@link CONNECTOR_FETCH_SOURCE_MARKERS_SORTED}) so this surface and the
+ * served OpenAPI spec materialise one array rather than two.
+ */
+export const VERIFICATION_SOURCE_PROVIDERS: readonly string[] =
+  CONNECTOR_FETCH_SOURCE_MARKERS_SORTED;
+
+/**
+ * SCRUM-4507: WHERE this record's document came from. Deliberately a bare
+ * vocabulary word in a one-key object, and deliberately nothing else:
+ *
+ *  - NO identifiers. This endpoint answers ANONYMOUSLY (`router.ts` lets an
+ *    unauthenticated GET through), so a Drive file id here would let anyone
+ *    holding a public record id probe whether a given Drive object exists —
+ *    and, for a link-shared file, open the document. The record OWNER gets the
+ *    identifiers on the authenticated record page; a public verifier does not.
+ *  - NO deep link, for the same reason.
+ *  - An OBJECT rather than a flat `source_provider` string because the v2
+ *    surface is expected to grow a richer source object under an explicit
+ *    `read:records` scope; a flat field would have to be deprecated to get
+ *    there, and v1 is frozen (§1.8).
+ *
+ * Omitted — never `null`, never `{}` — when the record carries no recognised
+ * connector marker. Absence means "not stated", never "client upload".
+ */
+export interface VerificationSource {
+  provider: string;
 }
 
 export interface AnchorByPublicId {
@@ -622,6 +665,31 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     Object.assign(result, connectorFingerprintRederivabilityFields(FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED));
   } else if (anchor.fingerprint_source !== 'issuer_record_attestation' && isConnectorFetchSource(anchor.server_fetched_connector_source)) {
     Object.assign(result, connectorFingerprintRederivabilityFields());
+  }
+
+  // SCRUM-4507 — source provenance label.
+  //
+  // Gated on `connector_source` (the RECOGNISED marker, resolved by
+  // `resolveConnectorFetchSource` in mapAnchorRow) and NOT on
+  // `server_fetched_connector_source`. The two answer different questions:
+  // `server_fetched_…` keys the "Measured: Arkova retrieved these bytes"
+  // claim above and must stay gated on real fetch evidence, whereas the
+  // provider says only WHERE the record originated. A declared-hash inbound
+  // DocuSign record did originate at DocuSign even though Arkova fetched
+  // nothing, and its weaker evidence class is already stated by
+  // `fingerprint_rederivability` — suppressing the provider there would hide
+  // true provenance to protect a claim something else already makes.
+  //
+  // `isConnectorFetchSource` is the choke point: free text on a legacy
+  // metadata blob can never become part of a public response body.
+  //
+  // RESIDUAL, disclosed rather than papered over: `connector_source` is
+  // server-stamped and, since migration 0423, stripped from any write by a
+  // non-`service_role` caller. On rows written BEFORE 0423 it could have been
+  // org-authored. That is exactly why this stays a bare vocabulary word with
+  // no identifier attached and never keys a "Measured:" sentence.
+  if (isConnectorFetchSource(anchor.connector_source)) {
+    result.source = { provider: anchor.connector_source };
   }
 
   return result;
