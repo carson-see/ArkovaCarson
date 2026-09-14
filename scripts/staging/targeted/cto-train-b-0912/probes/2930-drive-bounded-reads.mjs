@@ -47,6 +47,8 @@
 // pipeline, not a proof of DRIVE_BODY_READ_TIMEOUT_MS; it would pass
 // identically whether or not this PR's change was present, which is exactly
 // why it is not conflated with the real proof above.
+import { iamToken } from '../common.mjs';
+
 export const pr = '#2930';
 
 export const changedBehavior = [
@@ -79,7 +81,7 @@ export async function seed() {
 }
 
 export async function run(ctx) {
-  const { probe, workerFetch, state } = ctx;
+  const { probe, state, TAG_URL } = ctx;
   const out = [];
 
   if (!state.orgA) {
@@ -89,17 +91,43 @@ export async function run(ctx) {
 
   // Deliberately garbage state/code — must fail the signature check before
   // ever reaching exchangeCode/readDriveJson, and must do so promptly.
+  // redirect:'manual' is load-bearing here: this route redirects to
+  // FRONTEND_URL on both success and rejection, and workerFetch's plain
+  // fetch() follows redirects by default — landing on the real
+  // app.arkova.ai frontend (a live 200 HTML page) and making every outcome
+  // look identical. Capturing the redirect itself (or a direct 4xx) is the
+  // only way to observe what THIS worker decided.
   const t0 = Date.now();
-  const res = await workerFetch(`${CALLBACK_PATH}?code=${encodeURIComponent('2930-probe-not-a-real-code')}&state=${encodeURIComponent('2930-probe-not-a-real-signed-state')}`);
+  let res;
+  try {
+    const r = await fetch(
+      `${TAG_URL}${CALLBACK_PATH}?code=${encodeURIComponent('2930-probe-not-a-real-code')}&state=${encodeURIComponent('2930-probe-not-a-real-signed-state')}`,
+      { headers: { 'X-Serverless-Authorization': `Bearer ${iamToken()}` }, redirect: 'manual' },
+    );
+    res = { status: r.status, location: r.headers.get('location') };
+  } catch (e) {
+    res = { status: 0, location: null, error: String(e) };
+  }
   const elapsedMs = Date.now() - t0;
 
   out.push(probe('2930_callback_route_live', true, res.status !== 0, {
     pass: res.status !== 0,
-    detail: { status: res.status, note: 'status 0 means the request itself failed/aborted client-side (network/DNS), not a worker response' },
+    detail: { status: res.status, error: res.error ?? null, note: 'status 0 means the request itself failed/aborted client-side (network/DNS), not a worker response' },
   }));
-  out.push(probe('2930_callback_rejects_invalid_state', true, res.status >= 300 && res.status < 500, {
-    pass: res.status >= 300 && res.status < 500,
-    detail: { status: res.status, body: res.body, note: 'an invalid/unsigned state must be rejected (redirect or 4xx), never a 2xx' },
+  // A redirect (3xx, opaqueredirect surfaces as status 0 only under
+  // no-cors — not applicable to a plain same-process fetch) or a direct
+  // 4xx both count as "rejected"; only a bare 200 (the route treating
+  // garbage input as success) would be wrong.
+  const rejected = (res.status >= 300 && res.status < 500)
+    || (res.status >= 300 && res.location != null);
+  out.push(probe('2930_callback_rejects_invalid_state', true, rejected, {
+    pass: rejected,
+    detail: { status: res.status, location: res.location, note: 'an invalid/unsigned state must be rejected (redirect with an error indicator, or 4xx) — never treated as a successful exchange' },
+  }));
+  const errorIndicated = typeof res.location === 'string' && /error|invalid|expired/i.test(res.location);
+  out.push(probe('2930_callback_redirect_carries_error_indicator', true, res.status < 300 || errorIndicated, {
+    pass: res.status < 300 || errorIndicated,
+    detail: { location: res.location, note: 'when the route redirects, the target must be distinguishable from a success redirect (error/invalid/expired marker), or a caller cannot tell the two apart' },
   }));
   out.push(probe('2930_callback_resolves_within_latency_floor', true, elapsedMs < LATENCY_FLOOR_MS, {
     pass: elapsedMs < LATENCY_FLOOR_MS,

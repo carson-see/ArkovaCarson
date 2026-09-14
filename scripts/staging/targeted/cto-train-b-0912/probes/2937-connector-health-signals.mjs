@@ -79,33 +79,58 @@ const CURSOR_STALE_THRESHOLD_MS = 6 * 60 * 60 * 1000;
 const STALE_TIMESTAMP = new Date(Date.now() - CURSOR_STALE_THRESHOLD_MS - 60 * 60 * 1000).toISOString();
 const FRESH_TIMESTAMP = new Date().toISOString();
 
-async function ensureDriveIntegration(admin, orgId, accountId) {
+// The connector-health endpoint resolves ONE google_drive row per org via
+// `.eq('provider','google_drive').is('revoked_at',null).order('connected_at',
+// {ascending:false}).limit(1)` — it does NOT filter by account_id. #2912's
+// own probe (2912-connectors.mjs) already owns a google_drive
+// org_integrations row for orgA (account_id 'cto-train-b5b-2912-orgA') and
+// re-arms its scope/tokens every cycle. A second, independently-created
+// google_drive row for orgA here would race that query's ORDER BY
+// connected_at and silently break #2912's own scope/reconnect assertions
+// (discovered exactly that way against this rig, 2026-09-14: 2912's
+// insufficient_drive_scope assertion started reading reconnect_required
+// because this module's row had a newer connected_at). So this module
+// REUSES #2912's row and only ever touches the columns the health dashboard
+// actually reads for its two new signals (subscription_expires_at,
+// last_renewal_error, last_token_advanced_at) — never scope, tokens,
+// account_id or connected_at, which stay #2912's to manage.
+const UPSTREAM_2912_ACCOUNT_ID_SUFFIX = 'cto-train-b5b-2912-orgA';
+
+async function ensureDriveIntegration(admin, orgId) {
   const { data: existing, error: findErr } = await admin
     .from('org_integrations')
     .select('id')
     .eq('org_id', orgId)
     .eq('provider', 'google_drive')
-    .eq('account_id', accountId)
+    .eq('account_id', UPSTREAM_2912_ACCOUNT_ID_SUFFIX)
     .maybeSingle();
   if (findErr) throw new Error(`#2937 integration lookup: ${findErr.message}`);
-  const row = {
-    org_id: orgId,
-    provider: 'google_drive',
-    account_id: accountId,
-    scope: 'https://www.googleapis.com/auth/drive.readonly',
-    connected_at: FRESH_TIMESTAMP,
+  const sharedRow = {
     revoked_at: null,
     subscription_expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     last_renewal_error: null,
     last_token_advanced_at: FRESH_TIMESTAMP,
   };
   if (existing) {
-    const { error } = await admin.from('org_integrations').update(row).eq('id', existing.id);
-    if (error) throw new Error(`#2937 integration re-arm: ${error.message}`);
+    const { error } = await admin.from('org_integrations').update(sharedRow).eq('id', existing.id);
+    if (error) throw new Error(`#2937 integration re-arm (shared with #2912): ${error.message}`);
     return existing.id;
   }
-  const { data, error } = await admin.from('org_integrations').insert(row).select('id').single();
-  if (error) throw new Error(`#2937 integration insert: ${error.message}`);
+  // Defensive fallback only — #2912's seed() runs before this module's in
+  // setup.mjs's alphabetical ordering, so this row should always exist by
+  // the time this runs. If it genuinely does not, own a full row rather
+  // than throwing, but with a distinct account_id so it can never collide.
+  const { data, error } = await admin.from('org_integrations').insert({
+    org_id: orgId,
+    provider: 'google_drive',
+    account_id: `${NAME_PREFIX}-orgA-fallback`,
+    scope: 'https://www.googleapis.com/auth/drive.readonly',
+    connected_at: FRESH_TIMESTAMP,
+    encrypted_tokens: null,
+    token_kms_key_id: null,
+    ...sharedRow,
+  }).select('id').single();
+  if (error) throw new Error(`#2937 integration insert (fallback): ${error.message}`);
   return data.id;
 }
 
@@ -141,7 +166,7 @@ export async function seed(admin, state) {
   const orgA = state.orgA;
   const adminAUserId = state.adminA?.userId;
   if (!orgA || !adminAUserId) throw new Error('#2937 seed: state.orgA/adminA missing — run setup.mjs base fixtures first');
-  const integrationId = await ensureDriveIntegration(admin, orgA, `${NAME_PREFIX}-orgA`);
+  const integrationId = await ensureDriveIntegration(admin, orgA);
   const ruleId = await ensureRule(admin, orgA, adminAUserId);
   return { integrationId, ruleId };
 }
