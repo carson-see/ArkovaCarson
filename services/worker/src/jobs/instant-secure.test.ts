@@ -14,8 +14,8 @@ vi.mock('../utils/db.js', () => ({ db: { rpc: mockRpc, from: vi.fn((table: strin
 import { processInstantSecureIntent } from './instant-secure.js';
 const INTENT_ID = '550e8400-e29b-41d4-a716-446655440000';
 function seed(afterStatus = 'PROCESSING', attempt = 1) { intentReads.push(
-  { id: INTENT_ID, anchor_id: 'anchor-1', status: 'QUEUED', attempt: 0 },
-  { id: INTENT_ID, anchor_id: 'anchor-1', status: afterStatus, attempt },
+  { id: INTENT_ID, anchor_id: 'anchor-1', status: 'QUEUED', attempt: 0, rearm_generation: 0 },
+  { id: INTENT_ID, anchor_id: 'anchor-1', status: afterStatus, attempt, rearm_generation: 0 },
 ); }
 describe('durable instant-secure consumer', () => {
   beforeEach(() => { vi.clearAllMocks(); intentReads.length = 0; mockProcessBatchAnchors.mockResolvedValue({ processed: 1, txId: 'tx-1' }); mockRpc.mockResolvedValue({ data: { success: true }, error: null }); });
@@ -38,13 +38,35 @@ describe('durable instant-secure consumer', () => {
   });
   it('reconciles a held attempt after canonical recovery adopts it', async () => {
     intentReads.push(
-      { id: INTENT_ID, anchor_id: 'anchor-1', status: 'HELD', attempt: 1 },
-      { id: INTENT_ID, anchor_id: 'anchor-1', status: 'HELD', attempt: 1 },
+      { id: INTENT_ID, anchor_id: 'anchor-1', status: 'HELD', attempt: 1, rearm_generation: 0 },
+      { id: INTENT_ID, anchor_id: 'anchor-1', status: 'HELD', attempt: 1, rearm_generation: 0 },
     );
     anchorRead.current = { id: 'anchor-1', status: 'SECURED', chain_tx_id: 'tx-adopted' };
     await processInstantSecureIntent({ intent_id: INTENT_ID });
     expect(mockRpc).toHaveBeenCalledWith('settle_anchor_instant_intent', expect.objectContaining({
       p_outcome: 'SUBMITTED', p_expected_attempt: 1,
     }));
+  });
+
+  it('completes a stale old job without touching a newer explicit rearm generation', async () => {
+    intentReads.push(
+      { id: INTENT_ID, anchor_id: 'anchor-1', status: 'QUEUED', attempt: 0, rearm_generation: 0 },
+      { id: INTENT_ID, anchor_id: 'anchor-1', status: 'QUEUED', attempt: 0, rearm_generation: 1 },
+    );
+    anchorRead.current = { id: 'anchor-1', status: 'PENDING', chain_tx_id: null };
+    mockProcessBatchAnchors.mockResolvedValue({ processed: 0, txId: null });
+
+    await processInstantSecureIntent({ intent_id: INTENT_ID, generation: 0 });
+
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stale queued job before it can claim or debit', async () => {
+    intentReads.push({ id: INTENT_ID, anchor_id: 'anchor-1', status: 'QUEUED', attempt: 0, rearm_generation: 2 });
+
+    await processInstantSecureIntent({ intent_id: INTENT_ID, generation: 1 });
+
+    expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });

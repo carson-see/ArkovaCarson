@@ -240,12 +240,20 @@ async function handleAnchorSubmit(req: Request, res: Response) {
     if (existing) {
       let instantStatus: string | null = null;
       if (body.action === 'instant' && existing.status === 'PENDING') {
-        const { data, error } = await db.rpc('enqueue_existing_anchor_instant_intent' as never, {
+        const retryResult = await db.rpc('retry_anchor_instant_intent' as never, {
           p_anchor_id: existing.id, p_user_id: req.apiKey.userId, p_org_id: scopedOrgId,
-          p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
         } as never);
-        const intent = unwrapRpcResult(data);
-        if (error || !intent.success) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
+        let intent = unwrapRpcResult(retryResult.data);
+        if (retryResult.error) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
+        if (!intent.success && intent.error === 'intent_not_found') {
+          const initialResult = await db.rpc('enqueue_existing_anchor_instant_intent' as never, {
+            p_anchor_id: existing.id, p_user_id: req.apiKey.userId, p_org_id: scopedOrgId,
+            p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
+          } as never);
+          intent = unwrapRpcResult(initialResult.data);
+          if (initialResult.error) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
+        }
+        if (!intent.success) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
         instantStatus = intent.status ?? 'QUEUED';
       }
       const existingPublicId = existing.public_id ?? '';

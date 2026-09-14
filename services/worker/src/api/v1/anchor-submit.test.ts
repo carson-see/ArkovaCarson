@@ -295,6 +295,54 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(mockInsert).not.toHaveBeenCalled();
   });
 
+  it('atomically rearms a never-debited NEEDS_CREDIT intent on explicit instant resubmission', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'anchor-existing', public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'retry_anchor_instant_intent') return {
+        data: { success: true, status: 'QUEUED', intent_id: 'intent-1', job_id: 'job-2', idempotent: false }, error: null,
+      };
+      throw new Error(`unexpected RPC ${fn}`);
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ action: 'instant', instant_status: 'QUEUED', idempotent: true });
+    expect(mockRpc).toHaveBeenCalledWith('retry_anchor_instant_intent', {
+      p_anchor_id: 'anchor-existing', p_user_id: 'user-1', p_org_id: 'org-1',
+    });
+    expect(mockRpc).not.toHaveBeenCalledWith('enqueue_existing_anchor_instant_intent', expect.anything());
+  });
+
+  it('falls back to first-time instant publication when no intent exists', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'anchor-existing', public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'retry_anchor_instant_intent') return { data: { success: false, error: 'intent_not_found' }, error: null };
+      if (fn === 'enqueue_existing_anchor_instant_intent') return {
+        data: { success: true, status: 'QUEUED', intent_id: 'intent-1', job_id: 'job-1' }, error: null,
+      };
+      throw new Error(`unexpected RPC ${fn}`);
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+
+    expect(res.status).toBe(200);
+    expect(mockRpc).toHaveBeenNthCalledWith(1, 'retry_anchor_instant_intent', expect.anything());
+    expect(mockRpc).toHaveBeenNthCalledWith(2, 'enqueue_existing_anchor_instant_intent', expect.anything());
+  });
+
   it('accepts the compatibility submit path with the canonical write:anchors scope', async () => {
     const res = await request(makeApp(['write:anchors'])).post('/v1/anchor/submit').send({
       fingerprint: VALID_FINGERPRINT,
