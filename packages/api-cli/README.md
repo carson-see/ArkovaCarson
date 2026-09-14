@@ -26,5 +26,5 @@ arkova anchor ./agreement.pdf --action instant --description "Signed agreement" 
 arkova verify ARK-2026-001
 arkova folder list --scope ORG --org-id 00000000-0000-0000-0000-000000000000
 arkova folder create --name Cases --scope USER
-arkova folder move --record-id 00000000-0000-0000-0000-000000000000 --folder-id 00000000-0000-0000-0000-000000000000
+arkova folder move --record-id ARK-2026-001 --folder-id 00000000-0000-0000-0000-000000000000
 ```

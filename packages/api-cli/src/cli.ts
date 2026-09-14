@@ -184,14 +184,14 @@ async function runFolder(args: string[], client: CliClient): Promise<{ value: un
     return { value: await client.request('/api/v1/folders', { method: 'POST', body: JSON.stringify(body) }) };
   }
   if (action === 'move') {
-    const anchorIds = takeMany(args, '--record-id');
-    if (anchorIds.length === 0 || anchorIds.length > 100) throw new UsageError('--record-id is required (maximum 100)');
+    const recordPublicIds = takeMany(args, '--record-id');
+    if (recordPublicIds.length === 0 || recordPublicIds.length > 100) throw new UsageError('--record-id is required (maximum 100)');
     const folderId = takeOption(args, '--folder-id');
     const root = takeBoolean(args, '--root');
     if ((folderId == null) === !root) throw new UsageError('use exactly one of --folder-id or --root');
     noExtra(args);
     return { value: await client.request('/api/v1/folders/bulk-move', {
-      method: 'POST', body: JSON.stringify({ anchor_ids: anchorIds, folder_id: root ? null : folderId }),
+      method: 'POST', body: JSON.stringify({ record_public_ids: recordPublicIds, folder_id: root ? null : folderId }),
     }) };
   }
   throw new UsageError(action ? `Unknown folder command: ${action}` : 'A folder command is required');

@@ -77,7 +77,7 @@ describe('arkova API CLI', () => {
       method: 'POST', body: JSON.stringify({ name: 'Cases', owner_scope: 'ORG', org_id: 'org-1' }),
     });
     expect(api.request).toHaveBeenNthCalledWith(3, '/api/v1/folders/bulk-move', {
-      method: 'POST', body: JSON.stringify({ anchor_ids: ['record-1'], folder_id: 'folder-1' }),
+      method: 'POST', body: JSON.stringify({ record_public_ids: ['record-1'], folder_id: 'folder-1' }),
     });
   });
 
