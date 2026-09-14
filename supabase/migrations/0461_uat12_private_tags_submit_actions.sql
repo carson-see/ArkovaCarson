@@ -535,6 +535,6 @@ $$;
 NOTIFY pgrst, 'reload schema';
 COMMIT;
 
--- ROLLBACK: execute scripts/uat12/rollback-0461.sql. It removes every 0461
--- function/table/trigger and restores the exact pre-0461 claim and 0334
--- sanitizer bodies while retaining the service-only ACL from migration 0378.
+-- ROLLBACK: drop settle_anchor_instant_intent, claim_anchor_instant_intent,
+-- create_anchor_submission, anchor_instant_intents, anchor_private_tags;
+-- restore sanitize_metadata_for_public from migration 0334.
