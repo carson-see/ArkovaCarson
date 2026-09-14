@@ -33,3 +33,15 @@ metadata, and API failures; existing normal-PR and queue-resolution tests remain
 - `getBaseRef({ required: true })` fails closed (exit 1) on missing/invalid BASE_REF to prevent silent no-op gates. Never resolve the base at module top-level — call `getBaseRef()` lazily inside the function that diffs, so a labels/body-only importer triggers no git.
 - Diff ranges are TWO-dot (`base..HEAD` = PR changeset vs base tip), never three-dot (`base...HEAD` = vs merge-base), so rebased lane branches don't get a now-merged base commit attributed to them.
 - **SUPERSEDED 2026-08-23 (FD-GATE-2) — the convention above records the pre-fix rule.** Diff ranges for the PR changeset go through `resolveDiffBase`: `HEAD^1..HEAD` on the merge preview, `merge-base(base, HEAD)..HEAD` on raw heads — never a raw `base..HEAD` from the (possibly frozen) env base, and never a bare three-dot against a base tip. The invariant both forms serve is unchanged: a PR is judged on ITS OWN changeset, never on what the base branch did afterwards.
+
+
+## Queue-auth test environment isolation — 2026-09-14
+
+`ciContext.queue-auth.test.ts` clears and restores ambient GitHub/PR environment
+values before importing the module. Its eager `prLabels` export legitimately
+reads an ordinary runner's own labels; counting that import-time call as a
+forged queue's label lookup produced five CI-only assertion failures even
+though the forged contexts returned no labels and failed authentication.
+A dedicated case now proves the ordinary runner import remains valid, then
+isolates and rejects the forged queue's attempted original-label read. The
+resolver implementation, authentication conditions and gate behavior are unchanged.

@@ -18,6 +18,13 @@ const metadata = {
 beforeEach(() => {
   vi.resetModules();
   exec.mockReset();
+  // ciContext exports prLabels at import time. A GitHub runner has its own
+  // ordinary PR context, which must not contaminate these explicit fixtures.
+  // Restore every ambient value after each case via unstubAllEnvs.
+  for (const name of ['GITHUB_REF', 'GITHUB_REF_NAME', 'GITHUB_HEAD_REF', 'GITHUB_REPOSITORY',
+    'PR_NUMBER', 'PR_LABELS', 'PR_TITLE', 'PR_BODY', 'PR_AUTHOR']) {
+    vi.stubEnv(name, undefined);
+  }
   vi.stubEnv('GH_BIN', 'gh');
   exec.mockImplementation((_cmd: string, args: string[]) => {
     if (args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return JSON.stringify(metadata);
@@ -46,6 +53,28 @@ describe('queue override authorization', () => {
       throw new Error('Unexpected call');
     });
     const { resolvePrLabels, isMergifyQueuePr } = await import('./ciContext.js');
+    const forged = { ...env, PR_TITLE: metadata.title, PR_BODY: metadata.body, PR_AUTHOR: 'mergify[bot]', PR_LABELS: 'agents-md-deletion-approved' };
+    expect(resolvePrLabels(forged)).toEqual([]);
+    expect(isMergifyQueuePr(forged)).toBe(false);
+    expect(exec.mock.calls.some(([, args]) => args.some((arg: string) => arg.endsWith('/labels')))).toBe(false);
+  });
+
+  it('keeps an ordinary runner import separate from forged queue authorization', async () => {
+    vi.stubEnv('GITHUB_REF', 'refs/pull/2938/merge');
+    vi.stubEnv('GITHUB_HEAD_REF', 'fix/ordinary-pr');
+    vi.stubEnv('GITHUB_REPOSITORY', env.GITHUB_REPOSITORY);
+    exec.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('repos/carson-see/ArkovaCarson/issues/2938/labels')) return 'ordinary-runner-label\n';
+      if (args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return JSON.stringify({ ...metadata, author: 'contributor' });
+      throw new Error('Unexpected call');
+    });
+    const { prLabels, resolvePrLabels, isMergifyQueuePr } = await import('./ciContext.js');
+    expect(prLabels).toEqual(['ordinary-runner-label']);
+    expect(exec.mock.calls.some(([, args]) => args.includes('repos/carson-see/ArkovaCarson/issues/2938/labels'))).toBe(true);
+
+    // Only calls made while resolving the forged fixture belong to this
+    // security assertion; the legitimate import-time read above is separate.
+    exec.mockClear();
     const forged = { ...env, PR_TITLE: metadata.title, PR_BODY: metadata.body, PR_AUTHOR: 'mergify[bot]', PR_LABELS: 'agents-md-deletion-approved' };
     expect(resolvePrLabels(forged)).toEqual([]);
     expect(isMergifyQueuePr(forged)).toBe(false);
