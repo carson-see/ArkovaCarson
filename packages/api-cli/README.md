@@ -24,6 +24,7 @@ private tags are sent to the API. File contents are not uploaded.
 ```sh
 arkova anchor ./agreement.pdf --action instant --description "Signed agreement" --tag legal
 arkova verify ARK-2026-001
+arkova probe ARK-2026-001 --org-id 00000000-0000-0000-0000-000000000000
 arkova folder list --scope ORG --org-id 00000000-0000-0000-0000-000000000000
 arkova folder create --name Cases --scope USER
 arkova folder move --record-id ARK-2026-001 --folder-id 00000000-0000-0000-0000-000000000000

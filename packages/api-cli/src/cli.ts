@@ -33,6 +33,7 @@ const HELP = {
     'arkova health',
     'arkova read <public-id>',
     'arkova verify <public-id>',
+    'arkova probe <public-id> [--org-id id]',
     'arkova anchor <local-file> [--action queue|instant] [--description text] [--tag value] [--org-tag value]',
     'arkova folder list [--scope USER|ORG] [--org-id id] [--owner-user-id id] [--context-org-id id]',
     'arkova folder create --name name --scope USER|ORG [--org-id id] [--context-org-id id] [--parent-folder-id id]',
@@ -118,6 +119,20 @@ async function runCommand(args: string[], client: CliClient, readLocalFile: (pat
     noExtra(args);
     const result = await client.verify(publicId);
     return { value: result, exitCode: result.verified ? 0 : 1 };
+  }
+  if (command === 'probe') {
+    const publicId = required(args.shift(), 'public-id');
+    const orgId = takeOption(args, '--org-id');
+    noExtra(args);
+    const folderParams = new URLSearchParams({ owner_scope: 'ORG' });
+    if (orgId) folderParams.set('org_id', orgId);
+    const [health, record, verification, folderResponse] = await Promise.all([
+      client.request('/health'),
+      client.getAnchor(publicId),
+      client.verify(publicId),
+      client.request<{ folders: unknown[] }>(`/api/v1/folders?${folderParams}`),
+    ]);
+    return { value: { health, record, verification, folders: folderResponse.folders } };
   }
   if (command === 'anchor') {
     const path = required(args.shift(), 'local-file');

@@ -93,6 +93,29 @@ describe('arkova API CLI', () => {
     expect(output.stdout() + output.stderr()).not.toContain('ak_stdin_secret');
   });
 
+  it('runs a read-only recurring probe across health, read, verify, and folders', async () => {
+    const api = client();
+    vi.mocked(api.request)
+      .mockResolvedValueOnce({ status: 'healthy', git_sha: 'abc' })
+      .mockResolvedValueOnce({ folders: [{ public_id: 'FLD-1' }] });
+    vi.mocked(api.getAnchor).mockResolvedValue({ publicId: 'ARK-1', status: 'PENDING' } as never);
+    vi.mocked(api.verify).mockResolvedValue({ verified: false, status: 'PENDING' } as never);
+    const output = io();
+
+    const code = await main(['probe', 'ARK-1', '--org-id', 'org-1'], output.value, { client: api });
+    expect(code).toBe(0);
+    expect(api.request).toHaveBeenNthCalledWith(1, '/health');
+    expect(api.getAnchor).toHaveBeenCalledWith('ARK-1');
+    expect(api.verify).toHaveBeenCalledWith('ARK-1');
+    expect(api.request).toHaveBeenNthCalledWith(2, '/api/v1/folders?owner_scope=ORG&org_id=org-1');
+    expect(JSON.parse(output.stdout())).toEqual({
+      health: { status: 'healthy', git_sha: 'abc' },
+      record: { publicId: 'ARK-1', status: 'PENDING' },
+      verification: { verified: false, status: 'PENDING' },
+      folders: [{ public_id: 'FLD-1' }],
+    });
+  });
+
   it('writes structured errors to stderr and never echoes credentials', async () => {
     const output = io({ ARKOVA_API_KEY: 'ak_do_not_print' });
     const code = await main(['folder', 'create'], output.value);
