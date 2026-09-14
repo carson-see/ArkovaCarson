@@ -919,3 +919,11 @@ Replaced with relative ordering: `attestation.created` sits immediately after
 that. Same guarantee about where SCRUM-3982's entries go, indifferent to what
 lands after them. Prefer relative-position assertions over tail slices whenever
 the thing being ordered is an append-only list that other PRs also append to.
+
+## 2026-09-14 — SCRUM-5203: Zapier CI failure propagation
+
+The CI workflow contract now requires the standalone Zapier clean-build step
+in the required Tests aggregate. It runs the actual workflow shell body with
+each npm phase failing in turn and verifies nonzero propagation and early stop.
+Real package clean installation, tests, build and local CLI validation are
+separate release receipts; the shell controls do not replace them.

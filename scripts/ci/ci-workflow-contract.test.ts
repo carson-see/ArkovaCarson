@@ -769,3 +769,60 @@ describe("deploy-worker.yml zk circuit artifact cache survives a key rotation", 
     }
   });
 });
+
+function zapierValidationStep(workflow: string): string {
+  const testsJob = workflow.match(/^  test:\n([\s\S]*?)(?=^  [a-z][a-z0-9_-]*:|$(?![\s\S]))/mu)?.[0] ?? "";
+  expect(testsJob).toMatch(/node-version: ['"]22['"]/u);
+  const steps = workflowSteps(testsJob);
+  const validation = steps.filter((step) => /^\s+id: zapier-validation$/mu.test(step));
+  expect(validation, "required Tests must actually validate the standalone Zapier package").toHaveLength(1);
+  const step = validation[0];
+  expect(step).toMatch(/^\s+if: always\(\)$/mu);
+  expect(step).toMatch(/^\s+working-directory: integrations\/zapier$/mu);
+  expect(step).toMatch(/^\s+timeout-minutes: 10$/mu);
+  expect(step).not.toMatch(/continue-on-error|legacy-peer-deps|npm install|zapier-platform push/u);
+  const aggregate = steps.find((candidate) => candidate.includes("name: Aggregate test suite results")) ?? "";
+  expect(aggregate).toContain('[zapier-validation]="${{ steps.zapier-validation.outcome }}"');
+  expect(aggregate).toMatch(/for name [^\n]*\bzapier-validation\b/u);
+  return step;
+}
+
+function shellBody(step: string): string {
+  const raw = step.split(/\n\s+run: \|\n/u)[1];
+  expect(raw).toBeDefined();
+  return raw.split("\n").map((line) => line.replace(/^          /u, "")).join("\n");
+}
+
+describe("Zapier required clean-build contract", () => {
+  it("includes bounded standalone validation in the required Tests aggregate", () => {
+    const step = zapierValidationStep(readFileSync(WORKFLOW_PATH, "utf8"));
+    expect(shellBody(step).trim().split("\n")).toEqual([
+      "npm ci --ignore-scripts --no-fund",
+      "npm test",
+      "npm run build",
+      "npm run validate",
+    ]);
+  });
+
+  it.each(["ci", "test", "run build", "run validate"])("propagates a real shell failure at npm %s", async (failure) => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { spawnSync } = await import("node:child_process");
+    const directory = mkdtempSync(resolve(tmpdir(), "zapier-ci-contract-"));
+    try {
+      const commands = resolve(directory, "commands");
+      const executable = resolve(directory, "npm");
+      writeFileSync(executable, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$ZAPIER_COMMAND_LOG"\ncase "$*" in "$ZAPIER_FAIL_COMMAND"*) exit 42 ;; esac\n', { mode: 0o700 });
+      const step = zapierValidationStep(readFileSync(WORKFLOW_PATH, "utf8"));
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", shellBody(step)], {
+        encoding: "utf8", timeout: 5_000,
+        env: { ...process.env, PATH: directory + ":" + process.env.PATH, ZAPIER_COMMAND_LOG: commands, ZAPIER_FAIL_COMMAND: failure },
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(42);
+      expect(readFileSync(commands, "utf8").trim().split("\n").at(-1)).toMatch(new RegExp("^" + failure, "u"));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
