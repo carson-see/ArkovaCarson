@@ -149,6 +149,15 @@ The fingerprint index-plan suite now creates its own organization and required p
 
 The same full-schema run showed a second fixture defect: enable_seqscan=off still permits the planner to choose another index. With only one SECURED row it legitimately chose the status index. The suite now seeds 2,048 owned SECURED background rows so the fingerprint is selective, still asserting Index Cond and the uncast negative control without a latency threshold.
 
+## 2026-09-14 — SCRUM-5145 restored auth trigger compatibility
+
+`fingerprint-lookup-index-plan.test.ts` upserts its owned profile after inserting
+`auth.users`. A complete schema with migration 0459 creates that profile through
+the canonical auth-user trigger; a baseline without the trigger still needs the
+test to create it. The upsert makes both schemas converge on the exact owned
+organization and role without weakening the plan assertions or sharing fixture
+identities.
+
 ## 2026-09-11 — UAT-04 mandatory MFA boundary
 
 `uat04-mfa-enforcement.test.ts` exercises real GoTrue tokens and PostgREST for the
