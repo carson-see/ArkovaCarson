@@ -1,4 +1,6 @@
 # services/worker/src/api/v1/agents.md
+PR #2904 review: `webhooks-self-service.test.ts` explicitly disables descendant fanout in its config seam while preserving the real delivery module used by signed-ping and replay assertions.
+
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
