@@ -98,3 +98,8 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 ## 2026-09-14 — UAT-24 local evidence
 
 `uat24-2026-09-14/` is native PostgreSQL minimal-fixture evidence, including actual 0365/0445/0462 replay and executable rollback/reapply. It is not a full production-schema replay or staging soak receipt. The runner creates and owns a unique `arkova_uat24_*` database and refuses an existing name.
+
+SCRUM-5252 extends that same minimal fixture with additive migration 0464. The
+new checks compare platform-admin contextual and organization reads against
+global-personal, ordinary-member, write, missing-role, and API-key-bound
+denials. This remains local evidence; it is not hosted or soak evidence.

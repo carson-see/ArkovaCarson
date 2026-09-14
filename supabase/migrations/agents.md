@@ -1359,3 +1359,13 @@ retains the staged recovery and separately dated production pilot receipts.
 ## 2026-09-14 — SCRUM-5142 nested folders
 
 Migration 0462 extends the canonical 0365 `folders` table. Global USER folders remain private; explicit org-context USER folders are visible to exact/approved-ancestor admins, while mutations remain owner/exact-admin scoped. Hierarchy changes serialize per owner to reject concurrent cycles. Connector routing stays inside the 0445 atomic materialization transaction, preserves an existing folder, and validates active exact-scope connections. The native rollback/reapply, adverse RLS/API-key, 0445 reuse, reconnect, and two-session cycle fixture is under `docs/staging/uat24-2026-09-14/`.
+
+## 2026-09-14 — SCRUM-5252 platform-admin folder read parity
+
+Migration 0464 replaces only `folder_api_list` and retains its exact signature
+and service-role-only grants. It verifies `profiles.is_platform_admin` only
+when `p_api_org_id` is NULL, so API-key organization scope remains an upper
+bound. Do not add platform administrators to `folder_api_administers_org`:
+that helper protects write RPCs. Missing service-role claims must fail closed
+with `auth.role() IS DISTINCT FROM 'service_role'`. The unchanged signature
+has no generated database-type delta.

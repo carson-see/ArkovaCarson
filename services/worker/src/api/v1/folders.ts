@@ -86,6 +86,7 @@ export interface FolderApiDeps {
   canReadOrg(input: FolderActor & { orgId: string }): Promise<boolean>;
   canAdminOrg(input: FolderActor & { orgId: string }): Promise<boolean>;
   canAdminOrgExact(input: FolderActor & { orgId: string }): Promise<boolean>;
+  isPlatformAdmin(input: FolderActor): Promise<boolean>;
   canUsePersonalContext(input: FolderActor & { ownerUserId: string; orgId: string }): Promise<boolean>;
   emitFolderEvent(eventType: FolderEventType, orgId: string | null, payload: Record<string, unknown>): Promise<void>;
 }
@@ -167,7 +168,10 @@ async function authorizeScope(
     )) return { ok: false, code: 'personal_scope_key_org_required' };
     if (write && ownerUserId !== principalUserId) return { ok: false, code: 'personal_scope_owner_required' };
     if (ownerUserId !== principalUserId) {
-      if (!input.contextOrgId || !(await deps.canAdminOrg({ ...auth, orgId: input.contextOrgId }))) {
+      if (!input.contextOrgId) return { ok: false, code: 'folder_scope_forbidden' };
+      const platformAdminRead = !write && !auth.apiOrgId && !!auth.actorUserId &&
+        await deps.isPlatformAdmin(auth);
+      if (!platformAdminRead && !(await deps.canAdminOrg({ ...auth, orgId: input.contextOrgId }))) {
         return { ok: false, code: 'folder_scope_forbidden' };
       }
     } else if (input.contextOrgId && !(await deps.canUsePersonalContext({
@@ -180,9 +184,11 @@ async function authorizeScope(
 
   const orgId = input.orgId ?? auth.apiOrgId;
   if (!orgId) return { ok: false, code: 'org_id_required' };
+  const platformAdminRead = !write && !auth.apiOrgId && !!auth.actorUserId &&
+    await deps.isPlatformAdmin(auth);
   const allowed = write
     ? await deps.canAdminOrgExact({ ...auth, orgId })
-    : await deps.canReadOrg({ ...auth, orgId });
+    : platformAdminRead || await deps.canReadOrg({ ...auth, orgId });
   if (!allowed) return { ok: false, code: 'folder_scope_forbidden' };
   return { ok: true, ownerUserId: null, orgId, contextOrgId: null };
 }

@@ -1,6 +1,7 @@
 # UAT-24 isolated database evidence
 
-This directory is a reproducible **minimal-fixture** proof for migration 0462.
+This directory is a reproducible **minimal-fixture** proof for migrations 0462
+and the additive SCRUM-5252 read-parity repair in 0464.
 It does not claim a full migration replay or a staging soak. The repository's
 complete native replay is currently blocked on the Homebrew Postgres instance
 because the baseline requires the Supabase `http` extension.
@@ -17,7 +18,9 @@ only the database it created when the run ends. It
 applies a small pre-0462 schema plus the actual canonical 0445 and 0365 migrations, seeds
 the legacy mixed-context edge, applies the exact candidate 0462 file, executes
 the dependency-ordered rollback, confirms the baseline row/assignment survived,
-restores 0445/0365, and reapplies the exact 0462 candidate before adverse assertions.
+restores 0445/0365, reapplies the exact 0462 candidate, and applies 0464 before
+the adverse assertions. Migration 0464 replaces only the service-role list RPC;
+its signature is unchanged, so generated database types have no delta.
 
 The bounded hosted full-schema feature probe is
 `scripts/staging/targeted/uat24-folder-feature-driver.ts`. Run it only after
@@ -43,6 +46,8 @@ The SQL assertions cover:
 
 - AAL1 denial and AAL2 owner access;
 - approved parent-admin contextual visibility and ordinary-member denial;
+- platform-admin contextual-personal and organization reads through the service
+  RPC, with global-personal, ordinary-member, platform-write, and API-key-bound denials;
 - preservation of global personal folders and their existing org records;
 - org-key denial for issuer-owned global and other-org folders/records;
 - org-only key exact-org list/create/update/move and API-key creator audit;

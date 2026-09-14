@@ -54,6 +54,72 @@ DO $$ DECLARE n int; BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'personal principal key cannot reach its global folder'; END IF;
 END $$;
 
+-- SCRUM-5252: platform authority is read-only and applies only to verified
+-- JWT actors. Global personal folders remain private through the REST/RPC
+-- contract, and an API key org remains the upper bound.
+DO $$ DECLARE failed boolean:=false; BEGIN
+  PERFORM set_config('request.jwt.claim.role','',true);
+  BEGIN
+    PERFORM public.folder_api_list(
+      '99999999-0000-4000-8000-000000000009',NULL,'USER',
+      '22222222-0000-4000-8000-000000000002',NULL,'bbbbbbbb-0000-4000-8000-000000000001');
+  EXCEPTION WHEN insufficient_privilege THEN failed:=true; END;
+  PERFORM set_config('request.jwt.claim.role','service_role',true);
+  IF NOT failed THEN RAISE EXCEPTION 'missing role claim reached service folder list'; END IF;
+END $$;
+
+DO $$ DECLARE n int; failed boolean:=false; created public.folders%ROWTYPE; BEGIN
+  SELECT count(*) INTO n FROM public.folder_api_list(
+    '99999999-0000-4000-8000-000000000009',NULL,'USER',
+    '22222222-0000-4000-8000-000000000002',NULL,'bbbbbbbb-0000-4000-8000-000000000001');
+  IF n <> 1 THEN RAISE EXCEPTION 'platform admin lost contextual personal folder read'; END IF;
+
+  SELECT count(*) INTO n FROM public.folder_api_list(
+    '99999999-0000-4000-8000-000000000009',NULL,'USER',
+    '22222222-0000-4000-8000-000000000002',NULL,NULL);
+  IF n <> 0 THEN RAISE EXCEPTION 'platform admin reached a global personal folder'; END IF;
+
+  SELECT count(*) INTO n FROM public.folder_api_list(
+    '99999999-0000-4000-8000-000000000009',NULL,'ORG',NULL,
+    'aaaaaaaa-0000-4000-8000-000000000001',NULL);
+  IF n <> 1 THEN RAISE EXCEPTION 'platform admin lost organization folder read'; END IF;
+
+  SELECT count(*) INTO n FROM public.folder_api_list(
+    '33333333-0000-4000-8000-000000000003',NULL,'USER',
+    '22222222-0000-4000-8000-000000000002',NULL,'bbbbbbbb-0000-4000-8000-000000000001');
+  IF n <> 0 THEN RAISE EXCEPTION 'ordinary member gained peer contextual folder read'; END IF;
+
+  SELECT count(*) INTO n FROM public.folder_api_list(
+    '99999999-0000-4000-8000-000000000009','aaaaaaaa-0000-4000-8000-000000000001','USER',
+    '22222222-0000-4000-8000-000000000002',NULL,'bbbbbbbb-0000-4000-8000-000000000001');
+  IF n <> 0 THEN RAISE EXCEPTION 'API key escaped its organization through platform authority'; END IF;
+
+  BEGIN
+    SELECT * INTO created FROM public.folder_api_create(
+      '99999999-0000-4000-8000-000000000009',NULL,NULL,'ORG',NULL,
+      'cccccccc-0000-4000-8000-000000000001',NULL,'Forbidden platform write',NULL);
+  EXCEPTION WHEN insufficient_privilege THEN failed:=true; END;
+  IF NOT failed THEN RAISE EXCEPTION 'platform read authority widened org writes'; END IF;
+
+  SELECT * INTO created FROM public.folder_api_update(
+    '99999999-0000-4000-8000-000000000009',NULL,
+    'f0000000-0000-4000-8000-000000000002','Forbidden rename',true,
+    NULL,false,NULL,NULL,NULL,false);
+  IF created.id IS NOT NULL OR EXISTS (
+    SELECT 1 FROM public.folders
+     WHERE id='f0000000-0000-4000-8000-000000000002' AND name='Forbidden rename'
+  ) THEN RAISE EXCEPTION 'platform read authority widened personal owner writes'; END IF;
+
+  SELECT * INTO created FROM public.folder_api_create(
+    '11111111-0000-4000-8000-000000000001',NULL,NULL,'ORG',NULL,
+    'aaaaaaaa-0000-4000-8000-000000000001',NULL,'Exact admin write baseline',NULL);
+  IF created.org_id IS DISTINCT FROM 'aaaaaaaa-0000-4000-8000-000000000001'::uuid THEN
+    RAISE EXCEPTION 'exact org admin write baseline regressed';
+  END IF;
+  PERFORM public.folder_api_delete(
+    '11111111-0000-4000-8000-000000000001',NULL,created.id);
+END $$;
+
 DO $$ DECLARE failed boolean:=false; n int; f public.folders%ROWTYPE; r jsonb; BEGIN
   SELECT count(*) INTO n FROM public.folder_api_list(
     NULL,'aaaaaaaa-0000-4000-8000-000000000001','ORG',NULL,

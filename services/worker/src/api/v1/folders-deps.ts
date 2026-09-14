@@ -24,6 +24,13 @@ async function userIsExactAdmin(db: DbLike, userId: string, orgId: string): Prom
   return !!data;
 }
 
+async function userIsPlatformAdmin(db: DbLike, userId: string): Promise<boolean> {
+  const { data, error } = await db.from('profiles')
+    .select('is_platform_admin').eq('id', userId).maybeSingle();
+  if (error) throw new Error('folder_authority_lookup_failed');
+  return data?.is_platform_admin === true;
+}
+
 async function userCanReadOrg(db: DbLike, userId: string, targetOrgId: string): Promise<boolean> {
   const { data: membership, error: memberError } = await db.from('org_members')
     .select('user_id').eq('user_id', userId).eq('org_id', targetOrgId).limit(1).maybeSingle();
@@ -78,6 +85,10 @@ export function createDefaultFolderApiDeps(db: DbLike = defaultDb): FolderApiDep
     async canAdminOrgExact(input) {
       if (input.apiOrgId) return input.apiOrgId === input.orgId;
       return !!input.actorUserId && userIsExactAdmin(db, input.actorUserId, input.orgId);
+    },
+    async isPlatformAdmin(input) {
+      if (input.apiOrgId || !input.actorUserId) return false;
+      return userIsPlatformAdmin(db, input.actorUserId);
     },
     async canUsePersonalContext(input) {
       const userId = principalUserId(input);

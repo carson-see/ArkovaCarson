@@ -37,6 +37,7 @@ created=true
 "$psql_bin" -X -v ON_ERROR_STOP=1 -d "$database" -f "$repo_root/supabase/migrations/0365_scrum2940_folders_table_and_anchor_link.sql"
 "$psql_bin" -X -v ON_ERROR_STOP=1 -d "$database" -f "$evidence_dir/native-after-rollback.sql"
 "$psql_bin" -X -v ON_ERROR_STOP=1 -d "$database" -f "$repo_root/supabase/migrations/0462_scrum5142_folder_hierarchy_authority.sql"
+"$psql_bin" -X -v ON_ERROR_STOP=1 -d "$database" -f "$repo_root/supabase/migrations/0464_scrum5252_platform_admin_folder_read_parity.sql"
 "$psql_bin" -X -v ON_ERROR_STOP=1 -d "$database" -f "$evidence_dir/native-assertions.sql"
 
 first_log="$(mktemp)"

@@ -1463,3 +1463,13 @@ filters here; if you need OR semantics across columns, run the terms separately 
 ## 2026-09-14 — SCRUM-5142 folder API
 
 `folders.ts` exposes one canonical CRUD/connector/bulk surface to JWT and API-key callers. `folders-deps.ts` sends every operation to service-role-only atomic RPCs; never replace those with read-then-write authorization. Organization keys are an upper bound, personal scope requires a verified user, and org-only keys are supported for exact-org operations with key-id creator attribution. `PUT` is required by the connector binding route and must remain in CORS preflight.
+
+## 2026-09-14 — SCRUM-5252 platform-admin folder read parity
+
+Platform-admin authority is a read-only exception in `folders.ts`: it applies
+only to a verified JWT actor with no API-key org bound. `folders-deps.ts`
+rechecks that exact actor against `profiles.is_platform_admin`; the service RPC
+checks it again. Never route this through `canAdminOrg`, `canAdminOrgExact`, or
+the shared SQL organization-administration helper, because those helpers also
+guard writes. Global personal folders remain private through REST; only an
+explicit organization-context personal folder gets the platform read path.

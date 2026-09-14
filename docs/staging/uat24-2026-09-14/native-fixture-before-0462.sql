@@ -25,7 +25,8 @@ CREATE TABLE public.organizations(
 CREATE TABLE public.profiles(
   id uuid PRIMARY KEY,
   org_id uuid REFERENCES public.organizations(id),
-  role text
+  role text,
+  is_platform_admin boolean NOT NULL DEFAULT false
 );
 CREATE TYPE public.org_member_role AS ENUM ('owner', 'admin', 'member', 'compliance_officer');
 CREATE TABLE public.org_members(
@@ -95,7 +96,7 @@ CREATE FUNCTION public.get_user_org_ids() RETURNS SETOF uuid LANGUAGE sql STABLE
   SELECT org_id FROM public.org_members WHERE user_id=auth.uid()
 $$;
 CREATE FUNCTION public.is_current_user_platform_admin() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$
-  SELECT EXISTS(SELECT 1 FROM public.profiles WHERE id=auth.uid() AND role='PLATFORM_ADMIN')
+  SELECT EXISTS(SELECT 1 FROM public.profiles WHERE id=auth.uid() AND is_platform_admin=true)
 $$;
 CREATE FUNCTION public.is_org_admin_of(target_org_id uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$
   SELECT EXISTS(SELECT 1 FROM public.org_members WHERE user_id=auth.uid() AND org_id=target_org_id AND role::text IN ('owner','admin','ORG_ADMIN'))
@@ -127,6 +128,8 @@ INSERT INTO public.profiles(id,org_id,role) VALUES
  ('11111111-0000-4000-8000-000000000001','aaaaaaaa-0000-4000-8000-000000000001','ORG_ADMIN'),
  ('22222222-0000-4000-8000-000000000002','bbbbbbbb-0000-4000-8000-000000000001','INDIVIDUAL'),
  ('33333333-0000-4000-8000-000000000003','bbbbbbbb-0000-4000-8000-000000000001','INDIVIDUAL');
+INSERT INTO public.profiles(id,org_id,role,is_platform_admin) VALUES
+ ('99999999-0000-4000-8000-000000000009',NULL,'INDIVIDUAL',true);
 INSERT INTO public.org_members(user_id,org_id,role) VALUES
  ('11111111-0000-4000-8000-000000000001','aaaaaaaa-0000-4000-8000-000000000001','owner'),
  ('22222222-0000-4000-8000-000000000002','bbbbbbbb-0000-4000-8000-000000000001','member'),

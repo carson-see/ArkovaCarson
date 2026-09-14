@@ -47,6 +47,7 @@ function deps(overrides: Partial<FolderApiDeps> = {}): FolderApiDeps {
     canReadOrg: vi.fn().mockResolvedValue(true),
     canAdminOrg: vi.fn().mockResolvedValue(true),
     canAdminOrgExact: vi.fn().mockResolvedValue(true),
+    isPlatformAdmin: vi.fn().mockResolvedValue(false),
     canUsePersonalContext: vi.fn().mockResolvedValue(true),
     emitFolderEvent: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -130,6 +131,72 @@ describe('UAT-24 folders API', () => {
     const res = await request(app(d)).get(`/folders?owner_scope=USER&owner_user_id=${ANCHOR_A}&context_org_id=${ORG}`);
     expect(res.status).toBe(403);
     expect(d.listFolders).not.toHaveBeenCalled();
+  });
+
+  it('allows a verified platform admin to read another user contextual folders', async () => {
+    const d = deps({
+      isPlatformAdmin: vi.fn().mockResolvedValue(true),
+      canAdminOrg: vi.fn().mockResolvedValue(false),
+    });
+    const res = await request(app(d)).get(
+      `/folders?owner_scope=USER&owner_user_id=${ANCHOR_A}&context_org_id=${ORG}`,
+    );
+    expect(res.status).toBe(200);
+    expect(d.listFolders).toHaveBeenCalledWith(expect.objectContaining({
+      actorUserId: USER, apiOrgId: null, ownerUserId: ANCHOR_A, contextOrgId: ORG,
+    }));
+  });
+
+  it('keeps another user global personal folders private from platform admins', async () => {
+    const d = deps({ isPlatformAdmin: vi.fn().mockResolvedValue(true) });
+    const res = await request(app(d)).get(`/folders?owner_scope=USER&owner_user_id=${ANCHOR_A}`);
+    expect(res.status).toBe(403);
+    expect(d.listFolders).not.toHaveBeenCalled();
+  });
+
+  it('allows a verified platform admin to read an organization folder tree', async () => {
+    const d = deps({
+      isPlatformAdmin: vi.fn().mockResolvedValue(true),
+      canReadOrg: vi.fn().mockResolvedValue(false),
+    });
+    const res = await request(app(d)).get(`/folders?owner_scope=ORG&org_id=${OTHER_ORG}`);
+    expect(res.status).toBe(200);
+    expect(d.listFolders).toHaveBeenCalledWith(expect.objectContaining({ orgId: OTHER_ORG }));
+  });
+
+  it('retains ordinary ancestor-admin contextual read authority', async () => {
+    const d = deps({
+      isPlatformAdmin: vi.fn().mockResolvedValue(false),
+      canAdminOrg: vi.fn().mockResolvedValue(true),
+    });
+    const res = await request(app(d)).get(
+      `/folders?owner_scope=USER&owner_user_id=${ANCHOR_A}&context_org_id=${ORG}`,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('does not treat platform read authority as exact-org write authority', async () => {
+    const d = deps({
+      isPlatformAdmin: vi.fn().mockResolvedValue(true),
+      canAdminOrgExact: vi.fn().mockResolvedValue(false),
+    });
+    const res = await request(app(d)).post('/folders')
+      .send({ name: 'Other tenant', owner_scope: 'ORG', org_id: OTHER_ORG });
+    expect(res.status).toBe(403);
+    expect(d.createFolder).not.toHaveBeenCalled();
+    expect(d.isPlatformAdmin).not.toHaveBeenCalled();
+  });
+
+  it('keeps an API key organization bound above a platform principal read', async () => {
+    const d = deps({
+      isPlatformAdmin: vi.fn().mockResolvedValue(true),
+      canReadOrg: vi.fn().mockResolvedValue(false),
+    });
+    const res = await request(app(d, { orgId: ORG, apiUserId: USER }))
+      .get(`/folders?owner_scope=ORG&org_id=${OTHER_ORG}`);
+    expect(res.status).toBe(403);
+    expect(d.listFolders).not.toHaveBeenCalled();
+    expect(d.isPlatformAdmin).not.toHaveBeenCalled();
   });
 
   it('checks exact membership before creating an own contextual personal folder', async () => {
