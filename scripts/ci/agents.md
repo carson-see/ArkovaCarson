@@ -926,6 +926,14 @@ so the declaration order the five order-sensitive mirrors must match is pinned
 by name, not only by count. SCRUM-3972 appends seven `suborg.*` entries after
 these — declared land order is 3982 then 3972.
 
+## 2026-09-14 — SCRUM-5203: Zapier CI failure propagation
+
+The CI workflow contract now requires the standalone Zapier clean-build step
+in the required Tests aggregate. It runs the actual workflow shell body with
+each npm phase failing in turn and verifies nonzero propagation and early stop.
+Real package clean installation, tests, build and local CLI validation are
+separate release receipts; the shell controls do not replace them.
+
 ## SCRUM-3982 CTO review — the drift test's tail assertion (2026-09-12)
 
 `check-webhook-event-registration-drift.test.ts` asserted the registry's last

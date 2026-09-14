@@ -844,3 +844,11 @@ Manager entry, add `CLOUDFLARE_ORIGIN_SECRET=cloudflare-origin-secret:latest` to
 add `cloudflare-origin-secret` to the preflight loop's `for secret in ...` list, and only then flip
 `CLOUDFLARE_ORIGIN_GUARD_MODE`. Full rollout/rollback procedure:
 `docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`.
+
+## 2026-09-14 — SCRUM-5203: required Zapier clean-build verification
+
+The required Tests job now executes the standalone Zapier npm ci, 24 functional
+tests, build and local CLI structural validation under Node22. The bounded
+10-minute step runs even after another suite fails and participates in the
+existing aggregate outcomes. Root dependency installation cannot prove this
+package's lock is complete. No step publishes a Zap or calls real Arkova APIs.
