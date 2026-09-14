@@ -771,7 +771,7 @@ describe("deploy-worker.yml zk circuit artifact cache survives a key rotation", 
 });
 
 function zapierValidationStep(workflow: string): string {
-  const testsJob = workflow.match(/^  test:\n([\s\S]*?)(?=^  [a-z][a-z0-9_-]*:|$(?![\s\S]))/mu)?.[0] ?? "";
+  const testsJob = workflow.match(/^ {2}test:\n([\s\S]*?)(?=^ {2}[a-z][a-z0-9_-]*:|$(?![\s\S]))/mu)?.[0] ?? "";
   expect(testsJob).toMatch(/node-version: ['"]22['"]/u);
   const steps = workflowSteps(testsJob);
   const validation = steps.filter((step) => /^\s+id: zapier-validation$/mu.test(step));
@@ -790,7 +790,7 @@ function zapierValidationStep(workflow: string): string {
 function shellBody(step: string): string {
   const raw = step.split(/\n\s+run: \|\n/u)[1];
   expect(raw).toBeDefined();
-  return raw.split("\n").map((line) => line.replace(/^          /u, "")).join("\n");
+  return raw.split("\n").map((line) => line.replace(/^ {10}/u, "")).join("\n");
 }
 
 describe("Zapier required clean-build contract", () => {
