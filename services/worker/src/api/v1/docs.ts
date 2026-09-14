@@ -33,12 +33,21 @@ const ANCHOR_SUBMIT_REQUEST_BODY = {
     'application/json': {
       schema: {
         type: 'object',
-        required: ['fingerprint', 'label'],
+        required: ['fingerprint'],
         properties: {
           fingerprint: { type: 'string', description: 'SHA-256 document fingerprint (64-char hex)', pattern: '^[a-f0-9]{64}$' },
-          label: { type: 'string', description: 'Human-readable credential label' },
+          description: { type: 'string', maxLength: 1000, description: 'Private document description' },
           credential_type: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
-          metadata: { type: 'object', description: 'PII-stripped metadata fields', additionalProperties: { type: 'string' } },
+          action: { type: 'string', enum: ['queue', 'instant'], default: 'queue', description: 'Queue for batch anchoring or reserve one anchor credit to start now' },
+          private_tags: {
+            type: 'object',
+            description: 'Private tags; never included in public records or webhook payloads',
+            properties: {
+              user: { type: 'array', maxItems: 10, items: { type: 'string', minLength: 1, maxLength: 64 } },
+              organization: { type: 'array', maxItems: 10, items: { type: 'string', minLength: 1, maxLength: 64 } },
+            },
+          },
+          metadata: { type: 'object', description: 'PII-stripped metadata fields', additionalProperties: true },
         },
       },
     },
@@ -47,7 +56,7 @@ const ANCHOR_SUBMIT_REQUEST_BODY = {
 
 const ANCHOR_SUBMIT_RESPONSES = {
   '200': { description: 'Anchor already exists (idempotent)', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string' }, already_exists: { type: 'boolean' } } } } } },
-  '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] } } } } } },
+  '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] }, action: { type: 'string', enum: ['queue', 'instant'] }, credit_state: { type: 'string', enum: ['pending', 'spent', 'refunded'], nullable: true }, instant_status: { type: 'string', nullable: true } } } } } },
   '400': { $ref: '#/components/responses/BadRequest' },
   '401': { $ref: '#/components/responses/Unauthorized' },
   '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
@@ -843,6 +852,39 @@ export const openApiSpec: Record<string, any> = {
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         requestBody: ANCHOR_SUBMIT_REQUEST_BODY,
         responses: ANCHOR_SUBMIT_RESPONSES,
+      },
+    },
+    '/anchor-credits/status': {
+      get: {
+        summary: 'Get anchor-credit capability and exact selected-pool balance',
+        operationId: 'getAnchorCreditStatus',
+        tags: ['Anchoring'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'org_id', in: 'query', schema: { type: 'string', format: 'uuid' }, description: 'Selected organization or sub-organization pool; membership is checked exactly' },
+          { name: 'scope', in: 'query', schema: { type: 'string', enum: ['user'] }, description: 'Use the caller personal pool' },
+        ],
+        responses: {
+          '200': { description: 'Current capability and balance', content: { 'application/json': { schema: { type: 'object', properties: { canSecureInstantly: { type: 'boolean' }, creditBalance: { type: 'integer' }, instantSecureCost: { type: 'integer', enum: [1] }, scope: { type: 'string', enum: ['user', 'organization'] }, canPurchase: { type: 'boolean' }, purchaseGuidance: { type: 'string', nullable: true } } } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'Caller cannot access the selected credit pool' },
+        },
+      },
+    },
+    '/anchor-credits/purchase': {
+      post: {
+        summary: 'Purchase anchor credits for the selected pool',
+        description: 'Creates a card-only one-time Checkout session at $2 USD per anchor credit. Organization purchases require administrator authority for that exact organization or sub-organization.',
+        operationId: 'purchaseAnchorCredits',
+        tags: ['Anchoring'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['quantity'], properties: { quantity: { type: 'integer', minimum: 1, maximum: 1000 }, org_id: { type: 'string', format: 'uuid', nullable: true, description: 'Exact target organization pool, or null for the caller personal pool' } } } } } },
+        responses: {
+          '200': { description: 'Checkout session created', content: { 'application/json': { schema: { type: 'object', properties: { sessionId: { type: 'string' }, url: { type: 'string', format: 'uri' }, quantity: { type: 'integer' }, unitPriceCents: { type: 'integer', enum: [200] }, currency: { type: 'string', enum: ['usd'] }, scope: { type: 'string', enum: ['user', 'organization'] } } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'Organization administrator authority is required for the selected pool' },
+        },
       },
     },
     '/attestations': {

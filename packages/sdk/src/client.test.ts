@@ -114,6 +114,24 @@ describe('anchor', () => {
     await expect(client.anchor('test')).rejects.toThrow(ArkovaError);
     await expect(client.anchor('test')).rejects.toThrow('Invalid fingerprint');
   });
+
+  it('sends description, private tags, and explicit instant action', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({
+      public_id: 'ARK-1', fingerprint: 'a'.repeat(64), status: 'PENDING', created_at: '2026-01-01T00:00:00Z',
+      action: 'instant', instant_status: 'QUEUED',
+    }) });
+    const result = await client.anchor('data', {
+      description: 'Quarterly agreement', action: 'instant',
+      privateTags: { user: ['legal'], organization: ['q3'] },
+    });
+    const options = mockFetch.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(options.body))).toMatchObject({
+      description: 'Quarterly agreement', action: 'instant',
+      private_tags: { user: ['legal'], organization: ['q3'] },
+    });
+    expect(result.instantStatus).toBe('QUEUED');
+  });
 });
 
 describe('anchorBulk', () => {

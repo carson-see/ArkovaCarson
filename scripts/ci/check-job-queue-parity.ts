@@ -267,6 +267,23 @@ export function scanJobQueueUsage(files: ReadonlyMap<string, string>): JobQueueS
 
   for (const [file, source] of files) {
     if (isExcludedFile(file)) continue;
+    if (file.endsWith('.sql')) {
+      const directive = /^\s*--\s*job-queue-producer:\s*([a-z0-9._-]+)\s*$/gim;
+      for (const match of source.matchAll(directive)) {
+        const type = match[1] ?? null;
+        const tail = source.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 1_200);
+        const provesAtomicInsert = type !== null
+          && /INSERT\s+INTO\s+(?:public\.)?job_queue\s*\(/i.test(tail)
+          && tail.includes(`'${type}'`);
+        scan.producers.push({
+          type: provesAtomicInsert ? type : null,
+          expression: match[0].trim(),
+          file,
+          line: source.slice(0, match.index).split('\n').length,
+        });
+      }
+      continue;
+    }
     const sourceFile = parse(file, source);
 
     forEachNode(sourceFile, (node) => {
@@ -453,6 +470,15 @@ export function loadWorkerSources(root: string = REPO): Map<string, string> {
   };
 
   walk(srcRoot);
+  const migrationsRoot = join(root, 'supabase/migrations');
+  for (const entry of readdirSync(migrationsRoot)) {
+    if (!entry.endsWith('.sql')) continue;
+    const full = join(migrationsRoot, entry);
+    const source = readFileSync(full, 'utf8');
+    if (source.includes('job-queue-producer:')) {
+      files.set(relative(root, full).split(sep).join('/'), source);
+    }
+  }
   return files;
 }
 

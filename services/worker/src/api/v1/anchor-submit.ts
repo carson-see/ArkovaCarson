@@ -16,11 +16,11 @@ import {
   ANCHOR_CREDENTIAL_TYPES,
   hasPublicCredentialEvidenceMetadataKeys,
   parsePublicCredentialEvidenceMetadataResult,
+  PUBLIC_CREDENTIAL_EVIDENCE_METADATA_KEYS,
   stripClientUnassertableEvidenceClaims,
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
 import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
@@ -31,6 +31,8 @@ import {
   isProfessionalEducationSchemaReady,
   professionalEducationSchemaUnavailableBody,
 } from '../../utils/professionalEducationSchemaGate.js';
+import { config } from '../../config.js';
+import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 
 const router = Router();
 
@@ -43,6 +45,19 @@ export const AnchorSubmitSchema = z.object({
   fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
   credential_type: z.enum(ANCHOR_CREDENTIAL_TYPES).optional(),
   description: z.string().max(1000).optional(),
+  filename: z.string().trim().min(1).max(255).optional(),
+  file_size: z.number().int().positive().optional(),
+  file_mime: z.string().trim().max(255).optional(),
+  action: z.enum(['queue', 'instant']).optional().default('queue'),
+  private_tags: z.object({
+    user: z.array(z.string().trim().min(1).max(64)).max(10).optional().default([]),
+    organization: z.array(z.string().trim().min(1).max(64)).max(10).optional().default([]),
+  }).strict().superRefine((tags, ctx) => {
+    for (const [scope, values] of Object.entries(tags)) {
+      const normalized = values.map((value) => value.toLocaleLowerCase());
+      if (new Set(normalized).size !== normalized.length) ctx.addIssue({ code: 'custom', path: [scope], message: 'tags must be unique ignoring case' });
+    }
+  }).optional(),
   metadata: z.record(z.string().regex(SAFE_METADATA_KEY, 'metadata keys must match [a-zA-Z0-9_.-]+'), z.unknown()).optional(),
 }).strict();
 
@@ -54,6 +69,38 @@ interface AnchorReceipt {
   status: 'PENDING';
   created_at: string;
   record_uri: string;
+  action: 'queue' | 'instant';
+  credit_state: 'pending' | 'spent' | 'refunded' | null;
+  instant_status?: string | null;
+  idempotent?: boolean;
+}
+
+interface AtomicSubmissionResult {
+  success?: boolean; error?: string; id?: string; public_id?: string | null;
+  fingerprint?: string; status?: string; created_at?: string;
+  credential_type?: string | null; metadata?: unknown;
+  intent_id?: string | null;
+}
+function unwrapRpcResult(data: unknown): AtomicSubmissionResult {
+  const value = Array.isArray(data) ? data[0] : data;
+  return value && typeof value === 'object' ? value as AtomicSubmissionResult : {};
+}
+
+const DASHBOARD_PRIVATE_METADATA_KEYS = new Set([
+  'recipient', 'email', 'phone', 'phone_number', 'ssn', 'social_security',
+  'student_id', 'student_number', 'address', 'street_address', 'home_address',
+  'mailing_address', 'dob', 'date_of_birth', 'birthday', 'national_id',
+  'passport_number', 'drivers_license', 'private_tags', 'user_tags', 'org_tags',
+]);
+
+/** Preserve the dashboard's existing PII-stripped extraction/fraud metadata. */
+function dashboardMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!metadata) return {};
+  return Object.fromEntries(Object.entries(metadata).filter(([key]) =>
+    !key.startsWith('_')
+    && !DASHBOARD_PRIVATE_METADATA_KEYS.has(key.toLowerCase())
+    && !PUBLIC_CREDENTIAL_EVIDENCE_METADATA_KEYS.has(key)
+  ));
 }
 
 async function consumeAnchorCreateQuota(
@@ -94,6 +141,15 @@ async function handleAnchorSubmit(req: Request, res: Response) {
     return;
   }
   const body: AnchorSubmitRequest = parsed.data;
+  const scopedOrgId = req.apiKey.orgId?.trim() || null;
+  if (body.action === 'instant' && !config.enableInstantSecure) {
+    res.status(503).json({ error: 'instant_secure_unavailable', message: 'Instant securing is temporarily unavailable. Add this document to the queue instead.' });
+    return;
+  }
+  if ((body.private_tags?.organization.length ?? 0) > 0 && !scopedOrgId) {
+    res.status(400).json({ error: 'organization_required', message: 'Organization tags require an organization.' });
+    return;
+  }
 
   // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
   // No-op for every org without a policy row. Runs on the RAW body (so a field
@@ -101,7 +157,7 @@ async function handleAnchorSubmit(req: Request, res: Response) {
   // that lookup answers 200 for an existing fingerprint, which would otherwise
   // let a prohibited field through on any re-submission.
   if (!(await enforceOrgFieldPolicy({
-    orgId: req.apiKey.orgId ?? null,
+    orgId: scopedOrgId,
     body: req.body,
     res,
     scope: 'anchor-submit',
@@ -128,7 +184,7 @@ async function handleAnchorSubmit(req: Request, res: Response) {
   if (clientAssertableCredentialEvidenceMetadata?.stripped.length) {
     logger.warn(
       {
-        orgId: req.apiKey.orgId,
+        orgId: scopedOrgId ?? undefined,
         keyId: req.apiKey.keyId,
         stripped: clientAssertableCredentialEvidenceMetadata.stripped,
         attemptedVerificationLevel: parsedCredentialEvidenceMetadata.ok
@@ -173,21 +229,31 @@ async function handleAnchorSubmit(req: Request, res: Response) {
 
   try {
     // Check for duplicate fingerprint (idempotent — return existing if already anchored)
-    const { data: existing } = await db
-      .from('anchors')
-      .select('public_id, fingerprint, status, created_at')
+    let existingQuery = db.from('anchors')
+      .select('id, public_id, fingerprint, status, created_at')
       .eq('fingerprint', fingerprint)
-      .is('deleted_at', null)
-      .maybeSingle();
+      .eq('user_id', req.apiKey.userId)
+      .is('deleted_at', null);
+    existingQuery = scopedOrgId ? existingQuery.eq('org_id', scopedOrgId) : existingQuery.is('org_id', null);
+    const { data: existing } = await existingQuery.maybeSingle();
 
     if (existing) {
+      let instantStatus: string | null = null;
+      if (body.action === 'instant' && existing.status === 'PENDING') {
+        const { data, error } = await db.rpc('enqueue_existing_anchor_instant_intent' as never, {
+          p_anchor_id: existing.id, p_user_id: req.apiKey.userId, p_org_id: scopedOrgId,
+          p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
+        } as never);
+        const intent = unwrapRpcResult(data);
+        if (error || !intent.success) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
+        instantStatus = intent.status ?? 'QUEUED';
+      }
       const existingPublicId = existing.public_id ?? '';
       const receipt: AnchorReceipt = {
-        public_id: existingPublicId,
-        fingerprint: existing.fingerprint,
-        status: 'PENDING',
-        created_at: existing.created_at,
-        record_uri: buildVerifyUrl(existingPublicId),
+        public_id: existingPublicId, fingerprint: existing.fingerprint,
+        status: existing.status as AnchorReceipt['status'], created_at: existing.created_at,
+        record_uri: buildVerifyUrl(existingPublicId), action: body.action, credit_state: null,
+        instant_status: instantStatus, idempotent: true,
       };
       res.status(200).json(receipt);
       return;
@@ -202,7 +268,7 @@ async function handleAnchorSubmit(req: Request, res: Response) {
     const publicId = `ARK-${new Date().getFullYear()}-${shortId}`;
 
     // Get org_id from API key
-    const orgId = req.apiKey.orgId ?? null;
+    const orgId = scopedOrgId;
 
     // SCRUM-1667 — sub-org suspension guard, gated by
     // ENABLE_ORG_SUSPENSION_GUARD (default off). Off → no-op so existing
@@ -233,71 +299,59 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       return;
     }
 
-    // credential_type already validated by Zod enum; defaults to 'OTHER'.
+    // The RPC commits anchor + private tags + optional instant intent/job as one unit.
     const credentialType = body.credential_type ?? 'OTHER';
-    const insertPayload = {
-      fingerprint,
-      public_id: publicId,
-      status: 'PENDING' as const,
-      org_id: orgId,
-      user_id: req.apiKey.userId,
-      filename: `api-${fingerprint.slice(0, 12)}`,
-      credential_type: credentialType,
-      description: body.description ?? null,
-      ...(publicSafeCredentialEvidenceMetadata ? { metadata: publicSafeCredentialEvidenceMetadata } : {}),
+    const metadata = {
+      ...(req.apiKey.keyPrefix === 'jwt-session' ? dashboardMetadata(body.metadata) : {}),
+      ...(publicSafeCredentialEvidenceMetadata ?? {}),
+      securing_path: body.action,
     };
-    const { data: anchor, error: insertError } = await db
-      .from('anchors')
-      .insert(insertPayload)
-      .select('id, public_id, fingerprint, status, created_at, credential_type, metadata')
-      .single();
-
-    if (insertError) {
-      handleInsertError(insertError, orgId, res);
-      return;
+    let anchor: AtomicSubmissionResult;
+    let insertError: unknown = null;
+    if (body.action === 'queue' && !body.private_tags) {
+      const inserted = await db.from('anchors').insert({
+        fingerprint, public_id: publicId, status: 'PENDING' as const, org_id: orgId,
+        user_id: req.apiKey.userId, filename: body.filename ?? `api-${truncateUtf16Safe(fingerprint, 12)}`,
+        file_size: body.file_size ?? null, file_mime: body.file_mime ?? null,
+        credential_type: credentialType, description: body.description ?? null, metadata,
+        fingerprint_source: req.apiKey.keyPrefix === 'jwt-session' ? 'document_bytes' : null,
+      }).select('id, public_id, fingerprint, status, created_at, credential_type, metadata').single();
+      insertError = inserted.error;
+      anchor = inserted.data ? { ...inserted.data, success: true } : {};
+    } else {
+      const inserted = await db.rpc('create_anchor_submission' as never, {
+        p_fingerprint: fingerprint, p_public_id: publicId, p_user_id: req.apiKey.userId, p_org_id: orgId,
+        p_filename: body.filename ?? `api-${truncateUtf16Safe(fingerprint, 12)}`,
+        p_file_size: body.file_size ?? null, p_file_mime: body.file_mime ?? null,
+        p_credential_type: credentialType, p_description: body.description ?? null, p_metadata: metadata,
+        p_fingerprint_source: req.apiKey.keyPrefix === 'jwt-session' ? 'document_bytes' : null,
+        p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
+        p_action: body.action,
+      } as never);
+      insertError = inserted.error;
+      anchor = unwrapRpcResult(inserted.data);
     }
-
-    // SCRUM-1170-B / SCRUM-2970 — org-credit deduction, insert-then-deduct.
-    // The helper short-circuits to allowed=true when
-    // ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so existing API-key
-    // paths without per-org credit setup are unaffected. The reference_id is
-    // the just-inserted anchor row's id (repo pattern per
-    // credential-sources.ts): a fresh uuid per anchoring event, so a
-    // soft-delete + re-anchor is a NEW billable event, while an HTTP retry
-    // of the same logical request is absorbed by the dedup lookup above
-    // before ever reaching this gate. On deduct failure (402/503 already
-    // written by the gate), compensate by hard-deleting the never-paid row.
-    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res, anchor.id))) {
-      const { error: compensationError } = await db.from('anchors').delete().eq('id', anchor.id);
-      if (compensationError) {
-        // The row exists but was never paid for — surface loudly. NOTE:
-        // this unpaid PENDING row CAN still be batch-anchored on-chain
-        // (batch-anchor.ts queueRunCreditReason() returns null for non-rule
-        // anchors, so the drain does not re-check credits) — Arkova eats
-        // the fee. Bounded operational risk (requires a compensation-delete
-        // failure or a crash in the insert→deduct window); reconciliation
-        // sweep tracked as SCRUM-2973.
-        logger.error(
-          { anchorId: anchor.id, orgId },
-          'anchor_credit_compensation_delete_failed',
-        );
-      }
+    if (insertError || !anchor.success) {
+      handleInsertError(insertError ?? { code: anchor.error === 'duplicate' ? '23505' : undefined }, orgId, res);
       return;
     }
 
     const receipt: AnchorReceipt = {
       public_id: anchor.public_id ?? publicId,
-      fingerprint: anchor.fingerprint,
-      status: 'PENDING',
-      created_at: anchor.created_at,
+      fingerprint: anchor.fingerprint ?? fingerprint,
+      status: (anchor.status ?? 'PENDING') as AnchorReceipt['status'],
+      created_at: anchor.created_at ?? new Date().toISOString(),
       record_uri: buildVerifyUrl(anchor.public_id ?? publicId),
+      action: body.action,
+      credit_state: body.action === 'instant' ? 'pending' : null,
+      instant_status: body.action === 'instant' ? 'QUEUED' : null,
     };
 
     logger.info({ publicId }, 'Anchor submitted via API');
     enqueueProfessionalEducationExtraction({
-      id: anchor.id,
+      id: anchor.id ?? undefined,
       public_id: anchor.public_id ?? publicId,
-      fingerprint: anchor.fingerprint,
+      fingerprint: anchor.fingerprint ?? fingerprint,
       credential_type: anchor.credential_type ?? credentialType,
       org_id: orgId,
       user_id: req.apiKey.userId,

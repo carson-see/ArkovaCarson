@@ -33,6 +33,8 @@ import { proofKeysRouter } from './api/proof-keys.js';
 // Extracted routers (ARCH-1)
 import { emailConfirmationRouter } from './routes/email-confirmation-runtime.js';
 import { billingRouter } from './routes/billing.js';
+import { anchorCreditPurchaseRouter } from './routes/anchor-credit-purchase.js';
+import { anchorSelfServiceRouter } from './routes/anchor-self-service.js';
 import { anchorRouter } from './routes/anchor.js';
 import { adminRouter } from './routes/admin.js';
 import { cronRouter } from './routes/cron.js';
@@ -483,6 +485,8 @@ app.use('/api/v1/verify', publicVerifyAnonLimiter);
 // `middleware/apiIpShadowGuard.ts` with the full writeup.
 app.use('/api', apiIpShadowGuard, badgeRouter); // /api/badge/:publicId
 app.use('/api/auth/email-confirmation', rateLimiters.api, emailConfirmationRouter);
+app.use('/api/v1/anchor-credits', anchorCreditPurchaseRouter);
+app.use('/api/v1/anchor-self-service', rateLimiters.api, requireAuthMw, anchorSelfServiceRouter);
 app.use('/api', billingRouter);    // /api/checkout/session, /api/billing/portal
 app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/account
 app.use('/api', adminRouter);      // /api/treasury/*, /api/admin/*
