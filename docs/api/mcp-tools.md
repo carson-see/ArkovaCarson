@@ -70,7 +70,8 @@ Globally personal folders have no `context_org_id` and remain owner-private;
 authorized administrators can view personal folders only when the folder has an
 explicit approved organization context.
 
-Bulk moves accept one to 100 `anchor_ids`, preserve successful rows when other
+Bulk moves accept one to 100 internal `anchor_ids` or API-visible
+`record_public_ids`, preserve the caller's identifier in each outcome, and keep successful rows when other
 rows fail, and return partial results inside the MCP tool response. Omit
 `folder_id` to move records to Unfiled. Connector bindings require `provider`,
 `source_id`, and an active same-scope `connection_id`; omit the three values to

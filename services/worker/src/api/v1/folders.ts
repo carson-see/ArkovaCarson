@@ -48,6 +48,23 @@ export interface BulkMoveResult {
   folderPublicId?: string | null;
 }
 
+export function remapPublicIdMoveResult(
+  requested: string[], resolved: Array<{ id: string; public_id: string }>,
+  raw: { moved?: string[]; failed?: BulkMoveResult['failed']; event_org_id?: string; folder_public_id?: string },
+): BulkMoveResult {
+  const publicIdByAnchorId = new Map(resolved.map((row) => [row.id, row.public_id]));
+  const resolvedPublicIds = new Set(resolved.map((row) => row.public_id));
+  return {
+    moved: (raw.moved ?? []).map((id) => publicIdByAnchorId.get(id)).filter((id): id is string => !!id),
+    failed: [...(raw.failed ?? []).map((row) => ({
+      ...row, anchor_id: publicIdByAnchorId.get(row.anchor_id) ?? 'unresolved_public_id',
+    })), ...requested.filter((id) => !resolvedPublicIds.has(id))
+      .map((id) => ({ anchor_id: id, code: 'not_authorized_or_not_found' }))],
+    eventOrgId: raw.event_org_id ?? null,
+    folderPublicId: raw.folder_public_id ?? null,
+  };
+}
+
 export interface FolderApiDeps {
   listFolders(input: FolderAccessInput): Promise<FolderRow[]>;
   createFolder(input: FolderAccessInput & {
@@ -63,7 +80,9 @@ export interface FolderApiDeps {
     connectorConnectionId?: string | null;
   }): Promise<FolderRow | null>;
   deleteFolder(input: FolderActor & { folderId: string }): Promise<FolderRow | null>;
-  bulkMove(input: FolderActor & { anchorIds: string[]; folderId: string | null }): Promise<BulkMoveResult>;
+  bulkMove(input: FolderActor & {
+    anchorIds?: string[]; recordPublicIds?: string[]; folderId: string | null;
+  }): Promise<BulkMoveResult>;
   canReadOrg(input: FolderActor & { orgId: string }): Promise<boolean>;
   canAdminOrg(input: FolderActor & { orgId: string }): Promise<boolean>;
   canAdminOrgExact(input: FolderActor & { orgId: string }): Promise<boolean>;
@@ -102,9 +121,13 @@ const ConnectorBody = z.object({
   message: 'provider, source_id, and connection_id must all be set or all be null',
 });
 const BulkMoveBody = z.object({
-  anchor_ids: z.array(Uuid).min(1).max(100),
+  anchor_ids: z.array(Uuid).min(1).max(100).optional(),
+  record_public_ids: z.array(z.string().regex(/^ARK-[A-Za-z0-9][A-Za-z0-9_-]{0,123}$/))
+    .min(1).max(100).optional(),
   folder_id: Uuid.nullable(),
-}).strict();
+}).strict().refine((body) => Number(!!body.anchor_ids) + Number(!!body.record_public_ids) === 1, {
+  message: 'provide exactly one of anchor_ids or record_public_ids',
+});
 
 export function actor(req: Request): FolderActor | null {
   if (req.authUserId) {
@@ -263,7 +286,11 @@ export function createFoldersRouter(deps: FolderApiDeps): Router {
     const parsed = BulkMoveBody.safeParse(req.body);
     if (!parsed.success) return badRequest(res, parsed);
     const result = await deps.bulkMove({
-      ...actor(req)!, anchorIds: [...new Set(parsed.data.anchor_ids)], folderId: parsed.data.folder_id,
+      ...actor(req)!,
+      ...(parsed.data.anchor_ids ? { anchorIds: [...new Set(parsed.data.anchor_ids)] } : {}),
+      ...(parsed.data.record_public_ids
+        ? { recordPublicIds: [...new Set(parsed.data.record_public_ids)] } : {}),
+      folderId: parsed.data.folder_id,
     });
     if (result.moved.length > 0) {
       await deps.emitFolderEvent('record.folder_changed', result.eventOrgId ?? null, {

@@ -280,6 +280,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         source_id: { type: 'string', description: 'Opaque connector source destination identifier.' },
         connection_id: { type: 'string', description: 'Active connector connection UUID.' },
         anchor_ids: { type: 'string', description: 'JSON array of one to 100 record UUIDs for bulk_move.' },
+        record_public_ids: { type: 'string', description: 'JSON array of one to 100 API-visible record public ids for bulk_move.' },
       },
       required: ['action'],
     },
@@ -533,10 +534,14 @@ async function handleManageFolders(args: Record<string, string>): Promise<McpToo
   } else if (action === 'delete') {
     method = 'DELETE'; path += `/${encodeURIComponent(args.folder_id ?? '')}`;
   } else if (action === 'bulk_move') {
-    let anchorIds: unknown;
-    try { anchorIds = JSON.parse(args.anchor_ids ?? ''); } catch { return errorResult('anchor_ids must be a JSON array.'); }
+    if (!!args.anchor_ids === !!args.record_public_ids) return errorResult('Provide exactly one record id list.');
+    let recordIds: unknown;
+    try { recordIds = JSON.parse(args.record_public_ids ?? args.anchor_ids ?? ''); }
+    catch { return errorResult('Record ids must be a JSON array.'); }
     method = 'POST'; path += '/bulk-move';
-    body = { anchor_ids: anchorIds, folder_id: args.folder_id || null };
+    body = args.record_public_ids
+      ? { record_public_ids: recordIds, folder_id: args.folder_id || null }
+      : { anchor_ids: recordIds, folder_id: args.folder_id || null };
   } else {
     return errorResult('Unknown folder action.');
   }

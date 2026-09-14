@@ -489,6 +489,17 @@
             "minItems": 1,
             "maxItems": 100,
             "description": "One to 100 record UUIDs for bulk_move."
+          },
+          "record_public_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^ARK-",
+              "description": "API-visible record public id."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "One to 100 public record ids for bulk_move; outcomes preserve these ids."
           }
         },
         "required": [

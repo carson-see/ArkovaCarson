@@ -1,7 +1,7 @@
 import express, { type Request } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createFoldersRouter, type FolderApiDeps } from './folders.js';
+import { createFoldersRouter, remapPublicIdMoveResult, type FolderApiDeps } from './folders.js';
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const ORG = '22222222-2222-4222-8222-222222222222';
@@ -155,6 +155,43 @@ describe('UAT-24 folders API', () => {
     const res = await request(app(d)).post('/folders/bulk-move').send({ anchor_ids: [ANCHOR_A, ANCHOR_B], folder_id: FOLDER });
     expect(res.status).toBe(207);
     expect(res.body).toEqual({ moved: [ANCHOR_A], failed: [{ anchor_id: ANCHOR_B, code: 'not_authorized' }] });
+  });
+
+  it('accepts public record ids and preserves them in the dependency contract', async () => {
+    const d = deps({ bulkMove: vi.fn().mockResolvedValue({
+      moved: ['ARK-2026-ABC12345'], failed: [{ anchor_id: 'ARK-2026-MISSING1', code: 'not_authorized_or_not_found' }],
+    }) });
+    const res = await request(app(d)).post('/folders/bulk-move').send({
+      record_public_ids: ['ARK-2026-ABC12345', 'ARK-2026-MISSING1'], folder_id: FOLDER,
+    });
+    expect(res.status).toBe(207);
+    expect(d.bulkMove).toHaveBeenCalledWith(expect.objectContaining({
+      recordPublicIds: ['ARK-2026-ABC12345', 'ARK-2026-MISSING1'],
+    }));
+    expect(JSON.stringify(res.body)).not.toContain(ANCHOR_A);
+  });
+
+  it('maps public-id outcomes without leaking resolved UUIDs', () => {
+    const result = remapPublicIdMoveResult(
+      ['ARK-2026-A', 'ARK-2026-B', 'ARK-2026-MISSING'],
+      [{ id: ANCHOR_A, public_id: 'ARK-2026-A' }, { id: ANCHOR_B, public_id: 'ARK-2026-B' }],
+      { moved: [ANCHOR_A], failed: [{ anchor_id: ANCHOR_B, code: 'not_authorized_or_not_found' }] },
+    );
+    expect(result).toMatchObject({ moved: ['ARK-2026-A'], failed: [
+      { anchor_id: 'ARK-2026-B', code: 'not_authorized_or_not_found' },
+      { anchor_id: 'ARK-2026-MISSING', code: 'not_authorized_or_not_found' },
+    ] });
+    expect(JSON.stringify(result)).not.toContain(ANCHOR_A);
+    expect(JSON.stringify(result)).not.toContain(ANCHOR_B);
+  });
+
+  it('rejects ambiguous UUID and public-id bulk inputs', async () => {
+    const d = deps();
+    const res = await request(app(d)).post('/folders/bulk-move').send({
+      anchor_ids: [ANCHOR_A], record_public_ids: ['ARK-2026-ABC12345'], folder_id: FOLDER,
+    });
+    expect(res.status).toBe(400);
+    expect(d.bulkMove).not.toHaveBeenCalled();
   });
 
   it('rejects bulk requests over 100 before any write', async () => {

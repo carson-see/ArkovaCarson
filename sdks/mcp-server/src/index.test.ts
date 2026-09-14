@@ -73,6 +73,12 @@ describe('Tool Definitions', () => {
     expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining('/api/v1/folders/bulk-move'), expect.objectContaining({
       method: 'POST', body: JSON.stringify({ anchor_ids: ['aaaaaaaa-0000-4000-8000-000000000001'], folder_id: null }),
     }));
+
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ moved: ['ARK-2026-ABC12345'], failed: [] }), { status: 200 }));
+    await handleToolCall('arkova_manage_folders', { action: 'bulk_move', record_public_ids: '["ARK-2026-ABC12345"]' });
+    expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining('/api/v1/folders/bulk-move'), expect.objectContaining({
+      body: JSON.stringify({ record_public_ids: ['ARK-2026-ABC12345'], folder_id: null }),
+    }));
   });
 
   it('should have valid input schemas', () => {

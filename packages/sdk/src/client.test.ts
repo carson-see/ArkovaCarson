@@ -1420,6 +1420,14 @@ describe('folders namespace', () => {
     const result = await new Arkova({ apiKey: 'ak_test' }).folders.moveRecords(['anchor-a', 'anchor-b'], null);
     expect(result).toEqual({ moved: ['anchor-a'], failed: [{ anchorId: 'anchor-b', code: 'not_authorized_or_not_found' }] });
   });
+
+  it('bulk moves records by their API-visible public ids', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ moved: ['ARK-2026-ABC12345'], failed: [] }) });
+    await new Arkova({ apiKey: 'ak_test' }).folders.moveRecordsByPublicId(['ARK-2026-ABC12345'], null);
+    expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining('/api/v1/folders/bulk-move'), expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ record_public_ids: ['ARK-2026-ABC12345'], folder_id: null }),
+    }));
+  });
 });
 
 describe('webhooks namespace', () => {

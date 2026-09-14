@@ -1361,6 +1361,27 @@ describe('arkova_manage_folders', () => {
     );
   });
 
+  it('forwards API-visible public ids for a composable bulk move', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ moved: ['ARK-2026-ABC12345'], failed: [] }), { status: 200 }));
+    await handleManageFolders(
+      { action: 'bulk_move', record_public_ids: ['ARK-2026-ABC12345'] },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', callerApiKey: 'ak_test_caller' },
+    );
+    expect(mockFetch).toHaveBeenCalledWith('https://worker.test/api/v1/folders/bulk-move', expect.objectContaining({
+      body: JSON.stringify({ record_public_ids: ['ARK-2026-ABC12345'], folder_id: null }),
+    }));
+  });
+
+  it('rejects ambiguous bulk id lists before a worker call', async () => {
+    const result = await handleManageFolders(
+      { action: 'bulk_move', anchor_ids: ['aaaaaaaa-0000-4000-8000-000000000001'],
+        record_public_ids: ['ARK-2026-ABC12345'] },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', callerApiKey: 'ak_test_caller' },
+    );
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('forwards a verified Bearer and scrubs worker error bodies', async () => {
     mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ message: 'internal.host secret row' }), { status: 403 }));
     const result = await handleManageFolders(
