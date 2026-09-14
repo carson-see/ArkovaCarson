@@ -321,8 +321,15 @@ describe('apiV2Router', () => {
       },
       {
         specPath: '/orgs',
+        // SCRUM-3971: `/orgs` now issues a SECOND read for the children list
+        // (and a third for the parent when there is one), so a single
+        // `mockReturnValueOnce` no longer covers the handler.
         requestPath: '/api/v2/orgs',
-        arrange: fromResult(orgDetailRow, 'maybeSingle'),
+        arrange: () => {
+          vi.mocked(db.from)
+            .mockReturnValueOnce(mockQueryResult(orgDetailRow, 'maybeSingle') as never)
+            .mockReturnValueOnce(mockQueryResult([], 'order') as never);
+        },
       },
       {
         specPath: '/organizations/{public_id}',

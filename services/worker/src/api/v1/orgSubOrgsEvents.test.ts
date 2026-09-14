@@ -39,7 +39,7 @@ vi.mock('../../email/sender.js', () => ({
 }));
 vi.mock('../../webhooks/subOrgEvents.js', () => ({ emitSubOrgEvent: mockEmit }));
 
-import { orgSubOrgsRouter } from './orgSubOrgs.js';
+import { orgSubOrgsRouter, allocateSubOrgCreditsCore } from './orgSubOrgs.js';
 import { db } from '../../utils/db.js';
 import { buildApp as buildAppFromRouter } from './__testHelpers.js';
 
@@ -205,7 +205,20 @@ describe('affiliated-organization event emission (SCRUM-3972)', () => {
 
   // ─── credits ──────────────────────────────────────────────────────────────
 
-  function mockCreditsDb(opts: { childBalance?: number } = {}) {
+  it('emits no approval when the required audit write fails', async () => {
+    mockStatusActionDb('PENDING');
+    const prior = from().getMockImplementation() as (table: string) => unknown;
+    from().mockImplementation((table: string) => table === 'audit_events'
+      ? { insert: () => Promise.resolve({ error: { message: 'audit unavailable' } }) }
+      : prior(table));
+    const res = await request(buildApp(ADMIN)).post('/api/v1/org/sub-orgs/approve').send({ childOrgId: CHILD });
+    await settle();
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('audit_write_failed');
+    expect(mockEmit).not.toHaveBeenCalled();
+  });
+
+  function mockCreditsDb() {
     from().mockImplementation((table: string) => {
       if (table === 'org_members') {
         const all = { data: [{ org_id: PARENT, role: 'owner' }], error: null };
@@ -214,13 +227,6 @@ describe('affiliated-organization event emission (SCRUM-3972)', () => {
         chain.limit = () => chain;
         chain.maybeSingle = () => Promise.resolve({ data: { org_id: PARENT, role: 'owner' }, error: null });
         chain.then = (r: (v: unknown) => unknown) => Promise.resolve(all).then(r);
-        return { select: () => chain };
-      }
-      if (table === 'org_credits') {
-        const chain: Record<string, unknown> = {};
-        chain.eq = () => chain;
-        chain.maybeSingle = () =>
-          Promise.resolve({ data: { balance: opts.childBalance ?? 0 }, error: null });
         return { select: () => chain };
       }
       throw new Error(`unexpected table ${table}`);
@@ -284,11 +290,19 @@ describe('affiliated-organization event emission (SCRUM-3972)', () => {
 
   // ─── offboard ─────────────────────────────────────────────────────────────
 
+  it.each(['user', 'api_key'] as const)('emits one credit movement from the shared %s core', async (kind) => {
+    rpc().mockResolvedValueOnce({ data: { success: true, parent_balance: 900, child_balance: 100 }, error: null });
+    const caller = kind === 'user' ? { kind, orgId: PARENT, userId: ADMIN } : { kind, orgId: PARENT, apiKeyId: ADMIN, keyPrefix: 'test' };
+    expect((await allocateSubOrgCreditsCore(caller, CHILD, 100, null)).status).toBe(200);
+    expect(mockEmit).toHaveBeenCalledExactlyOnceWith({
+      eventType: 'suborg.credits_allocated', parentOrgId: PARENT, childOrgId: CHILD,
+      data: { amount: 100, parent_balance: 900, child_balance: 100, note: null },
+    });
+  });
+
   it('emits reclaim, suspension and offboarding exactly once each', async () => {
-    mockCreditsDb({ childBalance: 40 });
-    rpc()
-      .mockResolvedValueOnce({ data: { success: true, parent_balance: 140, child_balance: 0 }, error: null })
-      .mockResolvedValueOnce({ data: { success: true }, error: null });
+    mockCreditsDb();
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 40, already_suspended: false, parent_balance: 140, child_balance: 0 }, error: null });
 
     const res = await request(buildApp(ADMIN))
       .post('/api/v1/org/sub-orgs/offboard')
@@ -296,7 +310,9 @@ describe('affiliated-organization event emission (SCRUM-3972)', () => {
     await settle();
 
     expect(res.status).toBe(200);
-    // One reclaim, not two: /credits and /offboard each own their own emission.
+    // The atomic offboard core emits once after one committed RPC.
+    expect(rpc()).toHaveBeenCalledTimes(1);
+    expect(rpc().mock.calls[0][0]).toBe('offboard_suborg');
     expect(emitted('suborg.credits_reclaimed')).toHaveLength(1);
     expect(emitted('suborg.credits_reclaimed')[0]).toMatchObject({
       data: { amount: -40, parent_balance: 140, child_balance: 0 },
@@ -309,8 +325,8 @@ describe('affiliated-organization event emission (SCRUM-3972)', () => {
   });
 
   it('does not emit a credits reclaim when the affiliate held nothing', async () => {
-    mockCreditsDb({ childBalance: 0 });
-    rpc().mockResolvedValueOnce({ data: { success: true }, error: null });
+    mockCreditsDb();
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 0, parent_balance: 100, child_balance: 0 }, error: null });
 
     const res = await request(buildApp(ADMIN))
       .post('/api/v1/org/sub-orgs/offboard')
@@ -326,8 +342,8 @@ describe('affiliated-organization event emission (SCRUM-3972)', () => {
     // already_suspended: the RPC succeeded without a transition. Emitting
     // suborg.suspended here would tell a subscriber something changed when
     // nothing did.
-    mockCreditsDb({ childBalance: 0 });
-    rpc().mockResolvedValueOnce({ data: { success: true, already_suspended: true }, error: null });
+    mockCreditsDb();
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 0, parent_balance: 100, child_balance: 0, already_suspended: true }, error: null });
 
     const res = await request(buildApp(ADMIN))
       .post('/api/v1/org/sub-orgs/offboard')
@@ -341,7 +357,7 @@ describe('affiliated-organization event emission (SCRUM-3972)', () => {
   });
 
   it('emits nothing when the reclaim fails, because nothing was suspended', async () => {
-    mockCreditsDb({ childBalance: 40 });
+    mockCreditsDb();
     rpc().mockResolvedValueOnce({ data: { error: 'insufficient_child_balance' }, error: null });
 
     const res = await request(buildApp(ADMIN))
@@ -359,10 +375,8 @@ describe('affiliated-organization event emission (SCRUM-3972)', () => {
     ['a rejected emitter', () => mockEmit.mockRejectedValue(new Error('webhook exploded'))],
     ['a non-ok emitter', () => mockEmit.mockResolvedValue({ ok: false, dispatched: 0, failures: [] })],
   ])('returns 200 with %s', async (_label, arrange) => {
-    mockCreditsDb({ childBalance: 40 });
-    rpc()
-      .mockResolvedValueOnce({ data: { success: true, parent_balance: 140, child_balance: 0 }, error: null })
-      .mockResolvedValueOnce({ data: { success: true }, error: null });
+    mockCreditsDb();
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 40, already_suspended: false, parent_balance: 140, child_balance: 0 }, error: null });
     arrange();
 
     const res = await request(buildApp(ADMIN))

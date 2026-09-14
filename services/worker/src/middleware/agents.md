@@ -441,6 +441,22 @@ Mount order is the contract and is pinned by `__tests__/phiScopeMount.test.ts`: 
 `requireScopeAnyAuth` → rate limiter → router.
 
 
+## 2026-09-12 — `requireScopeAnyAuth` gained an `orgs:manage` ⊇ `read:orgs` case (SCRUM-3971)
+
+No change to the middleware itself — the implication lives in
+`api/apiScopes.ts`'s `scopeSatisfies`, which this guard already delegates to.
+The test was added here because the sub-organization mount requires `read:orgs`
+router-wide and `orgs:manage` on each mutating route: without the implication a
+key granted only the write scope would be 401'd at the router-wide gate before
+reaching the route it is entitled to.
+
+Worth re-reading before mounting this guard on a NEW surface: the JWT branch
+derives scopes from `ADMIN_JWT_SCOPES` / `MEMBER_JWT_SCOPES`, which contain only
+`compliance:*`. A JWT caller therefore cannot satisfy `read:orgs` here — which is
+why the sub-organization key mount runs no `requireAuth` and is API-key-only by
+construction, and why its caller abstraction refuses a request carrying both
+credentials rather than picking one.
+
 ## PR #2442 release review — 2026-09-05
 
 PR #2442 review: only a literal boolean false debit result may fall through to another payment tier. Null, missing, string and object results return 503; the response does not claim a debit was absent when its outcome is unknown.

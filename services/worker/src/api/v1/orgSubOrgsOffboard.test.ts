@@ -6,10 +6,8 @@
  * integrations, and carried on anchoring against a budget the parent funded.
  * This endpoint is the real lever.
  *
- * ORDER IS THE DESIGN. Reclaim first, then suspend. If the suspend fails after
- * a successful reclaim, the credits are safely back with the parent and the
- * sub-org is merely still active — a retry finishes the job. The reverse order
- * strands the parent's credits inside an org nobody can act in.
+ * 0460 makes reclaim, suspend and their audits one transaction. The worker
+ * forwards verified identity and never chooses a stale balance to reclaim.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -44,8 +42,8 @@ function buildApp(userId?: string) {
   });
 }
 
-/** Single-org admin plus a child credit balance. */
-function mockDb(opts: { role?: string; childBalance?: number; balanceError?: boolean } = {}) {
+/** Single-org admin. Balance reads belong to the SQL transaction. */
+function mockDb(opts: { role?: string } = {}) {
   const role = opts.role ?? 'owner';
   (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
     if (table === 'org_members') {
@@ -55,17 +53,6 @@ function mockDb(opts: { role?: string; childBalance?: number; balanceError?: boo
         limit: () => chain,
         maybeSingle: () => Promise.resolve({ data: { org_id: PARENT, role }, error: null }),
         then: (r: (v: typeof all) => unknown) => Promise.resolve(all).then(r),
-      };
-      return { select: () => chain };
-    }
-    if (table === 'org_credits') {
-      const chain = {
-        eq: () => chain,
-        maybeSingle: () => Promise.resolve(
-          opts.balanceError
-            ? { data: null, error: { message: 'boom' } }
-            : { data: { balance: opts.childBalance ?? 0 }, error: null },
-        ),
       };
       return { select: () => chain };
     }
@@ -95,86 +82,52 @@ describe('POST /api/v1/org/sub-orgs/offboard (SCRUM-3868)', () => {
     expect(rpc()).not.toHaveBeenCalled();
   });
 
-  it('reclaims the unspent balance and THEN suspends', async () => {
-    mockDb({ childBalance: 40 });
-    rpc()
-      .mockResolvedValueOnce({ data: { success: true, parent_balance: 140, child_balance: 0 }, error: null })
-      .mockResolvedValueOnce({ data: { success: true, sub_org_id: CHILD }, error: null });
-
+  it('returns the balance actually reclaimed by the single atomic RPC', async () => {
+    mockDb();
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 40, already_suspended: false, parent_balance: 140, child_balance: 0 }, error: null });
     const res = await request(buildApp(ADMIN))
       .post('/api/v1/org/sub-orgs/offboard')
-      .send({ childOrgId: CHILD, reason: 'engagement ended' });
-
+      .send({ childOrgId: CHILD, reason: 'engagement ended', callerUserId: 'forged' });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ reclaimed: 40, suspended: true });
-
-    const [firstCall, secondCall] = rpc().mock.calls;
-    expect(firstCall[0]).toBe('allocate_credits_to_sub_org');
-    expect(firstCall[1]).toMatchObject({ p_amount: -40, p_caller_user_id: ADMIN });
-    expect(secondCall[0]).toBe('suspend_suborg');
-    expect(secondCall[1]).toMatchObject({
-      p_parent_org_id: PARENT,
-      p_sub_org_id: CHILD,
-      p_reason: 'engagement ended',
-      p_caller_user_id: ADMIN,
+    expect(res.body).toEqual({ reclaimed: 40, suspended: true, alreadySuspended: false });
+    expect(rpc()).toHaveBeenCalledExactlyOnceWith('offboard_suborg', {
+      p_parent_org_id: PARENT, p_sub_org_id: CHILD,
+      p_reason: 'engagement ended', p_caller_user_id: ADMIN,
     });
   });
 
-  it('skips the reclaim when the sub-org has nothing left', async () => {
-    mockDb({ childBalance: 0 });
-    rpc().mockResolvedValueOnce({ data: { success: true }, error: null });
-
-    const res = await request(buildApp(ADMIN))
-      .post('/api/v1/org/sub-orgs/offboard')
-      .send({ childOrgId: CHILD });
-
+  it('successfully suspends a child with no balance', async () => {
+    mockDb();
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 0 }, error: null });
+    const res = await request(buildApp(ADMIN)).post('/api/v1/org/sub-orgs/offboard').send({ childOrgId: CHILD });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ reclaimed: 0, suspended: true });
+    expect(res.body).toEqual({ reclaimed: 0, suspended: true, alreadySuspended: false });
     expect(rpc()).toHaveBeenCalledTimes(1);
-    expect(rpc().mock.calls[0][0]).toBe('suspend_suborg');
   });
 
-  it('does NOT suspend when the reclaim fails', async () => {
-    // Suspending anyway would strand the parent's credits inside an org nobody
-    // can act in.
-    mockDb({ childBalance: 40 });
-    rpc().mockResolvedValueOnce({ data: { error: 'not_a_sub_org' }, error: null });
-
-    const res = await request(buildApp(ADMIN))
-      .post('/api/v1/org/sub-orgs/offboard')
-      .send({ childOrgId: CHILD });
-
-    // not_a_sub_org is a 404 in CREDIT_RPC_STATUS — the child named does not
-    // stand in the claimed relationship, which is a missing thing, not a
-    // conflicting one.
+  it('does not claim a state change when the SQL relationship check refuses', async () => {
+    mockDb();
+    rpc().mockResolvedValueOnce({ data: { success: false, error: 'not_a_child_of_parent' }, error: null });
+    const res = await request(buildApp(ADMIN)).post('/api/v1/org/sub-orgs/offboard').send({ childOrgId: CHILD });
     expect(res.status).toBe(404);
-    expect(res.body.error).toBe('not_a_sub_org');
+    expect(res.body).toEqual({ error: 'not_a_child_of_parent' });
     expect(rpc()).toHaveBeenCalledTimes(1);
   });
 
-  it('reports the partial state when reclaim succeeds but suspend fails', async () => {
-    mockDb({ childBalance: 40 });
-    rpc()
-      .mockResolvedValueOnce({ data: { success: true, parent_balance: 140, child_balance: 0 }, error: null })
-      .mockResolvedValueOnce({ data: { success: false, error: 'parent_admin_required' }, error: null });
-
-    const res = await request(buildApp(ADMIN))
-      .post('/api/v1/org/sub-orgs/offboard')
-      .send({ childOrgId: CHILD });
-
-    // The caller must learn the credits DID move — retrying is safe, but only
-    // if they know the reclaim already happened.
-    expect(res.status).toBe(403);
-    expect(res.body).toMatchObject({ error: 'parent_admin_required', reclaimed: 40, suspended: false });
+  it('does not claim a partial reclaim on transaction failure', async () => {
+    mockDb();
+    rpc().mockResolvedValueOnce({ data: null, error: { message: 'suborg_offboard_suspend_failed' } });
+    const res = await request(buildApp(ADMIN)).post('/api/v1/org/sub-orgs/offboard').send({ childOrgId: CHILD });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'offboard_unavailable' });
   });
 
-  it('503s when the balance cannot be read, without moving anything', async () => {
-    mockDb({ balanceError: true });
-    const res = await request(buildApp(ADMIN))
-      .post('/api/v1/org/sub-orgs/offboard')
-      .send({ childOrgId: CHILD });
+  it('503s a database outage without returning private upstream details', async () => {
+    mockDb();
+    rpc().mockResolvedValueOnce({ data: null, error: { message: 'private connection details' } });
+    const res = await request(buildApp(ADMIN)).post('/api/v1/org/sub-orgs/offboard').send({ childOrgId: CHILD });
     expect(res.status).toBe(503);
-    expect(rpc()).not.toHaveBeenCalled();
+    expect(res.body).toEqual({ error: 'offboard_unavailable' });
   });
 
   it('422s on a childOrgId that is not a uuid', async () => {
