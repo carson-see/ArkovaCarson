@@ -82,7 +82,8 @@ export interface ToolDefinition {
 
 export interface ToolInputSchemaProperty {
   type: string;
-  description: string;
+  description?: string;
+  enum?: string[];
   format?: string;
   items?: ToolInputSchemaProperty;
   minItems?: number;
@@ -118,7 +119,11 @@ export interface AnchorDocumentInput {
   record_type?: string;
   source?: string;
   title?: string;
+  description?: string;
   source_url?: string;
+  action?: 'queue' | 'instant';
+  user_tags?: string[];
+  organization_tags?: string[];
   idempotency_key?: string;
 }
 
@@ -393,8 +398,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       'Submit a document fingerprint for anchoring to the public ledger. ' +
       'The document itself is never sent — only its SHA-256 fingerprint. ' +
-      'Anchoring is asynchronous (batched), so this returns a submission receipt, ' +
-      'NOT a completed anchor: public_id is null and no network receipt exists yet. ' +
+      'Choose queue for asynchronous batching or instant to reserve one anchor credit and start now. ' +
+      'Both actions return a submission receipt rather than completed network evidence. ' +
+      'Descriptions and user or organization tags are private. ' +
       'Follow up with arkova_verify_document using the SAME content_hash — it reports ' +
       'status UNKNOWN until anchoring completes, then returns the public_id and proof.',
     inputSchema: {
@@ -416,9 +422,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Title of the document',
         },
+        description: {
+          type: 'string',
+          description: 'Private description visible to the submitting account',
+        },
         source_url: {
           type: 'string',
           description: 'URL of the original document',
+        },
+        action: {
+          type: 'string',
+          enum: ['queue', 'instant'],
+          description: 'Queue for batch anchoring or spend one anchor credit to start now',
+        },
+        user_tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Private tags visible only to the submitting user',
+        },
+        organization_tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Private tags visible only within the submitting organization',
         },
         idempotency_key: {
           type: 'string',
@@ -1714,6 +1739,38 @@ async function submitAnchorDirect(
   return anchorSubmittedResult(record, input.content_hash);
 }
 
+async function submitAnchorViaWorker(
+  input: AnchorDocumentInput,
+  config: SupabaseConfig,
+): Promise<ToolResult | undefined> {
+  if (!config.workerBaseUrl || !config.callerApiKey) return undefined;
+  const base = config.workerBaseUrl.replace(/\/$/, '');
+  const response = await fetch(`${base}/api/v1/anchor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': config.callerApiKey },
+    body: JSON.stringify({
+      fingerprint: input.content_hash,
+      credential_type: input.record_type,
+      description: input.description ?? input.title,
+      action: input.action ?? 'queue',
+      private_tags: input.user_tags || input.organization_tags ? {
+        user: input.user_tags ?? [],
+        organization: input.organization_tags ?? [],
+      } : undefined,
+      metadata: {
+        ...(input.source ? { source: input.source } : {}),
+        ...(input.source_url ? { source_url: input.source_url } : {}),
+      },
+    }),
+  });
+  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok) {
+    const message = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
+    return errorResult(`Anchor submission failed: ${message}`);
+  }
+  return textResult(body);
+}
+
 export async function handleAnchorDocument(
   input: AnchorDocumentInput,
   config: SupabaseConfig,
@@ -1727,6 +1784,17 @@ export async function handleAnchorDocument(
   }
 
   try {
+    const requestsSelfService = input.action !== undefined
+      || input.description !== undefined
+      || input.user_tags !== undefined
+      || input.organization_tags !== undefined;
+    if (requestsSelfService) {
+      const workerResult = await submitAnchorViaWorker(input, config);
+      if (workerResult) return workerResult;
+      return errorResult(
+        'Queue/instant selection, descriptions, and private tags require API-key authentication and the Arkova API endpoint.',
+      );
+    }
     if (input.idempotency_key) {
       const duplicate = await findRecentAnchorSubmission(config, input.content_hash);
       if (duplicate) return duplicate;

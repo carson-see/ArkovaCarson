@@ -105,6 +105,9 @@ JOBS=(
   # ENABLE_CONNECTOR_ARTIFACT_DRAIN=true. Idempotent (compare-and-set claim), so
   # retries never double-anchor; a non-200 (e.g. cycle select failure) retries.
   "drain-connector-artifacts|*/5 * * * *|/jobs/drain-connector-artifacts|30s,120s,2"
+  # SCRUM-5139: exact durable instant intents. The worker flag remains dark
+  # until the reviewed credit/journal soak; Scheduler retries non-2xx drains.
+  "instant-secure-intents|* * * * *|/jobs/instant-secure-intents|30s,120s,2"
   # SCRUM-2234: stuck-anchor monitor, hourly. Reads the oldest non-deleted
   # PENDING anchor's created_at and pages via Sentry past
   # STUCK_ANCHOR_ALERT_HOURS (default 24h). This is the dead-man for the exact

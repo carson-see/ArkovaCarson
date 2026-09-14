@@ -19,6 +19,7 @@ import {
   handleAgentVerify,
   handleNessieQuery,
   handleSearchCredentials,
+  handleAnchorDocument,
   SEARCH_MODE_SEMANTIC,
   SEARCH_MODE_LEXICAL,
   TOOL_DEFINITIONS,
@@ -49,6 +50,50 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+});
+
+describe('handleAnchorDocument submission action parity', () => {
+  it('forwards instant selection and private tags through the canonical API-key route', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ public_id: 'ark_test', action: 'instant', credit_state: 'pending' }),
+    });
+
+    const result = await handleAnchorDocument({
+      content_hash: 'a'.repeat(64),
+      description: 'Private description',
+      action: 'instant',
+      user_tags: ['tax'],
+      organization_tags: ['audit'],
+    }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    expect(result.isError).not.toBe(true);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://worker.test/api/v1/anchor');
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-API-Key': 'ak_test_secret' }));
+    expect(JSON.parse(String(init.body))).toEqual(expect.objectContaining({
+      fingerprint: 'a'.repeat(64),
+      description: 'Private description',
+      action: 'instant',
+      private_tags: { user: ['tax'], organization: ['audit'] },
+    }));
+  });
+
+  it('does not silently downgrade private options without a caller API key', async () => {
+    const result = await handleAnchorDocument({
+      content_hash: 'b'.repeat(64),
+      action: 'queue',
+      user_tags: ['private'],
+    }, CONFIG);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('require API-key authentication');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });
 
 // ── BUG-2: shapeAnchorRow key realignment ────────────────────────────

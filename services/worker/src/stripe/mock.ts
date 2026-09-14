@@ -42,10 +42,12 @@ export class MockStripeClient {
 
   async createCheckoutSession(params: {
     customer?: string;
-    line_items: Array<{ price: string; quantity: number }>;
+    line_items: Array<{ price?: string; price_data?: unknown; quantity?: number }>;
     success_url: string;
     cancel_url: string;
     metadata?: Record<string, string>;
+    mode?: string;
+    payment_method_types?: string[];
   }): Promise<{ id: string; url: string }> {
     const sessionId = `cs_mock_${Date.now()}`;
     const customerId = params.customer ?? `cus_mock_${Date.now()}`;

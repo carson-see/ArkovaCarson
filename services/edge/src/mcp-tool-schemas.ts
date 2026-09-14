@@ -84,7 +84,11 @@ export const anchorDocumentSchema = z
     record_type: z.string().max(50).optional(),
     source: z.string().max(50).optional(),
     title: z.string().max(500).optional(),
+    description: z.string().max(1000).optional(),
     source_url: z.string().url().max(2048).optional(),
+    action: z.enum(['queue', 'instant']).optional(),
+    user_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+    organization_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
     idempotency_key: idempotencyKeySchema.optional(),
   })
   .strict();

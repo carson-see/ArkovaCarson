@@ -695,6 +695,27 @@ def test_anchor_fingerprints_data_client_side_raw_content_never_sent() -> None:
     assert json.loads(body) == {"fingerprint": expected_fp}
 
 
+def test_anchor_sends_description_tags_and_instant_action() -> None:
+    seen: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return json_response({
+            "public_id": "ARK-INSTANT", "fingerprint": "a" * 64, "status": "PENDING",
+            "created_at": "2026-01-01T00:00:00Z", "record_uri": "https://app.arkova.ai/verify/ARK-INSTANT",
+            "action": "instant", "credit_state": "pending", "instant_status": "QUEUED",
+        }, status_code=201)
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        receipt = client.anchor(
+            fingerprint="a" * 64, description="Quarterly agreement", action="instant",
+            user_tags=["legal"], organization_tags=["q3"],
+        )
+    assert seen[0]["action"] == "instant"
+    assert seen[0]["private_tags"] == {"user": ["legal"], "organization": ["q3"]}
+    assert receipt.instant_status == "QUEUED"
+
+
 def test_anchor_rejects_neither_fingerprint_nor_data_without_network_call() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("no network call expected")
@@ -1368,7 +1389,7 @@ def test_verify_types_the_proof_and_fingerprint_evidence_fields() -> None:
 # BOTH emit sites (the idempotent duplicate hit at 200 and the fresh insert at
 # 201) build this same object literal with no conditional key.
 ANCHOR_RECEIPT_EMITTED_KEYS = frozenset(
-    {"public_id", "fingerprint", "status", "created_at", "record_uri"}
+    {"public_id", "fingerprint", "status", "created_at", "record_uri", "action", "credit_state", "instant_status", "idempotent"}
 )
 
 # services/worker/src/api/v2/resourceDetails.ts — `mapAnchorDetail()`. One
