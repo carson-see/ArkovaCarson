@@ -1,5 +1,116 @@
 # agents.md — services/edge
-_Last updated: 2026-07-28 (L2-A6 MCP discovery-manifest parity)._
+_Last updated: 2026-09-13 (SCRUM-3907 / SCRUM-1032 — edge deploy workflow + deployed-version parity)._
+
+## SCRUM-3907 / SCRUM-1032 — edge deploy workflow + deployed-version parity (2026-09-13)
+
+CODE ONLY — this PR builds the pipeline; it does not run it. No `wrangler
+deploy`, no Cloudflare or GCP call, executed in this session. The first
+real deploy through this pipeline is the release session's job (runbook:
+Confluence "SCRUM-3907 — Edge deploy workflow and deployed-version
+parity").
+
+**The gap this closes (SCRUM-3797):** prod `arkova-edge` was a pre-June
+manual `wrangler deploy` — `git grep wrangler origin/main --
+.github/workflows/` returned zero files before this PR. PR #2589's ES256
+verifier fix, and the SCRUM-3797 MCP audit-log fix
+(`src/mcp-audit-log.ts:211`), both sat on `main`, merged, for months
+without ever reaching `edge.arkova.ai`. Nothing detected this — the worker
+has `revision-drift.yml` (10-min cron, Sentry alert on `/health.git_sha`
+drift); the edge worker had no equivalent of ANY kind.
+
+**What shipped:**
+- **`src/build-info.ts`** (new, checked in) — `{ git_sha, built_at }`.
+  Checked-in placeholder is `{ git_sha: 'local-dev', built_at: null }` for
+  local dev / `vitest`. `scripts/generate-build-info.mjs` (new,
+  dependency-free plain-Node ESM — no `tsx`/TS compile step, so it needs
+  nothing beyond what `wrangler deploy` already requires) overwrites this
+  file with the real deploying SHA + an ISO timestamp immediately before
+  `wrangler deploy`, run as `npm run build:info`. A generated FILE was
+  chosen over a `wrangler.toml [vars]` entry because `[vars]` is a static
+  value checked into source — there is no wrangler-native way to stamp
+  "the SHA this specific deploy built from" into it without rewriting
+  `wrangler.toml` on every deploy. Matches the worker's existing
+  `git_sha` field name (`services/worker/src/api/admin-health.ts`,
+  `getBuildSha()` — same "unknown" sentinel for an unresolvable SHA).
+- **`/health`** (`src/index.ts`) now returns `git_sha` + `built_at`
+  alongside the pre-existing `status`/`service` fields — additive, no
+  existing consumer breaks.
+- **`.github/workflows/edge-deploy.yml`** (new) — `push` to `main`
+  (path-filtered to `services/edge/**`), `pull_request` (dry-run only, no
+  Cloudflare credential — `wrangler deploy --dry-run` builds/validates
+  the bundle without calling the Cloudflare API), and `workflow_dispatch`
+  with a `ref` input. `test` (typecheck + vitest) is unconditional on
+  every trigger. Push/dispatch path: `deploy-gate`
+  (`vars.DEPLOY_EDGE_PAUSED` — see `.github/workflows/agents.md`) →
+  `deploy`. `deploy` reads `cloudflare-api-token` from GCP Secret Manager
+  (project `arkova1`) via the SAME WIF auth step `deploy-worker.yml` uses
+  — **no `CLOUDFLARE_*` GitHub Actions secret exists** (`gh secret list`,
+  verified during SCRUM-3907 investigation), so this reads the one copy
+  that already lives in Secret Manager instead of provisioning a second
+  credential store for the same token. The value is `::add-mask::`-ed
+  before it touches `$GITHUB_ENV`.
+- **Cloudflare API token preflight** (`deploy` job, before `wrangler
+  deploy`) — the 2026-09-08 manual deploy failed partway through on a
+  token with too-narrow route-edit scope. `curl
+  https://api.cloudflare.com/client/v4/user/tokens/verify` fails the job
+  fast, naming the fix, instead of letting a bad token surface deep inside
+  `wrangler`'s own error output. **Required permission groups** for
+  `cloudflare-api-token` (keep this list in sync with the workflow's own
+  comment and the Confluence runbook): **Workers Scripts:Edit, Workers
+  Routes:Edit, Workers KV Storage:Edit, Zone:Read** on `arkova.ai`.
+  LIMITATION, stated plainly: `/user/tokens/verify` confirms the token is
+  well-formed and `active` — it does NOT enumerate permission groups
+  (Cloudflare has no endpoint for a token to introspect its own scopes
+  without additional Account:Read access it may itself lack). This step
+  proves "the token is dead"; it cannot prove "the token has route-edit
+  scope" — a scope-too-narrow failure can still surface later, inside
+  `wrangler deploy` itself.
+- **Pre-deploy identity record** (`deploy` job, before `wrangler deploy`) —
+  GETs `/health` and logs the SHA it was serving BEFORE this run (or "no
+  version identity (pre-workflow build)" if the field is absent — the
+  expected state for every deploy until the first one through this
+  pipeline). The live bundle's actual state, including whether PR #2589's
+  ES256 verifier fix was already somehow live, has been unverified for
+  months; the first real run should document its before-state in the log
+  rather than silently overwrite it with no record.
+- **Deployed-version parity check** (last step of the `deploy` job) — curls
+  `https://edge.arkova.ai/health` with a cache-busting query param + a
+  `Cache-Control: no-cache` header (a CDN/cache layer serving a pre-deploy
+  snapshot would otherwise silently pass or fail this check for the wrong
+  reason), up to 5 attempts across roughly 60s, and fails the job if
+  `git_sha` does not equal the commit that job just deployed. `wrangler
+  deploy` exiting 0 only proves the Cloudflare API accepted the upload,
+  not that the route is serving it — this is the actual "never again"
+  mechanism SCRUM-3907 asked for.
+- **`scripts/ci/check-edge-deployed-version.ts`** (new, root-level;
+  `.test.ts` sibling) — read-only, OUT-OF-BAND drift check: `git_sha` from
+  the live `/health` vs `origin/main` via `git merge-base --is-ancestor` /
+  `git rev-list --count` (no GitHub API call). Warn-only by design, twice
+  over: the script defaults to exit 0 without `--strict`, and the `ci.yml`
+  job wrapping it (`edge-deployed-version-check`) additionally sets
+  `continue-on-error: true` — a currently-known-stale prod edge (SCRUM-3797)
+  must not block unrelated PRs while this pipeline is new. This is the
+  lighter, CI-wired sibling of the worker's `revision-drift.yml`
+  (cron + Sentry); promoting edge to that same cron/Sentry shape is a
+  reasonable fast-follow, not done here.
+- **Vitest include** widened in both `services/edge/vitest.config.ts` and
+  (already present) root `vitest.config.ts` to `scripts/**/*.test.ts`, so
+  `generate-build-info.test.ts` / `check-edge-deployed-version.test.ts` run
+  under `npm test`.
+
+**Deliberately NOT touched:** `wrangler.toml` routes/KV bindings (SCRUM-3797
+also names a KV-drift concern — tracked separately, not this ticket) and the
+edge worker's runtime behavior. This PR is deploy ORCHESTRATION only.
+
+**Verification this session could NOT perform** (no deploy permitted):
+whether `wrangler deploy --dry-run` actually succeeds against real
+`wrangler.toml` bindings/secrets, whether the Secret Manager
+`cloudflare-api-token` value is a live/valid Cloudflare API token, and
+whether the parity-check curl step behaves as designed against the real
+`edge.arkova.ai/health` (all of `classifyDrift`/`renderBuildInfoModule`
+are covered by mocked-I/O unit tests instead — see the two new `.test.ts`
+files). First real exercise is the release session's `workflow_dispatch`
+run per the Confluence runbook.
 
 ## L2-A6 — MCP discovery-manifest parity + drift guard (2026-07-28)
 

@@ -12,6 +12,7 @@ import {
   DriveFileChangedJobPayload,
   DRIVE_ARTIFACT_SOURCE,
   CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_ID,
+  DRIVE_REVISION_KINDS,
   type DriveArtifactProducerDeps,
 } from './drive-artifact-producer.js';
 
@@ -152,8 +153,15 @@ describe('processDriveFileChangedJob', () => {
     expect(shape).not.toContain('actor_email');
     expect(shape).not.toContain('sender_email');
     // Sanity: the fields we DO carry are all connector-native identifiers.
+    // SCRUM-4507 added four of them — all opaque Drive ids plus a folder path.
+    // This list is a RATCHET: a new payload field has to be added here
+    // deliberately, which is the moment to ask whether it can carry PII.
     expect(shape.sort()).toEqual(
-      ['file_id', 'integration_id', 'mime_type', 'modified_time', 'org_id', 'revision_id', 'rule_event_id'].sort(),
+      [
+        'file_id', 'integration_id', 'mime_type', 'modified_time', 'org_id',
+        'revision_id', 'rule_event_id',
+        'shared_drive_id', 'folder_id', 'folder_path', 'revision_kind',
+      ].sort(),
     );
   });
 
@@ -164,5 +172,108 @@ describe('processDriveFileChangedJob', () => {
 
   it('source label is the canonical google_drive vendor', () => {
     expect(DRIVE_ARTIFACT_SOURCE).toBe('google_drive');
+  });
+});
+
+/**
+ * SCRUM-4507 — the four link-back fields across the job-payload boundary.
+ *
+ * These fields are OPTIONAL on purpose. Jobs enqueued before this change are
+ * already sitting in `job_queue` with a payload that has none of them; if the
+ * schema required them, every one of those rows would fail `parse` on its next
+ * attempt and the Drive fetch pipeline would stall on a backlog it can never
+ * drain. The legacy-parse test below is the guard on that.
+ */
+describe('SCRUM-4507 Drive source link-back payload fields', () => {
+  it('parses a legacy payload that predates the link-back fields', () => {
+    const parsed = parseDriveFileChangedJobPayload({
+      org_id: ORG,
+      integration_id: INT,
+      file_id: 'file-legacy',
+      revision_id: 'rev-legacy',
+    });
+
+    expect(parsed.shared_drive_id).toBeUndefined();
+    expect(parsed.folder_id).toBeUndefined();
+    expect(parsed.folder_path).toBeUndefined();
+    expect(parsed.revision_kind).toBeUndefined();
+  });
+
+  it('accepts every member of the shared revision-kind vocabulary and rejects anything else', () => {
+    for (const kind of DRIVE_REVISION_KINDS) {
+      const parsed = DriveFileChangedJobPayload.safeParse({
+        org_id: ORG,
+        integration_id: INT,
+        file_id: 'f',
+        revision_kind: kind,
+      });
+      expect(parsed.success, `${kind} should parse`).toBe(true);
+    }
+
+    const rejected = DriveFileChangedJobPayload.safeParse({
+      org_id: ORG,
+      integration_id: INT,
+      file_id: 'f',
+      revision_kind: 'head-revision',
+    });
+    expect(rejected.success).toBe(false);
+  });
+
+  it('forwards all four link-back fields to the artifact sink', async () => {
+    const { deps, enqueueArtifact } = makeDeps();
+
+    await processDriveFileChangedJob(
+      {
+        org_id: ORG,
+        integration_id: INT,
+        file_id: 'file-1',
+        revision_id: 'rev-1',
+        mime_type: 'application/pdf',
+        modified_time: '2026-05-04T01:00:00Z',
+        shared_drive_id: 'shared-drive-legal',
+        folder_id: 'folder-legal',
+        folder_path: '/Legal/Contracts',
+        revision_kind: 'head_revision',
+      },
+      deps,
+    );
+
+    expect(enqueueArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sharedDriveId: 'shared-drive-legal',
+        folderId: 'folder-legal',
+        folderPath: '/Legal/Contracts',
+        revisionKind: 'head_revision',
+      }),
+    );
+  });
+
+  it('converts absent link-back fields to null (never undefined) at the sink boundary', async () => {
+    const { deps, enqueueArtifact } = makeDeps();
+
+    await processDriveFileChangedJob(
+      { org_id: ORG, integration_id: INT, file_id: 'file-legacy' },
+      deps,
+    );
+
+    expect(enqueueArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sharedDriveId: null,
+        folderId: null,
+        folderPath: null,
+        revisionKind: null,
+      }),
+    );
+  });
+
+  it('has no field that could carry a Drive account label or actor email', () => {
+    // §1.4 / §1.6A. `drive-account-label.ts` parses a JSON blob whose
+    // `account_label` IS the connected Google account's EMAIL. None of the
+    // link-back fields may become a channel for it.
+    const shape = Object.keys(DriveFileChangedJobPayload.shape);
+    expect(shape).not.toContain('account_label');
+    expect(shape).not.toContain('actor_email');
+    expect(shape).not.toContain('owner_email');
+    expect(shape.filter((k) => /email|label|actor|owner|user/i.test(k))).toEqual([]);
   });
 });

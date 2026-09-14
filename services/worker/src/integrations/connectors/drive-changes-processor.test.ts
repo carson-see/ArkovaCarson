@@ -13,6 +13,7 @@ import {
   type DriveProcessorIntegration,
 } from './drive-changes-processor.js';
 import type { DriveChangesListResponseT } from '../oauth/drive.js';
+import { DRIVE_REVISION_KINDS } from './drive-artifact-producer.js';
 
 const ORG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const INTEGRATION_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -35,6 +36,13 @@ interface FakeDb extends DriveProcessorDb {
   ledgerDeletes: Array<{ file_id: string; revision_id: string }>;
   enqueueCalls: Array<{ file_id: string; parent_ids: string[]; actor_email: string | null; revision_id: string; folder_path: string | null }>;
   fileChangedJobCalls: Array<{ file_id: string; revision_id: string | null; mime_type: string | null; modified_time: string | null; rule_event_id: string }>;
+  /**
+   * SCRUM-4507: the FULL payload, captured verbatim. `fileChangedJobCalls`
+   * above is a deliberately narrow projection that several existing tests
+   * assert with `toEqual`; widening it would break them for no reason. The
+   * link-back fields are asserted against this raw capture instead.
+   */
+  fileChangedJobPayloads: Array<Record<string, unknown>>;
   advancedPageTokens: string[];
   duplicateKeys: Set<string>;
   enqueueResult: string | null;
@@ -52,6 +60,7 @@ function makeFakeDb(opts: {
   const ledgerDeletes: FakeDb['ledgerDeletes'] = [];
   const enqueueCalls: FakeDb['enqueueCalls'] = [];
   const fileChangedJobCalls: FakeDb['fileChangedJobCalls'] = [];
+  const fileChangedJobPayloads: FakeDb['fileChangedJobPayloads'] = [];
   const advancedPageTokens: string[] = [];
   const duplicateKeys = new Set(opts.duplicateKeys ?? []);
   const enqueueResult = opts.enqueueResult === undefined ? 'evt-out' : opts.enqueueResult;
@@ -62,6 +71,7 @@ function makeFakeDb(opts: {
     ledgerDeletes,
     enqueueCalls,
     fileChangedJobCalls,
+    fileChangedJobPayloads,
     advancedPageTokens,
     duplicateKeys,
     enqueueResult,
@@ -107,6 +117,7 @@ function makeFakeDb(opts: {
     // job enqueue. Tests that want to exercise the failure/rollback path pass
     // fileChangedJobResult: null or fileChangedJobImpl.
     enqueueFileChangedJob: vi.fn(async (payload) => {
+      fileChangedJobPayloads.push({ ...payload } as Record<string, unknown>);
       fileChangedJobCalls.push({
         file_id: payload.file_id,
         revision_id: payload.revision_id,
@@ -904,5 +915,202 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
         expect(order).toEqual(['resolveFolderPath', 'insertRevisionLedger']);
       });
     });
+  });
+});
+
+/**
+ * SCRUM-4507 — Drive source link-back, PRODUCER side.
+ *
+ * The record page and the anonymous verify surface can only ever show what the
+ * producer put on the job payload. These pin the four link-back fields at the
+ * point they are first derived from the raw Drive change: the shared drive id
+ * (already parsed by `listChanges` but previously dropped on the floor), the
+ * first parent folder id, the resolved human folder path, and WHICH revision
+ * token `resolveRevision` actually fell back to.
+ *
+ * `revision_kind` exists because `revision_id` is NOT always a Drive revision:
+ * Workspace-native files have no `headRevisionId`, so the resolved id is a
+ * synthetic `mtime:`/`evt:` token. Without the kind the UI would have to guess
+ * from the string shape, and would label a modification time as a revision
+ * (§1.5 — the surface must say what it actually measured).
+ */
+describe('SCRUM-4507 Drive source link-back producer fields', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('forwards shared_drive_id, folder_id, folder_path and revision_kind for a head-revision change', async () => {
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf([
+        {
+          file: {
+            id: 'file-1',
+            name: 'msa.pdf',
+            parents: [WATCHED_FOLDER_A, UNWATCHED_FOLDER],
+            driveId: 'shared-drive-legal',
+            modifiedTime: '2026-05-04T01:00:00Z',
+            headRevisionId: 'rev-1',
+            mimeType: 'application/pdf',
+          },
+        },
+      ], { newStartPageToken: 'token-2' }),
+    );
+
+    await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'access-token',
+      db,
+      deps: {
+        listChanges: listMock,
+        resolveFolderPath: vi.fn(async () => '/Legal/Contracts'),
+      },
+    });
+
+    expect(db.fileChangedJobPayloads).toHaveLength(1);
+    expect(db.fileChangedJobPayloads[0]).toMatchObject({
+      shared_drive_id: 'shared-drive-legal',
+      // The FIRST parent — the same array the watched-folder match ran over.
+      folder_id: WATCHED_FOLDER_A,
+      folder_path: '/Legal/Contracts',
+      revision_kind: 'head_revision',
+    });
+  });
+
+  it('emits null shared_drive_id for a My Drive change (no driveId on the entry)', async () => {
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf([
+        {
+          file: {
+            id: 'file-mydrive',
+            parents: [WATCHED_FOLDER_A],
+            headRevisionId: 'rev-mydrive',
+          },
+        },
+      ], { newStartPageToken: 'token-2' }),
+    );
+
+    await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'access-token',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(db.fileChangedJobPayloads[0]).toMatchObject({
+      shared_drive_id: null,
+      folder_id: WATCHED_FOLDER_A,
+      // No resolveFolderPath dep injected -> stays null, as today.
+      folder_path: null,
+      revision_kind: 'head_revision',
+    });
+  });
+
+  it('labels a Workspace-native change (no headRevisionId) as revision_kind modified_time', async () => {
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf([
+        {
+          file: {
+            id: 'file-doc',
+            parents: [WATCHED_FOLDER_A],
+            modifiedTime: '2026-05-04T01:23:00Z',
+            mimeType: 'application/vnd.google-apps.document',
+          },
+        },
+      ], { newStartPageToken: 'token-2' }),
+    );
+
+    await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'access-token',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    // The id itself is unchanged (the mtime: fallback is load-bearing for the
+    // 0343 dedupe key) — only the NEW kind field describes what it is.
+    expect(db.fileChangedJobPayloads[0]).toMatchObject({
+      revision_id: 'mtime:2026-05-04T01:23:00Z',
+      revision_kind: 'modified_time',
+    });
+  });
+
+  it('labels a change with neither head revision nor modifiedTime as revision_kind event_time', async () => {
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf([
+        {
+          fileId: 'file-evt',
+          time: '2026-05-04T02:00:00Z',
+          file: { parents: [WATCHED_FOLDER_A] },
+        },
+      ], { newStartPageToken: 'token-2' }),
+    );
+
+    await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'access-token',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(db.fileChangedJobPayloads[0]).toMatchObject({
+      revision_id: 'evt:2026-05-04T02:00:00Z:file-evt',
+      revision_kind: 'event_time',
+    });
+  });
+
+  it('only ever emits a revision_kind from the shared DRIVE_REVISION_KINDS vocabulary', async () => {
+    // Ratchet: the UI and the job-payload schema both switch on this value.
+    // A new fallback branch in resolveRevision that invents a fourth kind must
+    // land in the shared constant first, or this fails.
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf([
+        { file: { id: 'f-head', parents: [WATCHED_FOLDER_A], headRevisionId: 'r1' } },
+        { file: { id: 'f-mtime', parents: [WATCHED_FOLDER_A], modifiedTime: '2026-05-04T03:00:00Z' } },
+        { fileId: 'f-evt', time: '2026-05-04T04:00:00Z', file: { parents: [WATCHED_FOLDER_A] } },
+      ], { newStartPageToken: 'token-2' }),
+    );
+
+    await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'access-token',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(db.fileChangedJobPayloads).toHaveLength(3);
+    const kinds = db.fileChangedJobPayloads.map((p) => p.revision_kind);
+    expect(kinds).toEqual(['head_revision', 'modified_time', 'event_time']);
+    for (const kind of kinds) {
+      expect(DRIVE_REVISION_KINDS).toContain(kind);
+    }
+  });
+
+  it('emits null folder_id when the change carries no parents', async () => {
+    // An `unrelated_change` never reaches the enqueue, so the only way to see
+    // a parentless matching change is a watched-folder list that is itself
+    // empty — which cannot match. This asserts the DESCRIPTOR contract via the
+    // ledger row instead: parents stay the source of truth for folder_id.
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf([
+        { file: { id: 'file-orphan', parents: [], headRevisionId: 'rev-orphan' } },
+      ], { newStartPageToken: 'token-2' }),
+    );
+
+    const result = await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'access-token',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(result.queued).toBe(0);
+    expect(db.fileChangedJobPayloads).toHaveLength(0);
+    expect(db.ledgerInserts[0].outcome).toBe('unrelated_change');
   });
 });
