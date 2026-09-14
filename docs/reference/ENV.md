@@ -112,7 +112,7 @@ claims-review rule — measured vs asserted vs NOT asserted):
 | Field | Gated by `HEALTH_DETAIL_TOKEN`? |
 |---|---|
 | `checks.*.status` sub-objects (DB latency + error message, anchoring backlog `pendingCount` / `drainStalled` / `lastBatchAt`, `kms.provider`) | **Yes** — compact renders each check as a bare status string |
-| `info.*` (stripe / sentry / ai / prodAnchoring flags) | **Yes** — omitted entirely |
+| `info.*` (stripe / sentry / ai / prodAnchoring / originGuard flags) | **Yes** — omitted entirely |
 | `connection` (`mode` + Supabase URL / project ref) | **Yes** — omitted entirely |
 | `status`, `version`, `git_sha`, `uptime`, `network` | **NO — still public on plain `/health`** |
 
@@ -135,6 +135,44 @@ Deliberately optional and deliberately **not** in the production required-vars
 check: a missing secret must not crash-loop the worker. An unauthorized request
 degrades to compact rather than returning 401, so Cloud Run probes, uptime
 monitors, and the deploy-verification workflows never break on this gate.
+
+## Origin guard (SCRUM-3888)
+```bash
+CLOUDFLARE_ORIGIN_GUARD_MODE=off    # off | observe | enforce
+CLOUDFLARE_ORIGIN_SECRET=           # optional in `off` mode; REQUIRED (min 16 chars) once mode is observe|enforce — boot fails loudly otherwise
+```
+
+Closes the gap CLAUDE.md §1.1's Ingress row documents: `arkova-worker-*.run.app`
+answers publicly and unauthenticated (`ingress=all`, `invoker-iam-disabled`,
+empty IAM policy — verified live 2026-09-13), bypassing Cloudflare entirely.
+`requireCloudflareOrigin` (`services/worker/src/middleware/
+requireCloudflareOrigin.ts`) checks for `X-Arkova-Origin-Auth: <secret>`, a
+header a Cloudflare Transform Rule injects on every request it proxies through
+`api.` / `edge.` / `docs.arkova.ai`. A request that reaches the worker without
+going through that zone — i.e. anything against the bare run.app host — never
+carries it.
+
+`CLOUDFLARE_ORIGIN_GUARD_MODE` read PER REQUEST, not once at boot — flipping it
+on a live Cloud Run revision is a plain env-var update, no redeploy needed:
+
+| Mode | Behavior |
+|---|---|
+| `off` (default) | No-op. Ships inert until the release session wires the secret + Transform Rule. |
+| `observe` | Never blocks. Logs `origin_guard_would_block` and counts it per route family (`info.originGuard` on `/health?detailed=true`, `HEALTH_DETAIL_TOKEN`-gated) — see the rollout runbook before enforcing anything. |
+| `enforce` | 403 `origin_not_allowed` on a missing/wrong header. Bounded JSON body; no request details echoed. |
+
+`/health`, `/api/health`, `/jobs/*` (Cloud Scheduler — already CRON_SECRET/OIDC
+authenticated) and every `/webhooks/*` + `/api/v1/webhooks/*` inbound partner
+receiver (already HMAC/signature-authenticated per connector) are exempt in
+every mode. Full allowlist inventory with evidence, and the rollout/rollback
+procedure: [`docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`](./CLOUDFLARE_ORIGIN_GUARD.md).
+
+`CLOUDFLARE_ORIGIN_SECRET` is **not yet** in `deploy-worker.yml`'s
+`--set-secrets` (see the comment above the canary deploy step there) — adding a
+reference to a Secret Manager id that does not exist yet fails the SECRET
+PREFLIGHT step (SCRUM-4495) for every subsequent worker deploy, not just this
+flag's rollout. Provisioning it is a release-session step, done together with
+adding it to `--set-secrets` + the preflight loop + the Transform Rule.
 
 ## Cloudflare (edge workers)
 ```bash
