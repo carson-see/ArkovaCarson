@@ -1,0 +1,1152 @@
+{
+  "schedulerJob": null,
+  "treasury": null,
+  "notApplicable": {
+    "schedulerJob": "Train changes no anchoring/scheduler path; no forced-flush job exists on this rig (mock profile)",
+    "treasury": "USE_MOCKS=true rig; no chain path in the train"
+  },
+  "changedPaths": [
+    "pr-2841-api-keys",
+    "pr-2846-drive-source",
+    "pr-2909-verify-search-lexical-fallback",
+    "pr-2912-connectors"
+  ],
+  "drainLog": [
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T00-40-38-157Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T00-40-38-157Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T00-40-38-157Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T00-40-38-157Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T00-46-07-177Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T00-46-07-177Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T00-46-07-177Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T00-46-07-177Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T00-51-37-091Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T00-51-37-091Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T00-51-37-091Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T00-51-37-091Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T00-57-09-813Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T00-57-09-813Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T00-57-09-813Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T00-57-09-813Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-02-38-753Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-02-38-753Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-02-38-753Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-02-38-753Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-08-08-454Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-08-08-454Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-08-08-454Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-08-08-454Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-13-38-211Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-13-38-211Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-13-38-211Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-13-38-211Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-19-08-950Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-19-08-950Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-19-08-950Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-19-08-950Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-24-37-489Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-24-37-489Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-24-37-489Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-24-37-489Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-30-04-667Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-30-04-667Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-30-04-667Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-30-04-667Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-35-34-599Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-35-34-599Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-35-34-599Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-35-34-599Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-41-00-995Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-41-00-995Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-41-00-995Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-41-00-995Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-46-27-077Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-46-27-077Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-46-27-077Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-46-27-077Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-51-56-910Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-51-56-910Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-51-56-910Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-51-56-910Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T01-57-25-700Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T01-57-25-700Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T01-57-25-700Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T01-57-25-700Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-02-52-616Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-02-52-616Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-02-52-616Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-02-52-616Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-08-19-304Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-08-19-304Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-08-19-304Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-08-19-304Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-13-49-392Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-13-49-392Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-13-49-392Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-13-49-392Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-19-16-016Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-19-16-016Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-19-16-016Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-19-16-016Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-24-44-075Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-24-44-075Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-24-44-075Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-24-44-075Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-30-12-099Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-30-12-099Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-30-12-099Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-30-12-099Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-35-40-769Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-35-40-769Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-35-40-769Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-35-40-769Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-41-09-091Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-41-09-091Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-41-09-091Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-41-09-091Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-46-35-264Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-46-35-264Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-46-35-264Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-46-35-264Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-52-00-088Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-52-00-088Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-52-00-088Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-52-00-088Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T02-57-27-137Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T02-57-27-137Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T02-57-27-137Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T02-57-27-137Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-02-54-096Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-02-54-096Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-02-54-096Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-02-54-096Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-08-17-428Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-08-17-428Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-08-17-428Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-08-17-428Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-13-43-004Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-13-43-004Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-13-43-004Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-13-43-004Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-19-10-422Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-19-10-422Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-19-10-422Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-19-10-422Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-24-34-193Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-24-34-193Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-24-34-193Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-24-34-193Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-30-00-819Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-30-00-819Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-30-00-819Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-30-00-819Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-35-28-891Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-35-28-891Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-35-28-891Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-35-28-891Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-40-54-196Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-40-54-196Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-40-54-196Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-40-54-196Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-46-18-958Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-46-18-958Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-46-18-958Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-46-18-958Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-51-44-921Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-51-44-921Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-51-44-921Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-51-44-921Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T03-57-09-679Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T03-57-09-679Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T03-57-09-679Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T03-57-09-679Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T04-02-35-843Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T04-02-35-843Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T04-02-35-843Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T04-02-35-843Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T04-08-02-810Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T04-08-02-810Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T04-08-02-810Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T04-08-02-810Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T04-13-27-401Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T04-13-27-401Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T04-13-27-401Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T04-13-27-401Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T04-18-53-757Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T04-18-53-757Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T04-18-53-757Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T04-18-53-757Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T04-24-22-238Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T04-24-22-238Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T04-24-22-238Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T04-24-22-238Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T04-29-50-903Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T04-29-50-903Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T04-29-50-903Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T04-29-50-903Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T04-35-18-604Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T04-35-18-604Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T04-35-18-604Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T04-35-18-604Z: 15/15 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T04-40-42-723Z: 43/43 probes passed"
+    },
+    {
+      "processed": 25,
+      "skipped": false,
+      "path": "pr-2846-drive-source",
+      "reason": "cycle 2026-09-14T04-40-42-723Z: 25/25 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T04-40-42-723Z: 21/21 probes passed"
+    },
+    {
+      "processed": 15,
+      "skipped": false,
+      "path": "pr-2912-connectors",
+      "reason": "cycle 2026-09-14T04-40-42-723Z: 15/15 probes passed"
+    }
+  ],
+  "deployProvenance": {
+    "deployLogRows": [
+      {
+        "head_sha": "9321e767c3ce249cd53ea94654f38434ec7035be",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-13T23:49:41Z",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00025-rav"
+      }
+    ],
+    "prHeadSha": "9321e767c3ce249cd53ea94654f38434ec7035be",
+    "service": "arkova-worker-cto-train-b-0912-staging"
+  },
+  "base": {
+    "baseRefName": "main"
+  },
+  "_meta": {
+    "decision": "CTO 2026-09-12 — Confluence 146440221 / SCRUM-5054",
+    "generator": "scripts/staging/targeted/cto-train-b-0912/preflight-from-window.mjs",
+    "generated_at": "2026-09-14T04:41:45.452Z",
+    "rc_id": "rc-train-b5b-2026-09-13",
+    "manifest": "/private/tmp/b5b-fixes/main-seal/docs/staging/rc-manifests/rc-train-b5b-2026-09-13.json",
+    "window": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/window1",
+    "cycle_files": 45,
+    "cycles_with_per_pr": 45,
+    "cycles_passed": 45,
+    "errored_cycles": [],
+    "per_pr_totals": {
+      "#2841": {
+        "path": "pr-2841-api-keys",
+        "cycles": 45,
+        "probes": 1935,
+        "passed": 1935
+      },
+      "#2846": {
+        "path": "pr-2846-drive-source",
+        "cycles": 45,
+        "probes": 1125,
+        "passed": 1125
+      },
+      "#2909": {
+        "path": "pr-2909-verify-search-lexical-fallback",
+        "cycles": 45,
+        "probes": 945,
+        "passed": 945
+      },
+      "#2912": {
+        "path": "pr-2912-connectors",
+        "cycles": 45,
+        "probes": 675,
+        "passed": 675
+      }
+    },
+    "deploy_log_source": "STUB (no deploy-log file at \"<not supplied>\"): one row synthesized from manifest train_launch_sha + environment.revision (arkova-worker-cto-train-b-0912-staging-00025-rav), at = manifest soak.start. Replace with exported staging_deploy_log rows (deploy_log_id 7) when available.",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "preflight_result": "environment_type=clean_mirror (2026-09-13T23:35:39.584Z, docs/staging/cto-train-b-0912/preflight-b5b-20260913T233539Z.json); the prior Train B5a supervisor process on this rig was found still running past its own sealed 4.02h/47-cycle close and was stopped (SIGTERM, PIDs 65887/65889) before this preflight was run, so the rig was genuinely idle at capture time. missing_from_staging notes 0452 and 20260912143110 as informational — neither migration file exists on current main and neither is owned by any of this train's 4 members."
+  }
+}

@@ -103,12 +103,12 @@
     ]
   },
   "prod_cutover": {
-    "deployed_sha": "",
-    "health_check": "",
-    "smoke_result": "",
-    "rollback_readiness": "",
-    "actor": "",
-    "timestamp": "",
+    "deployed_sha": "8115bfdc6a270bb992c9fc607ff17d9bde8642f0 (main tip after #2842 8cbb0f02e, #2843 c8b505eb6, #2845 8115bfdc6 merged via Mergify)",
+    "health_check": "GET https://api.arkova.ai/health → {status:healthy, git_sha:8115bfdc6a270bb992c9fc607ff17d9bde8642f0, network:mainnet, checks:{database:ok,anchoring:ok,kms:ok}} at 2026-09-13T15:23Z; gcloud run services describe arkova-worker: revision arkova-worker-01415-foc at 100% (previous: 01412-ros = c8b505eb6 for #2843 at 15:03Z, 01409-bef = 8cbb0f02e for #2842 at 14:2xZ)",
+    "smoke_result": "deploy-worker.yml canary→full runs: #2843 https://github.com/carson-see/ArkovaCarson/actions/runs/34763497087 (success 15:03:12Z), #2845 https://github.com/carson-see/ArkovaCarson/actions/runs/34763592207 (success 15:22:09Z); Vercel production stays on dpl_G9HaxizfsZ63TbYpWPRWVzhSGtWc (c8b505eb6) — the later main commits carry no frontend files, so the ignoreCommand cancelled their builds by design",
+    "rollback_readiness": "Cloud Run previous revisions 01412-ros / 01409-bef retained; `gcloud run services update-traffic arkova-worker --to-revisions arkova-worker-01412-ros=100` reverts #2845 without a rebuild; #2845's grandfather grant (webhooks:manage on 15 active keys across the 3 endpoint-owning orgs) is additive and needs no reversal on rollback",
+    "actor": "CTO release session (Claude Fable 5.1) for carson@arkova.io",
+    "timestamp": "2026-09-13T15:23:00Z",
     "pre_deploy_step": "#2845 grandfather: grant webhooks:manage to the active api_keys of the 3 orgs that own webhook_endpoints rows (prod write; Carson signs off) BEFORE the worker deploy that carries #2845. #2842: create computeid-webhook-secret + computeid-ca-cert-pem in Secret Manager and grant roles/secretmanager.viewer to github-actions-deploy before the deploy that carries it."
   },
   "exceptions": [

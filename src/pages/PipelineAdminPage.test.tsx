@@ -23,6 +23,12 @@ vi.mock('@/lib/supabase', () => {
     eq: vi.fn().mockReturnThis(),
     order: vi.fn().mockReturnThis(),
     range: vi.fn().mockResolvedValue({ data: [], count: 0, error: null }),
+    // SCRUM-5044: per-source freshness ("Last: … · n rows / 30d") ends its
+    // chain on .gte(created_at cutoff) for the rows_30d head-count query.
+    // The last-insert query ends on the existing .limit(1) above (data: []
+    // by default, which renders as "No records yet" — a safe universal
+    // default no other assertion in this file depends on).
+    gte: vi.fn().mockResolvedValue({ count: 0, error: null }),
   };
   return {
     supabase: {
@@ -411,7 +417,10 @@ describe('PipelineAdminPage', () => {
     } as never);
   });
 
-  it('wires the continuing education control to a real worker route', async () => {
+  it('wires the EDGAR control to a real worker route', async () => {
+    // Was 'fetch-continuing-education' — SCRUM-5045/5046 moved that control to
+    // disabled (upstream endpoint moved, 404), so it can no longer stand in as
+    // "the enabled control" for this wiring assertion. fetch-edgar stays enabled.
     render(
       <MemoryRouter>
         <PipelineAdminPage />
@@ -421,10 +430,10 @@ describe('PipelineAdminPage', () => {
     vi.mocked(workerFetch).mockClear();
 
     fireEvent.click(screen.getByText('Pipeline Controls'));
-    fireEvent.click(await screen.findByTestId('pipeline-job-fetch-continuing-education'));
+    fireEvent.click(await screen.findByTestId('pipeline-job-fetch-edgar'));
 
     await waitFor(() => {
-      expect(workerFetch).toHaveBeenCalledWith('/jobs/fetch-continuing-education', { method: 'POST' });
+      expect(workerFetch).toHaveBeenCalledWith('/jobs/fetch-edgar', { method: 'POST' });
     });
   });
 
@@ -458,11 +467,13 @@ describe('PipelineAdminPage', () => {
   });
 
   it('clears stale completion timers when the same pipeline control is run again', async () => {
-    let continuingEducationCalls = 0;
+    // Was 'fetch-continuing-education' — now disabled (SCRUM-5046); fetch-edgar
+    // stays enabled and exercises the same timer-clearing path.
+    let edgarCalls = 0;
     vi.mocked(workerFetch).mockImplementation(async (path) => {
-      if (path === '/jobs/fetch-continuing-education') {
-        continuingEducationCalls += 1;
-        if (continuingEducationCalls === 1) {
+      if (path === '/jobs/fetch-edgar') {
+        edgarCalls += 1;
+        if (edgarCalls === 1) {
           return {
             ok: true,
             json: vi.fn().mockResolvedValue({ processed: 1 }),
@@ -498,7 +509,7 @@ describe('PipelineAdminPage', () => {
     await screen.findByText('Records Anchored');
 
     fireEvent.click(screen.getByText('Pipeline Controls'));
-    const control = await screen.findByTestId('pipeline-job-fetch-continuing-education');
+    const control = await screen.findByTestId('pipeline-job-fetch-edgar');
 
     vi.useFakeTimers();
     try {
@@ -526,6 +537,302 @@ describe('PipelineAdminPage', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ─── SCRUM-5045: retire controls that never produced a record ───────────
+
+  it('marks every source that has never produced a record as Disabled with an honest reason', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+
+    const placeholderCases: Array<[string, string]> = [
+      ['fetch-certifications', 'Placeholder — no data source is implemented (SCRUM-5045).'],
+      ['fetch-cle', 'Source has never produced a record; retired pending re-source (SCRUM-5045).'],
+      ['fetch-licensing-board', 'Source has never produced a record; retired pending re-source (SCRUM-5045).'],
+      ['fetch-insurance-licenses', 'Source has never produced a record; retired pending re-source (SCRUM-5045).'],
+      ['fetch-sos', 'Source has never produced a record; retired pending re-source (SCRUM-5045).'],
+      ['fetch-uspto', 'No USPTO credential — source unavailable (SCRUM-5041).'],
+      ['fetch-sam-entities', 'SAM.gov API key invalid — awaiting re-issue (SCRUM-5037).'],
+      ['fetch-courtlistener', 'CourtListener account blocked — awaiting new credential (SCRUM-5039).'],
+      ['fetch-sec-iapd', 'Upstream returns 403 (bot protection) (SCRUM-5046).'],
+      ['fetch-fcc', 'Upstream returns 403 (bot protection) (SCRUM-5046).'],
+      ['fetch-moh-sg', 'Upstream endpoint moved (404) (SCRUM-5046).'],
+      ['fetch-continuing-education', 'Upstream endpoint moved (404) (SCRUM-5046).'],
+      ['fetch-ipeds', 'Job fails (502) — code-side defect (SCRUM-5046).'],
+      ['fetch-ecfr', 'Returns 200 with zero rows — date bug (SCRUM-5042).'],
+      ['fetch-enforcement', 'Returns 200 with zero rows — date bug (SCRUM-5042).'],
+    ];
+
+    for (const [path, reason] of placeholderCases) {
+      const el = await screen.findByTestId(`pipeline-job-${path}`);
+      expect(el).toBeDisabled();
+      expect(el).toHaveAttribute('title', reason);
+
+      // UAT (SCRUM-5045 follow-up): button.tsx applies
+      // disabled:pointer-events-none, so a disabled control never receives
+      // hover and its `title` tooltip never renders for a mouse user — the
+      // reason must also exist as visible text, not just in title/aria-label.
+      const reasonCaption = await screen.findByTestId(`pipeline-job-reason-${path}`);
+      expect(reasonCaption).toHaveTextContent(reason);
+    }
+  });
+
+  it('does not render a disabled-reason caption for an enabled control', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+    await screen.findByTestId('pipeline-job-fetch-edgar');
+
+    expect(screen.queryByTestId('pipeline-job-reason-fetch-edgar')).not.toBeInTheDocument();
+  });
+
+  it('keeps the three pre-existing international "not wired" controls disabled as-is', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+
+    for (const path of ['fetch-eurlex', 'fetch-fca-uk', 'fetch-companies-house']) {
+      const el = await screen.findByTestId(`pipeline-job-${path}`);
+      expect(el).toBeDisabled();
+      expect(el).toHaveAttribute('title', 'Worker route is not wired in this release.');
+    }
+  });
+
+  // ─── SCRUM-5043 (UI half): 504 on a long-running job is not a failure ───
+
+  it('flags fetch-finra, fetch-npi, fetch-calbar and fetch-all-state-bills as long-running with a background hint', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+
+    for (const path of ['fetch-finra', 'fetch-npi', 'fetch-calbar', 'fetch-all-state-bills']) {
+      const button = await screen.findByTestId(`pipeline-job-${path}`);
+      expect(button).not.toBeDisabled();
+      expect(button).toHaveAttribute('title', expect.stringContaining('Runs in background'));
+    }
+  });
+
+  it('treats a 504 from a long-running control as started, not failed', async () => {
+    vi.mocked(workerFetch).mockImplementation(async (path) => {
+      if (path === '/jobs/fetch-finra') {
+        return {
+          ok: false,
+          status: 504,
+          json: vi.fn().mockResolvedValue(null),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          totalRecords: 10000,
+          anchoredRecords: 9000,
+          pendingRecords: 1000,
+          embeddedRecords: 8000,
+          anchorLinkedRecords: 9500,
+          pendingRecordLinks: 500,
+          pendingAnchorRecords: 450,
+          broadcastingRecords: 50,
+          submittedRecords: 7000,
+          securedRecords: 2000,
+          cacheUpdatedAt: '2026-04-24T12:00:00Z',
+          bySource: {},
+        }),
+      } as unknown as Response;
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+
+    const control = await screen.findByTestId('pipeline-job-fetch-finra');
+    fireEvent.click(control);
+
+    await waitFor(() => {
+      expect(control).toHaveAttribute(
+        'title',
+        'Started; runs in the background past the request timeout. Check source volume for completion.',
+      );
+    });
+    // 'done', not 'error' — no destructive-variant Error badge.
+    expect(screen.queryByText('Error')).not.toBeInTheDocument();
+  });
+
+  it('still treats a 504 from a NON-long-running control as an error', async () => {
+    vi.mocked(workerFetch).mockImplementation(async (path) => {
+      if (path === '/jobs/fetch-edgar') {
+        return {
+          ok: false,
+          status: 504,
+          json: vi.fn().mockResolvedValue(null),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          totalRecords: 10000,
+          anchoredRecords: 9000,
+          pendingRecords: 1000,
+          embeddedRecords: 8000,
+          anchorLinkedRecords: 9500,
+          pendingRecordLinks: 500,
+          pendingAnchorRecords: 450,
+          broadcastingRecords: 50,
+          submittedRecords: 7000,
+          securedRecords: 2000,
+          cacheUpdatedAt: '2026-04-24T12:00:00Z',
+          bySource: {},
+        }),
+      } as unknown as Response;
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+
+    const control = await screen.findByTestId('pipeline-job-fetch-edgar');
+    fireEvent.click(control);
+
+    await waitFor(() => {
+      expect(control).toHaveAttribute('title', 'Worker returned 504');
+    });
+  });
+
+  // ─── SCRUM-5044: per-source freshness under each control ────────────────
+
+  it('renders "No records yet" under a source control when the source has no rows', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+
+    const freshness = await screen.findByTestId('pipeline-job-freshness-fetch-edgar');
+    expect(freshness).toHaveTextContent('No records yet');
+  });
+
+  it('renders "Last: … · n rows / 30d" under a source control once freshness data resolves', async () => {
+    const recentIso = new Date(Date.now() - 60_000).toISOString();
+    (supabase.from as unknown as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+      if (table !== 'public_records') {
+        return { select: vi.fn().mockReturnValue({
+          not: vi.fn().mockResolvedValue({ count: 40, data: null, error: null }),
+          is: vi.fn().mockResolvedValue({ count: 10, data: null, error: null }),
+          limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+          eq: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          range: vi.fn().mockResolvedValue({ data: [], count: 0, error: null }),
+          gte: vi.fn().mockResolvedValue({ count: 0, error: null }),
+        }) };
+      }
+      const chain = {
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({ data: [{ created_at: recentIso }], error: null }),
+        gte: vi.fn().mockResolvedValue({ count: 7, error: null }),
+      };
+      return { select: vi.fn().mockReturnValue(chain) };
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+
+    const freshness = await screen.findByTestId('pipeline-job-freshness-fetch-edgar');
+    await waitFor(() => {
+      expect(freshness).toHaveTextContent(/Last: .* · 7 rows \/ 30d/);
+    });
+  });
+
+  it('does not render a freshness caption for controls with no source (fetch-certifications, fetch-sos)', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+    await screen.findByTestId('pipeline-job-fetch-certifications');
+
+    expect(screen.queryByTestId('pipeline-job-freshness-fetch-certifications')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pipeline-job-freshness-fetch-sos')).not.toBeInTheDocument();
+  });
+
+  // ─── Coordinator follow-up: gate the freshness fetch behind the section's
+  // open state and a 5-minute throttle, instead of firing on every 30s poll
+  // regardless of whether anyone can see the captions. ───────────────────
+
+  it('does not issue any public_records freshness queries while Pipeline Controls is collapsed', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+
+    // Pipeline Controls defaults closed and is never clicked in this test —
+    // the mount-time poll must not have queried public_records at all.
+    const fromCalls = (supabase.from as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(fromCalls.some((call) => call[0] === 'public_records')).toBe(false);
+  });
+
+  it('fetches per-source freshness once on expand, and not again on a second expand within the 5-minute window', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+
+    const header = screen.getByText('Pipeline Controls');
+    fireEvent.click(header); // expand
+    await screen.findByTestId('pipeline-job-freshness-fetch-edgar');
+
+    const countPublicRecordsCalls = () =>
+      (supabase.from as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((call: unknown[]) => call[0] === 'public_records').length;
+
+    const callsAfterFirstExpand = countPublicRecordsCalls();
+    expect(callsAfterFirstExpand).toBeGreaterThan(0);
+
+    // Collapse and re-expand immediately — still well inside the 5-minute
+    // throttle window, so this must NOT issue a second round of queries.
+    await act(async () => {
+      fireEvent.click(header); // collapse
+      fireEvent.click(header); // expand again
+      await Promise.resolve();
+    });
+
+    expect(countPublicRecordsCalls()).toBe(callsAfterFirstExpand);
   });
 });
 

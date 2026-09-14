@@ -130,6 +130,19 @@ export interface HealthCheckDeps {
    * the check reports `unknown` — never a manufactured `ok`.
    */
   getAnchoringRpcStatus?: () => AnchoringRpcProbeResult;
+  /**
+   * SCRUM-3888 — origin-guard rollout snapshot: mode, whether the shared
+   * secret is configured, and the observe-mode "would block" tallies per
+   * route family. SYNCHRONOUS (an in-memory counter read, no I/O) like
+   * `getAnchoringRpcStatus`. Optional so every existing caller/mock stays
+   * valid; when absent the detailed view simply omits `info.originGuard`.
+   */
+  getOriginGuardStats?: () => {
+    mode: string;
+    secretConfigured: boolean;
+    total: number;
+    byRouteFamily: Record<string, number>;
+  };
 }
 
 interface HealthResponse {
@@ -403,6 +416,7 @@ export async function buildHealthResponse(
       configured: Boolean(cfg.geminiApiKey) || cfg.aiProvider === 'mock',
     },
     prodAnchoring: { enabled: cfg.enableProdNetworkAnchoring },
+    ...(deps.getOriginGuardStats ? { originGuard: deps.getOriginGuardStats() } : {}),
   };
 
   return {
