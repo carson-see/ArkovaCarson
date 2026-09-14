@@ -1,6 +1,7 @@
 #!/usr/bin/env npx tsx
 /** SCRUM-5142 bounded full-schema driver for the reserved UAT-17 rig. */
 import { randomUUID } from 'node:crypto';
+import { runWithVerifiedCleanup } from './uat24-folder-feature-lifecycle';
 
 const EXPECTED_REF = 'vaarxclqdxnwoxziolmp';
 function required(name: string): string {
@@ -27,14 +28,20 @@ const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, 'co
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${baseUrl}/rest/v1/${path}`, { ...init, headers: { ...headers, ...(init.headers ?? {}) } });
   const body = await response.text();
-  if (!response.ok) throw new Error(`${path} returned ${response.status}: ${body.slice(0, 500)}`);
+  if (!response.ok) {
+    let code = 'unknown_error';
+    try { code = String((JSON.parse(body) as { code?: unknown }).code ?? code).slice(0, 80); } catch { /* bounded */ }
+    throw new Error(`${path} returned ${response.status} (${code})`);
+  }
   return (body ? JSON.parse(body) : null) as T;
 }
 async function expectFailure(path: string, body: Record<string, unknown>, pattern: RegExp): Promise<void> {
   const response = await fetch(`${baseUrl}/rest/v1/${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
   const text = await response.text();
   assert(!response.ok, `${path} unexpectedly succeeded`);
-  assert(pattern.test(text), `${path} failed unexpectedly: ${text.slice(0, 500)}`);
+  let code = 'unknown_error';
+  try { code = String((JSON.parse(text) as { code?: unknown }).code ?? code).slice(0, 80); } catch { /* bounded */ }
+  assert(pattern.test(text), `${path} failed unexpectedly (${response.status}, ${code})`);
 }
 
 type Folder = {
@@ -68,7 +75,7 @@ async function updateConnector(folderId: string, sourceId: string | null): Promi
   });
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<Record<string, unknown>> {
   const anchors = await request<Array<{ user_id: string; org_id: string; folder_id: string | null }>>(
     `anchors?select=user_id,org_id,folder_id&id=eq.${encodeURIComponent(anchorId)}&limit=1`,
   );
@@ -104,27 +111,45 @@ async function main(): Promise<void> {
   assert(bound.connector_provider === provider && bound.connector_source_id === sourceId,
     'connector binding did not persist');
   await updateConnector(child.id, null);
-  console.log(JSON.stringify({ result: 'uat24-hosted-feature-ok', projectRef: EXPECTED_REF,
+  return { result: 'uat24-hosted-feature-ok', projectRef: EXPECTED_REF,
     orgFolder: true, contextualPersonalFolder: true, nestedCycleDenied: true,
-    bulkMoved: 1, bulkFailed: 1, connectorBoundAndCleared: true }));
+    bulkMoved: 1, bulkFailed: 1, connectorBoundAndCleared: true };
 }
 
 async function cleanup(): Promise<void> {
+  const errors: string[] = [];
   try {
-    await rpc<MoveResult>('folder_api_bulk_move', {
+    const restored = await rpc<MoveResult>('folder_api_bulk_move', {
       p_actor_user_id: actorUserId, p_api_org_id: null, p_anchor_ids: [anchorId], p_folder_id: null,
     });
-  } catch (error) { console.error(`cleanup anchor restore failed: ${String(error)}`); }
+    if (!restored.moved.includes(anchorId)) errors.push('anchor_restore_not_moved');
+  } catch { errors.push('anchor_restore_failed'); }
   for (const folderId of [...createdFolderIds].reverse()) {
     try {
-      await rpc<Folder | null>('folder_api_delete', {
+      const deleted = await rpc<Folder | null>('folder_api_delete', {
         p_actor_user_id: actorUserId, p_api_org_id: null, p_folder_id: folderId,
       });
-    } catch (error) { console.error(`cleanup folder ${folderId} failed: ${String(error)}`); }
+      if (!deleted?.id) errors.push(`folder_delete_empty:${folderId}`);
+    } catch { errors.push(`folder_delete_failed:${folderId}`); }
+  }
+  if (errors.length) throw new Error(`cleanup failed (${errors.join(',')})`);
+}
+
+async function verifyCleanup(): Promise<void> {
+  const anchors = await request<Array<{ folder_id: string | null }>>(
+    `anchors?select=folder_id&id=eq.${encodeURIComponent(anchorId)}&limit=1`,
+  );
+  assert(anchors.length === 1 && anchors[0].folder_id === null, 'cleanup verification: anchor is not unfiled');
+  if (createdFolderIds.length) {
+    const encodedIds = createdFolderIds.map(encodeURIComponent).join(',');
+    const folders = await request<Array<{ id: string }>>(`folders?select=id&id=in.(${encodedIds})`);
+    assert(folders.length === 0, 'cleanup verification: created folders remain');
   }
 }
 
-main().finally(cleanup).catch((error) => {
+runWithVerifiedCleanup(main, cleanup, verifyCleanup).then((result) => {
+  console.log(JSON.stringify(result));
+}).catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });

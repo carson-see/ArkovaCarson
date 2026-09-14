@@ -1,0 +1,17 @@
+-- SCRUM-5142 cleanup. Every predicate is pinned to this fixture's ids/prefix.
+BEGIN;
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+UPDATE public.anchors SET folder_id=NULL WHERE id='51420000-0000-4000-8000-00000000c001';
+DELETE FROM public.folders WHERE
+  (org_id='51420000-0000-4000-8000-00000000b001' OR
+   user_id='51420000-0000-4000-8000-00000000a001')
+  AND name LIKE 'uat24-%';
+DELETE FROM public.anchors WHERE id='51420000-0000-4000-8000-00000000c001';
+DELETE FROM public.org_integrations WHERE id='51420000-0000-4000-8000-00000000d001';
+DELETE FROM public.org_members WHERE user_id='51420000-0000-4000-8000-00000000a001'
+  AND org_id='51420000-0000-4000-8000-00000000b001';
+DELETE FROM public.profiles WHERE id='51420000-0000-4000-8000-00000000a001';
+DELETE FROM public.organizations WHERE id='51420000-0000-4000-8000-00000000b001';
+DELETE FROM auth.identities WHERE user_id='51420000-0000-4000-8000-00000000a001';
+DELETE FROM auth.users WHERE id='51420000-0000-4000-8000-00000000a001';
+COMMIT;
