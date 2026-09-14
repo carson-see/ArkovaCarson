@@ -31,6 +31,7 @@ import {
 } from '../integrations/connectors/drive-changes-runner.js';
 import { fetchDriveFileBytes } from '../integrations/oauth/drive.js';
 import { createDefaultKmsClient } from '../integrations/oauth/crypto.js';
+import { reportDriveProcessingFailure } from '../integrations/connectors/drive-connect-health.js';
 
 // Re-exported for back-compat with existing importers — the job type is now
 // owned by drive-artifact-producer.ts (see DRIVE_FILE_CHANGED_JOB_TYPE there
@@ -326,7 +327,33 @@ export async function runDriveFileChangedJobs(
 
   for (let i = 0; i < limit; i++) {
     const processed = await processNextJob(DRIVE_FILE_CHANGED_JOB_TYPE, async (job) => {
-      await processDriveFileChangedJob(job.payload, jobDeps);
+      try {
+        await processDriveFileChangedJob(job.payload, jobDeps);
+      } catch (err) {
+        // P0-2 (2026-09-14 hardening audit): the `google_drive.file_changed`
+        // job_queue drain is the OTHER half of the "rule event succeeded,
+        // fetch job died" blind spot — this failure mode previously had NO
+        // Sentry coverage at all, only `job_queue.last_error` (which nobody
+        // watches proactively). Report with the payload's own ids before
+        // processNextJob's failJob() records the (separately sanitized)
+        // last_error column; rethrow unchanged so retry/dead-letter
+        // semantics are untouched.
+        const payload = job.payload as {
+          org_id?: string;
+          integration_id?: string;
+          file_id?: string;
+          revision_id?: string;
+        };
+        reportDriveProcessingFailure(err, {
+          stage: 'file_changed_job',
+          orgId: payload?.org_id ?? null,
+          integrationId: payload?.integration_id ?? null,
+          fileId: payload?.file_id ?? null,
+          revisionId: payload?.revision_id ?? null,
+          jobId: job.id,
+        });
+        throw err;
+      }
     });
     if (!processed.claimed) break;
     recordProcessedJob(result, processed);
