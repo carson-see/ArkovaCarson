@@ -19,8 +19,36 @@ applies a small pre-0462 schema plus the actual canonical 0445 and 0365 migratio
 the legacy mixed-context edge, applies the exact candidate 0462 file, executes
 the dependency-ordered rollback, confirms the baseline row/assignment survived,
 restores 0445/0365, reapplies the exact 0462 candidate, and applies 0464 before
-the adverse assertions. Migration 0464 replaces only the service-role list RPC;
-its signature is unchanged, so generated database types have no delta.
+the adverse assertions. Migration 0464 replaces only the service-role list RPC
+and keeps its SQL signature unchanged. The checked-in types now carry the
+verbatim scoped B4 generator output for the folder RPCs introduced by 0462;
+the unrelated full B4 output is deliberately not copied.
+
+## SCRUM-5252 corrected B4 parity probe (prepared, not executed)
+
+Apply `scrum5252-hosted-fixture.sql` once through an authorized SQL channel;
+that setup is not qualifying evidence. Then run the exact-host driver first
+with `SCRUM5252_PHASE=diagnostic`. It checks the deployed worker SHA, stable
+fixture shape, and live 0464 RPC behavior. Only after that succeeds, run one or
+more `SCRUM5252_PHASE=qualifying` cycles:
+
+```bash
+STAGING_SUPABASE_URL=https://dlfcwhljvkomeouykcwk.supabase.co \
+STAGING_SUPABASE_ANON_KEY=... \
+STAGING_SUPABASE_SERVICE_ROLE_KEY=... \
+STAGING_WORKER_URL=https://arkova-worker-cto-train-b4-0913-staging-270018525501.us-central1.run.app \
+B4_WORKER_ID_TOKEN=<exact-worker-audience-token> \
+SCRUM5252_EXPECTED_WORKER_SHA=<deployed-candidate-sha> \
+SCRUM5252_PHASE=diagnostic \
+npx tsx scripts/staging/targeted/scrum5252-platform-folder-parity.ts
+```
+
+Each qualifying cycle uses real AAL2 JWTs through the deployed router and
+production adapter. It emits a bounded result only after its API key and MFA
+factors are removed and verified absent. The stable synthetic identities,
+organizations, folders, and audit rows remain for repeated cycles. After the
+authorized window, retire those identities through supported Auth soft-delete,
+remove only their owned memberships, and mark their profiles deleted.
 
 The bounded hosted full-schema feature probe is
 `scripts/staging/targeted/uat24-folder-feature-driver.ts`. Run it only after
