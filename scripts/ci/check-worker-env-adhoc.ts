@@ -18,12 +18,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { type EnvReference, refKey, scanWorkerEnv } from './lib/workerEnvScan.js';
+import { hasLabel } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'worker-env-adhoc-baseline-update';
 const REPO = process.env.WORKER_ENV_ADHOC_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'worker-env-adhoc-baseline.json');
-
-const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 interface Baseline {
   /** Identifiers we allow to be read ad-hoc anywhere in the worker. */
@@ -71,7 +70,7 @@ function main(): void {
     return;
   }
 
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⚠️  PR labeled \`${OVERRIDE_LABEL}\` — allowing the following:`);
     for (const r of novel) console.log(`  ${r.file} → process.env.${r.identifier}`);
     for (const d of dynamicViolations) console.log(`  ${d.file} → ${d.snippet} (dynamic)`);
