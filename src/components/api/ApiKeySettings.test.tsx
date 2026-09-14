@@ -31,6 +31,9 @@ const defaultProps = {
   onCreate: vi.fn().mockResolvedValue({} as ApiKeyCreated) as unknown as (name: string, scopes: string[], expiresInDays?: number) => Promise<ApiKeyCreated>,
   onRevoke: vi.fn().mockResolvedValue(undefined) as unknown as (keyId: string) => Promise<void>,
   onDelete: vi.fn().mockResolvedValue(undefined) as unknown as (keyId: string) => Promise<void>,
+  // SCRUM-5023 — expiry extension. Its own behaviour is covered in
+  // ApiKeySettings.expiry.test.tsx; here it only satisfies the prop contract.
+  onExtend: vi.fn().mockResolvedValue(undefined) as unknown as (keyId: string, expiresInDays: number | null) => Promise<void>,
 };
 
 describe('ApiKeySettings', () => {
