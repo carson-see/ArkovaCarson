@@ -1355,3 +1355,7 @@ remains held until its own production and CI requirements are satisfied.
 
 [Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retains the staged recovery and separately dated production pilot receipts.
+
+## Recent migrations (PR #2966)
+
+0461 is immutable; it was applied only to the owned UAT-17 staging candidate in this session. Additive 0463 (SCRUM-5212) provides explicit funded, never-debited NEEDS_CREDIT recovery, exact owner/org checks, intent→anchor→credit lock order and one durable generation job. Apply 0463 before the corrected worker; roll back the worker before removing its RPC/column. Native tests load the exact 0341 debit helper and 0461/0463 RPCs, but use a reduced surrounding schema. Full canonical-schema replay, type generation and fresh corrected-head qualification remain separate gates. No production application is asserted here.
