@@ -42,7 +42,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { GH_BIN, REPO, isMainModule, parsePrNumber, resolvePrLabels } from './lib/ciContext';
+import { GH_BIN, REPO, isMainModule, resolveOriginalPrNumber, resolvePrLabels } from './lib/ciContext';
 
 /** The one label `.mergify.yml` honors as a merge hold. */
 export const HOLD_LABEL = 'do-not-merge';
@@ -89,7 +89,11 @@ interface LivePrState {
  * caller falls back to the frozen env payload.
  */
 export function fetchLivePrState(env: NodeJS.ProcessEnv = process.env): LivePrState | null {
-  const prNumber = parsePrNumber(env);
+  // resolveOriginalPrNumber (not the raw parsed number): inside a Mergify
+  // queue run this must be the REAL PR's body/draft state, not the ephemeral
+  // speculative PR's own auto-generated status body. Outside a queue context
+  // it is identical to parsePrNumber.
+  const prNumber = resolveOriginalPrNumber(env);
   const repo = env.GITHUB_REPOSITORY ?? '';
   if (prNumber === null || !repo) return null;
   try {
