@@ -1,5 +1,40 @@
 # services/worker/src/
-_Last updated: 2026-09-07 (SCRUM-4492: ComputeID AgentPassport integration — `config.ts` gains the ComputeID flag/secret/CA-pin trio with a boot guard; `index.ts` gains the `/webhooks/computeid` mount)_
+_Last updated: 2026-09-13 (SCRUM-3888: origin guard for the public Cloud Run origin — new `middleware/requireCloudflareOrigin.ts`, flag-gated `off` by default; `config.ts` gains the mode/secret pair with a boot guard; `index.ts` mounts it first, ahead of CORS and every route)_
+
+## 2026-09-13 SCRUM-3888 — origin guard for the public Cloud Run origin
+
+New `middleware/requireCloudflareOrigin.ts`, mounted in `index.ts` right after `securityHeaders`
+and before `corsMiddleware` — ahead of every route. Closes CLAUDE.md §1.1's Ingress gap:
+`arkova-worker-*.run.app` answers publicly and unauthenticated, bypassing Cloudflare entirely. A
+Cloudflare Transform Rule (release-session-configured, not yet live) will inject
+`X-Arkova-Origin-Auth: <CLOUDFLARE_ORIGIN_SECRET>` on every request it proxies through
+`api.`/`edge.`/`docs.arkova.ai`; a request against the bare run.app host never carries it.
+
+`config.ts` gains `cloudflareOriginGuardMode` (`z.enum(['off','observe','enforce']).default('off')`)
+and `cloudflareOriginSecret` (optional, min 16 chars) with a superRefine guard: any non-`off` mode
+without a secret fails the boot loudly, in every environment (not production-only — an `observe`
+soak with no secret would prove nothing). Read PER REQUEST from `config.ts`, not captured once at
+import — a mode change on a live Cloud Run revision is a plain env-var update, no redeploy. Neither
+field is registered in `middleware/flagRegistry.ts`'s boolean `ENV_FLAG_GETTERS` (3-state mode
+selector, not a flag — same precedent as `bitcoinFeeStrategy`), confirmed not to trip
+`scripts/ci/check-config-drift.ts`'s flag-inventory reconciliation.
+
+Allowlist (`/health`, `/api/health`, `/jobs/*`, `/webhooks/*`, `/api/v1/webhooks/drive`,
+`/api/v1/webhooks/ats`) is evidence-driven — three webhook paths (DocuSign, Adobe Sign, Drive) are
+**provably** registered against the bare run.app host via `config.workerPublicUrl` in code; the
+rest are exempted conservatively for lack of registration-host evidence. **Not** the bare
+`/api/v1/webhooks` prefix — that mount is the customer-facing webhook-management API
+(CRUD/self-service, `api/v1/router.ts:495,515`), not a partner receiver, and stays gated like the
+rest of `/api/v1` (CTO review correction, same date). Full inventory with citations, the rollout
+procedure (`off` → wire secret + Transform Rule → `observe` ≥24h → `enforce`), and the rollback
+(env-var flip to `off`, no redeploy): `docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`. See also
+`middleware/agents.md` (2026-09-13 entry) and `routes/agents.md` (2026-09-13 entry, the
+`getOriginGuardStats` health dep).
+
+**`CLOUDFLARE_ORIGIN_SECRET` is deliberately NOT yet in `deploy-worker.yml`'s `--set-secrets`** —
+adding a reference to a Secret Manager id that does not exist fails the SCRUM-4495 preflight for
+every subsequent worker deploy, not just this rollout. See `.github/workflows/agents.md`'s
+2026-09-13 entry for what the release session must do together to provision it.
 
 ## 2026-09-07 — ComputeID AgentPassport integration (SCRUM-4492 / SCRUM-4493 / SCRUM-4494)
 
@@ -229,6 +264,12 @@ When mocking Supabase rows in this suite, use columns the table actually has.
 - All secrets from env vars; treasury keys never logged.
 - `anchor.status = 'SECURED'` is worker-only via service_role.
 
+
+## 2026-09-11 — UAT-04 human bearer tokens
+
+`verifyAuthToken` rejects verified human JWTs below AAL2 and both Arkova pending
+roles before route authorization. Service OIDC, webhook credentials, and API-key
+paths remain separate.
 
 ## 2026-09-10 — ComputeID historical review closure
 
