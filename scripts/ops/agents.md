@@ -30,3 +30,7 @@ Operational scripts for database maintenance and production infrastructure.
 ## 2026-09-10 — ComputeID historical review closure
 
 `repro-computeid-agent-key-atomic.py` now verifies terminal service-owned passport authority, first-row lock races in both directions, atomic admission/audits, unknown-response retries, transition audit rollback, role isolation and concurrent DLQ deduplication alongside the original agent/key races. It uses a private temporary PostgreSQL fixture and removes it; complete committed Supabase schema replay remains a separate release requirement.
+
+## 2026-09-14 — SCRUM-5120 repair planning review
+
+`repair-pipeline-anchor-descriptions.ts` emits parameterized SQL plans scoped to the chosen source/date bounds, with lock and statement timeouts. Candidate keysets continue through short server-capped pages; source filters use the shared URL-budget helper and bounded pagination. Read failures/incomplete scans reject, and dry-run prints no source text. Immutable0458 remains unchanged; run production repair only through the separately reviewed operator plan.

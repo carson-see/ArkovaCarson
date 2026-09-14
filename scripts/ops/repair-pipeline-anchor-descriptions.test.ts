@@ -12,6 +12,7 @@ import {
   nextCursor,
   parseCliArgs,
   runRepair,
+  createSupabaseRepairClient,
   type RepairClient,
 } from './repair-pipeline-anchor-descriptions.js';
 
@@ -108,7 +109,7 @@ describe('buildBatchUpdateSql — the reference single-statement SQL', () => {
     const { text, values } = buildBatchUpdateSql(['id-1', 'id-2'], ['openalex', 'federal_register']);
     expect(text).toMatch(/a\.id = ANY\(\$1\)/);
     expect(text).toMatch(/pr\.source = ANY\(\$2\)/);
-    expect(values).toEqual([['id-1', 'id-2'], ['openalex', 'federal_register']]);
+    expect(values).toEqual([['id-1', 'id-2'], ['openalex', 'federal_register'], DEFAULT_SINCE]);
   });
 
   it('applies the same abstract/description/summary coalesce priority as computeDescription', () => {
@@ -357,5 +358,46 @@ describe('main() validation refusals (via parseCliArgs + isProdUrl, exercised th
     const url = `https://${PROD_SUPABASE_REF}.supabase.co`;
     const opts = parseCliArgs(['--i-know-this-is-prod']);
     expect(isProdUrl(url) && !opts.allowProd).toBe(false);
+  });
+});
+
+
+describe('review regressions — complete and bounded repair planning', () => {
+  const opts = { sources: ['openalex'], since: '2026-09-01', batchSize: 5000, maxBatches: null, allowProd: false, apply: false };
+  it('continues a server-capped short candidate page until the keyset returns empty', async () => {
+    const fetchCandidateIds = vi.fn().mockResolvedValueOnce([{ id: 'a1' }]).mockResolvedValueOnce([{ id: 'a2' }]).mockResolvedValueOnce([]);
+    const result = await runRepair({ fetchCandidateIds, fetchSourceRows: async () => [], updateDescription: vi.fn() }, opts, vi.fn());
+    expect(result.candidatesSeen).toBe(2);
+    expect(fetchCandidateIds).toHaveBeenNthCalledWith(2, 'a1', 5000);
+  });
+  it('prints an executable-parameter plan with the selected date bound and no source text', async () => {
+    const client = { fetchCandidateIds: vi.fn().mockResolvedValueOnce([{ id: 'a1' }]).mockResolvedValueOnce([]), fetchSourceRows: async () => [{ anchor_id: 'a1', metadata: { abstract: 'private source text' } }], updateDescription: vi.fn() };
+    const log = vi.fn(); await runRepair(client, opts, log);
+    const line = log.mock.calls.map(([line]) => line as string).find((line) => line.startsWith('sql_plan='));
+    expect(line).toBeDefined();
+    const plan = JSON.parse(line!.slice('sql_plan='.length));
+    expect(plan.values).toEqual([['a1'], ['openalex'], '2026-09-01']);
+    expect(plan.text).toContain('pr.created_at >= $3');
+    expect(plan.text).toContain("SET LOCAL statement_timeout = '30s'");
+    expect(line).not.toContain('private source text');
+    expect(client.updateDescription).not.toHaveBeenCalled();
+  });
+  it('does not declare completion for null candidate data', async () => {
+    const query = { select: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), not: vi.fn().mockReturnThis(), order: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(), then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(resolve) };
+    const client = createSupabaseRepairClient({ from: () => query } as never);
+    await expect(client.fetchCandidateIds(null, 2)).rejects.toThrow(/non-array/);
+  });
+  it('chunks source filters and consumes capped source pages through the final empty page', async () => {
+    const chunks: string[][] = []; const ranges: number[] = [];
+    const from = () => {
+      let ids: string[] = []; let offset = 0;
+      const query = { select: () => query, in: (column: string, values: string[]) => { if (column === 'anchor_id') { ids = values; chunks.push(values); } return query; }, gte: () => query, order: () => query, range: (start: number) => { offset = start; ranges.push(start); return query; }, then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data: ids.slice(offset, offset + 1).map((id) => ({ id, anchor_id: id, metadata: {} })), error: null }).then(resolve) }; return query;
+    };
+    const ids = Array.from({ length: 201 }, (_, i) => 'id-' + i.toString().padStart(3, '0'));
+    const client = createSupabaseRepairClient({ from } as never);
+    const rows = await client.fetchSourceRows(ids, ['openalex'], '2026-09-01');
+    expect(rows).toHaveLength(201);
+    expect(chunks.every((chunk) => chunk.length <= 200)).toBe(true);
+    expect(ranges).toContain(200);
   });
 });

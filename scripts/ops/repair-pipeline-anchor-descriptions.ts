@@ -139,6 +139,7 @@ import { resolve as resolvePath } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { chunkForInFilter, scanAllPages } from '../../services/worker/src/utils/postgrest-filter.js';
 
 export const EXIT_SUCCESS = 0;
 export const EXIT_VALIDATION = 1;
@@ -206,9 +207,10 @@ export function computeDescription(metadata: Record<string, unknown> | null | un
  * can run it by hand, one id-batch at a time, as an alternative execution
  * path this script does not itself take.
  */
-export function buildBatchUpdateSql(ids: string[], sources: string[]): { text: string; values: [string[], string[]] } {
+export function buildBatchUpdateSql(ids: string[], sources: string[], since = DEFAULT_SINCE): { text: string; values: [string[], string[], string] } {
   const text = [
     "SET LOCAL lock_timeout = '5s';",
+    "SET LOCAL statement_timeout = '30s';",
     'UPDATE anchors a',
     "SET description = left(coalesce(",
     "  nullif(pr.metadata->>'abstract', ''),",
@@ -220,13 +222,14 @@ export function buildBatchUpdateSql(ids: string[], sources: string[]): { text: s
     '  AND a.id = ANY($1)',
     '  AND a.description IS NULL',
     '  AND pr.source = ANY($2)',
+    '  AND pr.created_at >= $3',
     "  AND coalesce(",
     "    nullif(pr.metadata->>'abstract', ''),",
     "    nullif(pr.metadata->>'description', ''),",
     "    nullif(pr.metadata->>'summary', '')",
     '  ) IS NOT NULL;',
   ].join('\n');
-  return { text, values: [ids, sources] };
+  return { text, values: [ids, sources, since] };
 }
 
 /** The next keyset cursor: the last row's id, or null when the page was empty (walk is done). */
@@ -318,17 +321,28 @@ export function createSupabaseRepairClient(client: SupabaseClient): RepairClient
       }
       const { data, error } = await query;
       if (error) throw new Error(`fetchCandidateIds failed: ${error.message}`);
-      return (data ?? []) as Array<{ id: string }>;
+      if (!Array.isArray(data)) throw new Error('fetchCandidateIds returned non-array rows');
+      return data as Array<{ id: string }>;
     },
     async fetchSourceRows(ids, sources, since) {
-      const { data, error } = await client
-        .from('public_records')
-        .select('anchor_id, metadata')
-        .in('anchor_id', ids)
-        .in('source', sources)
-        .gte('created_at', since);
-      if (error) throw new Error(`fetchSourceRows failed: ${error.message}`);
-      return (data ?? []) as Array<{ anchor_id: string; metadata: Record<string, unknown> | null }>;
+      type SourceRow = { anchor_id: string; metadata: Record<string, unknown> | null };
+      const rows: SourceRow[] = [];
+      for (const chunk of chunkForInFilter(ids)) {
+        const scan = await scanAllPages<SourceRow>(async (offset, limit) => {
+          const result = await client.from('public_records')
+            .select('id, anchor_id, metadata')
+            .in('anchor_id', chunk.values)
+            .in('source', sources)
+            .gte('created_at', since)
+            .order('id', { ascending: true })
+            .range(offset, offset + limit - 1);
+          if (!result.error && !Array.isArray(result.data)) throw new Error('fetchSourceRows returned non-array rows');
+          return result;
+        }, { maxRows: 10_000, maxPages: 1024 });
+        if (scan.status !== 'complete') throw new Error(`fetchSourceRows incomplete: ${scan.status}`);
+        rows.push(...scan.rows);
+      }
+      return rows;
     },
     async updateDescription(id, description) {
       const { data, error } = await client
@@ -338,7 +352,8 @@ export function createSupabaseRepairClient(client: SupabaseClient): RepairClient
         .is('description', null)
         .select('id');
       if (error) throw new Error(`updateDescription(${id}) failed: ${error.message}`);
-      return { updated: (data ?? []).length > 0 };
+      if (!Array.isArray(data)) throw new Error('updateDescription returned non-array rows');
+      return { updated: data.length > 0 };
     },
   };
 }
@@ -353,8 +368,8 @@ export interface RepairResult {
 
 /**
  * Drives the keyset walk. Logs one line per batch (index, id range, rows
- * updated/would-update, elapsed ms) and stops when a page comes back short
- * (the walk is exhausted) or `--max-batches` is reached. Idempotent by
+ * updated/would-update, elapsed ms) and stops only when an empty page
+ * confirms exhaustion or `--max-batches` is reached. Idempotent by
  * construction: re-running after a partial run only touches rows still
  * `description IS NULL`.
  */
@@ -378,6 +393,9 @@ export async function runRepair(
     if (candidates.length === 0) break;
 
     const ids = candidates.map((c) => c.id);
+    if (ids.some((id, index) => typeof id !== 'string' || (index === 0 ? lastId !== null && id <= lastId : id <= ids[index - 1]))) {
+      throw new Error('Candidate keyset failed to advance in id order');
+    }
     if (firstId === null) firstId = ids[0];
     lastIdSeen = ids[ids.length - 1];
     candidatesSeen += ids.length;
@@ -400,6 +418,9 @@ export async function runRepair(
       }
     }
     updated += batchUpdated;
+    if (!options.apply) {
+      log(`sql_plan=${JSON.stringify(buildBatchUpdateSql(ids, options.sources, options.since))}`);
+    }
 
     const elapsedMs = Date.now() - started;
     log(
@@ -410,7 +431,7 @@ export async function runRepair(
 
     batchIndex += 1;
     lastId = ids[ids.length - 1];
-    if (candidates.length < options.batchSize) break; // short page — walk is exhausted
+    // A short page can be the server row cap; only the next empty page proves exhaustion.
   }
 
   log(
