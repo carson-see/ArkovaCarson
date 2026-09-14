@@ -31,7 +31,40 @@ export type WebhookEventType =
   // region regex stops at the first one and would silently read a truncated
   // union.
   | 'attestation.created'
-  | 'attestation.revoked';
+  | 'attestation.revoked'
+  | 'folder.created'
+  | 'folder.updated'
+  | 'folder.deleted'
+  | 'record.folder_changed';
+
+export interface Folder {
+  id: string;
+  publicId: string;
+  name: string;
+  ownerScope: 'USER' | 'ORG';
+  userId: string | null;
+  orgId: string | null;
+  contextOrgId: string | null;
+  parentFolderId: string | null;
+  connectorProvider: 'google_drive' | 'docusign' | null;
+  connectorSourceId: string | null;
+  connectorConnectionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateFolderInput {
+  name: string;
+  ownerScope: 'USER' | 'ORG';
+  orgId?: string;
+  contextOrgId?: string;
+  parentFolderId?: string;
+}
+
+export interface BulkFolderMoveResult {
+  moved: string[];
+  failed: Array<{ anchorId: string; code: string }>;
+}
 
 /** Webhook endpoint metadata (INT-09) */
 export interface WebhookEndpoint {

@@ -158,12 +158,14 @@ export const TriggerConfig = z.discriminatedUnion('trigger_type', [
 export const ActionConfigAutoAnchor = z.object({
   // Optional tag added to the anchor record for reporting.
   tag: z.string().max(50).optional(),
+  destination_folder_id: z.string().uuid().optional(),
 });
 
 export const ActionConfigFastTrackAnchor = z.object({
   // SCALE-01 gates this to Paid+ tier at runtime. Flag present for auditability.
   tag: z.string().max(50).optional(),
   reason: z.string().max(200).optional(),
+  destination_folder_id: z.string().uuid().optional(),
 });
 
 // Founder directive (2026-08-03): AUTO_ANCHOR's dispatcher behavior only ever
@@ -178,6 +180,7 @@ export const ActionConfigFastTrackAnchor = z.object({
 export const ActionConfigInstantSecure = z.object({
   tag: z.string().max(50).optional(),
   reason: z.string().max(200).optional(),
+  destination_folder_id: z.string().uuid().optional(),
 });
 
 export const ActionConfigQueueForReview = z.object({

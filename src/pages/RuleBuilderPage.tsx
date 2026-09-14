@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useFolders, type Folder } from '@/hooks/useFolders';
 import { workerFetch } from '@/lib/workerClient';
 import { ROUTES } from '@/lib/routes';
 import {
@@ -79,6 +80,7 @@ const EMPTY: WizardState = {
 export function RuleBuilderPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
+  const { folders } = useFolders();
   const navigate = useNavigate();
   const [state, setState] = useState<WizardState>(EMPTY);
   const [submitting, setSubmitting] = useState(false);
@@ -202,7 +204,7 @@ export function RuleBuilderPage() {
           <CardContent className="space-y-6">
             {state.step === 1 && <StepTrigger state={state} update={update} patch={patch} />}
             {state.step === 2 && <StepConfigure state={state} update={update} patch={patch} />}
-            {state.step === 3 && <StepAction state={state} update={update} patch={patch} />}
+            {state.step === 3 && <StepAction state={state} update={update} patch={patch} folders={folders} />}
             {state.step === 4 && <StepReview state={state} update={update} patch={patch} />}
 
             {error && (
@@ -518,7 +520,9 @@ function StepConfigure({ state, update }: StepProps) {
   return <p className="text-sm text-muted-foreground">{W.NO_CONFIG_MESSAGE}</p>;
 }
 
-function StepAction({ state, update, patch }: StepProps) {
+function StepAction({ state, update, patch, folders }: StepProps & { folders: Folder[] }) {
+  const supportsDestination = state.action_type === 'AUTO_ANCHOR' ||
+    state.action_type === 'FAST_TRACK_ANCHOR' || state.action_type === 'INSTANT_SECURE';
   function setCfg(key: string, value: unknown) {
     update('action_config', { ...state.action_config, [key]: value });
   }
@@ -550,6 +554,27 @@ function StepAction({ state, update, patch }: StepProps) {
           </p>
         )}
       </div>
+
+      {supportsDestination && (
+        <div className="space-y-2">
+          <Label htmlFor="destination-folder">Arkova destination folder</Label>
+          <Select
+            value={(state.action_config.destination_folder_id as string | undefined) ?? 'AUTO'}
+            onValueChange={(value) => setCfg('destination_folder_id', value === 'AUTO' ? undefined : value)}
+          >
+            <SelectTrigger id="destination-folder"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="AUTO">Auto-sort by connector source</SelectItem>
+              {folders.filter((folder) => folder.ownerScope === 'ORG').map((folder) => (
+                <SelectItem key={folder.id} value={folder.id}>{folder.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Auto-sort creates or reuses a connector-bound folder. Choose a folder to route every matching record there.
+          </p>
+        </div>
+      )}
 
       {state.action_type === 'NOTIFY' && (
         <div className="space-y-2">

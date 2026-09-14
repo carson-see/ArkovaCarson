@@ -32,6 +32,40 @@ class ArkovaModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
+class Folder(ArkovaModel):
+    id: str
+    public_id: str
+    name: str
+    owner_scope: Literal["USER", "ORG"]
+    user_id: str | None = None
+    org_id: str | None = None
+    context_org_id: str | None = None
+    parent_folder_id: str | None = None
+    connector_provider: Literal["google_drive", "docusign"] | None = None
+    connector_source_id: str | None = None
+    connector_connection_id: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class FolderList(ArkovaModel):
+    folders: list[Folder]
+
+
+class FolderEnvelope(ArkovaModel):
+    folder: Folder
+
+
+class FolderMoveFailure(ArkovaModel):
+    anchor_id: str
+    code: str
+
+
+class FolderMoveResult(ArkovaModel):
+    moved: list[str]
+    failed: list[FolderMoveFailure]
+
+
 class ProblemDetail(ArkovaModel):
     """RFC 7807 problem document — emitted by the **v2 API only**.
 

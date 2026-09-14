@@ -367,6 +367,21 @@ export const AttestationRevokedPayloadSchema = z
   })
   .strict();
 
+const FOLDER_EVENT_FIELDS = {
+  folder_public_id: z.string().min(1).max(64),
+  owner_scope: z.enum(['USER', 'ORG']),
+  connector_provider: z.enum(['google_drive', 'docusign']).nullable().optional(),
+} as const;
+
+/** SCRUM-5142 folder lifecycle payloads expose only the folder's public slug. */
+export const FolderLifecyclePayloadSchema = z.object(FOLDER_EVENT_FIELDS).strict();
+
+export const RecordFolderChangedPayloadSchema = z.object({
+  folder_public_id: z.string().min(1).max(64).nullable(),
+  moved_count: z.number().int().min(1).max(100),
+  failed_count: z.number().int().min(0).max(100),
+}).strict();
+
 /**
  * Map event_type → matching schema. Used by `dispatchWebhookEvent` to validate
  * outbound payloads against the canonical contract before signing.
@@ -384,6 +399,10 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'compliance.document_expiring': ComplianceDocumentExpiringPayloadSchema,
   'attestation.created': AttestationCreatedPayloadSchema,
   'attestation.revoked': AttestationRevokedPayloadSchema,
+  'folder.created': FolderLifecyclePayloadSchema,
+  'folder.updated': FolderLifecyclePayloadSchema,
+  'folder.deleted': FolderLifecyclePayloadSchema,
+  'record.folder_changed': RecordFolderChangedPayloadSchema,
 } as const;
 
 export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
@@ -399,6 +418,8 @@ export type CredentialStatusChangedPayload = z.infer<typeof CredentialStatusChan
 export type ComplianceDocumentExpiringPayload = z.infer<typeof ComplianceDocumentExpiringPayloadSchema>;
 export type AttestationCreatedPayload = z.infer<typeof AttestationCreatedPayloadSchema>;
 export type AttestationRevokedPayload = z.infer<typeof AttestationRevokedPayloadSchema>;
+export type FolderLifecyclePayload = z.infer<typeof FolderLifecyclePayloadSchema>;
+export type RecordFolderChangedPayload = z.infer<typeof RecordFolderChangedPayloadSchema>;
 
 export class WebhookPayloadValidationError extends Error {
   constructor(

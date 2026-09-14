@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 describe('Tool Definitions', () => {
-  it('should define exactly the 6 registered tools', () => {
+  it('should define exactly the 7 registered tools', () => {
     // Exact-name ratchet: adding or removing a tool must update this list
     // deliberately. The 4 nessie_-prefixed tools (NCE-19) were removed
     // 2026-09-02 — three 401'd for every real caller (the worker's
@@ -30,7 +30,22 @@ describe('Tool Definitions', () => {
       'arkova_create_attestation',
       'arkova_batch_verify',
       'arkova_verify_signature',
+      'arkova_manage_folders',
     ]);
+  });
+
+  it('manages folders through the authenticated REST surface', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ folders: [] }), { status: 200 }));
+    const result = await handleToolCall('arkova_manage_folders', { action: 'list', owner_scope: 'ORG', org_id: 'aaaaaaaa-0000-4000-8000-000000000001' });
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/folders?owner_scope=ORG'), expect.objectContaining({ method: 'GET' }));
+
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ moved: ['a'], failed: [] }), { status: 207 }));
+    const moved = await handleToolCall('arkova_manage_folders', { action: 'bulk_move', anchor_ids: '["aaaaaaaa-0000-4000-8000-000000000001"]' });
+    expect(moved.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining('/api/v1/folders/bulk-move'), expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ anchor_ids: ['aaaaaaaa-0000-4000-8000-000000000001'], folder_id: null }),
+    }));
   });
 
   it('should have valid input schemas', () => {

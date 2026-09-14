@@ -77,6 +77,7 @@ import { credentialsCtdlImportRouter } from './credentials-ctdl-import.js';
 import { credentialsCtdlRegistryAnchorRouter } from './credentials-ctdl-registry-anchor.js';
 import { webhooksRouter } from './webhooks.js';
 import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
+import { foldersRouter } from './folders-deps.js';
 // atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
 import { driveWebhookRouter } from './webhooks/drive.js';
 import { API_V1_PREFIX, WEBHOOK_PATHS, relativeTo } from '../../constants/webhook-paths.js';
@@ -172,7 +173,7 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
   if (API_CORS_ORIGINS.includes('*') || (origin && API_CORS_ORIGINS.includes(origin))) {
     res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Request-Id, Idempotency-Key');
     res.setHeader('Access-Control-Expose-Headers', API_EXPOSED_HEADERS);
     res.setHeader('Access-Control-Max-Age', '86400');
@@ -273,6 +274,24 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
   req.authUserId = userId;
   req.hmacSecret = hmacSecret;
   next();
+}
+
+function requireFolderAuth(req: Request, res: Response, next: NextFunction): void {
+  const scope = req.method === 'GET' || req.method === 'HEAD' ? 'anchor:read' : 'anchor:write';
+  const checkKeyThenContinue = () => {
+    if (req.apiKey) requireScope(scope)(req, res, next);
+    else next();
+  };
+  const bearer = req.headers.authorization;
+  if (bearer?.startsWith('Bearer ') && !bearer.startsWith('Bearer ak_')) {
+    void requireAuth(req, res, checkKeyThenContinue);
+    return;
+  }
+  if (req.apiKey) {
+    requireScope(scope)(req, res, next);
+    return;
+  }
+  res.status(401).json({ error: 'authentication_required' });
 }
 
 // ─── Batch rate limiter (Constitution 1.10: 10 req/min) ───
@@ -526,6 +545,10 @@ router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webho
 // would 401 an API-key caller before this route is ever reached.
 router.use('/agents/computeid', computeidGate, batchRateLimiter, requireScopeAnyAuth('agents:manage'), agentsComputeIdRouter);
 router.use('/agents', requireAuth, agentsRouter);
+
+// SCRUM-5142: folder management is available to AAL2 browser sessions and
+// scoped SDK/API keys. When both credentials are presented, both are checked.
+router.use('/folders', requireFolderAuth, foldersRouter);
 
 // ─── Record Authenticity Oracle — Phase II Agentic Layer (PH2-AGENT-04) ───
 // API key required — tracks agent identity for audit trail

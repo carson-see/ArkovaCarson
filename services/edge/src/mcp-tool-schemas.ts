@@ -109,6 +109,34 @@ export const oracleBatchVerifySchema = z
 
 export const listAgentsSchema = z.object({}).strict();
 
+export const manageFoldersSchema = z.object({
+  action: z.enum(['list', 'create', 'update', 'bind_connector', 'delete', 'bulk_move']),
+  folder_id: z.string().uuid().optional(),
+  owner_scope: z.enum(['USER', 'ORG']).optional(),
+  owner_user_id: z.string().uuid().optional(),
+  org_id: z.string().uuid().optional(),
+  context_org_id: z.string().uuid().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  parent_folder_id: z.string().uuid().nullable().optional(),
+  provider: z.enum(['google_drive', 'docusign']).nullable().optional(),
+  source_id: z.string().trim().min(1).max(500).nullable().optional(),
+  connection_id: z.string().uuid().nullable().optional(),
+  anchor_ids: z.array(z.string().uuid()).min(1).max(100).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (['update', 'bind_connector', 'delete'].includes(value.action) && !value.folder_id) {
+    ctx.addIssue({ code: 'custom', path: ['folder_id'], message: 'folder_id is required for this action' });
+  }
+  if (value.action === 'create' && (!value.name || !value.owner_scope)) {
+    ctx.addIssue({ code: 'custom', path: ['name'], message: 'name and owner_scope are required for create' });
+  }
+  if (value.action === 'bulk_move' && !value.anchor_ids) {
+    ctx.addIssue({ code: 'custom', path: ['anchor_ids'], message: 'anchor_ids is required for bulk_move' });
+  }
+  if (value.action === 'bind_connector' && value.provider && (!value.source_id || !value.connection_id)) {
+    ctx.addIssue({ code: 'custom', path: ['provider'], message: 'provider, source_id, and connection_id must all be set' });
+  }
+});
+
 export const agentVerifySchema = z
   .object({
     fingerprint: contentHashSchema,
@@ -157,6 +185,7 @@ export const MCP_TOOL_SCHEMAS = {
   arkova_get_document: agentGetDocumentSchema,
   arkova_oracle_batch_verify: oracleBatchVerifySchema,
   arkova_list_agents: listAgentsSchema,
+  arkova_manage_folders: manageFoldersSchema,
 } as const;
 
 export type McpToolName = keyof typeof MCP_TOOL_SCHEMAS;

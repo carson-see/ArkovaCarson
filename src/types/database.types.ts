@@ -3116,41 +3116,86 @@ export type Database = {
       }
       folders: {
         Row: {
+          connector_connection_id: string | null
+          connector_provider: string | null
+          connector_source_id: string | null
+          context_org_id: string | null
           created_at: string
-          created_by: string
+          created_by: string | null
+          created_by_api_key_id: string | null
           id: string
           name: string
           org_id: string | null
           owner_scope: string
+          parent_folder_id: string | null
+          public_id: string
+          is_system_managed: boolean
           updated_at: string
           user_id: string | null
         }
         Insert: {
+          connector_connection_id?: string | null
+          connector_provider?: string | null
+          connector_source_id?: string | null
+          context_org_id?: string | null
           created_at?: string
-          created_by: string
+          created_by?: string | null
+          created_by_api_key_id?: string | null
           id?: string
           name: string
           org_id?: string | null
           owner_scope: string
+          parent_folder_id?: string | null
+          public_id?: string
+          is_system_managed?: boolean
           updated_at?: string
           user_id?: string | null
         }
         Update: {
+          connector_connection_id?: string | null
+          connector_provider?: string | null
+          connector_source_id?: string | null
+          context_org_id?: string | null
           created_at?: string
-          created_by?: string
+          created_by?: string | null
+          created_by_api_key_id?: string | null
           id?: string
           name?: string
           org_id?: string | null
           owner_scope?: string
+          parent_folder_id?: string | null
+          public_id?: string
+          is_system_managed?: boolean
           updated_at?: string
           user_id?: string | null
         }
         Relationships: [
           {
+            foreignKeyName: "folders_context_org_id_fkey"
+            columns: ["context_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folders_parent_folder_id_fkey"
+            columns: ["parent_folder_id"]
+            isOneToOne: false
+            referencedRelation: "folders"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "folders_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folders_created_by_api_key_id_fkey"
+            columns: ["created_by_api_key_id"]
+            isOneToOne: false
+            referencedRelation: "api_keys"
             referencedColumns: ["id"]
           },
           {
@@ -7453,6 +7498,31 @@ export type Database = {
           p_merkle_root?: string
           p_tx_id: string
         }
+        Returns: Json
+      }
+      folder_api_administers_org: {
+        Args: { p_actor_user_id: string | null; p_api_org_id: string | null; p_org_id: string; p_exact?: boolean }
+        Returns: boolean
+      }
+      folder_api_bulk_move: {
+        Args: { p_actor_user_id: string | null; p_api_org_id: string | null; p_anchor_ids: string[]; p_folder_id: string | null }
+        Returns: Json
+      }
+      folder_api_create: {
+        Args: { p_actor_user_id: string | null; p_api_key_id: string | null; p_api_org_id: string | null; p_owner_scope: string; p_owner_user_id: string | null; p_org_id: string | null; p_context_org_id: string | null; p_name: string; p_parent_folder_id?: string | null }
+        Returns: Json
+      }
+      folder_api_delete: {
+        Args: { p_actor_user_id: string | null; p_api_org_id: string | null; p_folder_id: string }
+        Returns: Json
+      }
+      folder_api_is_member: { Args: { p_user_id: string; p_org_id: string }; Returns: boolean }
+      folder_api_list: {
+        Args: { p_actor_user_id: string | null; p_api_org_id: string | null; p_owner_scope: string; p_owner_user_id?: string | null; p_org_id?: string | null; p_context_org_id?: string | null }
+        Returns: Json
+      }
+      folder_api_update: {
+        Args: { p_actor_user_id: string | null; p_api_org_id: string | null; p_folder_id: string; p_name: string | null; p_name_present: boolean; p_parent_folder_id: string | null; p_parent_present: boolean; p_connector_provider: string | null; p_connector_source_id: string | null; p_connector_connection_id: string | null; p_connector_present: boolean }
         Returns: Json
       }
       generate_anchor_public_id: {

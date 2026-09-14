@@ -113,3 +113,7 @@ Two traps hit here, both now costly to rediscover:
 `attestation.revoked` is typed and subscribable but its worker producer is
 unreachable today, so no delivery of it has occurred — see
 `services/worker/src/webhooks/agents.md`.
+
+## 2026-09-14 — SCRUM-5142 folders
+
+`ArkovaClient.folders` mirrors the canonical worker REST surface: list/create/update/bindConnector/delete/moveRecords. Keep bulk moves capped by the server contract and preserve per-row failures.

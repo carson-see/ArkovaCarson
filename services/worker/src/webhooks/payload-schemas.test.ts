@@ -26,6 +26,8 @@ import {
   ComplianceDocumentExpiringPayloadSchema,
   AttestationCreatedPayloadSchema,
   AttestationRevokedPayloadSchema,
+  FolderLifecyclePayloadSchema,
+  RecordFolderChangedPayloadSchema,
   BANNED_PAYLOAD_KEYS,
   findBannedPayloadKeys,
   isBannedPayloadKey,
@@ -35,6 +37,29 @@ import {
   WebhookPayloadValidationError,
 } from './payload-schemas.js';
 import { BANNED_RESPONSE_KEYS } from '../api/v1/response-schemas.js';
+
+describe('folder webhook payloads (SCRUM-5142)', () => {
+  it('accepts public folder lifecycle and bulk-move summaries', () => {
+    expect(FolderLifecyclePayloadSchema.safeParse({
+      folder_public_id: 'FLD-0011223344556677', owner_scope: 'ORG', connector_provider: 'google_drive',
+    }).success).toBe(true);
+    expect(RecordFolderChangedPayloadSchema.safeParse({
+      folder_public_id: null, moved_count: 2, failed_count: 1,
+    }).success).toBe(true);
+  });
+
+  it.each(['folder_id', 'org_id', 'user_id', 'anchor_id'])('rejects internal %s', (field) => {
+    expect(FolderLifecyclePayloadSchema.safeParse({
+      folder_public_id: 'FLD-0011223344556677', owner_scope: 'USER', [field]: 'internal',
+    }).success).toBe(false);
+  });
+
+  it('registers all four folder events for authenticated webhook CRUD', () => {
+    for (const event of ['folder.created', 'folder.updated', 'folder.deleted', 'record.folder_changed']) {
+      expect(PAYLOAD_SCHEMAS_BY_EVENT_TYPE).toHaveProperty(event);
+    }
+  });
+});
 
 describe('AnchorSecuredPayloadSchema (SCRUM-1268)', () => {
   const valid = {

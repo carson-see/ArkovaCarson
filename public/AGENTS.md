@@ -55,6 +55,13 @@ The server card carries the same evidence qualifications as the registered tools
 
 ## Available Tools
 
+### `arkova_manage_folders`
+
+List and manage nested personal or organization record folders through the
+authenticated Arkova API. Supports create, update, connector binding, delete,
+and partial-result bulk moves. Organization API keys remain bounded to their
+organization.
+
 ### `arkova_verify_anchor`
 
 Verify a credential's authenticity and current status by its public identifier.

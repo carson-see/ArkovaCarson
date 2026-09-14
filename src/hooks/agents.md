@@ -167,3 +167,7 @@ _Restored 2026-07-28 — same union-merge-driver incident as the Recent Changes 
 `useProfile` does not fetch or return cached profile data until mailbox proof and
 a same-user `authenticated`/AAL2 token are present. An assurance upgrade resumes
 the query; account switches and AAL downgrades mask cached data immediately.
+
+## 2026-09-14 — SCRUM-5142 folder client
+
+`useFolders` uses the worker folder API for global personal, org-context personal, and org folders. Moves always use the bounded bulk endpoint, including one-record moves, so partial failures and service-role authorization have one contract.

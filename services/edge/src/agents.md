@@ -338,3 +338,7 @@ signed pending-role rejection before any user/KV/tool lookup can rescue it.
 
 Hosted MCP Supabase bearer verification requires AAL2 for human JWTs and rejects
 email/MFA pending roles. `X-API-Key` machine authentication is unchanged.
+
+## 2026-09-14 — SCRUM-5142 hosted folder management
+
+`arkova_manage_folders` forwards validated list/create/update/bind/delete/bulk actions to the canonical worker routes. Forward only the verified request credential (`X-API-Key` or the locally verified bearer header), never tool arguments as authorization.
