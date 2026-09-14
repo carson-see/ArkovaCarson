@@ -120,9 +120,9 @@ def frontend_content_sha256(url):
         raise RuntimeError('frontend_content_unreadable') from None
 
 
-def json_get(url, bearer):
+def json_get(url, bearer, serverless=False):
     request = Request(url, method='GET', headers={
-        'Authorization': f'Bearer {bearer}',
+        'X-Serverless-Authorization' if serverless else 'Authorization': f'Bearer {bearer}',
         'User-Agent': 'Arkova-UAT17-Soak/1.0',
     })
     try:
@@ -135,7 +135,7 @@ def json_get(url, bearer):
         raise RuntimeError('worker_identity_unreadable') from None
 
 
-def worker_identity_matches(manifest, access_token, id_token):
+def worker_identity_observation(manifest, access_token, id_token):
     base = (f'https://{manifest["workerRegion"]}-run.googleapis.com/'
             f'apis/serving.knative.dev/v1/namespaces/{manifest["workerGcpProject"]}')
     service = json_get(f'{base}/services/{manifest["workerService"]}', access_token)
@@ -146,18 +146,22 @@ def worker_identity_matches(manifest, access_token, id_token):
             or status.get('url', '').rstrip('/') != manifest['workerUrl'].rstrip('/')
             or not any(row.get('revisionName') == revision_name and row.get('percent') == 100
                        for row in traffic if isinstance(row, dict))):
-        return False
+        return None
     revision = json_get(f'{base}/revisions/{revision_name}', access_token)
     revision_status = revision.get('status') if isinstance(revision.get('status'), dict) else {}
     labels = revision.get('metadata', {}).get('labels', {})
     image_digest = revision_status.get('imageDigest', '')
     if (not image_digest.endswith(f'@{manifest["workerImageDigest"]}')
             and image_digest != manifest['workerImageDigest']):
-        return False
+        return None
     if labels.get('arkova-source-head') != manifest['head']:
-        return False
-    health = json_get(f'{manifest["workerUrl"].rstrip("/")}/health', id_token)
-    return health.get('git_sha') == manifest['head'] and health.get('status') == 'healthy'
+        return None
+    health = json_get(f'{manifest["workerUrl"].rstrip("/")}/health', id_token, serverless=True)
+    uptime = health.get('uptime')
+    if (health.get('git_sha') != manifest['head'] or health.get('status') != 'healthy'
+            or not isinstance(uptime, (int, float)) or uptime < 0):
+        return None
+    return float(uptime)
 
 
 def write_summary(path, payload):
@@ -167,7 +171,8 @@ def write_summary(path, payload):
     temporary.replace(path)
 
 
-def redacted_summary(manifest, started_at, deadline, cycles, status, failure=None):
+def redacted_summary(manifest, started_at, deadline, cycles, status, failure=None,
+                     initial_worker_uptime=None, final_worker_uptime=None):
     payload = {
         'driver': 'uat17-email-soak-supervisor',
         'head': manifest['head'],
@@ -179,6 +184,8 @@ def redacted_summary(manifest, started_at, deadline, cycles, status, failure=Non
         'deadlineAt': iso_utc(deadline),
         'cyclesCompleted': cycles,
         'status': status,
+        'initialWorkerUptimeSeconds': initial_worker_uptime,
+        'finalWorkerUptimeSeconds': final_worker_uptime,
         'emailsPerHourUpperBound': round(3 * 3600 / (
             driver.AUTH_LINK_EXPIRY_SECONDS
             + driver.AUTH_LINK_EXPIRY_GRACE_SECONDS
@@ -237,6 +244,8 @@ def main():
     deadline = started_at + timedelta(hours=args.duration_hours)
     cycle = 0
     failure = None
+    initial_worker_uptime = None
+    final_worker_uptime = None
     write_summary(summary_path, redacted_summary(
         manifest, started_at, deadline, cycle, 'running'))
     try:
@@ -257,10 +266,17 @@ def main():
             except RuntimeError:
                 failure = 'credential_refresh_failed'
                 break
-            if not worker_identity_matches(
-                    manifest, credentials['GCP_ACCESS_TOKEN'], credentials['UAT17_WORKER_ID_TOKEN']):
+            observed_uptime = worker_identity_observation(
+                manifest, credentials['GCP_ACCESS_TOKEN'], credentials['UAT17_WORKER_ID_TOKEN'])
+            if observed_uptime is None:
                 failure = 'worker_runtime_identity_drift'
                 break
+            if final_worker_uptime is not None and observed_uptime < final_worker_uptime:
+                failure = 'worker_uptime_decreased'
+                break
+            if initial_worker_uptime is None:
+                initial_worker_uptime = observed_uptime
+            final_worker_uptime = observed_uptime
             cycle_name = f'{args.run_id}/cycle-{cycle:04d}.json'
             child_env = {**os.environ, **credentials}
             command = [
@@ -289,7 +305,9 @@ def main():
                 failure = 'cycle_evidence_failed'
                 break
             write_summary(summary_path, redacted_summary(
-                manifest, started_at, deadline, cycle, 'running'))
+                manifest, started_at, deadline, cycle, 'running',
+                initial_worker_uptime=initial_worker_uptime,
+                final_worker_uptime=final_worker_uptime))
             remaining = (deadline - utc_now()).total_seconds()
             if remaining <= 0:
                 break
@@ -298,9 +316,15 @@ def main():
         failure = failure or 'supervisor_probe_failed'
 
     elapsed = (utc_now() - started_at).total_seconds()
-    passed = failure is None and cycle > 0 and elapsed >= args.duration_hours * 3600
+    if (failure is None and elapsed >= args.duration_hours * 3600
+            and (final_worker_uptime is None or final_worker_uptime < 24 * 3600)):
+        failure = 'worker_uptime_below_24h'
+    passed = (failure is None and cycle > 0 and elapsed >= args.duration_hours * 3600
+              and final_worker_uptime is not None and final_worker_uptime >= 24 * 3600)
     write_summary(summary_path, redacted_summary(
-        manifest, started_at, deadline, cycle, 'pass' if passed else 'fail', failure))
+        manifest, started_at, deadline, cycle, 'pass' if passed else 'fail', failure,
+        initial_worker_uptime=initial_worker_uptime,
+        final_worker_uptime=final_worker_uptime))
     return 0 if passed else 1
 
 

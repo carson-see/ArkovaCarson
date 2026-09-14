@@ -75,14 +75,16 @@ class Uat17SoakSupervisorTest(unittest.TestCase):
                 'metadata': {'labels': {'arkova-source-head': manifest['head']}},
                 'status': {'imageDigest': f'image@{manifest["workerImageDigest"]}'},
             },
-            {'status': 'healthy', 'git_sha': manifest['head']},
+            {'status': 'healthy', 'git_sha': manifest['head'], 'uptime': 86401},
         ]
-        with patch.object(supervisor, 'json_get', side_effect=responses):
-            self.assertTrue(supervisor.worker_identity_matches(manifest, 'access', 'identity'))
+        with patch.object(supervisor, 'json_get', side_effect=responses) as get:
+            self.assertEqual(
+                supervisor.worker_identity_observation(manifest, 'access', 'identity'), 86401)
+            self.assertTrue(get.call_args_list[-1].kwargs['serverless'])
 
         responses[0]['status']['latestReadyRevisionName'] = 'wrong-revision'
         with patch.object(supervisor, 'json_get', side_effect=responses):
-            self.assertFalse(supervisor.worker_identity_matches(manifest, 'access', 'identity'))
+            self.assertIsNone(supervisor.worker_identity_observation(manifest, 'access', 'identity'))
 
     def test_rejects_relative_or_symlinked_credential_helpers(self):
         with self.assertRaisesRegex(ValueError, 'absolute executable'):
