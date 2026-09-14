@@ -940,3 +940,15 @@ Replaced with relative ordering: `attestation.created` sits immediately after
 that. Same guarantee about where SCRUM-3982's entries go, indifferent to what
 lands after them. Prefer relative-position assertions over tail slices whenever
 the thing being ordered is an append-only list that other PRs also append to.
+
+
+## 2026-09-14 — Isolate gate fixtures from speculative CI identity
+
+The dependency, prose-hold, worker-environment and F-5c null-identity CLI tests
+now clear the surrounding Actions PR/head/repository identity before setting
+their local fixture environment. Mergify speculative PR #2974 exposed four
+false failures: ordinary fixture override labels were correctly rejected as
+untrusted queue labels because the runner's queue head leaked into the child.
+All four failures reproduce under a queue-shaped runner environment. Explicit
+forged-queue negative cases still reject those labels; resolver authentication
+and all production gate behavior remain unchanged.

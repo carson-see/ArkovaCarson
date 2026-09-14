@@ -164,3 +164,15 @@ The FERPA contract explicitly classifies `get_public_org_profile` as counts grou
 ## 2026-09-05 — PR #2440 subtype opt-out release review
 
 Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
+
+
+## 2026-09-14 — Isolate gate fixtures from speculative CI identity
+
+The dependency, prose-hold, worker-environment and F-5c null-identity CLI tests
+now clear the surrounding Actions PR/head/repository identity before setting
+their local fixture environment. Mergify speculative PR #2974 exposed four
+false failures: ordinary fixture override labels were correctly rejected as
+untrusted queue labels because the runner's queue head leaked into the child.
+All four failures reproduce under a queue-shaped runner environment. Explicit
+forged-queue negative cases still reject those labels; resolver authentication
+and all production gate behavior remain unchanged.
