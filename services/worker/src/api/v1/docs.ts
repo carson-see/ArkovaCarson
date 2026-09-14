@@ -9,6 +9,15 @@ import { Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { API_KEY_SCOPES } from '../apiScopes.js';
 import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
+// SCRUM-4507: the source-provider vocabulary, taken from the SAME closed
+// marker set the verify endpoint gates on (constants/connectorFingerprint.ts).
+// Imported from the constants module rather than from `verify.ts` on purpose:
+// `verify.ts` pulls in the db client and config at module scope, and this
+// module is imported by tests that deliberately do not stand those up. Both
+// surfaces therefore reference ONE frozen, already-ordered array rather than
+// each materialising its own — see the constant's own header for why the
+// order is stated and the array is frozen.
+import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js';
 
 const router = Router();
 
@@ -1816,6 +1825,38 @@ export const openApiSpec: Record<string, any> = {
               + 'class (Constitution 1.5) — in particular, for root_only records, '
               + 'that no self-contained per-document offline proof is available, '
               + 'and that its absence is not evidence the record is invalid.',
+          },
+          source: {
+            // SCRUM-4507. Enum members are the runtime recognised-marker set
+            // itself — the same array `verify.ts` re-exports as
+            // VERIFICATION_SOURCE_PROVIDERS — so the served spec can never
+            // document a value the endpoint would refuse to emit, or omit one
+            // it emits.
+            type: 'object',
+            properties: {
+              provider: {
+                type: 'string',
+                enum: CONNECTOR_FETCH_SOURCE_MARKERS_SORTED,
+                description:
+                  'The connected system this record\'s document was retrieved from.',
+              },
+            },
+            description:
+              'SCRUM-4507. Which connected document source this record originated '
+              + 'from. OMITTED (never null, never an empty object) when the record '
+              + 'carries no recognised connector marker — absence means "not '
+              + 'stated", NOT "uploaded by a person". '
+              + 'Carries the provider label and NOTHING ELSE: no file, folder, '
+              + 'shared-drive or revision identifier and no deep link into the '
+              + 'source system. This endpoint answers anonymously, so a source '
+              + 'identifier here would let any holder of a public record id probe '
+              + 'the source system for that object; those identifiers are shown '
+              + 'only to the record owner on the authenticated record page. '
+              + 'Not asserted: that the document still exists in the source '
+              + 'system, is unchanged there, or is reachable by the caller — see '
+              + 'fingerprint_rederivability for what the fingerprint does and does '
+              + 'not commit. Additive field (Constitution 1.8); no API version '
+              + 'change.',
           },
           compliance_controls: {
             // SCRUM-2227: this was declared `type: object`, but the field has
