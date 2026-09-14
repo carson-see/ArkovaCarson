@@ -1,5 +1,22 @@
 # agents.md — components/integrations
-_Last updated: 2026-09-13 (`DriveConnectorCard.tsx` / `DocusignConnectorCard.tsx` MOVED to `src/components/connectors/` — Connectors page, SPEC-CONNECTORS)_
+_Last updated: 2026-09-14 (`ConnectorCardStatusRow.tsx` shared with `components/connectors/` — SonarCloud duplication fix)_
+
+## 2026-09-14 — `ConnectorCardStatusRow.tsx` (from PR #2934) pulled into this branch
+
+PR #2912's move of `DriveConnectorCard.tsx` / `DocusignConnectorCard.tsx` into
+`src/components/connectors/` (below) left both cards with their own copy of the status-icon /
+badge / Connect-Disconnect button block, on top of the two copies already in
+`AdobeSignConnectorCard.tsx` and `MemberDocusignConnectorCard.tsx` here — four copies, which
+SonarCloud flagged as new-code duplication over the 3% gate. PR #2934 extracted that block into
+`ConnectorCardStatusRow.tsx` for the two cards in this folder; this branch copies that same
+component (not a fork — same file) and points its own two cards at it instead of re-duplicating.
+Button copy is now the shared generic `CONNECTIONS_LABELS.CONNECT_BUTTON` /
+`DISCONNECT_BUTTON` ("Connect" / "Disconnect") rather than each card's own wording ("Connect
+Drive", etc.) — matches what #2934 already shipped for the two cards here, so all four connector
+cards read consistently. `e2e/integrations-drive.spec.ts` still asserts the old
+`OrgProfilePage`-settings-tab copy from before the 2026-09-13 move above; it was already
+orphaned by that move (the cards no longer render there at all) and is unrelated to this note —
+left as-is, out of scope for the duplication fix.
 
 ## 2026-09-13 — `DriveConnectorCard.tsx` / `DocusignConnectorCard.tsx` moved to `components/connectors/`
 

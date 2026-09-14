@@ -1,6 +1,19 @@
 # agents.md — components/connectors
 
-_Last updated: 2026-09-13 (Connectors page — SPEC-CONNECTORS, founder direction 2026-09-13)_
+_Last updated: 2026-09-14 (status row deduplicated against `components/integrations/ConnectorCardStatusRow.tsx`)_
+
+## 2026-09-14 — `DriveConnectorCard.tsx` / `DocusignConnectorCard.tsx` now use the shared status row
+
+Both cards' status-icon / badge / Connect-Disconnect block is gone from this folder — it now
+renders `components/integrations/ConnectorCardStatusRow.tsx` (see that folder's agents.md), the
+same component PR #2934 extracted from `AdobeSignConnectorCard.tsx` /
+`MemberDocusignConnectorCard.tsx`. That block was the SonarCloud new-code duplication finding
+(~4.2% vs the 3% gate) — four near-identical copies across two folders. Card-specific detail
+(account label, subscription/last-synced lines, the DS-01 entitlement-denied notice) stays in each
+card as `children` passed to the shared row; only the chrome moved. Button copy changed from each
+card's own wording to the shared generic `CONNECTIONS_LABELS.CONNECT_BUTTON` /
+`DISCONNECT_BUTTON`; `DriveConnectorCard.test.tsx` was updated to match (was asserting the literal
+`Connect Drive` string).
 
 ## What This Folder Contains
 
