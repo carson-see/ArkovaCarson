@@ -62,6 +62,48 @@ read or the whole batch would treat a freshly-created org as still-unmetered. Bo
 with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
 check itself.
 
+## 2026-09-13 — `ai-verify-search.ts`: `GET /verify/search` no longer 503s when `ENABLE_SEMANTIC_SEARCH` is off (SCRUM-3906)
+
+This route used to be mounted behind `aiSemanticSearchGate()` in `router.ts` — with
+`ENABLE_SEMANTIC_SEARCH` off (the prod default), EVERY call 503'd before ever reaching the handler,
+including direct API-key callers (npm `arkova-mcp-server`'s `arkova_search_anchors`, the TS/Python
+SDKs' `search()`). The edge hosted MCP (`services/edge/src/mcp-tools.ts` `handleSearchCredentials`)
+already tolerated that 503 by re-running its own lexical query; nothing else did. Confluence
+135069697 (finding N3) and SCRUM-3906/SCRUM-3940 have the full audit trail.
+
+The route is now unconditionally mounted (`router.ts`: `router.use('/verify/search',
+aiVerifySearchRouter)`, no gate) and owns its own mode selection:
+
+- **Semantic** (`search_mode: 'semantic_vector'`): attempted only when `isSemanticSearchEnabled()`
+  (from `middleware/aiFeatureGate.ts`) is true. Embeds the query, matches via
+  `search_public_credential_embeddings`, costs one AI credit (`checkAICredits`/`deductAICredits`,
+  unchanged from before), and can return `issuer_name` / `issued_date` / `expiry_date` /
+  `anchor_timestamp` / `similarity`.
+- **Lexical** (`search_mode: 'lexical_substring'`): the fallback, taken whenever the flag is off OR
+  the embed call throws OR the embeddings RPC errors for ANY reason (not just the RPC-not-found
+  `42883` case the old code special-cased). Queries `search_public_credentials` — the SAME
+  anon-callable ILIKE-substring RPC `services/edge/src/mcp-tools.ts`'s `searchCredentialsFallback`
+  uses (see `supabase/migrations/0415_ferpa_directory_info_opt_out_public_projections.sql` for the
+  current body). No AI credit is checked or deducted on this path. The RPC's `jsonb_build_object`
+  row carries `org_id` — deliberately never read here (§6: no internal ids in a v1 response).
+
+Every response — semantic or lexical — carries `search_mode` so a caller (and a test) can tell which
+path actually answered instead of inferring it from which optional fields are present. The two
+string values (`'semantic_vector'` / `'lexical_substring'`) are a DELIBERATE match to
+`services/edge/src/mcp-tools.ts`'s `SEARCH_MODE_SEMANTIC` / `SEARCH_MODE_LEXICAL` constants — one
+shared vocabulary across the two surfaces, even though the values are duplicated (not imported)
+because worker and edge are separately built services with no shared runtime module boundary.
+
+**Known follow-up, deliberately NOT fixed in this PR (out of lane):** `services/edge/src/mcp-tools.ts`'s
+`searchCredentialsWorkerSemantic()` proxies to this exact route and today treats ANY 2xx response as
+semantic — it does not read `search_mode` from the body at all. Once this ships, an edge-proxied MCP
+caller whose semantic path this route degrades to lexical will see the edge label those results
+`semantic_vector` even though they came from the lexical branch, until the edge is updated to check
+this field. That is an edge-owned fix; flagged via a spawned follow-up task, not fixed here.
+
+`ENABLE_VERIFICATION_API` (the router-wide gate applied above every `/api/v1/*` mount) is unchanged
+and remains the only way this route now 503s.
+
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
 `router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.

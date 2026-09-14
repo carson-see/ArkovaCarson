@@ -57,6 +57,20 @@ Forked from `checkr.ts`. Three things are deliberately different and are the fir
 
 Signature contract verified against a real delivery (`integrations/computeid/__fixtures__/golden-test-delivery.json`): `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>`, no timestamp header. The `sha256=` prefix is required; a bare hex digest is rejected. Body cap 64 KiB, checked before signature verification. The partner-supplied free-text `reason` is never logged, never written to `audit_events.details`, never written to the DLQ — `computeid.test.ts` pins that with a serialized-args assertion.
 
+## 2026-09-13 — `docusign.test.ts`: PR #2485's comments re-landed onto the already-present max-cardinality test (SCRUM-3843)
+
+PR #2485 ("DocuSign rule-event payload 16KB CHECK overflow at max cardinality", bilateral Finding 7)
+closed unmerged. Checked before redoing the work: the SUBSTANTIVE fix (`document_ids` moved off the
+capped `organization_rule_events.payload` onto the uncapped job payload — `docusign.ts` around
+`_signers`/`document_hashes` construction and the `submitJob` call) and the full 100-document /
+20-signer max-cardinality test asserting it were already on `main`, landed independently of #2485.
+The ONLY thing #2485 carried that `main` did not was two explanatory comments on the existing
+`expect()` calls (`gh pr diff 2485` — 24 lines, comments only, zero new assertions). Those two
+comments are now applied verbatim. No behavior changed; the invariant (rule-event payload
+`pg_column_size <= 16384` at 100 docs / 20 signers, `document_ids` absent from that payload,
+`document_hashes` and `document_ids` both present at full cardinality on the two uncapped
+surfaces) was already pinned and stays pinned.
+
 _Last updated: 2026-08-30 (`adobe-sign.ts`: registration challenge + DLQ the orphaned-webhook_id path)_
 
 ## 2026-08-30 — `adobe-sign.ts` now answers Adobe's webhook REGISTRATION challenge (`GET /`)
