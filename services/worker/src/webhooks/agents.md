@@ -396,3 +396,8 @@ a fresh undici `Agent` per call (no keep-alive reuse), and each delivery resolve
 pre-check and the pin). Webhook fan-out is the first hot path on this primitive; a pooled Agent
 keyed by pinned IP and a shared resolve are the follow-up. IPv6-literal hosts (`https://[…]/`) pass
 the bracketed hostname as TLS `servername` (SCRUM-5038).
+
+
+## 2026-09-14 — SCRUM-3972 review correction
+
+The fan-out reader uses config.enableSubOrgWebhookFanout. Delivery suites explicitly mock the disabled flag; the dedicated sub-organization suite enables the same config dependency. This supersedes the older rationale for an ad-hoc process.env read.

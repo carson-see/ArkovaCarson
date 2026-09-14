@@ -1380,3 +1380,8 @@ above WAS escaped — the inconsistency is the tell). Each term now goes through
 (`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
 `entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
 filters here; if you need OR semantics across columns, run the terms separately and union.
+
+
+## 2026-09-14 — SCRUM-3972 review correction
+
+Webhook test-ping tests explicitly mock the opt-in fan-out config dependency; normal validated configuration owns the production flag.

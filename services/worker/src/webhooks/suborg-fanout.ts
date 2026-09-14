@@ -62,25 +62,13 @@
  * cross-org feed within 60 s, not instantly. That is stated in
  * `docs/api/webhooks.md` rather than implied. Errors are never cached.
  *
- * WHY THE FLAG IS READ FROM `process.env` AND NOT FROM `config.ts`. This module
- * is imported by `delivery.ts`, which is imported by every webhook test suite
- * in the tree. `config.ts` validates the whole worker environment at module
- * load and THROWS when it is incomplete, so a static `import { config }` here
- * would make six existing suites — `delivery.test.ts`, `replay.test.ts`,
- * `circuit-breaker.test.ts`, `ssrf-protection.test.ts`,
- * `webhooks-test-ping.test.ts`, `webhook-delivery-roundtrip.test.ts` — fail at
- * import with "Invalid worker configuration", purely because a dark flag was
- * added. `config.ts` is still the DECLARED home of the flag
- * (`enableSubOrgWebhookFanout`, `boolFlag(false)`) and the flagRegistry entry
- * and `flag-inventory.json` both point at it; this read is provably the same
- * value, because `boolFlag`'s preprocessor is
- * `boolEnv = (v) => v === 'true' || v === true` and its `.default(false)` can
- * never fire (the preprocessor always returns a boolean, so the input to
- * `z.boolean()` is never `undefined`). `config.test.ts` pins that equivalence
- * against the real, fully-loaded config object, so the day the coercion
- * changes, a test fails rather than a flag silently diverging.
+ * CONFIGURATION. The validated config singleton owns the fan-out flag, as it
+ * does for the flag registry. Cloud Run configuration changes replace the
+ * revision; they do not mutate process.env in a running process. Tests mock
+ * this dependency explicitly rather than adding an unvalidated runtime read.
  */
 
+import { config } from '../config.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { Sentry } from '../utils/sentry.js';
@@ -125,16 +113,9 @@ function emptyResolution(): FanoutResolution {
 
 export const FANOUT_CACHE_TTL_MS = 60_000;
 
-/**
- * `ENABLE_SUBORG_WEBHOOK_FANOUT`, read the same way `config.ts`'s `boolFlag`
- * reads it. Exported so `config.test.ts` can pin it against the real config
- * object rather than against a restatement of the rule.
- *
- * Read per call, not memoised: the value is a founder-controlled kill switch
- * and a process that caches it could not be turned off without a restart.
- */
+/** The same validated setting used by the worker flag registry. */
 export function isSubOrgFanoutEnabled(): boolean {
-  return process.env.ENABLE_SUBORG_WEBHOOK_FANOUT === 'true';
+  return config.enableSubOrgWebhookFanout;
 }
 
 interface DescendantProbeCache {

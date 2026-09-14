@@ -2204,3 +2204,6 @@ describe('processWebhookRetries refuses stored payloads with banned fields (SCRU
     expect(refusalLogs).toHaveLength(1);
   });
 });
+
+// Keep this delivery suite focused on its own path; fan-out is opt-in.
+vi.mock('../config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));

@@ -24,6 +24,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import crypto from 'node:crypto';
 
 const {
+  mockConfig,
   mockLogger,
   mockSentry,
   mockDbFrom,
@@ -107,8 +108,10 @@ const {
   const mockRpc = vi.fn();
   const mockFetch = vi.fn();
 
-  return { mockLogger, mockSentry, mockDbFrom, mockRpc, mockFetch, tableResolvers, queryLog };
+  return { mockConfig: { enableSubOrgWebhookFanout: false }, mockLogger, mockSentry, mockDbFrom, mockRpc, mockFetch, tableResolvers, queryLog };
 });
+
+vi.mock('../config.js', () => ({ config: mockConfig }));
 
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../utils/sentry.js', () => ({ Sentry: mockSentry }));
@@ -142,14 +145,9 @@ import {
 } from './delivery.js';
 import { __resetSubOrgFanoutCachesForTest, FANOUT_CACHE_TTL_MS } from './suborg-fanout.js';
 
-/**
- * The flag is read from `process.env` on every call (see the rationale in
- * suborg-fanout.ts); flipping the real variable is therefore the honest way to
- * exercise it, and it also proves the read is not memoised.
- */
+/** Exercise the same validated flag the worker reads on every dispatch. */
 function setFanoutFlag(on: boolean): void {
-  if (on) process.env.ENABLE_SUBORG_WEBHOOK_FANOUT = 'true';
-  else delete process.env.ENABLE_SUBORG_WEBHOOK_FANOUT;
+  mockConfig.enableSubOrgWebhookFanout = on;
 }
 
 // ─── Fixture ────────────────────────────────────────────────────────────────
