@@ -50,6 +50,12 @@ const sinkInput = {
   mimeType: 'application/pdf',
   sourceTimestamp: '2026-07-22T10:00:00.000Z',
   ruleEventId: 'evt-src',
+  // SCRUM-4507 link-back fields. Always supplied by
+  // processDriveFileChangedJob (`?? null`), never undefined at this boundary.
+  sharedDriveId: 'shared-drive-legal',
+  folderId: 'folder-legal',
+  folderPath: '/Legal/Contracts',
+  revisionKind: 'head_revision' as const,
 };
 
 describe('drive sink — fingerprint + idempotent enqueue', () => {
@@ -79,7 +85,22 @@ describe('drive sink — §1.6A pre-mortem (b): metadata is ids-only, never byte
     const meta = rpcArgs.p_metadata;
     // Fixed ids-only shape.
     expect(Object.keys(meta).sort()).toEqual(
-      ['content_type', 'export_mime_type', 'file_id', 'integration_id', 'mime_type', 'revision_id', 'rule_event_id'].sort(),
+      [
+        'content_type',
+        'export_mime_type',
+        'file_id',
+        'integration_id',
+        'mime_type',
+        'revision_id',
+        'rule_event_id',
+        // SCRUM-4507: underscore-prefixed so the record page's generic
+        // metadata dump (which hides `_`-prefixed keys) does not show them
+        // raw — they are rendered by the dedicated Drive source block.
+        '_drive_shared_drive_id',
+        '_drive_folder_id',
+        '_drive_folder_path',
+        '_drive_revision_kind',
+      ].sort(),
     );
     // No value is a Buffer/typed-array, and the doc bytes appear nowhere.
     for (const v of Object.values(meta)) {
@@ -134,5 +155,89 @@ describe('drive sink — §1.6A pre-mortem (c): fixed-string errors + feature ga
     expect(sanitizeLastError(JSON.stringify(sinkInput.documentBytes))).toBe(REDACTED_LAST_ERROR_TOKEN);
     // The fixed error strings the sink throws are byte-free and pass through.
     expect(sanitizeLastError('drive_connector_artifact_enqueue_failed')).toBe('drive_connector_artifact_enqueue_failed');
+  });
+});
+
+/**
+ * SCRUM-4507 — the Drive source link-back metadata the record page reads.
+ *
+ * This is the LAST producer-side hop: whatever lands in `p_metadata` here is
+ * what `connector-artifact-drain.ts` later spreads onto `anchors.metadata`
+ * (the drain is T3 and deliberately untouched by this change — the mapping
+ * belongs in the producer). So the shape assertions that matter live here.
+ */
+describe('SCRUM-4507 Drive source link-back metadata', () => {
+  it('writes the four _drive_* keys verbatim from the sink input', async () => {
+    const { db, rpc } = makeDb();
+    const deps = makeDriveFileChangedJobDeps({ db, enableConnectorArtifactEnqueue: true });
+    await deps.enqueueArtifact(sinkInput);
+
+    const meta = (rpc.mock.calls[0]![1] as { p_metadata: Record<string, unknown> }).p_metadata;
+    expect(meta._drive_shared_drive_id).toBe('shared-drive-legal');
+    expect(meta._drive_folder_id).toBe('folder-legal');
+    expect(meta._drive_folder_path).toBe('/Legal/Contracts');
+    expect(meta._drive_revision_kind).toBe('head_revision');
+    // file_id / revision_id keep their existing names — the record page's
+    // Drive link builder reads those, so renaming them would silently break
+    // every anchor written before this change.
+    expect(meta.file_id).toBe('file-42');
+    expect(meta.revision_id).toBe('rev-7');
+  });
+
+  it('writes null (never undefined) for every absent link-back field', async () => {
+    const { db, rpc } = makeDb();
+    const deps = makeDriveFileChangedJobDeps({ db, enableConnectorArtifactEnqueue: true });
+    await deps.enqueueArtifact({
+      ...sinkInput,
+      sharedDriveId: null,
+      folderId: null,
+      folderPath: null,
+      revisionKind: null,
+    });
+
+    const meta = (rpc.mock.calls[0]![1] as { p_metadata: Record<string, unknown> }).p_metadata;
+    for (const key of ['_drive_shared_drive_id', '_drive_folder_id', '_drive_folder_path', '_drive_revision_kind']) {
+      expect(meta).toHaveProperty(key);
+      expect(meta[key]).toBeNull();
+    }
+  });
+
+  it('never writes an email, an account label, or a Drive environment marker', async () => {
+    // §1.4 + §1.6A. `drive-account-label.ts` parses a blob whose
+    // `account_label` IS the connected Google account's email address; the
+    // link-back fields must not become a back door for it. `_drive_env` is
+    // deliberately absent too — unlike DocuSign there is no demo/prod Drive
+    // split, so an env key would be a field with no measured value behind it.
+    const { db, rpc, insert } = makeDb();
+    const deps = makeDriveFileChangedJobDeps({ db, enableConnectorArtifactEnqueue: true });
+    await deps.enqueueArtifact({
+      ...sinkInput,
+      folderPath: '/Legal/Contracts',
+    });
+
+    const rpcArgs = rpc.mock.calls[0]![1] as { p_metadata: Record<string, unknown> };
+    const serialized = JSON.stringify(rpcArgs.p_metadata);
+    expect(serialized).not.toContain('@');
+    expect(rpcArgs.p_metadata).not.toHaveProperty('account_label');
+    expect(rpcArgs.p_metadata).not.toHaveProperty('actor_email');
+    expect(rpcArgs.p_metadata).not.toHaveProperty('_drive_env');
+    // The audit breadcrumb is the second persisted surface — same rule.
+    const auditRow = insert.mock.calls[0]![0] as Record<string, unknown>;
+    expect(JSON.stringify(auditRow)).not.toContain('@');
+  });
+
+  it('keeps the byte-discard invariant with the link-back fields present', async () => {
+    const { db, rpc, insert } = makeDb();
+    const deps = makeDriveFileChangedJobDeps({ db, enableConnectorArtifactEnqueue: true });
+    await deps.enqueueArtifact(sinkInput);
+
+    const docText = sinkInput.documentBytes.toString('utf8');
+    const rpcArgs = rpc.mock.calls[0]![1] as { p_metadata: Record<string, unknown> };
+    for (const v of Object.values(rpcArgs.p_metadata)) {
+      expect(Buffer.isBuffer(v)).toBe(false);
+      expect(ArrayBuffer.isView(v as ArrayBufferView)).toBe(false);
+    }
+    expect(JSON.stringify(rpcArgs)).not.toContain(docText);
+    expect(JSON.stringify(insert.mock.calls[0]![0])).not.toContain(docText);
   });
 });

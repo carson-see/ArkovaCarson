@@ -1230,6 +1230,59 @@ export function isOfflinePackageOnlyChange(files: string[]): boolean {
   );
 }
 
+/**
+ * Prefixes that mean a real Cloud Run worker image or frontend bundle exists
+ * for this PR — a `sha256:<64 hex>` digest IS producible, so the edge-Worker-
+ * Version-ID carve-out below must not apply. Deliberately the union of the
+ * worker/migration/frontend/SDK surfaces: any one of them means the PR is not
+ * confined to the Cloudflare Worker.
+ */
+const EDGE_IMAGE_PRODUCING_SURFACE_RE: RegExp[] = [
+  /^services\/worker\//,
+  /^supabase\/migrations\//,
+  /^src\//,
+  /^packages\//,
+  /^sdks\//,
+];
+
+/**
+ * True iff the PR is confined to the Cloudflare Worker (`services/edge/`) plus
+ * the CI plumbing that builds/tests/deploys it — no file that would produce a
+ * real OCI image or frontend bundle. `validateImageDigestEvidence` requires a
+ * literal `sha256:<64 hex>` because that is what a Cloud Run worker deploy
+ * produces, but a Cloudflare Worker deploy produces no OCI image at all: there
+ * is no digest to give. The Worker's immutable Version ID is the correct
+ * identity binding for THAT artifact instead, so this predicate exists solely
+ * to gate accepting one in place of a digest — modelled on
+ * {@link isFrontendOnlyChange} / {@link isOfflinePackageOnlyChange}'s
+ * fail-closed shape.
+ *
+ * Requires ALL of:
+ *   - `files` is non-empty (nothing to carve out otherwise);
+ *   - at least one file is under `services/edge/` (there must be an edge
+ *     deploy to bind evidence to);
+ *   - NO file matches {@link EDGE_IMAGE_PRODUCING_SURFACE_RE} — any of those
+ *     means a real Cloud Run worker image or frontend bundle exists for this
+ *     PR, and a digest again IS producible, so the carve-out must not apply;
+ *   - every remaining file is either under `services/edge/` itself, CI
+ *     plumbing (`.github/workflows/`, `scripts/ci/`), or already T0 per
+ *     {@link isT0OnlyFile} (docs, `agents.md`, test files, …).
+ *
+ * The carve-out disappears the moment anything image-producing is touched —
+ * it fails closed, exactly like the frontend and offline-package paths.
+ */
+export function isEdgeDeployOnlyChange(files: string[]): boolean {
+  if (files.length === 0) return false;
+  if (!files.some((f) => f.startsWith('services/edge/'))) return false;
+  if (files.some((f) => EDGE_IMAGE_PRODUCING_SURFACE_RE.some((re) => re.test(f)))) return false;
+  return files.every(
+    (f) => f.startsWith('services/edge/')
+      || f.startsWith('.github/workflows/')
+      || f.startsWith('scripts/ci/')
+      || isT0OnlyFile(f),
+  );
+}
+
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
@@ -1546,6 +1599,13 @@ const NOT_AN_ARTIFACT_PREFIX_RE =
   /^(?:none|n\/a|not[\s-]?applicable|null)(?:$|[\s,;:.()!?—–])/i;
 const URL_RE = /\bhttps?:\/\/\S+/i;
 const IMAGE_DIGEST_RE = /\bsha256:[0-9a-f]{64}\b/i;
+// CTO decision 2026-09-13: a Cloudflare Worker deploy produces no OCI image,
+// so it has no sha256 digest to give — the Worker's immutable Version ID
+// (a v4 UUID, returned by `wrangler deploy` / the Cloudflare API) is the
+// correct identity binding for THAT artifact. Accepted ONLY for an edge-only
+// PR ({@link isEdgeDeployOnlyChange}); every other tier still requires
+// IMAGE_DIGEST_RE. See {@link validateImageDigestEvidence}.
+const CLOUDFLARE_WORKER_VERSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isIncompletePlaceholder(value: string): boolean {
   const trimmed = value.trim();
@@ -1604,15 +1664,23 @@ function validateCloudRunUrlEvidence(body: string): string | null {
     : `${field} must contain the Cloud Run service or tag URL.`;
 }
 
-function validateImageDigestEvidence(body: string): string | null {
+function validateImageDigestEvidence(body: string, files: string[]): string | null {
   const field = 'Image digest:';
   const artifact = validateArtifactEvidenceField(body, field);
   if (artifact !== null) return artifact;
   const value = extractEvidenceFieldValue(body, field);
   if (value === null || value.trim().length === 0) return null;
-  return IMAGE_DIGEST_RE.test(value)
-    ? null
-    : `${field} must contain the immutable sha256:<64 hex> image digest for the tested worker image.`;
+  const trimmed = value.trim();
+  if (IMAGE_DIGEST_RE.test(trimmed)) return null;
+  // Edge-only carve-out (CTO decision 2026-09-13): a Cloudflare Worker deploy
+  // has no OCI image and so no sha256 digest — its Worker Version ID is the
+  // correct identity binding instead. Gated on isEdgeDeployOnlyChange so this
+  // never loosens the requirement for a PR that touches a real worker image or
+  // frontend bundle.
+  if (isEdgeDeployOnlyChange(files) && CLOUDFLARE_WORKER_VERSION_ID_RE.test(trimmed)) return null;
+  return `${field} must contain either the immutable sha256:<64 hex> image digest for the `
+    + 'tested worker image, or — for an edge-only PR with no OCI image to digest — the '
+    + 'Cloudflare Worker Version ID (UUID) for the deployed edge Worker.';
 }
 
 // Concrete deploy artifacts: a placeholder or N/A here means the deploy did
@@ -1963,7 +2031,7 @@ function unsoakableT2Errors(body: string): string[] {
   return errors.filter((e): e is string => e !== null);
 }
 
-function requiredValueErrors(body: string, tier: Tier): string[] {
+function requiredValueErrors(body: string, tier: Tier, files: string[]): string[] {
   if (tier === 'T0') return [];
 
   if (tier === 'T1') {
@@ -2000,7 +2068,7 @@ function requiredValueErrors(body: string, tier: Tier): string[] {
   return [
     ...T2_T3_ARTIFACT_FIELDS.map((field) => validateArtifactEvidenceField(body, field)),
     validateCloudRunUrlEvidence(body),
-    validateImageDigestEvidence(body),
+    validateImageDigestEvidence(body, files),
     ...T2_T3_FILLED_FIELDS.map((field) => validateFilledEvidenceField(body, field)),
   ].filter((error): error is string => error !== null);
 }
@@ -3753,7 +3821,7 @@ function standardEvidenceErrors(
   notes.push(...duration.notes);
   errors.push(
     ...duration.errors,
-    ...requiredValueErrors(body, declared),
+    ...requiredValueErrors(body, declared, opts.files ?? []),
     ...(declared === 'T1' ? [] : changedBehaviorErrors(body)),
     ...integrity.errors,
     ...futureTimestampErrors(body),

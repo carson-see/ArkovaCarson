@@ -4,9 +4,9 @@ import { verifySupabaseJwt as verifyEdge } from './supabase-jwt';
 import type { Env } from './env';
 const secret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const url = 'https://fixture.supabase.co';
-async function token(role: string) {
+async function token(role: string, aal: 'aal1' | 'aal2' = 'aal1') {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  const input = `${encode({ alg: 'HS256' })}.${encode({ sub: 'fixture-user', role, aud: 'authenticated', iss: `${url}/auth/v1`, iat: 100, exp: 1000 })}`;
+  const input = `${encode({ alg: 'HS256' })}.${encode({ sub: 'fixture-user', role, aal, aud: 'authenticated', iss: `${url}/auth/v1`, iat: 100, exp: 1000 })}`;
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(input));
   return `${input}.${Buffer.from(sig).toString('base64url')}`;
@@ -20,9 +20,21 @@ describe('pending account parity at both edge JWT entry points', () => {
     expect(await verifyEdge(await token('arkova_email_pending'), { SUPABASE_URL: url, SUPABASE_JWT_SECRET: secret } as Env, 200)).toBeNull();
   });
   it('preserves both normal authenticated positive controls', async () => {
-    const bearer = await token('authenticated');
+    const bearer = await token('authenticated', 'aal2');
     expect(await verifyMcp(bearer, { secret, supabaseUrl: url, nowSec: 200 })).toMatchObject({ ok: true, userId: 'fixture-user' });
     expect(await verifyEdge(bearer, { SUPABASE_URL: url, SUPABASE_JWT_SECRET: secret } as Env, 200)).toMatchObject({ sub: 'fixture-user' });
+  });
+});
+
+describe('UAT-04 mandatory MFA bearer boundary', () => {
+  it('rejects AAL1 and the MFA-pending role while accepting an AAL2 human session', async () => {
+    expect(await verifyMcp(await token('authenticated', 'aal1'), { secret, supabaseUrl: url, nowSec: 200 }))
+      .toMatchObject({ ok: false, reason: 'mfa_required' });
+    expect(await verifyMcp(await token('arkova_mfa_pending', 'aal2'), { secret, supabaseUrl: url, nowSec: 200 }))
+      .toMatchObject({ ok: false, reason: 'mfa_required' });
+    expect(await verifyMcp(await token('authenticated', 'aal2'), { secret, supabaseUrl: url, nowSec: 200 }))
+      .toMatchObject({ ok: true, userId: 'fixture-user' });
+    expect(await verifyEdge(await token('authenticated', 'aal1'), { SUPABASE_URL: url, SUPABASE_JWT_SECRET: secret } as Env, 200)).toBeNull();
   });
 });
 
@@ -30,7 +42,7 @@ async function liveBearer(role: string, algorithm: 'HS256' | 'ES256', issuer: st
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const now = Math.floor(Date.now() / 1000);
   const input = `${encode({ alg: algorithm, kid: 'owned-fixture' })}.${encode({
-    sub: 'owned-fixture-user', role, aud: 'authenticated', iss: `${issuer}/auth/v1`, iat: now, exp: now + 300,
+    sub: 'owned-fixture-user', role, aal: 'aal2', aud: 'authenticated', iss: `${issuer}/auth/v1`, iat: now, exp: now + 300,
   })}`;
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']) as CryptoKeyPair;
   const jwk = { ...await crypto.subtle.exportKey('jwk', pair.publicKey), kid: 'owned-fixture' };

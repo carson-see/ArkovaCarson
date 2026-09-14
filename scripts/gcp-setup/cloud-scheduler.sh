@@ -273,6 +273,7 @@ JOBS=(
   "refresh-stats|*/5 * * * *|/jobs/refresh-stats|DEFAULT"
   "refresh-treasury-cache|*/10 * * * *|/jobs/refresh-treasury-cache|DEFAULT"
   "rule-action-dispatcher|*/2 * * * *|/jobs/rule-action-dispatcher|DEFAULT"
+  "webhook-dlq-report|0 * * * *|/jobs/webhook-dlq-report|DEFAULT"
   "webhook-retries|*/10 * * * *|/jobs/webhook-retries|DEFAULT"
   # PAUSED (observed 2026-08-10): unattributed — actor/reason not recorded at
   # pause time; investigate before resuming.

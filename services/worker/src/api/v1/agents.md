@@ -2,6 +2,43 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+
+## 2026-09-12 — SCRUM-4507: `source.provider` on the verification response, and what it deliberately omits
+
+`GET /api/v1/verify/:publicId` gained an additive `source: { provider }` — a bare vocabulary word
+saying WHICH connected system a record's document came from. Additive and omitted when unknown, so
+§1.8 is satisfied without a version bump.
+
+**What it does NOT carry, and why.** No file id, folder id, shared-drive id, revision or deep link.
+This route answers ANONYMOUSLY (`router.ts` lets an unauthenticated GET through), so a Drive file id
+here would let any holder of a public record id probe the source system for that object — and open
+the document outright if it is link-shared. Those identifiers go to the record OWNER on the
+authenticated record page and nowhere else. `verify-pii-projection.test.ts` walks the whole response
+RECURSIVELY for Drive ids, UUIDs and `@`, so a future nested addition fails there without anyone
+remembering to extend an allowlist.
+
+**Gated on `connector_source`, NOT `server_fetched_connector_source`.** The two answer different
+questions. `server_fetched_…` keys the "Measured: Arkova retrieved these bytes" claim and must stay
+gated on real fetch evidence. The provider says only where the record originated — a declared-hash
+inbound DocuSign record did originate at DocuSign even though Arkova fetched nothing, and its weaker
+evidence class is already stated by `fingerprint_rederivability`. Suppressing the provider there
+would hide true provenance to protect a claim something else already makes.
+
+**One vocabulary, three surfaces, no drift.** `VERIFICATION_SOURCE_PROVIDERS` (verify.ts) is DERIVED
+from `CONNECTOR_FETCH_SOURCE_MARKERS`, `docs.ts` derives its enum from the same constant, and
+`openapi-source-provider-contract.test.ts` asserts the published `docs/api/openapi.yaml` enum equals
+the served one. An enum member the runtime gate would reject is a documented value the API cannot
+produce; a marker the gate accepts but the enum omits is an undocumented value on a frozen schema.
+Both are impossible by construction rather than by review.
+
+**Residual, disclosed:** `connector_source` is server-stamped and, since migration 0423, stripped
+from any non-`service_role` write — but rows written BEFORE 0423 could carry an org-authored marker.
+That is precisely why this stays a bare word with no identifier attached and never keys a
+"Measured:" sentence.
+
+`docs.ts` imports the vocabulary from `constants/connectorFingerprint.js` rather than from
+`verify.js` on purpose: `verify.ts` stands up the db client and config at module scope, and
+`docs.test.ts` deliberately does not.
 ## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
 
 Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI

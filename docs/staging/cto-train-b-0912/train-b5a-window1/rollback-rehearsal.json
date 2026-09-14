@@ -1,0 +1,30 @@
+{
+  "kind": "rollback_rehearsal",
+  "train": "B5a",
+  "service": "arkova-worker-cto-train-b-0912-staging",
+  "method": "non-disruptive tag-URL verification (no live --to-revisions traffic shift performed)",
+  "reason_for_method": "Train B5b soaks on this same rig immediately after B5a seals (CLAUDE.md: leave supervisor+rig running); a live traffic shift away from the 100%-traffic candidate risks failing an in-flight supervisor cycle during the B5a->B5b handoff, so the rollback path was proven reachable+healthy instead of exercised end-to-end.",
+  "candidate_revision": "arkova-worker-cto-train-b-0912-staging-00011-dvm",
+  "candidate_health": {
+    "git_sha": "96b03d9d71c3d4a9ecf1cda5a9d1c7a12746e33f",
+    "status": "healthy",
+    "checked_at": "2026-09-13T22:26:48Z",
+    "checked_via": "https://arkova-worker-cto-train-b-0912-staging-kvojbeutfa-uc.a.run.app/health (IAM identity-token auth)"
+  },
+  "rollback_target_revision": "arkova-worker-cto-train-b-0912-staging-00018-ruw",
+  "rollback_target_tag": "train-5",
+  "rollback_target_health": {
+    "git_sha": "143d58d68caf372c237f6fe52da1af7941d59a60",
+    "status": "healthy",
+    "checked_at": "2026-09-13T22:26:48Z",
+    "checked_via": "https://train-5---arkova-worker-cto-train-b-0912-staging-kvojbeutfa-uc.a.run.app/health (IAM identity-token auth, tagged revision URL, zero traffic-split change)"
+  },
+  "rollback_procedure_if_needed": "gcloud run services update-traffic arkova-worker-cto-train-b-0912-staging --region us-central1 --to-tags train-5=100 ; verify /health git_sha == 143d58d68caf372c237f6fe52da1af7941d59a60",
+  "all_tagged_revisions_checked_healthy": [
+    {"tag": "train-b", "revision": "00003-niy", "git_sha": "f2b95a412bcabbbb4930bad1b425909363b016d7", "status": "healthy"},
+    {"tag": "train-b2", "revision": "00009-qof", "git_sha": "89dba6baafa1f73311e6885bcb85698d7f3d709d", "status": "healthy"},
+    {"tag": "train-3", "revision": "00014-car", "git_sha": "e6bd4a1672626b7b0f924725b855a4edde52a2aa", "status": "healthy"},
+    {"tag": "train-5", "revision": "00018-ruw", "git_sha": "143d58d68caf372c237f6fe52da1af7941d59a60", "status": "healthy"},
+    {"tag": "train-6", "revision": "00022-wom", "git_sha": "96b03d9d71c3d4a9ecf1cda5a9d1c7a12746e33f", "status": "healthy"}
+  ]
+}

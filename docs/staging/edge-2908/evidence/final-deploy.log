@@ -1,0 +1,21 @@
+npm warn Unknown user config "min-release-age". This will stop working in the next major version of npm.
+npm warn Unknown user config "minimum-release-age". This will stop working in the next major version of npm.
+
+ ⛅️ wrangler 4.130.0
+────────────────────
+Total Upload: 1699.47 KiB / gzip: 284.97 KiB
+Worker Startup Time: 4 ms
+Your Worker has access to the following bindings:
+Binding                                                              Resource                  
+env.MCP_RATE_LIMIT_KV (17c2fc96c3674d909097c5717afbce56)             KV Namespace              
+env.MCP_ORIGIN_ALLOWLIST_KV (d771cb3b0dd440d4b31a59b3f2dfa71c)       KV Namespace              
+env.ARKOVA_AI                                                        AI                        
+env.ENABLE_AI_FALLBACK ("false")                                     Environment Variable      
+env.CF_AI_MODEL ("@cf/nvidia/nemotron")                              Environment Variable      
+env.ENABLE_X402_FACILITATOR ("false")                                Environment Variable      
+env.EDGE_REQUIRE_MCP_SIGNING ("true")                                Environment Variable      
+
+Uploaded arkova-edge-cto-2908 (2.37 sec)
+Deployed arkova-edge-cto-2908 triggers (0.61 sec)
+  https://arkova-edge-cto-2908.carson-182.workers.dev
+Current Version ID: af6f4e22-7067-4833-9248-af422082b992

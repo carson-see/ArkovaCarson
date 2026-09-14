@@ -12,6 +12,7 @@
  */
 
 import type { Env, BatchQueueMessage } from './env';
+import { BUILD_INFO } from './build-info';
 
 /**
  * Verify internal service auth via shared CRON_SECRET.
@@ -55,10 +56,21 @@ export default {
     const url = new URL(request.url);
 
     // Health check — no auth required
+    //
+    // SCRUM-3907 / SCRUM-3797: `git_sha` + `built_at` come from `build-info.ts`
+    // (generated at deploy time by `scripts/generate-build-info.mjs`, run as
+    // `npm run build:info` immediately before `wrangler deploy` in
+    // `.github/workflows/edge-deploy.yml`). The deploy workflow's own parity
+    // check curls this endpoint and fails the job if `git_sha` does not match
+    // the commit it just deployed — this is the mechanism that stops an edge
+    // fix from sitting merged-but-undeployed the way PR #2589's ES256
+    // verifier fix did for months. `scripts/ci/check-edge-deployed-version.ts`
+    // reads the same field, out-of-band, to detect drift after the fact.
     if (url.pathname === '/health') {
-      return new Response(JSON.stringify({ status: 'ok', service: 'arkova-edge' }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ status: 'ok', service: 'arkova-edge', git_sha: BUILD_INFO.git_sha, built_at: BUILD_INFO.built_at }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
     }
 
     // SCRUM-1283 (R3-10) sub-issue C: end-user report download. Auth comes

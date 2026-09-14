@@ -16,6 +16,37 @@ after an avoidable retry is the wrong order of defences.
 
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
+## 2026-09-13 (CTO review, PR #2911) — `cron.ts`'s `/webhook-dlq-report` comment named the wrong endpoint
+
+The route comment pointed operators at `POST /api/admin/webhook-dlq/replay` — the endpoint from
+this same day's earlier cut, removed same-day by the CTO decision documented in
+`api/agents.md` and replaced with `POST /api/admin/webhook-dlq/resolve`. The comment was never
+updated when the rename happened, so it named an endpoint that does not exist in this router's
+sibling file. No behavior was wrong (the code never called the old path), only the pointer a
+human or agent reading this file would follow. Fixed to say `/resolve` and to record why the
+name changed, so a future reader does not have to reconstruct the history from `git log`. Also
+confirmed (not changed): `webhook-dlq-report`'s `0 * * * *` schedule matches several other
+established hourly `:00` jobs in `cloud-scheduler.sh` (`check-stuck-anchors`,
+`treasury-alert-check`, `docusign-connect-failures-poll`, `rebroadcast-txs`'s `:00` 6-hourly) —
+SCRUM-4475 replaced the old single global 30/min `/jobs/*` bucket with a per-source-IP burst
+guard (120/min, sized for the whole 66-job fleet landing at `:00`) plus a per-job-path limiter, so
+`:00` is not the live-incident risk the `ce-key-expiry-check`/ComputeID-era comments describe —
+see `routes/cron.ts`'s own `SCRUM-4475` doc comment. `17 * * * *`-style offsets remain correct for
+NEW jobs going forward as defense in depth, but `:00` here is not a defect.
+
+## 2026-09-13 — SCRUM-4514: two `admin.ts` routes + one `cron.ts` job for the inbound webhook DLQ
+
+`admin.ts` gained `GET /admin/webhook-dlq` and `POST /admin/webhook-dlq/resolve` (handlers in
+`api/admin-webhook-dlq.ts`) — no `admin-paths.ts` change needed, both paths already match the
+existing `/admin` prefix. `cron.ts` gained `POST /webhook-dlq-report` (HTTP-triggered only, no
+in-process registration, same shape as `/queue-digest`) wrapped in `withCronMonitoring`. Neither
+route mutates anything a concurrent Cloud Run instance could double-apply unsafely: the report
+job only reads+logs, and the resolve route's write is a single guarded `UPDATE ... WHERE
+resolved_at IS NULL ... RETURNING`, idempotent under a repeated/duplicated call — see
+`api/agents.md`'s 2026-09-13 entry for the full shape and the CTO decision (same day) that
+replaced an initial `/replay` route with this `/resolve` one, since nothing in this table is
+actually server-side replayable.
+
 ## 2026-09-02 — a /health mock that omits `getAnchoringRpcStatus` is now a live cold-cache test
 
 `buildHealthResponse` falls back to the module-local `UNPROBED` constant
@@ -289,3 +320,17 @@ exhaust that single job's 10/min bucket.
 ## 2026-09-12 — `POST /jobs/computeid-passport-recheck` (SCRUM-4495)
 
 New cron route delegating to `jobs/computeid-passport-recheck.ts`. Dark unless `ENABLE_COMPUTEID_INTEGRATION=true`, and it answers `200 {skipped:true}` rather than an error when dark, so a scheduled trigger against a dark flag is quiet. Listed in `scripts/gcp-setup/cloud-scheduler.sh`'s `NOT_SCHEDULED` with the schedule to bind (`17 * * * *` — hourly but off the top of the hour, because every `/jobs/*` route shares one per-IP burst guard, and spreading hourly jobs off `:00` is prevention rather than a fix for live 429s (SCRUM-4475 replaced the global bucket)); bind it in the same motion as the flag flip, per `docs/partners/computeid-activation-runbook.md`.
+
+## 2026-09-13 SCRUM-3888 — `health.ts` gains an optional `getOriginGuardStats` dep
+
+Same shape as `getAnchoringRpcStatus` above: optional on `HealthCheckDeps`, so every existing
+caller/mock stays valid when absent, and SYNCHRONOUS — an in-memory counter read
+(`middleware/requireCloudflareOrigin.ts`'s `getOriginGuardStats()`), no I/O, no risk to `/health`
+latency. When supplied, `info.originGuard` (detailed-view only, `HEALTH_DETAIL_TOKEN`-gated, same
+as every other `info.*` field) reports the origin guard's mode, whether the shared secret is
+configured, and observe-mode "would block" tallies per route family — the rollout signal for
+SCRUM-3888's `off → observe → enforce` procedure (`docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`).
+Wired in `index.ts`'s `healthCheckHandler` deps as `getOriginGuardStats: () =>
+getOriginGuardStats()`. Counters are process-local (Cloud Run runs multiple instances), so this is
+a quick per-instance signal, not a durable audit trail — the `origin_guard_would_block` /
+`origin_guard_blocked` structured log lines are that.

@@ -1,3 +1,25 @@
+## 2026-09-13 — SCRUM-4514: `webhook-dlq-report.ts` — first reader of `webhook_dlq`
+
+New job, `POST /jobs/webhook-dlq-report` (Cloud Scheduler HTTP trigger only, same shape as
+`queue-digest-cron.ts` — no in-process registration). Report-only: counts unresolved
+`webhook_dlq` rows by provider and the oldest unresolved age, logs at `warn` when non-empty /
+`info` when clean, never mutates a row. Unchanged by the CTO decision below — the resolve path
+lives entirely in `api/admin-webhook-dlq.ts` (`POST /api/admin/webhook-dlq/resolve`), not this
+job; this job exists so a growing backlog is visible in logs/Sentry between operator resolve
+runs. Selects only `provider, created_at` — never `reason`, `payload_hash`, `external_id`, or
+`webhook_id` in the query, so there is nothing PII-adjacent to accidentally log.
+
+**Same-day correction:** this entry originally said the sibling operator endpoint was
+`POST /api/admin/webhook-dlq/replay` and that it "claims and resolves every row, but every
+outcome is not_replayable." The CTO decided the same day that Arkova does not retain raw partner
+webhook bodies for replay (§1.6A), so that endpoint was replaced with
+`POST /api/admin/webhook-dlq/resolve` — an operator acknowledgment after redelivery happens at
+the partner, not a claim-and-attempt. See `api/v1/webhooks/agents.md`'s 2026-09-13 entries for
+the full history: none of the four inbound writers (`docusign`, `adobe_sign`, `checkr`,
+`computeid`) persist a raw body, so nothing in this table was ever actually replayable —
+this job's report is about visibility into that backlog, independent of which shape the
+operator endpoint takes.
+
 ## 2026-09-10 — PR #2570 unknown debit response recovery
 
 A lost/malformed debit RPC response can follow a committed charge. The default
@@ -62,6 +84,25 @@ Scheduler re-drive the whole window and re-mail every key that already succeeded
 Constitution 1.4: the notice carries the key PREFIX and NAME only. Never the key, never the hash.
 
 # services/worker/src/jobs/agents.md
+
+
+## 2026-09-12 — SCRUM-4507: the `_drive_*` metadata keys written by `drive-file-changed.ts`
+
+The Drive sink's `p_metadata` gained four keys — `_drive_shared_drive_id`, `_drive_folder_id`,
+`_drive_folder_path`, `_drive_revision_kind` — which `connector-artifact-drain.ts` (untouched, T3)
+carries onto `anchors.metadata`, where the authenticated record page renders them as links back
+into Drive.
+
+- **Underscore-prefixed on purpose.** `AssetDetailView`'s generic metadata dump hides `_`-prefixed
+  keys (`isAnchorMetadataVisible`, BUG-2026-07-17-010). These render through a dedicated Drive
+  source block with labels and a §1.5 note instead of as raw `drive folder id:` rows.
+- **`?? null`, never `?? undefined`.** A JSON `undefined` drops the key, which would make "this
+  record predates the link-back" and "Drive had no shared drive for this file" indistinguishable.
+- **`file_id` / `revision_id` keep their existing names.** The record page's link builder reads
+  those, so renaming them would silently break every Drive anchor written before this change.
+- **§1.4 / §1.6A unchanged.** All four are opaque Drive ids plus a folder path. No email, no account
+  label, no digest, no bytes. `drive-file-changed.test.ts` pins the exact `p_metadata` key set, the
+  byte-discard invariant, and asserts the serialized metadata contains no `@`.
 
 ## 2026-09-10 — PR #2570 atomic connector publication (SCRUM-3882)
 
