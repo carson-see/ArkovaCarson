@@ -14,6 +14,35 @@
 
 ## Now
 
+### 2026-09-14T12:24Z — Train B5c sealed (#2841 #2909), rig 1
+
+- Train B5c (T2, 4h floor) soaked on rig 1 (Supabase `xhvasifpunswhsgfsstd`, Cloud Run
+  `arkova-worker-cto-train-b-0912-staging` tag `train-8`, rev `-00026-teq`, image digest
+  `sha256:c1c5ac3f6dafc79547e721578375e091b6b7a86123bba280d2941da05772db0e`, candidate
+  `aaaa0d7bad30af5e781d52370e0d5479a003089f`) from `2026-09-14T07:26:35.773Z` to
+  `2026-09-14T12:24:17.271Z` (4.96h — window was picked up ~1h after its declared 11:26:35Z
+  close and the supervisor was still running clean; no reason to discard the extra cycles):
+  57/57 supervisor-clock cycles `cycle_pass=true`, 65/65 probes every cycle (identity +
+  #2841 + #2909 modules), 0 failures. One additional manual pre-launch cycle (07:25:52.086Z,
+  also 65/65 clean) is recorded for continuity but not counted toward the clock, per
+  `window1/SOAK_START`. Both PR heads unchanged from the pre-deploy manifest
+  (`ec8895a2ca4...` / `ca2256c043b...`) — no post-soak T0 delta needed on either.
+- Post-close `staging-honesty-preflight.ts` (--prod-project-ref `vzwyaatejekddvltxyye`):
+  `environment_type=clean_mirror`, 8/8 checks pass
+  (`docs/staging/cto-train-b-0912/preflight-b5c-postclose-20260914T123023Z.json`).
+  Anti-hollow-soak guard set (SCRUM-2977) all green against
+  `docs/staging/soak-preflight/rc-train-b5c-2026-09-14.json` (real `staging_deploy_log`
+  export, not the generator's STUB fallback). Rollback rehearsal (non-disruptive tag-URL
+  method): candidate (`train-8`) and rollback target (`train-7`, rev `-00025-rav`) both
+  verified healthy — `docs/staging/cto-train-b-0912/train-b5c-window1/rollback-rehearsal.json`.
+- Supervisor (pid 971, caffeinate 1081) was stopped (SIGTERM to pgid 969) at seal time —
+  rig 1 has no soak running now.
+- #2841, #2909: `## Staging Soak Evidence` T2 blocks filled from this manifest, taken to
+  `gh pr ready`, Mergify queue. All required CI checks were already green pre-seal except
+  the two evidence gates, which read the PR body this seal adds.
+- Manifest: `docs/staging/rc-manifests/rc-train-b5c-2026-09-14.json`. Full trail:
+  `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/SEAL-LOG.md`.
+
 ### 2026-09-14T04:41Z — Train B5b sealed (#2841 #2846 #2909 #2912), rig 1
 
 - Train B5b (T2, 4h floor) soaked on rig 1 (Supabase xhvasifpunswhsgfsstd, Cloud Run
@@ -44,19 +73,20 @@
   running per §1.11A (do not tear down). Full trail:
   `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md`.
 
-### Soaks — Train B5b CLOSED 2026-09-14T04:41Z; rig 1 idle, supervisor pid 31065 still alive (do not kill)
+### Soaks — Train B5c CLOSED 2026-09-14T12:24Z; rig 1 idle, no supervisor running
 
 Rig 1 (`arkova-worker-cto-train-b-0912-staging`, Supabase `xhvasifpunswhsgfsstd`) has NO
-soak running right now for a NEW candidate. The Train B5b supervisor (pid 31065, launched
-2026-09-14T00:40:38Z) finished its 45/45-cycle T2 window at 04:41:08Z and was intentionally
-left running per CLAUDE.md §1.11A ("leave the rig, the supervisor and all evidence in
-place") — it will keep firing 5-min cycles against the train-7 tag indefinitely until
-someone stops it or repoints TRAIN_TAG_URL for a new train. Seeing this pid alive is
-expected, not a stray process. Traffic tags train-b/train-b2/train-3/train-5/train-6/train-7 are all still live on
-this service (verified via `gcloud run services describe arkova-worker-cto-train-b-0912-staging`
-2026-09-14T04:41Z); 100% DEFAULT traffic still goes to revision `-00011-dvm` (untagged, Train
-B5a's candidate — no tagged revision on this rig carries default traffic). Train B5b's own
-candidate is `-00025-rav` tagged `train-7`. Recheck tag->revision mapping before reusing any
+soak running right now for a NEW candidate. The Train B5c supervisor (pid 971, launched
+2026-09-14T07:26:35Z) finished its 57-cycle T2 window (declared close 11:26:35Z, actually
+picked up and sealed at 12:24-12:33Z with the supervisor still green past its own close) and
+was explicitly STOPPED (SIGTERM to pgid 969) at seal time — unlike B5a/B5b this rig was left
+idle deliberately, since no next train was queued behind it at seal time. Confirm no other
+session has since relaunched a supervisor here before assuming idle. Traffic tags
+train-b/train-b2/train-3/train-5/train-6/train-7/train-8 are all still live on this service
+(verified via `gcloud run services describe arkova-worker-cto-train-b-0912-staging`
+2026-09-14T12:29Z); 100% DEFAULT traffic still goes to revision `-00011-dvm` (untagged, Train
+B5a's candidate — no tagged revision on this rig carries default traffic). Train B5c's own
+candidate is `-00026-teq` tagged `train-8`. Recheck tag->revision mapping before reusing any
 tag name for a new train — this rig has accumulated one tag per train and they are not
 reclaimed automatically.
 
@@ -2796,4 +2826,4 @@ _Last refreshed: 2026-09-10 by Codex release review — claims verified against 
 
 
 
-_Last refreshed: 2026-09-14 by Claude Sonnet 5 (CTO release session) — claims verified against gh pr checks/gcloud/MCP output cited in /Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md._
+_Last refreshed: 2026-09-14 by Claude Sonnet 5 (CTO release session) — claims verified against gh pr checks/gcloud/MCP output cited in /Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/SEAL-LOG.md._

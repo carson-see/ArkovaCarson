@@ -261,6 +261,79 @@ paths:
         "402":
           description: Payment required
 
+  /verify/search:
+    get:
+      operationId: agenticVerifySearch
+      summary: Agentic verification search
+      description: |
+        Search returning frozen verification schema results, for AI agents, ATS
+        systems, and background check integrations. Requires an API key (not a
+        JWT).
+
+        SCRUM-3906: answers with EITHER a semantic match (embedding + cosine
+        similarity, `search_mode: semantic_vector`) OR a lexical match (ILIKE
+        substring via `search_public_credentials`, `search_mode:
+        lexical_substring`) — never a 503 for ENABLE_SEMANTIC_SEARCH being off.
+        Semantic is attempted when the flag is on; the route falls back to
+        lexical whenever the flag is off or the embed/match RPC fails. Only the
+        semantic path costs an AI credit or returns `similarity`.
+      tags: [Verification, AI]
+      security:
+        - apiKey: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+        - name: threshold
+          in: query
+          schema:
+            type: number
+            default: 0.75
+          description: Semantic-path only; ignored on a lexical-path request.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 5
+            maximum: 20
+      responses:
+        "200":
+          description: >-
+            Verification results. `search_mode` (`semantic_vector` |
+            `lexical_substring`) says which path answered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/VerificationResult"
+                  count:
+                    type: integer
+                  threshold:
+                    type: number
+                  search_mode:
+                    type: string
+                    enum: [semantic_vector, lexical_substring]
+        "400":
+          description: Missing or invalid query
+        "401":
+          description: API key required
+        "402":
+          description: No AI credits remaining for the semantic path
+        "429":
+          description: Rate limited
+        "503":
+          description: ENABLE_VERIFICATION_API is off (worker-wide gate)
+
   /anchor:
     post:
       operationId: anchorDocument
