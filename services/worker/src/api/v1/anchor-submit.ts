@@ -240,6 +240,14 @@ async function handleAnchorSubmit(req: Request, res: Response) {
     if (existing) {
       let instantStatus: string | null = null;
       if (body.action === 'instant' && existing.status === 'PENDING') {
+        if (process.env.ENABLE_ORG_SUSPENSION_GUARD === 'true' && scopedOrgId) {
+          const suspensionGuard = await ensureOrgNotSuspended(scopedOrgId);
+          if (!suspensionGuard.ok) {
+            const status = suspensionGuard.code === 'org_suspended' ? 403 : 503;
+            res.status(status).json({ error: suspensionGuard.code, message: suspensionGuard.message });
+            return;
+          }
+        }
         const retryResult = await db.rpc('retry_anchor_instant_intent' as never, {
           p_anchor_id: existing.id, p_user_id: req.apiKey.userId, p_org_id: scopedOrgId,
         } as never);

@@ -7955,6 +7955,10 @@ export type Database = {
         Args: { p_action: string; p_journal_id: string; p_reason?: string }
         Returns: boolean
       }
+      retry_anchor_instant_intent: {
+        Args: { p_anchor_id: string; p_org_id: string; p_user_id: string }
+        Returns: Json
+      }
       revoke_anchor: {
         Args: { anchor_id: string; reason?: string }
         Returns: undefined

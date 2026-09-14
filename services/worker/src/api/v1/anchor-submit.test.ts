@@ -295,6 +295,28 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(mockInsert).not.toHaveBeenCalled();
   });
 
+  it('preserves ordinary duplicate reads while the organization suspension guard is enabled', async () => {
+    process.env.ENABLE_ORG_SUSPENSION_GUARD = 'true';
+    try {
+      mockSelectChain.maybeSingle.mockResolvedValueOnce({
+        data: {
+          public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+          status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+        },
+        error: null,
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+      expect(res.status).toBe(200);
+      expect(res.body.public_id).toBe('ARK-2026-EXISTING');
+      expect(mockRpc).not.toHaveBeenCalled();
+      expect(mockInsert).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.ENABLE_ORG_SUSPENSION_GUARD;
+    }
+  });
+
   it('atomically rearms a never-debited NEEDS_CREDIT intent on explicit instant resubmission', async () => {
     mockSelectChain.maybeSingle.mockResolvedValueOnce({
       data: {
@@ -341,6 +363,51 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.status).toBe(200);
     expect(mockRpc).toHaveBeenNthCalledWith(1, 'retry_anchor_instant_intent', expect.anything());
     expect(mockRpc).toHaveBeenNthCalledWith(2, 'enqueue_existing_anchor_instant_intent', expect.anything());
+  });
+
+  it('denies a suspended organization before any existing-anchor instant side effect', async () => {
+    process.env.ENABLE_ORG_SUSPENSION_GUARD = 'true';
+    try {
+      mockSelectChain.maybeSingle.mockResolvedValueOnce({
+        data: { id: 'anchor-existing', public_id: 'ARK-EXISTING', fingerprint: VALID_FINGERPRINT, status: 'PENDING', created_at: '2026-04-26T00:00:00Z' },
+        error: null,
+      });
+      mockRpc.mockImplementation(async (fn: string) => fn === 'is_org_suspended'
+        ? { data: true, error: null }
+        : { data: { success: true }, error: null });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('org_suspended');
+      expect(mockRpc).not.toHaveBeenCalledWith('retry_anchor_instant_intent', expect.anything());
+      expect(mockRpc).not.toHaveBeenCalledWith('enqueue_existing_anchor_instant_intent', expect.anything());
+    } finally {
+      delete process.env.ENABLE_ORG_SUSPENSION_GUARD;
+    }
+  });
+
+  it('allows an active organization to rearm an existing instant intent', async () => {
+    process.env.ENABLE_ORG_SUSPENSION_GUARD = 'true';
+    try {
+      mockSelectChain.maybeSingle.mockResolvedValueOnce({
+        data: { id: 'anchor-existing', public_id: 'ARK-EXISTING', fingerprint: VALID_FINGERPRINT, status: 'PENDING', created_at: '2026-04-26T00:00:00Z' },
+        error: null,
+      });
+      mockRpc.mockImplementation(async (fn: string) => {
+        if (fn === 'is_org_suspended') return { data: false, error: null };
+        if (fn === 'retry_anchor_instant_intent') return { data: { success: true, status: 'QUEUED' }, error: null };
+        throw new Error(`unexpected RPC ${fn}`);
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+
+      expect(res.status).toBe(200);
+      expect(mockRpc).toHaveBeenNthCalledWith(1, 'is_org_suspended', { p_org_id: 'org-1' });
+      expect(mockRpc).toHaveBeenNthCalledWith(2, 'retry_anchor_instant_intent', expect.anything());
+    } finally {
+      delete process.env.ENABLE_ORG_SUSPENSION_GUARD;
+    }
   });
 
   it('accepts the compatibility submit path with the canonical write:anchors scope', async () => {
