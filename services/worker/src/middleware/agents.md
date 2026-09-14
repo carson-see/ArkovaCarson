@@ -481,9 +481,7 @@ annotation anywhere else in a comment block; rule id verified against the Sekura
 in `ai/gemini.ts` and `utils/gcp-auth.ts` rather than trusting a line number, which the Sekura report
 pinned at gemini.ts:1042 / gcp-auth.ts:77 and which moves with every edit above the call.
 (5) This is defense-in-depth, not a substitute: SCRUM-3888 (close the public Cloud
-Run origin) stays open — `requireCloudflareOrigin.ts` (below) now exists but ships flag-OFF, so
-this remains the only *active* mitigation on the bare run.app host until that guard is rolled to
-`enforce`; `edge.arkova.ai` gets the same set under SCRUM-5040 once an edge deploy
+Run origin) stays open; `edge.arkova.ai` gets the same set under SCRUM-5040 once an edge deploy
 pipeline exists; the R-5 config-drift scaffold (`scripts/ci/check-config-drift.ts`) only snapshots
 the `vercel.json` CSP, so a worker-CSP change has no drift gate today — keep this file and the
 middleware in step by hand.
