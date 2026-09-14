@@ -45,6 +45,7 @@
 // At cycle end the fixture shape is restored (expiries only). Nothing outside
 // the `cto-train-b-0912-2841-` fixture set is touched.
 import { randomBytes, randomUUID } from 'node:crypto';
+import { signInMfa } from '../common.mjs';
 
 export const pr = '#2841';
 
@@ -436,13 +437,16 @@ export async function run(ctx) {
   const CLOCK_SKEW_ALLOWANCE_MS = 60_000;
   const cycleStart = new Date(Date.now() - CLOCK_SKEW_ALLOWANCE_MS).toISOString();
 
-  let jwt;
-  try {
-    jwt = await signIn(ctx);
-  } catch (e) {
-    return [probe('2841_org_admin_signin', 'access_token', 'failed', { pass: false, detail: String(e.message ?? e) })];
-  }
-  out.push(probe('2841_org_admin_signin', true, Boolean(jwt), { detail: { email: state.adminA.email } }));
+  // 0451 mandatory MFA: adminA's plain password-grant token is aal1 and is
+  // rejected by requireAuth on every protected route with "Invalid or expired
+  // authentication token" (verified live 2026-09-13). signInMfa enrolls/
+  // reuses adminA's persisted TOTP factor and returns an aal2 session.
+  const signed = await signInMfa(ctx, 'adminA');
+  const jwt = signed.token;
+  out.push(probe('2841_org_admin_signin', true, Boolean(jwt), {
+    detail: { email: state.adminA.email, status: signed.status, error: signed.error, aalBefore: signed.aalBefore, aalAfter: signed.aalAfter },
+  }));
+  if (!jwt) return out;
 
   // Fresh expiries for THIS cycle — see cycleExpiries() for why they are not
   // replayed from setup. Applied before anything is read, so the statuses
