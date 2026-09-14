@@ -481,7 +481,73 @@ annotation anywhere else in a comment block; rule id verified against the Sekura
 in `ai/gemini.ts` and `utils/gcp-auth.ts` rather than trusting a line number, which the Sekura report
 pinned at gemini.ts:1042 / gcp-auth.ts:77 and which moves with every edit above the call.
 (5) This is defense-in-depth, not a substitute: SCRUM-3888 (close the public Cloud
-Run origin) stays open; `edge.arkova.ai` gets the same set under SCRUM-5040 once an edge deploy
+Run origin) stays open — `requireCloudflareOrigin.ts` (below) now exists but ships flag-OFF, so
+this remains the only *active* mitigation on the bare run.app host until that guard is rolled to
+`enforce`; `edge.arkova.ai` gets the same set under SCRUM-5040 once an edge deploy
 pipeline exists; the R-5 config-drift scaffold (`scripts/ci/check-config-drift.ts`) only snapshots
 the `vercel.json` CSP, so a worker-CSP change has no drift gate today — keep this file and the
 middleware in step by hand.
+
+## 2026-09-13 SCRUM-3888 — `requireCloudflareOrigin.ts`: origin guard for the public Cloud Run origin
+
+Mounted in `index.ts` immediately after `securityHeaders` and before `corsMiddleware` — ahead of
+every route — so every path gets one consistent answer regardless of which router would eventually
+have served it. Flag-gated at `CLOUDFLARE_ORIGIN_GUARD_MODE` (`off` default / `observe` / `enforce`),
+read PER REQUEST from `config.ts` (never captured once at import time) so a mode change on a live
+Cloud Run revision is an env-var update, not a redeploy — see
+`docs/reference/CLOUDFLARE_ORIGIN_GUARD.md` for the full rollout/rollback procedure and the
+allowlist inventory with per-path evidence.
+
+Checks `X-Arkova-Origin-Auth` (a header a Cloudflare Transform Rule injects on every request
+proxied through `api.`/`edge.`/`docs.arkova.ai`) against `CLOUDFLARE_ORIGIN_SECRET` via
+`crypto.timingSafeEqual` on equal-length buffers, length-checked first — same shape as
+`routes/health.ts`'s `isDetailedHealthAuthorized`. `off` is a pure no-op; `observe` never blocks
+but counts `origin_guard_would_block` per route family (read via `GET /health?detailed=true`
+`info.originGuard`); `enforce` 403s `origin_not_allowed` with a bounded body. Neither logging path
+nor the 403 body ever includes the header value or the configured secret — only `routeFamily`, a
+boolean `headerPresent`, and a keyed IP hash (`lib/ip-hash.ts`).
+
+**Allowlist is evidence-driven, not assumed.** `/health`, `/api/health`, `/jobs/*` (Cloud
+Scheduler — already CRON_SECRET/OIDC authenticated), every `/webhooks/*` receiver, and the two
+provably partner-inbound sub-paths `/api/v1/webhooks/drive` + `/api/v1/webhooks/ats` bypass the
+guard in every mode. **Not** the bare `/api/v1/webhooks` or `/api/v1/webhooks/self-service` —
+those are the customer-facing webhook-management API (`api/v1/router.ts:495,515`), gated on
+`webhooks:manage` scope or a dashboard JWT; an earlier draft of the allowlist swept them in by
+prefix and a CTO review caught it before the flag ever left `off`. Three of the true receivers —
+DocuSign, Adobe Sign, and
+the Google Drive `changes.watch` webhook — are **provably** registered against the bare run.app
+host: their registration URLs are built in code from `config.workerPublicUrl`
+(`integrations/oauth/docusign.ts`, `integrations/oauth/adobe-sign.ts`,
+`jobs/drive-subscription-renewal-deps.ts`), and `deploy-worker.yml` sets `WORKER_PUBLIC_URL` to
+`https://arkova-worker-270018525501.us-central1.run.app`, not `api.arkova.ai`. The remaining
+webhook paths (Middesk, Checkr, Stripe, Veremark, Microsoft Graph, ComputeID, ATS) have no
+code-level registration-host proof — most are console-configured by an operator, outside this
+repo's visibility — and are exempted conservatively rather than assumed safe to gate: exempting
+costs nothing (each has its own signature/HMAC check per Constitution SEC-01), while gating one
+that turns out to be registered against run.app would be a silent partner outage. Do not narrow
+this allowlist without re-verifying the registration host for the path being removed.
+
+**Deliberately NOT exempt, and why that is a real rollout risk, not an oversight:**
+`docs/api/README.md` / `docs/api/webhooks.md` / `docs/api/openapi.yaml` currently document the
+`/api/v1` and `/api/v2` REST base URL as the bare run.app host, not `api.arkova.ai`. Any partner or
+SDK caller that copy-pasted that base URL is, today, hitting the unprotected origin directly and
+would be blocked the moment `enforce` ships. That is exactly what `observe` mode exists to quantify
+before anything blocks — see the runbook's rollout section. Updating those three docs to
+`api.arkova.ai` is a release-session prerequisite this file flags but does not fix (out of lane for
+a worker-code change).
+
+`CLOUDFLARE_ORIGIN_GUARD_MODE` is a 3-state mode selector, not a boolean — deliberately **not**
+registered in `flagRegistry.ts`'s `ENV_FLAG_GETTERS` (that map, and the flag-inventory CI gate's
+`deploy-worker.yml` parser, are boolean-only: `ENABLE_*=true|false` / `MAINTENANCE_MODE=true|false`).
+Same precedent as `bitcoinFeeStrategy`, which also lives outside that boolean surface — confirmed
+this does not trip `scripts/ci/check-config-drift.ts`'s flag-inventory reconciliation.
+`CLOUDFLARE_ORIGIN_SECRET` is likewise **not yet** in `deploy-worker.yml`'s `--set-secrets`: see the
+comment block above the canary deploy step there for why (SCRUM-4495 preflight would fail every
+subsequent deploy, not just this rollout, until the Secret Manager entry exists) and what the
+release session must do in the same motion to add it.
+
+Tests: `requireCloudflareOrigin.test.ts` (the mode × header × route-class matrix, the
+constant-time compare, the allowlist boundary conditions, and that no log call anywhere carries the
+header or secret value) and `index.test.ts`'s "origin guard mount" block (the real app, real mount
+order, exemptions proven through the composed application rather than a hand-built one — same
+reasoning as the BUG-024 proof-keys mount test above).
