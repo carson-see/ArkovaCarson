@@ -13,28 +13,6 @@
  *   - HIPAA (§164.312)
  */
 
-import { resolveMfaEnforceFrom } from './mfaPolicy';
-
-/**
- * Item 34 (PR #2637 review): derived from `mfaPolicy.ts`'s own
- * date-resolution logic, rather than a hardcoded literal — the
- * HIPAA-164.312-MFA description below can never drift from the ACTUAL
- * effective enforcement date if `VITE_MFA_ENFORCE_FROM` moves it. No
- * circular import: `mfaPolicy.ts` has no import of this module.
- *
- * R23 (PR #2637 review round 2, CI failure): this is a FUNCTION, not a
- * module-scope constant — `mfaPolicy.ts`'s own doc comment states its
- * "never cache at module scope" rule for exactly this reason.
- * `resolveMfaEnforceFrom()` reads `import.meta.env`, which does not exist
- * under plain `tsx`/Node; `scripts/ci/check-compliance-mapping-mirror.ts`
- * loads this module that way, so a module-scope call here crashed on
- * import alone, before any export was even used. Called lazily instead —
- * see `HIPAA-164.312-MFA`'s `description` getter below, the only reader.
- */
-function getMfaEnforceFromDate(): string {
-  return resolveMfaEnforceFrom().slice(0, 10);
-}
-
 /** A single regulatory control reference */
 export interface ComplianceControl {
   /** Short identifier (e.g., "SOC2-CC6.7") */
@@ -93,73 +71,14 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   'eIDAS-25': ctrl('eIDAS-25', 'eIDAS', 'eIDAS Art. 25', 'Electronic signatures and seals — timestamped cryptographic proof of document state'),
   'eIDAS-35': ctrl('eIDAS-35', 'eIDAS', 'eIDAS Art. 35', 'Qualified electronic time stamps — network-observed timestamp via public anchoring'),
   'HIPAA-164.312': ctrl('HIPAA-164.312', 'HIPAA', 'HIPAA §164.312', 'Technical safeguards — integrity controls and audit controls for electronic PHI'),
-  // SCRUM/R-7 claims gate history: these two descriptions once asserted that
-  // MFA and automatic logoff were ENFORCED when neither was — the login-
-  // challenge enforcement shipped in PR #1973 was reverted in 6d10032b4 after
-  // a lockout incident, and `useHipaaMfaGate` (deleted, SCRUM-3167) had zero
-  // non-test importers. Asserting a control as enforced with nothing wired up
-  // is a false claim on a regulated surface — the same defect class as the
-  // SCRUM-2283 DPF removal above.
-  //
-  // SCRUM-3167 changed the underlying fact for MFA: AuthGuard + mfaPolicy.ts +
-  // useMfaEnrollmentRequirement now enforce a real login challenge (every
-  // session, for anyone with a verified factor) and mandatory enrollment,
-  // ROLE-GATED to ORG_ADMIN / platform admins, effective from the resolved
-  // MFA_ADMIN_ENFORCE_FROM_DEFAULT date (2026-09-21T00:00:00Z, overridable via
-  // VITE_MFA_ENFORCE_FROM). Org-level enforcement
-  // (`organizations.hipaa_mfa_required`) is DELIBERATELY NOT part of this —
-  // CTO ruling A4-3 dropped it from phase 1 because that column is writable
-  // by any org owner/admin via PostgREST with no audit trail, so it cannot
-  // back a security claim yet (phase 2: an audited service-role RPC + column
-  // REVOKE migration, SCRUM-3593 lineage). The description below states
-  // exactly this boundary — available to everyone, required for two specific
-  // roles from a specific date, not yet required for anyone else — rather
-  // than a blanket "enforced" claim this control still cannot support.
-  // Automatic logoff remains genuinely unenforced: `useIdleTimeout` has zero
-  // non-test importers, so `organizations.session_timeout_minutes` is stored
-  // and never acted on.
-  //
-  // Item 34 (PR #2637 review): the date in the description below comes from
-  // `getMfaEnforceFromDate()` (`resolveMfaEnforceFrom()`), NOT a hardcoded
-  // literal — it moves automatically if `VITE_MFA_ENFORCE_FROM` does. Item
-  // 11/C3: the description also discloses that this is an
-  // APPLICATION-LEVEL sign-in gate, not a database-level control — the
-  // stronger control is a phase-2 SCRUM-3593 RLS ticket.
-  //
-  // R21 (PR #2637 review round 2, CTO ruling R17-R21 — SUPERSEDES the
-  // original "fails open on a platform error" wording): fail-open is now
-  // asymmetric, not a blanket property of the gate. The LOGIN CHALLENGE
-  // (a session whose user already has a verified factor) fails CLOSED on
-  // every error — a retry screen, never access — because a client-detected
-  // "platform error" is trivially attacker-triggerable and fail-open there
-  // would have made MFA optional for anyone holding a password. Only
-  // FIRST-TIME ENROLLMENT (no verified factor yet) still fails open, and
-  // only until the platform can issue a factor — the original CTO ruling
-  // A4-2/A4-7 rationale (an admin with zero factors must never be
-  // permanently walled out by a broken enrollment backend) still applies
-  // there, just nowhere else. See `src/components/auth/agents.md`'s dated
-  // entry for the full design.
-  //
-  // NEVER RENAME THIS KEY — a worker mirror gate compares the compliance
-  // control ID set (SCRUM-3167 Amendment A5 item 7). Description edits only.
-  //
-  // R23: a getter, not a plain string built by `ctrl()` — the description
-  // is computed on READ, not at object-construction time (which still
-  // happens at module-eval time for every other control here), so
-  // `getMfaEnforceFromDate()` (and therefore `resolveMfaEnforceFrom()`)
-  // only ever runs when something actually asks for this control's
-  // `description`. `enumerable: true` behavior (the object-literal `get`
-  // syntax gives this for free) means `Object.keys`, spread, and
-  // `JSON.stringify` all still see it normally — only lazier, not hidden.
-  'HIPAA-164.312-MFA': {
-    id: 'HIPAA-164.312-MFA',
-    framework: 'HIPAA',
-    label: 'HIPAA §164.312(d) MFA',
-    color: FRAMEWORK_COLORS['HIPAA'],
-    get description(): string {
-      return `Person or entity authentication — multi-factor authentication (authenticator app) is available to every account; it is required for organization administrators and platform administrators from ${getMfaEnforceFromDate()} and is not yet required for other roles (application-level sign-in gate: the login challenge fails closed on any error and never grants access without a real verified code, while first-time enrollment fails open only until the platform can issue a factor; database-level enforcement is planned under SCRUM-3593)`;
-    },
-  },
+  // Mandatory MFA is enforced for every human account at browser, bearer,
+  // PostgREST, and RLS boundaries. Machine credentials remain separate.
+  'HIPAA-164.312-MFA': ctrl(
+    'HIPAA-164.312-MFA',
+    'HIPAA',
+    'HIPAA §164.312(d) MFA',
+    'Person or entity authentication — every human account must confirm its mailbox and complete authenticator-app MFA before onboarding or protected access; browser, bearer-token, and database enforcement fail closed below AAL2',
+  ),
   'HIPAA-164.312-AUDIT': ctrl('HIPAA-164.312-AUDIT', 'HIPAA', 'HIPAA §164.312(b) Audit', 'Audit controls — hardware, software, and procedural mechanisms to record PHI access'),
   'HIPAA-164.312-SESSION': ctrl('HIPAA-164.312-SESSION', 'HIPAA', 'HIPAA §164.312(a)(2)(iii) Session', 'Automatic logoff — session timeout is configurable per organization but is not currently applied to active sessions'),
   // International frameworks (REG-27)

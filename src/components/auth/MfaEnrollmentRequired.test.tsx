@@ -1,30 +1,4 @@
-/**
- * MfaEnrollmentRequired Component Tests — SCRUM-3167 mandatory MFA,
- * hardened again per PR #2637 code review.
- *
- * CHANGES FROM THE PRIOR VERSION (this batch):
- * - `handleVerify`'s challenge()/verify() calls are now wrapped in
- *   try/catch AND raced against the shared 8s timeout (items 4/E4/EA1) —
- *   previously neither call was try/caught, so a thrown exception left
- *   `busy=true` forever; and neither was timed out, so a hang spun forever.
- *   Non-wrong-code errors now route to `onCapabilityUnavailable` via the
- *   shared `classifyMfaError` (this was the EA1 gap: a platform blip during
- *   the post-enrollment verify step used to strand a mandatorily-enrolling
- *   admin on a generic inline error with no escape route).
- * - `randomSuffix()` now comes from `crypto.randomUUID().slice(0, 8)`
- *   directly (R9, PR #2637 review round 2 — replaces the bespoke
- *   `randomSuffixHex()` helper, now deleted; SonarCloud typescript:S2245,
- *   item 25 still holds — this is CSPRNG-backed, not `Math.random()`).
- * - The enroll timeout is raised from 8s to 15s, and a LATE-resolving
- *   `enroll()` (one that loses the timeout race but later succeeds
- *   server-side) is best-effort unenrolled so it never becomes an orphaned,
- *   invisible factor (item 31).
- * - The code input carries `inputMode="numeric"`, `autoComplete="one-time-code"`,
- *   `pattern="[0-9]*"` (item 8/D3); the QR `alt` text and code placeholder
- *   now come from `copy.ts` (item 10/C1/C2).
- * - "Sign out" is disabled while `starting` or `busy` (item 6/D8), and a
- *   `handleVerify` result arriving after unmount is ignored (item 6/D2).
- */
+/** Mandatory MFA enrollment remains non-skippable and fails closed. */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StrictMode } from 'react';
@@ -70,7 +44,6 @@ const VALID_ENROLL_RESPONSE = {
 
 describe('MfaEnrollmentRequired', () => {
   const onEnrolled = vi.fn();
-  const onCapabilityUnavailable = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -83,7 +56,7 @@ describe('MfaEnrollmentRequired', () => {
   });
 
   function renderScreen() {
-    return render(<MfaEnrollmentRequired onEnrolled={onEnrolled} onCapabilityUnavailable={onCapabilityUnavailable} />);
+    return render(<MfaEnrollmentRequired onEnrolled={onEnrolled} />);
   }
 
   // The real app renders inside <React.StrictMode> (src/main.tsx), and every
@@ -93,7 +66,7 @@ describe('MfaEnrollmentRequired', () => {
   function renderScreenUnderStrictMode() {
     return render(
       <StrictMode>
-        <MfaEnrollmentRequired onEnrolled={onEnrolled} onCapabilityUnavailable={onCapabilityUnavailable} />
+        <MfaEnrollmentRequired onEnrolled={onEnrolled} />
       </StrictMode>,
     );
   }
@@ -189,7 +162,6 @@ describe('MfaEnrollmentRequired', () => {
     await waitFor(() => {
       expect(onEnrolled).toHaveBeenCalledTimes(1);
     });
-    expect(onCapabilityUnavailable).not.toHaveBeenCalled();
   });
 
   it('shows an inline error and does NOT call onEnrolled when the verification CODE is wrong (user-fixable, not a capability failure)', async () => {
@@ -209,16 +181,13 @@ describe('MfaEnrollmentRequired', () => {
       expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(/invalid code/i);
     });
     expect(onEnrolled).not.toHaveBeenCalled();
-    expect(onCapabilityUnavailable).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
-  // EA1 (PR #2637 review): a PLATFORM failure during the post-enroll verify
-  // step used to strand the user on a generic inline error with no escape
-  // — now it routes to onCapabilityUnavailable, same as MfaChallenge.
+  // Platform failures during enrollment verification remain inside the gate.
   // -----------------------------------------------------------------------
 
-  it('ITEM 4/EA1: a PLATFORM error on challenge() (unrecognized code) calls onCapabilityUnavailable, not an inline error', async () => {
+  it('ITEM 4/EA1: a PLATFORM error on challenge() (unrecognized code) keeps the gate closed with a retryable error', async () => {
     mockChallenge.mockResolvedValueOnce({ data: null, error: { message: 'service down', code: 'mfa_totp_verify_not_enabled' } });
 
     renderScreen();
@@ -230,13 +199,17 @@ describe('MfaEnrollmentRequired', () => {
     fireEvent.click(screen.getByTestId('mfa-enrollment-submit'));
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('mfa_totp_verify_not_enabled');
+      expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+        MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+      );
     });
     expect(onEnrolled).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('mfa-enrollment-error')).not.toBeInTheDocument();
+    expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+      MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+    );
   });
 
-  it('ITEM 4/EA1 (R24): a PLATFORM error on verify() (unrecognized code) calls onCapabilityUnavailable', async () => {
+  it('ITEM 4/EA1 (R24): a PLATFORM error on verify() (unrecognized code) keeps the gate closed', async () => {
     mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
     mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'service down', code: 'mfa_totp_verify_not_enabled' } });
 
@@ -249,21 +222,17 @@ describe('MfaEnrollmentRequired', () => {
     fireEvent.click(screen.getByTestId('mfa-enrollment-submit'));
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('mfa_totp_verify_not_enabled');
+      expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+        MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+      );
     });
     expect(onEnrolled).not.toHaveBeenCalled();
   });
 
-  // R24 (PR #2637 review round 2, real bug — fixed): the two branches above
-  // used to treat EVERY non-wrong-code outcome as fail-open, including an
-  // explicit backend REJECTION (validation_failed, over_request_rate_limit,
-  // mfa_ip_address_mismatch — classifyMfaError's `'rejected'` kind), which
-  // directly contradicts mfaErrors.ts's own contract that `'rejected'` is
-  // NEVER a fail-open signal on either the challenge or enrollment path.
-  // These prove the fix: a rejection shows an inline retryable error and
-  // never calls onCapabilityUnavailable or onEnrolled.
+  // Explicit backend rejections retain their actionable message; they never
+  // call the completion callback or expose protected content.
   it.each(['validation_failed', 'over_request_rate_limit', 'mfa_ip_address_mismatch'])(
-    'R24: a REJECTED verify() error (%s) shows an inline error — NOT onCapabilityUnavailable, NOT onEnrolled',
+    'R24: a REJECTED verify() error (%s) stays in the gate with an inline error',
     async (code) => {
       mockChallenge.mockResolvedValueOnce({ data: { id: 'challenge-1' }, error: null });
       mockVerify.mockResolvedValueOnce({ data: null, error: { message: 'rejected by GoTrue', code } });
@@ -279,7 +248,6 @@ describe('MfaEnrollmentRequired', () => {
       await waitFor(() => {
         expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(/rejected by gotrue/i);
       });
-      expect(onCapabilityUnavailable).not.toHaveBeenCalled();
       expect(onEnrolled).not.toHaveBeenCalled();
       // Stays on the same completable screen — a rejection is retryable,
       // not a reason to fail open or otherwise abandon the code form.
@@ -288,7 +256,7 @@ describe('MfaEnrollmentRequired', () => {
   );
 
   it.each(['validation_failed', 'over_request_rate_limit', 'mfa_ip_address_mismatch'])(
-    'R24: a REJECTED challenge() error (%s) shows an inline error — NOT onCapabilityUnavailable, NOT onEnrolled',
+    'R24: a REJECTED challenge() error (%s) stays in the gate with an inline error',
     async (code) => {
       mockChallenge.mockResolvedValueOnce({ data: null, error: { message: 'rejected by GoTrue', code } });
 
@@ -303,13 +271,12 @@ describe('MfaEnrollmentRequired', () => {
       await waitFor(() => {
         expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(/rejected by gotrue/i);
       });
-      expect(onCapabilityUnavailable).not.toHaveBeenCalled();
       expect(onEnrolled).not.toHaveBeenCalled();
       expect(screen.getByTestId('mfa-enrollment-code')).toBeInTheDocument();
     }
   );
 
-  it('ITEM 4/E4: a THROWN exception during handleVerify calls onCapabilityUnavailable, resets busy, never crashes', async () => {
+  it('ITEM 4/E4: a THROWN exception during handleVerify keeps the gate closed, resets busy, never crashes', async () => {
     mockChallenge.mockRejectedValueOnce(new TypeError('boom'));
 
     renderScreen();
@@ -321,12 +288,14 @@ describe('MfaEnrollmentRequired', () => {
     fireEvent.click(screen.getByTestId('mfa-enrollment-submit'));
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+      expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+        MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+      );
     });
     expect(screen.getByTestId('mfa-enrollment-submit')).not.toBeDisabled();
   });
 
-  it('ITEM 4/EA6: a HUNG challenge() call during handleVerify times out to onCapabilityUnavailable("unknown")', async () => {
+  it('ITEM 4/EA6: a HUNG challenge() call during handleVerify times out with the gate closed', async () => {
     vi.useFakeTimers();
     mockChallenge.mockReturnValueOnce(new Promise(() => {}));
 
@@ -341,7 +310,9 @@ describe('MfaEnrollmentRequired', () => {
       await vi.advanceTimersByTimeAsync(8_000);
     });
 
-    expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+    expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+      MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+    );
   });
 
   it('LOCKOUT ESCAPE HATCH: offers a working sign-out affordance so a user without their device right now is never permanently trapped', async () => {
@@ -411,61 +382,71 @@ describe('MfaEnrollmentRequired', () => {
   });
 
   // -----------------------------------------------------------------------
-  // FAIL-OPEN ON ANY ENROLL ERROR (CTO ruling A4-2) — no allowlist of codes.
+  // Every enrollment error keeps the mandatory gate closed.
   // -----------------------------------------------------------------------
 
-  it('FAIL-OPEN: a known enroll error code (mfa_totp_enroll_not_enabled) calls onCapabilityUnavailable with that code; no QR/verify form renders', async () => {
+  it('FAIL-CLOSED: a known enroll error code (mfa_totp_enroll_not_enabled) keeps the gate closed with that code; no QR/verify form renders', async () => {
     mockEnroll.mockResolvedValueOnce({ data: null, error: { message: 'MFA enroll is disabled for TOTP', code: 'mfa_totp_enroll_not_enabled' } });
 
     renderScreen();
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('mfa_totp_enroll_not_enabled');
+      expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+        MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+      );
     });
     expect(onEnrolled).not.toHaveBeenCalled();
     expect(screen.queryByTestId('mfa-enrollment-qr')).not.toBeInTheDocument();
     expect(screen.queryByTestId('mfa-enrollment-code')).not.toBeInTheDocument();
   });
 
-  it('FAIL-OPEN: an UNKNOWN enroll error code still calls onCapabilityUnavailable — no allowlist', async () => {
+  it('FAIL-CLOSED: an UNKNOWN enroll error code still keeps the gate closed — no allowlist', async () => {
     mockEnroll.mockResolvedValueOnce({ data: null, error: { message: 'something new broke', code: 'some_future_error_code' } });
 
     renderScreen();
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('some_future_error_code');
+      expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+        MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+      );
     });
     expect(onEnrolled).not.toHaveBeenCalled();
     expect(screen.queryByTestId('mfa-enrollment-qr')).not.toBeInTheDocument();
   });
 
-  it('FAIL-OPEN: an error with no code at all reports "unknown"', async () => {
+  it('FAIL-CLOSED: an error with no code at all reports "unknown"', async () => {
     mockEnroll.mockResolvedValueOnce({ data: null, error: { message: 'network down' } });
 
     renderScreen();
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+      expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+        MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+      );
     });
   });
 
-  it('FAIL-OPEN: missing data with no error object also calls onCapabilityUnavailable', async () => {
+  it('FAIL-CLOSED: missing data with no error object also keeps the gate closed', async () => {
     mockEnroll.mockResolvedValueOnce({ data: null, error: null });
 
     renderScreen();
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+      expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+        MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+      );
     });
   });
 
-  it('FAIL-OPEN: a THROWN TypeError during enroll() calls onCapabilityUnavailable("unknown"), never crashes; no QR/verify form renders', async () => {
+  it('FAIL-CLOSED: a THROWN TypeError during enroll() keeps the gate closed without crashing', async () => {
     mockEnroll.mockRejectedValueOnce(new TypeError('unexpected shape'));
 
     renderScreen();
 
     await waitFor(() => {
-      expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+      expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+        MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+      );
     });
     expect(onEnrolled).not.toHaveBeenCalled();
     expect(screen.queryByTestId('mfa-enrollment-qr')).not.toBeInTheDocument();
@@ -480,12 +461,14 @@ describe('MfaEnrollmentRequired', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(8_000);
     });
-    expect(onCapabilityUnavailable).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('mfa-enrollment-error')).not.toBeInTheDocument();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(7_001); // total 15_001ms
     });
-    expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+    expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+      MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+    );
   });
 
   it('ITEM 31: a LATE-resolving enroll() (loses the 15s race, then succeeds server-side) is best-effort unenrolled so no orphan factor is left behind', async () => {
@@ -502,7 +485,9 @@ describe('MfaEnrollmentRequired', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
     });
-    expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+    expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+      MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+    );
     expect(mockUnenroll).not.toHaveBeenCalled();
 
     // The original request finally comes back, well after the timeout.
@@ -566,7 +551,6 @@ describe('MfaEnrollmentRequired', () => {
     });
 
     expect(mockUnenroll).toHaveBeenCalledWith({ factorId: 'factor-new' });
-    expect(onCapabilityUnavailable).not.toHaveBeenCalled();
     expect(onEnrolled).not.toHaveBeenCalled();
   });
 
@@ -611,7 +595,9 @@ describe('MfaEnrollmentRequired', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
     });
-    expect(onCapabilityUnavailable).toHaveBeenCalledWith('unknown');
+    expect(screen.getByTestId('mfa-enrollment-error')).toHaveTextContent(
+      MFA_ENROLLMENT_REQUIRED_LABELS.GENERIC_ERROR,
+    );
 
     await act(async () => {
       resolveEnroll(VALID_ENROLL_RESPONSE);

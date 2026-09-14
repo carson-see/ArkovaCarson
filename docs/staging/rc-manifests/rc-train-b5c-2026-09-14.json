@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "rc_id": "rc-train-b5c-2026-09-14",
+  "created_at": "2026-09-14T07:15:54Z",
+  "created_by": "CTO release session (Claude Sonnet 5) for carson@arkova.io",
+  "release_owner": "CTO release session",
+  "approval_status": "approved",
+  "approval_actor": "carson@arkova.io (session directive 2026-09-14, \"Train B5b sealed. #2846 merged. #2841 and #2909 are open and blocked... Cut Train B5c for them\")",
+  "approval_time": "2026-09-14T07:11:04Z",
+  "train_launch_sha": "aaaa0d7bad30af5e781d52370e0d5479a003089f",
+  "target_main_sha": "a62671abddaed263e70402f9d8baec498c58daf9",
+  "allowed_base_shas": [
+    "a62671abddaed263e70402f9d8baec498c58daf9"
+  ],
+  "covered_main_shas": [
+    "a62671abddaed263e70402f9d8baec498c58daf9"
+  ],
+  "included_prs": [
+    {
+      "head_sha": "ec8895a2ca4dabe9f04a9e5f2f2583930c8836df",
+      "base_sha": "a62671abddaed263e70402f9d8baec498c58daf9",
+      "ticket": "SCRUM-5023",
+      "number": 2841,
+      "ci_summary": "Re-pushed head after resolving the real GitHub CONFLICTING state (see below); gh pr view now reports mergeable=MERGEABLE. CI re-triggered by the push at manifest-write time; results pending. Prior B5b evidence (T0 delta at head 8715d5574) is invalidated by this new head per CLAUDE.md §1.11A -- this train provides the fresh T2 soak.",
+      "rollback_note": "Revert the PR's commits; no migration. Additive response fields; older worker/frontend fall back cleanly. Cron disabled via pausing api-key-expiry-notice Cloud Scheduler job (writes only append-only audit_events).",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "conflict_resolution": "GitHub reported a real one-line collision in services/worker/src/api/v1/docs.ts: this PR's `import { EXPIRING_SOON_WINDOW_DAYS, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js'` vs origin/main's (post-#2846) `import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js'` at the same anchor. Verified with a driver-bypassed local `git merge --no-ff` (not `git merge-tree` alone, which does not reproduce GitHub's plain 3-way check against .gitattributes union drivers) that this is the ONLY conflicting path -- every agents.md file plus cloud-scheduler.sh/cron.ts/copy.ts auto-merged clean. Resolved by keeping both import lines (both are referenced later in the same file: MAX_EXPIRES_IN_DAYS ~L482, CONNECTOR_FETCH_SOURCE_MARKERS_SORTED ~L1871, EXPIRING_SOON_WINDOW_DAYS ~L2121). Verified 0 unmerged paths and a scoped tsc pass on the touched file."
+    },
+    {
+      "head_sha": "ca2256c043b37f533996e7a10112ed4b593f4a7a",
+      "base_sha": "a62671abddaed263e70402f9d8baec498c58daf9",
+      "ticket": "SCRUM-3906/SCRUM-3843",
+      "number": 2909,
+      "ci_summary": "Re-pushed head after re-merging origin/main (0 conflicts) and a deliberate tier ruling on docs/api/agents.md (see below); gh pr view reports mergeable=MERGEABLE. CI re-triggered by the push at manifest-write time; results pending. Prior evidence-identity gate failure (a [T0]-labeled commit had touched the T2-tier docs/api/agents.md, improperly claiming the Post-soak T0 delta allowance) does not recur here -- this commit is an honestly-tiered T2 merge landing inside a fresh full soak, not a delta against old evidence.",
+      "rollback_note": "Revert both commits — no migration/schema/RLS/deployed-state dependency. Restores prior aiSemanticSearchGate()-gated 503 behavior exactly; docs/openapi/README revert with it.",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "conflict_resolution": "GitHub reported mergeable=MERGEABLE already (no real content conflict), but its evidence gates failed because the PR's prior head carried a commit labeled [T0] that edited docs/api/agents.md. Confirmed live via requiredTierFor(['docs/api/agents.md']) => {tier:'T2', reason:'docs/api/agents.md — public API contract / SDK surface'} -- NOT covered by the generic agents.md T0 carve-out. Deliberate decision: KEPT the docs/api/agents.md edit rather than reverting it, for two reasons verified before deciding: (1) this PR is independently T2 via its own code diff regardless of this file -- it touches services/worker/src/api/v1/{ai-verify-search.ts,ai-verify-search.test.ts,docs.ts,router.ts,docs.routeParity.test.ts} and services/worker/src/api/v1/webhooks/docusign.test.ts, all on the T2 worker-code path, so reverting the doc would not move the tier; (2) the file's 2026-09-13 SCRUM-3906 entry is this PR's OWN substantive documentation of its OWN behavior change (the /verify/search lexical fallback + search_mode field), required by the CLAUDE.md Doc Update Matrix -- reverting it would undocument a real, shipped API behavior change. (The file's other new section, dated 2026-09-12 SCRUM-4507, is inherited verbatim from origin/main via this merge -- already landed there by #2846 -- and is not new content from this PR.) Re-merged origin/main on top of the existing conflict-resolution head: 0 conflicts, 0 unmerged paths, scoped tsc pass clean on the touched worker files."
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "PENDING (deploy in progress at manifest-write time)",
+    "staging_url": "PENDING (deploy in progress at manifest-write time)",
+    "cloud_run_service": "arkova-worker-cto-train-b-0912-staging",
+    "revision": "PENDING (deploy in progress at manifest-write time)",
+    "deploy_tag": "PENDING",
+    "image_digest": "PENDING",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "deploy_log_id": "PENDING",
+    "preflight_result": "PENDING (staging-honesty-preflight.ts to be run against xhvasifpunswhsgfsstd with --prod-project-ref vzwyaatejekddvltxyye before soak start, per CLAUDE.md §1.11A)",
+    "origin_guard_mode": "n/a for this train's changed surfaces"
+  },
+  "soak": {
+    "tier": "T2 (4 h floor, CLAUDE.md §1.12)",
+    "start": "PENDING",
+    "end": "",
+    "cycles": 0,
+    "failures": 0,
+    "evidence_dir": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/window1",
+    "notes": "Manifest written pre-deploy; environment/soak fields to be completed once the candidate is deployed and the supervisor is launched. Rig 1 reused (Supabase xhvasifpunswhsgfsstd, Cloud Run arkova-worker-cto-train-b-0912-staging) -- the B5b supervisor on this rig (pid 31065, candidate 9321e767c, train-b5b outdir) is being stopped for this reuse; the concurrent train-c2 supervisor (pid 94871, unrelated candidate/outdir) is left untouched.",
+    "result": "pending",
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs",
+    "evidence_links": [],
+    "expires_at": ""
+  },
+  "migration_plan": {
+    "migrations": [],
+    "note": "no member carries a migration (confirmed via gh pr diff <N> --name-only for both #2841 and #2909, 0 supabase/migrations/ paths each)"
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "pre_deploy_step": ""
+  },
+  "exceptions": [],
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-b5c-2026-09-14.json",
+  "staging_branch": "rc/train-b5c-2026-09-14",
+  "preflight_timestamp": "PENDING"
+}

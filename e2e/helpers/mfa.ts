@@ -16,17 +16,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { SEED_USERS } from '../fixtures/supabase';
 import { uniqueTestId } from './unique';
 import { totp } from './totp';
-import { MFA_ENFORCE_FROM_OVERRIDE_KEY } from '../../src/lib/mfaPolicy';
-
-/**
- * R14 (PR #2637 review round 2): re-exported from `src/lib/mfaPolicy.ts`'s
- * own constant instead of a locally-duplicated string literal, so this
- * helper and the app can never drift on the key name.
- */
-export const MFA_ENFORCE_DATE_OVERRIDE_KEY = MFA_ENFORCE_FROM_OVERRIDE_KEY;
 
 export interface DisposableUserOptions {
-  role: 'INDIVIDUAL' | 'ORG_ADMIN';
+  role: 'INDIVIDUAL' | 'ORG_ADMIN' | 'ORG_MEMBER';
   orgId?: string | null;
   emailPrefix?: string;
   fullName?: string;
@@ -199,24 +191,6 @@ export async function loginViaUi(page: Page, email: string, password: string): P
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-}
-
-/**
- * Register a non-production enforcement-date override in `localStorage`
- * BEFORE the app loads, via `page.addInitScript` (so it is present for the
- * very first navigation, not raced against app boot). Honoured by
- * `src/lib/mfaPolicy.ts` (branch `security/mfa-enforcement-3167`) only in
- * dev/CI builds — see that module for the exact gating condition.
- *
- * `iso` must be a full UTC timestamp, e.g. `2099-01-01T00:00:00Z`.
- */
-export async function setEnforceDateOverride(page: Page, iso: string): Promise<void> {
-  await page.addInitScript(
-    ({ key, value }) => {
-      window.localStorage.setItem(key, value);
-    },
-    { key: MFA_ENFORCE_DATE_OVERRIDE_KEY, value: iso },
-  );
 }
 
 /**

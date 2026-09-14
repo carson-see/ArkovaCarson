@@ -92,6 +92,13 @@ max_enrolled_factors = 10
 enroll_enabled = true
 verify_enabled = true
 
+# UAT-04 composes mailbox confirmation with mandatory MFA in one token hook.
+# Hosted projects must explicitly enable the same hook during rollout; SQL
+# installation alone does not change hosted Auth configuration.
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/private/oauth_email_confirmation_token_hook"
+
 [analytics]
 enabled = false
 port = 54327

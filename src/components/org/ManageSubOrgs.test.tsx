@@ -117,6 +117,9 @@ describe('ManageSubOrgs', () => {
 
     await renderLoaded();
 
+    // Founder feedback 2026-09-13: the create form is a disclosure under the
+    // list, so the admin who came to approve a request is not met by a form.
+    await user.click(screen.getByRole('button', { name: 'Add an organization' }));
     await user.type(screen.getByLabelText('Affiliate name'), 'New Clinic');
     await user.type(screen.getByLabelText('Affiliate admin email'), 'Admin@New.Example');
     await user.type(screen.getByLabelText('Legal name'), 'New Clinic Legal');
@@ -152,6 +155,7 @@ describe('ManageSubOrgs', () => {
     const user = userEvent.setup();
 
     await renderLoaded();
+    await user.click(screen.getByRole('button', { name: 'Add an organization' }));
     await user.click(screen.getByRole('button', { name: /Create Affiliate/i }));
 
     expect(mocks.toastError).toHaveBeenCalledWith('Affiliate name and admin email are required.');
@@ -179,8 +183,11 @@ describe('ManageSubOrgs', () => {
       });
     });
 
+    // Founder feedback 2026-09-13: Revoke confirms now, like the Offboard
+    // button beside it always did.
     const revokeButtons = screen.getAllByRole('button', { name: /Revoke/i });
     await user.click(revokeButtons[revokeButtons.length - 1]);
+    await user.click(await screen.findByRole('button', { name: 'End Affiliation' }));
 
     await waitFor(() => {
       const revokeCall = fetchMock.mock.calls.find(([url, init]) =>

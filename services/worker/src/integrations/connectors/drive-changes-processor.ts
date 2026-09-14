@@ -24,6 +24,10 @@ import {
   type DriveChangesListEntry,
   type DriveChangesListResponseT,
 } from '../oauth/drive.js';
+// SCRUM-4507: the revision-kind vocabulary is owned by the job-payload
+// contract module so the producer, the queue schema and the record page all
+// read one declaration. Type-only import — no runtime edge added here.
+import type { DriveRevisionKind } from './drive-artifact-producer.js';
 
 export interface DriveProcessorDb {
   /** Insert a row into drive_revision_ledger; resolve to true on success,
@@ -90,6 +94,17 @@ export interface DriveProcessorDb {
     mime_type: string | null;
     modified_time: string | null;
     rule_event_id: string;
+    /**
+     * SCRUM-4507 source link-back — the identifiers a record owner needs to
+     * get back to the file this anchor was made from. Derived here, at the
+     * one point the raw Drive change is in hand; every later hop just carries
+     * them. `null` where Drive gave us nothing (My Drive has no shared drive
+     * id; a change can have no parents; folder_path needs a resolver).
+     */
+    shared_drive_id: string | null;
+    folder_id: string | null;
+    folder_path: string | null;
+    revision_kind: DriveRevisionKind;
   }): Promise<string | null>;
 }
 
@@ -149,7 +164,8 @@ const SAFE_PAGE_LIMIT = 25;
 const FOLDER_PATH_RESOLUTION_CONCURRENCY = 8;
 
 /**
- * Resolve the revision identifier for a Drive change.
+ * Resolve the revision identifier for a Drive change, AND which kind of token
+ * it turned out to be.
  *
  * Prefer `headRevisionId` (Drive's monotonic revision token, available for
  * binary file types). Fall back to `modifiedTime` for native Google
@@ -157,13 +173,28 @@ const FOLDER_PATH_RESOLUTION_CONCURRENCY = 8;
  * Drive guarantees `modifiedTime` advances on every meaningful change so
  * this still discriminates revisions. Last resort: synthesize from `time`
  * + file id so dedupe still functions for transient `removed` events.
+ *
+ * SCRUM-4507: the precedence and the emitted id strings are UNCHANGED — the
+ * `mtime:` / `evt:` prefixes are part of the 0343 `connector_artifact` dedupe
+ * key, so altering them would re-anchor every Workspace-native file. The only
+ * addition is the `kind`, which travels alongside so a rendering surface never
+ * has to infer the answer from the string's prefix (a caller that parsed
+ * `mtime:` out of the id would be re-deriving a fact the producer already
+ * knew, and would silently misread any future id shape).
  */
-function resolveRevisionId(change: DriveChangesListEntry): string | null {
+interface ResolvedDriveRevision {
+  revisionId: string;
+  kind: DriveRevisionKind;
+}
+
+function resolveRevision(change: DriveChangesListEntry): ResolvedDriveRevision | null {
   const headRev = change.file?.headRevisionId;
-  if (headRev) return headRev;
+  if (headRev) return { revisionId: headRev, kind: 'head_revision' };
   const mtime = change.file?.modifiedTime;
-  if (mtime) return `mtime:${mtime}`;
-  if (change.time && change.fileId) return `evt:${change.time}:${change.fileId}`;
+  if (mtime) return { revisionId: `mtime:${mtime}`, kind: 'modified_time' };
+  if (change.time && change.fileId) {
+    return { revisionId: `evt:${change.time}:${change.fileId}`, kind: 'event_time' };
+  }
   return null;
 }
 
@@ -198,12 +229,22 @@ function classifyLedgerOutcome(matches: boolean, parentCount: number): LedgerOut
 interface ChangeDescriptor {
   fileId: string;
   revisionId: string;
+  /** SCRUM-4507: which fallback `resolveRevision` landed on for `revisionId`. */
+  revisionKind: DriveRevisionKind;
   parents: string[];
   matches: boolean;
   actorEmail: string | null;
   modifiedTime: string | null;
   filename: string | null;
   mimeType: string | null;
+  /**
+   * SCRUM-4507: the Shared Drive this file lives on, or null for My Drive.
+   * `listChanges` has always requested `driveId` in its field mask and the Zod
+   * entry has always parsed it — nothing read it until now.
+   */
+  sharedDriveId: string | null;
+  /** SCRUM-4507: first parent folder id, or null when the change has no parents. */
+  folderId: string | null;
 }
 
 /** Sync-only pass: classify every change in a page. No I/O. */
@@ -223,8 +264,8 @@ function classifyPage(
     if (change.removed === true || change.file?.trashed === true) continue;
 
     const fileId = change.file?.id ?? change.fileId ?? null;
-    const revisionId = resolveRevisionId(change);
-    if (!fileId || !revisionId) {
+    const revision = resolveRevision(change);
+    if (!fileId || !revision) {
       onSkip(change);
       continue;
     }
@@ -232,7 +273,15 @@ function classifyPage(
     const parents = change.file?.parents ?? [];
     descriptors.push({
       fileId,
-      revisionId,
+      revisionId: revision.revisionId,
+      revisionKind: revision.kind,
+      sharedDriveId: change.file?.driveId ?? null,
+      // The FIRST parent, deliberately: Drive allows multiple parents, and the
+      // watched-folder match already treats the array as a set. Picking one is
+      // a display choice, so it picks the same element a reader sees first
+      // rather than searching for the watched one — which would make the link
+      // depend on the org's rule configuration rather than on the file.
+      folderId: parents[0] ?? null,
       parents,
       matches: parentMatches(parents, watchedFolderIds),
       actorEmail: change.file?.lastModifyingUser?.emailAddress ?? null,
@@ -443,6 +492,12 @@ export async function processDriveChanges(args: {
             mime_type: d.mimeType,
             modified_time: d.modifiedTime,
             rule_event_id: ruleEventId,
+            // SCRUM-4507 source link-back. `folderPath` is the value already
+            // resolved for this file in PHASE 2 — no extra Drive round-trip.
+            shared_drive_id: d.sharedDriveId,
+            folder_id: d.folderId,
+            folder_path: folderPath,
+            revision_kind: d.revisionKind,
           });
       } catch (err) {
         // Compensate: roll back the ledger reservation so retry isn't blocked.

@@ -1,0 +1,14 @@
+{
+  "soak_start": "2026-09-13T21:24:00Z",
+  "last_update": "2026-09-14T01:20:08Z",
+  "rig_url": "https://arkova-edge-cto-2908.carson-182.workers.dev",
+  "expected_sha": "07da6aca894d4a18dc8820bf9344c42171b94106",
+  "tier": "T2",
+  "planned_duration_hours": 4,
+  "cycle_count": 48,
+  "health_ok_count": 48,
+  "discovery_ok_count": 48,
+  "unsigned_refused_count": 48,
+  "parity_ok_count": 48,
+  "note": "unsigned_refused currently fires via mcp_kill_switch_503 (rig Supabase ENABLE_MCP_SERVER=false), not the auth_gate 401 the runbook described; Supabase is out of scope for this rig operator to change."
+}

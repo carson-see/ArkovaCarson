@@ -16,6 +16,7 @@ import {
   TRANSFORMERS_BROWSER_MODULE,
   __setTransformersLoaderForTesting,
   __resetTransformersLoaderForTesting,
+  __loadRealTransformersModuleForE2E,
   type NEREntity,
 } from './nerPiiDetector';
 
@@ -314,6 +315,35 @@ describe('nerPiiDetector', () => {
       expect(TRANSFORMERS_BROWSER_MODULE).not.toMatch(/^https?:\/\//);
       expect(TRANSFORMERS_BROWSER_MODULE).toContain('bundle');
       expect(TRANSFORMERS_BROWSER_MODULE).not.toBe('/vendor/transformers.web.min.js');
+    });
+
+    describe('defaultTransformersLoader dev/prod branch (2026-09-13 review correction)', () => {
+      // The fetch+blob detour (added to work around Vite's dev server
+      // refusing a plain `import()` of a `/public` asset) is REFUSED by CSP
+      // `script-src` in production (`vercel.json` has no `blob:`) — verified
+      // against a live Chromium CSP violation during this fix's own review.
+      // It must run ONLY under `import.meta.env.DEV`; production/preview
+      // must keep the original, unconditional `import()` of the static path
+      // exactly as before, with no blob URL ever constructed.
+      afterEach(() => {
+        vi.unstubAllEnvs();
+        vi.restoreAllMocks();
+      });
+
+      it('never constructs a blob URL when import.meta.env.DEV is false (production/preview)', async () => {
+        vi.stubEnv('DEV', false);
+        const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL');
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+        // jsdom does not actually serve /vendor/..., so the real import()
+        // rejects — that's expected and irrelevant here. What matters is
+        // that the production branch never reaches for fetch or a blob URL
+        // before (or instead of) that import().
+        await __loadRealTransformersModuleForE2E().catch(() => undefined);
+
+        expect(createObjectURLSpy).not.toHaveBeenCalled();
+        expect(fetchSpy).not.toHaveBeenCalled();
+      });
     });
 
     it('exposes a same-origin ort WASM vendor path (F-2)', () => {

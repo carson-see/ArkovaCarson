@@ -658,6 +658,11 @@ describe('createProcessorDbAdapter', () => {
         mime_type: 'application/pdf',
         modified_time: '2026-05-04T01:00:00Z',
         rule_event_id: 'evt-3',
+        // SCRUM-4507 link-back fields.
+        shared_drive_id: 'shared-drive-legal',
+        folder_id: 'folder-legal',
+        folder_path: '/Legal/Contracts',
+        revision_kind: 'head_revision',
       });
 
       expect(jobId).toBe('job-1');
@@ -673,6 +678,10 @@ describe('createProcessorDbAdapter', () => {
           mime_type: 'application/pdf',
           modified_time: '2026-05-04T01:00:00Z',
           rule_event_id: 'evt-3',
+          shared_drive_id: 'shared-drive-legal',
+          folder_id: 'folder-legal',
+          folder_path: '/Legal/Contracts',
+          revision_kind: 'head_revision',
         },
       });
     });
@@ -690,6 +699,10 @@ describe('createProcessorDbAdapter', () => {
         mime_type: null,
         modified_time: null,
         rule_event_id: 'evt-doc-1',
+        shared_drive_id: null,
+        folder_id: null,
+        folder_path: null,
+        revision_kind: 'modified_time',
       });
 
       expect(jobId).toBe('job-2');
@@ -698,6 +711,13 @@ describe('createProcessorDbAdapter', () => {
       expect(submittedPayload.mime_type).toBeUndefined();
       expect(submittedPayload.modified_time).toBeUndefined();
       expect(submittedPayload.file_id).toBe('doc-1');
+      // SCRUM-4507: the same null -> undefined convention at this one adapter
+      // boundary. `revision_kind` is never null (the processor always resolves
+      // one) so it is asserted as a value, not as undefined.
+      expect(submittedPayload.shared_drive_id).toBeUndefined();
+      expect(submittedPayload.folder_id).toBeUndefined();
+      expect(submittedPayload.folder_path).toBeUndefined();
+      expect(submittedPayload.revision_kind).toBe('modified_time');
     });
 
     it('returns null (does not submit) on Zod failure — e.g. non-UUID org_id', async () => {
@@ -713,6 +733,10 @@ describe('createProcessorDbAdapter', () => {
         mime_type: null,
         modified_time: null,
         rule_event_id: 'evt-4',
+        shared_drive_id: null,
+        folder_id: null,
+        folder_path: null,
+        revision_kind: 'head_revision',
       });
 
       expect(jobId).toBeNull();
@@ -734,6 +758,10 @@ describe('createProcessorDbAdapter', () => {
         mime_type: null,
         modified_time: null,
         rule_event_id: 'evt-5',
+        shared_drive_id: null,
+        folder_id: null,
+        folder_path: null,
+        revision_kind: 'head_revision',
       });
 
       expect(jobId).toBeNull();

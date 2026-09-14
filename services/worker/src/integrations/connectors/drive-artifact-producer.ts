@@ -57,6 +57,27 @@ export const DRIVE_FILE_CHANGED_JOB_TYPE = 'google_drive.file_changed' as const;
  * artifact while a redelivery of the SAME revision dedupes (0343 RPC idempotency
  * key = org_id / source / external_ref / COALESCE(external_revision,'')).
  */
+/**
+ * SCRUM-4507: which token `revision_id` actually IS, for this change.
+ *
+ * `revision_id` is NOT always a Drive revision. Workspace-native files
+ * (Docs/Sheets/Slides) expose no `headRevisionId`, so the changes processor
+ * falls back to a synthetic `mtime:<modifiedTime>` token, and a change with
+ * neither falls back again to `evt:<time>:<fileId>`. Both fallbacks are
+ * load-bearing for the 0343 dedupe key and must not change — but a surface
+ * that renders the value has to know which of the three it is holding, or it
+ * will label a modification time as a document revision (§1.5: state what was
+ * actually measured).
+ *
+ * ONE vocabulary, declared here because this module already owns the job
+ * payload contract. The processor imports the TYPE from here and the record
+ * page switches on the value, so a new fallback branch has to land in this
+ * array before anything downstream can emit it.
+ */
+export const DRIVE_REVISION_KINDS = ['head_revision', 'modified_time', 'event_time'] as const;
+
+export type DriveRevisionKind = (typeof DRIVE_REVISION_KINDS)[number];
+
 export const DriveFileChangedJobPayload = z.object({
   org_id: dbUuid('org_id'),
   integration_id: dbUuid('integration_id'),
@@ -71,6 +92,24 @@ export const DriveFileChangedJobPayload = z.object({
   modified_time: z.string().datetime().optional(),
   // The rule event that produced this job, for audit cross-reference.
   rule_event_id: z.string().min(1).optional(),
+  // ── SCRUM-4507 source link-back ───────────────────────────────────────────
+  // All four are `.optional()` ON PURPOSE, and that is not cosmetic: jobs
+  // enqueued before this change are already sitting in `job_queue` with a
+  // payload that has none of them. A required field here would fail `parse` on
+  // every one of those rows' next attempt and stall the Drive fetch pipeline
+  // behind a backlog it could never drain.
+  //
+  // Shared-drive id for a file that lives on a Shared Drive (`change.file.driveId`);
+  // absent for My Drive. Already fetched by `listChanges`' field mask — it was
+  // parsed and then dropped before this change.
+  shared_drive_id: z.string().min(1).optional(),
+  // The file's FIRST parent folder id — the same array the watched-folder
+  // match runs over.
+  folder_id: z.string().min(1).optional(),
+  // Human folder path resolved by drive-folder-resolver.ts (e.g. `/HR/2026-Q2`).
+  // Present only when a resolver was wired and the walk succeeded.
+  folder_path: z.string().min(1).optional(),
+  revision_kind: z.enum(DRIVE_REVISION_KINDS).optional(),
 });
 
 export type DriveFileChangedJobPayloadT = z.infer<typeof DriveFileChangedJobPayload>;
@@ -130,6 +169,17 @@ export interface DriveArtifactProducerDeps {
     mimeType: string | null;
     sourceTimestamp: string | null;
     ruleEventId: string | null;
+    /**
+     * SCRUM-4507 source link-back. REQUIRED and `| null` rather than optional:
+     * the sink writes each of these as an explicit `null` when absent, so an
+     * omitted key here would become a silently missing metadata key instead of
+     * a recorded "not available". `processDriveFileChangedJob` is the only
+     * production caller and always supplies all four.
+     */
+    sharedDriveId: string | null;
+    folderId: string | null;
+    folderPath: string | null;
+    revisionKind: DriveRevisionKind | null;
   }) => Promise<DriveArtifactSinkResult>;
   /**
    * Whether the connector-artifact enqueue is enabled
@@ -210,6 +260,12 @@ export async function processDriveFileChangedJob(
     mimeType: parsed.mime_type ?? null,
     sourceTimestamp: parsed.modified_time ?? null,
     ruleEventId: parsed.rule_event_id ?? null,
+    // SCRUM-4507: undefined -> null at this one boundary, matching how every
+    // other optional payload field above crosses into the sink.
+    sharedDriveId: parsed.shared_drive_id ?? null,
+    folderId: parsed.folder_id ?? null,
+    folderPath: parsed.folder_path ?? null,
+    revisionKind: parsed.revision_kind ?? null,
   });
 }
 

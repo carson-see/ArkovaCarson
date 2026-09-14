@@ -36,7 +36,7 @@ import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS,
 import { isPlatformAdmin } from '@/lib/platform';
 import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
-import { ManageSubOrgs } from '@/components/org/ManageSubOrgs';
+import { ManageSubOrgs, translateWorkerError, type SubOrgCounts } from '@/components/org/ManageSubOrgs';
 import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
 import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedBadge';
 import { MemberDocusignConnectorCard } from '@/components/integrations/MemberDocusignConnectorCard';
@@ -47,6 +47,16 @@ import type { Database } from '@/types/database.types';
 type Anchor = Database['public']['Tables']['anchors']['Row'];
 
 type OrgMemberRole = 'owner' | 'admin' | 'member';
+
+/**
+ * Shared tab-trigger styling. Extracted when the fourth tab (Affiliates) was
+ * added — four copies of a 160-character class string had already started to
+ * drift. `whitespace-nowrap` keeps the labels on one line inside the
+ * horizontally scrolling row at 375 px.
+ */
+const TAB_TRIGGER_CLASS =
+  'rounded-none border-b-2 border-transparent data-[state=active]:border-primary ' +
+  'data-[state=active]:bg-transparent px-3 md:px-4 py-3 text-sm font-medium whitespace-nowrap';
 
 export function OrgProfilePage() {
   const navigate = useNavigate();
@@ -110,6 +120,16 @@ export function OrgProfilePage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [affiliationDialogOpen, setAffiliationDialogOpen] = useState(false);
   const [subOrgRefreshKey, setSubOrgRefreshKey] = useState(0);
+  /**
+   * Counts reported by ManageSubOrgs, or `null` while unknown / after a failed
+   * load. Founder feedback 2026-09-13: a parent admin with an affiliation
+   * request waiting had nothing on any screen telling them so — the Approve
+   * button sat 2,396 px down the Settings tab at 1280 px and 2,996 px down at
+   * 375 px (docs/uat/suborg-ux/discoverability-*.json). `null` renders no
+   * badge at all, because a badge reading "0" after a failed fetch would be a
+   * reassurance we have not earned.
+   */
+  const [subOrgCounts, setSubOrgCounts] = useState<SubOrgCounts | null>(null);
 
   // Org records count
   const [recordsCount, setRecordsCount] = useState<number | null>(null);
@@ -134,7 +154,10 @@ export function OrgProfilePage() {
 
   // Sub-org affiliation state
   const [parentOrgName, setParentOrgName] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState(searchParams.get('tab') === 'settings' ? 'settings' : 'home');
+  const [activeTab, setActiveTab] = useState(() => {
+    const requested = searchParams.get('tab');
+    return requested === 'settings' || requested === 'affiliates' ? requested : 'home';
+  });
 
   // Fetch user's role in this org
   useEffect(() => {
@@ -199,9 +222,37 @@ export function OrgProfilePage() {
   const isVerifiedOrg = organization?.verification_status === 'VERIFIED';
   const parentOrgDisplayName = parentOrgName ?? SUB_ORG_LABELS.PARENT_ORGANIZATION;
 
+  // Founder feedback 2026-09-13: this used to return early unless the status
+  // was APPROVED, so the two states where a child most needs to know WHO to
+  // chase — PENDING and REVOKED — rendered the literal fallback string
+  // ("Affiliation revoked by parent organization", see
+  // docs/uat/suborg-ux/step11-revoked-child-dead-end-1280.png). The gate on
+  // status is removed; the query is attempted for any child with a parent now.
+  //
+  // CTO review (2026-09-13): removing the status gate does not, by itself,
+  // make the name arrive. This is a direct `.from('organizations')` read, and
+  // the ONLY SELECT policy on that table is `organizations_select_member`
+  // (`supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`),
+  // restricted to org ids in the CALLER's own `get_user_org_ids()`. A child
+  // org's members are never added to the parent's `org_members` — only the
+  // reverse happens, when a parent creates a new affiliate
+  // (`buildAffiliateMembershipRows`, `services/worker/src/api/v1/orgSubOrgs.ts`)
+  // — so for a child that REQUESTED affiliation into an existing parent (the
+  // common path), RLS denies this read and PostgREST returns zero rows: no
+  // thrown error, `data` is `null`, and the UI falls back to the generic
+  // `SUB_ORG_LABELS.PARENT_ORGANIZATION` label below — gracefully, not a
+  // crash or a leak, but also not the real name. `OrgProfilePageAffiliates.test.tsx`
+  // pins both directions: the render-logic tests above (mocked as if RLS
+  // allowed the read) AND the two tests under "when the parent-name read is
+  // RLS-blocked" (the shape PostgREST actually returns). Making the name
+  // reach the client for real needs a child-scoped SECURITY DEFINER RPC
+  // (narrower than `search_organizations_public`, which searches by name/
+  // domain, not by id) — a backend change, out of scope for a frontend-only
+  // PR. Flagged as a follow-up; do not read this query's presence as proof
+  // the feature works end to end.
   useEffect(() => {
     async function fetchParentOrgName() {
-      if (!parentOrgId || parentApprovalStatus !== 'APPROVED') {
+      if (!parentOrgId) {
         setParentOrgName(null);
         return;
       }
@@ -214,7 +265,7 @@ export function OrgProfilePage() {
       setParentOrgName(data?.display_name ?? null);
     }
     fetchParentOrgName();
-  }, [parentOrgId, parentApprovalStatus]);
+  }, [parentOrgId]);
 
   // Initialize settings fields when org loads
   if (organization && !orgSettingsInit) {
@@ -568,16 +619,41 @@ export function OrgProfilePage() {
 
         {/* Tabs integrated into the card bottom — like LinkedIn */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <div className="border-t border-border/50 px-4 md:px-6">
+          {/*
+            Four tabs no longer fit one 375 px row at the old padding, so the
+            row scrolls horizontally and the labels never wrap. Founder
+            feedback 2026-09-13 added Affiliates here: the panel it opens used
+            to be reachable only from the bottom of Settings.
+          */}
+          <div className="border-t border-border/50 px-4 md:px-6 overflow-x-auto">
             <TabsList className="h-auto bg-transparent p-0 gap-0">
-              <TabsTrigger value="home" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-3 text-sm font-medium">
+              <TabsTrigger value="home" className={TAB_TRIGGER_CLASS}>
                 Home
               </TabsTrigger>
-              <TabsTrigger value="people" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-3 text-sm font-medium">
+              <TabsTrigger value="people" className={TAB_TRIGGER_CLASS}>
                 People
               </TabsTrigger>
               {isAdmin && (
-                <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-3 text-sm font-medium">
+                <TabsTrigger value="affiliates" className={TAB_TRIGGER_CLASS}>
+                  {SUB_ORG_LABELS.TAB_LABEL}
+                  {/*
+                    The queue is visible from the tab row itself. Rendered only
+                    for a known, non-zero count: `subOrgCounts === null` means
+                    the list has not loaded or failed to load, and a "0" there
+                    would claim there is nothing waiting when we do not know.
+                  */}
+                  {subOrgCounts !== null && subOrgCounts.pending > 0 && (
+                    <span
+                      aria-label={`${subOrgCounts.pending} ${SUB_ORG_LABELS.TAB_PENDING_BADGE_LABEL}`}
+                      className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 text-xs font-semibold text-amber-400"
+                    >
+                      {subOrgCounts.pending}
+                    </span>
+                  )}
+                </TabsTrigger>
+              )}
+              {isAdmin && (
+                <TabsTrigger value="settings" className={TAB_TRIGGER_CLASS}>
                   Settings
                 </TabsTrigger>
               )}
@@ -672,6 +748,141 @@ export function OrgProfilePage() {
         </TabsContent>
 
         {/* Settings Tab (admin only) */}
+
+        {/*
+          Affiliates tab (founder feedback 2026-09-13). This whole block used
+          to be the last thing inside the Settings tab, below fifteen profile
+          fields, the verification card and four connector cards: 2,396 px of
+          scrolling at 1280 px and 2,996 px at 375 px before its heading
+          appeared (docs/uat/suborg-ux/discoverability-*.json). Nothing about
+          the markup changed except where it lives, what the revoked child is
+          offered, and that the panel now reports its counts upward for the
+          tab badge.
+        */}
+        {isAdmin && (
+          <TabsContent value="affiliates" className="p-4 md:p-6">
+            <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
+              <Link2 className="h-5 w-5" />
+              {SUB_ORG_LABELS.SECTION_TITLE}
+            </h3>
+
+            {/* Child org view: show parent affiliation status */}
+            {isChildOrg && (
+              <div className="mb-6 p-4 rounded-lg border border-border/50 bg-card">
+                {parentApprovalStatus === 'APPROVED' && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <AffiliatedBadge parentName={parentOrgDisplayName} />
+                    <span className="text-sm text-muted-foreground">
+                      {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgDisplayName}</strong>
+                    </span>
+                  </div>
+                )}
+                {parentApprovalStatus === 'PENDING' && (
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">
+                          {SUB_ORG_LABELS.STATUS_PENDING}
+                        </Badge>
+                        <span className="text-sm text-muted-foreground">
+                          {SUB_ORG_LABELS.PENDING_APPROVAL} <strong className="text-foreground">{parentOrgDisplayName}</strong>
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">{SUB_ORG_LABELS.PENDING_EXPLAINER}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-red-400 border-red-500/20 hover:bg-red-500/10 sm:shrink-0"
+                      onClick={async () => {
+                        // Every failure path here used to be silent: the toast
+                        // fired only on `response.ok` and the catch was empty,
+                        // so a 500, a 403 or a dropped connection left the
+                        // button looking inert with the request still pending.
+                        // Same shape as the panel's own handlers — worker codes
+                        // through translateWorkerError, generic fallback for
+                        // anything unrecognised or thrown.
+                        try {
+                          const { data: { session } } = await supabase.auth.getSession();
+                          if (!session?.access_token) throw new Error('Not authenticated');
+                          const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs/cancel`, {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'Authorization': `Bearer ${session.access_token}`,
+                            },
+                          });
+                          if (!response.ok) {
+                            // A 5xx can answer with an HTML error page, so a
+                            // body that will not parse must still reach the
+                            // user as the generic failure rather than as a
+                            // throw indistinguishable from a network drop.
+                            const data = await response.json().catch(() => ({})) as { error?: string };
+                            toast.error(translateWorkerError(data.error, SUB_ORG_LABELS.CANCEL_FAILED));
+                            return;
+                          }
+                          toast.success(SUB_ORG_LABELS.CANCEL_SUCCESS);
+                          window.location.reload();
+                        } catch {
+                          toast.error(SUB_ORG_LABELS.CANCEL_FAILED);
+                        }
+                      }}
+                    >
+                      {SUB_ORG_LABELS.CANCEL_REQUEST}
+                    </Button>
+                  </div>
+                )}
+                {parentApprovalStatus === 'REVOKED' && (
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
+                        {SUB_ORG_LABELS.STATUS_REVOKED}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {SUB_ORG_LABELS.REVOKED_BY} <strong className="text-foreground">{parentOrgDisplayName}</strong>
+                      </span>
+                    </div>
+                    {/* Said nothing about what being revoked means for them. */}
+                    <p className="text-sm text-muted-foreground">{SUB_ORG_LABELS.REVOKED_EXPLAINER}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/*
+              Request affiliation. The condition used to be `!isChildOrg`
+              alone, but a revoked child KEEPS its `parent_org_id`, so the one
+              organization that most needs this control was the one that could
+              not see it — a dead end with no way back
+              (docs/uat/suborg-ux/step11-revoked-child-dead-end-1280.png). The
+              comment on the original markup already said "for non-child orgs
+              or revoked"; the code did not.
+            */}
+            {(!isChildOrg || parentApprovalStatus === 'REVOKED') && (
+              <div className="mb-6">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAffiliationDialogOpen(true)}
+                >
+                  <Link2 className="mr-2 h-4 w-4" />
+                  {parentApprovalStatus === 'REVOKED'
+                    ? SUB_ORG_LABELS.REQUEST_AGAIN
+                    : SUB_ORG_LABELS.REQUEST_AFFILIATION}
+                </Button>
+              </div>
+            )}
+
+            {/* Parent org view: manage sub-orgs (only for verified orgs or orgs with existing sub-orgs) */}
+            {(isVerifiedOrg || !isChildOrg) && orgId && (
+              <ManageSubOrgs
+                key={subOrgRefreshKey}
+                orgId={orgId}
+                onCountsChange={setSubOrgCounts}
+              />
+            )}
+          </TabsContent>
+        )}
         {isAdmin && (
           <TabsContent value="settings" className="p-4 md:p-6">
             <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
@@ -892,94 +1103,6 @@ export function OrgProfilePage() {
               </div>
             </div>
 
-            {/* Sub-Organization Affiliation (IDT-11) */}
-            <div className="mt-8">
-              <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
-                <Link2 className="h-5 w-5" />
-                {SUB_ORG_LABELS.SECTION_TITLE}
-              </h3>
-
-              {/* Child org view: show parent affiliation status */}
-              {isChildOrg && (
-                <div className="mb-6 p-4 rounded-lg border border-border/50 bg-card">
-                  {parentApprovalStatus === 'APPROVED' && (
-                    <div className="flex items-center gap-3">
-                      <AffiliatedBadge parentName={parentOrgDisplayName} />
-                      <span className="text-sm text-muted-foreground">
-                        {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgDisplayName}</strong>
-                      </span>
-                    </div>
-                  )}
-                  {parentApprovalStatus === 'PENDING' && (
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">
-                          {SUB_ORG_LABELS.STATUS_PENDING}
-                        </Badge>
-                        <span className="text-sm text-muted-foreground">
-                          {SUB_ORG_LABELS.PENDING_APPROVAL} <strong className="text-foreground">{parentOrgDisplayName}</strong>
-                        </span>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-red-400 border-red-500/20 hover:bg-red-500/10"
-                        onClick={async () => {
-                          try {
-                            const { data: { session } } = await supabase.auth.getSession();
-                            if (!session?.access_token) return;
-                            const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs/cancel`, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${session.access_token}`,
-                              },
-                            });
-                            if (response.ok) {
-                              toast.success(SUB_ORG_LABELS.CANCEL_SUCCESS);
-                              window.location.reload();
-                            }
-                          } catch {
-                            // Handle silently
-                          }
-                        }}
-                      >
-                        {SUB_ORG_LABELS.CANCEL_REQUEST}
-                      </Button>
-                    </div>
-                  )}
-                  {parentApprovalStatus === 'REVOKED' && (
-                    <div className="flex items-center gap-3">
-                      <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
-                        {SUB_ORG_LABELS.STATUS_REVOKED}
-                      </Badge>
-                      <span className="text-sm text-muted-foreground">
-                        {SUB_ORG_LABELS.REVOKED_BY} <strong className="text-foreground">{parentOrgDisplayName}</strong>
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Request affiliation button (for non-child orgs or revoked) */}
-              {!isChildOrg && (
-                <div className="mb-6">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setAffiliationDialogOpen(true)}
-                  >
-                    <Link2 className="mr-2 h-4 w-4" />
-                    {SUB_ORG_LABELS.REQUEST_AFFILIATION}
-                  </Button>
-                </div>
-              )}
-
-              {/* Parent org view: manage sub-orgs (only for verified orgs or orgs with existing sub-orgs) */}
-              {(isVerifiedOrg || !isChildOrg) && orgId && (
-                <ManageSubOrgs key={subOrgRefreshKey} orgId={orgId} />
-              )}
-            </div>
           </TabsContent>
         )}
         </Tabs>

@@ -69,6 +69,7 @@ import { startHeapMonitor, logHeapStatus } from './utils/heapMonitor.js';
 import { flagRegistry } from './middleware/flagRegistry.js';
 import { correlationIdMiddleware } from './utils/correlationId.js';
 import { securityHeaders } from './middleware/securityHeaders.js';
+import { requireCloudflareOrigin, getOriginGuardStats } from './middleware/requireCloudflareOrigin.js';
 import { requirePaymentCurrent } from './middleware/requirePaymentCurrent.js';
 import { initUpstashRateLimiting } from './utils/upstashRateLimit.js';
 import { createUpstashIdempotencyStore } from './middleware/upstashIdempotency.js';
@@ -136,8 +137,22 @@ app.use(correlationIdMiddleware);
 
 // ─── SCRUM-4987: browser-enforced security headers on EVERY response ───
 // Before CORS so OPTIONS preflights and every 4xx/5xx carry them too. The prod
-// origin bypasses Cloudflare (SCRUM-3888), so this cannot live at the edge.
+// origin bypasses Cloudflare (SCRUM-3888) — see requireCloudflareOrigin below,
+// which is the worker-side half of closing that gap. This header set still
+// belongs here regardless: it protects browsers hitting either host.
 app.use(securityHeaders);
+
+// ─── SCRUM-3888: origin guard for the public Cloud Run origin ───
+// Runs FIRST among request-handling middleware (after correlationId +
+// securityHeaders, which are unconditional observability/hygiene that must
+// stamp every response including a 403 from this guard) — ahead of CORS and
+// every route mount, so every path gets one consistent answer no matter which
+// router would eventually have served it. Flag-gated at
+// CLOUDFLARE_ORIGIN_GUARD_MODE, default `off` (no behaviour change until the
+// release session wires CLOUDFLARE_ORIGIN_SECRET + the Cloudflare Transform
+// Rule). See middleware/requireCloudflareOrigin.ts for the full allowlist
+// rationale and docs/reference/CLOUDFLARE_ORIGIN_GUARD.md for the rollout.
+app.use(requireCloudflareOrigin);
 
 // ─── Global CORS (BUG-UAT-12 / SCRUM-499) ───
 // Apply CORS middleware globally so OPTIONS preflights are handled
@@ -237,6 +252,10 @@ const healthCheckHandler = async (req: Request, res: Response) => {
     // SCRUM-3374: cached, synchronous, non-blocking snapshot — see the
     // monitor singleton above. Never performs I/O on the request path.
     getAnchoringRpcStatus: () => anchoringRpcMonitor.read(),
+    // SCRUM-3888: origin-guard rollout counters — observe-mode "would block"
+    // tallies per route family, read on the detailed (X-Health-Token gated)
+    // view so the release session can watch them without a Sentry query.
+    getOriginGuardStats: () => getOriginGuardStats(),
   };
 
   const result = await buildHealthResponse(deps, detailed, { detailDenied });
