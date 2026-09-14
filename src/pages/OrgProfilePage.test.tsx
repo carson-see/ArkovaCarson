@@ -9,12 +9,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { OrgProfilePage } from './OrgProfilePage';
 
-const { mockInviteMember, mockRefreshInvitations, mockSupabaseEq } = vi.hoisted(() => ({
+const { mockInviteMember, mockRefreshInvitations, mockSupabaseEq, mockInvitationMode, platformAdminMode, invitationListState } = vi.hoisted(() => ({
   mockInviteMember: vi.fn(),
+  mockInvitationMode: vi.fn(),
+  platformAdminMode: { value: false },
+  invitationListState: { error: null as string | null },
   mockRefreshInvitations: vi.fn(),
   // Records every .eq(column, value) on the supabase mock chain so scoping
   // of the page's queries can be asserted (arkova/no-unscoped-service-test).
@@ -42,7 +46,7 @@ vi.mock('@/hooks/useProfile', () => ({
       full_name: 'Org Admin',
       role: 'ORG_ADMIN',
       org_id: 'org-1',
-      is_platform_admin: false,
+      is_platform_admin: platformAdminMode.value,
     },
     loading: false,
   }),
@@ -67,11 +71,10 @@ vi.mock('@/hooks/useOrgMembers', () => ({
 }));
 
 vi.mock('@/hooks/useOrgInvitations', () => ({
-  useOrgInvitations: () => ({
-    invitations: [],
-    loading: false,
-    refreshInvitations: mockRefreshInvitations,
-  }),
+  useOrgInvitations: (orgId: string | null, mode: boolean) => {
+    mockInvitationMode(orgId, mode);
+    return { invitations: [], loading: false, error: invitationListState.error, refreshInvitations: mockRefreshInvitations };
+  },
 }));
 
 vi.mock('@/hooks/useAdminOrgMembers', () => ({
@@ -207,6 +210,27 @@ describe('OrgProfilePage — handleInvite result handling (SCRUM-3524)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedOnInvite = null;
+    platformAdminMode.value = false;
+    invitationListState.error = null;
+  });
+
+  it('passes platform-admin mode when listing invitations for the selected org', async () => {
+    platformAdminMode.value = true;
+    renderPage();
+    await waitFor(() => expect(mockInvitationMode).toHaveBeenCalledWith('org-1', true));
+  });
+
+  it('shows a curated invitation-list failure instead of an apparently empty list', async () => {
+    platformAdminMode.value = true;
+    invitationListState.error = 'Internal database details that must not reach the page';
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('tab', { name: 'People' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Could not load invitations. Please try again.');
+    expect(alert).toBeVisible();
+    expect(screen.queryByText(invitationListState.error)).not.toBeInTheDocument();
   });
 
   it('returns true and refreshes invitations when inviteMember succeeds', async () => {

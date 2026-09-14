@@ -1,4 +1,9 @@
 # agents.md — hooks
+
+## UAT-22 platform invitation list (2026-09-14)
+
+`useOrgInvitations(orgId, platformAdmin)` uses the authenticated admin worker list for platform administrators and the existing tenant RLS query otherwise. Cache keys include actor mode, preventing reuse of privileged foreign-org results in tenant mode. Expiry and revoked-status display semantics remain shared.
+
 _Last updated: 2026-09-11_
 
 ## 2026-09-11 — UAT-22 selected-org platform invitations

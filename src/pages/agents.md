@@ -1,4 +1,9 @@
 # agents.md — pages
+
+## UAT-22 invitation read mode (2026-09-14)
+
+OrgProfilePage forwards its verified `platformAdmin` mode to the invitation-list hook, matching organization metadata and the existing create-invitation path. The page regression checks that selected-org invitation reads receive that mode. Failed list reads show a visible invitation-section alert using curated copy; raw worker or database errors are never rendered.
+
 _Last updated: 2026-09-12_
 _Last updated: 2026-09-13_
 

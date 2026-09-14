@@ -1,5 +1,9 @@
 # services/worker/src/routes/agents.md
 
+## UAT-22 invitation GET route (2026-09-14)
+
+`GET /api/admin/organizations/:id/invitations` sits behind the structural `/admin` gate and forwards the authenticated actor to the independently authorized list handler. Route regressions cover missing auth, non-admin denial and selected-org dispatch.
+
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
 ## 2026-09-11 — UAT-22 selected-org platform invitation route

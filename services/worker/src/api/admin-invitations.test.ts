@@ -17,7 +17,7 @@ vi.mock('../email/templates.js', () => ({ buildInvitationEmail: mockBuildInvitat
 vi.mock('../lib/urls.js', () => ({ buildInviteAcceptUrl: mockBuildInviteAcceptUrl }));
 
 import type { Request, Response } from 'express';
-import { handleAdminCreateInvitation } from './admin-invitations.js';
+import { handleAdminCreateInvitation, handleAdminListInvitations } from './admin-invitations.js';
 
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
@@ -255,5 +255,64 @@ describe('handleAdminCreateInvitation', () => {
     await handleAdminCreateInvitation(ACTOR_ID, ORG_ID, req(validBody()), res);
     expect(res.statusCode).toBe(502);
     expect((res.body as { sent: boolean }).sent).toBe(false);
+  });
+});
+
+
+describe('handleAdminListInvitations', () => {
+  beforeEach(() => { vi.clearAllMocks(); mockIsPlatformAdmin.mockResolvedValue(true); });
+
+  it('returns only public invitation fields from the selected org, bounded newest first', async () => {
+    const publicRow = { id: IDEMPOTENCY_KEY, email: 'member@example.test', role: 'ORG_ADMIN', status: 'pending',
+      created_at: '2026-09-01T00:00:00Z', expires_at: '2026-09-08T00:00:00Z', accepted_at: null };
+    const query = chain({ data: [{ ...publicRow, token: 'must-not-leak', invited_by: ACTOR_ID }], error: null });
+    for (const method of ['neq', 'order', 'limit']) query[method] = vi.fn(() => query);
+    mockDbFrom.mockReturnValue(query);
+    const res = response();
+    await handleAdminListInvitations(ACTOR_ID, ORG_ID, req({}), res);
+    expect(res.statusCode).toBe(200);
+    expect(mockIsPlatformAdmin).toHaveBeenCalledWith(ACTOR_ID);
+    expect(mockDbFrom).toHaveBeenCalledWith('invitations');
+    expect(query.select).toHaveBeenCalledWith('id, email, role, status, created_at, expires_at, accepted_at');
+    expect(query.eq).toHaveBeenCalledWith('org_id', ORG_ID);
+    expect(query.neq).toHaveBeenCalledWith('status', 'accepted');
+    expect(query.order).toHaveBeenCalledWith('created_at', { ascending: false });
+    expect(query.limit).toHaveBeenCalledWith(100);
+    expect(res.body).toEqual({ invitations: [publicRow] });
+    expect(JSON.stringify(res.body)).not.toContain('must-not-leak');
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('denies a non-platform admin before any privileged query', async () => {
+    mockIsPlatformAdmin.mockResolvedValue(false);
+    const res = response();
+    await handleAdminListInvitations(ACTOR_ID, ORG_ID, req({}), res);
+    expect(res.statusCode).toBe(403); expect(mockDbFrom).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed organization IDs before querying', async () => {
+    const res = response();
+    await handleAdminListInvitations(ACTOR_ID, 'not-a-uuid', req({}), res);
+    expect(res.statusCode).toBe(400); expect(mockDbFrom).not.toHaveBeenCalled();
+  });
+
+  it('reports database failure without exposing raw error details', async () => {
+    const query = chain({ data: null, error: { message: 'private-token-and-email' } });
+    for (const method of ['neq', 'order', 'limit']) query[method] = vi.fn(() => query);
+    mockDbFrom.mockReturnValue(query);
+    const res = response();
+    await handleAdminListInvitations(ACTOR_ID, ORG_ID, req({}), res);
+    expect(res.statusCode).toBe(500);
+    expect(JSON.stringify(res.body)).not.toContain('private-token-and-email');
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('private-token-and-email');
+  });
+
+  it('returns an empty list when the selected org has no unaccepted invitations', async () => {
+    const query = chain({ data: [], error: null });
+    for (const method of ['neq', 'order', 'limit']) query[method] = vi.fn(() => query);
+    mockDbFrom.mockReturnValue(query);
+    const res = response();
+    await handleAdminListInvitations(ACTOR_ID, ORG_ID, req({}), res);
+    expect(res.body).toEqual({ invitations: [] });
   });
 });

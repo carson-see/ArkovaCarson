@@ -352,6 +352,32 @@ describe('UAT-22 selected-org invitation — real local DB and mounted routes', 
     expect(first.status).toBe(201);
     expect(first.body).toEqual({ sent: true, invitationId: adminInviteKey, replayed: false });
 
+    const listPath = `/api/admin/organizations/${selectedOrgId}/invitations`;
+    expect((await request(app).get(listPath)).status).toBe(401);
+    expect((await request(app).get(listPath).set('Authorization', `Bearer ${ordinaryToken}`)).status).toBe(403);
+    // The browser's original RLS query must remain unable to read the selected
+    // foreign org even for a platform administrator. The worker owns the exception.
+    const browser = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${adminToken}` } },
+    });
+    const hiddenByRls = await browser.from('invitations').select('id').eq('org_id', selectedOrgId);
+    expect(hiddenByRls.error).toBeNull();
+    expect(hiddenByRls.data).toEqual([]);
+    const listed = await request(app).get(listPath).set('Authorization', `Bearer ${adminToken}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.invitations).toEqual([expect.objectContaining({
+      id: adminInviteKey, email: emails.existingElsewhere, role: 'ORG_ADMIN', status: 'pending',
+    })]);
+    expect(Object.keys(listed.body.invitations[0]).sort()).toEqual(
+      ['id', 'email', 'role', 'status', 'created_at', 'expires_at', 'accepted_at'].sort(),
+    );
+    const otherOrgList = await request(app)
+      .get(`/api/admin/organizations/${homeOrgId}/invitations`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(otherOrgList.status).toBe(200);
+    expect(otherOrgList.body.invitations).toEqual([]);
+
     const replay = await request(app)
       .post(`/api/admin/organizations/${selectedOrgId}/invitations`)
       .set('Authorization', `Bearer ${adminToken}`)

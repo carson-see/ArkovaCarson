@@ -107,6 +107,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 900 }, { name: '
     const bodies: Array<{ email: string; role: string; idempotency_key: string }> = [];
     let detailReads = 0;
     let memberReads = 0;
+    let invitationReads = 0;
     await page.route(`**/api/admin/organizations/${orgId}`, async (route) => {
       detailReads += 1;
       await route.fulfill({
@@ -126,7 +127,24 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 900 }, { name: '
       memberReads += 1;
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ members: [] }) });
     });
+    // Browser transport/rendering proof only: worker list/create responses are
+    // captured here; the real mounted-route suite verifies authorization/DB reads.
     await page.route(`**/api/admin/organizations/${orgId}/invitations`, async (route) => {
+      if (route.request().method() === 'GET') {
+        invitationReads += 1;
+        const invitations = bodies.map((body) => ({
+          id: body.idempotency_key,
+          email: body.email,
+          role: body.role,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 86400_000).toISOString(),
+          accepted_at: null,
+        }));
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ invitations }) });
+        return;
+      }
+      expect(route.request().method()).toBe('POST');
       bodies.push(route.request().postDataJSON());
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ sent: true }) });
     });
@@ -137,6 +155,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 900 }, { name: '
     await expect(page.getByRole('heading', { name: 'No members yet' })).toBeVisible();
     expect(detailReads).toBeGreaterThan(0);
     expect(memberReads).toBeGreaterThan(0);
+    expect(invitationReads).toBeGreaterThan(0);
     await page.getByRole('button', { name: /Invite Member/i }).click();
     const dialog = page.getByRole('dialog', { name: 'Invite Team Member' });
     await dialog.getByLabel('Email address').fill(`uat22-recipient-${suffix}@example.test`);
@@ -150,6 +169,8 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 900 }, { name: '
     });
     await dialog.getByRole('button', { name: /Send Invitation/i }).click();
     await expect(page.getByText('Invitation sent successfully.')).toBeVisible();
+    await expect(page.getByText(`uat22-recipient-${suffix}@example.test`, { exact: true })).toBeVisible();
+    expect(invitationReads).toBeGreaterThan(1);
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toMatchObject({ role: 'ORG_ADMIN', email: `uat22-recipient-${suffix}@example.test` });
     expect(bodies[0].idempotency_key).toMatch(/^[0-9a-f-]{36}$/i);

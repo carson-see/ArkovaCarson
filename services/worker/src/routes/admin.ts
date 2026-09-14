@@ -21,7 +21,7 @@ import { handleSystemHealth } from '../api/admin-health.js';
 import { handleOpsSloStats } from '../api/admin-ops-slo.js';
 import { handleAdminOrganizationDetail, handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
-import { handleAdminCreateInvitation } from '../api/admin-invitations.js';
+import { handleAdminCreateInvitation, handleAdminListInvitations } from '../api/admin-invitations.js';
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota, handleAdjustOrgCredit, handleCreateOrganization, handleCreateUserAccount } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
@@ -284,6 +284,17 @@ adminRouter.post('/admin/users', async (req, res) => {
     await handleCreateUserAccount(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Create user account request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.get('/admin/organizations/:id/invitations', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAdminListInvitations(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin invitation list request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

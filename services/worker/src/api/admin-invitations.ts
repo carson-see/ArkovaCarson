@@ -38,6 +38,48 @@ interface InvitationRow {
 
 const INVITATION_COLUMNS = 'id, email, role, org_id, invited_by, status, token, expires_at';
 
+/** Read-side counterpart to creation: selected-org visibility without widening tenant RLS. */
+export async function handleAdminListInvitations(
+  actorId: string,
+  orgId: string,
+  _req: Request,
+  res: Response,
+): Promise<void> {
+  if (!(await isPlatformAdmin(actorId))) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+  if (!z.string().uuid().safeParse(orgId).success) {
+    res.status(400).json({ error: 'Invalid organization id' });
+    return;
+  }
+
+  const { data, error } = await db
+    .from('invitations')
+    .select('id, email, role, status, created_at, expires_at, accepted_at')
+    .eq('org_id', orgId)
+    .neq('status', 'accepted')
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) {
+    logger.error({ orgId }, 'Admin invitation list query failed');
+    res.status(500).json({ error: 'Failed to load invitations.' });
+    return;
+  }
+
+  // A separate response whitelist prevents a future broader SELECT from
+  // accidentally exposing the single-use token or other private row fields.
+  res.json({ invitations: (data ?? []).map((row) => ({
+    id: row.id,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+    created_at: row.created_at,
+    expires_at: row.expires_at,
+    accepted_at: row.accepted_at,
+  })) });
+}
+
 function isDuplicateKey(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === '23505';
 }

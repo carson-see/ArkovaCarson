@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextFunction, Request, Response } from 'express';
 
-const { mockExtractAuthUserId, mockIsPlatformAdmin, mockHandleInvitation } = vi.hoisted(() => ({
+const { mockExtractAuthUserId, mockIsPlatformAdmin, mockHandleInvitation, mockHandleListInvitations } = vi.hoisted(() => ({
   mockExtractAuthUserId: vi.fn(),
   mockIsPlatformAdmin: vi.fn(),
   mockHandleInvitation: vi.fn(),
+  mockHandleListInvitations: vi.fn(),
 }));
 
 vi.mock('./middleware.js', () => ({
@@ -27,6 +28,7 @@ vi.mock('../utils/db.js', () => ({
 vi.mock('../config.js', () => ({ config: { frontendUrl: 'https://app.arkova.test' } }));
 vi.mock('../api/admin-invitations.js', () => ({
   handleAdminCreateInvitation: mockHandleInvitation,
+  handleAdminListInvitations: mockHandleListInvitations,
 }));
 
 import express from 'express';
@@ -74,5 +76,28 @@ describe('POST /api/admin/organizations/:id/invitations route', () => {
 
     expect(res.status).toBe(403);
     expect(mockHandleInvitation).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('GET /api/admin/organizations/:id/invitations route', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); mockExtractAuthUserId.mockResolvedValue('admin-user'); mockIsPlatformAdmin.mockResolvedValue(true);
+    mockHandleListInvitations.mockImplementation(async (_actor, _org, _req, res: Response) => res.json({ invitations: [] }));
+  });
+  it('forwards the verified actor and selected organization to the list handler', async () => {
+    const res = await request(app()).get(`/api/admin/organizations/${ORG_ID}/invitations`);
+    expect(res.status).toBe(200); expect(res.body).toEqual({ invitations: [] });
+    expect(mockHandleListInvitations).toHaveBeenCalledWith('admin-user', ORG_ID, expect.anything(), expect.anything());
+  });
+  it('rejects missing authentication before the handler', async () => {
+    mockExtractAuthUserId.mockResolvedValue(null);
+    const res = await request(app()).get(`/api/admin/organizations/${ORG_ID}/invitations`);
+    expect(res.status).toBe(401); expect(mockHandleListInvitations).not.toHaveBeenCalled();
+  });
+  it('rejects authenticated non-platform admins before the handler', async () => {
+    mockIsPlatformAdmin.mockResolvedValue(false);
+    const res = await request(app()).get(`/api/admin/organizations/${ORG_ID}/invitations`);
+    expect(res.status).toBe(403); expect(mockHandleListInvitations).not.toHaveBeenCalled();
   });
 });

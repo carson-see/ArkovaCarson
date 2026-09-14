@@ -1,5 +1,9 @@
 # agents.md — lib
 
+## Invitation list failure copy (2026-09-14)
+
+`PENDING_INVITATIONS_LABELS.LOAD_FAILED` is the curated worker-list loading failure used by the platform invitation hook; a rejected worker read does not fall back to an empty tenant query.
+
 _Last updated: 2026-09-13 (`nerPiiDetector.ts` dev-server bundle-load fix)_
 
 ## 2026-09-13 — Founder report "Secure Document Continue is broken" root-caused to `nerPiiDetector.ts`, not `SecureDocumentDialog.tsx`

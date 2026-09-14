@@ -1,5 +1,9 @@
 # agents.md — services/worker/src/api/
 
+## UAT-22 selected-org invitation list (2026-09-14)
+
+`handleAdminListInvitations` independently requires platform-admin authority and validates the selected UUID before service-role reads. It returns at most 100 unaccepted invitations newest first using explicit public columns and a separate response whitelist; the accept token and private row fields never leave this endpoint. No schema or RLS change.
+
 ## 2026-09-13 (CTO review, PR #2911) — `admin-webhook-dlq.ts` resolve now validates `ids` as UUIDs
 
 `isValidIdsArray` checked `typeof v === 'string' && v.length > 0` only — no shape check.
