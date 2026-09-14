@@ -245,7 +245,7 @@ CREATE OR REPLACE FUNCTION public.allocate_credits_to_sub_org(
     SET lock_timeout TO '5s'
 AS $function$
   SELECT public.allocate_credits_to_sub_org(
-    p_parent_org_id, p_child_org_id, p_amount, p_note, auth.uid()
+    p_parent_org_id, p_child_org_id, p_amount, p_note, (SELECT auth.uid())
   );
 $function$;
 

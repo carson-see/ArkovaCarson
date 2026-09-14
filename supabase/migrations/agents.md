@@ -1481,3 +1481,11 @@ serialize offboarding and positive allocation on the child organization row;
 reclaim, suspension and their audit records commit together. Native PostgreSQL
 interleavings and a split-step TLA negative control are required before review.
 This reservation asserts no completed test, live qualification or soak.
+
+The unpublished-to-database 0460 source was corrected after its first CI run:
+the legacy wrapper uses `(SELECT auth.uid())`, satisfying the repository's
+initplan ratchet while preserving the same guarded delegation. Before editing,
+the release owners confirmed no hosted application; fresh production/C2 ledger
+and function-existence reads showed no 0460 or either new offboard function.
+The exact corrected file is rerun through the native concurrency harness before
+its final source hash can enter C3. This note does not amend applied 0453.
