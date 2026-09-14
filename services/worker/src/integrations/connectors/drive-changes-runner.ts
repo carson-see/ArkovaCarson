@@ -56,6 +56,7 @@ import {
   type FolderPathCacheStore,
 } from './drive-folder-resolver.js';
 import { reportDriveProcessingFailure } from './drive-connect-health.js';
+import { driveFolderIds } from './drive-folder-bindings.js';
 
 // Adapter-boundary Zod schemas (CodeRabbit ASSERTIVE on PR #696).
 // CLAUDE.md §1.4 mandates Zod on every write path; the processor → adapter
@@ -312,18 +313,7 @@ export async function loadWatchedFolderIds(
   }
   const ids = new Set<string>();
   for (const row of (data ?? []) as Array<{ trigger_config?: Record<string, unknown> | null }>) {
-    const cfg = row.trigger_config ?? {};
-    if (typeof cfg.folder_id === 'string' && cfg.folder_id.length > 0) {
-      ids.add(cfg.folder_id);
-    }
-    const arr = (cfg.drive_folders ?? []) as Array<{ folder_id?: unknown }>;
-    if (Array.isArray(arr)) {
-      for (const entry of arr) {
-        if (entry && typeof entry.folder_id === 'string' && entry.folder_id.length > 0) {
-          ids.add(entry.folder_id);
-        }
-      }
-    }
+    for (const folderId of driveFolderIds(row.trigger_config)) ids.add(folderId);
   }
   return [...ids];
 }

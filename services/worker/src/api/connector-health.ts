@@ -19,6 +19,8 @@ import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
 import { parseDriveAccountLabel } from '../integrations/connectors/drive-account-label.js';
 import { DRIVE_FILE_CHANGED_JOB_TYPE } from '../integrations/connectors/drive-artifact-producer.js';
+import { driveFolderIds } from '../integrations/connectors/drive-folder-bindings.js';
+import { scanAllPages, PageScanError } from '../utils/postgrest-filter.js';
 
 export type ConnectorKind = 'live' | 'demo' | 'gated';
 export type ConnectorState = 'connected' | 'degraded' | 'disconnected';
@@ -145,6 +147,7 @@ export function resolveConnectorKind(
 }
 
 interface IntegrationRow {
+  id: string;
   provider: string;
   account_label: string | null;
   connected_at: string | null;
@@ -406,6 +409,31 @@ function classify(
   return { state: 'connected', reason: 'none', lastError: null };
 }
 
+// A provider card summarizes every active Google account. Preserve classify's
+// failure precedence across accounts; a healthy/revoked row must not hide an
+// active account's failure. Equal reasons use newest connection then stable ID.
+const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
+  subscription_expiry: 4, cursor_stale: 3, fetch_job_failures: 2, processing_failure: 1,
+  vendor_auth_revoked: 0, none: 0,
+};
+
+function compareDriveHealth(
+  a: { integration: IntegrationRow; reason: HealthReason | null },
+  b: { integration: IntegrationRow; reason: HealthReason | null },
+): number {
+  const severity = (DRIVE_HEALTH_PRIORITY[b.reason ?? 'none'] ?? 0)
+    - (DRIVE_HEALTH_PRIORITY[a.reason ?? 'none'] ?? 0);
+  if (severity) return severity;
+  const timestamp = (value: string | null) => {
+    const parsed = Date.parse(value ?? '');
+    return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+  };
+  const left = timestamp(a.integration.connected_at);
+  const right = timestamp(b.integration.connected_at);
+  if (left !== right) return left > right ? -1 : 1;
+  return a.integration.id.localeCompare(b.integration.id);
+}
+
 export async function handleConnectorHealth(
   userId: string,
   _req: Request,
@@ -417,15 +445,38 @@ export async function handleConnectorHealth(
     return;
   }
 
-  const [integrations, subscriptions, recentEvents, recentExecutions, driveRuleRows, driveFetchFailureRows] = await Promise.all([
-    safeFetch<IntegrationRow[]>(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (db as any)
-        .from('org_integrations')
-        .select('provider, account_label, connected_at, revoked_at, subscription_expires_at, last_renewal_error, last_renewal_at, last_token_advanced_at')
-        .eq('org_id', orgId),
-      [],
-    ),
+  let integrations: IntegrationRow[];
+  let driveRuleRows: Array<{ trigger_config: unknown }>;
+  try {
+    // Complete means an empty terminal page, not a short PostgREST response.
+    // These are request budgets, not a claimed account/rule product limit.
+    const signal = AbortSignal.timeout(5_000);
+    const budget = { maxRows: 5_000, maxPages: 20 };
+    const [integrationScan, ruleScan] = await Promise.all([
+      scanAllPages<IntegrationRow>((offset, limit) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (db as any).from('org_integrations')
+          .select('id, provider, account_label, connected_at, revoked_at, subscription_expires_at, last_renewal_error, last_renewal_at, last_token_advanced_at')
+          .eq('org_id', orgId)
+          .order('created_at', { ascending: true }).order('id', { ascending: true })
+          .range(offset, offset + limit - 1).abortSignal(signal), budget),
+      scanAllPages<{ trigger_config: unknown }>((offset, limit) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (db as any).from('organization_rules').select('trigger_config')
+          .eq('org_id', orgId).eq('trigger_type', 'WORKSPACE_FILE_MODIFIED').eq('enabled', true)
+          .order('id', { ascending: true }).range(offset, offset + limit - 1).abortSignal(signal), budget),
+    ]);
+    if (integrationScan.status !== 'complete' || ruleScan.status !== 'complete') throw new Error('Incomplete health inventory');
+    integrations = integrationScan.rows;
+    driveRuleRows = ruleScan.rows;
+  } catch (error) {
+    logger.error({ pgCode: error instanceof PageScanError ? error.pgCode : null }, 'Connector health inventory unavailable');
+    res.setHeader?.('Cache-Control', 'no-store, max-age=0');
+    res.status(503).json({ error: { code: 'connector_health_unavailable', message: 'Unable to load complete connector health' } });
+    return;
+  }
+
+  const [subscriptions, recentEvents, recentExecutions, driveFetchFailureRows] = await Promise.all([
     safeFetch<SubscriptionRow[]>(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (db as any)
@@ -455,23 +506,6 @@ export async function handleConnectorHealth(
         .limit(50),
       [],
     ),
-    // P0-2: does this org have at least one enabled WORKSPACE_FILE_MODIFIED
-    // rule bound to Drive? Mirrors loadWatchedFolderIds's own query shape
-    // (drive-changes-runner.ts) — if this is empty, `runDriveChanges` always
-    // returns `{skipped:'no_watched_folders'}` and NEVER calls
-    // advancePageToken, so a never-advancing cursor is expected, not a
-    // finding (see isDriveCursorStale's false-positive guard below).
-    safeFetch<Array<{ id: string }>>(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (db as any)
-        .from('organization_rules')
-        .select('id')
-        .eq('org_id', orgId)
-        .eq('trigger_type', 'WORKSPACE_FILE_MODIFIED')
-        .eq('enabled', true)
-        .limit(1),
-      [],
-    ),
     // P0-2: recent failed/dead google_drive.file_changed job_queue rows for
     // this org. job_queue has no org_id column — org_id lives on the JSONB
     // payload every enqueuer writes (DriveFileChangedJobPayload), so this
@@ -489,7 +523,7 @@ export async function handleConnectorHealth(
     ),
   ]);
 
-  const hasEnabledDriveRules = driveRuleRows.length > 0;
+  const hasEnabledDriveRules = driveRuleRows.some((row) => driveFolderIds(row.trigger_config).length > 0);
   const driveFetchJobFailureCount = driveFetchFailureRows.length;
 
   const integrationByProvider = new Map<string, IntegrationRow>();
@@ -510,13 +544,17 @@ export async function handleConnectorHealth(
   // could mis-attribute one connector's failures to every connector.
   const failureByVendor = await loadFailuresByVendor(orgId, recentExecutions);
 
+  const driveConnections = integrations.filter((row) => row.provider === 'google_drive');
+  const activeDriveConnections = driveConnections.filter((row) => !row.revoked_at);
+  const consideredDriveConnections = activeDriveConnections.length ? activeDriveConnections : driveConnections;
+
   const connectors: ConnectorHealth[] = CONNECTOR_CATALOG.map((entry) => {
-    const integration = integrationByProvider.get(entry.id);
+    let integration = integrationByProvider.get(entry.id);
     // PR #1944 review round 3: google_drive's real watch health lives on
     // org_integrations (integration), never on connector_subscriptions —
     // see deriveDriveWatchHealth()'s doc comment. microsoft_graph is
     // unaffected and keeps reading connector_subscriptions as before.
-    const subscription = entry.id === 'google_drive'
+    let subscription = entry.id === 'google_drive'
       ? (integration ? deriveDriveWatchHealth(integration) : undefined)
       : subscriptionByProvider.get(entry.id as SubscriptionRow['provider']);
     const vendorFailure = entry.vendor_event_sources
@@ -532,7 +570,25 @@ export async function handleConnectorHealth(
         fetchJobFailureCount: driveFetchJobFailureCount,
       }
       : undefined;
-    const { state, reason, lastError } = classify(entry, integration, subscription, lastFailed, driveSignals);
+    let classification = classify(entry, integration, subscription, lastFailed, driveSignals);
+    if (entry.id === 'google_drive' && consideredDriveConnections.length) {
+      const now = new Date();
+      const candidates = consideredDriveConnections.map((row) => {
+        const watch = deriveDriveWatchHealth(row);
+        return {
+          integration: row, subscription: watch,
+          ...classify(entry, row, watch, vendorFailure, {
+            cursorStale: hasEnabledDriveRules && isDriveCursorStale(row.last_token_advanced_at, now),
+            fetchJobFailureCount: driveFetchJobFailureCount,
+          }),
+        };
+      }).sort(compareDriveHealth);
+      const selected = candidates[0];
+      integration = selected.integration;
+      subscription = selected.subscription;
+      classification = selected;
+    }
+    const { state, reason, lastError } = classification;
     const last_event_at = entry.vendor_event_sources
       .map((v) => lastEventByVendor.get(v))
       .filter((v): v is string => typeof v === 'string')

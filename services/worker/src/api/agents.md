@@ -537,3 +537,9 @@ The helper uses a direct PENDING comparison and has no test-only export. Behavio
   promised a concurrent double accept was "a clean no-op"; the code threw the loser's 23505 as a 500.
   23505 on that insert is now treated as success (the membership exists). Any other insert error
   still throws and triggers the new-account rollback.
+
+## 2026-09-14 — PR #2937 multi-account Drive health review
+
+Drive OAuth permits multiple active account IDs in an organization; connect does not retire older accounts and renewal processes each active row. The provider health card must evaluate every active Google row and retain any failure, using renewal, cursor, fetch-job and processing precedence, then connection timestamp and stable row ID for a deterministic explanation. Revoked accounts cannot hide active health; only an all-revoked set is disconnected. Expiry, renewal timestamp and sanitized account label come from that same explanation row. Order reversal and mixed healthy/failed/revoked regression cases exercise the API output. The separate disconnect multi-account cleanup mismatch is logged for follow-up and is outside this repair.
+
+Integration and enabled-rule inventories now use shared scanAllPages with complete-page validation, total ordering, a five-second abort signal and row/page budgets. An error or incomplete inventory returns503 rather than a partial healthy response. Cursor health shares the pure driveFolderIds binding parser with the actual runner: an enabled rule with empty configuration is not a watched folder; later configured rows are scanned too.
