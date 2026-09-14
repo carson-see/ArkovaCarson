@@ -219,6 +219,10 @@ describe('checkCleanPreflightIdentity', () => {
       t2Body({ preflight: 'environment_type=dirty' }),
       HEAD,
       'T2',
+      // Stubbed so the edge-deploy-only carve-out's file-set lookup never
+      // shells out to real git for this test's fake SHAs — a worker file
+      // keeps the carve-out from applying, preserving pre-carve-out behavior.
+      { changedFilesProvider: () => ['services/worker/src/index.ts'] },
     );
     expect(findings.length).toBeGreaterThan(0);
     expect(findings[0].message).toMatch(/clean_mirror/i);
@@ -276,6 +280,147 @@ describe('checkCleanPreflightIdentity', () => {
     expect(
       checkCleanPreflightIdentity(t2Body({ preflight: 'smoke ok' }), HEAD, 'T1'),
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkCleanPreflightIdentity — edge-deploy-only carve-out
+// (CTO decision 2026-09-13, PR #2908). PR #2908's real changed-file list: a
+// Cloudflare-Worker-only PR has no Supabase project to preflight, so a
+// declared `Preflight result:` that is not `clean_mirror` is accepted for
+// T2/T3 ONLY when the PR's own changed-file set (declared `Base SHA:` →
+// declared `PR head SHA:`) is edge-deploy-only per `isEdgeDeployOnlyChange`.
+// The base SHA in `t2Body()` is the 40-1's SHA below.
+// ---------------------------------------------------------------------------
+
+describe('checkCleanPreflightIdentity — edge-deploy-only carve-out', () => {
+  const BASE = '1'.repeat(40);
+
+  // PR #2908's actual changed-file list.
+  const EDGE_ONLY_FILES = [
+    '.github/workflows/agents.md',
+    '.github/workflows/ci.yml',
+    '.github/workflows/edge-deploy.yml',
+    'docs/reference/ENV.md',
+    'scripts/ci/agents.md',
+    'scripts/ci/check-edge-deployed-version.test.ts',
+    'scripts/ci/check-edge-deployed-version.ts',
+    'services/edge/agents.md',
+    'services/edge/package-lock.json',
+    'services/edge/package.json',
+    'services/edge/scripts/agents.md',
+    'services/edge/scripts/generate-build-info.mjs',
+    'services/edge/scripts/generate-build-info.test.ts',
+    'services/edge/src/build-info.ts',
+    'services/edge/src/index.test.ts',
+    'services/edge/src/index.ts',
+    'services/edge/vitest.config.ts',
+  ];
+
+  it('PASSES a non-clean_mirror preflight for an edge-only PR (T2)', () => {
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: 'smoke ok, no supabase project in scope' }),
+      HEAD,
+      'T2',
+      { changedFilesProvider: () => EDGE_ONLY_FILES },
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('PASSES a non-clean_mirror preflight for an edge-only PR (T3)', () => {
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: 'smoke ok' }),
+      HEAD,
+      'T3',
+      { changedFilesProvider: () => EDGE_ONLY_FILES },
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('surfaces an informational note via runEvidenceIdentity when the carve-out applies', () => {
+    const result = runEvidenceIdentity({
+      body: t2Body({ preflight: 'smoke ok' }),
+      actualHeadSha: HEAD,
+      isDraft: false,
+      changedFilesProvider: () => EDGE_ONLY_FILES,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.notes.some((n) => /edge-deploy-only carve-out applied/i.test(n))).toBe(true);
+  });
+
+  it('still FAILS a worker-touching PR with the same non-clean_mirror preflight', () => {
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: 'smoke ok' }),
+      HEAD,
+      'T2',
+      { changedFilesProvider: () => [...EDGE_ONLY_FILES, 'services/worker/src/handlers/index.ts'] },
+    );
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0].message).toMatch(/clean_mirror/i);
+  });
+
+  it('still FAILS a migration-touching PR with the same non-clean_mirror preflight', () => {
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: 'smoke ok' }),
+      HEAD,
+      'T3',
+      { changedFilesProvider: () => [...EDGE_ONLY_FILES, 'supabase/migrations/0450_x.sql'] },
+    );
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0].message).toMatch(/clean_mirror/i);
+  });
+
+  it('still FAILS when the changed-file provider returns null (uncomputable diff)', () => {
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: 'smoke ok' }),
+      HEAD,
+      'T2',
+      { changedFilesProvider: () => null },
+    );
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0].message).toMatch(/clean_mirror/i);
+  });
+
+  it('still FAILS when the changed-file provider returns an empty list', () => {
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: 'smoke ok' }),
+      HEAD,
+      'T2',
+      { changedFilesProvider: () => [] },
+    );
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0].message).toMatch(/clean_mirror/i);
+  });
+
+  it('does not affect the b2 copied-evidence check when the carve-out applies', () => {
+    // Edge-only file set, clean-mirror requirement skipped, but the preflight
+    // still embeds a head SHA that differs from the declared PR head — that
+    // is an orthogonal identity failure the carve-out must not swallow.
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: `smoke ok head=${OTHER}` }),
+      HEAD,
+      'T2',
+      { changedFilesProvider: () => EDGE_ONLY_FILES },
+    );
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.some((f) => /copied|different head|across heads/i.test(f.message))).toBe(true);
+  });
+
+  it('does not read the declared Base SHA field as edge-only when it or the head is missing', () => {
+    // No `PR head SHA:` declared at all — the carve-out cannot compute a
+    // file-set diff without both endpoints, so it must not apply.
+    const body = t2Body({ preflight: 'smoke ok' }).replace(/^PR head SHA:.*$/m, 'PR head SHA:');
+    const findings = checkCleanPreflightIdentity(body, null, 'T2', {
+      changedFilesProvider: () => EDGE_ONLY_FILES,
+    });
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0].message).toMatch(/clean_mirror/i);
+  });
+
+  it('the BASE fixture matches the Base SHA declared by t2Body()', () => {
+    // Sanity check that this describe block's assumption about t2Body()'s
+    // fixture stays true if that helper ever changes.
+    expect(t2Body()).toContain(`Base SHA: ${BASE}`);
   });
 });
 

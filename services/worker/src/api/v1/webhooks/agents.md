@@ -1,6 +1,49 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-09-07 (SCRUM-4493: ComputeID AgentPassport revocation receiver)_
+_Last updated: 2026-09-13 (SCRUM-4514: CTO decision — no raw-body retention, no server-side replay)_
+
+## 2026-09-13 (later) — SCRUM-4514 CTO decision: no raw-body retention, so no `/replay` endpoint
+
+The entry immediately below this one (same day, earlier) describes a `POST
+/api/admin/webhook-dlq/replay` endpoint that claimed rows and always reported
+`not_replayable`. The CTO closed that open question the same day: Arkova does **not** retain raw
+partner webhook bodies to make server-side replay possible (§1.6A stands; DocuSign/Adobe bodies
+carry signer emails). An endpoint named "replay" that can never replay anything is misleading
+surface, so it was removed and replaced with `POST /api/admin/webhook-dlq/resolve` — an
+operator acknowledges a row once they have separately triggered redelivery **at the partner**
+(DocuSign Connect "Resend", Adobe Sign webhook retry / re-send from the developer console,
+Checkr webhook-logs re-send, ComputeID asked to re-emit — see the SCRUM-4514 Confluence page's
+partner redelivery matrix). `GET /api/admin/webhook-dlq` now also returns each row's
+`external_id` and `reason` (still never `payload_hash`) so the operator has what they need to
+find the matching delivery in the partner's console. Wherever "the drain claims and resolves
+every row, but cannot actually re-invoke any handler" appears below, read "resolve" for
+"drain/replay" — the mechanism changed from a claim-and-attempt to an operator acknowledgment,
+the underlying fact (nothing here can reprocess a delivery) did not.
+
+## 2026-09-13 (earlier) — SCRUM-4514: `webhook_dlq` is now drained — update the "drained by nobody" claim below
+
+The 2026-08-23 entry below (and this folder's earlier agents.md snapshots) states
+"Nothing under `services/worker/src/jobs/` reads that table ... drained by nobody. Treat a
+DLQ insert as a record of the loss, never as a recovery path." That is now stale for the
+"drained by nobody" half: `api/admin-webhook-dlq.ts` (`GET /api/admin/webhook-dlq`,
+`POST /api/admin/webhook-dlq/resolve` — see the entry above; originally shipped this same day
+as `/replay`, superseded — platform-admin only) and the report-only
+`POST /jobs/webhook-dlq-report` cron (`jobs/webhook-dlq-report.ts`) both read it now.
+
+The "treat a DLQ insert as a record of the loss" half is **still correct** — do not remove it.
+None of the four inbound writers into this table (`docusign.ts`, `adobe-sign.ts`, `checkr.ts`,
+and `computeid.ts` via `integrations/computeid/passport-transition.ts`'s
+`recordPassportFailure` -> `enqueue_computeid_failure` RPC) persist the raw webhook body — by
+design, per this folder's own "DO NOT persist raw webhook payloads" rule below. So the operator
+surface can acknowledge/resolve every row, but cannot actually re-invoke any handler — there is
+nothing to replay. See `api/admin-webhook-dlq.ts`'s module doc comment and the entry above for
+the full reasoning and the CTO decision that closed this off (not a future extension point
+anymore — retaining raw bodies for replay was considered and declined on privacy grounds).
+
+`computeid.ts` was found to be a fourth writer into this table (not three, as this ticket's
+brief assumed) by grepping the actual writers instead of trusting the brief — it writes through
+an RPC rather than a direct `.from('webhook_dlq')` call, which is why a literal string grep for
+`webhook_dlq` in `computeid.ts` itself finds nothing.
 
 ## 2026-09-07 — SCRUM-4493: `computeid.ts` — ComputeID AgentPassport revocation receiver (flag-gated dark)
 
@@ -13,6 +56,20 @@ Forked from `checkr.ts`. Three things are deliberately different and are the fir
 3. **Ack semantics.** `test` and unknown event names → `200 ignored`. Unbound passport → `200 orphaned` + `webhook_dlq` row (reason `unbound_passport`). A DB failure mid-apply → `500` + DLQ so the partner can retry — but their delivery is `node-fetch` fire-and-forget with undocumented retry, so treat every 5xx as a probable loss until SCRUM-4497's re-verify cron exists.
 
 Signature contract verified against a real delivery (`integrations/computeid/__fixtures__/golden-test-delivery.json`): `X-ComputeID-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>`, no timestamp header. The `sha256=` prefix is required; a bare hex digest is rejected. Body cap 64 KiB, checked before signature verification. The partner-supplied free-text `reason` is never logged, never written to `audit_events.details`, never written to the DLQ — `computeid.test.ts` pins that with a serialized-args assertion.
+
+## 2026-09-13 — `docusign.test.ts`: PR #2485's comments re-landed onto the already-present max-cardinality test (SCRUM-3843)
+
+PR #2485 ("DocuSign rule-event payload 16KB CHECK overflow at max cardinality", bilateral Finding 7)
+closed unmerged. Checked before redoing the work: the SUBSTANTIVE fix (`document_ids` moved off the
+capped `organization_rule_events.payload` onto the uncapped job payload — `docusign.ts` around
+`_signers`/`document_hashes` construction and the `submitJob` call) and the full 100-document /
+20-signer max-cardinality test asserting it were already on `main`, landed independently of #2485.
+The ONLY thing #2485 carried that `main` did not was two explanatory comments on the existing
+`expect()` calls (`gh pr diff 2485` — 24 lines, comments only, zero new assertions). Those two
+comments are now applied verbatim. No behavior changed; the invariant (rule-event payload
+`pg_column_size <= 16384` at 100 docs / 20 signers, `document_ids` absent from that payload,
+`document_hashes` and `document_ids` both present at full cardinality on the two uncapped
+surfaces) was already pinned and stays pinned.
 
 _Last updated: 2026-08-30 (`adobe-sign.ts`: registration challenge + DLQ the orphaned-webhook_id path)_
 
@@ -241,3 +298,9 @@ Historical review repairs reject provider timestamps beyond five minutes, canoni
 ## 2026-09-10 — Cross-organization revocation pagination
 
 A single PostgREST select silently stops at the configured 1000-row cap. The receiver now streams ID-ordered keyset pages of 200 and requires an empty page before success. A shorter hosted cap cannot cause early completion; deleting earlier rows cannot shift later rows out of the scan. A failed later page returns 500 so the provider retries, and the terminal authority write still runs on that retry. Signed HTTP regressions reproduce the old 1001-binding truncation and verify page failure, smaller caps and deletion between pages. Concurrent new suspension-time admissions remain a separate activation concern; terminal revocation blocks new admission through its authority sentinel.
+
+## 2026-09-12 — SCRUM-4495: `computeid.ts` no longer owns the transition
+
+The receiver kept its authentication, parsing, privacy and HTTP behaviour, but `findBoundAgents`, the `apply_computeid_agent_transition` call, the DLQ insert and the terminal revocation write now live in `integrations/computeid/passport-transition.ts`. The scheduled re-check (`jobs/computeid-passport-recheck.ts`, added the same day) is a SECOND producer of `passport.*` events, and two copies of the lifecycle would drift in exactly one direction — keys staying live on a revoked passport.
+
+What stays here is only the HTTP mapping: a `conflict` outcome becomes `409 conflict_retry` so ComputeID redelivers, a `failed` outcome becomes `500`. If you change the receiver's behaviour, change `passport-transition.ts` — otherwise the cron path keeps the old behaviour and nothing tells you.

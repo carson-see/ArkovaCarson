@@ -14,6 +14,141 @@
 
 ## Now
 
+### 2026-09-14T12:24Z — Train B5c sealed (#2841 #2909), rig 1
+
+- Train B5c (T2, 4h floor) soaked on rig 1 (Supabase `xhvasifpunswhsgfsstd`, Cloud Run
+  `arkova-worker-cto-train-b-0912-staging` tag `train-8`, rev `-00026-teq`, image digest
+  `sha256:c1c5ac3f6dafc79547e721578375e091b6b7a86123bba280d2941da05772db0e`, candidate
+  `aaaa0d7bad30af5e781d52370e0d5479a003089f`) from `2026-09-14T07:26:35.773Z` to
+  `2026-09-14T12:24:17.271Z` (4.96h — window was picked up ~1h after its declared 11:26:35Z
+  close and the supervisor was still running clean; no reason to discard the extra cycles):
+  57/57 supervisor-clock cycles `cycle_pass=true`, 65/65 probes every cycle (identity +
+  #2841 + #2909 modules), 0 failures. One additional manual pre-launch cycle (07:25:52.086Z,
+  also 65/65 clean) is recorded for continuity but not counted toward the clock, per
+  `window1/SOAK_START`. Both PR heads unchanged from the pre-deploy manifest
+  (`ec8895a2ca4...` / `ca2256c043b...`) — no post-soak T0 delta needed on either.
+- Post-close `staging-honesty-preflight.ts` (--prod-project-ref `vzwyaatejekddvltxyye`):
+  `environment_type=clean_mirror`, 8/8 checks pass
+  (`docs/staging/cto-train-b-0912/preflight-b5c-postclose-20260914T123023Z.json`).
+  Anti-hollow-soak guard set (SCRUM-2977) all green against
+  `docs/staging/soak-preflight/rc-train-b5c-2026-09-14.json` (real `staging_deploy_log`
+  export, not the generator's STUB fallback). Rollback rehearsal (non-disruptive tag-URL
+  method): candidate (`train-8`) and rollback target (`train-7`, rev `-00025-rav`) both
+  verified healthy — `docs/staging/cto-train-b-0912/train-b5c-window1/rollback-rehearsal.json`.
+- Supervisor (pid 971, caffeinate 1081) was stopped (SIGTERM to pgid 969) at seal time —
+  rig 1 has no soak running now.
+- #2841, #2909: `## Staging Soak Evidence` T2 blocks filled from this manifest, taken to
+  `gh pr ready`, Mergify queue. All required CI checks were already green pre-seal except
+  the two evidence gates, which read the PR body this seal adds.
+- Manifest: `docs/staging/rc-manifests/rc-train-b5c-2026-09-14.json`. Full trail:
+  `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/SEAL-LOG.md`.
+
+### 2026-09-14T04:41Z — Train B5b sealed (#2841 #2846 #2909 #2912), rig 1
+
+- Train B5b (T2, 4h floor) soaked on rig 1 (Supabase xhvasifpunswhsgfsstd, Cloud Run
+  arkova-worker-cto-train-b-0912-staging tag train-7, rev -00025-rav, candidate
+  9321e767c3ce249cd53ea94654f38434ec7035be) from 2026-09-14T00:40:38Z to 2026-09-14T04:41:08.746Z:
+  45/45 cycles cycle_pass=true, 105/105 probes every cycle (identity +
+  #2841 43 + #2846 25 + #2909 21 + #2912 15). Two earlier launch attempts this window
+  (wrong probe set, then wrong tag URL) are archived and NOT cited as evidence — see
+  `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/window1/SOAK_START`.
+- Post-soak, all four branches needed T0-only doc fixes before Mergify's required checks
+  would go green: a real `services/worker/src/agents.md` merge conflict on #2912 (GitHub's
+  mergeability check does not honor `.gitattributes`' `agents.md merge=union` driver, so two
+  PRs inserting a dated entry at the same anchor point produce a real CONFLICTING state even
+  though a local union-aware merge is clean — fixed by not touching the shared header line);
+  a repo-wide sweep of agents.md files each branch had gone stale on without ever touching
+  (18-22 files per branch, all confirmed byte-identical to that branch's own merge-base
+  before syncing); and the `count-exact-allowed` label on all four (main-drift moved the
+  R0-8 baseline from 79 to 80, not caused by any of these PRs' own diffs).
+- #2841, #2846, #2909: taken to `gh pr ready`, evidence blocks filled, Mergify queue.
+- #2912: soak evidence is real and recorded (`## Staging Soak Evidence` on the PR, honest
+  NOT-ASSERTED line for the Drive folder-picker path since `ENABLE_DRIVE_OAUTH` is off on
+  this rig), but the PR stays Draft — SonarCloud's Quality Gate is genuinely failing
+  ("4.2% Duplication on New Code" vs a 3% ceiling), which is a required check in every
+  Mergify queue rule with no override label. Fixing it needs real `.tsx` code (not T0), which
+  cannot ride the Post-soak T0 delta allowance and would need its own soak — out of scope for
+  tonight. Follow-up task spawned; do not re-attempt the T0-delta trick on this finding.
+- Manifest: `docs/staging/rc-manifests/rc-train-b5b-2026-09-13.json`. Rig/supervisor left
+  running per §1.11A (do not tear down). Full trail:
+  `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md`.
+
+### Soaks — Train B5c CLOSED 2026-09-14T12:24Z; rig 1 idle, no supervisor running
+
+Rig 1 (`arkova-worker-cto-train-b-0912-staging`, Supabase `xhvasifpunswhsgfsstd`) has NO
+soak running right now for a NEW candidate. The Train B5c supervisor (pid 971, launched
+2026-09-14T07:26:35Z) finished its 57-cycle T2 window (declared close 11:26:35Z, actually
+picked up and sealed at 12:24-12:33Z with the supervisor still green past its own close) and
+was explicitly STOPPED (SIGTERM to pgid 969) at seal time — unlike B5a/B5b this rig was left
+idle deliberately, since no next train was queued behind it at seal time. Confirm no other
+session has since relaunched a supervisor here before assuming idle. Traffic tags
+train-b/train-b2/train-3/train-5/train-6/train-7/train-8 are all still live on this service
+(verified via `gcloud run services describe arkova-worker-cto-train-b-0912-staging`
+2026-09-14T12:29Z); 100% DEFAULT traffic still goes to revision `-00011-dvm` (untagged, Train
+B5a's candidate — no tagged revision on this rig carries default traffic). Train B5c's own
+candidate is `-00026-teq` tagged `train-8`. Recheck tag->revision mapping before reusing any
+tag name for a new train — this rig has accumulated one tag per train and they are not
+reclaimed automatically.
+
+
+
+### 2026-09-13T15:10Z → 15:45Z — CTO release session (Claude Fable): B3b live on prod, standing-rig pair unblocked, GitHub cleaned, PRs 4–6 of 8 opened
+
+**Read this block first.** Earlier blocks stay accurate except where this one supersedes them.
+
+- **Prod is on main.** `arkova-worker` revision `arkova-worker-01415-foc` serves `8115bfdc6` (#2845) at 100%; `/health` healthy (`gcloud run services describe arkova-worker`; deploy runs https://github.com/carson-see/ArkovaCarson/actions/runs/34763497087 for #2843 → rev `01412-ros`, https://github.com/carson-see/ArkovaCarson/actions/runs/34763592207 for #2845). Main has since taken #2875 (`a3d0bddb5`, edge types only). Vercel production stays on `dpl_G9HaxizfsZ63TbYpWPRWVzhSGtWc` = `c8b505eb6`; the later main commits carry no frontend files (the `ignoreCommand` cancelled those builds by design, diff verified). Edge is the known gap until #2908 lands (no deploy pipeline, SCRUM-3907).
+- **Migrations vs prod: nothing missing.** Every numeric file on main (0290–0450) has a prod ledger row; prod additionally carries 0451/0452 for the pair below (`list_migrations MCP tool` re-read 15:22Z). Pending on branches by design: 0453 (#2844, B4 seal), 0454 (#2904), 0455/0456 (#2905) — Train C. Hygiene left for the operator: the duplicate timestamp-style row `20260912143110` for 0443 (gate warns only; a delete is a §1.11A ledger write). The stale 0443 exemption is dropped in this push.
+- **#2832 / #2831 unblocked.** Both re-anchored below the H1 of the colliding `agents.md` files (heads `af5d82fec`, `0737a25cc`), MERGEABLE, drift check green on #2832. The evidence-identity gate demands a literal `clean_mirror` preflight with no residual hatch; the shared standing rig was prod + [0443, 0451, 0452] at soak start by design. Re-ran `staging-honesty-preflight.ts --project-ref fizyjojbebyalirtjjht --prod-project-ref vzwyaatejekddvltxyye` from `origin/main` after the three reached prod: `clean_mirror`, 8/8 checks (`docs/staging/cto-train-b1-0912/preflight-standing-rig-fizyjojbebyalirtjjht-20260913T152230Z.json`); both bodies now cite it with the pre-soak state spelled out. #2832 is embarked behind nothing (#2875 merged 15:25Z); identity reruns fire when each PR's Tests job finishes.
+- **GitHub cleanup (founder ask):** 16 branches with merged/closed PRs deleted; 25 `rc/*` + `soak/*` evidence branches archived as `archive/<branch>` tags then deleted (every RC-manifest SHA still resolves); 3 stale `mergify/carson-see/*` refs removed. Left untouched: 12 unmerged no-PR branches that look like other sessions' in-flight work.
+- **PRs 4–6 of 8 opened (drafts, bodies from the sprint session, heads/tiers verified):** #2907 sub-org dashboard UX (T1, `8d6215be2`), #2908 edge deploy workflow + parity (T2, `640d553aa`), #2909 verify/search lexical fallback (T2, `206ca7e43`). Review agents running on all three. Slot 6 needed no PR: one T0 test file lands in this push (`fix/mcp-sdk-hardening-followups` cherry-pick). #2903 review folded (head `41d9e0ae8`, follow-up SCRUM-5102); #2904 re-review clean (head `93ef43d3b`, TLA 16/16); #2905 review folded on the sprint session's main merge (head `abf820106`).
+- **Founder ask 2026-09-13 → SCRUM-5115** (High, under SCRUM-2325): record page + proof package show the Bitcoin inclusion evidence with a one-click path to the block; SCRUM-3956 shipped only the API/SDK/CLI plumbing. Subtasks 5116–5118, Confluence page created.
+- **Jira/Confluence:** SCRUM-3982 and SCRUM-3981 pages updated to shipped state (slices); parent stories stay In Progress for the deferred halves (0454 CHECK + allow-list via #2904; SCRUM-5070 for dead scopes / PHI mounts). SCRUM-3999 reverted to In Progress after a premature Done.
+- **B4 (#2844, rig 3):** 144/144 clean cycles at 15:15Z; seal 2026-09-14T02:02Z unchanged. **Train B5 / Train C** plan unchanged from the 14:20Z block; B5 waits for the last two of the eight PRs.
+- **Open for Carson:** (a) npm publish of `arkova` / `arkova-mcp-server` 3.0.0 is unblocked on evidence — go/no-go; (b) delete the 12 unmerged no-PR branches or keep; (c) the duplicate 0443 ledger row.
+
+### 2026-09-13 — Jira/Confluence reconciliation session (read-only; no repo/staging/prod writes)
+
+**7 Sept re-baseline recorded.** The 2026-09-07 "Prioritized Backlog and Roadmap Re-baseline" (Confluence [138903576](https://arkova.atlassian.net/wiki/spaces/A/pages/138903576), Jira [SCRUM-4506](https://arkova.atlassian.net/browse/SCRUM-4506)) is now pointed to from the top of the 12-Month Technical Roadmap v3 page (Confluence [82444290](https://arkova.atlassian.net/wiki/spaces/A/pages/82444290) — page version bumped 2→3 at 2026-09-13T15:09:57Z, verified by re-fetch after publish) via a new status panel. What moved: Q1.2 (revenue funnel), Q1.4 (key/secret expiry monitoring), Q1.6 (open verifier & SDK GA) and Q1.7 (chain resilience) slipped from Q1 into Oct–Dec 2026; SOC 2 Type 1 now lands before Type II; CE Registry GA moved from Q2 2026 to Q1 2027.
+
+**12–13 Sept sprint.** PR-by-PR state is in the CTO release-session blocks above this entry, which supersede the snapshot this reconciliation was built on.
+
+
+**Drive cursor defect (SCRUM-3661, still open).** Direct prod query today (`vzwyaatejekddvltxyye`): `org_integrations` has exactly one `google_drive` row for the Arkova org, `last_page_token IS NULL`, `connected_at=2026-04-25`. The L3-01 producer bridge (PR #1654, merged 2026-08-01) has shipped **zero** real `connector_artifact` rows with `source='google_drive'` in six-plus weeks despite being on `origin/main` (`select count(*),source from connector_artifact group by source` → 27 rows, all `source='docusign'`, 0 `google_drive`). SCRUM-3661 (the ticket that would fix the stuck cursor) is still **To Do with no PR** as of this check. If the 12–13 Sept sprint shipped a fix for this, its PR number was not in the four slice reports this session read — cite it explicitly here before marking SCRUM-3661 Done; this session did not find one on `origin/main`.
+
+**Ownership split.** Per this session's task brief, the CTO *release* session has owned Sekura Phase 2 remediation (5 PRs, pushed 2026-09-12) since that date — this reconciliation session did not touch those PRs or push any commits. This session's own scope was strictly Jira ticket reconciliation + two Confluence edits, with read-only prod SQL used only to confirm facts the verifier slices already cited. Zero repo writes, zero staging/prod writes, zero new PRs opened.
+
+**Open PR budget.** 8 approved, 3 used as of this session's start per the task brief. This session opened zero new PRs.
+
+**Jira reconciliation this session (2026-09-13):** 11 stale tickets transitioned To Do/In Progress → Done with evidence comments (SCRUM-4475, 4493, 4494, 3167, 3900, 3875, 3874, 3816, 3179, 3178, 4035) — all re-read after transition and confirmed to hold at Done with resolution=Done; no reporter≠resolver bounce was observed in this session's own checks (Jira Automation could still act asynchronously outside this session's visibility — re-verify on next touch). 8 tickets received evidence-only comments with no status change, either because the two source verifier passes disagreed on verdict (SCRUM-4476, 3953, 3021, 3017), the ticket's Blocked status reflects a deliberate founder park rather than the technical gap being cited (SCRUM-3853), the recommended prod check wasn't completed this session (SCRUM-2099), the cited PR was wrong/dead (SCRUM-4103, comment-only correction), or the ticket's own Done resolution is internally inconsistent with its description (SCRUM-4879, flagged not changed). Full ticket-by-ticket table: `RECONCILIATION-2026-09-13.md` in this session's scratchpad.
+
+**Bug Tracker (Confluence 88768514).** Rows for SCRUM-4512/4513/4514 were **not** inserted into the active table — the page body returned at ~187,575 characters, over this session's safe round-trip-edit limit (consistent with the precedent already logged for SCRUM-4939 on this same page). Added as a footer comment instead; a session with chunked/shell-level access should fold them into the table proper.
+
+### 2026-09-13T14:20Z → 15:10Z — CTO release session (Claude Fable): B3b landed, three new PRs opened under Carson's 8-PR allowance, train plan for the rest
+
+**Read this block first.** Earlier blocks stay accurate except where this one supersedes them.
+
+- **Merged:** #2843 (`c8b505eb6`, 14:43:40Z) and #2845 (`8115bfdc6`, 14:45:36Z) — Train B3b fully landed. Before #2845's revision took traffic the cutover grant ran on prod (`UPDATE api_keys … array_append(scopes,'webhooks:manage')` for active keys of the 3 endpoint-owning orgs → 15 rows, matching the review census). Prod deploy verification for both is in this session's watchers; Jira closeouts follow it.
+- **Standing-rig close done:** 0451/0452 on prod and reconciled (`list_migrations MCP tool` re-read 14:14Z); #2832 (`c845b0b41`) is embarked behind dependabot #2875, #2831 (`c935a0b9f`) re-enters when its identity/drift re-runs pass. After both merge: stop the CTO drivers under `/Volumes/Extreme/offload/cto-soak-2026-09-12/{mfa-2832,invite-2831}`, then the standing rig hosts Train C.
+- **Founder allowance (relayed by the sprint session, Carson 15:05Z/15:20Z): up to 8 new PRs; "hold off on re-soaking" until they are in.** Opened so far (3 of 8): **#2903** Drive null-cursor bootstrap (SCRUM-5094, T2, head `a193a4f74`), **#2904** SCRUM-3972 sub-org webhook events + fan-out scope, 0454 (T3, head `bed9c2cfd`), **#2905** SCRUM-5024 partner referrals, 0455+0456 (T3, head `41bb540e0`). All draft; review passes (/codereview /debug /simplify /tlaprecheck) running; fixes fold into the same PRs. Division of labour (Carson): this session owns review, pre-mortem, rigs, soaks, merges; the sprint session codes and plans only.
+- **Train B5 (T2, 4 h, rig 1 `xhvasifpunswhsgfsstd`):** #2841 (`4c472d226`) + #2846 (`6f48d0a92`) — both merged with main today, single merge-base, GitHub-mergeable — plus #2903 and any further T2 handed over before the cut. Cut only after every member has main merged; merge as one Mergify batch.
+- **Train C (T3, 24 h, standing rig after #2832/#2831 merge):** #2904 + #2905 (+ any further migration PR); apply 0454/0455/0456 on the rig, rollback/reapply rehearsal per migration, Trigger A/B, daily flush, per-org isolation, and 3972's flag-flip condition (a `self_and_descendants` endpoint receiving a child's `anchor.secured`); merge as one batch; flip `ENABLE_SUBORG_WEBHOOK_FANOUT` on prod after.
+- **Train B4 (#2844, rig 3):** 24 h floor 2026-09-14T02:02Z; head re-anchored to `2346dd0ed` (docs-only delta); at seal: apply 0453 with its exemption, seal, merge.
+- **Rigs:** rig 1 free (B5); rig 2 `pdgfbbnrqhojiihtxycd` idle on rev 00008-quh (spare); rig 3 B4; standing rig → Train C. Dependabot worker/root bumps stay held by the soak gate.
+
+
+### 2026-09-13T11:17Z → 14:20Z — CTO release session (Claude Fable): B3b sealed, #2842 merged, standing-rig windows closed with 0451/0452 applied to prod, gate mechanics corrected
+
+**Read this block first.** Earlier blocks below stay accurate except where this one supersedes them.
+
+- **Merged since the 07:25Z block:** #2825 (13:23:51Z, migration/docs only — no worker deploy; prod worker stays `af771e35d`, healthy), #2839 (11:05Z, prod deploy run 34753537237 → `/health` git_sha af771e35d, rev `arkova-worker-01406-zef`), #2840 (10:27Z, Vercel production deployment `dpl_EiD7QNSyJteC6x92qpv5FVLoG5mA` READY), #2842 (14:07:35Z, deploy verification in progress; its Secret Manager entries now exist: `computeid-ca-cert-pem` = the X.509 certificate from `GET https://api.aicomputeid.com/v1/ca/cert` (key_id ebb276c2f18ed34f, SHA256 52:4F:70:27…, valid 2026-08-16→2036-08-13) and `computeid-webhook-secret` = a COPY of the 2026-09-07 rig value `computeid-webhook-secret-computeid-pra-staging` (labels `provenance=computeid-pra-staging-copy`, `verify-before-flag-flip=true`) — it keeps `--set-secrets` deploys flowing while `ENABLE_COMPUTEID_INTEGRATION=false` (the receiver answers 503 vendor_gated and never reads it) and MUST be confirmed or rotated to Praveen's real HMAC secret before the flag flips (runbook step 1/5); `roles/secretmanager.viewer` granted secret-level to `github-actions-deploy@arkova1.iam.gserviceaccount.com` on both). Jira Done: SCRUM-4879, 4988, 4989 (+ earlier 4940, 4939, 4987, 4983, 4984, 4985, 4991; SCRUM-4986 held Blocked on SCRUM-5004/5033).
+- **Train B3b sealed at 11:17:59Z** (supervisor stop after the 11:17:42Z floor; last cycle 11:15:10Z; 41/41 on rev `…-00018-ruw`), rollback rehearsed 11:18Z (00014-car ⇄ 00018-ruw), guards pass; manifest `rc-train-b3b-2026-09-13.json` + evidence `docs/staging/cto-train-b-0912/train-b3b-window1/` in this push. Members #2843 (`5848cd553`) and #2845 (`52a8ae871`) are ready and merging as the batch's tail; #2841 left the train (criss-cross merge-bases → GitHub CONFLICTING) and joins #2846 in **Train B5** on rig 2 after these land (merge main into both first, resolve #2846's docs.ts, re-soak 4 h).
+- **Standing rig closed 14:07:00Z:** MFA driver 284/284, invite driver 283/283, identity monitor 159 samples / 94,804 s uptime. **0451 and 0452 applied to prod `vzwyaatejekddvltxyye` at ~14:13Z via MCP `apply_migration`**, ledger rows reconciled to numeric versions, `list_migrations` re-read at 14:14Z shows `0451`, `0452` after `0450`; exemptions `0451`/`0452` recorded in `scripts/ci/snapshots/ledger-numeric-exemptions.json` (this push); prod `/health` healthy and anonymous routes normal after the apply. #2832 (`c845b0b41`) and #2831 (`c935a0b9f`) carry the observed `Soak end`, the apply facts, gate-script syncs and GitHub-side conflict fixes (re-anchored agents.md blocks; `invitations.test.ts` 3-way merged) and merge when their re-run gates go green. Stop the CTO drivers (`/Volumes/Extreme/offload/cto-soak-2026-09-12/{mfa-2832,invite-2831}` supervisors) after both merge.
+- **Gate mechanics that cost time today (now in memory + CLOSEOUT.md):** the gate's "current base" is GitHub's `baseRefOid`, not `git merge-base`; `Soak end − Soak start` must clear the floor, so use the supervisor stop time; a branch that merged a sibling's branch which main later merged has two merge-bases and GitHub reports it CONFLICTING; GitHub ignores `agents.md merge=union`, so same-anchor appends conflict there (fix = re-anchor the PR's block, T0). Recipe: merge main into every member before cutting a train; cut from those heads; merge the batch together.
+- **#2844 (Train B4, rig 3, 24 h floor 2026-09-14T02:02Z):** 130/130 at 13:01Z; agents.md blocks re-anchored ahead of its seal (head `2346dd0ed`, docs-only delta → `Post-soak T0 delta` at seal).
+- **Dependabot wave (11:06Z, 20 PRs):** peripheral CI/zapier/edge bumps merged via Mergify; worker/root bumps (#2878 worker-deps group, #2881, #2882 bitcoinjs-lib 7.0.2 major, #2884, #2886 production-deps group of 17, #2887/#2888 vitest 5) are held red by the soak gate and stay held — none of them has evidence; bitcoinjs-lib is a T3 chain surface.
+- **Branches held (16-PR ceiling, Carson 02:30Z):** SCRUM-3972 `78565812e` and SCRUM-5024 `41bb540e0` (both merged with main by the sprint session, GitHub-style merge clean); 3972 still needs the CATALOG_DATA rebase after #2843 lands.
+
+
 ### 2026-09-13T07:05Z → 07:25Z — CTO release session (Claude Fable): B1 batch merged, Train B3 sealed then re-cut as B3b after same-file drift, #2846 trails
 
 **Read this block first.** The 04:10Z→06:10Z and 02:29Z→03:10Z blocks below stay accurate except where this one supersedes them.
@@ -2691,4 +2826,4 @@ _Last refreshed: 2026-09-10 by Codex release review — claims verified against 
 
 
 
-_Last refreshed: 2026-09-13 by Claude Fable 5.1 (CTO release session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-14 by Claude Sonnet 5 (CTO release session) — claims verified against gh pr checks/gcloud/MCP output cited in /Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/SEAL-LOG.md._

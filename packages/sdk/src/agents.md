@@ -90,3 +90,26 @@ The 2026-09-10 SDK suite also exposed stale terminology expectations from migrat
 ## PR #2589 — integrate the observed timestamp contract
 
 The current-main merge preserves the nullable observed timestamp from #2695 alongside the rich verification fields. Reviewed terminology counts combine migration0427 technical proof references with the additional documented `merkleProofHash` field; the scanner and strict banned list remain unchanged. The combined SDK suite and build qualify the merged mapping.
+
+## 2026-09-12 — WebhookEventType + its pin gained the attestation events (SCRUM-3982)
+
+`types.ts`: `attestation.created` and `attestation.revoked` appended to the
+`WebhookEventType` union. `client.test.ts`: both added to
+`WEBHOOK_EVENT_TYPE_PIN`, the exhaustive `Record<WebhookEventType, true>` whose
+missing member fails `tsc --noEmit` and whose deleted row fails `vitest run`.
+
+Two traps hit here, both now costly to rediscover:
+
+- **No semicolons in comments inside that union.** The PR-time gate
+  `scripts/ci/check-webhook-event-registration-drift.ts` locates it with
+  `/export type WebhookEventType\s*=([\s\S]*?);/` — non-greedy to the FIRST
+  `;`. A semicolon in a comment truncates the region, and the gate then reports
+  every member after it as "Missing" from this mirror, which reads like a
+  forgotten edit rather than a truncated read.
+- **`terminology.test.ts` counts banned §1.3 words in this source, comments
+  included.** The word "block" in a new comment bumped the ratcheted count and
+  reddened the suite. Reword the comment rather than raising the expected count.
+
+`attestation.revoked` is typed and subscribable but its worker producer is
+unreachable today, so no delivery of it has occurred — see
+`services/worker/src/webhooks/agents.md`.

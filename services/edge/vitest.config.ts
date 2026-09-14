@@ -14,6 +14,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    // SCRUM-3907: scripts/generate-build-info.test.ts covers the deploy-time
+    // build-info generator (root vitest.config.ts already includes
+    // `scripts/**/*.test.ts` for the same reason — CIBA-HARDEN-05).
+    include: ['src/**/*.test.ts', 'tests/**/*.test.ts', 'scripts/**/*.test.ts'],
   },
 });

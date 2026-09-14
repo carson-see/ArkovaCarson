@@ -24,10 +24,17 @@ import {
   CredentialVerifiedPayloadSchema,
   CredentialStatusChangedPayloadSchema,
   ComplianceDocumentExpiringPayloadSchema,
+  AttestationCreatedPayloadSchema,
+  AttestationRevokedPayloadSchema,
+  BANNED_PAYLOAD_KEYS,
+  findBannedPayloadKeys,
+  isBannedPayloadKey,
+  LEGACY_UNREGISTERED_EVENT_TYPES,
   PAYLOAD_SCHEMAS_BY_EVENT_TYPE,
   validateWebhookPayload,
   WebhookPayloadValidationError,
 } from './payload-schemas.js';
+import { BANNED_RESPONSE_KEYS } from '../api/v1/response-schemas.js';
 
 describe('AnchorSecuredPayloadSchema (SCRUM-1268)', () => {
   const valid = {
@@ -602,19 +609,28 @@ describe('validateWebhookPayload helper', () => {
     }
   });
 
-  it('passes through unknown event types without validation', () => {
+  // SUPERSEDED by the CTO review of SCRUM-3982 (ruling Z2). This used to assert
+  // that an unknown event type passed unvalidated, on the premise that nothing
+  // could subscribe to one. That premise is false — `create_webhook_endpoint`
+  // and the `webhook_endpoints` RLS write policies both accept arbitrary
+  // `events` strings — so the bypass was a live delivery of an unchecked
+  // payload. Unknown types now fail closed.
+  it('REFUSES an unknown event type rather than passing it through unvalidated', () => {
     const result = validateWebhookPayload('payment.subscription_updated', {
       anything: 'goes',
       stripe_subscription_id: 'sub_test',
     });
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toMatch(/not registered/i);
   });
 
-  // PR #567 CodeRabbit minor fix
-  it('PR #567 fix: flags unknown event types via `bypassed: true` so callers can debug-log the gap', () => {
+  // PR #567 CodeRabbit minor fix, hardened by the SCRUM-3982 CTO review (Z2).
+  // #567 made a typo'd event type OBSERVABLE (`bypassed: true` + a debug log)
+  // because it could not be made fatal at the time. It can now: a caps-typo
+  // dispatch is refused outright instead of shipping unvalidated.
+  it('refuses a typo of a registered event type (was: bypassed with a debug log)', () => {
     const result = validateWebhookPayload('anchor.SUBMITTED', { public_id: 'x' });
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.bypassed).toBe(true);
+    expect(result.ok).toBe(false);
   });
 
   it('PR #567 fix: known event types return ok WITHOUT a bypassed flag (still validated)', () => {
@@ -773,5 +789,473 @@ describe('ComplianceDocumentExpiringPayloadSchema (BUG-002)', () => {
     });
     expect(leaked.ok).toBe(false);
     if (!leaked.ok) expect(leaked.error.eventType).toBe('compliance.document_expiring');
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * SCRUM-3982 — the banned-field ratchet.
+ *
+ * Before this change, `validateWebhookPayload` only checked payloads whose
+ * event type was a key of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`. Everything else
+ * returned `{ ok: true, bypassed: true }` with no inspection at all — and that
+ * is the path every historical leak of this class actually took. These tests
+ * pin the scan running BEFORE the registry lookup, for registered and
+ * unregistered types alike.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('BANNED_PAYLOAD_KEYS (SCRUM-3982)', () => {
+  it('is BANNED_RESPONSE_KEYS plus fingerprint, in that order', () => {
+    expect([...BANNED_PAYLOAD_KEYS]).toEqual([...BANNED_RESPONSE_KEYS, 'fingerprint']);
+    // The four the file header has always named, still there after deriving.
+    for (const key of ['anchor_id', 'fingerprint', 'org_id', 'user_id']) {
+      expect(BANNED_PAYLOAD_KEYS).toContain(key);
+    }
+  });
+
+  it('finds banned keys in payload order and ignores clean ones', () => {
+    expect(findBannedPayloadKeys({ public_id: 'pub-1', fingerprint: 'a'.repeat(64) })).toEqual([
+      'fingerprint',
+    ]);
+    expect(findBannedPayloadKeys({ anchor_id: 'x', public_id: 'p', org_id: 'y' })).toEqual([
+      'anchor_id',
+      'org_id',
+    ]);
+    expect(findBannedPayloadKeys({ public_id: 'pub-1', status: 'SECURED' })).toEqual([]);
+  });
+
+  it('treats any `_`-led key as internal-only (file header convention)', () => {
+    expect(findBannedPayloadKeys({ public_id: 'p', _internal: 1 })).toEqual(['_internal']);
+  });
+
+  it('returns nothing for non-object input rather than throwing', () => {
+    for (const input of [null, undefined, 'string', 42, ['fingerprint']]) {
+      expect(findBannedPayloadKeys(input)).toEqual([]);
+    }
+  });
+
+  it('names the offending key but never its value (the value IS the secret)', () => {
+    const fingerprint = 'deadbeef'.repeat(8);
+    const result = validateWebhookPayload('anchor.secured', { public_id: 'pub-1', fingerprint });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(WebhookPayloadValidationError);
+    expect(result.error.message).toContain('fingerprint');
+    expect(result.error.message).not.toContain(fingerprint);
+  });
+});
+
+describe('validateWebhookPayload — banned keys refused on EVERY event type (SCRUM-3982)', () => {
+  const REGISTERED = Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE);
+  // The nine types with a real `dispatchWebhookEvent` call site in
+  // services/worker/src but no entry in PAYLOAD_SCHEMAS_BY_EVENT_TYPE as of
+  // this PR — minus the two it registers. Verified with
+  // `git grep -n "dispatchWebhookEvent(" services/worker/src`.
+  const UNREGISTERED = [
+    'attestation.active',
+    'anchor.revocation_anchored',
+    'job.completed',
+    'compliance.anchor_delayed',
+    'compliance.certificate_expiring',
+    'compliance.signature_revoked',
+    'compliance.timestamp_coverage_low',
+  ];
+
+  it.each(REGISTERED.flatMap((type) => BANNED_PAYLOAD_KEYS.map((key) => [type, key] as const)))(
+    'refuses %s carrying %s',
+    (eventType, key) => {
+      const result = validateWebhookPayload(eventType, { public_id: 'pub-1', [key]: 'leaked-value' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.eventType).toBe(eventType);
+    },
+  );
+
+  it.each(UNREGISTERED.flatMap((type) => BANNED_PAYLOAD_KEYS.map((key) => [type, key] as const)))(
+    'refuses UNREGISTERED %s carrying %s (this is the path the leaks took)',
+    (eventType, key) => {
+      const result = validateWebhookPayload(eventType, { public_id: 'pub-1', [key]: 'leaked-value' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.eventType).toBe(eventType);
+    },
+  );
+
+  it('still passes a CLEAN unregistered payload with bypassed: true', () => {
+    // Deliberate: the ban is on the FIELDS, not on being unregistered. Turning
+    // unknown types into a blanket refusal would break every remaining
+    // dispatch site at once for no subscriber benefit (nothing can subscribe
+    // to an unregistered type anyway).
+    const delayed = validateWebhookPayload('compliance.anchor_delayed', {
+      pending_count: 3,
+      oldest_pending_since: '2026-09-12T10:00:00Z',
+      threshold_minutes: 60,
+    });
+    expect(delayed.ok).toBe(true);
+    if (delayed.ok) expect(delayed.bypassed).toBe(true);
+
+    // NOTE the `job_id` here: it IS an internal `batch_verification_jobs`
+    // UUID, and it is NOT in BANNED_PAYLOAD_KEYS, so this payload passes. That
+    // is a stated residual gap of this PR, pinned here so it cannot be
+    // mistaken for coverage. Closing it means registering `job.completed` with
+    // a public-id-only schema, which is follow-up work.
+    const job = validateWebhookPayload('job.completed', {
+      job_id: '550e8400-e29b-41d4-a716-446655440000',
+      status: 'complete',
+      total: 2,
+      result_count: 2,
+    });
+    expect(job.ok).toBe(true);
+    if (job.ok) expect(job.bypassed).toBe(true);
+  });
+});
+
+describe('the three real leaking producer payloads are now refused (SCRUM-3982)', () => {
+  // Each object below is copied verbatim from its producer's dispatch call.
+  // Two of them live in T3 anchor-lifecycle files this PR deliberately does
+  // NOT edit — the boundary is what stops them. Both call sites wrap the
+  // dispatch in a non-fatal try/catch, so refusal costs a warn log, not a
+  // failed job.
+
+  it('services/worker/src/jobs/revocation.ts:141 — anchor.revocation_anchored (anchor_id + fingerprint)', () => {
+    const result = validateWebhookPayload('anchor.revocation_anchored', {
+      anchor_id: '550e8400-e29b-41d4-a716-446655440000',
+      public_id: 'pub-001',
+      fingerprint: 'a'.repeat(64),
+      status: 'REVOKED',
+      revocation_tx_id: 'tx-abc',
+      revocation_block_height: 900_001,
+      original_chain_tx_id: 'tx-orig',
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const named = result.error.issues.map((i) => i.path.join('.'));
+    expect(named).toContain('anchor_id');
+    expect(named).toContain('fingerprint');
+  });
+
+  it('services/worker/src/jobs/attestationAnchor.ts:161 — attestation.active (fingerprint)', () => {
+    const result = validateWebhookPayload('attestation.active', {
+      public_id: 'ARK-ORG-VER-ABC123',
+      attestation_type: 'VERIFICATION',
+      status: 'ACTIVE',
+      chain_tx_id: 'tx-abc',
+      chain_timestamp: '2026-09-12T10:00:00Z',
+      fingerprint: 'b'.repeat(64),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('fingerprint');
+  });
+
+  it('services/worker/src/api/v1/attestations.ts — attestation.created as it was BEFORE this PR', () => {
+    const result = validateWebhookPayload('attestation.created', {
+      public_id: 'ARK-ORG-VER-ABC123',
+      attestation_type: 'VERIFICATION',
+      status: 'PENDING',
+      fingerprint: 'c'.repeat(64),
+      created_at: '2026-09-12T10:00:00Z',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('fingerprint');
+  });
+});
+
+describe('AttestationCreatedPayloadSchema (SCRUM-3982)', () => {
+  const valid = {
+    public_id: 'ARK-ORG-VER-ABC123',
+    attestation_type: 'VERIFICATION',
+    status: 'PENDING',
+    created_at: '2026-09-12T10:00:00Z',
+  };
+
+  it('accepts the payload the producer actually sends after the fingerprint drop', () => {
+    expect(AttestationCreatedPayloadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts an optional org_public_id, null included', () => {
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, org_public_id: 'org-1' }).success).toBe(true);
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, org_public_id: null }).success).toBe(true);
+  });
+
+  it('accepts DRAFT (the column default) and refuses every terminal status', () => {
+    // public.attestation_status = DRAFT | PENDING | ACTIVE | REVOKED | EXPIRED
+    // | CHALLENGED. A creation event can only carry a pre-anchoring state.
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, status: 'DRAFT' }).success).toBe(true);
+    for (const status of ['ACTIVE', 'REVOKED', 'EXPIRED', 'CHALLENGED']) {
+      expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, status }).success).toBe(false);
+    }
+  });
+
+  it.each([...BANNED_PAYLOAD_KEYS, 'attestation_id', 'attester_user_id'])(
+    'rejects the banned/internal key %s (.strict())',
+    (key) => {
+      expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, [key]: 'x' }).success).toBe(false);
+    },
+  );
+
+  it('rejects any unknown key at all', () => {
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, claims: [] }).success).toBe(false);
+  });
+
+  it('requires an ISO 8601 created_at', () => {
+    expect(AttestationCreatedPayloadSchema.safeParse({ ...valid, created_at: '2026-09-12' }).success).toBe(false);
+  });
+
+  it('is registered, so it no longer bypasses validation', () => {
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('attestation.created');
+    const clean = validateWebhookPayload('attestation.created', valid);
+    expect(clean.ok).toBe(true);
+    if (clean.ok) expect(clean.bypassed).toBeUndefined();
+  });
+});
+
+describe('AttestationRevokedPayloadSchema (SCRUM-3982)', () => {
+  const valid = {
+    public_id: 'ARK-ORG-VER-ABC123',
+    status: 'REVOKED',
+    revocation_reason: 'Issued in error',
+    revoked_at: '2026-09-12T10:00:00Z',
+  };
+
+  it('accepts the payload the (not-yet-reachable) producer would send', () => {
+    expect(AttestationRevokedPayloadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('mirrors the route guard on revocation_reason: min 3, no upper bound', () => {
+    // PATCH /api/v1/attestations/:publicId/revoke rejects reason.length < 3 and
+    // imposes no maximum. A `.max()` here that the route does not enforce would
+    // turn a long-but-valid revocation into a refused dispatch.
+    expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, revocation_reason: 'ab' }).success).toBe(false);
+    expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, revocation_reason: 'abc' }).success).toBe(true);
+    expect(
+      AttestationRevokedPayloadSchema.safeParse({ ...valid, revocation_reason: 'x'.repeat(5_000) }).success,
+    ).toBe(true);
+  });
+
+  it('accepts the optional attestation_type and org_public_id', () => {
+    expect(
+      AttestationRevokedPayloadSchema.safeParse({ ...valid, attestation_type: 'AUDIT', org_public_id: 'org-1' })
+        .success,
+    ).toBe(true);
+    expect(
+      AttestationRevokedPayloadSchema.safeParse({ ...valid, attestation_type: null, org_public_id: null }).success,
+    ).toBe(true);
+  });
+
+  it('rejects any status other than REVOKED', () => {
+    for (const status of ['PENDING', 'ACTIVE', 'EXPIRED']) {
+      expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, status }).success).toBe(false);
+    }
+  });
+
+  it.each([...BANNED_PAYLOAD_KEYS, 'attestation_id'])(
+    'rejects the banned/internal key %s (.strict())',
+    (key) => {
+      expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, [key]: 'x' }).success).toBe(false);
+    },
+  );
+
+  it('requires an ISO 8601 revoked_at', () => {
+    expect(AttestationRevokedPayloadSchema.safeParse({ ...valid, revoked_at: 'yesterday' }).success).toBe(false);
+  });
+
+  it('is registered, so it no longer bypasses validation', () => {
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('attestation.revoked');
+    const clean = validateWebhookPayload('attestation.revoked', valid);
+    expect(clean.ok).toBe(true);
+    if (clean.ok) expect(clean.bypassed).toBeUndefined();
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * CTO review of SCRUM-3982 (rulings Z2/Z3/Z4) — hardening the ratchet.
+ *
+ * The first cut of this PR had three holes that the review found by reading
+ * the producers and the subscription path rather than the diff:
+ *
+ *  Z3  The ban list was four hand-written keys. `api/v1/response-schemas.ts`
+ *      already maintains a longer list for the SAME class of leak on API
+ *      response bodies, and a webhook payload is a strictly more exposed
+ *      surface than a response body (it is PUSHED to a third-party URL).
+ *      Compound spellings (`document_fingerprint`) and camelCase (`orgId`)
+ *      also walked straight through an exact-match `Set.has()`.
+ *  AB6 The scan was top-level only, while `jobs/attestationAnchor.ts` nests a
+ *      `metadata` object. A banned key one level down was invisible.
+ *  Z2/RA3 "nothing can subscribe to an unregistered type" is FALSE. The
+ *      `/api/v1/webhooks` route does restrict `events` to the registry, but
+ *      `create_webhook_endpoint` (SECURITY DEFINER, granted to
+ *      `authenticated`) inserts `p_events` unvalidated, and
+ *      `webhook_endpoints_insert_org` / `_update_org` let any ORG_ADMIN write
+ *      the column directly through PostgREST. There is no CHECK constraint.
+ *      So an unregistered type IS deliverable, and "bypass" was a real hole.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('BANNED_PAYLOAD_KEYS derives from the response-body ban list (Z3)', () => {
+  it('is a superset of BANNED_RESPONSE_KEYS plus fingerprint', () => {
+    for (const key of BANNED_RESPONSE_KEYS) {
+      expect(isBannedPayloadKey(key)).toBe(true);
+    }
+    expect(isBannedPayloadKey('fingerprint')).toBe(true);
+  });
+
+  it.each([
+    'document_fingerprint',
+    'evidence_fingerprint',
+    'anchor_fingerprint',
+    'certificate_fingerprint',
+    'new_fingerprint',
+    'fingerprint_sha256',
+  ])('bans the compound spelling %s', (key) => {
+    expect(isBannedPayloadKey(key)).toBe(true);
+  });
+
+  it.each(['anchorId', 'orgId', 'userId', 'documentFingerprint', 'attesterOrgId'])(
+    'bans the camelCase spelling %s',
+    (key) => {
+      expect(isBannedPayloadKey(key)).toBe(true);
+    },
+  );
+
+  it.each(['attester_org_id', 'previous_user_id', 'source_anchor_id'])(
+    'bans the qualified spelling %s',
+    (key) => {
+      expect(isBannedPayloadKey(key)).toBe(true);
+    },
+  );
+
+  it.each([
+    // Explicitly allowed by the file header — a blanket `*_id` ban would take
+    // these out and break every registered anchor payload.
+    'public_id',
+    'org_public_id',
+    'chain_tx_id',
+    'revocation_tx_id',
+    'original_chain_tx_id',
+    // Residual gap, deliberately NOT banned (Z2): these are internal UUIDs on
+    // the seven legacy unregistered types. Banning them here would refuse live
+    // dispatches; the fix is to register those types with public-id schemas
+    // (SCRUM-5063), not to widen the key ban under them.
+    'job_id',
+    'certificate_id',
+    'signature_id',
+  ])('leaves %s alone', (key) => {
+    expect(isBannedPayloadKey(key)).toBe(false);
+  });
+});
+
+describe('findBannedPayloadKeys scans nested objects and arrays (AB6)', () => {
+  it('finds a banned key one level down and reports its path', () => {
+    expect(
+      findBannedPayloadKeys({ public_id: 'p', metadata: { fingerprint: 'a'.repeat(64) } }),
+    ).toEqual(['metadata.fingerprint']);
+  });
+
+  it('finds a banned key inside an array of objects', () => {
+    expect(
+      findBannedPayloadKeys({ items: [{ public_id: 'p' }, { anchor_id: 'uuid' }] }),
+    ).toEqual(['items.1.anchor_id']);
+  });
+
+  it('does not recurse past a banned key (the whole subtree is refused anyway)', () => {
+    expect(findBannedPayloadKeys({ org_id: { user_id: 'x' } })).toEqual(['org_id']);
+  });
+
+  it('terminates on a cyclic payload instead of blowing the stack', () => {
+    const cyclic: Record<string, unknown> = { public_id: 'p' };
+    cyclic.self = cyclic;
+    expect(() => findBannedPayloadKeys(cyclic)).not.toThrow();
+  });
+});
+
+describe('unregistered event types fail closed (Z2)', () => {
+  it('refuses an event type that is neither registered nor a known legacy type', () => {
+    const result = validateWebhookPayload('suborg.created', { public_id: 'pub-1' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.eventType).toBe('suborg.created');
+      expect(result.error.message).toMatch(/not registered/i);
+    }
+  });
+
+  it('refuses a typo of a registered type rather than bypassing it', () => {
+    const result = validateWebhookPayload('anchor.SECURED', { public_id: 'pub-1' });
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([...LEGACY_UNREGISTERED_EVENT_TYPES])(
+    'still bypasses the known legacy type %s so no live dispatch site breaks',
+    (eventType) => {
+      const result = validateWebhookPayload(eventType, { public_id: 'pub-1', status: 'ok' });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.bypassed).toBe(true);
+    },
+  );
+
+  it('pins the legacy allowlist to exactly the seven types with a live dispatch site', () => {
+    // `git grep -n "dispatchWebhookEvent(" services/worker/src`, minus the 12
+    // registered types. This list is a RATCHET: entries come off it as
+    // SCRUM-5063 registers each type. Nothing is ever added.
+    expect([...LEGACY_UNREGISTERED_EVENT_TYPES].sort()).toEqual([
+      'anchor.revocation_anchored',
+      'attestation.active',
+      'compliance.anchor_delayed',
+      'compliance.certificate_expiring',
+      'compliance.signature_revoked',
+      'compliance.timestamp_coverage_low',
+      'job.completed',
+    ]);
+  });
+});
+
+describe('one authority per event type (Z4)', () => {
+  it('reports the SCHEMA error for a registered type, not a key-scan error', () => {
+    // `.strict()` is the authority for a registered type. Running the key scan
+    // first meant a banned key produced a generic scan message where the
+    // schema would have said `unrecognized_keys`, and a payload that was both
+    // banned-key-free and schema-invalid reported nothing useful.
+    const result = validateWebhookPayload('anchor.secured', {
+      public_id: 'pub-1',
+      fingerprint: 'a'.repeat(64),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.issues.some((i) => i.code === 'unrecognized_keys')).toBe(true);
+  });
+
+  it('no registered schema declares a nested object, so .strict() is a complete guard', () => {
+    // The key scan does not run for registered types (Z4). That is only safe
+    // while every registered schema is a FLAT object of primitives — `.strict()`
+    // rejects unknown keys at the top level only. If a future schema declares a
+    // nested object or a z.record, this test goes red and the scan must be
+    // re-introduced for that schema.
+    // Walk the zod def tree by `type` discriminator rather than `instanceof`:
+    // the registry holds a mix of ZodObject and refined wrappers, and the class
+    // identities are not part of zod's public contract across minor versions.
+    const shapeOf = (schema: unknown): Record<string, unknown> | null => {
+      let node = schema as { def?: Record<string, unknown> };
+      for (let i = 0; i < 8 && node?.def; i++) {
+        if (node.def.type === 'object') return node.def.shape as Record<string, unknown>;
+        node = (node.def.innerType ?? node.def.schema) as { def?: Record<string, unknown> };
+      }
+      return null;
+    };
+    // "Nests keys" means the value can CARRY KEYS a scan would have to look at.
+    // `z.array(z.string())` (anchor.batch_secured.public_ids) cannot; an array
+    // of objects can, so recurse into the element type.
+    const KEY_BEARING = new Set(['object', 'record', 'map', 'tuple', 'interface']);
+    const nestsKeys = (node: unknown, depth = 0): boolean => {
+      const def = (node as { def?: Record<string, unknown> })?.def;
+      if (!def || depth > 8) return false;
+      if (KEY_BEARING.has(String(def.type))) return true;
+      for (const child of [def.innerType, def.schema, def.element, def.valueType]) {
+        if (child && nestsKeys(child, depth + 1)) return true;
+      }
+      return false;
+    };
+
+    for (const [eventType, schema] of Object.entries(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)) {
+      const shape = shapeOf(schema);
+      expect(`${eventType} shape=${shape ? 'found' : 'MISSING'}`).toBe(`${eventType} shape=found`);
+      for (const [field, def] of Object.entries(shape as Record<string, unknown>)) {
+        const nests = nestsKeys(def);
+        expect(`${eventType}.${field} nests=${nests}`).toBe(`${eventType}.${field} nests=false`);
+      }
+    }
   });
 });

@@ -55,3 +55,26 @@ only other records with a recognized connector marker and artifact stamp may emi
 fetch_time_snapshot. Raw markers without that evidence stay silent. Verify, proof,
 and authenticated packet exports load the typed source; the signable proof bundle
 is unchanged. Regression reproduced before the fix; local validation is not soak evidence.
+
+## 2026-09-12 — SCRUM-4507: `CONNECTOR_FETCH_SOURCE_MARKERS_SORTED`
+
+The published `source.provider` enum on `GET /api/v1/verify/:publicId` is
+materialised HERE, once, and nowhere else. `api/v1/verify.ts`
+(`VERIFICATION_SOURCE_PROVIDERS`) re-exports it and `api/v1/docs.ts` consumes it
+directly — neither sorts, so the served OpenAPI spec and the response contract
+cannot order the vocabulary differently.
+
+- **Explicit comparator, pinned locale.** `.sort()` with no argument is read as a
+  reliability defect (SonarQube `typescript:S2871`) and leaves the intent
+  unstated; `localeCompare(b, 'en')` pins the order so it cannot vary with the
+  host's default locale. The members are ASCII, so the order is the same one the
+  bare sort produced — now written down rather than implied.
+- **Frozen, not just `readonly`.** The array is module-scope state handed to a
+  long-lived `openApiSpec` object. `readonly` is erased at runtime; one stray
+  mutation would silently change a FROZEN v1 published schema (§1.8). Pinned by
+  `api/v1/openapi-source-provider-contract.test.ts`, which asserts both the
+  freeze and the literal member order.
+- **Adding a marker widens a public enum.** A new member of
+  `CONNECTOR_FETCH_SOURCE_MARKERS` appears in the served spec and in
+  `docs/api/openapi.yaml` automatically — update the YAML in the same commit or
+  the parity test fails, which is the intent.

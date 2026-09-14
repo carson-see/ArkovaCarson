@@ -295,6 +295,88 @@ describe('IP_HASH_PEPPER production guard (DPA IP pseudonymisation)', () => {
 });
 
 /**
+ * SCRUM-3888 — CLOUDFLARE_ORIGIN_GUARD_MODE / CLOUDFLARE_ORIGIN_SECRET.
+ *
+ * The guard's comparison is unmeetable without a secret to compare against,
+ * so `observe`/`enforce` must fail the boot loudly (in every environment,
+ * not just production — an observe-mode soak with no secret would prove
+ * nothing) when the secret is missing or too short to be a real secret. The
+ * default `off` must never require it, in any environment.
+ */
+describe('CLOUDFLARE_ORIGIN_GUARD_MODE / CLOUDFLARE_ORIGIN_SECRET', () => {
+  it('defaults to off with no secret required, in dev/test', async () => {
+    await withConfig(
+      { CLOUDFLARE_ORIGIN_GUARD_MODE: undefined, CLOUDFLARE_ORIGIN_SECRET: undefined },
+      (mod) => {
+        expect(mod.config.cloudflareOriginGuardMode).toBe('off');
+        expect(mod.config.cloudflareOriginSecret).toBeUndefined();
+      },
+    );
+  });
+
+  it('defaults to off with no secret required, in production', async () => {
+    await withConfig(
+      { ...PROD_BASE_ENV, NODE_ENV: 'production', CLOUDFLARE_ORIGIN_GUARD_MODE: undefined },
+      (mod) => {
+        expect(mod.config.cloudflareOriginGuardMode).toBe('off');
+      },
+    );
+  });
+
+  it('rejects an unrecognized mode value', async () => {
+    await expectConfigToReject({ CLOUDFLARE_ORIGIN_GUARD_MODE: 'bogus' });
+  });
+
+  it('rejects observe mode with no secret configured, even outside production', async () => {
+    await expectConfigToReject({
+      CLOUDFLARE_ORIGIN_GUARD_MODE: 'observe',
+      CLOUDFLARE_ORIGIN_SECRET: undefined,
+    });
+  });
+
+  it('rejects enforce mode with no secret configured', async () => {
+    await expectConfigToReject({
+      CLOUDFLARE_ORIGIN_GUARD_MODE: 'enforce',
+      CLOUDFLARE_ORIGIN_SECRET: undefined,
+    });
+  });
+
+  it('rejects enforce mode with a secret too short to be real', async () => {
+    await expectConfigToReject({
+      CLOUDFLARE_ORIGIN_GUARD_MODE: 'enforce',
+      CLOUDFLARE_ORIGIN_SECRET: 'short',
+    });
+  });
+
+  it('accepts observe mode with a valid secret and exposes both on config', async () => {
+    await withConfig(
+      {
+        CLOUDFLARE_ORIGIN_GUARD_MODE: 'observe',
+        CLOUDFLARE_ORIGIN_SECRET: 'a-real-cloudflare-shared-secret-value',
+      },
+      (mod) => {
+        expect(mod.config.cloudflareOriginGuardMode).toBe('observe');
+        expect(mod.config.cloudflareOriginSecret).toBe('a-real-cloudflare-shared-secret-value');
+      },
+    );
+  });
+
+  it('accepts enforce mode with a valid secret in production', async () => {
+    await withConfig(
+      {
+        ...PROD_BASE_ENV,
+        NODE_ENV: 'production',
+        CLOUDFLARE_ORIGIN_GUARD_MODE: 'enforce',
+        CLOUDFLARE_ORIGIN_SECRET: 'a-real-cloudflare-shared-secret-value',
+      },
+      (mod) => {
+        expect(mod.config.cloudflareOriginGuardMode).toBe('enforce');
+      },
+    );
+  });
+});
+
+/**
  * SCRUM-1257 (R1-3) — kmsProvider default 'aws' → 'gcp' + fail-loud production guard.
  *
  * Why: forensic 2/8 found that an accidental `--remove-env-vars=KMS_PROVIDER` on
@@ -496,6 +578,45 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     });
     it('rejects a bare public-key pin in production (only an X.509 CA certificate is acceptable there)', async () => {
       await expectConfigToReject({ NODE_ENV: 'production', ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: 's1', COMPUTEID_CA_CERT_PEM: SPKI_PEM });
+    });
+
+    // SCRUM-4495 review: the pin is now in `--set-secrets` while the flag is
+    // still false, so a malformed or rotated PEM sits in prod unexercised and
+    // is first parsed by the ACTIVATION deploy. Warn then, do not fail: a dark
+    // integration must never be able to stop the worker booting.
+    it('warns but still boots when the CA pin is unusable and the flag is OFF', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await withConfig(
+        { ENABLE_COMPUTEID_INTEGRATION: 'false', COMPUTEID_CA_CERT_PEM: 'not a pem' },
+        (mod) => { expect(mod.config.enableComputeidIntegration).toBe(false); },
+      );
+      expect(warn.mock.calls.flat().join(' ')).toContain('COMPUTEID_CA_CERT_PEM');
+      warn.mockRestore();
+    });
+
+    it('says nothing when the dark pin is well-formed', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await withConfig(
+        { ENABLE_COMPUTEID_INTEGRATION: 'false', COMPUTEID_CA_CERT_PEM: SPKI_PEM },
+        (mod) => { expect(mod.config.enableComputeidIntegration).toBe(false); },
+      );
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('COMPUTEID_CA_CERT_PEM');
+      warn.mockRestore();
+    });
+
+    // W7 review decision, pinned so it cannot drift back silently: the partner
+    // API key is deliberately NOT required by the flag-on refine. The re-check
+    // reports itself skipped (loudly — logger.error + Sentry) rather than
+    // blocking activation on a key Carson provisions separately.
+    it('does NOT require COMPUTEID_API_KEY when the flag is on — the re-check alerts instead of blocking the boot', async () => {
+      await withConfig(
+        { ENABLE_COMPUTEID_INTEGRATION: 'true', COMPUTEID_WEBHOOK_SECRET: 's1', COMPUTEID_CA_CERT_PEM: SPKI_PEM, COMPUTEID_API_KEY: undefined },
+        (mod) => {
+          expect(mod.config.enableComputeidIntegration).toBe(true);
+          expect(mod.config.computeidApiKey).toBeUndefined();
+          expect(mod.config.computeidApiBaseUrl).toBe('https://api.aicomputeid.com');
+        },
+      );
     });
   });
 

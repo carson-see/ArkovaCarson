@@ -33,6 +33,7 @@ import ws from 'ws';
 import {
   createServiceClient,
   createAnonClient,
+  elevateRlsClientToAal2,
   type TypedClient,
 } from '../../src/tests/rls/helpers';
 
@@ -112,6 +113,7 @@ describe('SCRUM-2380 — org CPE dashboard RLS (anchors SECURITY INVOKER read)',
       password: RLS_TEST_PASSWORD,
     });
     if (signInErr) throw new Error(`sign-in failed for ${email}: ${signInErr.message}`);
+    await elevateRlsClientToAal2(client, id);
     return { id, email, client };
   }
 

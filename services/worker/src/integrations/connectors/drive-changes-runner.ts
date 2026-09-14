@@ -487,6 +487,15 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
         mime_type: payload.mime_type ?? undefined,
         modified_time: payload.modified_time ?? undefined,
         rule_event_id: payload.rule_event_id ?? undefined,
+        // SCRUM-4507 source link-back — same null -> undefined conversion as
+        // every field above. `revision_kind` is never null (the processor
+        // always resolves one) so it passes through unchanged; it still goes
+        // through safeParse, which fails CLOSED on an unrecognised value
+        // rather than enqueueing a job the record page cannot render.
+        shared_drive_id: payload.shared_drive_id ?? undefined,
+        folder_id: payload.folder_id ?? undefined,
+        folder_path: payload.folder_path ?? undefined,
+        revision_kind: payload.revision_kind,
       };
       const parsed = DriveFileChangedJobPayload.safeParse(candidate);
       if (!parsed.success) {
@@ -567,8 +576,17 @@ export async function runDriveChanges(
 ): Promise<ProcessChangesResult | { skipped: 'no_page_token' | 'no_watched_folders' }> {
   // Bootstrap guard — Drive integrations created BEFORE migration 0288 may
   // have last_page_token=null. Without it the processor can't even call
-  // changes.list. Fail soft (skip + log); the watch-renewal monitor will
-  // re-bootstrap on next renewal pass per createChangesWatch().
+  // changes.list. Fail soft (skip + log).
+  //
+  // Recovery path (corrected, BUG 2026-09-13): the hourly
+  // `drive-subscription-renewal.ts` sweep bootstraps a NULL cursor from the
+  // startPageToken of the watch it registers, in the same write as the
+  // channel swap — so a connection that lands here recovers on the next
+  // renewal pass that reaches it (within the 24h pre-expiry horizon, or
+  // immediately for a row with no channel at all). Before that fix, renewal
+  // discarded the startPageToken unconditionally and this comment's promise
+  // was false: a null cursor was never bootstrapped by anything, and every
+  // push for that connection was dropped here forever.
   if (!integration.last_page_token) {
     deps.logger?.warn?.(
       { integrationId: integration.id, orgId: integration.org_id },

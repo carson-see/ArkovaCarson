@@ -1,6 +1,21 @@
 # agents.md — e2e/
 
-_Last updated: 2026-09-13 (`uat-pr2840.spec.ts` self-skips outside its own config, CI run 34741690944)._
+_Last updated: 2026-09-13 (`ner-dev-load.spec.ts` added)._
+
+## 2026-09-13 — `ner-dev-load.spec.ts` / `ner-dev-load.config.ts` (new)
+
+Pins the founder-reported "Secure Document Continue is broken" regression at
+its real layer: `src/lib/nerPiiDetector.ts`'s bundle loader, not
+`SecureDocumentDialog.tsx` (see `src/lib/agents.md` for the full mechanism).
+Run with `-c e2e/ner-dev-load.config.ts`. No seeded account or Supabase
+needed. Like `secure-dialog-layout.spec.ts`, this MUST run against a real
+`vite dev` server, not vitest/jsdom — the defect is in how Vite's dev server
+serves a `/public` asset requested via `import()`, which jsdom cannot
+reproduce. Drives `__loadRealTransformersModuleForE2E` (the real loader,
+never `__setTransformersLoaderForTesting`) against the real vendored
+`public/vendor/transformers.bundle.min.js`; stops at "module loaded" rather
+than running full on-device inference, since backend/WASM/WebGPU selection is
+a separate concern from the bundle-loading bug this fix addresses.
 
 ## 2026-09-13 SCRUM-4989 — `uat-pr2840.spec.ts` was NOT actually excluded from CI; it self-skips now
 
@@ -29,6 +44,34 @@ this change: it is a non-`e2e/` config edit, and the tier detector
 future edit ever adds `projects` to `uat-pr2840.config.ts`, give it an empty-string project
 name (or update this guard) — do not let the name collide with a shared-config project name.
 
+## 2026-09-13 — `uat-suborg-ux.spec.ts` (sub-organisation UAT capture)
+
+Same shape and the same boundary as `uat-pr2840.spec.ts`: its own
+`uat-suborg-ux.config.ts` with **no `projects` array**, so its one implicit project has an empty
+name, and a file-level `test.beforeEach` skips whenever `testInfo.project.name !== ''`. That is what
+stops the shared `playwright.config.ts` glob (`testDir: './e2e'`, no `testMatch`) from running it
+against `.env.test` and a real rig.
+
+Differences from the 2840 capture worth knowing:
+
+- it drives `npm run dev` on **:5173**, not `vite preview` on :4173 — there is no build step, so the
+  loop is fast enough to re-shoot after each fix;
+- it stubs **both** Supabase and the worker (`page.route` on `http://localhost:3001/**`), because the
+  panel under test is worker-backed, not PostgREST-backed;
+- it is parameterised so ONE spec reproduces both sides of the change:
+  `SUBORG_UAT_OUT` picks the output directory (default `after`) and `SUBORG_UAT_TAB` picks the tab
+  the panel is expected on (default `affiliates`, `settings` for a pre-fix checkout).
+
+It also writes `discoverability-<width>.json` — the measured pixel offset of the panel heading
+inside AppShell's scrolling column. That number, not a screenshot, is the evidence for the founder's
+"clunky" complaint, and it is worth re-measuring rather than re-arguing whenever someone proposes
+moving the panel again.
+
+**There is still no CI-suite e2e coverage of the sub-org flow.** There never was; adding it needs a
+real Supabase project with a seeded parent/child pair and an affiliation row, which a UAT capture
+deliberately does not touch. Do not mistake this file for that gate.
+
+
 ## 2026-09-12 SCRUM-4989 — `uat-pr2840.spec.ts` runs OUTSIDE the CI suite
 
 `uat-pr2840.spec.ts` + `uat-pr2840.config.ts` are a one-off T1 UAT capture for PR #2840,
@@ -42,6 +85,15 @@ Its hostile/safe pair is the pattern worth copying: a capture that proves someth
 render is worthless without the control showing the same code path DOES render legitimate values.
 
 Evidence and reproduction steps: `docs/uat/pr-2840/README.md`.
+
+
+## 2026-09-12 — SCRUM-4507: the Drive record-detail fixture MUST be written with the service client
+
+`record-detail.spec.ts` gained a Google Drive block mirroring the DocuSign one. Its `beforeAll`
+writes `metadata` through `serviceClient`, and that is load-bearing rather than incidental:
+migration 0423's trigger strips `connector_source` from any write by a non-`service_role` caller.
+A fixture written as the user would produce a record with no marker, hence no chips — and the spec
+would pass while testing nothing. Same reason the DocuSign block above uses the service client.
 
 ## 2026-09-08 — every failed E2E job used to discard its own evidence
 
@@ -494,7 +546,9 @@ Historical change log: [./agents-changelog.md](./agents-changelog.md)
 
 ## 2026-09-05 — SCRUM-4035 OAuth confirmation routing
 
-`oauth-email-confirmation.spec.ts` runs via `playwright.uat03.config.ts` in CI before hosted-stack setup. Its seven real-app browser cases mock only external Auth/worker boundaries and verify pending routing without profile reads, delivery/retry, explicit proof confirmation, account switching/recovery, normal authenticated routing, and profile loading after confirmation. The default config excludes this separately executed fixture; no tests are conditionally skipped. Screenshots at 1280/375 are uploaded. This does not prove hosted Google consent or real mailbox receipt.
+`oauth-email-confirmation.spec.ts` runs via `playwright.uat03.config.ts` in CI before hosted-stack setup. Its seven real-app browser cases mock only external Auth/worker boundaries and verify pending routing without profile reads, delivery/retry, explicit proof confirmation, account switching/recovery, post-MFA authenticated routing, and mandatory MFA after confirmation. The default config excludes this separately executed fixture; no tests are conditionally skipped. Screenshots at 1280/375 are uploaded. This does not prove hosted Google consent or real mailbox receipt.
+
+The synthetic session JWT must include an explicit `aal`. Post-MFA onboarding controls use `authenticated`/`aal2`; completing mailbox confirmation yields `authenticated`/`aal1` and must stop at mandatory MFA without reading `profiles`. A role-only `authenticated` fixture is not proof of product authority.
 ## PR #2637 soak closeout timing correction (2026-09-05)
 
 The 12h UI window contained three failures and is preserved as failed evidence.
@@ -512,3 +566,20 @@ foreign-private-profile denials. Enrollment screenshots mask QR and secret data.
 At375px the header account button is named by initials, because the full name
 is hidden. MFA sign-out probes use the banner's menu trigger across widths;
 they still click the real Sign out action and require a new-login challenge.
+
+## 2026-09-11 — UAT-04 all-user MFA
+
+Auth setup removes old fixture factors, performs real TOTP enrollment, and saves
+only same-user `authenticated`/AAL2 sessions. The former 2099 enforcement-date
+override is gone. Browser coverage pins direct `/login` and `/signup` AAL1
+routing to the non-skippable gate for individual and organization users.
+
+## Mandatory MFA and ordinary success fixtures
+
+Billing reuses the real MFA session produced by `auth.setup.ts`. Disposable
+profile flows complete MFA without changing their onboarding/profile state.
+Direct tenant-isolation and entitlement tests borrow setup's AAL2 bearer; their
+positive access checks must pass before a negative isolation result is meaningful.
+The sign-out test uses its own real UI login and MFA enrollment, so signing out
+cannot revoke a later test's saved seed session. Intentional AAL1 rejection tests
+and `loginViaUi` retain their original authentication level.

@@ -258,10 +258,63 @@ interface TransformersJsModule {
  */
 type TransformersLoader = () => Promise<TransformersJsModule>;
 
-const defaultTransformersLoader: TransformersLoader = async () =>
-  // Keep the large, on-demand NER runtime out of the homepage bundle.
-  // Vite serves `public/` files at the site root in both dev and prod.
-  (await import(/* @vite-ignore */ TRANSFORMERS_BROWSER_MODULE)) as TransformersJsModule;
+/**
+ * Founder-reported bug (2026-09-13): the Secure Document dialog's Continue
+ * flow fails closed to the loud §1.6 `privacy-blocked` screen on every run
+ * under `vite dev` (the local dev server started by `npm run dev`). Root
+ * cause was here, not in SecureDocumentDialog.tsx itself.
+ *
+ * A plain `import(TRANSFORMERS_BROWSER_MODULE)` — a native ESM dynamic
+ * import of a same-origin `/public` path — works under a static/production
+ * server (the browser just fetches the URL), but Vite's DEV server
+ * middleware intercepts any request for a `/public` asset that arrives
+ * shaped as a module import and refuses to serve it ("This file is in
+ * /public and will be copied as-is during build ... and therefore should
+ * not be imported from source code"), rejecting the import outright. The
+ * comment this replaces ("Vite serves `public/` files at the site root in
+ * both dev and prod") was true for plain `fetch()`/`<script src>` but false
+ * for `import()` specifically — that gap is the whole bug. `@vite-ignore`
+ * only suppresses Rollup's static-analysis warning at build time; it does
+ * not change the dev server's HTTP-level module interception.
+ *
+ * FIX IS DEV-ONLY (review correction, 2026-09-13): the first version of this
+ * fix fetched the bundle as text and imported it from a same-origin `blob:`
+ * URL unconditionally. That is refused by CSP `script-src` in PRODUCTION —
+ * `vercel.json`'s header CSP is `script-src 'self' 'wasm-unsafe-eval'` (no
+ * `blob:`), confirmed by a real Chromium CSP violation
+ * ("Loading the script 'blob:...' violates ... script-src") against the
+ * app's own dev-fallback CSP meta tag in `index.html`, which carries the
+ * same restriction and ships into `dist/index.html` unchanged. Shipping the
+ * blob path unconditionally would have replaced "every dev run fails
+ * closed" with "every user in every environment fails closed" — the exact
+ * opposite of the goal. `index.html`'s dev-fallback CSP meta tag now allows
+ * `blob:` in `script-src` (comment there explains why that's safe: multiple
+ * delivered CSPs are enforced as an intersection, and production's separate,
+ * unmodified `vercel.json` header CSP still has no `blob:`, so this addition
+ * has zero effect once deployed).
+ *
+ * `import.meta.env.DEV` is statically known at build time (Vite sets it
+ * false for both `vite build` output and `vite preview`, true only for the
+ * `vite` dev server) — so production and preview keep the exact original,
+ * unconditional `import()` of the static path; only the dev server takes the
+ * fetch+blob detour.
+ */
+const defaultTransformersLoader: TransformersLoader = async () => {
+  if (!import.meta.env.DEV) {
+    return (await import(/* @vite-ignore */ TRANSFORMERS_BROWSER_MODULE)) as TransformersJsModule;
+  }
+  const response = await fetch(TRANSFORMERS_BROWSER_MODULE);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${TRANSFORMERS_BROWSER_MODULE}: ${response.status}`);
+  }
+  const source = await response.text();
+  const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+  try {
+    return (await import(/* @vite-ignore */ blobUrl)) as TransformersJsModule;
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+};
 
 let _transformersLoader: TransformersLoader = defaultTransformersLoader;
 
@@ -273,6 +326,20 @@ export function __setTransformersLoaderForTesting(loader: TransformersLoader): v
 /** TEST-ONLY: restore the real dynamic-import loader. */
 export function __resetTransformersLoaderForTesting(): void {
   _transformersLoader = defaultTransformersLoader;
+}
+
+/**
+ * E2E-ONLY: exercise the REAL `defaultTransformersLoader` (never the
+ * test-injected one) against the real vendored bundle. Used by
+ * `e2e/ner-dev-load.spec.ts` to pin the 2026-09-13 dev-server regression at
+ * exactly the layer it was fixed — loading the bundle module — without
+ * pulling in on-device inference (backend selection, WASM/WebGPU, model
+ * weights), which is a separate concern this loader fix does not touch.
+ * Not reachable from any production code path.
+ */
+export async function __loadRealTransformersModuleForE2E(): Promise<{ hasPipeline: boolean; hasEnv: boolean }> {
+  const mod = await defaultTransformersLoader();
+  return { hasPipeline: typeof mod.pipeline === 'function', hasEnv: typeof mod.env === 'object' };
 }
 
 // Singleton pipeline — loaded once, reused across calls

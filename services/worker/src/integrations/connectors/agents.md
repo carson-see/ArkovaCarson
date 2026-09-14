@@ -1,6 +1,104 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+_Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
+## 2026-09-13 — a NULL `last_page_token` is now bootstrapped at renewal (BUG 2026-09-13, prod: zero Drive artifacts since April)
+
+**What was wrong.** Two modules held contradictory beliefs about who repairs a null changes cursor,
+and the intersection was "nobody".
+
+- `drive-changes-runner.ts`'s bootstrap guard skipped any integration with `last_page_token = null`
+  (`{ skipped: 'no_page_token' }`) and its comment deferred recovery to "the watch-renewal monitor
+  will re-bootstrap on next renewal pass per `createChangesWatch()`".
+- `drive-subscription-renewal.ts` — that monitor — stated the opposite in its own doc comment
+  ("renewal NEVER touches `last_page_token`") and its deps adapter deliberately DISCARDED the
+  `startPageToken` that `createChangesWatch()` returns, with a test pinning the discard as a feature.
+
+So a connection whose cursor was null was never bootstrapped by anything, forever. Verified on prod
+(read-only) on 2026-09-13 by the CTO: the Arkova org's `google_drive` row
+(`org_integrations.id = 2b47529f-e3d6-4d35-a902-2c8c9731b64b`, connected 2026-04-25) has its push
+channel renewed hourly with zero failures and received 63 Google change notifications in 36h — every
+one of which ended in `drive webhook: changes processed {result:{skipped:'no_page_token'}}`, because
+`last_page_token` has been NULL since April. `drive_watch_state` has 0 rows and no Drive artifact has
+ever been produced in production.
+
+**The refined invariant (this is the rule now — the old absolute one was over-broad).** Renewal never
+OVERWRITES a POPULATED cursor; it BOOTSTRAPS a null one. The original reasoning — persisting a fresh
+`startPageToken` silently drops every change between the last advance and the renewal — is only true
+of a cursor that exists. A null cursor has nothing to drop and everything to gain.
+
+**What changed (red-first; `drive-subscription-renewal.test.ts` → `describe('null-cursor bootstrap (BUG 2026-09-13)')`):**
+
+- `DriveSubscriptionRow` gains `last_page_token: string | null`, and the DB adapter's `select` list is
+  pinned by a test — if the column falls out of the select, the null check reads `undefined`,
+  indistinguishable from NULL, and the sweep would clobber a LIVE cursor on every pass.
+- `createChannel` on the client interface now returns an optional `startPageToken`, and
+  `jobs/drive-subscription-renewal-deps.ts` threads it through from `createChangesWatch()`. Optional
+  by design: its absence degrades to "no bootstrap", never to a failed renewal.
+- On the successful-renewal path ONLY, when the row's cursor is null/empty AND a `startPageToken` came
+  back, `last_page_token` + `last_token_advanced_at` ride along in the SAME `updateConnection` call as
+  the channel swap — atomic, so the cursor and the channel feeding it can never disagree. `now` is the
+  one already sampled for that write (one clock per decision).
+- A POPULATED cursor is still absent from the update **as a key**, not re-sent unchanged — a test
+  asserts `'last_page_token' in update === false`, because a key that is present at all is one
+  refactor away from carrying the wrong value.
+- Empty string counts as null. A bootstrap is logged (`info`, `{integrationId, orgId, bootstrapped:true}`)
+  only AFTER the write actually landed — a bootstrap that was not persisted is not a bootstrap — and a
+  null cursor whose watch returned no `startPageToken` is logged at **error** level with the reason
+  (not a silent skip: that connection stays unprocessable until a later sweep). Neither line carries a
+  token value, an account email, or anything out of `account_label`; a test greps the serialized log
+  calls for all three.
+- The logger is an injected optional interface (`DriveSubscriptionRenewalLogger`), never an import —
+  this module stays a pure orchestrator, and logging absence never changes what gets written.
+
+**Not changed, deliberately.** `drive-watch-bootstrap.ts` (DRIVE-02) is still not wired — it is the
+second, folder-scoped watch system with zero prod callers (see the "two parallel watch systems" note
+below), and wiring it is the architecture-debt reconciliation, not this fix. The changes
+processor/runner logic, `jobs/connector-artifact-drain.ts`, the webhooks and the migrations are
+untouched; only the runner's stale recovery COMMENT was corrected. Blast radius is exactly the rows
+with a null cursor — one in prod today.
+
 _Last updated: 2026-08-30 (`adobe-sign-token-store.ts` added for the Adobe Sign connect flow)._
+
+
+## 2026-09-12 — SCRUM-4507: the Drive link-back mapping lives in the PRODUCER, not the drain
+
+`connector-artifact-drain.ts` spreads a `connector_artifact` row's own `metadata` onto
+`anchors.metadata` wholesale. That makes the drain look like the natural place to add Drive
+provenance keys — and it is the wrong place. The drain is T3 (`check-staging-evidence.ts`
+"anchor-creating feeder / anchor pipeline", SCRUM-3802): a change there needs a 24h isolated
+soak and puts every connector's anchor creation in the blast radius, to add four keys that only
+one connector produces. The mapping therefore lands where the raw Drive change is actually in
+hand, and every later hop just carries the values:
+
+| Hop | File | What it gained |
+|---|---|---|
+| 1. classify | `drive-changes-processor.ts` | `ChangeDescriptor` gained `sharedDriveId` / `folderId` / `revisionKind`; `resolveRevisionId` became `resolveRevision`, returning the id AND which fallback produced it |
+| 2. enqueue | `drive-changes-processor.ts` | `enqueueFileChangedJob` payload gained `shared_drive_id` / `folder_id` / `folder_path` / `revision_kind` |
+| 3. adapt | `drive-changes-runner.ts` | the four fields cross the `null` -> `undefined` boundary with the existing ones |
+| 4. schema | `drive-artifact-producer.ts` | the four as `.optional()`, plus the `DRIVE_REVISION_KINDS` vocabulary |
+| 5. write | `jobs/drive-file-changed.ts` | `p_metadata` gained `_drive_shared_drive_id` / `_drive_folder_id` / `_drive_folder_path` / `_drive_revision_kind` |
+
+**`shared_drive_id` was already on the wire.** `listChanges`' field mask has always requested
+`driveId` and the Zod entry has always parsed it — nothing read it. No new Drive API call, no new
+scope, no extra round-trip: `folder_path` reuses the value PHASE 2 already resolved for that file.
+
+**Why `revision_kind` exists.** `revision_id` is not always a Drive revision. Workspace-native
+files expose no `headRevisionId`, so `resolveRevision` falls back to `mtime:<modifiedTime>`, and a
+change with neither falls back again to `evt:<time>:<fileId>`. Those prefixes are part of the 0343
+`connector_artifact` dedupe key and MUST NOT change — altering them re-anchors every Doc. But a
+surface that renders the value has to know which of the three it holds, or it labels a modification
+time as a document revision (§1.5). Downstream must switch on `_drive_revision_kind`, never parse
+the id's prefix.
+
+**The four fields are `.optional()` and that is load-bearing.** Jobs enqueued before this change are
+already in `job_queue` without them; a required field would fail `parse` on every one of those rows'
+next attempt and stall the pipeline behind a backlog it could never drain.
+
+**Never add an owner or account label.** Drive's `account_label` IS the connected Google account's
+email (`drive-account-label.ts`), and the change's `actor_email` is the last modifying user's. Neither
+exists on `DriveFileChangedJobPayload`, and `drive-artifact-producer.test.ts` pins the whole payload
+key set as a ratchet so a new field has to be added deliberately.
 
 ## 2026-08-30 — `adobe-sign-token-store.ts` reuses the DocuSign Secret Manager client on purpose
 
@@ -69,7 +167,7 @@ Founder-priority ("where is my fucking google drive connection") — the Drive c
 
 | File | Purpose |
 |------|---------|
-| `drive-subscription-renewal.ts` | **GH #1835**: pure orchestrator that renews `org_integrations` google_drive rows before their `changes.watch` channel expires (or registers one for a never-bootstrapped connection). NEVER touches `last_page_token` — see its own doc comment for why (a renewal that reset the cursor would silently drop unprocessed changes). Every successful renewal mints a fresh random `channel_token` (GH #1836 rotation). No cron here — see `jobs/drive-subscription-renewal-deps.ts` + `routes/cron.ts`. **PR #1944 review rounds 2-3** (see the entry above for full detail): create-then-stop channel ordering (CRITICAL), `boundedReason()` routes through canonical `boundedErrorDetail()` (PII scrub), bounded chunked concurrency (`RENEWAL_CONCURRENCY = 5`), account_label parse routes through `drive-account-label.ts`, and a `recordSetback()` inner closure consolidating what were 3 copy-pasted failure-recording blocks. |
+| `drive-subscription-renewal.ts` | **GH #1835**: pure orchestrator that renews `org_integrations` google_drive rows before their `changes.watch` channel expires (or registers one for a never-bootstrapped connection). Never OVERWRITES a populated `last_page_token` — a renewal that reset a live cursor would silently drop unprocessed changes — but since BUG 2026-09-13 it DOES bootstrap a null one from the new watch's `startPageToken`, in the same write as the channel swap; see its own doc comment and the 2026-09-13 entry above. Every successful renewal mints a fresh random `channel_token` (GH #1836 rotation). No cron here — see `jobs/drive-subscription-renewal-deps.ts` + `routes/cron.ts`. **PR #1944 review rounds 2-3** (see the entry above for full detail): create-then-stop channel ordering (CRITICAL), `boundedReason()` routes through canonical `boundedErrorDetail()` (PII scrub), bounded chunked concurrency (`RENEWAL_CONCURRENCY = 5`), account_label parse routes through `drive-account-label.ts`, and a `recordSetback()` inner closure consolidating what were 3 copy-pasted failure-recording blocks. |
 | `drive-account-label.ts` | **NEW (PR #1944 review round 3 addendum)**: canonical `parseDriveAccountLabel(raw: string \| null \| undefined): DriveAccountLabel \| null` + `stringifyDriveAccountLabel(label)`. Returns `null` for null/empty/invalid-JSON/non-object input — covers both a Drive row with no label yet and a plain non-JSON display string (the shape other connectors' `account_label` columns use). Consolidates 4 near-duplicate inline `JSON.parse` call sites that disagreed on edge-case handling: `drive-oauth.ts` (disconnect flow), `webhooks/drive.ts` (`resolveDriveChannel`), `drive-subscription-renewal.ts` (this folder), and `api/connector-health.ts` (`sanitizeAccountLabel`). Any new Drive code reading or writing `account_label` MUST go through this file, not another inline `JSON.parse`/`JSON.stringify`. |
 
 ## What This Folder Contains

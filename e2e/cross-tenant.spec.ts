@@ -54,6 +54,7 @@
  *   fixtures)
  */
 
+import { readSeedAal2Token } from './helpers/seed-session';
 import { request as playwrightRequest, type APIRequestContext, type Page } from '@playwright/test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { test, expect, getServiceClient, createTestAnchor, deleteTestAnchor, SEED_USERS } from './fixtures';
@@ -292,17 +293,9 @@ test.describe('Cross-Tenant Isolation — direct PostgREST (RLS)', () => {
     // must deny cross-tenant reads; see the seed-cast caveat in the header).
     accessorClient = createClient(SUPABASE_URL, anonKey, {
       auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${await readSeedAal2Token('orgAdmin')}` } },
       ...WS_CLIENT_OPTIONS,
     });
-    const { data, error } = await accessorClient.auth.signInWithPassword({
-      email: SEED_USERS.orgAdmin.email,
-      password: SEED_USERS.orgAdmin.password,
-    });
-    if (error || !data.session) {
-      throw new Error(
-        `precondition: org A admin session not authenticated — signInWithPassword failed: ${error?.message ?? 'no session'}`,
-      );
-    }
 
     const ts = Date.now();
     // DEG-4: PENDING only.
@@ -337,18 +330,8 @@ test.describe('Cross-Tenant Isolation — direct PostgREST (RLS)', () => {
     for (const id of createdAnchorIds) {
       await deleteTestAnchor(serviceClient, id);
     }
-    // scope:'local' is load-bearing: supabase-js signOut() defaults to
-    // scope:'global', which revokes EVERY session for demo-admin — including
-    // the .auth/orgAdmin.json storageState session that auth.setup.ts minted
-    // and every later spec in a single-invocation run reuses. Against hosted
-    // GoTrue that bounced every subsequent orgAdminPage spec to /login
-    // (observed 2026-08-15 on the fullsoak side-rig: csv-upload, dashboard,
-    // error-states, integrations-docusign*, org-admin… all failed the moment
-    // this afterAll ran). CI's local GoTrue masks it, per-spec invocations
-    // mask it; one full-suite invocation against a hosted project does not.
-    // Matches the app's own convention (src/hooks/useAuth.ts uses
-    // scope:'local' everywhere).
-    await accessorClient?.auth.signOut({ scope: 'local' }).catch(() => {});
+    // The token belongs to auth.setup.ts: never revoke its borrowed session.
+
   });
 
   test('RLS silently filters cross-tenant anchor reads for an authenticated org-admin JWT', async () => {
@@ -408,19 +391,6 @@ test.describe('Cross-Tenant Isolation — public API (API keys)', () => {
   let orgAJobId: string;
   let orgBJobId: string;
 
-  async function mintBearerToken(email: string, password: string, label: string): Promise<string> {
-    const anonKey = requireLiveEnv('VITE_SUPABASE_ANON_KEY', 'cross-tenant public-API coverage');
-    const anon = createClient(SUPABASE_URL, anonKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-      ...WS_CLIENT_OPTIONS,
-    });
-    const { data, error } = await anon.auth.signInWithPassword({ email, password });
-    if (error || !data.session) {
-      throw new Error(`precondition: ${label} session not authenticated — signInWithPassword failed: ${error?.message ?? 'no session'}`);
-    }
-    return data.session.access_token;
-  }
-
   async function createApiKey(bearerToken: string, name: string, label: string): Promise<string> {
     const res = await api.post(`${WORKER_URL}/api/v1/keys`, {
       headers: { Authorization: `Bearer ${bearerToken}` },
@@ -475,8 +445,8 @@ test.describe('Cross-Tenant Isolation — public API (API keys)', () => {
     // seed flag is irrelevant here: job ownership is checked per API KEY, and
     // each key is org-scoped at creation.
     const [orgAToken, orgBToken] = await Promise.all([
-      mintBearerToken(SEED_USERS.orgAdmin.email, SEED_USERS.orgAdmin.password, 'org A admin'),
-      mintBearerToken(SEED_USERS.orgBAdmin.email, SEED_USERS.orgBAdmin.password, 'org B admin'),
+      readSeedAal2Token('orgAdmin'),
+      readSeedAal2Token('orgBAdmin'),
     ]);
     orgAKey = await createApiKey(orgAToken, KEY_NAMES.orgA, 'org A');
     orgBKey = await createApiKey(orgBToken, KEY_NAMES.orgB, 'org B');

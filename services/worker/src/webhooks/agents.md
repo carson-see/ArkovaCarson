@@ -180,6 +180,160 @@ declaration stops resolving, and runs inside the already-required `Tests` job
 via the root vitest `scripts/**` glob — no workflow wiring needed. Register a
 schema in this file and that check goes red until every mirror follows.
 
+## 2026-09-12 — banned fields refused on EVERY outbound payload + attestation events registered (SCRUM-3982)
+
+Two changes in `payload-schemas.ts`, one ratchet and one registration.
+
+**1. `BANNED_PAYLOAD_KEYS` is now enforced, not just documented.** This file's
+header has listed `anchor_id` / `fingerprint` / `org_id` / `user_id` / `_`-led
+keys as banned since SCRUM-1268, but the only thing that enforced them was
+`.strict()` on the per-event schemas — which never ran for an event type that
+was not a key of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`. That unregistered path is the
+one every incident in this class actually travelled (SCRUM-1794, BUG-002, and
+the two live producers below). `validateWebhookPayload` now scans top-level
+payload keys against that list **before** the registry lookup, so the ban binds
+registered and unregistered types alike and returns `ok: false`; `delivery.ts`
+already error-logs and throws on that, unchanged.
+
+The error names the offending KEY and never its value — the value is exactly
+the fingerprint or UUID being refused, and the message reaches logs, Sentry and
+`job_queue.last_error`.
+
+**2. `attestation.created` + `attestation.revoked` registered**, appended after
+`compliance.document_expiring`, with public-id-only `.strict()` schemas and all
+six ordered mirrors updated in the same commit
+(`scripts/ci/check-webhook-event-registration-drift.ts` names them).
+`services/worker/src/api/v1/attestations.ts` stopped putting `fingerprint`
+(CLAUDE.md §1.6) in the `attestation.created` payload.
+
+| Event | Schema | Producer | Status |
+|---|---|---|---|
+| `attestation.created` | `AttestationCreatedPayloadSchema` (SCRUM-3982) | `services/worker/src/api/v1/attestations.ts` (`POST /api/v1/attestations`) | Live. The `profiles` lookup selects `org_id`, so the dispatch guard can be true |
+| `attestation.revoked` | `AttestationRevokedPayloadSchema` (SCRUM-3982) | `services/worker/src/api/v1/attestations.ts` (`PATCH /api/v1/attestations/:publicId/revoke`) | Registered + subscribable, **never dispatched**: the guard reads `attestation.attester_org_id` while the ownership query selects only `id, status, attester_user_id`, so it is always false |
+
+### What this PR deliberately did NOT close — stated gaps
+
+- **Seven event types remain dispatched-but-unregistered**: `attestation.active`,
+  `anchor.revocation_anchored`, `job.completed`, `compliance.anchor_delayed`,
+  `compliance.certificate_expiring`, `compliance.signature_revoked`,
+  `compliance.timestamp_coverage_low`. A clean payload on any of them still
+  passes with `bypassed: true`, by design — the ban is on the FIELDS, not on
+  being unregistered, and refusing unknown types wholesale would break seven
+  live call sites at once with no subscriber benefit (nothing can subscribe to
+  an unregistered type).
+- **Two of those producers ship banned fields and are refused at this boundary
+  rather than fixed at source**: `services/worker/src/jobs/revocation.ts`
+  (`anchor_id` + `fingerprint`) and `services/worker/src/jobs/attestationAnchor.ts`
+  (`fingerprint`). Both are T3 anchor-lifecycle files, and both wrap the
+  dispatch in a non-fatal try/catch, so the refusal costs a warn log and the
+  job continues. Their payloads must be rewritten public-id-only in a T3
+  change, not here.
+- **`job_id`, `certificate_id` and `signature_id` are NOT in
+  `BANNED_PAYLOAD_KEYS`.** They are internal UUIDs on unregistered events, and
+  they still pass. The ban list is derived from what this file's header
+  declares, and widening it is a separate decision; registering those events
+  with public-id-only schemas is the real fix.
+- **The scan is top-level only**, matching what `.strict()` does for registered
+  types. A banned key nested inside a sub-object is not caught. No current
+  producer nests one.
+- **`webhook_endpoints.events` still has no allow-list CHECK**, so a row can
+  name an event type the registry does not know. Deferred deliberately: it
+  couples with SCRUM-3972's seven new `suborg.*` entries.
+
+### Correction to the SCRUM-3982 ticket text
+
+The ticket claimed `anchor.batch_secured` "is never emitted". Measured against
+this tree: `services/worker/src/jobs/check-confirmations.ts:153` and `:169` do
+carry `event_type: 'anchor.batch_secured'`, but those build `audit_events`
+rows, not webhook dispatches. `git grep -n "dispatchWebhookEvent(" services/worker/src`
+returns no `anchor.batch_secured` call site anywhere, so the event is
+registered, subscribable, and documented while nothing dispatches it. The
+ticket's claim is correct for webhooks; what exists is an audit row that shares
+the name.
+
+## CTO review of SCRUM-3982 (2026-09-12) — what changed and why
+
+The first cut of the ratchet was correct about the leak class and wrong about
+three of its own premises. All three were found by reading the subscription
+path and the producers rather than the diff.
+
+### The stated gaps above are superseded
+
+- **"Nothing can subscribe to an unregistered type" is FALSE.** It holds for
+  `POST /api/v1/webhooks`, whose Zod schema restricts `events` to
+  `VALID_WEBHOOK_EVENTS` — but that route is one of three writers.
+  `create_webhook_endpoint(p_url, p_events)` is `SECURITY DEFINER`, `GRANT`ed to
+  `authenticated`, and inserts `p_events` with no allowlist check; and
+  `webhook_endpoints_insert_org` / `webhook_endpoints_update_org` let any
+  ORG_ADMIN write the `events` column directly through PostgREST. There is no
+  CHECK constraint. So an unregistered type **is** subscribable and was being
+  delivered with nothing having inspected it. Unregistered types now FAIL
+  CLOSED; the seven with live dispatch sites are grandfathered on
+  `LEGACY_UNREGISTERED_EVENT_TYPES`, which is a shrinking ratchet, not a
+  permanent carve-out.
+- **The scan is no longer top-level only.** `jobs/attestationAnchor.ts` builds a
+  nested `metadata` object, so "top level mirrors `.strict()`" was not a mirror
+  of anything on the unregistered path — `.strict()` is the authority for
+  registered types, and the scan is the authority where there is no schema.
+  `findBannedPayloadKeys` now recurses into objects and arrays and reports
+  dotted paths.
+- **The ban list is derived, not hand-written.** `BANNED_PAYLOAD_KEYS` is
+  `BANNED_RESPONSE_KEYS` (api/v1/response-schemas.ts) ∪ `fingerprint`. A webhook
+  payload is a more exposed surface than a response body, so the response ban
+  binds here a fortiori, and the two lists can no longer drift. Matching is
+  normalised (camelCase → snake_case, lowercased), covers qualified spellings
+  (`attester_org_id`, `source_anchor_id`) and anything containing `fingerprint`
+  (`document_fingerprint`, `fingerprint_sha256`). `job_id` / `certificate_id` /
+  `signature_id` remain deliberately un-banned — see the note above; that is
+  unchanged and still tracked on SCRUM-5063.
+
+### The ratchet binds every path out of the process, not just the first dispatch
+
+`dispatchWebhookEvent` only ever sees an event's FIRST dispatch. Two other
+paths re-sign a payload read back from `webhook_delivery_logs.payload`:
+
+- `replayDelivery` (`POST /api/v1/webhooks/deliveries/:id/replay` and the
+  self-service route) — now returns `payload_refused` → HTTP 422.
+- `processWebhookRetries` — a refused head row is terminated (`status='failed'`
+  with the reason in `error_message`) rather than left in `retrying`, because a
+  permanent refusal that stays `retrying` is re-read every sweep AND
+  head-of-line-blocks every newer event for that resource forever.
+
+Refused rows are **not** moved to the dead-letter queue: migration 0338's
+`failure_kind` CHECK admits only `http_delivery` | `log_write`, and neither is
+true. Recording a refusal as an HTTP failure would be a false audit fact.
+Extending `failure_kind` needs a migration (T3) and is tracked on SCRUM-5063.
+
+**What a stored payload is refused for.** `unrecognized_keys` (a field we never
+declared — the leak class) and `custom` (an event type with no schema). NOT a
+missing required field, a malformed timestamp, or a failed refine: schemas have
+tightened over time (PR #567 made `anchor.secured`'s chain fields non-nullable),
+and refusing on that would make every pre-change delivery log un-replayable —
+an availability regression wearing a security control's clothes.
+
+**Refusal logging is rate-limited** to one error per (event type, path, key
+paths) per minute, with the suppressed count folded into the next log. A
+refusal is usually permanent, so an un-limited log would emit the same error per
+row per sweep forever and train everyone to ignore it.
+
+### Prod census — whose measurement this is
+
+The "4 active endpoints, subscribed only to `anchor.secured` / `anchor.revoked` /
+`anchor.expired`, no CHECK constraint on `webhook_endpoints.events`" census is
+the **CTO session's** read-only SQL of 2026-09-12 ~17:20Z, not this branch's.
+Cite it as that. It is what supports "no live subscriber loses a delivery from
+this change" — and note it is a point-in-time fact: an ORG_ADMIN can add an
+unregistered event type to that column at any moment through either of the two
+writers above, which is exactly why fail-closed replaced bypass.
+
+### `fingerprint` in `attestations.ts` is NOT dead — do not strip the selects
+
+`attestations.ts:428` and `:816` select `fingerprint` and the review ledger
+listed them as having no consumer. They do: the 201 response bodies at `:489`
+(single create) and `:851` (batch create) both publish `fingerprint`, and that
+field is part of the frozen v1 contract (CLAUDE.md §1.8 — removal needs a `v2`
+prefix and a 12-month deprecation). It is the attestation-content hash computed
+at `:395`, and it is banned from *webhook payloads* only. Left in place.
 ## 2026-09-12 SCRUM-4983 — every outbound webhook socket is IP-pinned (`egress.ts`)
 
 `isPrivateUrlResolved()` was a pre-check, not a connection guard: it resolved and validated the

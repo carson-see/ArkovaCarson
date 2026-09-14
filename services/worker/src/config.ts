@@ -229,6 +229,50 @@ const ConfigSchema = z.object({
    */
   healthDetailToken: z.string().min(16).optional(),
 
+  /**
+   * SCRUM-3888 — origin guard for the public Cloud Run origin.
+   *
+   * `arkova-worker-*.run.app` answers publicly and unauthenticated
+   * (`ingress=all`, `invoker-iam-disabled`, empty IAM policy — CLAUDE.md
+   * §1.1 Ingress row, verified 2026-09-13), bypassing Cloudflare entirely.
+   * `requireCloudflareOrigin` (middleware/requireCloudflareOrigin.ts) checks
+   * a shared-secret header a Cloudflare Transform Rule will inject on every
+   * proxied request once the release session configures it — this flag
+   * governs what the middleware DOES when the header is absent or wrong:
+   *
+   *   - `off`     — default. No behaviour change; the middleware is a no-op.
+   *   - `observe` — never blocks. Logs + counts `origin_guard_would_block`
+   *                 per route family so the rollout can see how much traffic
+   *                 would be rejected (including any partner/SDK caller
+   *                 still configured against the bare run.app host — see
+   *                 the CLOUDFLARE_ORIGIN_GUARD.md runbook) before enforcing.
+   *   - `enforce` — 403 `origin_not_allowed` on a missing/wrong header.
+   *
+   * Read PER REQUEST (config.ts is a singleton re-read on every access, not
+   * captured once at middleware-factory time), so flipping this on a Cloud
+   * Run revision is a plain env-var update — no redeploy needed to roll
+   * forward to observe, or back to off.
+   *
+   * NOT registered in flagRegistry.ts's ENV_FLAG_GETTERS: that map is
+   * boolean-only (it powers /health's flag snapshot and the flag-inventory
+   * CI gate, whose deploy-worker.yml parser only matches `ENABLE_*=true|false`
+   * / `MAINTENANCE_MODE=true|false`), and this is a 3-state mode selector —
+   * same precedent as `bitcoinFeeStrategy` below, which also lives outside
+   * that boolean surface.
+   */
+  cloudflareOriginGuardMode: z.enum(['off', 'observe', 'enforce']).default('off'),
+  /**
+   * Shared secret a Cloudflare Transform Rule injects as
+   * `X-Arkova-Origin-Auth` on every request proxied through
+   * api./edge./docs.arkova.ai. Compared with `crypto.timingSafeEqual` on
+   * equal-length buffers (see requireCloudflareOrigin.ts). Optional at the
+   * schema level so `off` mode never requires it — the cross-field guard
+   * below fails the boot loudly the moment `observe`/`enforce` is selected
+   * without it, rather than letting the middleware run with an unmeetable
+   * comparison (every request would read as unauthenticated).
+   */
+  cloudflareOriginSecret: z.string().min(16).optional(),
+
   // Email (BETA-03)
   /** Resend API key for transactional emails */
   resendApiKey: z.string().min(1).optional(),
@@ -438,6 +482,20 @@ const ConfigSchema = z.object({
   computeidWebhookSecret: z.string().optional(),
   /** Pinned ComputeID CA — X.509 certificate PEM (prod) or bare SPKI public-key PEM (staging/tests). Never fetched at runtime. */
   computeidCaCertPem: z.string().optional(),
+  /**
+   * Base origin for the ONE outbound ComputeID call we make: the scheduled
+   * passport re-check's `GET /v1/agents/{id}/verify` (SCRUM-4495). It lives in
+   * config, never in request or row data, so no caller can steer the request
+   * (SSRF). Admission stays fully offline — it never calls the partner.
+   */
+  computeidApiBaseUrl: z.string().url().default('https://api.aicomputeid.com'),
+  /**
+   * Arkova's ComputeID partner API key (`X-API-Key`), used ONLY by the
+   * scheduled re-check. Optional on purpose: the re-check reports itself
+   * skipped rather than failing the worker, so the key can be provisioned
+   * after the integration is otherwise live.
+   */
+  computeidApiKey: z.string().optional(),
   /** Microsoft Graph subscription clientState. Required when ENABLE_MICROSOFT_GRAPH_WEBHOOK=true. */
   microsoftGraphClientState: z.string().optional(),
   enableMicrosoftGraphWebhook: boolFlag(false),
@@ -688,6 +746,27 @@ const ConfigSchema = z.object({
     });
   }
 
+  // SCRUM-3888 — the origin guard's comparison is unmeetable without a secret
+  // to compare against: every request would read as unauthenticated, which in
+  // `observe` mode floods the would-block counters with noise and in
+  // `enforce` mode 403s every caller, including Cloudflare itself once the
+  // Transform Rule is live. Fail loudly at boot in EITHER mode, in every
+  // environment — a soak run in `observe` on staging with no secret configured
+  // is exactly as unable to prove anything as a silent prod misconfiguration
+  // would be, and `off` (the default) never reaches this branch.
+  if (cfg.cloudflareOriginGuardMode !== 'off' && !cfg.cloudflareOriginSecret) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'CLOUDFLARE_ORIGIN_GUARD_MODE=observe|enforce requires CLOUDFLARE_ORIGIN_SECRET. '
+        + 'Without it requireCloudflareOrigin cannot compare the inbound header against '
+        + 'anything, so every request — including Cloudflare-proxied traffic once the '
+        + 'Transform Rule is live — would fail the check. Set the secret, or leave the '
+        + 'mode at its default `off`.',
+      path: ['cloudflareOriginSecret'],
+    });
+  }
+
   // SCRUM-534: frontendUrl defaults to http://localhost:5173 for dev convenience,
   // but that default would generate broken user-facing links (verify URLs, invite
   // emails, GRC evidence URLs) if it ever reached production. Require FRONTEND_URL
@@ -877,6 +956,22 @@ const ConfigSchema = z.object({
         });
       }
     }
+  } else if (cfg.computeidCaCertPem?.trim()) {
+    // VALIDATE-IF-PRESENT (SCRUM-4495 review). Since 2026-09-12 the pin is
+    // wired into deploy-worker.yml `--set-secrets` while the flag is still
+    // false, so a malformed or rotated PEM now sits in prod completely
+    // unexercised — and is first parsed by the activation deploy, i.e. the one
+    // moment nobody wants a surprise. Warn (never `addIssue`) while the flag is
+    // off: a dark integration must not be able to fail the worker's boot.
+    try {
+      loadPinnedCa(cfg.computeidCaCertPem);
+    } catch (err) {
+      console.warn(
+        '[config] COMPUTEID_CA_CERT_PEM is set but is NOT a usable CA pin '
+        + `(${err instanceof Error ? err.message : String(err)}). The ComputeID integration is dark, so this is not fatal — `
+        + 'but flipping ENABLE_COMPUTEID_INTEGRATION=true will fail the boot until it is fixed.',
+      );
+    }
   }
 
   // Veremark: when the webhook is enabled, the HMAC secret must be set.
@@ -1062,6 +1157,8 @@ function loadConfig(): Config {
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     healthDetailToken: process.env.HEALTH_DETAIL_TOKEN,
+    cloudflareOriginGuardMode: process.env.CLOUDFLARE_ORIGIN_GUARD_MODE,
+    cloudflareOriginSecret: process.env.CLOUDFLARE_ORIGIN_SECRET,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
     x402FacilitatorUrl: process.env.X402_FACILITATOR_URL,
     arkovaUsdcAddress: process.env.ARKOVA_USDC_ADDRESS,
@@ -1110,6 +1207,8 @@ function loadConfig(): Config {
     enableComputeidIntegration: process.env.ENABLE_COMPUTEID_INTEGRATION,
     computeidWebhookSecret: process.env.COMPUTEID_WEBHOOK_SECRET,
     computeidCaCertPem: process.env.COMPUTEID_CA_CERT_PEM,
+    computeidApiBaseUrl: process.env.COMPUTEID_API_BASE_URL,
+    computeidApiKey: process.env.COMPUTEID_API_KEY,
     microsoftGraphClientState: process.env.MICROSOFT_GRAPH_CLIENT_STATE,
     enableMicrosoftGraphWebhook: process.env.ENABLE_MICROSOFT_GRAPH_WEBHOOK,
     middeskApiKey: process.env.MIDDESK_API_KEY,
