@@ -14,6 +14,54 @@
 
 ## Now
 
+### 2026-09-14T04:41Z — Train B5b sealed (#2841 #2846 #2909 #2912), rig 1
+
+- Train B5b (T2, 4h floor) soaked on rig 1 (Supabase xhvasifpunswhsgfsstd, Cloud Run
+  arkova-worker-cto-train-b-0912-staging tag train-7, rev -00025-rav, candidate
+  9321e767c3ce249cd53ea94654f38434ec7035be) from 2026-09-14T00:40:38Z to 2026-09-14T04:41:08.746Z:
+  45/45 cycles cycle_pass=true, 105/105 probes every cycle (identity +
+  #2841 43 + #2846 25 + #2909 21 + #2912 15). Two earlier launch attempts this window
+  (wrong probe set, then wrong tag URL) are archived and NOT cited as evidence — see
+  `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/window1/SOAK_START`.
+- Post-soak, all four branches needed T0-only doc fixes before Mergify's required checks
+  would go green: a real `services/worker/src/agents.md` merge conflict on #2912 (GitHub's
+  mergeability check does not honor `.gitattributes`' `agents.md merge=union` driver, so two
+  PRs inserting a dated entry at the same anchor point produce a real CONFLICTING state even
+  though a local union-aware merge is clean — fixed by not touching the shared header line);
+  a repo-wide sweep of agents.md files each branch had gone stale on without ever touching
+  (18-22 files per branch, all confirmed byte-identical to that branch's own merge-base
+  before syncing); and the `count-exact-allowed` label on all four (main-drift moved the
+  R0-8 baseline from 79 to 80, not caused by any of these PRs' own diffs).
+- #2841, #2846, #2909: taken to `gh pr ready`, evidence blocks filled, Mergify queue.
+- #2912: soak evidence is real and recorded (`## Staging Soak Evidence` on the PR, honest
+  NOT-ASSERTED line for the Drive folder-picker path since `ENABLE_DRIVE_OAUTH` is off on
+  this rig), but the PR stays Draft — SonarCloud's Quality Gate is genuinely failing
+  ("4.2% Duplication on New Code" vs a 3% ceiling), which is a required check in every
+  Mergify queue rule with no override label. Fixing it needs real `.tsx` code (not T0), which
+  cannot ride the Post-soak T0 delta allowance and would need its own soak — out of scope for
+  tonight. Follow-up task spawned; do not re-attempt the T0-delta trick on this finding.
+- Manifest: `docs/staging/rc-manifests/rc-train-b5b-2026-09-13.json`. Rig/supervisor left
+  running per §1.11A (do not tear down). Full trail:
+  `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md`.
+
+### Soaks — Train B5b CLOSED 2026-09-14T04:41Z; rig 1 idle, supervisor pid 31065 still alive (do not kill)
+
+Rig 1 (`arkova-worker-cto-train-b-0912-staging`, Supabase `xhvasifpunswhsgfsstd`) has NO
+soak running right now for a NEW candidate. The Train B5b supervisor (pid 31065, launched
+2026-09-14T00:40:38Z) finished its 45/45-cycle T2 window at 04:41:08Z and was intentionally
+left running per CLAUDE.md §1.11A ("leave the rig, the supervisor and all evidence in
+place") — it will keep firing 5-min cycles against the train-7 tag indefinitely until
+someone stops it or repoints TRAIN_TAG_URL for a new train. Seeing this pid alive is
+expected, not a stray process. Traffic tags train-b/train-b2/train-3/train-5/train-6/train-7 are all still live on
+this service (verified via `gcloud run services describe arkova-worker-cto-train-b-0912-staging`
+2026-09-14T04:41Z); 100% DEFAULT traffic still goes to revision `-00011-dvm` (untagged, Train
+B5a's candidate — no tagged revision on this rig carries default traffic). Train B5b's own
+candidate is `-00025-rav` tagged `train-7`. Recheck tag->revision mapping before reusing any
+tag name for a new train — this rig has accumulated one tag per train and they are not
+reclaimed automatically.
+
+
+
 ### 2026-09-13T15:10Z → 15:45Z — CTO release session (Claude Fable): B3b live on prod, standing-rig pair unblocked, GitHub cleaned, PRs 4–6 of 8 opened
 
 **Read this block first.** Earlier blocks stay accurate except where this one supersedes them.
@@ -2748,4 +2796,4 @@ _Last refreshed: 2026-09-10 by Codex release review — claims verified against 
 
 
 
-_Last refreshed: 2026-09-13 by Claude Fable 5.1 (CTO release session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-14 by Claude Sonnet 5 (CTO release session) — claims verified against gh pr checks/gcloud/MCP output cited in /Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md._
