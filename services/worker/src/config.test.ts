@@ -295,6 +295,88 @@ describe('IP_HASH_PEPPER production guard (DPA IP pseudonymisation)', () => {
 });
 
 /**
+ * SCRUM-3888 — CLOUDFLARE_ORIGIN_GUARD_MODE / CLOUDFLARE_ORIGIN_SECRET.
+ *
+ * The guard's comparison is unmeetable without a secret to compare against,
+ * so `observe`/`enforce` must fail the boot loudly (in every environment,
+ * not just production — an observe-mode soak with no secret would prove
+ * nothing) when the secret is missing or too short to be a real secret. The
+ * default `off` must never require it, in any environment.
+ */
+describe('CLOUDFLARE_ORIGIN_GUARD_MODE / CLOUDFLARE_ORIGIN_SECRET', () => {
+  it('defaults to off with no secret required, in dev/test', async () => {
+    await withConfig(
+      { CLOUDFLARE_ORIGIN_GUARD_MODE: undefined, CLOUDFLARE_ORIGIN_SECRET: undefined },
+      (mod) => {
+        expect(mod.config.cloudflareOriginGuardMode).toBe('off');
+        expect(mod.config.cloudflareOriginSecret).toBeUndefined();
+      },
+    );
+  });
+
+  it('defaults to off with no secret required, in production', async () => {
+    await withConfig(
+      { ...PROD_BASE_ENV, NODE_ENV: 'production', CLOUDFLARE_ORIGIN_GUARD_MODE: undefined },
+      (mod) => {
+        expect(mod.config.cloudflareOriginGuardMode).toBe('off');
+      },
+    );
+  });
+
+  it('rejects an unrecognized mode value', async () => {
+    await expectConfigToReject({ CLOUDFLARE_ORIGIN_GUARD_MODE: 'bogus' });
+  });
+
+  it('rejects observe mode with no secret configured, even outside production', async () => {
+    await expectConfigToReject({
+      CLOUDFLARE_ORIGIN_GUARD_MODE: 'observe',
+      CLOUDFLARE_ORIGIN_SECRET: undefined,
+    });
+  });
+
+  it('rejects enforce mode with no secret configured', async () => {
+    await expectConfigToReject({
+      CLOUDFLARE_ORIGIN_GUARD_MODE: 'enforce',
+      CLOUDFLARE_ORIGIN_SECRET: undefined,
+    });
+  });
+
+  it('rejects enforce mode with a secret too short to be real', async () => {
+    await expectConfigToReject({
+      CLOUDFLARE_ORIGIN_GUARD_MODE: 'enforce',
+      CLOUDFLARE_ORIGIN_SECRET: 'short',
+    });
+  });
+
+  it('accepts observe mode with a valid secret and exposes both on config', async () => {
+    await withConfig(
+      {
+        CLOUDFLARE_ORIGIN_GUARD_MODE: 'observe',
+        CLOUDFLARE_ORIGIN_SECRET: 'a-real-cloudflare-shared-secret-value',
+      },
+      (mod) => {
+        expect(mod.config.cloudflareOriginGuardMode).toBe('observe');
+        expect(mod.config.cloudflareOriginSecret).toBe('a-real-cloudflare-shared-secret-value');
+      },
+    );
+  });
+
+  it('accepts enforce mode with a valid secret in production', async () => {
+    await withConfig(
+      {
+        ...PROD_BASE_ENV,
+        NODE_ENV: 'production',
+        CLOUDFLARE_ORIGIN_GUARD_MODE: 'enforce',
+        CLOUDFLARE_ORIGIN_SECRET: 'a-real-cloudflare-shared-secret-value',
+      },
+      (mod) => {
+        expect(mod.config.cloudflareOriginGuardMode).toBe('enforce');
+      },
+    );
+  });
+});
+
+/**
  * SCRUM-1257 (R1-3) — kmsProvider default 'aws' → 'gcp' + fail-loud production guard.
  *
  * Why: forensic 2/8 found that an accidental `--remove-env-vars=KMS_PROVIDER` on

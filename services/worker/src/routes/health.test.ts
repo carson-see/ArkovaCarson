@@ -442,6 +442,36 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       expect(info.prodAnchoring).toBeDefined();
     });
 
+    // SCRUM-3888 — origin-guard rollout counters. Optional dep, mirrors
+    // getAnchoringRpcStatus: absent entirely when the dep is not supplied
+    // (every existing caller/mock stays valid), present under info.originGuard
+    // when it is.
+    it('omits info.originGuard when the dep is not supplied', async () => {
+      const deps = createMockDeps();
+      const result = await buildHealthResponse(deps, true);
+      const info = result.body.info as Record<string, unknown>;
+      expect(info.originGuard).toBeUndefined();
+    });
+
+    it('includes info.originGuard when the dep is supplied', async () => {
+      const deps = createMockDeps({
+        getOriginGuardStats: () => ({
+          mode: 'observe',
+          secretConfigured: true,
+          total: 3,
+          byRouteFamily: { 'api-v1': 3 },
+        }),
+      });
+      const result = await buildHealthResponse(deps, true);
+      const info = result.body.info as Record<string, unknown>;
+      expect(info.originGuard).toEqual({
+        mode: 'observe',
+        secretConfigured: true,
+        total: 3,
+        byRouteFamily: { 'api-v1': 3 },
+      });
+    });
+
     it('does not include info in compact mode', async () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, false);

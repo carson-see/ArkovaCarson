@@ -30,6 +30,16 @@
       "doc": "src/pages/agents.md",
       "path": "packages/verifier-cli/dist/cli.js",
       "reason": "Generated build artifact. dist/ is gitignored (.gitignore:12); this path is the STEP_3_CMD the documented build produces, and the same paragraph exists to say a bare `arkova-verify` is not on PATH so `node packages/verifier-cli/dist/cli.js` must be used instead. A tracked file here would mean dist/ was committed."
+    },
+    {
+      "doc": "docs/api/agents.md",
+      "path": "docs/partners/docusign-integration-guide.html",
+      "reason": "SCRUM-3906 task instructions named this file as needing a search-availability update. It is untracked scratch work in another session's working directory only (confirmed via git status at task start) — it does not exist on main or in any PR branch. The pointer documents that it was checked for and found absent, not a promise it exists."
+    },
+    {
+      "doc": "docs/api/agents.md",
+      "path": "docs/partners/hakichain-integration-guide.html",
+      "reason": "Same as docusign-integration-guide.html above — named by the SCRUM-3906 task instructions, confirmed untracked/absent from main via git status, not created by this PR."
     }
   ]
 }

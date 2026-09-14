@@ -17,6 +17,7 @@ import {
   hasEvidenceSection,
   hasResidualRiskException,
   isDeployWorkerUsesOnlyBump,
+  isEdgeDeployOnlyChange,
   isFrontendOnlyChange,
   isOfflinePackageOnlyChange,
   isS33Lane1RootLintScriptOnly,
@@ -5417,6 +5418,177 @@ ${deltaLine}
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/not a T0-classified file/i);
+    });
+  });
+
+  // ── CTO decision 2026-09-13 (PR #2908): edge-only Image digest carve-out ──
+  // check-staging-evidence.ts's Image digest validator requires a literal
+  // sha256:<64 hex> OCI image digest, which does not exist for a Cloudflare
+  // Worker deploy (no OCI image is built). isEdgeDeployOnlyChange gates a
+  // narrow, fail-closed carve-out: an edge-only PR may give the deployed
+  // Worker's immutable Version ID (a UUID) instead of a digest.
+  describe('isEdgeDeployOnlyChange (CTO edge-deploy carve-out, 2026-09-13)', () => {
+    // PR #2908's real, final changed-file list (edge-deploy.yml pipeline).
+    const edgeOnlyFiles = [
+      '.github/workflows/agents.md',
+      '.github/workflows/ci.yml',
+      '.github/workflows/edge-deploy.yml',
+      'docs/reference/ENV.md',
+      'scripts/ci/agents.md',
+      'scripts/ci/check-edge-deployed-version.test.ts',
+      'scripts/ci/check-edge-deployed-version.ts',
+      'services/edge/agents.md',
+      'services/edge/package-lock.json',
+      'services/edge/package.json',
+      'services/edge/scripts/agents.md',
+      'services/edge/scripts/generate-build-info.mjs',
+      'services/edge/scripts/generate-build-info.test.ts',
+      'services/edge/src/build-info.ts',
+      'services/edge/src/index.test.ts',
+      'services/edge/src/index.ts',
+      'services/edge/vitest.config.ts',
+    ];
+
+    it('is true for the #2908 edge-deploy real fileset', () => {
+      expect(isEdgeDeployOnlyChange(edgeOnlyFiles)).toBe(true);
+    });
+
+    it('is true for a minimal single edge source file', () => {
+      expect(isEdgeDeployOnlyChange(['services/edge/src/index.ts'])).toBe(true);
+    });
+
+    it('(e) is false when a services/worker/ file rides alongside edge files', () => {
+      expect(isEdgeDeployOnlyChange([
+        ...edgeOnlyFiles,
+        'services/worker/src/api/v1/verify.ts',
+      ])).toBe(false);
+    });
+
+    it('(e) is false when a migration rides alongside edge files', () => {
+      expect(isEdgeDeployOnlyChange([
+        'services/edge/src/index.ts',
+        'supabase/migrations/0430_x.sql',
+      ])).toBe(false);
+    });
+
+    it('is false when a frontend src/ file rides alongside edge files', () => {
+      expect(isEdgeDeployOnlyChange([
+        'services/edge/src/index.ts',
+        'src/components/Foo.tsx',
+      ])).toBe(false);
+    });
+
+    it('is false when a packages/ SDK file rides alongside edge files', () => {
+      expect(isEdgeDeployOnlyChange([
+        'services/edge/src/index.ts',
+        'packages/typescript/src/index.ts',
+      ])).toBe(false);
+    });
+
+    it('is false when a sdks/ file rides alongside edge files', () => {
+      expect(isEdgeDeployOnlyChange([
+        'services/edge/src/index.ts',
+        'sdks/typescript/src/index.ts',
+      ])).toBe(false);
+    });
+
+    it('is false when no services/edge/ file is present at all (nothing to bind evidence to)', () => {
+      expect(isEdgeDeployOnlyChange(['.github/workflows/ci.yml', 'scripts/ci/foo.ts'])).toBe(false);
+    });
+
+    it('(f) is false for an empty fileset', () => {
+      expect(isEdgeDeployOnlyChange([])).toBe(false);
+    });
+  });
+
+  describe('T2 Image digest — Cloudflare Worker Version ID carve-out (CTO decision 2026-09-13)', () => {
+    const headSha = '1234567890abcdef1234567890abcdef12345678';
+    const baseSha = 'abcdef1234567890abcdef1234567890abcdef12';
+    const workerVersionId = 'af6f4e22-7067-4833-9248-af422082b992';
+    const edgeOnlyFiles = [
+      '.github/workflows/edge-deploy.yml',
+      'services/edge/src/index.ts',
+      'services/edge/src/build-info.ts',
+    ];
+
+    // Modelled directly on the proven-passing `mergeGradeT2Body` fixture above
+    // (same field set/order); only the worker-specific identity fields are
+    // swapped for their edge equivalents, and the Image digest line is the
+    // one thing under test.
+    function edgeT2Body(imageDigestLine: string): string {
+      return `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-edge-cto-2908 — Cloudflare Version ID ${workerVersionId}
+- PR head SHA: ${headSha}
+- Changed behavior: edge-deploy.yml pipeline deploys the Cloudflare Worker and verifies deployed-version parity
+- Targeted evidence: rig deploy of this exact head confirmed via a deployed-version parity verification check against /health git_sha
+- Load/concurrency evidence: concurrency group prevents overlapping deploys; supervisor probed every 5 minutes for the soak window
+- Base SHA: ${baseSha}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://arkova-edge-cto-2908.carson-182.workers.dev
+- ${imageDigestLine}
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+`;
+    }
+
+    it('(b) an edge-only PR with a valid Cloudflare Worker Version ID PASSES', () => {
+      const r = check({
+        body: edgeT2Body(`Image digest: ${workerVersionId}`),
+        files: edgeOnlyFiles,
+        headSha,
+        baseSha,
+      });
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('(d) an edge-only PR with a real sha256 digest still passes (unchanged behaviour)', () => {
+      const r = check({
+        body: edgeT2Body(
+          'Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        ),
+        files: edgeOnlyFiles,
+        headSha,
+        baseSha,
+      });
+      expect(r.ok).toBe(true);
+    });
+
+    it('(c) an edge-only PR with junk in the Image digest field is rejected', () => {
+      const r = check({
+        body: edgeT2Body('Image digest: not-a-real-identifier'),
+        files: edgeOnlyFiles,
+        headSha,
+        baseSha,
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Image digest:/);
+      expect(r.errors.join(' ')).toMatch(/sha256/i);
+      expect(r.errors.join(' ')).toMatch(/Worker Version ID/i);
+    });
+
+    it('(a) a worker-touching PR with a Worker Version ID in Image digest is still REJECTED', () => {
+      const r = check({
+        body: edgeT2Body(`Image digest: ${workerVersionId}`),
+        // Same body, but the fileset now also includes a real Cloud Run
+        // worker file — a digest IS producible, so the carve-out must not
+        // apply and the plain sha256 requirement stands.
+        files: [...edgeOnlyFiles, 'services/worker/src/api/v1/verify.ts'],
+        headSha,
+        baseSha,
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Image digest:/);
+      expect(r.errors.join(' ')).toMatch(/sha256/i);
     });
   });
 });

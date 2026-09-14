@@ -9,6 +9,15 @@ import { Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { API_KEY_SCOPES } from '../apiScopes.js';
 import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
+// SCRUM-4507: the source-provider vocabulary, taken from the SAME closed
+// marker set the verify endpoint gates on (constants/connectorFingerprint.ts).
+// Imported from the constants module rather than from `verify.ts` on purpose:
+// `verify.ts` pulls in the db client and config at module scope, and this
+// module is imported by tests that deliberately do not stand those up. Both
+// surfaces therefore reference ONE frozen, already-ordered array rather than
+// each materialising its own — see the constant's own header for why the
+// order is stated and the array is frozen.
+import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js';
 
 const router = Router();
 
@@ -1737,20 +1746,42 @@ export const openApiSpec: Record<string, any> = {
       get: {
         summary: 'Agentic verification search',
         description:
-          'Semantic search returning frozen verification schema results. Designed for AI agents, ATS systems, and background check integrations. Requires API key (not JWT).',
+          'Search returning frozen verification schema results. Designed for AI agents, ATS systems, and background check integrations. Requires API key (not JWT). '
+          + 'SCRUM-3906: this route now answers with EITHER a semantic (embedding + cosine-similarity) match OR a lexical (ILIKE substring) match — `search_mode` on '
+          + 'the response says which. Semantic is used when ENABLE_SEMANTIC_SEARCH is on and the embed+match RPC succeeds; the route falls back to lexical, never a 503, '
+          + 'when the flag is off or that RPC/embedding call fails. Only the semantic path costs an AI credit or emits `similarity`; `issuer_name`, `issued_date`, `expiry_date` '
+          + 'and `anchor_timestamp` are omitted (never null) on a lexical result — that path does not query them.',
         operationId: 'agenticVerifySearch',
         tags: ['AI Intelligence', 'Verification'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         parameters: [
           { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 } },
-          { name: 'threshold', in: 'query', schema: { type: 'number', default: 0.75 } },
+          { name: 'threshold', in: 'query', schema: { type: 'number', default: 0.75 }, description: 'Semantic-path only; ignored on a lexical-path request.' },
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 5, maximum: 20 } },
         ],
         responses: {
-          '200': { description: 'Verification results with similarity scores', content: { 'application/json': { schema: { type: 'object', properties: { results: { type: 'array', items: { $ref: '#/components/schemas/VerificationResult' } }, total: { type: 'integer' } } } } } },
+          '200': {
+            description: 'Verification results. `search_mode` (`semantic_vector` | `lexical_substring`) tells the caller which path answered — see the operation description.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    query: { type: 'string' },
+                    results: { type: 'array', items: { $ref: '#/components/schemas/VerificationResult' } },
+                    count: { type: 'integer' },
+                    threshold: { type: 'number', description: 'Echoes the request threshold; not applied on the lexical path.' },
+                    search_mode: { type: 'string', enum: ['semantic_vector', 'lexical_substring'] },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '402': { description: 'No AI credits remaining for the semantic path (flag on, RPC not yet attempted). Retry to get a lexical result instead is NOT automatic on this status — insufficient credits is a distinct condition from a semantic RPC failure.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
-          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+          '503': { description: 'ENABLE_VERIFICATION_API is off (worker-wide gate, applies to all of /api/v1/*). No longer returned for ENABLE_SEMANTIC_SEARCH off — see the operation description.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
     },
@@ -1827,6 +1858,38 @@ export const openApiSpec: Record<string, any> = {
               + 'class (Constitution 1.5) — in particular, for root_only records, '
               + 'that no self-contained per-document offline proof is available, '
               + 'and that its absence is not evidence the record is invalid.',
+          },
+          source: {
+            // SCRUM-4507. Enum members are the runtime recognised-marker set
+            // itself — the same array `verify.ts` re-exports as
+            // VERIFICATION_SOURCE_PROVIDERS — so the served spec can never
+            // document a value the endpoint would refuse to emit, or omit one
+            // it emits.
+            type: 'object',
+            properties: {
+              provider: {
+                type: 'string',
+                enum: CONNECTOR_FETCH_SOURCE_MARKERS_SORTED,
+                description:
+                  'The connected system this record\'s document was retrieved from.',
+              },
+            },
+            description:
+              'SCRUM-4507. Which connected document source this record originated '
+              + 'from. OMITTED (never null, never an empty object) when the record '
+              + 'carries no recognised connector marker — absence means "not '
+              + 'stated", NOT "uploaded by a person". '
+              + 'Carries the provider label and NOTHING ELSE: no file, folder, '
+              + 'shared-drive or revision identifier and no deep link into the '
+              + 'source system. This endpoint answers anonymously, so a source '
+              + 'identifier here would let any holder of a public record id probe '
+              + 'the source system for that object; those identifiers are shown '
+              + 'only to the record owner on the authenticated record page. '
+              + 'Not asserted: that the document still exists in the source '
+              + 'system, is unchanged there, or is reachable by the caller — see '
+              + 'fingerprint_rederivability for what the fingerprint does and does '
+              + 'not commit. Additive field (Constitution 1.8); no API version '
+              + 'change.',
           },
           compliance_controls: {
             // SCRUM-2227: this was declared `type: object`, but the field has
