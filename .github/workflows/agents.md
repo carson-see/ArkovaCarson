@@ -1,5 +1,15 @@
 # .github/workflows/ — CI/CD Workflows
 
+## PR #2940 — Edge deploy follows the installed Wrangler version
+
+Both edge dry-run and production deploy invoke `./node_modules/.bin/wrangler`
+from `services/edge/` after locked `npm ci`. Do not add a second hardcoded version
+to the workflow: Dependabot updates the manifest/lock together, so the old
+`npx --no-install wrangler@4.130.0` failed as soon as 4.131.1 was installed.
+Direct execution keeps the no-download guarantee and fails if the local binary
+is missing. The production credentials and deployed-version verification remain
+separate from the credential-free PR bundle dry run.
+
 ## 2026-09-05 — `publish-sdk.yml` job name, and the two things this folder does NOT do
 
 The job was named "Build, test, and publish arkova (npm)". There are two npm packages in
