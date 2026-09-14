@@ -52,6 +52,7 @@ import { aiReviewRouter } from './ai-review.js';
 import { aiIntegrityRouter } from './ai-integrity.js';
 import { aiEmbedRouter } from './ai-embed.js';
 import { aiFeedbackRouter } from './ai-feedback.js';
+import { aiVerifySearchRouter } from './ai-verify-search.js';
 
 type ExpressMethod = 'get' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -129,6 +130,11 @@ const MOUNTS: MountEntry[] = [
   { varName: 'aiIntegrityRouter', router: aiIntegrityRouter, prefix: '/ai/integrity' },
   { varName: 'aiEmbedRouter', router: aiEmbedRouter, prefix: '/ai/embed' },
   { varName: 'aiFeedbackRouter', router: aiFeedbackRouter, prefix: '/ai/feedback' },
+  // SCRUM-3906: added when the aiSemanticSearchGate() mount-time gate was
+  // removed from '/verify/search' — this MOUNTS table is the only thing
+  // that would have caught a served-spec / mounted-route drift on that
+  // route, and it did not cover it before this entry.
+  { varName: 'aiVerifySearchRouter', router: aiVerifySearchRouter, prefix: '/verify/search' },
 ];
 
 describe('served v1 OpenAPI spec — mounted route parity (pentest-prep)', () => {
