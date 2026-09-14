@@ -283,3 +283,10 @@ Two new typed config entries, both read through `config` and never `process.env`
 - `computeidApiKey` (`COMPUTEID_API_KEY`) — optional **by decision**, pinned by a test in `config.test.ts`. The flag-on refine deliberately does NOT require it: the re-check reports itself skipped rather than blocking activation on a key provisioned separately. The silence that decision used to buy is gone — the job logs ERROR and raises a Sentry event when the flag is on and the key is missing.
 
 **Validate-if-present for `COMPUTEID_CA_CERT_PEM` (W11b).** The refine block validated the pin only inside `if (cfg.enableComputeidIntegration)`. Since the pin is now in `deploy-worker.yml --set-secrets` while the flag is still false, a malformed or rotated PEM sits in prod entirely unexercised and is first parsed by the *activation* deploy — the one moment nobody wants a surprise. It is now parsed whenever it is present, and a failure while the flag is OFF is a `console.warn`, never an `addIssue`: a dark integration must not be able to stop the worker booting. Flag ON keeps the hard failure, including the production "must be an X.509 certificate, not a bare SPKI pin" rule.
+
+## 2026-09-14 — SCRUM-5142 MCP registry assertion
+
+`mcp-tools.test.ts` includes `arkova_manage_folders` in the exact ordered runtime
+registry. Adding an MCP tool must update this list and the canonical
+`docs/api/mcp-tools.md` inventory together; keep the gated
+`arkova_anchor_document` exclusion distinct from the default catalog count.

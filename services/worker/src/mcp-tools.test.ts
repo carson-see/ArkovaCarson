@@ -69,6 +69,7 @@ const EXPECTED_TOOL_NAMES = [
   'arkova_get_document',
   'arkova_oracle_batch_verify',
   'arkova_list_agents',
+  'arkova_manage_folders',
 ];
 
 describe('TOOL_DEFINITIONS', () => {

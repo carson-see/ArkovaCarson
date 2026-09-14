@@ -24,3 +24,11 @@ Tests for middleware modules that use a shared test directory rather than co-loc
 - Organization quota tests cover exact bulk delta, canonical/compatibility
   headers, daily versus capacity backends, and DB-error/rejection fail-closed
   behavior. Never make external RPC or Supabase calls in these tests.
+# 2026-09-14 — requireAuth source assertion boundary
+
+`phiScopeMount.test.ts` locates the next top-level function declaration after
+`requireAuth` before checking that JWT-only guard. Folder API authentication now
+lives in the adjacent `requireFolderAuth`; widening the slice through that
+separate API-key-aware helper creates a false PHI failure. The assertions still
+inspect only `requireAuth` and still require its Bearer-key rejection and lack
+of `req.apiKey`/`X-API-Key` access.

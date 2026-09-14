@@ -210,11 +210,12 @@ describe('canonical agent workflow documentation', () => {
     ).map((match) => match[1]);
     // `arkova_anchor_document` is registered at runtime only when
     // `MCP_ENABLE_ANCHOR_DOCUMENT=true` (see mcp-server.ts) — it is not
-    // part of the default read-only launch surface.
+    // part of the default launch catalog.
     const launchToolNames = definedToolNames.filter((name) => name !== 'arkova_anchor_document');
 
-    expect(launchToolNames).toHaveLength(15);
-    expect(mcpToolsDoc).toContain('exposes fifteen read-oriented launch tools');
+    expect(launchToolNames).toHaveLength(16);
+    expect(mcpToolsDoc).toContain('exposes sixteen launch tools');
+    expect(mcpToolsDoc).toContain('fifteen read-oriented tools and one scoped folder-management tool');
     expect(launchToolNames).not.toContain('arkova_anchor_document');
     expect(mcpToolsDoc).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
 
@@ -261,7 +262,8 @@ describe('canonical agent workflow documentation', () => {
     expect(mcpServerSource).toContain("scopes: Array.isArray(data.scopes) ? data.scopes : []");
     expect(mcpServerSource).toContain('scopes: local.scopes');
     expect(mcpJwtSource).toContain('scopesFromPayload');
-    expect(mcpToolsDoc).toContain('public MCP launch is read-only');
+    expect(mcpToolsDoc).toContain('Folder mutations remain separately available through `arkova_manage_folders`');
+    expect(mcpToolsDoc).toContain('only to callers with `anchor:write`');
     expect(mcpToolsDoc).toContain('gated write tool');
   });
 });
