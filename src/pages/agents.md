@@ -827,6 +827,14 @@ One-line addition to the `<AssetDetailView anchor={{...}}>` object literal: `fin
 
 Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Attestation outside the viewport. Document scrollWidth did not detect it because the shell clips overflow. Stack the heading and action group below lg and allow the actions to wrap. The staging browser regression checks every action bounding box at 375px and 1280px; it failed before this fix. Preserve this geometry check alongside actual database loading/error/retry and tenant-isolation checks.
 
+## 2026-09-12 — SCRUM-5023: `ApiKeySettingsPage` passes `extendKey` through
+
+`useApiKeys().extendKey` → `<ApiKeySettings onExtend>`. No page-level logic: the page is a pass-through
+for the hook, as it already is for create/revoke/delete. `ApiKeySettingsPage.test.tsx` mocks the whole
+hook, so a new hook member must be added to that mock or the page renders an `undefined` handler that
+only fails when a user clicks.
+
+
 ## PR #2782 — proof download block identity
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.

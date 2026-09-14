@@ -14,6 +14,40 @@ export function esc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * SCRUM-5023 — sanitise user-controlled text destined for a SUBJECT LINE.
+ *
+ * `esc()` is the wrong tool here: a subject is not HTML, so escaping would
+ * ship a literal `&quot;` to the reader's inbox. What a subject cannot carry
+ * is control characters — CR/LF in particular, the classic header-injection
+ * primitive. Arkova sends through Resend's JSON API, which builds the message
+ * itself, so injection is not reachable today; this is defence that does not
+ * depend on a third party's parser staying the way it is.
+ *
+ * The reachable problem is quieter: an API key's name is caller-supplied and
+ * lands inside quotes in the subject, so a name containing its own quotes and
+ * clauses lets one ORG_ADMIN forge the shape of a system notice to their
+ * colleagues. Collapsing whitespace and bounding the length removes the room
+ * to build one.
+ */
+export function subjectSafe(value: string, maxLength = 120): string {
+  // eslint-disable-next-line no-control-regex -- stripping control characters is the point.
+  const flattened = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (flattened.length <= maxLength) return flattened;
+  return `${flattened.slice(0, maxLength - 1).trimEnd()}\u2026`;
+}
+
+/**
+ * "today" / "in 1 day" / "in N days" — never "in 0 days" or "in 1 days".
+ * `null` means the caller could not compute a remaining count.
+ */
+export function relativeDaysLabel(days: number | null): string {
+  if (days === null) return 'soon';
+  if (days <= 0) return 'today';
+  if (days === 1) return 'in 1 day';
+  return `in ${days} days`;
+}
+
 export const SHARED_STYLES = {
   container: 'font-family: "Helvetica Neue", Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px; background-color: #ffffff;',
   header: 'text-align: center; margin-bottom: 32px;',

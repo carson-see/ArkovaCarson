@@ -1,3 +1,16 @@
+## 2026-09-12 — SCRUM-5023: `api-key-expiry.ts`
+
+Expiry notice for an API key, in two kinds. **The kinds are not cosmetic**: `expiring` states a
+deadline with time to act; `expired` states that requests are ALREADY being refused. A partner reading
+"expires soon" about a key that died in July learns nothing actionable — that was the defect.
+
+**This template receives the key PREFIX and NAME, and nothing else (Constitution 1.4).** An email is
+the least controllable artifact the system produces: it lands in an inbox, a mail archive, and usually
+a support thread. The raw key is unrecoverable by construction (only the HMAC is stored) and the hash
+must never leave the worker. `api-key-expiry.test.ts` asserts no 64-hex string of any kind appears in
+subject or body, and that a crafted key name cannot inject markup (names are user-supplied and land in
+an HTML document — `esc()` from `_template.ts` is mandatory, not decorative).
+
 # services/worker/src/emails/
 
 Individual email template modules. Each file builds a specific transactional email using the shared layout from `_template.ts` and sends via the `email/sender.ts` infrastructure.
