@@ -43,6 +43,8 @@ import {
   type ExpiringKeyRow,
 } from './api-key-expiry-notice.js';
 import { db } from '../utils/db.js';
+import { config } from '../config.js';
+import { sendApiKeyExpiryEmail } from '../emails/api-key-expiry.js';
 
 const NOW = new Date('2026-09-12T09:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -391,4 +393,24 @@ describe('the real dedupe query (makeApiKeyExpiryNoticeDeps)', () => {
     const deps = makeApiKeyExpiryNoticeDeps();
     await expect(deps.listPriorNotices('key-1')).rejects.toThrow(/dedupe lookup failed/);
   });
+});
+
+describe('notice management link', () => {
+  it.each(['https://app.test', 'https://app.test/', 'https://app.test///'])(
+    'uses the registered route with frontendUrl=%s', async (frontendUrl) => {
+      const original = config.frontendUrl;
+      try {
+        config.frontendUrl = frontendUrl;
+        await makeApiKeyExpiryNoticeDeps().sendNotice({
+          to: 'admin@example.test', keyName: 'key', keyPrefix: 'ak_live_demo',
+          kind: 'expiring', expiresAt: at(3), daysRemaining: 3, orgId: 'org-1',
+        });
+        expect(sendApiKeyExpiryEmail).toHaveBeenCalledWith(expect.objectContaining({
+          manageKeysUrl: 'https://app.test/settings/api-keys',
+        }));
+      } finally {
+        config.frontendUrl = original;
+      }
+    },
+  );
 });

@@ -255,9 +255,8 @@ export function makeApiKeyExpiryNoticeDeps(): ApiKeyExpiryNoticeDeps {
     },
 
     listOrgAdminEmails(orgId) {
-      // Union of `profiles.role = 'ORG_ADMIN'` and `org_members` owner/admin —
-      // see utils/orgAdminRecipients.ts for the prod row that made a
-      // profiles-only lookup lose an org's only administrator.
+      // Match the current key-management API: profile ORG_ADMIN in this org.
+      // A membership-only admin cannot act on this notice's management link.
       return listOrgAdminRecipients(db, orgId);
     },
 
@@ -269,7 +268,7 @@ export function makeApiKeyExpiryNoticeDeps(): ApiKeyExpiryNoticeDeps {
         kind: payload.kind,
         expiresAt: payload.expiresAt,
         daysRemaining: payload.daysRemaining,
-        manageKeysUrl: `${config.frontendUrl}/settings/api-keys`,
+        manageKeysUrl: `${config.frontendUrl.replace(/\/+$/, '')}/settings/api-keys`,
         orgId: payload.orgId,
       });
       return { success };

@@ -498,7 +498,7 @@ export const openApiSpec: Record<string, any> = {
           '404': { $ref: '#/components/responses/NotFound' },
           '409': {
             description:
-              'api_key_already_revoked — revocation is terminal, so the key cannot be reactivated or extended; or api_key_expiry_would_shorten — the requested expiry is earlier than the current one and allow_shorten was not set.',
+              'api_key_already_revoked — revocation is terminal, so the key cannot be reactivated or extended; or api_key_expiry_would_shorten — the requested expiry is earlier than the current one and allow_shorten was not set; or api_key_changed — expiry or revocation changed concurrently, so refresh before retrying.',
           },
         },
       },

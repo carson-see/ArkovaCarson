@@ -392,3 +392,17 @@ CI automatically; no workflow edit was needed.
 - **`dlqKind` can represent a value the database cannot store, on purpose.** Migration `0338` ships `CHECK (failure_kind IN ('http_delivery', 'log_write'))` and that constraint is live on prod. Because the DLQ write is a PostgREST upsert, a rejection arrives in `{ error }` rather than as a throw, so a third value loses the audit row silently while the "Moved to dead letter queue" info line still fires. `dlqKindSatisfiesMigration0338Check` is the ratchet: the negative control (set `EGRESS_REFUSED` in `refuseAtPinnedLayer`) violates it in two steps. Widening the CHECK needs a migration, which makes any such change T3.
 - The A1/A2/AMAX ladder stands in for `MAX_RETRIES = 5`: the model proves the SHAPE of the ladder, not its depth. Circuit breaker, per-resource head-of-line ordering (SCRUM-2250) and idempotency-key dedupe are **out of scope** — they are covered by `webhooks/delivery.test.ts`.
 - `SUCCESS` and `FAILED` are terminal by design, so `checks: { deadlock: false }` — same resolution as `partnerProvisioning` and `drainRunAccounting`. Documentation-only: no `runtimeAdapter`; the rows live on `webhook_delivery_logs` / `webhook_dead_letter_queue`, which this machine does not own.
+
+## 2026-09-14 — PR #2841 expiry model review correction
+
+The 2026-09-12 assertion that no interleaving affects no-shortening was incorrect:
+two requests can validate one snapshot and overwrite a farther extension.
+`apiKeyExpiry.machine.ts` now has two independent read/validate/commit requests,
+nullable expiry ordered SOON/FAR/NONE, explicit shortening acknowledgement,
+revocation and rejected stale writes. Commit compares the captured expiry and
+current revocation state atomically, matching the handler's UPDATE predicates.
+Removing the expiry comparison while retaining the revocation check produces a
+TLC counterexample to `expiryWritesRespectCurrentState` in which a later write
+shortens a concurrent extension. Graph equivalence is explicitly requested.
+This finite model covers the write protocol, not tenant authorization, elapsed
+clock arithmetic, notice delivery or liveness. No generated adapter is claimed.

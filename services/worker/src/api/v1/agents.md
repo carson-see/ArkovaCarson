@@ -1497,3 +1497,31 @@ above WAS escaped — the inconsistency is the tell). Each term now goes through
 (`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
 `entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
 filters here; if you need OR semantics across columns, run the terms separately and union.
+
+## 2026-09-14 — PR #2841 expiry concurrency review correction
+
+The no-shortening check in the 2026-09-12 entry was a read-then-write decision.
+Two extensions could pass against the same old expiry and commit in reverse order,
+silently shortening the first result. Expiry updates now compare `expires_at`
+(including `IS NULL`), `is_active=true` and `revoked_at IS NULL` in the atomic
+UPDATE, preserving id/org ownership predicates. Zero matched rows returns 409
+`api_key_changed`, with no expiry-change audit; operational errors remain 500.
+The client must refresh before deciding again. A revoke combined with an expiry
+still drops the expiry and follows the existing revocation path.
+
+`keys-expiry.test.ts` injects separately committed extension/removal/revocation
+between the real handler's read and update. Four races failed before the fix;
+a database-error control distinguishes conflict from infrastructure failure.
+The two-request `apiKeyExpiry.machine.ts` now checks this interleaving explicitly.
+This runtime correction needs new staging qualification; prior Train B5c evidence
+covers its original head only. The recipient scope correction is documented in
+services/worker/src/jobs/agents.md under the same date.
+
+## 2026-09-14 — PR #2841 v1 creation compatibility correction
+
+The 3650-day POST cap described on 2026-09-12 is withdrawn: it rejected positive
+integer durations accepted by the frozen v1 creation API. CreateKeySchema retains
+its prior positive-integer contract; the newly added PATCH expiry capability
+keeps its explicit 1..3650 constraint. A real-route regression creates a key with
+3651 days and verifies the persisted row and returned countdown. Invalid fractional
+creation input still returns the existing field-scoped 400 response.

@@ -1999,3 +1999,19 @@ Read before changing it:
 - **An all-authentication-failure run THROWS** (CTO ruling 2026-09-12). A Sentry message alone was not enough: the route answered 200, so `withCronMonitoring` reported an OK check-in and the monitor said the safety net was healthy while a rotated key meant it verified nothing. The throw becomes a 500 and the check-in goes to `error`. Partial auth failures do not qualify — one bad passport is not a rotated key.
 - **`COMPUTEID_RECHECK_CRON`** is the single source for the schedule: the `withCronMonitoring` slug's declared crontab and the schedule quoted in `cloud-scheduler.sh`'s `NOT_SCHEDULED` reason, bound together by a test. Nothing bound the literal before, so Sentry's monitor could have drifted from the gcloud binding silently.
 - **Correction to the rationale, not the schedule.** `17 * * * *` stays, but the reason given for it was false: SCRUM-4475 replaced the global bucket, so the `:00` pile-up is **not** currently costing other jobs 429s. Spreading off `:00` is prevention, not a fix for a live incident. Corrected in all four places that repeated the claim.
+
+## 2026-09-14 — PR #2841 actionable notices and URL correction
+
+This supersedes the 2026-09-12 UNION-recipient decision above. The current key
+management API authorizes the profile ORG_ADMIN's home organization, so the
+expiry notice uses that same scope. Membership-only admins and foreign-home-org
+admins would receive an action link they cannot use; they are excluded until
+selected-org key management exists. An org with no eligible profile admin increments
+`noRecipients`, sends nothing, and records no notification. This is explicit
+unhandled work, not successful delivery. Provider delivery is still subject to
+the job's existing configuration checks.
+
+Notice links trim trailing slashes from the configured frontend URL before adding
+`/settings/api-keys`; otherwise valid configuration produced an unmatched `//` route.
+Tests cover normal, single-slash and repeated-slash base URLs using the actual deps
+factory and a mocked email transport. No email was sent by these tests.

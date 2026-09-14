@@ -1,138 +1,110 @@
-/**
- * SCRUM-5023 — who actually receives an org-scoped administrative notice.
- *
- * The bug this pins: prod's "Fragile Rocks" org holds ONE active key with an
- * expiry ahead of it, ZERO `profiles` rows at `role = 'ORG_ADMIN'`, and ONE
- * `org_members` row at `role = 'admin'` whose profile has a live address. A
- * profiles-only lookup returns `[]` there, the notice job counts a
- * `noRecipients`, and the key lapses in silence — the exact outcome this story
- * exists to prevent, reintroduced inside the fix for it.
- */
+/** API-key notices must reach people authorized to act on that org's keys. */
 import { describe, it, expect } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { listOrgAdminRecipients } from './orgAdminRecipients.js';
 
-type Result = { data: unknown; error: { message: string } | null };
-
-/**
- * Records every filter applied, then answers with whatever the scenario
- * queued for that table. `profiles` is queried twice (role-based, then by
- * id), so its answers are a queue, not a single value.
- */
-function makeClient(scenario: {
-  profilesByRole?: Result;
-  profilesByIds?: Result;
-  members?: Result;
-}) {
-  const filters: Array<{ table: string; op: string; args: unknown[] }> = [];
-  const profileAnswers = [
-    scenario.profilesByRole ?? { data: [], error: null },
-    scenario.profilesByIds ?? { data: [], error: null },
-  ];
-
-  const client = {
+type Row = Record<string, unknown>;
+function makeClient(
+  profiles: Row[], members: Row[] = [],
+  options: { serverCap?: number; failAtOffset?: number } = {},
+) {
+  return {
     from(table: string) {
-      const result = table === 'profiles'
-        ? profileAnswers.shift() ?? { data: [], error: null }
-        : scenario.members ?? { data: [], error: null };
-
-      const builder: Record<string, unknown> = {};
-      for (const op of ['select', 'eq', 'in', 'is']) {
-        builder[op] = (...args: unknown[]) => {
-          filters.push({ table, op, args });
+      const predicates: Array<(row: Row) => boolean> = [];
+      const rows = table === 'profiles' ? profiles : members;
+      let offset = 0;
+      let limit = options.serverCap ?? 1_000;
+      let orderColumn: string | null = null;
+      const builder = {
+        select: () => builder,
+        eq: (column: string, value: unknown) => { predicates.push((row) => row[column] === value); return builder; },
+        is: (column: string, value: unknown) => { predicates.push((row) => row[column] === value); return builder; },
+        in: (column: string, values: unknown[]) => { predicates.push((row) => values.includes(row[column])); return builder; },
+        order: (column: string) => { orderColumn = column; return builder; },
+        range: (from: number, to: number) => {
+          offset = from;
+          limit = Math.min(to - from + 1, options.serverCap ?? 1_000);
           return builder;
-        };
-      }
-      // The terminal await: any builder method may be the last one called.
-      (builder as { then: unknown }).then = (resolve: (r: Result) => unknown) => resolve(result);
+        },
+        then: (resolve: (value: unknown) => unknown) => {
+          const filtered = rows.filter((row) => predicates.every((predicate) => predicate(row)));
+          if (orderColumn) {
+            const column = orderColumn;
+            filtered.sort((a, b) => String(a[column]).localeCompare(String(b[column])));
+          }
+          const failed = options.failAtOffset !== undefined && offset >= options.failAtOffset;
+          return resolve({
+            data: failed ? null : filtered.slice(offset, offset + limit),
+            error: failed ? { code: '08006', message: 'connection reset' } : null,
+          });
+        },
+      };
       return builder;
     },
   } as unknown as SupabaseClient;
-
-  return { client, filters };
 }
+const admin = (overrides: Row = {}): Row => ({
+  id: 'admin-1', org_id: 'org-1', role: 'ORG_ADMIN', deleted_at: null,
+  email: 'admin@example.test', ...overrides,
+});
 
-describe('listOrgAdminRecipients', () => {
-  it('returns the profiles-table ORG_ADMINs', async () => {
-    const { client } = makeClient({
-      profilesByRole: { data: [{ email: 'admin@partner.example' }], error: null },
-    });
-
-    await expect(listOrgAdminRecipients(client, 'org-1')).resolves.toEqual(['admin@partner.example']);
+describe('listOrgAdminRecipients — API-key authorization parity', () => {
+  it('returns the owning-org profile administrators', async () => {
+    await expect(listOrgAdminRecipients(makeClient([admin()]), 'org-1'))
+      .resolves.toEqual(['admin@example.test']);
   });
 
-  it('finds an org_members admin that the profiles role column does not know about', async () => {
-    // Fragile Rocks, verified in prod 2026-09-12.
-    const { client } = makeClient({
-      profilesByRole: { data: [], error: null },
-      members: { data: [{ user_id: 'user-9' }], error: null },
-      profilesByIds: { data: [{ email: 'owner@fragilerocks.example' }], error: null },
-    });
-
-    await expect(listOrgAdminRecipients(client, 'org-1'))
-      .resolves.toEqual(['owner@fragilerocks.example']);
+  it('does not notify membership-only administrators who cannot use the key-management API', async () => {
+    const profile = admin({ id: 'member-1', role: 'INDIVIDUAL', email: 'member@example.test' });
+    const membership = { org_id: 'org-1', user_id: 'member-1', role: 'admin' };
+    await expect(listOrgAdminRecipients(makeClient([profile], [membership]), 'org-1')).resolves.toEqual([]);
   });
 
-  it('de-duplicates an admin recorded in BOTH tables, case-insensitively', async () => {
-    // Org creators normally appear in both; the address casing need not match.
-    const { client } = makeClient({
-      profilesByRole: { data: [{ email: 'Carson@Arkova.io' }], error: null },
-      members: { data: [{ user_id: 'user-1' }], error: null },
-      profilesByIds: { data: [{ email: 'carson@arkova.io' }], error: null },
-    });
-
-    // The stored casing of the FIRST sighting is what gets mailed: the local
-    // part of an address is technically case-sensitive.
-    await expect(listOrgAdminRecipients(client, 'org-1')).resolves.toEqual(['Carson@Arkova.io']);
+  it('does not notify a foreign-home-org administrator whose notice link opens different keys', async () => {
+    const profile = admin({ org_id: 'org-2' });
+    const membership = { org_id: 'org-1', user_id: 'admin-1', role: 'owner' };
+    await expect(listOrgAdminRecipients(makeClient([profile], [membership]), 'org-1')).resolves.toEqual([]);
   });
 
-  it('asks only for owner and admin members', async () => {
-    const { client, filters } = makeClient({ members: { data: [], error: null } });
-    await listOrgAdminRecipients(client, 'org-1');
-
-    const roleFilter = filters.find((f) => f.table === 'org_members' && f.op === 'in');
-    expect(roleFilter?.args).toEqual(['role', ['owner', 'admin']]);
+  it('excludes soft-deleted profiles even when an administrator membership remains', async () => {
+    const profile = admin({ deleted_at: '2026-09-01T00:00:00Z' });
+    const membership = { org_id: 'org-1', user_id: 'admin-1', role: 'admin' };
+    await expect(listOrgAdminRecipients(makeClient([profile], [membership]), 'org-1')).resolves.toEqual([]);
   });
 
-  it('excludes soft-deleted profiles from both lookups', async () => {
-    const { client, filters } = makeClient({
-      members: { data: [{ user_id: 'user-9' }], error: null },
-    });
-    await listOrgAdminRecipients(client, 'org-1');
-
-    const deletedFilters = filters.filter((f) => f.table === 'profiles' && f.op === 'is');
-    expect(deletedFilters).toHaveLength(2);
-    expect(deletedFilters.every((f) => f.args[0] === 'deleted_at' && f.args[1] === null)).toBe(true);
+  it('de-duplicates addresses case-insensitively while retaining stored casing', async () => {
+    const profiles = [admin({ email: 'Admin@example.test' }), admin({ id: 'admin-2' })];
+    await expect(listOrgAdminRecipients(makeClient(profiles), 'org-1')).resolves.toEqual(['Admin@example.test']);
   });
 
-  it('skips blank and missing addresses rather than mailing an empty string', async () => {
-    const { client } = makeClient({
-      profilesByRole: { data: [{ email: '  ' }, { email: null }, { email: 'real@example.test' }], error: null },
-    });
-
-    await expect(listOrgAdminRecipients(client, 'org-1')).resolves.toEqual(['real@example.test']);
+  it('ignores missing and blank addresses', async () => {
+    const profiles = [admin({ email: null }), admin({ email: '   ' }), admin({ email: ' usable@example.test ' })];
+    await expect(listOrgAdminRecipients(makeClient(profiles), 'org-1')).resolves.toEqual(['usable@example.test']);
   });
 
-  it('does not resolve member profiles when there are no admin members', async () => {
-    const { client, filters } = makeClient({ members: { data: [], error: null } });
-    await listOrgAdminRecipients(client, 'org-1');
-
-    expect(filters.some((f) => f.table === 'profiles' && f.op === 'in')).toBe(false);
+  it('returns every authorized recipient beyond 1,000 rows when the server returns short pages', async () => {
+    const profiles = Array.from({ length: 1_205 }, (_, i) => admin({
+      id: `admin-${String(i).padStart(4, '0')}`, email: `admin-${i}@example.test`,
+    }));
+    const expected = profiles.map((profile) => profile.email);
+    await expect(listOrgAdminRecipients(makeClient(profiles.reverse(), [], { serverCap: 400 }), 'org-1'))
+      .resolves.toEqual(expected);
   });
 
-  it('THROWS on a lookup error instead of reporting "no admins"', async () => {
-    // An empty array is indistinguishable from "this org has nobody to tell",
-    // so the caller would record the notice as handled and lose the warning.
-    const { client } = makeClient({
-      profilesByRole: { data: null, error: { message: 'connection reset' } },
-    });
-
-    await expect(listOrgAdminRecipients(client, 'org-1')).rejects.toThrow(/connection reset/);
+  it('rejects a later-page failure instead of returning a partial recipient set', async () => {
+    const profiles = Array.from({ length: 401 }, (_, i) => admin({ id: `admin-${i}` }));
+    await expect(listOrgAdminRecipients(makeClient(profiles, [], { serverCap: 400, failAtOffset: 400 }), 'org-1'))
+      .rejects.toThrow(/page scan failed at offset 400/);
   });
 
-  it('THROWS when the org_members lookup fails', async () => {
-    const { client } = makeClient({ members: { data: null, error: { message: 'timeout' } } });
+  it('rejects a recipient set beyond the scan budget instead of silently truncating it', async () => {
+    const profiles = Array.from({ length: 25_001 }, (_, i) => admin({ id: `admin-${i}` }));
+    await expect(listOrgAdminRecipients(makeClient(profiles), 'org-1'))
+      .rejects.toThrow(/row_budget_exceeded/);
+  });
 
-    await expect(listOrgAdminRecipients(client, 'org-1')).rejects.toThrow(/timeout/);
+  it('throws on lookup failure rather than recording an empty recipient set', async () => {
+    await expect(listOrgAdminRecipients(makeClient([], [], { failAtOffset: 0 }), 'org-1'))
+      .rejects.toThrow(/page scan failed at offset 0/);
   });
 });

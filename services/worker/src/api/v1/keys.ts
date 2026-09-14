@@ -59,12 +59,9 @@ const ApiKeyScopeSchema = z.enum(API_KEY_SCOPES);
 export const CreateKeySchema = z.object({
   name: z.string().min(1).max(100),
   scopes: z.array(ApiKeyScopeSchema).min(1).max(30).default(DEFAULT_API_KEY_SCOPES), // max mirrors docs/api/openapi.yaml maxItems (SCRUM-4984 PR)
-  // SCRUM-5023: `.positive()` already forbids 0 and negatives, so this route
-  // cannot write an expiry in the past — prod's one born-expired row (expiry
-  // BEFORE creation) did not come from here. `.max()` is the new half: an
-  // unbounded day count multiplies into a timestamp Postgres cannot store,
-  // and a 100-year "expiry" is a null expiry wearing a costume.
-  expires_in_days: z.number().int().positive().max(MAX_EXPIRES_IN_DAYS).optional(),
+  // Frozen v1 creation contract: retain its accepted positive-integer range.
+  // The 3650-day bound applies only to the new PATCH expiry capability below.
+  expires_in_days: z.number().int().positive().optional(),
   // REG-04: FERPA requester identity verification fields
   ferpa_exception_category: z.enum(FERPA_EXCEPTION_CATEGORIES).optional(),
   institution_type: z.enum(INSTITUTION_TYPES).optional(),
@@ -82,7 +79,7 @@ export const UpdateKeySchema = z.object({
    * entirely. A client-supplied timestamp is never accepted — it would trust
    * the caller's clock and re-open the exact door this story closes, letting
    * an owner write an already-past expiry and re-create the silent lapse by
-   * hand. Same bounds as creation.
+   * hand. This new PATCH capability is bounded independently of v1 creation.
    */
   expires_in_days: z.number().int().positive().max(MAX_EXPIRES_IN_DAYS).nullable().optional(),
   /**
@@ -461,12 +458,32 @@ router.patch('/:keyId', async (req, res) => {
       updateData.is_active = true;
     }
 
-    const { data: updated, error } = await db.from('api_keys')
+    let update = db.from('api_keys')
       .update(updateData)
       .eq('id', keyId)
-      .eq('org_id', profile.org_id)
-      .select(KEY_RESPONSE_COLUMNS)
-      .single();
+      .eq('org_id', profile.org_id);
+
+    if (wantsExpiryChange) {
+      // The shortening decision used this snapshot. Compare it in the same
+      // UPDATE so a concurrent extension/removal/revocation cannot be silently
+      // overwritten after the read. A caller must refresh before deciding again.
+      update = update.eq('is_active', true).is('revoked_at', null);
+      update = existing.expires_at === null
+        ? update.is('expires_at', null)
+        : update.eq('expires_at', existing.expires_at);
+    }
+
+    const { data: updated, error } = await update.select(KEY_RESPONSE_COLUMNS).single();
+
+    // id is unique: PGRST116 here means the compare-and-set matched zero rows.
+    // Operational database errors retain the existing 500 path below.
+    if (wantsExpiryChange && ((!error && !updated) || error?.code === 'PGRST116')) {
+      res.status(409).json({
+        error: 'api_key_changed',
+        message: 'This API key changed while you were editing it. Refresh and try again.',
+      });
+      return;
+    }
 
     if (error || !updated) {
       res.status(500).json({ error: 'Failed to update API key' });

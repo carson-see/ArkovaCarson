@@ -32,6 +32,8 @@ const h = vi.hoisted(() => {
   type Row = Record<string, unknown>;
   const state: Record<string, Row[]> = { profiles: [], api_keys: [] };
   let idCounter = 0;
+  let beforeUpdate: (() => void) | null = null;
+  let updateError: { code: string; message: string } | null = null;
 
   const pickCols = (row: Row, cols: string | undefined): Row => {
     if (!cols || cols.trim() === '*') return { ...row };
@@ -49,6 +51,18 @@ const h = vi.hoisted(() => {
     const filters: Array<[string, unknown]> = [];
 
     const exec = () => {
+      // A separately committed request lands after the handler's snapshot but
+      // before this UPDATE evaluates its WHERE predicates.
+      if (op === 'update' && beforeUpdate) {
+        const concurrentCommit = beforeUpdate;
+        beforeUpdate = null;
+        concurrentCommit();
+      }
+      if (op === 'update' && updateError) {
+        const error = updateError;
+        updateError = null;
+        return { data: null, error };
+      }
       const rows = state[table] ?? [];
       const matches = rows.filter((r) => filters.every(([c, v]) => r[c] === v));
       let data: Row[];
@@ -109,9 +123,15 @@ const h = vi.hoisted(() => {
     state.profiles = [{ id: ADMIN_USER_H, org_id: ORG_H, role: 'ORG_ADMIN' }];
     state.api_keys = [];
     idCounter = 0;
+    beforeUpdate = null;
+    updateError = null;
   };
 
-  return { state, makeBuilder, reset, ORG: ORG_H };
+  return {
+    state, makeBuilder, reset, ORG: ORG_H,
+    onNextUpdate: (fn: () => void) => { beforeUpdate = fn; },
+    failNextUpdate: (error: { code: string; message: string }) => { updateError = error; },
+  };
 });
 
 vi.mock('../../utils/db.js', () => ({
@@ -253,15 +273,19 @@ describe('POST /api/v1/keys — a created key can never be born expired', () => 
     expect(CreateKeySchema.safeParse({ name: 'k', expires_in_days: 1.5 }).success).toBe(false);
   });
 
-  it(`caps expiry at ${MAX_EXPIRES_IN_DAYS} days`, () => {
-    expect(CreateKeySchema.safeParse({ name: 'k', expires_in_days: MAX_EXPIRES_IN_DAYS }).success).toBe(true);
-    expect(CreateKeySchema.safeParse({ name: 'k', expires_in_days: MAX_EXPIRES_IN_DAYS + 1 }).success).toBe(false);
+  it('preserves previously accepted v1 creation durations above the new PATCH cap', async () => {
+    const days = MAX_EXPIRES_IN_DAYS + 1;
+    expect(CreateKeySchema.safeParse({ name: 'long-lived', expires_in_days: days }).success).toBe(true);
+    const res = await request(makeApp()).post('/api/v1/keys')
+      .send({ name: 'long-lived', scopes: ['verify'], expires_in_days: days }).expect(201);
+    expect(res.body.days_until_expiry).toBe(days);
+    expect(h.state.api_keys).toHaveLength(1);
   });
 
   it('answers 400 with a field-scoped validation error, not a server internal', async () => {
     const res = await request(makeApp())
       .post('/api/v1/keys')
-      .send({ name: 'over-cap', scopes: ['verify'], expires_in_days: 999999 })
+      .send({ name: 'invalid-duration', scopes: ['verify'], expires_in_days: 1.5 })
       .expect(400);
 
     expect(res.body.error).toBe('validation_error');
@@ -569,5 +593,61 @@ describe('PATCH /api/v1/keys/:keyId — owner-controlled expiry', () => {
 
     expect(res.body.name).toBe('after');
     expect(res.body.expires_at).toBeNull();
+  });
+});
+
+describe('expiry write conflicts after the authorization/read snapshot', () => {
+  const future = (days: number) => new Date(Date.now() + days * DAY_MS).toISOString();
+
+  it('keeps an operational database failure distinct from a stale-write conflict', async () => {
+    const originalExpiry = future(365);
+    const id = seedKey({ expires_at: originalExpiry });
+    h.failNextUpdate({ code: 'XX000', message: 'database unavailable' });
+    const res = await request(makeApp()).patch(`/api/v1/keys/${id}`).send({ expires_in_days: 400 });
+    expect(res.status).toBe(500);
+    expect(h.state.api_keys[0].expires_at).toBe(originalExpiry);
+    expect(recordAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stale extension after another request extends farther', async () => {
+    const id = seedKey({ expires_at: future(365) });
+    const concurrentExpiry = future(730);
+    h.onNextUpdate(() => { h.state.api_keys[0].expires_at = concurrentExpiry; });
+    const res = await request(makeApp()).patch(`/api/v1/keys/${id}`).send({ expires_in_days: 400 });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('api_key_changed');
+    expect(h.state.api_keys[0].expires_at).toBe(concurrentExpiry);
+    expect(recordAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stale extension after another request removes expiry', async () => {
+    const id = seedKey({ expires_at: future(365) });
+    h.onNextUpdate(() => { h.state.api_keys[0].expires_at = null; });
+    const res = await request(makeApp()).patch(`/api/v1/keys/${id}`).send({ expires_in_days: 400 });
+    expect(res.status).toBe(409);
+    expect(h.state.api_keys[0].expires_at).toBeNull();
+    expect(recordAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not extend a key revoked between the read and write', async () => {
+    const originalExpiry = future(365);
+    const id = seedKey({ expires_at: originalExpiry });
+    const revokedAt = new Date().toISOString();
+    h.onNextUpdate(() => { Object.assign(h.state.api_keys[0], { is_active: false, revoked_at: revokedAt }); });
+    const res = await request(makeApp()).patch(`/api/v1/keys/${id}`).send({ expires_in_days: 400 });
+    expect(res.status).toBe(409);
+    expect(h.state.api_keys[0].expires_at).toBe(originalExpiry);
+    expect(h.state.api_keys[0].revoked_at).toBe(revokedAt);
+    expect(recordAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('compares a NULL expiry snapshot even for an acknowledged shortening', async () => {
+    const id = seedKey({ expires_at: null });
+    const concurrentExpiry = future(730);
+    h.onNextUpdate(() => { h.state.api_keys[0].expires_at = concurrentExpiry; });
+    const res = await request(makeApp()).patch(`/api/v1/keys/${id}`).send({ expires_in_days: 400, allow_shorten: true });
+    expect(res.status).toBe(409);
+    expect(h.state.api_keys[0].expires_at).toBe(concurrentExpiry);
+    expect(recordAuditEvent).not.toHaveBeenCalled();
   });
 });
