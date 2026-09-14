@@ -5,16 +5,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 const authState = { loading: false, error: null as string | null };
 const mockSignUp = vi.fn();
+const mockResendSignUpConfirmation = vi.fn();
 const mockSignInWithGoogle = vi.fn();
 const mockSignInWithLinkedIn = vi.fn();
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     signUp: mockSignUp,
+    resendSignUpConfirmation: mockResendSignUpConfirmation,
     signInWithGoogle: mockSignInWithGoogle,
     signInWithLinkedIn: mockSignInWithLinkedIn,
     loading: authState.loading,
@@ -23,16 +25,13 @@ vi.mock('@/hooks/useAuth', () => ({
   }),
 }));
 
-vi.mock('@/components/onboarding/EmailConfirmation', () => ({
-  EmailConfirmation: () => <div data-testid="email-confirmation">Check your email</div>,
-}));
-
 describe('SignUpForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authState.loading = false;
     authState.error = null;
     mockSignUp.mockResolvedValue({ error: null });
+    mockResendSignUpConfirmation.mockResolvedValue({ error: null });
   });
 
   afterEach(() => {
@@ -129,7 +128,7 @@ describe('SignUpForm', () => {
       authState.error = 'Signup is temporarily unavailable';
       rerender(<SignUpForm onSuccess={onSuccess} />);
       expect(screen.getByRole('alert').textContent).toContain('Signup is temporarily unavailable');
-      expect(screen.queryByTestId('email-confirmation')).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: /check your email/i })).not.toBeInTheDocument();
       expect(onSuccess).not.toHaveBeenCalled();
       expect(screen.getByLabelText(/email address/i)).toHaveValue('test@example.com');
     });
@@ -139,7 +138,7 @@ describe('SignUpForm', () => {
       const SignUpForm = await loadSignUpForm();
       render(<SignUpForm />);
       expect(screen.getByRole('alert').textContent).toContain('Unable to connect to the sign-in provider');
-      expect(screen.queryByTestId('email-confirmation')).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: /check your email/i })).not.toBeInTheDocument();
     });
 
     it('prevents duplicate signup and provider submissions while auth is loading', async () => {
@@ -161,7 +160,7 @@ describe('SignUpForm', () => {
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
       await waitFor(() => {
-        expect(screen.getByTestId('email-confirmation')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /check your email/i })).toBeInTheDocument();
       });
     });
 
@@ -179,7 +178,7 @@ describe('SignUpForm', () => {
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
       await waitFor(() => {
-        expect(screen.getByTestId('email-confirmation')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /check your email/i })).toBeInTheDocument();
       });
       expect(onSuccess).not.toHaveBeenCalled();
     });
@@ -200,7 +199,59 @@ describe('SignUpForm', () => {
       await waitFor(() => {
         expect(onSuccess).toHaveBeenCalledOnce();
       });
-      expect(screen.queryByTestId('email-confirmation')).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: /check your email/i })).not.toBeInTheDocument();
+    });
+
+    it('waits 90 seconds, then uses the dedicated resend flow and reports success', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-14T12:00:00Z'));
+      try {
+        const SignUpForm = await loadSignUpForm();
+        render(<SignUpForm />);
+        fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'test@example.com' } });
+        fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'password123' } });
+        fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'password123' } });
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+        });
+
+        expect(screen.getByRole('button', { name: /resend in 90s/i })).toBeDisabled();
+        act(() => vi.advanceTimersByTime(90_000));
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: /^resend email$/i }));
+        });
+
+        expect(mockResendSignUpConfirmation).toHaveBeenCalledWith('test@example.com');
+        expect(mockSignUp).toHaveBeenCalledOnce();
+        expect(screen.getByText(/new verification link was sent/i)).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not claim a resend succeeded when Auth rejects it', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-14T12:00:00Z'));
+      mockResendSignUpConfirmation.mockResolvedValue({ error: new Error('Email rate limit exceeded') });
+      try {
+        const SignUpForm = await loadSignUpForm();
+        render(<SignUpForm />);
+        fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'test@example.com' } });
+        fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'password123' } });
+        fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'password123' } });
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+        });
+        act(() => vi.advanceTimersByTime(90_000));
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: /^resend email$/i }));
+        });
+
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not send a new verification link/i);
+        expect(screen.queryByText(/new verification link was sent/i)).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('shows sign in link when onLoginClick provided', async () => {

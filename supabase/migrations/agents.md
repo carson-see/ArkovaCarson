@@ -1355,3 +1355,7 @@ remains held until its own production and CI requirements are satisfied.
 
 [Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retains the staged recovery and separately dated production pilot receipts.
+
+## 2026-09-14 — 0459 restores omitted auth.users triggers (SCRUM-5145)
+
+Fresh hosted replay evidence showed only `aa_enroll_oauth_email_confirmation`; the squashed baseline omits Auth-schema triggers. Migration 0459 installs `on_auth_user_created` → `public.create_profile_for_new_user()` and `zz_auth_user_auto_associate_org` → `public.handle_auth_user_email_verified_org_join()` only when missing. Existing canonical triggers are no-ops with stable OID/body; any same-name trigger with different timing, events, columns, function, or enabled state fails closed.

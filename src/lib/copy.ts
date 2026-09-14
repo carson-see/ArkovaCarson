@@ -10,6 +10,8 @@
  * Internal DB/code may use technical names, but UI renders approved terms only.
  */
 
+import { SIGNUP_EMAIL_LINK_LIFETIME_SECONDS } from './authEmailPolicy';
+
 // =============================================================================
 // ANCHOR STATUS
 // =============================================================================
@@ -2601,6 +2603,19 @@ export const AUTH_FORM_LABELS = {
   CREATING_ACCOUNT: 'Creating account...',
 } as const;
 
+export const SIGNUP_EMAIL_CONFIRMATION_LABELS = {
+  TITLE: 'Check your email',
+  DESCRIPTION: 'We sent a verification link to confirm your account.',
+  INSTRUCTION: 'Click the link in the email to verify your account and sign in.',
+  EXPIRY: `The link expires in ${SIGNUP_EMAIL_LINK_LIFETIME_SECONDS / 60} minutes. If you don't see the email, check your spam folder.`,
+  RESEND: 'Resend email',
+  RESENDING: 'Sending...',
+  RESEND_WAIT: 'Resend in',
+  RESEND_SUCCESS: 'A new verification link was sent.',
+  RESEND_ERROR: 'We could not send a new verification link. Please try again when the timer ends.',
+  BACK: 'Back to sign up',
+} as const;
+
 // =============================================================================
 // ACCEPT INVITE (SCRUM-3012) — /accept-invite?token=...
 // =============================================================================
@@ -2685,10 +2700,10 @@ export const ACTIVATE_ACCOUNT_LABELS = {
 /**
  * SCRUM-2907 — copy for a confirmation link that did not work.
  *
- * Supabase signals a dead link with `error`/`error_code` on the redirect hash
- * and creates no session. Previously the app could not tell that apart from
- * "not signed in yet" and silently redirected to the login form, so a user
- * whose link had expired saw no explanation and had no route forward.
+ * Supabase signals a dead link with `error`/`error_code` on the redirect hash.
+ * A consumed link can coexist with an existing browser session, so the callback
+ * distinguishes a correlated confirmed user from an unrelated or unconfirmed
+ * session and gives every state an honest route forward.
  */
 export const AUTH_CALLBACK_LABELS = {
   COMPLETING: 'Completing sign in...',
@@ -2698,6 +2713,10 @@ export const AUTH_CALLBACK_LABELS = {
   FAILED_TITLE: 'We could not complete sign in',
   FAILED_DESCRIPTION:
     'Something went wrong verifying this link. Try again, or request a new link.',
+  SIGNED_IN_TITLE: 'This link is no longer valid',
+  SIGNED_IN_DESCRIPTION:
+    'You are already signed in. Continue to your account, or request a new link for the account you were verifying.',
+  CONTINUE: 'Continue to your account',
   REQUEST_NEW_LINK: 'Request a new link',
   BACK_TO_SIGN_IN: 'Back to sign in',
 } as const;
