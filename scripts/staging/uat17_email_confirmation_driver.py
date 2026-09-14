@@ -185,14 +185,14 @@ def extract_confirmation_url(message, supabase_origin, callback):
     raise ValueError('Bound signup confirmation URL not found')
 
 
-def request(method, url, headers=None, body=None, no_redirect=False):
+def request(method, url, headers=None, body=None):
     data = None if body is None else json.dumps(body).encode()
     req = Request(trusted_request_url(url), method=method, data=data, headers={
         'Content-Type': 'application/json',
         'User-Agent': 'Arkova-UAT17/1.0',
         **(headers or {}),
     })
-    opener = build_opener(NoRedirect()) if no_redirect else build_opener()
+    opener = build_opener(NoRedirect())
     try:
         with opener.open(req, timeout=30) as response:
             raw = response.read()
@@ -202,7 +202,8 @@ def request(method, url, headers=None, body=None, no_redirect=False):
                 parsed = None
             return response.status, parsed, dict(response.headers)
     except HTTPError as error:
-        raw = error.read()
+        with error:
+            raw = error.read()
         try:
             parsed = json.loads(raw) if raw else None
         except ValueError:
@@ -473,7 +474,7 @@ def main():
             raise RuntimeError('Resend did not produce a fresh confirmation message')
         checks.append({'name': 'resend_after_90_seconds', 'passed': True})
 
-        status, _, headers = request('GET', second_link, no_redirect=True)
+        status, _, headers = request('GET', second_link)
         location = headers.get('Location', '')
         parsed_location = urlparse(location)
         if status not in (302, 303) or f'{parsed_location.scheme}://{parsed_location.netloc}{parsed_location.path}' != callback:
@@ -499,7 +500,7 @@ def main():
             raise RuntimeError('Confirmed AAL1 session bypassed the mandatory MFA data gate')
         checks.append({'name': 'mfa_gate_closed', 'passed': True})
 
-        status, _, headers = request('GET', second_link, no_redirect=True)
+        status, _, headers = request('GET', second_link)
         consumed_location = headers.get('Location', '')
         consumed = parse_qs(urlparse(consumed_location).fragment)
         if status not in (302, 303) or consumed.get('error_code') != ['otp_expired']:
@@ -518,7 +519,7 @@ def main():
         expiry_wait = AUTH_LINK_EXPIRY_SECONDS + AUTH_LINK_EXPIRY_GRACE_SECONDS - (time.monotonic() - expiry_started)
         if expiry_wait > 0:
             time.sleep(expiry_wait)
-        status, _, headers = request('GET', expiry_link, no_redirect=True)
+        status, _, headers = request('GET', expiry_link)
         expired = parse_qs(urlparse(headers.get('Location', '')).fragment)
         if status not in (302, 303) or expired.get('error_code') != ['otp_expired']:
             raise RuntimeError('Unconsumed confirmation link remained valid after 15 minutes')

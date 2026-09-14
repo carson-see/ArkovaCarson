@@ -444,6 +444,11 @@ encoded traversal. Keep the attacker-host, alternate/symlinked/modified helper,
 and alternate manifest controls when changing these pins. Updating a target or
 helper is a reviewed source change; accepting a new pattern from the manifest
 would reopen the bearer-token disclosure boundary.
+
+The credential-bearing email API client never follows redirects. Its real
+loopback regression checks that a second HTTP origin receives no request or
+credentials, while a direct JSON response still succeeds. Confirmation-link
+redirects are returned to the caller for the existing callback validation.
 2026-09-05, PR #2519: the two exact documentation snapshots now include the Adobe webhook seed section above. Preserve every prior section, its order, and the existing per-section byte pins when updating either snapshot.
 ## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner
 

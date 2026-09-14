@@ -1,7 +1,9 @@
 import importlib.util
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +14,47 @@ SPEC.loader.exec_module(driver)
 
 
 class Uat17DriverTest(unittest.TestCase):
+    def test_credentials_never_follow_redirects_and_direct_json_still_works(self):
+        received = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == '/redirect':
+                    self.send_response(302)
+                    self.send_header('Location', sink_url + '/capture')
+                    self.end_headers()
+                    return
+                if self.path == '/capture':
+                    received.append(dict(self.headers))
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def log_message(self, *_args):
+                pass
+
+        servers = [ThreadingHTTPServer(('127.0.0.1', 0), Handler) for _ in range(2)]
+        source_url, sink_url = [f'http://127.0.0.1:{server.server_port}' for server in servers]
+        threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in servers]
+        for thread in threads:
+            thread.start()
+        try:
+            # Only the origin validator is replaced; urllib handles the real HTTP redirect.
+            with patch.object(driver, 'trusted_request_url', side_effect=lambda url: url):
+                headers = {'Authorization': 'Bearer synthetic-only', 'apikey': 'synthetic-only'}
+                status, body, _ = driver.request('GET', source_url + '/direct', headers)
+                self.assertEqual((status, body), (200, {'ok': True}))
+                status, _, _ = driver.request('GET', source_url + '/redirect', headers)
+                self.assertEqual(received, [], 'Credentials reached the redirect destination')
+                self.assertEqual(status, 302)
+        finally:
+            for server in servers:
+                server.shutdown()
+                server.server_close()
+            for thread in threads:
+                thread.join(timeout=2)
+
     def manifest(self):
         return {
             'projectRef': driver.OWNED_PROJECT_REF,
