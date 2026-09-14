@@ -44,6 +44,6 @@ describe('0461 UAT-12 private tags and instant-credit lifecycle', () => {
     for (const key of ['private_tags', 'user_tags', 'org_tags']) {
       expect(sql).toContain(`- '${key}'`);
     }
-    expect(sql).toMatch(/kv\.key NOT LIKE '\\\_%'/i);
+    expect(sql).toMatch(/kv\.key NOT LIKE '\\_%'/i);
   });
 });
