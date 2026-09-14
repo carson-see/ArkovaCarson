@@ -1,9 +1,17 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-09-14 (Mergify merge-queue label resolution — `ciContext.ts` resolves the ORIGINAL PR inside a queue speculative check; `check-pr-labels-raw-read.test.ts` new, closes the raw-`process.env.PR_LABELS` bypass class; previously 2026-09-07 evidence-gate closures)._
+## PR #2940 — Execute the edge health parsers in Bash
+
+`edge-deploy-health-parser.test.ts` executes the actual PRE_SHA/LIVE_SHA
+assignments from the edge workflow. It caught a shell default expansion adding
+an extra brace to valid JSON, which made a successful deploy look unverified.
+Both real commit parsing and unavailable/malformed response handling are covered.
+
 _Last updated: 2026-09-07 (ninth closure: approver-class fields now reject a LEADING incomplete marker — `Approved by: PENDING — Carson must decide.` no longer grants a residual-risk / base-drift exception; previously 2026-08-29 evidence-gate integrity series)._
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
 _Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditions + new do-not-merge body/label parity lint; previously: evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+
+_Last updated: 2026-09-14 (Mergify merge-queue label resolution — `ciContext.ts` resolves the ORIGINAL PR inside a queue speculative check; `check-pr-labels-raw-read.test.ts` new, closes the raw-`process.env.PR_LABELS` bypass class; previously 2026-09-07 evidence-gate closures)._
 
 ## 2026-09-14 — Mergify merge-queue label resolution + `check-pr-labels-raw-read.test.ts` (new)
 
