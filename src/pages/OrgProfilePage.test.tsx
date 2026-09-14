@@ -179,12 +179,6 @@ vi.mock('@/components/shared/VerifiedBadge', () => ({
   OrgVerifiedBadge: () => null,
   AffiliatedBadge: () => null,
 }));
-vi.mock('@/components/integrations/DriveConnectorCard', () => ({
-  DriveConnectorCard: () => null,
-}));
-vi.mock('@/components/integrations/DocusignConnectorCard', () => ({
-  DocusignConnectorCard: () => null,
-}));
 vi.mock('@/components/integrations/MemberDocusignConnectorCard', () => ({
   MemberDocusignConnectorCard: () => null,
 }));

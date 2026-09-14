@@ -1,0 +1,208 @@
+/**
+ * ConnectorsPage — SPEC-CONNECTORS §6, tests 1, 3, 9, 10, 11 (adapted).
+ *
+ * Every `org_integrations` query this page issues is scoped by `org_id` —
+ * pinned explicitly in the "test 10" case below via the `.eq('org_id', ...)`
+ * call recorded on the mock chain, alongside the column-pinning assertion.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { toast } from 'sonner';
+import { ConnectorsPage } from './ConnectorsPage';
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ user: { id: 'user-1', email: 'admin@test.com' }, signOut: vi.fn() }),
+}));
+
+vi.mock('@/hooks/useProfile', () => ({
+  useProfile: () => ({
+    profile: { id: 'user-1', org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Test Admin' },
+    loading: false,
+  }),
+}));
+
+vi.mock('@/hooks/useCanIssueCredential', () => ({
+  useCanIssueCredential: () => ({ allowed: true, loading: false, reason: null }),
+}));
+
+const mockFrom = vi.fn();
+vi.mock('@/lib/supabase', () => ({
+  supabase: { from: (...args: unknown[]) => mockFrom(...args) },
+}));
+
+const workerFetch = vi.fn();
+vi.mock('@/lib/workerClient', () => ({
+  workerFetch: (...args: unknown[]) => workerFetch(...args),
+  WORKER_URL: 'https://worker.test',
+}));
+
+interface OrgIntegrationsFixture {
+  google_drive?: { id: string; connected_at: string } | null;
+  docusign?: { id: string; connected_at: string; account_id?: string; account_label?: string } | null;
+}
+
+const orgIntegrationsSelects: Array<{ provider: string | undefined; orgId: string | undefined; columns: string }> = [];
+// Real vi.fn() wrapping every .eq() call across every org_integrations chain,
+// so a test can assert directly `expect(mockOrgIntegrationsEq).toHaveBeenCalledWith('org_id', ...)`
+// — pinning that the page's own connection-status query is org-scoped, not
+// just provider-filtered (arkova/no-unscoped-service-test).
+const mockOrgIntegrationsEq = vi.fn();
+
+function installOrgIntegrations(fixture: OrgIntegrationsFixture) {
+  orgIntegrationsSelects.length = 0;
+  mockOrgIntegrationsEq.mockReset();
+  mockFrom.mockImplementation((table: string) => {
+    if (table !== 'org_integrations') {
+      return {
+        select: () => ({ eq: () => ({ eq: () => ({ is: () => ({ order: () => ({ limit: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }) }) }) }),
+      };
+    }
+    let provider: 'google_drive' | 'docusign' | undefined;
+    const record = { provider: undefined as string | undefined, orgId: undefined as string | undefined, columns: '' };
+    orgIntegrationsSelects.push(record);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const chain: any = {
+      select: (cols: string) => {
+        record.columns = cols;
+        return chain;
+      },
+      eq: (col: string, val: string) => {
+        mockOrgIntegrationsEq(col, val);
+        if (col === 'provider') {
+          provider = val as 'google_drive' | 'docusign';
+          record.provider = val;
+        }
+        if (col === 'org_id') {
+          record.orgId = val;
+        }
+        return chain;
+      },
+      is: () => chain,
+      order: () => chain,
+      limit: () => chain,
+      maybeSingle: async () => ({
+        data: provider ? fixture[provider] ?? null : null,
+        error: null,
+      }),
+    };
+    return chain;
+  });
+}
+
+function installRules(items: Array<{ id: string; trigger_type: string; enabled: boolean }>, detailById: Record<string, unknown> = {}) {
+  workerFetch.mockImplementation(async (endpoint: string) => {
+    if (endpoint === '/api/rules') {
+      return { ok: true, status: 200, json: async () => ({ items }) } as Response;
+    }
+    const detailMatch = endpoint.match(/^\/api\/rules\/([^/]+)$/);
+    if (detailMatch) {
+      const item = detailById[detailMatch[1]!];
+      return { ok: !!item, status: item ? 200 : 404, json: async () => ({ item }) } as Response;
+    }
+    return { ok: true, status: 200, json: async () => ({}) } as Response;
+  });
+}
+
+function renderPage(initialEntries: string[] = ['/organization/connectors']) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <ConnectorsPage />
+    </MemoryRouter>,
+  );
+}
+
+beforeEach(() => {
+  mockFrom.mockReset();
+  workerFetch.mockReset();
+  vi.clearAllMocks();
+  installOrgIntegrations({});
+  installRules([]);
+});
+
+describe('ConnectorsPage', () => {
+  it('renders exactly the two real connector cards, no Adobe Sign, no "coming soon" text (test 1)', async () => {
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Google Drive')).toBeInTheDocument());
+    expect(screen.getByText('DocuSign')).toBeInTheDocument();
+    expect(screen.queryByText('Adobe Sign')).not.toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
+  });
+
+  it('connected Drive with zero folders renders the empty-folders copy and disables Save (test 3)', async () => {
+    installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+    installRules([]); // no rules yet -> status 'none'
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('No folders selected yet. Arkova will not act on anything until you choose at least one.')).toBeInTheDocument());
+
+    const saveButtons = screen.getAllByRole('button', { name: 'Save' });
+    saveButtons.forEach((btn) => expect(btn).toBeDisabled());
+  });
+
+  it('two enabled WORKSPACE_FILE_MODIFIED rules produce the read-only Managed-in-Rules state; Save absent (test 9)', async () => {
+    installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+    installRules(
+      [
+        { id: 'rule-1', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: true },
+        { id: 'rule-2', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: true },
+      ],
+      {
+        'rule-1': {
+          id: 'rule-1',
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: {},
+          action_type: 'AUTO_ANCHOR',
+          action_config: {},
+          enabled: true,
+        },
+      },
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('This connector is set up with more than one rule, so it is managed in Rules.')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  });
+
+  it('the google_drive org_integrations select never requests account_label/encrypted_tokens/token_kms_key_id/token_secret_name (test 10, GH #1836)', async () => {
+    installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+    renderPage();
+    await waitFor(() => expect(mockFrom).toHaveBeenCalledWith('org_integrations'));
+    await waitFor(() => expect(orgIntegrationsSelects.some((s) => s.provider === 'google_drive')).toBe(true));
+
+    // account_label carries a secret (channel_token) for google_drive ONLY —
+    // docusign/adobe_sign's account_label is a public account name, so this
+    // check is scoped to the google_drive provider's own select() calls, not
+    // every org_integrations query on the page.
+    const driveSelects = orgIntegrationsSelects.filter((s) => s.provider === 'google_drive');
+    expect(driveSelects.length).toBeGreaterThan(0);
+    for (const { columns, orgId } of driveSelects) {
+      // Every query is scoped by org_id, not just filtered by provider — an
+      // unscoped select here would leak connection status across tenants.
+      expect(orgId).toBe('org-1');
+      expect(columns).not.toContain('account_label');
+      expect(columns).not.toContain('encrypted_tokens');
+      expect(columns).not.toContain('token_kms_key_id');
+      expect(columns).not.toContain('token_secret_name');
+    }
+    expect(mockOrgIntegrationsEq).toHaveBeenCalledWith('org_id', 'org-1');
+  });
+
+  it('consumes drive_error exactly once and clears it from the URL (test 11)', async () => {
+    renderPage(['/organization/connectors?drive_error=access_denied']);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    const [message] = (toast.error as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(message).toContain('Google Drive connection was not completed');
+  });
+
+  it('consumes docusign_error exactly once with the mapped copy (test 11)', async () => {
+    renderPage(['/organization/connectors?docusign_error=denied']);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    const [message] = (toast.error as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(message).toContain('DocuSign connection failed: denied');
+  });
+});

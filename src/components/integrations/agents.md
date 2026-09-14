@@ -36,6 +36,47 @@ entirely. `MemberDocusignConnectorCard.test.tsx` was written against the pre-ref
 and passed unchanged after it, which is what makes this a refactor rather than a rewrite: it pins the
 `member_integrations` table, the provider/tenant filters, the credential-free projection, the OAuth
 redirect contract, both disconnect outcomes and the generic-copy fallbacks.
+_Last updated: 2026-09-14 (`ConnectorCardStatusRow.tsx` shared with `components/connectors/` — SonarCloud duplication fix)_
+
+## 2026-09-14 — `ConnectorCardStatusRow.tsx` (from PR #2934) pulled into this branch
+
+PR #2912's move of `DriveConnectorCard.tsx` / `DocusignConnectorCard.tsx` into
+`src/components/connectors/` (below) left both cards with their own copy of the status-icon /
+badge / Connect-Disconnect button block, on top of the two copies already in
+`AdobeSignConnectorCard.tsx` and `MemberDocusignConnectorCard.tsx` here — four copies, which
+SonarCloud flagged as new-code duplication over the 3% gate. PR #2934 extracted that block into
+`ConnectorCardStatusRow.tsx` for the two cards in this folder; this branch copies that same
+component (not a fork — same file) and points its own two cards at it instead of re-duplicating.
+Button copy is now the shared generic `CONNECTIONS_LABELS.CONNECT_BUTTON` /
+`DISCONNECT_BUTTON` ("Connect" / "Disconnect") rather than each card's own wording ("Connect
+Drive", etc.) — matches what #2934 already shipped for the two cards here, so all four connector
+cards read consistently. `e2e/integrations-drive.spec.ts` still asserts the old
+`OrgProfilePage`-settings-tab copy from before the 2026-09-13 move above; it was already
+orphaned by that move (the cards no longer render there at all) and is unrelated to this note —
+left as-is, out of scope for the duplication fix.
+
+## 2026-09-13 — `DriveConnectorCard.tsx` / `DocusignConnectorCard.tsx` moved to `components/connectors/`
+
+Founder direction (2026-09-13): the Connectors page (`src/pages/ConnectorsPage.tsx`,
+`/organization/connectors`) replaces `OrgProfilePage`'s "Rules" nav button with "Connectors", and
+the two REAL org connector cards move there with it — they are composed by `ConnectorsPage`, not
+duplicated (PM-11). `OrgProfilePage`'s Settings tab now shows a link row
+("Connectors — Manage connectors") instead of rendering the cards inline.
+
+**What stays here, and why:**
+
+- `AdobeSignConnectorCard.tsx` — live prod state is the `adobe_sign_unconfigured` denial (no Adobe
+  application registered). Putting it on the Connectors page would be exactly the greyed
+  "coming soon" card the founder rejected. Moves here in one commit once Adobe is configured.
+- `MemberDocusignConnectorCard.tsx` — member-scoped (writes `member_integrations`, not
+  `org_integrations`), not an org connector, has no org rule. Not in scope for the Connectors page.
+- `useSignatureConnection.ts` / `signatureOAuthResponse.ts` — shared by `AdobeSignConnectorCard`
+  (still here) AND the moved `DocusignConnectorCard`, so they stayed put; the moved card imports them
+  via `../integrations/useSignatureConnection` / `../integrations/signatureOAuthResponse` rather than
+  duplicating them.
+
+See `src/components/connectors/agents.md` for what moved and what it grew (folder picker, action
+choice, `useConnectorRule`).
 
 ## 2026-08-30 — `AdobeSignConnectorCard.tsx`
 
@@ -83,12 +124,13 @@ Fix: `account_label` is no longer in the `.select()` column list at all (not fet
 Third-party integration connector cards for org admins and members to manage OAuth connections.
 
 ## Key Files
-- `DocusignConnectorCard.tsx` — Org-level DocuSign OAuth connector: connect/disconnect, tokens never touch the browser (worker returns auth URL only). Queries `org_integrations`. SCRUM-2361 (DS-01): the *connect* action is gated on the shipped verified-org signal via `useCanIssueCredential` (SCRUM-1755) — denied orgs see `CONNECTIONS_LABELS.DOCUSIGN_NOT_VERIFIED` with a disabled Connect button (`data-testid="docusign-gate-denied"`); the worker `/oauth/start` is the authoritative gate, this is UX defense-in-depth. Disconnect is never gated. Mounted in `src/pages/OrgProfilePage.tsx` Settings tab. NOTE (2026-07-28): does NOT show a last-synced timestamp — the same gap DriveConnectorCard closed below; a symmetric follow-up for DocuSign is a candidate but out of scope for SCRUM-2903.
+- `DocusignConnectorCard.tsx` — **MOVED to `src/components/connectors/` (2026-09-13, see that folder's agents.md).** Org-level DocuSign OAuth connector: connect/disconnect, tokens never touch the browser (worker returns auth URL only). Queries `org_integrations`. SCRUM-2361 (DS-01): the *connect* action is gated on the shipped verified-org signal via `useCanIssueCredential` (SCRUM-1755) — denied orgs see `CONNECTIONS_LABELS.DOCUSIGN_NOT_VERIFIED` with a disabled Connect button (`data-testid="docusign-gate-denied"`); the worker `/oauth/start` is the authoritative gate, this is UX defense-in-depth. Disconnect is never gated. Now composed by `src/pages/ConnectorsPage.tsx`. NOTE (2026-07-28): does NOT show a last-synced timestamp — the same gap DriveConnectorCard closed below; a symmetric follow-up for DocuSign is a candidate but out of scope for SCRUM-2903.
 - `MemberDocusignConnectorCard.tsx` — Member-level DocuSign OAuth connector (SCRUM-2044): same pattern as org-level but queries `member_integrations` and uses `/api/v1/integrations/docusign/member/*` endpoints. `data-testid="member-docusign-card"`.
 - `ConnectorCardStatusRow.tsx` — shared status line + Connect/Disconnect control pair for every connector card. `connectDisabled` gates Connect only; Disconnect is never gated. Card-specific detail goes in `children`. Used by `MemberDocusignConnectorCard` and `AdobeSignConnectorCard` (see the 2026-09-14 entry for why the other two cards still inline it).
 - `connectorDisconnect.ts` — `requestConnectorDisconnect(path, orgId)`: the shared disconnect POST and refusal copy, returning the parsed body so a card can react to provider-specific fields (`adobe_webhook_removed`).
 - `useSignatureConnection.ts` — public-column status query for `adobe_sign` / `docusign`, over `org_integrations` (default) or `member_integrations` (4th argument). Never Google Drive.
 - `DriveConnectorCard.tsx` — Google Drive OAuth connector: same pattern as DocuSign, tokens handled server-side only. Mounted alongside the DocuSign cards in `src/pages/OrgProfilePage.tsx` Settings tab — this is the only reachable UI surface for Drive connector status. **SCRUM-2903 GD-PROD (2026-07-28, #1654):** now also renders "Last synced `<timestamp>`" (from `org_integrations.last_token_advanced_at` — the changes-feed runner's page-token-advance watermark; falls back to "Not yet synced"). Additive read on the existing connected-state branch — no new query fires while disconnected. **A "`N` document(s) secured via Drive" counter was proposed and CUT** (2026-08-01): it was an exact PostgREST row count on `anchors` filtered by `metadata->>connector_source`, which raises the R0-8 / SCRUM-1254 exact-count baseline (`scripts/ci/check-count-exact-baseline.ts` fails the build) and has no supporting index — a sequential scan over ~2.97M rows on every Settings render, the shape that trips the 60s PostgREST timeout. This card queries `org_integrations` ONLY; do not reintroduce an `anchors` query here without a `CREATE INDEX CONCURRENTLY` on `(org_id, (metadata->>'connector_source')) WHERE deleted_at IS NULL` plus the `count-exact-allowed` label. Pinned by a removal test in `DriveConnectorCard.test.tsx`.
+- `DriveConnectorCard.tsx` — **MOVED to `src/components/connectors/` (2026-09-13, see that folder's agents.md).** Google Drive OAuth connector: same pattern as DocuSign, tokens handled server-side only. Now composed by `src/pages/ConnectorsPage.tsx` — that is the primary reachable UI surface for Drive connector status; `OrgProfilePage`'s Settings tab links to it instead of rendering it. **SCRUM-2903 GD-PROD (2026-07-28, #1654):** now also renders "Last synced `<timestamp>`" (from `org_integrations.last_token_advanced_at` — the changes-feed runner's page-token-advance watermark; falls back to "Not yet synced"). Additive read on the existing connected-state branch — no new query fires while disconnected. **A "`N` document(s) secured via Drive" counter was proposed and CUT** (2026-08-01): it was an exact PostgREST row count on `anchors` filtered by `metadata->>connector_source`, which raises the R0-8 / SCRUM-1254 exact-count baseline (`scripts/ci/check-count-exact-baseline.ts` fails the build) and has no supporting index — a sequential scan over ~2.97M rows on every Settings render, the shape that trips the 60s PostgREST timeout. This card queries `org_integrations` ONLY; do not reintroduce an `anchors` query here without a `CREATE INDEX CONCURRENTLY` on `(org_id, (metadata->>'connector_source')) WHERE deleted_at IS NULL` plus the `count-exact-allowed` label. Pinned by a removal test in `DriveConnectorCard.test.tsx`.
 
 ## Dependencies
 - `@/lib/workerClient` (workerFetch) — server-side OAuth URL generation
