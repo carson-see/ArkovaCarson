@@ -2,8 +2,8 @@
 """SCRUM-5145 isolated hosted email-confirmation probe; dry-run by default.
 
 The live mode creates only uniquely labelled Resend test users on an approved
-isolated project, reads only the matching sent message body, and deletes its
-own Auth users. Tokens, links, addresses, and message content stay in memory.
+isolated project, reads only the matching sent message body, and deactivates its
+own Auth users while preserving immutable audit history. Tokens, links, addresses, and message content stay in memory.
 """
 import argparse
 from datetime import datetime, timezone
@@ -201,6 +201,26 @@ def evidence(head, checks, complete, elapsed):
         'containsSecretsOrMessageContent': False,
         'remainingReleaseGates': remaining,
     }
+
+
+def cleanup_fixture_user(origin, user_id, admin_headers):
+    # Hard deletion attempts FK SET NULL on immutable audit_events. Use Auth's
+    # supported soft deletion and deactivate only this invocation's fixtures.
+    user_path = f'{origin}/auth/v1/admin/users/{quote(user_id)}'
+    status, _, _ = request('DELETE', user_path, admin_headers, {'should_soft_delete': True})
+    read_status, user, _ = request('GET', user_path, admin_headers)
+    if status not in (200, 204) or read_status != 200 or not isinstance(user, dict) or not user.get('deleted_at'):
+        return False
+    members = f'{origin}/rest/v1/org_members?user_id=eq.{quote(user_id)}'
+    profile = f'{origin}/rest/v1/profiles?id=eq.{quote(user_id)}'
+    removed, _, _ = request('DELETE', members, admin_headers)
+    patched, _, _ = request('PATCH', profile, admin_headers,
+                            {'deleted_at': datetime.now(timezone.utc).isoformat()})
+    members_status, rows, _ = request('GET', members + '&select=user_id', admin_headers)
+    profile_status, profiles, _ = request('GET', profile + '&select=deleted_at', admin_headers)
+    return (removed in (200, 204) and patched in (200, 204)
+            and members_status == 200 and rows == [] and profile_status == 200
+            and isinstance(profiles, list) and len(profiles) == 1 and bool(profiles[0].get('deleted_at')))
 
 
 def read_trigger_catalog(project_ref, management_headers, database_url=''):
@@ -461,11 +481,8 @@ def main():
     finally:
         cleanup_ok = bool(created_user_ids)
         for user_id in created_user_ids:
-            delete_status, _, _ = request(
-                'DELETE', f'{supabase_origin}/auth/v1/admin/users/{quote(user_id)}', admin_headers)
-            read_status, _, _ = request(
-                'GET', f'{supabase_origin}/auth/v1/admin/users/{quote(user_id)}', admin_headers)
-            cleanup_ok = cleanup_ok and delete_status in (200, 204) and read_status == 404
+            user_cleaned = cleanup_fixture_user(supabase_origin, user_id, admin_headers)
+            cleanup_ok = user_cleaned and cleanup_ok
         checks.append({'name': 'fixture_cleanup_verified', 'passed': cleanup_ok})
         report = evidence(manifest.get('head', ''), checks, complete and cleanup_ok, time.monotonic() - started)
         out.parent.mkdir(parents=True, exist_ok=True)

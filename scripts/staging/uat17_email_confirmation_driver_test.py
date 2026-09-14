@@ -116,6 +116,17 @@ class Uat17DriverTest(unittest.TestCase):
         self.assertNotIn('SUPABASE_ACCESS_TOKEN', child_env)
         self.assertIn('access_token=secret', child_env['UAT17_BROWSER_CONFIRMED_CALLBACK'])
 
+    def test_cleanup_soft_deletes_and_verifies_deactivation_without_touching_audit(self):
+        responses = [(200, {}, {}), (200, {'deleted_at': '2026-09-14T00:00:00Z'}, {}),
+                     (204, None, {}), (204, None, {}), (200, [], {}),
+                     (200, [{'deleted_at': '2026-09-14T00:00:00Z'}], {})]
+        with patch.object(driver, 'request', side_effect=responses) as request:
+            self.assertTrue(driver.cleanup_fixture_user('https://fixture.supabase.co', 'owned-id', {}))
+            self.assertEqual(request.call_args_list[0].args[3], {'should_soft_delete': True})
+            self.assertFalse(any('audit_events' in str(call) for call in request.call_args_list))
+        with patch.object(driver, 'request', side_effect=[(200, {}, {}), (200, {}, {})]):
+            self.assertFalse(driver.cleanup_fixture_user('https://fixture.supabase.co', 'owned-id', {}))
+
     def test_evidence_contains_no_fixture_identity_or_message(self):
         report = driver.evidence('a' * 40, [{'name': 'owned_project', 'passed': True}], True, 92)
         encoded = json.dumps(report)
