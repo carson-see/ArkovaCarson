@@ -1,8 +1,21 @@
 # scripts/ci/agents.md
 
+_Last updated: 2026-09-14 (Mergify merge-queue label resolution — `ciContext.ts` resolves the ORIGINAL PR inside a queue speculative check; `check-pr-labels-raw-read.test.ts` new, closes the raw-`process.env.PR_LABELS` bypass class; previously 2026-09-07 evidence-gate closures)._
 _Last updated: 2026-09-07 (ninth closure: approver-class fields now reject a LEADING incomplete marker — `Approved by: PENDING — Carson must decide.` no longer grants a residual-risk / base-drift exception; previously 2026-08-29 evidence-gate integrity series)._
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
 _Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditions + new do-not-merge body/label parity lint; previously: evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+
+## 2026-09-14 — Mergify merge-queue label resolution + `check-pr-labels-raw-read.test.ts` (new)
+
+Every label-gated override (`agents-md-deletion-approved`, `count-exact-allowed`, `hot-table-ddl-lock-timeout-reviewed`, 13 more) silently read as absent inside Mergify's speculative merge-queue PR even when correctly applied on the real PR — `GITHUB_REF`/`PR_NUMBER`/`PR_LABELS` for that run describe the ephemeral queue PR (e.g. `#2936`), not the real one (`#2841`) it is checking. Confirmed live twice: queue PRs `#2936` and `#2939`, both checking real `#2841`, both failed `Block dropped agents.md content` despite `#2841` carrying `agents-md-deletion-approved`.
+
+`ciContext.ts` gained `isMergifyQueuePr()` (detects `GITHUB_HEAD_REF` matching `mergify/merge-queue/*`) and `resolveOriginalPrNumber()`, which parses the real PR number from Mergify's own YAML state block in the queue PR body (`pull_requests:\n  - number: <N>`) or, failing that, its title (`merge queue: checking #<N> on ...`). `resolvePrLabels()` now reads only the resolved original's live labels inside a queue context and fails CLOSED (never the speculative PR's own labels) when the original cannot be identified. `hasLabel()` consumers inherit this automatically.
+
+Eleven checks bypassed `ciContext` entirely with a raw `(process.env.PR_LABELS ?? '')...` read (doubly broken: no live fetch either) and were migrated to `hasLabel()`: `check-dep-pinning`, `check-null-identity-guard`, `check-rls-auth-uid-wrap`, `check-hot-table-ddl-lock-timeout`, `check-views-security-invoker`, `check-rls-policy-coverage`, `check-webhook-hmac-consolidation`, `check-worker-env-adhoc`, `check-anchor-field-policy-coverage`, `check-error-swallow`, `check-csp-runtime-deps`.
+
+**`check-pr-labels-raw-read.test.ts` (new)** closes the regression: scans every `scripts/ci/**/*.ts` (feedback-rules/ included) except `lib/ciContext.ts` and `*.test.ts` files for `process.env.PR_LABELS` / `process.env['PR_LABELS']`, failing with a message naming `hasLabel()` as the correct route. Proven against a deliberately reintroduced raw read in `check-dep-pinning.ts` before being kept (red, then reverted to green). Sibling in spirit to `check-pr-labels-token-parity.test.ts` (token pairing) and `check-agents-md-migration-collision.ts` (structural-drift-by-copy-paste) — same class of "invisible at the call site, easy to copy-paste forward" defect.
+
+PR #2938 / branch `fix/mergify-queue-label-override-resolution`.
 
 ## 2026-09-12 — soak floors 4h/24h + post-soak T0 delta (CTO decision)
 
