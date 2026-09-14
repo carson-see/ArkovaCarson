@@ -64,6 +64,35 @@ def validate_settings(manifest, duration_hours, interval_seconds):
     return manifest
 
 
+def run_feature_probes(manifest, credentials):
+    features = manifest.get('featureDrivers', [])
+    if features not in ([], ['uat12', 'uat24']):
+        raise ValueError('Only the reviewed UAT12/UAT24 union is supported')
+    if not features:
+        return True
+    child_env = {
+        **os.environ,
+        'UAT_DATABASE_URL': credentials['UAT17_DATABASE_URL'],
+        'STAGING_SUPABASE_URL': manifest['supabaseUrl'],
+        'STAGING_SUPABASE_SERVICE_ROLE_KEY': credentials['UAT17_SERVICE_ROLE_KEY'],
+        'UAT24_ACTOR_USER_ID': '51420000-0000-4000-8000-00000000a001',
+        'UAT24_ORG_ID': '51420000-0000-4000-8000-00000000b001',
+        'UAT24_UNFILED_ANCHOR_ID': '51420000-0000-4000-8000-00000000c001',
+        'UAT24_CONNECTOR_CONNECTION_ID': '51420000-0000-4000-8000-00000000d001',
+    }
+    commands = [
+        ['bash', str(REPO_ROOT / 'scripts/uat12/run-hosted-pg-driver.sh')],
+        [str(REPO_ROOT / 'node_modules/.bin/tsx'),
+         str(REPO_ROOT / 'scripts/staging/targeted/uat24-folder-feature-driver.ts')],
+    ]
+    for command in commands:
+        result = subprocess.run(command, cwd=REPO_ROOT, env=child_env,
+                                capture_output=True, text=True, timeout=180, check=False)
+        if result.returncode != 0:
+            return False
+    return True
+
+
 def validate_helper(path_value):
     path = Path(path_value)
     if not path.is_absolute() or path.is_symlink() or not path.is_file() or not os.access(path, os.X_OK):
@@ -176,6 +205,7 @@ def redacted_summary(manifest, started_at, deadline, cycles, status, failure=Non
     payload = {
         'driver': 'uat17-email-soak-supervisor',
         'head': manifest['head'],
+        'featureDrivers': manifest.get('featureDrivers', []),
         'frontendContentSha256': manifest['frontendContentSha256'],
         'workerRevision': manifest['workerRevision'],
         'workerImageDigest': manifest['workerImageDigest'],
@@ -303,6 +333,9 @@ def main():
                 break
             if cycle_evidence.get('head') != manifest['head'] or cycle_evidence.get('allPassed') is not True:
                 failure = 'cycle_evidence_failed'
+                break
+            if not run_feature_probes(manifest, credentials):
+                failure = 'union_feature_probe_failed'
                 break
             write_summary(summary_path, redacted_summary(
                 manifest, started_at, deadline, cycle, 'running',

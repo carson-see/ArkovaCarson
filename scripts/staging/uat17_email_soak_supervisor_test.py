@@ -47,6 +47,19 @@ class Uat17SoakSupervisorTest(unittest.TestCase):
         self.assertEqual(set(refreshed), set(supervisor.REQUIRED_CREDENTIALS))
         self.assertNotIn('must-not-propagate', json.dumps(refreshed))
 
+    def test_union_feature_probes_fail_closed_and_use_fixed_commands(self):
+        manifest = self.manifest()
+        manifest['featureDrivers'] = ['uat12', 'uat24']
+        credentials = {'UAT17_DATABASE_URL': 'private-db', 'UAT17_SERVICE_ROLE_KEY': 'private-key'}
+        completed = type('Completed', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
+        with patch.object(supervisor.subprocess, 'run', return_value=completed) as run:
+            self.assertTrue(supervisor.run_feature_probes(manifest, credentials))
+            self.assertEqual(run.call_count, 2)
+            self.assertNotIn('private-key', str([call.args for call in run.call_args_list]))
+        completed.returncode = 1
+        with patch.object(supervisor.subprocess, 'run', return_value=completed):
+            self.assertFalse(supervisor.run_feature_probes(manifest, credentials))
+
     def test_summary_contains_no_credentials_or_fixture_identity(self):
         started = supervisor.utc_now()
         summary = supervisor.redacted_summary(
