@@ -1,0 +1,327 @@
+name: Deploy Edge Worker
+
+# SCRUM-3907 / SCRUM-1032 (source: SCRUM-3797) — GitHub Actions deploy
+# pipeline for the Cloudflare edge worker (services/edge, hosted MCP at
+# edge.arkova.ai). Prod arkova-edge was a pre-June manual `wrangler deploy`
+# with no CI/CD path at all — `git grep wrangler origin/main --
+# .github/workflows/` returned zero files before this — so PR #2589's ES256
+# verifier fix (and the SCRUM-3797 audit-log fix) sat on `main`, merged, for
+# months without ever reaching prod. This workflow deploys on push to `main`,
+# dry-runs the bundle on every PR (SCRUM-1032 AC), and its parity-check step
+# fails the job outright if the deployed `/health` git_sha does not match the
+# commit it just deployed — see `services/edge/src/build-info.ts` and
+# `scripts/ci/check-edge-deployed-version.ts` for the read side of the same
+# mechanism.
+#
+# Mirrors deploy-worker.yml's GCP auth (WIF) + Secret Manager pattern:
+# `cloudflare-api-token` already exists in Secret Manager (project arkova1,
+# consumed there via Cloud Run's --set-secrets for the WORKER's own outbound
+# Cloudflare calls) but there is NO `CLOUDFLARE_*` GitHub Actions secret
+# (verified via `gh secret list` — SCRUM-3907 investigation) and none is
+# added here. Instead this workflow reads the same Secret Manager value at
+# run time via `gcloud secrets versions access`, exactly as deploy-worker.yml
+# would if a Cloud Run --set-secrets entry needed the raw value on the
+# runner. See .github/workflows/agents.md for the full rationale + the
+# DEPLOY_EDGE_PAUSED pause-gate contract (mirrors DEPLOY_WORKER_PAUSED).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/edge/**'
+      - '.github/workflows/edge-deploy.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/edge/**'
+      - '.github/workflows/edge-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy (branch, tag, or full SHA). Defaults to main.'
+        type: string
+        required: false
+        default: 'main'
+
+# One edge deploy at a time — two overlapping `wrangler deploy` runs racing
+# to publish different versions would make "which commit is actually live"
+# (the whole point of this workflow) briefly undefined. Mirrors
+# deploy-worker.yml's `group: deploy-worker` / cancel-in-progress: false.
+concurrency:
+  group: deploy-edge
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: arkova1
+
+jobs:
+  # Runs for every trigger (push / pull_request / workflow_dispatch) — the
+  # quality gate that must pass before either the PR dry-run or the real
+  # deploy proceeds.
+  test:
+    name: Typecheck & Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: services/edge
+    outputs:
+      resolved-sha: ${{ steps.resolve-sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+          # This job runs on every trigger including `pull_request` (fork PRs
+          # included) and then runs `npm ci` against PR-supplied
+          # package.json/package-lock.json — don't leave a live GITHUB_TOKEN
+          # in git config for anything that install step executes.
+          persist-credentials: false
+
+      - name: Resolve deploy SHA
+        id: resolve-sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/edge/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  # PR trigger only — validates the bundle builds and wrangler.toml is
+  # coherent WITHOUT publishing anything or touching the Cloudflare API
+  # token. `wrangler deploy --dry-run` builds + validates the Worker bundle
+  # locally; it does not call the Cloudflare API, so a PR (same-repo or
+  # fork) never needs the deploy credential. Satisfies SCRUM-1032 AC
+  # "Dry-run / preview deploy on PR (no production push)".
+  dry-run:
+    name: Dry run (PR)
+    if: github.event_name == 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: services/edge
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # PR-triggered (fork PRs included) and runs `npm ci` against
+          # PR-supplied package.json/package-lock.json right below — don't
+          # leave a live GITHUB_TOKEN in git config for that install step.
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/edge/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate build-info (dry run — not written back to git)
+        run: node scripts/generate-build-info.mjs "${{ github.event.pull_request.head.sha }}"
+
+      # SonarCloud githubactions:S6505/S8543 -- `--no-install` refuses to
+        # fall back to an on-demand fetch-and-run if the local copy is ever
+        # missing (closing the "npx can install and run arbitrary lifecycle
+        # scripts" path), and the pinned `@4.130.0` (must match the
+        # `wrangler` devDependency in package.json) satisfies "define exact
+        # package version" instead of resolving whatever `wrangler` means at
+        # run time.
+      - name: wrangler deploy --dry-run
+        run: npx --no-install wrangler@4.130.0 deploy --dry-run
+
+  # push-to-main / workflow_dispatch only — evaluates the pause gate BEFORE
+  # any deploy work runs. Mirrors deploy-worker.yml's `deploy-gate` job:
+  # workflow_dispatch always bypasses the pause (a human explicitly
+  # dispatching this workflow is by definition an intentional deploy).
+  deploy-gate:
+    name: Evaluate DEPLOY_EDGE_PAUSED
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Evaluate DEPLOY_EDGE_PAUSED
+        id: check
+        env:
+          PAUSED: ${{ vars.DEPLOY_EDGE_PAUSED }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ needs.test.outputs.resolved-sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Manual workflow_dispatch by ${ACTOR} — deploy proceeds regardless of DEPLOY_EDGE_PAUSED (intentional-override path)."
+            exit 0
+          fi
+
+          if [ "$PAUSED" = "true" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### :no_entry: DEPLOY PAUSED — edge deploy skipped for this push"
+              echo
+              echo "\`vars.DEPLOY_EDGE_PAUSED=true\`. Commit \`${SHA}\` passed \`test\` (typecheck/vitest) but the \`deploy\` job's \`wrangler deploy\` was **not executed**."
+              echo
+              echo "**To deploy this commit anyway (human, intentional):** Actions tab -> Deploy Edge Worker -> Run workflow (or \`gh workflow run edge-deploy.yml\`). \`workflow_dispatch\` always bypasses this pause."
+              echo
+              echo "**To resume automatic deploys for all future pushes:** \`gh variable set DEPLOY_EDGE_PAUSED --body false\` or \`gh variable delete DEPLOY_EDGE_PAUSED\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::DEPLOY PAUSED (vars.DEPLOY_EDGE_PAUSED=true) — edge deploy SKIPPED for commit ${SHA}. See job summary for why + how to re-enable/override."
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    name: Deploy & verify parity
+    if: github.event_name != 'pull_request' && needs.deploy-gate.result == 'success' && needs.deploy-gate.outputs.proceed == 'true'
+    needs: [test, deploy-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: services/edge
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.test.outputs.resolved-sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/edge/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+
+      # No CLOUDFLARE_* GitHub Actions secret exists (verified via `gh secret
+      # list` — SCRUM-3907). `cloudflare-api-token` already lives in Secret
+      # Manager (project arkova1); read it here instead of provisioning a
+      # second copy of the same credential in a second secret store.
+      # `::add-mask::` registers the value with the Actions log redactor
+      # BEFORE it is echoed into $GITHUB_ENV, so it never appears in plain
+      # text in the run log even on a failed/verbose step.
+      - name: Read Cloudflare API token from Secret Manager
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud secrets versions access latest --secret=cloudflare-api-token --project="${PROJECT_ID}")"
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::cloudflare-api-token secret in Secret Manager (project ${PROJECT_ID}) returned an empty value."
+            exit 1
+          fi
+          echo "::add-mask::${TOKEN}"
+          echo "CLOUDFLARE_API_TOKEN=${TOKEN}" >> "$GITHUB_ENV"
+
+      # The 2026-09-08 manual deploy failed partway through on a Cloudflare
+      # API token with too-narrow route-edit scope — a class of failure that
+      # otherwise only surfaces deep inside `wrangler deploy`'s own error
+      # output. Fail fast, before touching wrangler at all, with a message
+      # that names what to fix. LIMITATION (stated, not hidden): Cloudflare's
+      # `/user/tokens/verify` endpoint confirms the token is well-formed and
+      # `active` — it does NOT enumerate the token's permission groups (that
+      # requires Account:Read/Token-introspection access the deploy token may
+      # itself lack). This step can prove "the token is dead" but cannot
+      # prove "the token has route-edit scope"; a scope-too-narrow failure
+      # can still surface later, inside `wrangler deploy` itself. Required
+      # permission groups for this token (document kept in sync with
+      # services/edge/agents.md and the Confluence runbook): Workers
+      # Scripts:Edit, Workers Routes:Edit, Workers KV Storage:Edit, Zone:Read
+      # on arkova.ai.
+      - name: Verify Cloudflare API token is active
+        run: |
+          set -euo pipefail
+          RESP="$(curl -fsS --max-time 10 -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" || true)"
+          STATUS="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b?.result?.status||""))}catch{process.stdout.write("")}' "${RESP:-{}}")"
+          if [ "${STATUS}" != "active" ]; then
+            echo "::error::Cloudflare API token verify failed (status='${STATUS:-<unparseable response>}'). The token in Secret Manager (cloudflare-api-token, project ${PROJECT_ID}) is missing, expired, or revoked. Regenerate it in the Cloudflare dashboard with these permission groups: Workers Scripts:Edit, Workers Routes:Edit, Workers KV Storage:Edit, Zone:Read (scoped to arkova.ai) — then update the Secret Manager value. Note: a token that verifies 'active' here can still lack route-edit scope; this check cannot enumerate permission groups (see the workflow comment above this step)."
+            exit 1
+          fi
+          echo "✅ Cloudflare API token verify: status=active."
+
+      - name: Generate build-info
+        run: node scripts/generate-build-info.mjs "${{ needs.test.outputs.resolved-sha }}"
+
+      # Records what edge.arkova.ai was serving BEFORE this deploy, for the
+      # run log — the live bundle's actual state (including whether the
+      # ES256 verifier fix was already live) has been unverified for months,
+      # so the first real run through this pipeline should document its
+      # before-state rather than silently overwrite it with no record.
+      - name: Record pre-deploy live identity
+        run: |
+          set -euo pipefail
+          BODY="$(curl -fsS --max-time 10 -H 'Cache-Control: no-cache' "https://edge.arkova.ai/health?cb=predeploy-${{ github.run_id }}" || true)"
+          PRE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "${BODY:-{}}")"
+          if [ -z "${PRE_SHA}" ]; then
+            echo "Pre-deploy edge.arkova.ai/health: no version identity (pre-workflow build) — response: ${BODY:-<unreachable>}"
+          else
+            echo "Pre-deploy edge.arkova.ai/health reports git_sha=${PRE_SHA}"
+          fi
+
+      # SonarCloud githubactions:S6505/S8543 -- see the `--dry-run` step's
+        # comment above; same fix, same pinned version (keep in sync with
+        # package.json's `wrangler` devDependency).
+      - name: wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+        run: npx --no-install wrangler@4.130.0 deploy
+
+      # Deployed-version parity check (SCRUM-3907's actual "never again"
+      # mechanism): a `wrangler deploy` exit 0 only proves the Cloudflare API
+      # accepted the upload — it does NOT prove edge.arkova.ai is serving it
+      # (propagation lag, a route misconfiguration, a stale KV-bound
+      # environment, or a CDN/cache layer serving a pre-deploy snapshot).
+      # Curl the live endpoint with a cache-busting query param + no-cache
+      # header and assert its self-reported git_sha equals the commit this
+      # job just deployed; fail the job if not. Retries up to 5 times across
+      # roughly 60s (4 x 15s waits) to absorb propagation lag without
+      # mistaking it for a real failure.
+      - name: Verify deployed-version parity
+        env:
+          EXPECTED_SHA: ${{ needs.test.outputs.resolved-sha }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            BODY="$(curl -fsS --max-time 10 -H 'Cache-Control: no-cache' "https://edge.arkova.ai/health?cb=postdeploy-${{ github.run_id }}-${attempt}" || true)"
+            LIVE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "${BODY:-{}}")"
+            if [ "${LIVE_SHA}" = "${EXPECTED_SHA}" ]; then
+              echo "✅ edge.arkova.ai/health reports git_sha=${LIVE_SHA} — matches deployed commit."
+              exit 0
+            fi
+            if [ "${attempt}" -lt 5 ]; then
+              echo "Attempt ${attempt}/5: live git_sha='${LIVE_SHA}', expected '${EXPECTED_SHA}' — retrying in 15s (propagation lag / cache, ~60s total window)..."
+              sleep 15
+            fi
+          done
+          echo "::error::Deployed-version parity check FAILED — edge.arkova.ai/health git_sha ('${LIVE_SHA}') does not match the commit this job deployed ('${EXPECTED_SHA}') after 5 attempts over ~60s. wrangler deploy exited 0 but the live edge is not serving this commit — this is exactly the merged-but-undeployed failure mode SCRUM-3907 exists to catch. Do not assume the deploy succeeded; investigate before re-running."
+          exit 1
