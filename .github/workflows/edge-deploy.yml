@@ -147,15 +147,11 @@ jobs:
       - name: Generate build-info (dry run — not written back to git)
         run: node scripts/generate-build-info.mjs "${{ github.event.pull_request.head.sha }}"
 
-      # SonarCloud githubactions:S6505/S8543 -- `--no-install` refuses to
-        # fall back to an on-demand fetch-and-run if the local copy is ever
-        # missing (closing the "npx can install and run arbitrary lifecycle
-        # scripts" path), and the pinned `@4.130.0` (must match the
-        # `wrangler` devDependency in package.json) satisfies "define exact
-        # package version" instead of resolving whatever `wrangler` means at
-        # run time.
+      # Execute only the binary installed by the locked npm ci above. A missing
+      # binary fails immediately, with no registry download or lifecycle-script
+      # fallback. The exact version has one source: the package manifest/lock.
       - name: wrangler deploy --dry-run
-        run: npx --no-install wrangler@4.130.0 deploy --dry-run
+        run: ./node_modules/.bin/wrangler deploy --dry-run
 
   # push-to-main / workflow_dispatch only — evaluates the pause gate BEFORE
   # any deploy work runs. Mirrors deploy-worker.yml's `deploy-gate` job:
@@ -342,20 +338,18 @@ jobs:
         run: |
           set -euo pipefail
           BODY="$(curl -fsS --max-time 10 -H 'Cache-Control: no-cache' "https://edge.arkova.ai/health?cb=predeploy-${{ github.run_id }}" || true)"
-          PRE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "${BODY:-{}}")"
+          PRE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "$BODY")"
           if [ -z "${PRE_SHA}" ]; then
             echo "Pre-deploy edge.arkova.ai/health: no version identity (pre-workflow build) — response: ${BODY:-<unreachable>}"
           else
             echo "Pre-deploy edge.arkova.ai/health reports git_sha=${PRE_SHA}"
           fi
 
-      # SonarCloud githubactions:S6505/S8543 -- see the `--dry-run` step's
-        # comment above; same fix, same pinned version (keep in sync with
-        # package.json's `wrangler` devDependency).
+      # Use the same locally installed, lockfile-pinned binary as the PR dry run.
       - name: wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
-        run: npx --no-install wrangler@4.130.0 deploy
+        run: ./node_modules/.bin/wrangler deploy
 
       # Deployed-version parity check (SCRUM-3907's actual "never again"
       # mechanism): a `wrangler deploy` exit 0 only proves the Cloudflare API
@@ -374,7 +368,7 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
             BODY="$(curl -fsS --max-time 10 -H 'Cache-Control: no-cache' "https://edge.arkova.ai/health?cb=postdeploy-${{ github.run_id }}-${attempt}" || true)"
-            LIVE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "${BODY:-{}}")"
+            LIVE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "$BODY")"
             if [ "${LIVE_SHA}" = "${EXPECTED_SHA}" ]; then
               echo "✅ edge.arkova.ai/health reports git_sha=${LIVE_SHA} — matches deployed commit."
               exit 0
