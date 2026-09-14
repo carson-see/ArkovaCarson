@@ -33,16 +33,16 @@
  */
 
 import { useCallback, useState } from 'react';
-import { CheckCircle, FileSignature, Loader2, PlugZap, ShieldAlert, Unplug } from 'lucide-react';
+import { CheckCircle, FileSignature, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS } from '@/lib/copy';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
 import { useSignatureConnection } from './useSignatureConnection';
 import { followSignatureOAuthStart } from './signatureOAuthResponse';
+import { requestConnectorDisconnect } from './connectorDisconnect';
+import { ConnectorCardStatusRow } from './ConnectorCardStatusRow';
 
 interface AdobeSignConnectorCardProps {
   orgId: string;
@@ -112,17 +112,12 @@ export function AdobeSignConnectorCard({ orgId }: Readonly<AdobeSignConnectorCar
     setActionLoading(true);
     setError(null);
     try {
-      const response = await workerFetch('/api/v1/integrations/adobe-sign/disconnect', {
-        method: 'POST',
-        body: JSON.stringify({ org_id: orgId }),
-      });
-      const body = await response.json().catch(() => ({})) as {
-        error?: string;
+      const { error: failure, body } = await requestConnectorDisconnect<{
         adobe_webhook_removed?: boolean;
-      };
+      }>('/api/v1/integrations/adobe-sign/disconnect', orgId);
 
-      if (!response.ok) {
-        setError(body.error ?? CONNECTIONS_LABELS.DISCONNECT_FAILED);
+      if (failure) {
+        setError(failure);
         return;
       }
 
@@ -143,18 +138,6 @@ export function AdobeSignConnectorCard({ orgId }: Readonly<AdobeSignConnectorCar
 
   const connected = !!connection;
   const accountLabel = connection?.account_label || connection?.account_id;
-  let StatusIcon = PlugZap;
-  let statusIconClass = 'h-5 w-5 text-muted-foreground';
-  let statusLabel: string = CONNECTIONS_LABELS.STATUS_NOT_CONNECTED;
-  if (statusLoading) {
-    StatusIcon = Loader2;
-    statusIconClass = 'h-5 w-5 animate-spin text-muted-foreground';
-    statusLabel = CONNECTIONS_LABELS.STATUS_CHECKING;
-  } else if (connected) {
-    StatusIcon = CheckCircle;
-    statusIconClass = 'h-5 w-5 text-emerald-500';
-    statusLabel = CONNECTIONS_LABELS.STATUS_CONNECTED;
-  }
 
   return (
     <Card data-testid="adobe-sign-card">
@@ -167,44 +150,20 @@ export function AdobeSignConnectorCard({ orgId }: Readonly<AdobeSignConnectorCar
         <CardDescription>{CONNECTIONS_LABELS.ADOBE_SIGN_DESC}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <StatusIcon className={statusIconClass} />
-            <div>
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium">Status</p>
-                <Badge variant={connected ? 'default' : 'secondary'}>
-                  {statusLabel}
-                </Badge>
-              </div>
-              {connected && accountLabel && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {CONNECTIONS_LABELS.ACCOUNT_LABEL_PREFIX}{accountLabel}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {connected ? (
-            <Button variant="outline" size="sm" onClick={handleDisconnect} disabled={actionLoading}>
-              {actionLoading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Unplug className="mr-2 h-4 w-4" />
-              )}
-              {actionLoading ? CONNECTIONS_LABELS.DISCONNECTING : CONNECTIONS_LABELS.DISCONNECT_BUTTON}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              onClick={handleConnect}
-              disabled={statusLoading || actionLoading || gateBlocked || gateLoading}
-            >
-              {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {actionLoading ? CONNECTIONS_LABELS.CONNECTING : CONNECTIONS_LABELS.CONNECT_BUTTON}
-            </Button>
+        <ConnectorCardStatusRow
+          statusLoading={statusLoading}
+          connected={connected}
+          actionLoading={actionLoading}
+          connectDisabled={gateBlocked || gateLoading}
+          onConnect={handleConnect}
+          onDisconnect={handleDisconnect}
+        >
+          {connected && accountLabel && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {CONNECTIONS_LABELS.ACCOUNT_LABEL_PREFIX}{accountLabel}
+            </p>
           )}
-        </div>
+        </ConnectorCardStatusRow>
 
         {!connected && gateLoading && (
           <p className="text-sm text-muted-foreground">{CONNECTIONS_LABELS.ADOBE_SIGN_GATE_CHECKING}</p>
