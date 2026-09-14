@@ -13,15 +13,29 @@ name: Deploy Edge Worker
 # `scripts/ci/check-edge-deployed-version.ts` for the read side of the same
 # mechanism.
 #
-# Mirrors deploy-worker.yml's GCP auth (WIF) + Secret Manager pattern:
-# `cloudflare-api-token` already exists in Secret Manager (project arkova1,
-# consumed there via Cloud Run's --set-secrets for the WORKER's own outbound
-# Cloudflare calls) but there is NO `CLOUDFLARE_*` GitHub Actions secret
-# (verified via `gh secret list` — SCRUM-3907 investigation) and none is
-# added here. Instead this workflow reads the same Secret Manager value at
-# run time via `gcloud secrets versions access`, exactly as deploy-worker.yml
-# would if a Cloud Run --set-secrets entry needed the raw value on the
-# runner. See .github/workflows/agents.md for the full rationale + the
+# Mirrors deploy-worker.yml's GCP auth (WIF) pattern only — NOT its secret
+# consumption. `cloudflare-api-token` already exists in Secret Manager
+# (project arkova1, consumed there via Cloud Run's --set-secrets for the
+# WORKER's own outbound Cloudflare calls, entirely at Cloud Run's own
+# runtime), but there is NO `CLOUDFLARE_*` GitHub Actions secret (verified
+# via `gh secret list` — SCRUM-3907 investigation) and none is added here.
+# CORRECTION (2026-09-14, SCRUM-3907 incident): this paragraph previously
+# claimed this workflow reads the value "exactly as deploy-worker.yml does" —
+# that was false, and the false equivalence is what produced the incident.
+# deploy-worker.yml NEVER reads this secret's raw value on the GitHub Actions
+# runner at all; Cloud Run pulls it directly via --set-secrets at ITS OWN
+# runtime, so the runner never sees it and needs no Secret Manager grant for
+# it. This workflow is different: `wrangler deploy` needs the raw token
+# value ON THE RUNNER (to hand to the Cloudflare API), so it reads
+# `cloudflare-api-token` directly via `gcloud secrets versions access` in the
+# steps below — a genuinely new access pattern, not a mirror of an existing
+# one. That means the GitHub Actions deploy identity
+# (`github-actions-deploy@arkova1.iam.gserviceaccount.com`) needs its own
+# explicit `roles/secretmanager.secretAccessor` grant scoped to this one
+# secret, which nobody added when this workflow was written (there was
+# nothing to copy it from). Granted 2026-09-14 (secret-level binding only,
+# no project-level role); see the PR that fixed this for the exact command.
+# See .github/workflows/agents.md for the full rationale + the
 # DEPLOY_EDGE_PAUSED pause-gate contract (mirrors DEPLOY_WORKER_PAUSED).
 
 on:
@@ -231,10 +245,17 @@ jobs:
       # `::add-mask::` registers the value with the Actions log redactor
       # BEFORE it is echoed into $GITHUB_ENV, so it never appears in plain
       # text in the run log even on a failed/verbose step.
+      #
+      # `tr -d '\r\n'` strips any stray trailing CR/LF from the secret
+      # payload before it is ever used. Not confirmed to be the cause of the
+      # 2026-09-14 verify-step failure (a local repro of this exact capture
+      # found no embedded CR/LF), but it is harmless either way and a
+      # malformed `Authorization: Bearer <token>\r` header is exactly the
+      # class of bug this class of defensive strip exists to rule out.
       - name: Read Cloudflare API token from Secret Manager
         run: |
           set -euo pipefail
-          TOKEN="$(gcloud secrets versions access latest --secret=cloudflare-api-token --project="${PROJECT_ID}")"
+          TOKEN="$(gcloud secrets versions access latest --secret=cloudflare-api-token --project="${PROJECT_ID}" | tr -d '\r\n')"
           if [ -z "${TOKEN}" ]; then
             echo "::error::cloudflare-api-token secret in Secret Manager (project ${PROJECT_ID}) returned an empty value."
             exit 1
@@ -257,14 +278,54 @@ jobs:
       # services/edge/agents.md and the Confluence runbook): Workers
       # Scripts:Edit, Workers Routes:Edit, Workers KV Storage:Edit, Zone:Read
       # on arkova.ai.
+      #
+      # DIAGNOSTIC FIX (2026-09-14, SCRUM-3907 incident): the previous form
+      # of this step (`RESP="$(curl -fsS ... || true)"` then parsed as JSON)
+      # could not tell a 4xx from Cloudflare/an intermediary returning a
+      # non-JSON 200 apart — both curl's `-f` (which prints NO body on an
+      # HTTP error and just exits nonzero, swallowed by `|| true`) and a
+      # JSON-parse failure on a non-JSON body collapse to the same empty
+      # string, reported as the unhelpful `<unparseable response>`.
+      #
+      # ROOT CAUSE FOUND while building this fix, and it is NOT a token or
+      # network problem: `"${RESP:-{}}"` is a bash parsing hazard. When the
+      # default-value branch of `${VAR:-word}` is itself the literal `{}`,
+      # bash's brace matching for the SURROUNDING `${...}` gets confused by
+      # the nested `{`/`}` in `word` and appends a stray extra `}` to the
+      # expansion -- for ANY value of RESP, not only when it is empty.
+      # Reproduced directly: `BODY='{"result":{"status":"active"}}'; echo
+      # "${BODY:-{}}"` prints the body with an extra trailing `}`, which
+      # JSON.parse correctly rejects as a syntax error -- caught by the
+      # `try{}catch{}` and reported as empty status, i.e. exactly
+      # `<unparseable response>`. This means the ORIGINAL step could never
+      # have succeeded against any real Cloudflare response, valid token or
+      # not; the two live dispatches on 2026-09-14 (both `<unparseable
+      # response>`, both against a token independently confirmed active by
+      # two different people from two different shells) are fully explained
+      # by this alone. Fixed by never using a brace-shaped default inside
+      # `${...}` -- an explicit `if`/empty-string default sidesteps the
+      # parser hazard entirely (verified: preserves a real body exactly,
+      # defaults a genuinely empty one to `{}`).
+      #
+      # Separately, real HTTP-level failures (bad token, network/WAF issue)
+      # are now distinguishable too: the HTTP status code and body are
+      # captured SEPARATELY (`-w`/`-o`, no `-f`) instead of curl silently
+      # discarding the body on any non-2xx. The body is Cloudflare's own
+      # response describing the token's status — never the token itself —
+      # so it is safe to print in full; it is truncated only to keep the
+      # log line reasonable.
       - name: Verify Cloudflare API token is active
         run: |
           set -euo pipefail
-          RESP="$(curl -fsS --max-time 10 -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" || true)"
-          STATUS="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b?.result?.status||""))}catch{process.stdout.write("")}' "${RESP:-{}}")"
+          HTTP_CODE="$(curl -sS --max-time 10 -o /tmp/cf_verify_body.json -w '%{http_code}' \
+            -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" || echo "000")"
+          BODY="$(cat /tmp/cf_verify_body.json 2>/dev/null || true)"
+          if [ -z "${BODY:-}" ]; then BODY='{}'; fi
+          STATUS="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b?.result?.status||""))}catch{process.stdout.write("")}' "$BODY")"
           if [ "${STATUS}" != "active" ]; then
-            echo "::error::Cloudflare API token verify failed (status='${STATUS:-<unparseable response>}'). The token in Secret Manager (cloudflare-api-token, project ${PROJECT_ID}) is missing, expired, or revoked. Regenerate it in the Cloudflare dashboard with these permission groups: Workers Scripts:Edit, Workers Routes:Edit, Workers KV Storage:Edit, Zone:Read (scoped to arkova.ai) — then update the Secret Manager value. Note: a token that verifies 'active' here can still lack route-edit scope; this check cannot enumerate permission groups (see the workflow comment above this step)."
+            BODY_PREVIEW="$(printf '%s' "${BODY}" | head -c 300)"
+            echo "::error::Cloudflare API token verify failed (http_code=${HTTP_CODE}, status='${STATUS:-<unparseable>}', body='${BODY_PREVIEW}'). The token in Secret Manager (cloudflare-api-token, project ${PROJECT_ID}) is missing, expired, or revoked — OR the request was rejected/altered before reaching the verify endpoint (e.g. a non-2xx from Cloudflare or an intermediary). If http_code is 2xx with an unparseable body, this is NOT a bad-token signal; investigate the runner-to-Cloudflare network path instead of rotating the token. If the token genuinely needs replacing: regenerate it in the Cloudflare dashboard with these permission groups: Workers Scripts:Edit, Workers Routes:Edit, Workers KV Storage:Edit, Zone:Read (scoped to arkova.ai) — then update the Secret Manager value. Note: a token that verifies 'active' here can still lack route-edit scope; this check cannot enumerate permission groups (see the workflow comment above this step)."
             exit 1
           fi
           echo "✅ Cloudflare API token verify: status=active."
