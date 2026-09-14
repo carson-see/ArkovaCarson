@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "rc_id": "rc-train-c2-2026-09-13",
+  "created_at": "2026-09-13T23:34:10.000Z",
+  "created_by": "CTO release session (Claude Sonnet 5) for carson@arkova.io",
+  "release_owner": "CTO release session",
+  "approval_status": "approved",
+  "approval_actor": "carson@arkova.io (CTO release session, rebuild directive 2026-09-13)",
+  "approval_time": "2026-09-13T23:34:10.000Z",
+  "train_launch_sha": "392d933ee37f4a13e6d010485ce5a7d5da1d99be",
+  "target_main_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+  "allowed_base_shas": [
+    "64c3824e53c256936c6d4a5d9064ac97533f673c"
+  ],
+  "covered_main_shas": [
+    "64c3824e53c256936c6d4a5d9064ac97533f673c"
+  ],
+  "included_prs": [
+    {
+      "head_sha": "f8a5b576839951b1aa2d50e7d7f5ed44a5744c6b",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "UAT-22",
+      "number": 2831,
+      "ci_summary": "Merged origin/main cleanly (no textual conflicts, incl. agents.md verified with a driver-bypassed 3-way merge-file check). Pending: services/worker typecheck/lint/test re-run on the train branch.",
+      "rollback_note": "See PR #2831 body for rollback; no migration state to reconcile beyond 0452.",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io"
+    },
+    {
+      "head_sha": "b6d6ef39c0ecdfdfb25e942ab369081ffa9d29cc",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "SCRUM-3971",
+      "number": 2844,
+      "ci_summary": "Real conflict in docs/api/README.md (kept main's webhooks:manage/SCRUM-3981 enforcement paragraph plus this PR's orgs:manage/read:orgs paragraph, cross-referenced both) and services/worker/src/api/apiScopes.test.ts (kept both independent describe-block additions). agents.md carried no real conflict (already re-anchored by this branch's own prior commit). Folded into this train deliberately: its own B4 soak evidence is void because main also touched docs/api/README.md (same-file T2 carve-out), and folding avoids the 0453 migration carve-out that would force whichever train landed second to re-soak.",
+      "rollback_note": "See PR #2844 body for rollback of migration 0453 (orgs:manage scope + suborg API-key authority).",
+      "risk_tier": "T3",
+      "owner": "carson@arkova.io"
+    },
+    {
+      "head_sha": "63b9f0fe398efea56674cb17f3aea118c62259cd",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "SCRUM-3972",
+      "number": 2904,
+      "ci_summary": "Merged origin/main cleanly (no conflicts). A real code conflict then surfaced merging THIS PR into the train alongside #2844 (both touch services/worker/src/api/v1/orgSubOrgs.ts): resolved by keeping #2844's extracted-handler refactor (applyAffiliateStatusAction / allocateSubOrgCreditsCore / offboardSubOrgCore) as the single source of the audit/log/RPC calls, and layering this PR's emitSubOrgEvent() webhook dispatch on top without duplicating the audit write or success log the refactor already performs. Extended offboardSubOrgCore's return with the reclaim's parent/child balance so the route layer can still emit suborg.credits_reclaimed with real balances. Verified: services/worker typecheck clean, targeted vitest (orgSubOrgs, orgSubOrgsApiKey, docs.routeParity, apiScopes) 200/200 passed on the train branch.",
+      "rollback_note": "See PR #2904 body for rollback of migration 0454 (webhook endpoint scope, dark).",
+      "risk_tier": "T3",
+      "owner": "carson@arkova.io"
+    },
+    {
+      "head_sha": "3ea9f1cba8c558fa5773783078c6c0cbcc05ea35",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "SCRUM-5024",
+      "number": 2905,
+      "ci_summary": "Merged origin/main; real (driver-masked) agents.md collisions in e2e/, src/components/org/, src/hooks/, tests/rls/, and the supabase/migrations/agents.md ledger table were found with a union-driver-bypassed 3-way merge-file check and hand-relocated to untouched anchors in each file (main's content left in its original position, text kept byte-identical). Merging into the train then conflicted with #2905 in services/worker/src/api/v1/docs.routeParity.test.ts against #2905 (two independent router-mount list entries at the same insertion point) \u2014 kept both.",
+      "rollback_note": "See PR #2905 body for rollback of migrations 0455/0456 (partner referral attribution + tenant-authority compensating migration; apply both or neither).",
+      "risk_tier": "T3",
+      "owner": "carson@arkova.io"
+    },
+    {
+      "head_sha": "59b001e79ad46ab531b11f9906e91b6b70e7de5f",
+      "base_sha": "64c3824e53c256936c6d4a5d9064ac97533f673c",
+      "ticket": "SCRUM-5120",
+      "number": null,
+      "branch": "fix/scrum-5120-batch-insert-anchors-description",
+      "ci_summary": "No open PR (ships without one per founder directive 2026-09-12). Merged origin/main cleanly, no conflicts of any kind, merged into the train cleanly.",
+      "rollback_note": "See migration 0458 header ROLLBACK comment (batch_insert_anchors RPC column list fix).",
+      "risk_tier": "T3",
+      "owner": "carson@arkova.io"
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade standing staging rig",
+    "staging_api_base": "https://train-c2---arkova-worker-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://train-c2---arkova-worker-staging-kvojbeutfa-uc.a.run.app",
+    "cloud_run_service": "arkova-worker-staging",
+    "revision": "arkova-worker-staging-00408-caw",
+    "deploy_tag": "train-c2",
+    "image_digest": "sha256:03a1162c2e3784940fc203df5a7b90472a6b3ed1e6728f9ac017ddbd43855ebe",
+    "supabase_project_ref": "fizyjojbebyalirtjjht",
+    "deploy_log_id": "49",
+    "preflight_result": "environment_type=clean_mirror (docs/staging/cto-train-c2-2026-09-13/preflight-20260913T234131Z.json, timestamped before soak start)",
+    "notes": "Rebuild of Train C (obsolete head c6e2822be, 24/24 cycles failing, supervisor pid 57103 killed) and Train B4 (#2844, service arkova-worker-cto-train-b4-0913-staging, supervisor pid 95141 killed, 230/230 cycles passing at kill time) folded together onto the standing rig."
+  },
+  "soak": {
+    "tier": "T3 (24 h floor, CLAUDE.md \u00a71.12)",
+    "start": "2026-09-13T23:59:32Z",
+    "end": "PENDING",
+    "cycles": 1,
+    "failures": 0,
+    "evidence_dir": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-c2/window1",
+    "notes": "Known probe defect 2904_suborg_parent_created_persisted_from_seed (seeds via direct DB insert, never drives the route that emits suborg.created \u2014 driving it live-sends an invitation email) marked skipped with reason, not faked.",
+    "result": "IN_PROGRESS",
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs (reused cto-train-b-0912 harness against the standing rig, secret names corrected for this rig: api-key-hmac-secret unsuffixed v1, supabase-service-role-key-staging v2, legacy anon key from get_publishable_keys)",
+    "evidence_links": [
+      "docs/staging/cto-train-c2-2026-09-13/preflight-20260913T234131Z.json",
+      "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-c2/window1/summary.json",
+      "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-c2/rollback-rehearsal.json"
+    ],
+    "expires_at": "2026-09-20T23:59:32Z",
+    "known_gaps": "No dedicated train-cycle.mjs probe module exists for #2831 (UAT-22 invite delivery) in this harness; TRAIN_PROBES includes 2831 as a documented no-op. A separate, pre-existing 'invite-2831' driver process is running on this host but targets arkova-worker-staging's main-traffic URL with a hardcoded old candidate SHA (c6e2822be) \u2014 it is NOT scoped to this candidate and must not be cited as soak evidence for rc-train-c2. 2904_suborg_parent_created_persisted_from_seed marked skipped with a recorded reason (see probe source) rather than faked: seed() creates its lifecycle child via a direct DB insert, never the real create route, so no suborg.created event was ever emitted for it to read back; driving the real route live-sends an invitation email every cycle for 24h."
+  },
+  "migration_plan": {
+    "migrations": [
+      "0452_scrum4888_provision_org_quota_enforcement.sql",
+      "0453_scrum3971_orgs_manage_scope_api_key_suborg_authority.sql",
+      "0454_scrum3972_webhook_endpoint_scope.sql",
+      "0455_scrum5024_partner_referral_attribution.sql",
+      "0456_scrum5024_referral_rpc_tenant_authority.sql",
+      "0458_scrum5120_batch_insert_anchors_description.sql"
+    ],
+    "note": "0457 intentionally skipped \u2014 reserved by another author per supabase/migrations/agents.md; not owned by this train. Applied to the STANDING rig (fizyjojbebyalirtjjht) only, never prod."
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "pre_deploy_step": ""
+  },
+  "exceptions": [],
+  "rc_manifest_path": "docs/staging/rc-manifests/rc-train-c2-2026-09-13.json",
+  "staging_branch": "rc/train-c2-2026-09-13",
+  "preflight_timestamp": "PENDING"
+}
