@@ -526,7 +526,7 @@ export async function listChildFolders(args: {
   const res = await fetchImpl(url, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
-  const json = (await res.json().catch(() => null)) as {
+  const json = (await readDriveJson(res, 'Drive files.list folders')) as {
     files?: Array<{ id?: string; name?: string; driveId?: string }>;
     nextPageToken?: string;
   } | null;

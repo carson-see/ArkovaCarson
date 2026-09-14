@@ -148,3 +148,7 @@ document-bearing path. It uses `arrayBuffer()` / a `for await` over the body str
 which the `readJsonBounded` / `readTextBounded` primitives cover, and neither of which the
 `bounded-body-reads` lint flags. Bounding a size-capped streaming read needs its own primitive and
 its own soak; see the Bug Tracker row for this finding.
+
+## 2026-09-14 — Folder picker response deadline
+
+`listChildFolders` uses the shared ten-second `readDriveJson` deadline from PR #2930. A stalled folder-list response becomes a sanitized `DriveApiError` 408; malformed-response and Retry-After handling remain unchanged. A parked-body regression failed before this correction. PR #2912 requires fresh observation for the corrected runtime.
