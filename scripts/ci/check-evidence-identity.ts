@@ -41,12 +41,28 @@
  * field with the SAME semantics, reusing `requiredTierFor` /
  * `changedFilesBetween` / `gitAncestryProvider` from `check-staging-evidence.ts`
  * so the two gates cannot drift apart on this rule the way they just did.
+ *
+ * Edge-deploy-only carve-out (CTO decision 2026-09-13, PR #2908): check B's
+ * clean-mirror requirement is unconditional for T2/T3 in
+ * `check-staging-evidence.ts` (a PR either has clean_mirror evidence or a
+ * `### Residual-risk note`), but this gate never grew that residual-risk-note
+ * hatch — deliberately: it is the one check that cannot be talked out of by
+ * prose, and a general hatch here would weaken it for every soak run on a
+ * contaminated rig. A Cloudflare-Worker-only PR has no Supabase project in
+ * scope at all, so instead of a prose hatch, `evaluateCleanPreflightIdentity`
+ * skips the clean-mirror requirement ONLY when `isEdgeDeployOnlyChange`
+ * (imported from `check-staging-evidence.ts`) is true of the PR's own
+ * changed-file set (declared `Base SHA:` → `PR head SHA:`) — a fact computed
+ * from a real diff, not asserted by the PR author. See the rationale comment
+ * on `evaluateCleanPreflightIdentity` for the full argument and its explicit
+ * rejection of the general-hatch alternative.
  */
 
 import {
   requiredTierFor,
   changedFilesBetween,
   gitAncestryProvider,
+  isEdgeDeployOnlyChange,
   type AncestryProvider,
   type ChangedFilesProvider,
 } from './check-staging-evidence.js';
@@ -345,34 +361,99 @@ function extractPreflightSha(value: string): string | null {
   return full ? full[0].toLowerCase() : null;
 }
 
-export function checkCleanPreflightIdentity(
+export interface CleanPreflightIdentityOpts {
+  /**
+   * Injection point for the edge-deploy-only carve-out's file-set question
+   * (declared `Base SHA:` → declared `PR head SHA:`). Same shape and same
+   * fallback convention as {@link HeadShaIdentityOpts.changedFilesProvider}:
+   * tests inject a stub so this module never shells out; omitted in
+   * production, where it falls back to real git via `changedFilesBetween`.
+   */
+  changedFilesProvider?: ChangedFilesProvider;
+}
+
+interface CleanPreflightIdentityEvaluation {
+  findings: Finding[];
+  /** Set only when the edge-deploy-only carve-out was applied — informational, never fails the gate. */
+  note: string | null;
+}
+
+/**
+ * Core `clean-preflight-identity` evaluation, including the edge-deploy-only
+ * carve-out (CTO decision 2026-09-13, PR #2908). `checkCleanPreflightIdentity`
+ * is a thin wrapper returning only `.findings`, unchanged in shape for
+ * existing callers; `runEvidenceIdentity` also reads `.note` so an applied
+ * carve-out surfaces as an info line instead of vanishing silently — mirrors
+ * how `evaluateHeadShaIdentity` / `checkHeadShaIdentity` split for the
+ * Post-soak T0 delta allowance above.
+ *
+ * WHY A FILE-SET CARVE-OUT AND NOT A PROSE ONE: the clean-mirror requirement
+ * binds evidence to an uncontaminated Supabase database (CLAUDE.md §1.11A). A
+ * PR that deploys only a Cloudflare Worker has no database in scope at
+ * all — for that PR the requirement is INAPPLICABLE, not waived, because
+ * there is nothing for a preflight to certify as clean. That is a narrower
+ * claim than a general `### Residual-risk note` escape hatch (the kind
+ * `check-staging-evidence.ts`'s `preflightResultErrors()` grants elsewhere),
+ * and deliberately so: this gate has no such general hatch anywhere else,
+ * because it is the one check that cannot be talked out of by an author's own
+ * prose, and a general hatch here would weaken it for every soak run on a
+ * contaminated rig — precisely what §1.11A exists to stop. So the carve-out
+ * is keyed strictly on the PR's changed-file set via
+ * {@link isEdgeDeployOnlyChange}, computed from data (`Base SHA:` /
+ * `PR head SHA:` + a real diff), never from a claim in the PR body. A
+ * null/empty/uncomputable file list is NOT edge-deploy-only — it fails CLOSED
+ * to the original clean-mirror finding, exactly like every other file-set
+ * carve-out in this repo.
+ */
+function evaluateCleanPreflightIdentity(
   body: string,
   declaredHead: string | null,
   tier: Tier | null,
-): Finding[] {
+  opts: CleanPreflightIdentityOpts = {},
+): CleanPreflightIdentityEvaluation {
   const name = 'clean-preflight-identity';
   const findings: Finding[] = [];
+  let note: string | null = null;
   const preflight = extractField(body, 'Preflight result:');
 
   // No preflight field present — nothing to identity-check here (the standard
   // staging-evidence gate enforces presence/format; this gate is identity only).
-  if (preflight === null || preflight.length === 0) return findings;
+  if (preflight === null || preflight.length === 0) return { findings, note };
 
-  // (b1) clean_mirror is required for T2/T3 environment identity.
+  // (b1) clean_mirror is required for T2/T3 environment identity — unless the
+  // PR's own changed-file set proves there is no Supabase surface to bind a
+  // clean-mirror claim to at all (see the carve-out rationale above).
   const requiresCleanMirror = tier === 'T2' || tier === 'T3';
   if (requiresCleanMirror && !isCleanMirror(preflight)) {
-    findings.push({
-      name,
-      message:
-        `Preflight result does not declare \`environment_type=clean_mirror\` ` +
-        `(found: \`${preflight}\`). ${tier} merge-grade evidence requires a ` +
-        `clean-mirror preflight identity (CLAUDE.md §1.11A).`,
-    });
+    const changedFilesProvider = opts.changedFilesProvider ?? changedFilesBetween;
+    const declaredBase = extractShaFromField(body, 'Base SHA:');
+    const files = declaredBase && declaredHead
+      ? changedFilesProvider(declaredBase, declaredHead)
+      : null;
+
+    if (files !== null && isEdgeDeployOnlyChange(files)) {
+      note =
+        'clean-preflight-identity: edge-deploy-only carve-out applied — ' +
+        `${files.length} changed file(s) between declared \`Base SHA:\` ` +
+        `${declaredBase} and \`PR head SHA:\` ${declaredHead} classify as ` +
+        'Cloudflare-Worker-only (isEdgeDeployOnlyChange), so this PR has no ' +
+        'Supabase surface to preflight. The clean-mirror requirement is ' +
+        'inapplicable, not waived (CTO decision 2026-09-13).';
+    } else {
+      findings.push({
+        name,
+        message:
+          `Preflight result does not declare \`environment_type=clean_mirror\` ` +
+          `(found: \`${preflight}\`). ${tier} merge-grade evidence requires a ` +
+          `clean-mirror preflight identity (CLAUDE.md §1.11A).`,
+      });
+    }
   }
 
   // (b2) any head SHA embedded in the preflight must match the declared head —
   // otherwise the preflight was captured against a different head (copied
-  // evidence across heads).
+  // evidence across heads). Unaffected by the carve-out above: it is an
+  // orthogonal identity check, not a clean-mirror requirement.
   const preflightSha = extractPreflightSha(preflight);
   if (preflightSha && declaredHead && !shaMatches(preflightSha, declaredHead)) {
     findings.push({
@@ -384,7 +465,16 @@ export function checkCleanPreflightIdentity(
     });
   }
 
-  return findings;
+  return { findings, note };
+}
+
+export function checkCleanPreflightIdentity(
+  body: string,
+  declaredHead: string | null,
+  tier: Tier | null,
+  opts: CleanPreflightIdentityOpts = {},
+): Finding[] {
+  return evaluateCleanPreflightIdentity(body, declaredHead, tier, opts).findings;
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +538,11 @@ export function runEvidenceIdentity(
   if (headEvaluation.note) notes.push(headEvaluation.note);
 
   const declaredHead = extractShaFromField(body, 'PR head SHA:');
-  findings.push(...checkCleanPreflightIdentity(body, declaredHead, tier));
+  const preflightEvaluation = evaluateCleanPreflightIdentity(body, declaredHead, tier, {
+    changedFilesProvider: input.changedFilesProvider,
+  });
+  findings.push(...preflightEvaluation.findings);
+  if (preflightEvaluation.note) notes.push(preflightEvaluation.note);
 
   return {
     skipped: false,

@@ -2,6 +2,14 @@
 
 Row Level Security integration tests. Verify RLS policies enforce tenant isolation and role-based access.
 
+## PR #2905 — Referral disclosure requires a verified human session
+
+The disposable referred-org member now completes real GoTrue MFA through
+`elevateRlsClientToAal2` before asserting tenant isolation. A password-only session
+is blocked before tenant RLS and cannot prove the disclosure boundary. Migration
+0457 adds the existing restrictive MFA predicate to both new referral tables;
+the UAT-04 live policy census covers them during the complete migration replay.
+
 ## Files
 - **`oauth-email-confirmation.test.ts`** — SCRUM-4035 real SQL authority and replay/concurrency checks. Role-corruption setup uses the local Supabase bootstrap administrator, restricted to owned loopback ports 54322/55503 and the repository CI port blocks; `UAT03_DATABASE_URL` can select the owned native candidate database. Creator cases use `SET SESSION AUTHORIZATION` so a superuser session cannot hide non-superuser role behavior. Setup proves a live bootstrap connection; permission assertions match the primary server ERROR diagnostic exactly, excluding supplied SQL in Node commands or PostgreSQL LINE/CONTEXT excerpts. Transaction scripts use stdin with `SHOW_ALL_RESULTS=off` explicitly exercised: multi-command `psql -c` otherwise hides intermediate results on CI's psql. Temporary roles and grants roll back; concurrent fixtures delete only their own UUID and restore the previous activation timestamp.
 - **`rls.test.ts`** — core RLS tests: cross-tenant reads, own-data reads, insert/update/delete policies. Uses `withUser()` and `createServiceClient()` from `src/tests/rls/helpers.ts`.

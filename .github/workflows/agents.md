@@ -212,7 +212,7 @@ Two compliant shapes, both now in use:
 
 ## Files
 
-All 16 workflows, with their real triggers. **Not everything here is PR-driven** —
+All 17 workflows, with their real triggers (SCRUM-3907 added `edge-deploy.yml`, 16 -> 17). **Not everything here is PR-driven** —
 four workflows can fire with no PR and no push to `main` (cron, tag push, or an
 issue comment), so a change to one of those can take effect outside the PR cycle.
 
@@ -224,6 +224,7 @@ issue comment), so a change to one of those can take effect outside the PR cycle
 | `merge-authority.yml` | `pull_request` (`opened`/`synchronize`/`reopened`/`ready_for_review`) | Single `compute` job — reuses `requiredTierFor` to emit the tier/merge-council marker. Fails closed. |
 | `gitleaks.yml` | `pull_request` main + `push` main | Single `scan` job — secret scanning. |
 | `deploy-worker.yml` | **`push` to `main`** filtered to `services/worker/**` + `workflow_dispatch` | Cloud Run worker deploy: `pre-deploy-checks` → `deploy-gate` (the `vars.DEPLOY_WORKER_PAUSED` pause) → `deploy`. Worker lint uses `npm run lint` (matches CI). |
+| `edge-deploy.yml` | `push` to `main` filtered to `services/edge/**` + `pull_request` (dry-run) + `workflow_dispatch` (`ref` input) | Cloudflare edge worker (`edge.arkova.ai`) deploy — SCRUM-3907/SCRUM-1032, closing the gap SCRUM-3797 found (prod was a pre-June manual `wrangler deploy`, no CI/CD path at all). `test` → PR: `dry-run` (`wrangler deploy --dry-run`, no Cloudflare credential needed); push/dispatch: `deploy-gate` (the `vars.DEPLOY_EDGE_PAUSED` pause, same contract as `DEPLOY_WORKER_PAUSED` below) → `deploy` (reads `cloudflare-api-token` from Secret Manager — no `CLOUDFLARE_*` GitHub secret exists — then `wrangler deploy`, then a **deployed-version parity check**: curl `edge.arkova.ai/health`, fail the job if `git_sha` != the commit just deployed). See `services/edge/agents.md` for the `build-info.ts` generator + `scripts/ci/check-edge-deployed-version.ts` (the warn-only CI-side half of the same mechanism, wired into `ci.yml`). |
 | `deploy-staging.yml` | **`workflow_dispatch` only** | Manual staging deploy. Inputs: `pr_number`, `source_ref`, `service` (default `arkova-worker-staging`), `force_reason` (must start `SCRUM-NNNN:` to bypass the lease check). |
 | `verify-worker-runtime.yml` | **`workflow_dispatch` only** | Single `verify` job — optional `pr_number` input for authenticated staging-tag health. |
 | `revision-drift.yml` | **`schedule` — cron `*/10 * * * *`** + `workflow_dispatch` | Every 10 min: fetch worker `/health.git_sha`, compare to `origin/main`, fire Sentry on drift > 1h or `missing-sha`. Runs with no PR involved. |
@@ -443,6 +444,21 @@ now has a `deploy-gate` job between `pre-deploy-checks` and `deploy`:
   blast radius (it changes deploy ORCHESTRATION only: no secret, env var,
   image, region, scaling, or IAM line is touched, and the default state is
   unpaused/unchanged behavior).
+
+## Deploy-edge pause gate (`vars.DEPLOY_EDGE_PAUSED`, SCRUM-3907)
+
+`edge-deploy.yml`'s `deploy-gate` job is the same contract as
+`DEPLOY_WORKER_PAUSED` above, applied to the Cloudflare edge worker instead
+of Cloud Run: default (unset, or anything other than `"true"`) is
+**unpaused**; `workflow_dispatch` always bypasses the pause; reversal is
+`gh variable set DEPLOY_EDGE_PAUSED --body false` (or `gh variable delete
+DEPLOY_EDGE_PAUSED`), no code change required. The `test` job (typecheck +
+vitest) is unconditional on every trigger, same as `pre-deploy-checks` for
+the worker — paused or not, quality gates stay live. See the workflow
+file's own comments for the pause-evaluation step and
+`services/edge/agents.md` for the `build-info.ts` / deployed-version-parity
+mechanism this gate protects.
+
 ## `$GITHUB_OUTPUT` heredoc delimiters must be per-run random (2026-07-28)
 
 Any step that frames **author-controlled** text inside a `$GITHUB_OUTPUT` (or
@@ -791,3 +807,23 @@ negative controls. The staging live-input and step-identity contracts remain in
 It checks EXISTENCE only — never a value, never a version payload, nothing printed. It lists only NEWLY-introduced names: the pre-existing ones are already proven by every green deploy on `main`. **Add a name to that list in the same commit that adds it to `--set-secrets`.** A name in `--set-secrets` that is neither covered by a green deploy nor listed in the preflight is precisely the hole this step closes.
 
 Also added dark: `ENABLE_COMPUTEID_INTEGRATION=false` in `--set-env-vars`. It was already false by `config.ts` default; stating it makes the activation flip one reviewable line instead of an invisible default, and it fails SAFE if the code default ever changes.
+
+## 2026-09-13 — `deploy-worker.yml`: `CLOUDFLARE_ORIGIN_GUARD_MODE=off` added; `CLOUDFLARE_ORIGIN_SECRET` deliberately NOT added yet (SCRUM-3888)
+
+Same "state the dark default explicitly" move as `ENABLE_COMPUTEID_INTEGRATION=false` above:
+`CLOUDFLARE_ORIGIN_GUARD_MODE=off` in `--set-env-vars` matches `config.ts`'s own default and makes
+a future activation one reviewable line rather than an invisible default.
+
+`CLOUDFLARE_ORIGIN_SECRET` is **not** added to `--set-secrets` in this change, on purpose — this is
+the inverse of the SCRUM-4495 preflight entry above, and the same mechanism is exactly why: a
+`--set-secrets` reference to a Secret Manager id (`cloudflare-origin-secret`) that does not exist
+yet fails the "Preflight required Secret Manager entries" step for **every subsequent worker
+deploy**, not just this flag's own rollout, until someone creates it. The flag defaults `off` and
+needs no secret in that mode (`services/worker/src/config.ts` fails the boot loudly if a non-off
+mode is ever set without one — see its `cloudflareOriginGuardMode`/`cloudflareOriginSecret`
+cross-field guard), so there is nothing to provision until the release session is ready to roll
+into `observe`. When that happens, in ONE motion: create the `cloudflare-origin-secret` Secret
+Manager entry, add `CLOUDFLARE_ORIGIN_SECRET=cloudflare-origin-secret:latest` to `--set-secrets`,
+add `cloudflare-origin-secret` to the preflight loop's `for secret in ...` list, and only then flip
+`CLOUDFLARE_ORIGIN_GUARD_MODE`. Full rollout/rollback procedure:
+`docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`.

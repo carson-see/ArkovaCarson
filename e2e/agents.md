@@ -86,6 +86,15 @@ render is worthless without the control showing the same code path DOES render l
 
 Evidence and reproduction steps: `docs/uat/pr-2840/README.md`.
 
+
+## 2026-09-12 — SCRUM-4507: the Drive record-detail fixture MUST be written with the service client
+
+`record-detail.spec.ts` gained a Google Drive block mirroring the DocuSign one. Its `beforeAll`
+writes `metadata` through `serviceClient`, and that is load-bearing rather than incidental:
+migration 0423's trigger strips `connector_source` from any write by a non-`service_role` caller.
+A fixture written as the user would produce a record with no marker, hence no chips — and the spec
+would pass while testing nothing. Same reason the DocuSign block above uses the service client.
+
 ## 2026-09-08 — every failed E2E job used to discard its own evidence
 
 `playwright.config.ts` set `reporter: process.env.CI ? 'list' : 'html'`. The `list`

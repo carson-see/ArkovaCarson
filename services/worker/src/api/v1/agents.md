@@ -1,7 +1,50 @@
 # services/worker/src/api/v1/agents.md
 
+## PR #2905 — Route parity after the main refresh
+
+The parity harness includes both the new referrals router and main’s verified
+search router. Preserve both entries and imports when resolving concurrent
+additions so either undocumented mount still fails the harness.
+
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+
+## 2026-09-12 — SCRUM-4507: `source.provider` on the verification response, and what it deliberately omits
+
+`GET /api/v1/verify/:publicId` gained an additive `source: { provider }` — a bare vocabulary word
+saying WHICH connected system a record's document came from. Additive and omitted when unknown, so
+§1.8 is satisfied without a version bump.
+
+**What it does NOT carry, and why.** No file id, folder id, shared-drive id, revision or deep link.
+This route answers ANONYMOUSLY (`router.ts` lets an unauthenticated GET through), so a Drive file id
+here would let any holder of a public record id probe the source system for that object — and open
+the document outright if it is link-shared. Those identifiers go to the record OWNER on the
+authenticated record page and nowhere else. `verify-pii-projection.test.ts` walks the whole response
+RECURSIVELY for Drive ids, UUIDs and `@`, so a future nested addition fails there without anyone
+remembering to extend an allowlist.
+
+**Gated on `connector_source`, NOT `server_fetched_connector_source`.** The two answer different
+questions. `server_fetched_…` keys the "Measured: Arkova retrieved these bytes" claim and must stay
+gated on real fetch evidence. The provider says only where the record originated — a declared-hash
+inbound DocuSign record did originate at DocuSign even though Arkova fetched nothing, and its weaker
+evidence class is already stated by `fingerprint_rederivability`. Suppressing the provider there
+would hide true provenance to protect a claim something else already makes.
+
+**One vocabulary, three surfaces, no drift.** `VERIFICATION_SOURCE_PROVIDERS` (verify.ts) is DERIVED
+from `CONNECTOR_FETCH_SOURCE_MARKERS`, `docs.ts` derives its enum from the same constant, and
+`openapi-source-provider-contract.test.ts` asserts the published `docs/api/openapi.yaml` enum equals
+the served one. An enum member the runtime gate would reject is a documented value the API cannot
+produce; a marker the gate accepts but the enum omits is an undocumented value on a frozen schema.
+Both are impossible by construction rather than by review.
+
+**Residual, disclosed:** `connector_source` is server-stamped and, since migration 0423, stripped
+from any non-`service_role` write — but rows written BEFORE 0423 could carry an org-authored marker.
+That is precisely why this stays a bare word with no identifier attached and never keys a
+"Measured:" sentence.
+
+`docs.ts` imports the vocabulary from `constants/connectorFingerprint.js` rather than from
+`verify.js` on purpose: `verify.ts` stands up the db client and config at module scope, and
+`docs.test.ts` deliberately does not.
 ## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
 
 Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI
@@ -24,6 +67,48 @@ read or the whole batch would treat a freshly-created org as still-unmetered. Bo
 `orgId` is undefined. A genuine deduction failure (insufficient credits / RPC error) still fails CLOSED
 with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
 check itself.
+
+## 2026-09-13 — `ai-verify-search.ts`: `GET /verify/search` no longer 503s when `ENABLE_SEMANTIC_SEARCH` is off (SCRUM-3906)
+
+This route used to be mounted behind `aiSemanticSearchGate()` in `router.ts` — with
+`ENABLE_SEMANTIC_SEARCH` off (the prod default), EVERY call 503'd before ever reaching the handler,
+including direct API-key callers (npm `arkova-mcp-server`'s `arkova_search_anchors`, the TS/Python
+SDKs' `search()`). The edge hosted MCP (`services/edge/src/mcp-tools.ts` `handleSearchCredentials`)
+already tolerated that 503 by re-running its own lexical query; nothing else did. Confluence
+135069697 (finding N3) and SCRUM-3906/SCRUM-3940 have the full audit trail.
+
+The route is now unconditionally mounted (`router.ts`: `router.use('/verify/search',
+aiVerifySearchRouter)`, no gate) and owns its own mode selection:
+
+- **Semantic** (`search_mode: 'semantic_vector'`): attempted only when `isSemanticSearchEnabled()`
+  (from `middleware/aiFeatureGate.ts`) is true. Embeds the query, matches via
+  `search_public_credential_embeddings`, costs one AI credit (`checkAICredits`/`deductAICredits`,
+  unchanged from before), and can return `issuer_name` / `issued_date` / `expiry_date` /
+  `anchor_timestamp` / `similarity`.
+- **Lexical** (`search_mode: 'lexical_substring'`): the fallback, taken whenever the flag is off OR
+  the embed call throws OR the embeddings RPC errors for ANY reason (not just the RPC-not-found
+  `42883` case the old code special-cased). Queries `search_public_credentials` — the SAME
+  anon-callable ILIKE-substring RPC `services/edge/src/mcp-tools.ts`'s `searchCredentialsFallback`
+  uses (see `supabase/migrations/0415_ferpa_directory_info_opt_out_public_projections.sql` for the
+  current body). No AI credit is checked or deducted on this path. The RPC's `jsonb_build_object`
+  row carries `org_id` — deliberately never read here (§6: no internal ids in a v1 response).
+
+Every response — semantic or lexical — carries `search_mode` so a caller (and a test) can tell which
+path actually answered instead of inferring it from which optional fields are present. The two
+string values (`'semantic_vector'` / `'lexical_substring'`) are a DELIBERATE match to
+`services/edge/src/mcp-tools.ts`'s `SEARCH_MODE_SEMANTIC` / `SEARCH_MODE_LEXICAL` constants — one
+shared vocabulary across the two surfaces, even though the values are duplicated (not imported)
+because worker and edge are separately built services with no shared runtime module boundary.
+
+**Known follow-up, deliberately NOT fixed in this PR (out of lane):** `services/edge/src/mcp-tools.ts`'s
+`searchCredentialsWorkerSemantic()` proxies to this exact route and today treats ANY 2xx response as
+semantic — it does not read `search_mode` from the body at all. Once this ships, an edge-proxied MCP
+caller whose semantic path this route degrades to lexical will see the edge label those results
+`semantic_vector` even though they came from the lexical branch, until the edge is updated to check
+this field. That is an edge-owned fix; flagged via a spawned follow-up task, not fixed here.
+
+`ENABLE_VERIFICATION_API` (the router-wide gate applied above every `/api/v1/*` mount) is unchanged
+and remains the only way this route now 503s.
 
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 

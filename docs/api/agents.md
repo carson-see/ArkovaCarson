@@ -2,6 +2,20 @@
 
 Developer-facing API documentation. Engineering mirrors and guides for the Arkova Verification API.
 
+
+## 2026-09-12 — SCRUM-4507: `VerificationResult.source` is mirrored here AND in `docs.ts`
+
+`GET /verify/{publicId}` gained an additive `source: { provider }`. It exists in TWO published
+places — this YAML (handed to integrators) and the in-worker `docs.ts` spec served at
+`/api/v1/docs` — and `services/worker/src/api/v1/openapi-source-provider-contract.test.ts` asserts
+the provider enums match, for the same reason `openapi-proof-bundle-contract.test.ts` exists: the
+0427 proof-bundle fields landed in one surface and not the other and nothing compared them.
+
+The enum is the runtime recognised-marker set from
+`services/worker/src/constants/connectorFingerprint.ts`. Widening it means changing that constant,
+not editing this file. `source` carries the provider label and NOTHING else — no identifier, no deep
+link — because this endpoint answers anonymously; see `services/worker/src/api/v1/agents.md` for the
+full reasoning, which lives there and is not restated here.
 ## 2026-09-12 — documenting `webhooks:manage` enforcement, and why openapi.yaml was not the place (SCRUM-3981)
 
 `/api/v1/webhooks*` now requires the `webhooks:manage` scope. Three documentation surfaces changed
@@ -21,6 +35,26 @@ and one deliberately did not:
   description of this surface there would recreate the drift the demotion was meant to end. It is
   still parse-checked by `scripts/ci/check-api-scope-vocabulary.ts` for scope VOCABULARY parity, and
   the vocabulary did not change here — no scope was added, renamed, or removed.
+
+## 2026-09-13 — `/verify/search` documented for the first time; `total`→`count` drift fixed (SCRUM-3906)
+
+`GET /verify/search` existed in `services/worker/src/api/v1/docs.ts` (the served spec) but was
+missing entirely from the `openapi.yaml` mirror and from `README.md`'s REST API table — added to
+both. While updating `docs.ts`'s response schema, found and fixed a pre-existing drift unrelated to
+this PR's behavior change: the schema documented a `total` field but the handler has always returned
+`count` (and never documented `query` or `threshold` at all). All three now match the handler.
+
+New behavior documented in all three surfaces (`docs.ts`, `openapi.yaml`, `README.md`): the route no
+longer 503s when `ENABLE_SEMANTIC_SEARCH` is off — it falls back to a lexical
+(`search_public_credentials`) match and marks every response with `search_mode`
+(`semantic_vector` | `lexical_substring`). The 503 response documentation now names
+`ENABLE_VERIFICATION_API` instead of the semantic-search flag, since that flag can no longer produce
+one on this route. See `services/worker/src/api/v1/agents.md`'s 2026-09-13 entry for the full
+mechanism and the known edge (`services/edge/src/mcp-tools.ts`) follow-up this does NOT fix.
+
+`docs/partners/docusign-integration-guide.html` and `docs/partners/hakichain-integration-guide.html`
+(referenced by the task as needing a search-availability update) do not exist on `main` / in this
+worktree — not touched.
 
 ## 2026-09-05 — the `arkova_` rename vs §1.8: what moved and what did not (SCRUM-4465 / BUG-2026-09-02-001)
 

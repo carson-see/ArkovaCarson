@@ -26,6 +26,7 @@ import {
   createServiceClient,
   createAnonClient,
   withUser,
+  elevateRlsClientToAal2,
   cleanupClient,
   DEMO_CREDENTIALS,
   ORG_IDS,
@@ -353,6 +354,14 @@ describe('SCRUM-5024 referral codes and attribution (live DB)', () => {
           user_id: memberId,
           role: 'owner',
         });
+        const { data: membership, error: membershipError } = await service
+          .from('org_members')
+          .select('org_id, user_id')
+          .eq('org_id', REFERRED_ORG)
+          .eq('user_id', memberId)
+          .single();
+        expect(membershipError).toBeNull();
+        expect(membership).toEqual({ org_id: REFERRED_ORG, user_id: memberId });
 
         const { createClient } = await import('@supabase/supabase-js');
         const url = process.env.SUPABASE_URL ?? 'http://127.0.0.1:54321';
@@ -363,6 +372,10 @@ describe('SCRUM-5024 referral codes and attribution (live DB)', () => {
           password: `Referred-${RUN}-Aa1!`,
         });
         expect(signInError).toBeNull();
+
+        // Exercise tenant RLS as a verified human. An AAL1 session is rejected
+        // by the mandatory MFA gate before this disclosure boundary is reached.
+        await elevateRlsClientToAal2(client as TypedClient, memberId);
 
         const { data, error } = await client
           .from('organization_referrals')

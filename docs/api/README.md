@@ -36,6 +36,7 @@ The rich v1 verification response includes shipped API-RICH-02 fields `descripti
 | Group | Endpoints | Auth | Docs |
 |---|---|---|---|
 | Verification | `GET /verify/{publicId}`, `POST /verify/batch` | Optional API key (rate-limit boost) | [OpenAPI](./openapi.yaml) |
+| Agentic search | `GET /verify/search` | API key required | [OpenAPI](./openapi.yaml) — `search_mode` (`semantic_vector` \| `lexical_substring`) on every response says which path answered; never a 503 for semantic search being disabled (SCRUM-3906) |
 | Anchoring | `POST /anchor` | API key | [OpenAPI](./openapi.yaml) |
 | Webhooks | `POST/GET/PATCH/DELETE /webhooks`, `GET /webhooks/{id}`, `POST /webhooks/test`, `GET /webhooks/deliveries`, `POST /webhooks/deliveries/{id}/replay`, `GET /webhooks/dlq`, `POST /webhooks/dlq/{id}/resolve` | API key with the `webhooks:manage` scope (all ten routes). Registering, updating, deleting, and both DLQ routes additionally require the key's actor to be an ORG_ADMIN | [Webhooks guide](./webhooks.md) |
 | API key management | `POST/GET/PATCH/DELETE /keys` | Supabase JWT | [OpenAPI](./openapi.yaml) |
@@ -245,6 +246,7 @@ External:
 
 | Date | Story | What shipped |
 |---|---|---|
+| 2026-09-13 | SCRUM-3906 | `GET /verify/search` no longer 503s when `ENABLE_SEMANTIC_SEARCH` is off (or the embed/match RPC fails) — it falls back to the same lexical `search_public_credentials` RPC the edge MCP server already used, and labels every response with `search_mode`. |
 | 2026-04-24 | SCRUM-1110 | v1 deprecation calendar, migration guide, and production `Deprecation` header wiring. |
 | 2026-04-24 | SCRUM-1111 | API v2 per-scope rate limits backed by Upstash Redis with documented env overrides. |
 | 2026-04-24 | SCRUM-1112 | Python SDK package (`pip install arkova`) with sync/async typed clients and publish workflow. |
