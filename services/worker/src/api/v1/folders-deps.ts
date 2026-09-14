@@ -30,6 +30,14 @@ function nullableFolderRpcArgs<Name extends FolderFunction>(
   return args as Database['public']['Functions'][Name]['Args'];
 }
 
+/** PostgREST serializes a SQL composite RETURN NULL as an all-null object. */
+function folderCompositeOrNull(data: unknown): FolderRow | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  return typeof (data as { id?: unknown }).id === 'string'
+    ? data as FolderRow
+    : null;
+}
+
 async function userIsExactAdmin(db: DbLike, userId: string, orgId: string): Promise<boolean> {
   const { data, error } = await db.from('org_members')
     .select('user_id').eq('user_id', userId).eq('org_id', orgId)
@@ -146,14 +154,14 @@ export function createDefaultFolderApiDeps(db: DbLike = defaultDb): FolderApiDep
       }));
       if (error) throw new Error(error.code === '23505' ? 'folder_name_conflict'
         : error.code === '42501' ? 'folder_forbidden' : 'folder_update_failed');
-      return data as unknown as FolderRow | null;
+      return folderCompositeOrNull(data);
     },
     async deleteFolder(input) {
       const { data, error } = await db.rpc('folder_api_delete', nullableFolderRpcArgs<'folder_api_delete'>({
         ...rpcIdentity(input), p_folder_id: input.folderId,
       }));
       if (error) throw new Error(error.code === '23503' ? 'folder_has_children' : 'folder_delete_failed');
-      return data as unknown as FolderRow | null;
+      return folderCompositeOrNull(data);
     },
     async bulkMove(input) {
       let anchorIds = input.anchorIds ?? [];

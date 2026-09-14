@@ -1473,3 +1473,12 @@ checks it again. Never route this through `canAdminOrg`, `canAdminOrgExact`, or
 the shared SQL organization-administration helper, because those helpers also
 guard writes. Global personal folders remain private through REST; only an
 explicit organization-context personal folder gets the platform read path.
+
+## 2026-09-14 — folder composite NULL normalization
+
+`folder_api_update` and `folder_api_delete` return the composite type
+`public.folders`. PostgREST represents PL/pgSQL `RETURN NULL` for that composite
+as an object whose columns are all null, so truthiness is not an authorization
+signal. `folders-deps.ts` normalizes any response without a string `id` to null
+before the router decides between 404 and success. Keep rename, connector-update,
+and delete tests together; none may emit a webhook for the all-null shape.

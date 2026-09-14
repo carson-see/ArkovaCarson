@@ -8,6 +8,7 @@ vi.mock('../../webhooks/delivery.js', () => ({ dispatchWebhookEvent: vi.fn() }))
 
 import { createDefaultFolderApiDeps } from './folders-deps.js';
 import { createFoldersRouter } from './folders.js';
+import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 
 const PLATFORM = '99999999-0000-4000-8000-000000000001';
 const TARGET = '88888888-0000-4000-8000-000000000001';
@@ -24,8 +25,8 @@ function query(data: unknown) {
   return chain;
 }
 
-function appFor(profile: { is_platform_admin: boolean } | null) {
-  const rpc = vi.fn(async () => ({ data: [], error: null }));
+function appFor(profile: { is_platform_admin: boolean } | null, rpcData: unknown = []) {
+  const rpc = vi.fn(async () => ({ data: rpcData, error: null }));
   const from = vi.fn((table: string) => {
     if (table === 'profiles') return query(profile);
     if (table === 'org_members') return query(null);
@@ -33,6 +34,7 @@ function appFor(profile: { is_platform_admin: boolean } | null) {
     throw new Error(`unexpected table ${table}`);
   });
   const server = express();
+  server.use(express.json());
   server.use((req, _res, next) => { req.authUserId = PLATFORM; next(); });
   server.use('/folders', createFoldersRouter(createDefaultFolderApiDeps({ from, rpc } as never)));
   return { server, from, rpc };
@@ -58,5 +60,43 @@ describe('SCRUM-5252 production folder adapter', () => {
     );
     expect(response.status).toBe(403);
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['rename', 'patch', `/folders/${TARGET}`, { name: 'forbidden' }],
+    ['connector update', 'put', `/folders/${TARGET}/connector`, {
+      provider: 'google_drive', source_id: 'source', connection_id: PLATFORM,
+    }],
+    ['delete', 'delete', `/folders/${TARGET}`, undefined],
+  ] as const)('normalizes an all-null composite for denied %s and emits no webhook',
+    async (_label, method, path, body) => {
+      const nullComposite = {
+        id: null, public_id: null, name: null, owner_scope: null, user_id: null,
+        org_id: null, context_org_id: null, parent_folder_id: null,
+        connector_provider: null, connector_source_id: null, connector_connection_id: null,
+        created_at: null, updated_at: null,
+      };
+      const { server } = appFor({ is_platform_admin: true }, nullComposite);
+      const operation = request(server)[method](path);
+      const response = body ? await operation.send(body) : await operation;
+      expect(response.status, response.text).toBe(404);
+      expect(dispatchWebhookEvent).not.toHaveBeenCalled();
+    });
+
+  it('preserves a valid composite row and emits its organization webhook', async () => {
+    const valid = {
+      id: TARGET, public_id: 'FOL-VALID', name: 'renamed', owner_scope: 'ORG',
+      user_id: null, org_id: ORG, context_org_id: null, parent_folder_id: null,
+      connector_provider: null, connector_source_id: null, connector_connection_id: null,
+      created_at: '2026-09-14T00:00:00Z', updated_at: '2026-09-14T00:00:00Z',
+    };
+    const { server } = appFor({ is_platform_admin: true }, valid);
+    const response = await request(server).patch(`/folders/${TARGET}`).send({ name: 'renamed' });
+    expect(response.status, response.text).toBe(200);
+    expect(response.body.folder).toEqual(valid);
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+      ORG, 'folder.updated', expect.any(String),
+      expect.objectContaining({ folder_public_id: 'FOL-VALID' }),
+    );
   });
 });
