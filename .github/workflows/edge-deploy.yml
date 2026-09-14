@@ -338,7 +338,7 @@ jobs:
         run: |
           set -euo pipefail
           BODY="$(curl -fsS --max-time 10 -H 'Cache-Control: no-cache' "https://edge.arkova.ai/health?cb=predeploy-${{ github.run_id }}" || true)"
-          PRE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "${BODY:-{}}")"
+          PRE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "$BODY")"
           if [ -z "${PRE_SHA}" ]; then
             echo "Pre-deploy edge.arkova.ai/health: no version identity (pre-workflow build) — response: ${BODY:-<unreachable>}"
           else
@@ -368,7 +368,7 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
             BODY="$(curl -fsS --max-time 10 -H 'Cache-Control: no-cache' "https://edge.arkova.ai/health?cb=postdeploy-${{ github.run_id }}-${attempt}" || true)"
-            LIVE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "${BODY:-{}}")"
+            LIVE_SHA="$(node -e 'try{const b=JSON.parse(process.argv[1]);process.stdout.write(String(b.git_sha||""))}catch{process.stdout.write("")}' "$BODY")"
             if [ "${LIVE_SHA}" = "${EXPECTED_SHA}" ]; then
               echo "✅ edge.arkova.ai/health reports git_sha=${LIVE_SHA} — matches deployed commit."
               exit 0

@@ -10,6 +10,13 @@ Direct execution keeps the no-download guarantee and fails if the local binary
 is missing. The production credentials and deployed-version verification remain
 separate from the credential-free PR bundle dry run.
 
+The two health parsers pass `"$BODY"` directly to Node. Bash parses the old
+`${BODY:-{}}` form with an extra closing brace after a nonempty response, so
+valid JSON was rejected and every deployed SHA became empty. The behavioral
+workflow parser test executes both actual shell assignments with valid, empty
+and malformed responses; keep failed parsing distinguishable from a verified
+matching deployed commit.
+
 ## 2026-09-05 — `publish-sdk.yml` job name, and the two things this folder does NOT do
 
 The job was named "Build, test, and publish arkova (npm)". There are two npm packages in
