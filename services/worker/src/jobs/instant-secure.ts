@@ -22,6 +22,8 @@ interface IntentRow {
 }
 
 async function settle(intentId: string, attempt: number, outcome: 'SUBMITTED' | 'HELD' | 'FAILED_SAFE', errorCode?: string): Promise<void> {
+  // Worker generated types acquire this additive RPC after schema promotion.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db.rpc as any)('settle_anchor_instant_intent', {
     p_intent_id: intentId,
     p_outcome: outcome,
@@ -37,6 +39,8 @@ export async function processInstantSecureIntent(payload: unknown): Promise<void
   const { intent_id: intentId } = PayloadSchema.parse(payload);
   if (!config.enableInstantSecure) throw new Error('instant_secure_disabled');
 
+  // Worker generated types acquire this additive table after schema promotion.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: before, error: beforeError } = await (db as any)
     .from('anchor_instant_intents')
     .select('id, anchor_id, status, attempt')
@@ -49,7 +53,9 @@ export async function processInstantSecureIntent(payload: unknown): Promise<void
   await processBatchAnchors({ force: true, instantIntentId: intentId });
 
   const [{ data: after, error: afterError }, { data: anchor, error: anchorError }] = await Promise.all([
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db as any).from('anchor_instant_intents').select('id, anchor_id, status, attempt').eq('id', intentId).single(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db as any).from('anchors').select('id, status, chain_tx_id').eq('id', intent.anchor_id).single(),
   ]);
   if (afterError || anchorError || !after || !anchor) throw new Error('instant_intent_state_unavailable');

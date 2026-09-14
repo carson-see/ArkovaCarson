@@ -6,7 +6,7 @@
  * and only accepts the frozen schema (CLAUDE.md §1.8).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -92,10 +92,10 @@ function makeApp(scopes = ['anchor:write'], orgId: string | null = 'org-1', keyP
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).apiKey = {
+    req.apiKey = {
       keyId: 'key-1',
       userId: 'user-1',
-      orgId,
+      orgId: orgId as string,
       scopes,
       rateLimitTier: 'paid',
       keyPrefix,

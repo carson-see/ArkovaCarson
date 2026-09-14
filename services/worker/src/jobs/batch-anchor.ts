@@ -1819,6 +1819,9 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   if (instantIntentId) {
     let exactResult: { data: unknown; error: unknown };
     try {
+      // The production-generated worker types lag this additive migration until
+      // it is promoted; the runtime RPC is covered by the migration contract.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       exactResult = await withDbTimeout(() => (db.rpc as any)('claim_anchor_instant_intent', {
         p_intent_id: instantIntentId,
         p_worker_id: `instant-${process.pid}`,
