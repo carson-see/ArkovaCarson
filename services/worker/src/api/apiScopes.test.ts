@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   scopeSatisfies,
+  API_KEY_SCOPES,
   API_V2_SCOPES,
   LEGACY_API_SCOPES,
   COMPLIANCE_API_SCOPES,
@@ -85,5 +86,25 @@ describe('scopeSatisfies', () => {
   it('treats canonical anchor write scopes as equivalent', () => {
     expect(scopeSatisfies(['write:anchors'], 'anchor:write')).toBe(true);
     expect(scopeSatisfies(['anchor:write'], 'write:anchors')).toBe(true);
+  });
+
+  // SCRUM-3981 — `/api/v1/webhooks` now requires `webhooks:manage`. The
+  // default scope set for a new key is `['read:search']`
+  // (DEFAULT_API_KEY_SCOPES), which is exactly the key that could manage an
+  // org's webhook endpoints before the guard existed. Nothing implies
+  // `webhooks:manage`: it is granted explicitly or not at all.
+  it('does not let the default read:search scope satisfy webhooks:manage', () => {
+    expect(scopeSatisfies(['read:search'], 'webhooks:manage')).toBe(false);
+  });
+
+  it('does not let any other single vocabulary scope satisfy webhooks:manage', () => {
+    for (const scope of API_KEY_SCOPES) {
+      if (scope === 'webhooks:manage') continue;
+      expect(scopeSatisfies([scope], 'webhooks:manage'), `${scope} must not imply webhooks:manage`).toBe(false);
+    }
+  });
+
+  it('lets webhooks:manage satisfy itself', () => {
+    expect(scopeSatisfies(['webhooks:manage'], 'webhooks:manage')).toBe(true);
   });
 });

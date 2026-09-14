@@ -1,0 +1,24 @@
+{
+  "kind": "rollback_rehearsal",
+  "train": "B5c",
+  "service": "arkova-worker-cto-train-b-0912-staging",
+  "method": "non-disruptive tag-URL verification (no live --to-revisions traffic shift performed)",
+  "reason_for_method": "Same posture as Train B5a/B5b's rehearsals: CLAUDE.md §1.11A says leave the rig running for whatever comes next, so a live traffic shift away from the candidate risks disrupting the next train on this shared rig. Rollback path proven reachable+healthy via its own tag URL instead of exercised end-to-end.",
+  "candidate_revision": "arkova-worker-cto-train-b-0912-staging-00026-teq",
+  "candidate_tag": "train-8",
+  "candidate_health": {
+    "git_sha": "aaaa0d7bad30af5e781d52370e0d5479a003089f",
+    "status": "healthy",
+    "checked_at": "2026-09-14T12:29:00Z",
+    "checked_via": "https://train-8---arkova-worker-cto-train-b-0912-staging-kvojbeutfa-uc.a.run.app/health (IAM identity-token auth, tagged revision URL, zero traffic-split change)"
+  },
+  "rollback_target_revision": "arkova-worker-cto-train-b-0912-staging-00025-rav",
+  "rollback_target_tag": "train-7",
+  "rollback_target_health": {
+    "git_sha": "9321e767c3ce249cd53ea94654f38434ec7035be",
+    "status": "healthy",
+    "checked_at": "2026-09-14T12:29:00Z",
+    "checked_via": "https://train-7---arkova-worker-cto-train-b-0912-staging-kvojbeutfa-uc.a.run.app/health (IAM identity-token auth, tagged revision URL, zero traffic-split change)"
+  },
+  "rollback_procedure_if_needed": "gcloud run services update-traffic arkova-worker-cto-train-b-0912-staging --region us-central1 --to-tags train-7=100 ; verify /health git_sha == 9321e767c3ce249cd53ea94654f38434ec7035be"
+}

@@ -98,7 +98,9 @@ export async function verifyAuthToken(
   // not fall through to auth.getUser(), whose stored user.role can still be
   // authenticated even though the signed token has no product authority.
   try {
-    if (decodeJwt(token).role === 'arkova_email_pending') return null;
+    const { role, aal } = decodeJwt(token);
+    if (role === 'arkova_email_pending') return null;
+    if (role === 'arkova_mfa_pending' || aal !== 'aal2') return null;
   } catch {
     // The verifier below owns malformed-token handling.
   }

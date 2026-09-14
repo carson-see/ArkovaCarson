@@ -112,7 +112,7 @@ claims-review rule — measured vs asserted vs NOT asserted):
 | Field | Gated by `HEALTH_DETAIL_TOKEN`? |
 |---|---|
 | `checks.*.status` sub-objects (DB latency + error message, anchoring backlog `pendingCount` / `drainStalled` / `lastBatchAt`, `kms.provider`) | **Yes** — compact renders each check as a bare status string |
-| `info.*` (stripe / sentry / ai / prodAnchoring flags) | **Yes** — omitted entirely |
+| `info.*` (stripe / sentry / ai / prodAnchoring / originGuard flags) | **Yes** — omitted entirely |
 | `connection` (`mode` + Supabase URL / project ref) | **Yes** — omitted entirely |
 | `status`, `version`, `git_sha`, `uptime`, `network` | **NO — still public on plain `/health`** |
 
@@ -136,12 +136,57 @@ check: a missing secret must not crash-loop the worker. An unauthorized request
 degrades to compact rather than returning 401, so Cloud Run probes, uptime
 monitors, and the deploy-verification workflows never break on this gate.
 
+## Origin guard (SCRUM-3888)
+```bash
+CLOUDFLARE_ORIGIN_GUARD_MODE=off    # off | observe | enforce
+CLOUDFLARE_ORIGIN_SECRET=           # optional in `off` mode; REQUIRED (min 16 chars) once mode is observe|enforce — boot fails loudly otherwise
+```
+
+Closes the gap CLAUDE.md §1.1's Ingress row documents: `arkova-worker-*.run.app`
+answers publicly and unauthenticated (`ingress=all`, `invoker-iam-disabled`,
+empty IAM policy — verified live 2026-09-13), bypassing Cloudflare entirely.
+`requireCloudflareOrigin` (`services/worker/src/middleware/
+requireCloudflareOrigin.ts`) checks for `X-Arkova-Origin-Auth: <secret>`, a
+header a Cloudflare Transform Rule injects on every request it proxies through
+`api.` / `edge.` / `docs.arkova.ai`. A request that reaches the worker without
+going through that zone — i.e. anything against the bare run.app host — never
+carries it.
+
+`CLOUDFLARE_ORIGIN_GUARD_MODE` read PER REQUEST, not once at boot — flipping it
+on a live Cloud Run revision is a plain env-var update, no redeploy needed:
+
+| Mode | Behavior |
+|---|---|
+| `off` (default) | No-op. Ships inert until the release session wires the secret + Transform Rule. |
+| `observe` | Never blocks. Logs `origin_guard_would_block` and counts it per route family (`info.originGuard` on `/health?detailed=true`, `HEALTH_DETAIL_TOKEN`-gated) — see the rollout runbook before enforcing anything. |
+| `enforce` | 403 `origin_not_allowed` on a missing/wrong header. Bounded JSON body; no request details echoed. |
+
+`/health`, `/api/health`, `/jobs/*` (Cloud Scheduler — already CRON_SECRET/OIDC
+authenticated) and every `/webhooks/*` + `/api/v1/webhooks/*` inbound partner
+receiver (already HMAC/signature-authenticated per connector) are exempt in
+every mode. Full allowlist inventory with evidence, and the rollout/rollback
+procedure: [`docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`](./CLOUDFLARE_ORIGIN_GUARD.md).
+
+`CLOUDFLARE_ORIGIN_SECRET` is **not yet** in `deploy-worker.yml`'s
+`--set-secrets` (see the comment above the canary deploy step there) — adding a
+reference to a Secret Manager id that does not exist yet fails the SECRET
+PREFLIGHT step (SCRUM-4495) for every subsequent worker deploy, not just this
+flag's rollout. Provisioning it is a release-session step, done together with
+adding it to `--set-secrets` + the preflight loop + the Transform Rule.
+
 ## Cloudflare (edge workers)
 ```bash
 CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_API_TOKEN=
 CLOUDFLARE_TUNNEL_TOKEN=            # never logged (INFRA-01, ADR-002)
 ```
+`CLOUDFLARE_API_TOKEN` is NOT a GitHub Actions secret (verified via `gh secret
+list` — SCRUM-3907). `.github/workflows/edge-deploy.yml` reads it at deploy
+time from GCP Secret Manager (`cloudflare-api-token`, project `arkova1`) via
+the same WIF auth `deploy-worker.yml` uses, masked with `::add-mask::` before
+it touches `$GITHUB_ENV`. See `.github/workflows/agents.md` for the
+`vars.DEPLOY_EDGE_PAUSED` pause gate (same contract as `DEPLOY_WORKER_PAUSED`)
+and `services/edge/agents.md` for the deploy pipeline itself.
 
 ## x402 payments (worker only)
 ```bash
@@ -533,6 +578,19 @@ COMPUTEID_WEBHOOK_SECRET=
 # bare SPKI public-key PEM whose private key the soak driver holds. NEVER
 # fetched at runtime — rotation = partner's 30-day notice → update → redeploy.
 COMPUTEID_CA_CERT_PEM=
+
+# Base origin for the ONE outbound ComputeID call we make: the hourly passport
+# re-check's GET /v1/agents/{id}/verify (SCRUM-4495). Config-sourced so no
+# request or row can steer it (SSRF). Admission stays fully offline.
+COMPUTEID_API_BASE_URL=https://api.aicomputeid.com
+
+# Arkova's ComputeID partner API key (sent as X-API-Key), used ONLY by that
+# re-check. Optional so the flag can be flipped before the key is provisioned —
+# but while it is unset the re-check reports skipped and raises a Sentry error,
+# because the re-check is the ONLY safety net for a revocation whose webhook
+# was lost (ComputeID has no webhook retry). Provision it in the same motion as
+# the flag flip: docs/partners/computeid-activation-runbook.md.
+COMPUTEID_API_KEY=
 
 # ─── SCRUM-1099 / SCRUM-1100 — Google Drive connector + rule binding ───
 # See docs/runbooks/integrations/drive.md for GCP OAuth app setup.

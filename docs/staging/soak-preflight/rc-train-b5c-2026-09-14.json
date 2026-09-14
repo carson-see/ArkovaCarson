@@ -1,0 +1,754 @@
+{
+  "schedulerJob": null,
+  "treasury": null,
+  "notApplicable": {
+    "schedulerJob": "Train changes no anchoring/scheduler path; no forced-flush job exists on this rig (mock profile)",
+    "treasury": "USE_MOCKS=true rig; no chain path in the train"
+  },
+  "changedPaths": [
+    "pr-2841-api-keys",
+    "pr-2909-verify-search-lexical-fallback"
+  ],
+  "drainLog": [
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T07-25-52-086Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T07-25-52-086Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T07-26-35-773Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T07-26-35-773Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T07-31-53-642Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T07-31-53-642Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T07-37-12-170Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T07-37-12-170Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T07-42-29-995Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T07-42-29-995Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T07-47-48-524Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T07-47-48-524Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T07-53-05-897Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T07-53-05-897Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T07-58-23-104Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T07-58-23-104Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-03-42-831Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-03-42-831Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-08-59-999Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-08-59-999Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-14-19-518Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-14-19-518Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-19-36-607Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-19-36-607Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-24-56-766Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-24-56-766Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-30-18-378Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-30-18-378Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-35-37-066Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-35-37-066Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-40-57-726Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-40-57-726Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-46-16-540Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-46-16-540Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-51-44-761Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-51-44-761Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T08-57-01-795Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T08-57-01-795Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-02-22-237Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-02-22-237Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-07-40-671Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-07-40-671Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-13-00-897Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-13-00-897Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-18-16-320Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-18-16-320Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-23-33-187Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-23-33-187Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-28-49-535Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-28-49-535Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-34-10-908Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-34-10-908Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-39-26-604Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-39-26-604Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-44-44-927Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-44-44-927Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-50-01-701Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-50-01-701Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T09-55-18-596Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T09-55-18-596Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-00-35-766Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-00-35-766Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-05-52-820Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-05-52-820Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-11-10-077Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-11-10-077Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-16-26-922Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-16-26-922Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-21-46-233Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-21-46-233Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-27-02-922Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-27-02-922Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-32-23-553Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-32-23-553Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-37-42-765Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-37-42-765Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-43-01-503Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-43-01-503Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-48-20-738Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-48-20-738Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-53-37-457Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-53-37-457Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T10-58-56-203Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T10-58-56-203Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-04-16-276Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-04-16-276Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-09-33-721Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-09-33-721Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-14-51-777Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-14-51-777Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-20-10-958Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-20-10-958Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-25-28-522Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-25-28-522Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-30-47-537Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-30-47-537Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-36-07-324Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-36-07-324Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-41-25-804Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-41-25-804Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-46-45-037Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-46-45-037Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-52-03-686Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-52-03-686Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T11-57-20-149Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T11-57-20-149Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T12-02-39-146Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T12-02-39-146Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T12-08-01-212Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T12-08-01-212Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T12-13-20-763Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T12-13-20-763Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T12-18-38-819Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T12-18-38-819Z: 21/21 probes passed"
+    },
+    {
+      "processed": 43,
+      "skipped": false,
+      "path": "pr-2841-api-keys",
+      "reason": "cycle 2026-09-14T12-23-58-953Z: 43/43 probes passed"
+    },
+    {
+      "processed": 21,
+      "skipped": false,
+      "path": "pr-2909-verify-search-lexical-fallback",
+      "reason": "cycle 2026-09-14T12-23-58-953Z: 21/21 probes passed"
+    }
+  ],
+  "deployProvenance": {
+    "deployLogRows": [
+      {
+        "head_sha": "aaaa0d7bad30af5e781d52370e0d5479a003089f",
+        "service": "arkova-worker-cto-train-b-0912-staging",
+        "at": "2026-09-14T07:25:30.749696Z",
+        "revision_name": "arkova-worker-cto-train-b-0912-staging-00026-teq"
+      }
+    ],
+    "prHeadSha": "aaaa0d7bad30af5e781d52370e0d5479a003089f",
+    "service": "arkova-worker-cto-train-b-0912-staging"
+  },
+  "base": {
+    "baseRefName": "main"
+  },
+  "_meta": {
+    "decision": "CTO 2026-09-12 — Confluence 146440221 / SCRUM-5054",
+    "generator": "scripts/staging/targeted/cto-train-b-0912/preflight-from-window.mjs",
+    "generated_at": "2026-09-14T12:33:06.610Z",
+    "rc_id": "rc-train-b5c-2026-09-14",
+    "manifest": "/private/tmp/b5b-fixes/main-seal/docs/staging/rc-manifests/rc-train-b5c-2026-09-14.json",
+    "window": "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/window1",
+    "cycle_files": 58,
+    "cycles_with_per_pr": 58,
+    "cycles_passed": 58,
+    "errored_cycles": [],
+    "per_pr_totals": {
+      "#2841": {
+        "path": "pr-2841-api-keys",
+        "cycles": 58,
+        "probes": 2494,
+        "passed": 2494
+      },
+      "#2909": {
+        "path": "pr-2909-verify-search-lexical-fallback",
+        "cycles": 58,
+        "probes": 1218,
+        "passed": 1218
+      }
+    },
+    "deploy_log_source": "exported staging_deploy_log rows: /tmp/b5c-deploy-log.json",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "preflight_result": "environment_type=clean_mirror (pre-deploy: docs/staging/cto-train-b-0912/preflight-b5c-20260914T071847Z.json, 8/8 checks pass; post-close: docs/staging/cto-train-b-0912/preflight-b5c-postclose-20260914T123023Z.json, 8/8 checks pass, run 2026-09-14T12:30:23.398Z). missing_from_staging notes 0452 and 20260912143110 as informational both times -- neither migration file exists on current main and neither is owned by #2841/#2909."
+  }
+}

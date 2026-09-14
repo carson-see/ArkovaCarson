@@ -36,8 +36,10 @@ import {
 import { runProofCoverageCheck } from '../jobs/proof-coverage-monitor.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { runPlatformHealthDigest } from '../jobs/platform-health-digest-cron.js';
+import { COMPUTEID_RECHECK_CRON, runComputeIdPassportRecheck } from '../jobs/computeid-passport-recheck.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
+import { runWebhookDlqReport } from '../jobs/webhook-dlq-report.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
 import { processPendingReports } from '../jobs/report.js';
 import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
@@ -801,6 +803,34 @@ cronRouter.post('/platform-health-digest', async (_req, res) => {
   }
 });
 
+// ComputeID passport re-check (SCRUM-4495). ComputeID has no webhook retry:
+// a non-2xx from us is swallowed, and our own receiver answers 409 to the
+// loser of a compare-and-set race expecting a redelivery that never comes. So
+// a revocation can be lost outright and a revoked passport's Arkova API keys
+// stay live. This hourly reconciliation is the safety net Carson committed to
+// the partner on 2026-09-07 ("caught within the hour").
+//
+// It does NOT re-implement the lifecycle: it turns an observed divergence into
+// the same passport.* event a webhook would have carried and hands it to the
+// shared transition path in integrations/computeid/passport-transition.ts, so
+// the ordering floor, terminal revocation and key enforcement are decided in
+// exactly one place. Dark unless ENABLE_COMPUTEID_INTEGRATION=true (answers
+// 200 {skipped:true} rather than an error, so a scheduled trigger against a
+// dark flag is quiet).
+cronRouter.post('/computeid-passport-recheck', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'computeid-passport-recheck',
+      COMPUTEID_RECHECK_CRON,
+      () => runComputeIdPassportRecheck(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'ComputeID passport re-check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 cronRouter.post('/process-revocations', async (_req, res) => {
   try {
     const result = await withCronMonitoring(
@@ -825,6 +855,29 @@ cronRouter.post('/webhook-retries', async (_req, res) => {
     res.json({ retried });
   } catch (error) {
     logger.error({ error }, 'Webhook retry processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// SCRUM-4514: report-only visibility for the inbound webhook_dlq backlog.
+// Never replays or resolves rows — that's the operator-triggered
+// POST /api/admin/webhook-dlq/resolve endpoint (api/admin-webhook-dlq.ts).
+// CTO decision 2026-09-13: an earlier /replay endpoint was removed the same
+// day it shipped — Arkova does not retain raw webhook bodies, so nothing
+// here was ever server-side replayable (see api/admin-webhook-dlq.ts's
+// module doc comment). This job exists so a growing DLQ is visible in
+// logs/Sentry between operator drain runs, per api/v1/webhooks/agents.md's
+// "drained by nobody" gap.
+cronRouter.post('/webhook-dlq-report', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'webhook-dlq-report',
+      '0 * * * *',
+      () => runWebhookDlqReport(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Webhook DLQ report failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

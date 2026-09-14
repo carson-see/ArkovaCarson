@@ -460,12 +460,19 @@ router.post('/', async (req: Request, res: Response) => {
     logger.info({ publicId: attestation.public_id, attestationType: data.attestation_type, attester: data.attester_name }, 'Attestation created');
 
     // PH2-AGENT-03: Dispatch webhook for attestation created — non-fatal
+    //
+    // SCRUM-3982: `fingerprint` was in this payload. The event type was not in
+    // `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, so `validateWebhookPayload` bypassed it
+    // and a CLAUDE.md §1.6 document-derived hash was one subscription away
+    // from the wire. The field is gone and the event is now registered
+    // (`AttestationCreatedPayloadSchema`, `.strict()`), so re-adding it — or
+    // any other internal id — fails validation before anything is signed.
+    // Keep this payload public-ids-only.
     if (profile?.org_id) {
       void dispatchWebhookEvent(profile.org_id, 'attestation.created', attestation.id, {
         public_id: attestation.public_id,
         attestation_type: attestation.attestation_type,
         status: attestation.status,
-        fingerprint: attestation.fingerprint,
         created_at: attestation.created_at,
       }).catch((err: unknown) => logger.warn({ error: err }, 'Attestation creation webhook failed'));
     }
@@ -1045,12 +1052,19 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
       return;
     }
 
+    // SCRUM-3982: one clock for the decision. This used to be three separate
+    // `new Date().toISOString()` calls — the row, the webhook payload and the
+    // API response each stamped a different instant, so a subscriber
+    // reconciling the delivered `revoked_at` against the stored one could
+    // never match it exactly.
+    const revokedAt = new Date().toISOString();
+
     // eslint-disable-next-line arkova/missing-org-filter -- attestation update by public_id, ownership verified above
     const { error: updateError } = await dbAny
       .from('attestations')
       .update({
         status: 'REVOKED',
-        revoked_at: new Date().toISOString(),
+        revoked_at: revokedAt,
         revocation_reason: reason,
       })
       .eq('id', attestation.id);
@@ -1064,16 +1078,28 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
     logger.info({ publicId, reason }, 'Attestation revoked');
 
     // PH2-AGENT-03: Dispatch webhook for attestation revoked — non-fatal
+    //
+    // SCRUM-3982, measured not assumed: this branch is UNREACHABLE today. The
+    // ownership lookup above selects `id, status, attester_user_id` only, so
+    // `attestation.attester_org_id` is `undefined` and the guard is always
+    // false — `attestation.revoked` has never been dispatched. The schema is
+    // registered in `payload-schemas.ts` anyway (so the contract is locked and
+    // the payload below is checked the moment it can fire), and every
+    // registration surface marks the event not-yet-active rather than claiming
+    // a delivery that does not happen (§1.13 R-7). Making it fire means adding
+    // `attester_org_id` to that select — a new outbound delivery path, so it
+    // belongs in its own soaked change, not this ratchet. Tracked in the
+    // SCRUM-3982 follow-up.
     if (attestation.attester_org_id) {
       void dispatchWebhookEvent(attestation.attester_org_id, 'attestation.revoked', attestation.id, {
         public_id: publicId,
         status: 'REVOKED',
         revocation_reason: reason,
-        revoked_at: new Date().toISOString(),
+        revoked_at: revokedAt,
       }).catch((err: unknown) => logger.warn({ error: err }, 'Attestation revocation webhook failed'));
     }
 
-    res.json({ public_id: publicId, status: 'REVOKED', revoked_at: new Date().toISOString() });
+    res.json({ public_id: publicId, status: 'REVOKED', revoked_at: revokedAt });
   } catch (error) {
     logger.error({ error }, 'Attestation revocation error');
     res.status(500).json({ error: 'Internal server error' });

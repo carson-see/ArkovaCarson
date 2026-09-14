@@ -131,10 +131,13 @@ export function makeDriveSubscriptionRenewalDb(
         subscription_expires_at: row.subscription_expires_at,
         account_label: row.account_label,
         watch_renewal_failure_count: row.watch_renewal_failure_count ?? 0,
+        // First-class field on DriveSubscriptionRow since BUG 2026-09-13 —
+        // the sweep reads it to decide whether the cursor needs bootstrapping.
+        // It must stay in the select list above or that check reads undefined.
+        last_page_token: row.last_page_token,
         // Carried through for the client adapter only — see asRawRow().
         encrypted_tokens: row.encrypted_tokens,
         token_kms_key_id: row.token_kms_key_id,
-        last_page_token: row.last_page_token,
       })) as unknown as DriveSubscriptionRow[];
     },
 
@@ -213,9 +216,10 @@ export function makeDriveSubscriptionRenewalClient(
       if (!workerPublicUrl) {
         throw new Error('WORKER_PUBLIC_URL not set — cannot renew Drive changes.watch channel.');
       }
-      // GH #1835 CRITICAL: the returned startPageToken is deliberately
-      // discarded — renewal must never reset the live changes cursor. See
-      // the module doc comment on drive-subscription-renewal.ts.
+      // The returned startPageToken is threaded back to the sweep, which
+      // uses it ONLY to bootstrap a connection whose `last_page_token` is
+      // null (BUG 2026-09-13) — never to reset a live cursor. See the
+      // invariant in drive-subscription-renewal.ts's module doc comment.
       const created = await createChangesWatch({
         accessToken,
         channelId,
@@ -225,7 +229,11 @@ export function makeDriveSubscriptionRenewalClient(
         token: channelToken,
         deps: driveDeps,
       });
-      return { resourceId: created.resourceId, expiration: created.expiration };
+      return {
+        resourceId: created.resourceId,
+        expiration: created.expiration,
+        startPageToken: created.startPageToken,
+      };
     },
   };
 }
@@ -284,6 +292,7 @@ export async function runDriveSubscriptionRenewal(
       db: makeDriveSubscriptionRenewalDb(options),
       client: makeDriveSubscriptionRenewalClient(options),
       alert: alertDriveSubscriptionRenewal,
+      logger,
     }),
   );
   return outcome.acquired ? outcome.result : { ...EMPTY_RENEWAL_SUMMARY, skipped: true };

@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { openApiSpec } from './docs.js';
 import { API_KEY_SCOPES } from '../apiScopes.js';
+import { CONNECTOR_FETCH_SOURCE_MARKERS } from '../../constants/connectorFingerprint.js';
 
 describe('OpenAPI spec', () => {
   it('has valid OpenAPI version', () => {
@@ -174,6 +175,41 @@ describe('OpenAPI spec', () => {
     expect(openApiSpec.paths['/usage'].get['x-arkova-required-scopes']).toEqual(['usage:read']);
   });
 
+  // SCRUM-3981 — the served spec is what a partner reads before minting a key
+  // (docs/api/canonical-sources.md: docs.ts is canonical for v1, openapi.yaml
+  // is demoted). Every /webhooks* operation now declares the scope it requires
+  // and the 403 it answers without it.
+  it('documents webhooks:manage and a 403 on every webhook-management operation', () => {
+    // Deliberately NOT `startsWith('/webhooks')`: `/webhooks/self-service/*`
+    // (dashboard JWT), `/webhooks/drive` (channel token) and `/webhooks/ats/*`
+    // (HMAC) share that prefix, carry their own auth, and are mounted ahead of
+    // the scope-gated management router. When `docs.routeParity.test.ts` widens
+    // the served spec to them, this test must keep saying the truth about them
+    // rather than pressure someone into declaring a scope that is not required.
+    const MANAGEMENT_PREFIX = /^\/webhooks(\/(\{id\}|test|deliveries|dlq)(\/.*)?)?$/;
+    const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
+    const webhookPaths = Object.keys(openApiSpec.paths).filter((p) => MANAGEMENT_PREFIX.test(p));
+    expect(webhookPaths.length).toBeGreaterThan(0);
+
+    let operationCount = 0;
+    for (const path of webhookPaths) {
+      for (const [method, operation] of Object.entries(openApiSpec.paths[path])) {
+        // Path items may also carry `parameters` / `summary` keys, which are
+        // not operations and must not be counted toward the ten.
+        if (!HTTP_METHODS.has(method)) continue;
+        const op = operation as Record<string, unknown>;
+        operationCount += 1;
+        expect(op['x-arkova-required-scopes'], `${method.toUpperCase()} ${path}`).toEqual(['webhooks:manage']);
+        const responses = op.responses as Record<string, { description?: string }>;
+        expect(responses['403'], `${method.toUpperCase()} ${path} must document its 403`).toBeDefined();
+        expect(responses['403'].description).toContain('insufficient_scope');
+      }
+    }
+    // Matches the 10 routes webhooksRouter registers (webhooks-scope.test.ts
+    // asserts the same count off the Express stack).
+    expect(operationCount).toBe(10);
+  });
+
   it('/anchor/submit requestBody mirrors /anchor requestBody', () => {
     const anchorBody = openApiSpec.paths['/anchor'].post.requestBody;
     const submitBody = openApiSpec.paths['/anchor/submit'].post.requestBody;
@@ -187,5 +223,88 @@ describe('OpenAPI spec', () => {
     expect(tagNames).toContain('Jobs');
     expect(tagNames).toContain('Usage');
     expect(tagNames).toContain('Key Management');
+  });
+});
+
+/**
+ * OpenAPI 3.0.3 STRUCTURAL validity (PR #2841 review V10: the version string
+ * was asserted, the document's conformance to it was not).
+ *
+ * 3.0.3 has no `type: 'null'` and no type ARRAYS — both are 3.1 (JSON Schema
+ * 2020-12) spellings. A 3.1-ism in a document declaring 3.0.3 is served to
+ * every SDK generator and linter that reads this spec, so it breaks consumers
+ * silently rather than failing our own build.
+ */
+describe('OpenAPI 3.0.3 structural conformance', () => {
+  function walk(node: unknown, path: string, visit: (n: Record<string, unknown>, p: string) => void): void {
+    if (Array.isArray(node)) {
+      node.forEach((child, i) => walk(child, `${path}[${i}]`, visit));
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    visit(obj, path);
+    for (const [key, child] of Object.entries(obj)) walk(child, `${path}.${key}`, visit);
+  }
+
+  it('uses no 3.1-only type spellings anywhere in the document', () => {
+    const offenders: string[] = [];
+    walk(openApiSpec, '$', (node, path) => {
+      if (!('type' in node)) return;
+      const t = node.type;
+      if (t === 'null') offenders.push(`${path}.type === 'null'`);
+      if (Array.isArray(t)) offenders.push(`${path}.type is an array (${JSON.stringify(t)})`);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it('expresses optional-null with `nullable: true` instead', () => {
+    // Positive control: the spec really does use the 3.0 spelling somewhere,
+    // so the assertion above is not vacuously green on a spec with no
+    // nullable fields at all.
+    let sawNullable = false;
+    walk(openApiSpec, '$', (node) => {
+      if (node.nullable === true) sawNullable = true;
+    });
+    expect(sawNullable).toBe(true);
+  });
+});
+
+/**
+ * SCRUM-4507 — the `source` object must be documented wherever
+ * VerificationResult is, and documented as identifier-free.
+ */
+describe('SCRUM-4507 source.provider is documented on VerificationResult', () => {
+  it('declares source as an object with a single closed-enum provider property', () => {
+    const source = openApiSpec.components.schemas.VerificationResult.properties.source;
+    expect(source).toBeDefined();
+    expect(source.type).toBe('object');
+    expect(Object.keys(source.properties)).toEqual(['provider']);
+    expect(source.properties.provider.type).toBe('string');
+    expect(Array.isArray(source.properties.provider.enum)).toBe(true);
+    expect(source.properties.provider.enum.length).toBeGreaterThan(0);
+  });
+
+  it('documents no identifier or deep-link property on source', () => {
+    const source = openApiSpec.components.schemas.VerificationResult.properties.source;
+    for (const banned of ['file_id', 'folder_id', 'revision_id', 'shared_drive_id', 'url', 'link', 'deep_link']) {
+      expect(source.properties).not.toHaveProperty(banned);
+    }
+  });
+
+  it('documents exactly the runtime recognised-marker vocabulary', () => {
+    // Closes the loop: verify.ts's VERIFICATION_SOURCE_PROVIDERS is asserted
+    // against the same set in verify-source-provider.test.ts, and the
+    // published YAML is asserted against THIS enum in
+    // openapi-source-provider-contract.test.ts. All three therefore agree by
+    // construction, not by anyone remembering to update a list.
+    const served = openApiSpec.components.schemas.VerificationResult.properties.source
+      .properties.provider.enum as string[];
+    expect([...served].sort()).toEqual([...CONNECTOR_FETCH_SOURCE_MARKERS].sort());
+  });
+
+  it('states the field is additive and omitted when unknown', () => {
+    const source = openApiSpec.components.schemas.VerificationResult.properties.source;
+    expect(source.description).toMatch(/omitted/i);
   });
 });

@@ -2,6 +2,43 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+
+## 2026-09-12 — SCRUM-4507: `source.provider` on the verification response, and what it deliberately omits
+
+`GET /api/v1/verify/:publicId` gained an additive `source: { provider }` — a bare vocabulary word
+saying WHICH connected system a record's document came from. Additive and omitted when unknown, so
+§1.8 is satisfied without a version bump.
+
+**What it does NOT carry, and why.** No file id, folder id, shared-drive id, revision or deep link.
+This route answers ANONYMOUSLY (`router.ts` lets an unauthenticated GET through), so a Drive file id
+here would let any holder of a public record id probe the source system for that object — and open
+the document outright if it is link-shared. Those identifiers go to the record OWNER on the
+authenticated record page and nowhere else. `verify-pii-projection.test.ts` walks the whole response
+RECURSIVELY for Drive ids, UUIDs and `@`, so a future nested addition fails there without anyone
+remembering to extend an allowlist.
+
+**Gated on `connector_source`, NOT `server_fetched_connector_source`.** The two answer different
+questions. `server_fetched_…` keys the "Measured: Arkova retrieved these bytes" claim and must stay
+gated on real fetch evidence. The provider says only where the record originated — a declared-hash
+inbound DocuSign record did originate at DocuSign even though Arkova fetched nothing, and its weaker
+evidence class is already stated by `fingerprint_rederivability`. Suppressing the provider there
+would hide true provenance to protect a claim something else already makes.
+
+**One vocabulary, three surfaces, no drift.** `VERIFICATION_SOURCE_PROVIDERS` (verify.ts) is DERIVED
+from `CONNECTOR_FETCH_SOURCE_MARKERS`, `docs.ts` derives its enum from the same constant, and
+`openapi-source-provider-contract.test.ts` asserts the published `docs/api/openapi.yaml` enum equals
+the served one. An enum member the runtime gate would reject is a documented value the API cannot
+produce; a marker the gate accepts but the enum omits is an undocumented value on a frozen schema.
+Both are impossible by construction rather than by review.
+
+**Residual, disclosed:** `connector_source` is server-stamped and, since migration 0423, stripped
+from any non-`service_role` write — but rows written BEFORE 0423 could carry an org-authored marker.
+That is precisely why this stays a bare word with no identifier attached and never keys a
+"Measured:" sentence.
+
+`docs.ts` imports the vocabulary from `constants/connectorFingerprint.js` rather than from
+`verify.js` on purpose: `verify.ts` stands up the db client and config at module scope, and
+`docs.test.ts` deliberately does not.
 ## 2026-09-12 — `ai-extract.ts` / `ai-extract-batch.ts` auto-provision the `ai_credits` period before deducting (SCRUM-4939)
 
 Both routes now call `ensureAICreditsPeriod(orgId)` (`ai/cost-tracker.ts`) so a first-ever AI
@@ -24,6 +61,48 @@ read or the whole batch would treat a freshly-created org as still-unmetered. Bo
 `orgId` is undefined. A genuine deduction failure (insufficient credits / RPC error) still fails CLOSED
 with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
 check itself.
+
+## 2026-09-13 — `ai-verify-search.ts`: `GET /verify/search` no longer 503s when `ENABLE_SEMANTIC_SEARCH` is off (SCRUM-3906)
+
+This route used to be mounted behind `aiSemanticSearchGate()` in `router.ts` — with
+`ENABLE_SEMANTIC_SEARCH` off (the prod default), EVERY call 503'd before ever reaching the handler,
+including direct API-key callers (npm `arkova-mcp-server`'s `arkova_search_anchors`, the TS/Python
+SDKs' `search()`). The edge hosted MCP (`services/edge/src/mcp-tools.ts` `handleSearchCredentials`)
+already tolerated that 503 by re-running its own lexical query; nothing else did. Confluence
+135069697 (finding N3) and SCRUM-3906/SCRUM-3940 have the full audit trail.
+
+The route is now unconditionally mounted (`router.ts`: `router.use('/verify/search',
+aiVerifySearchRouter)`, no gate) and owns its own mode selection:
+
+- **Semantic** (`search_mode: 'semantic_vector'`): attempted only when `isSemanticSearchEnabled()`
+  (from `middleware/aiFeatureGate.ts`) is true. Embeds the query, matches via
+  `search_public_credential_embeddings`, costs one AI credit (`checkAICredits`/`deductAICredits`,
+  unchanged from before), and can return `issuer_name` / `issued_date` / `expiry_date` /
+  `anchor_timestamp` / `similarity`.
+- **Lexical** (`search_mode: 'lexical_substring'`): the fallback, taken whenever the flag is off OR
+  the embed call throws OR the embeddings RPC errors for ANY reason (not just the RPC-not-found
+  `42883` case the old code special-cased). Queries `search_public_credentials` — the SAME
+  anon-callable ILIKE-substring RPC `services/edge/src/mcp-tools.ts`'s `searchCredentialsFallback`
+  uses (see `supabase/migrations/0415_ferpa_directory_info_opt_out_public_projections.sql` for the
+  current body). No AI credit is checked or deducted on this path. The RPC's `jsonb_build_object`
+  row carries `org_id` — deliberately never read here (§6: no internal ids in a v1 response).
+
+Every response — semantic or lexical — carries `search_mode` so a caller (and a test) can tell which
+path actually answered instead of inferring it from which optional fields are present. The two
+string values (`'semantic_vector'` / `'lexical_substring'`) are a DELIBERATE match to
+`services/edge/src/mcp-tools.ts`'s `SEARCH_MODE_SEMANTIC` / `SEARCH_MODE_LEXICAL` constants — one
+shared vocabulary across the two surfaces, even though the values are duplicated (not imported)
+because worker and edge are separately built services with no shared runtime module boundary.
+
+**Known follow-up, deliberately NOT fixed in this PR (out of lane):** `services/edge/src/mcp-tools.ts`'s
+`searchCredentialsWorkerSemantic()` proxies to this exact route and today treats ANY 2xx response as
+semantic — it does not read `search_mode` from the body at all. Once this ships, an edge-proxied MCP
+caller whose semantic path this route degrades to lexical will see the edge label those results
+`semantic_vector` even though they came from the lexical branch, until the edge is updated to check
+this field. That is an edge-owned fix; flagged via a spawned follow-up task, not fixed here.
+
+`ENABLE_VERIFICATION_API` (the router-wide gate applied above every `/api/v1/*` mount) is unchanged
+and remains the only way this route now 503s.
 
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
@@ -1264,10 +1343,94 @@ is unchanged. Regression reproduced before the fix; local validation is not soak
 Migration `0448` checks every active agent-key INSERT/reactivation against the agent row under a parent share lock, including the existing administrator mint path. A concurrent provider revoke either waits and deactivates the committed key, or wins and causes the late key write to fail. The terminal-state trigger checks the actual UPDATE row, so a stale PATCH receives 409 after revocation. Failed ComputeID admission calls service-only `cleanup_computeid_empty_admission`; it deletes only the unchanged active agent with no keys while holding the same parent lock. It preserves a later revocation and a key whose INSERT committed despite a lost reply, avoiding `ON DELETE SET NULL` detachment. SQL errors return no raw key. Signed receipt HTTP tests cover those boundary responses; the owned PostgreSQL harness proves the lock interleavings and rollback behavior.
 
 
+## 2026-09-12 — `/webhooks` mount order: limiter -> scope -> handler key + ORG_ADMIN (SCRUM-3981)
+
+`router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter)`.
+Read the chain left to right, because each layer answers a different question and none of them
+is redundant:
+
+1. **`batchRateLimiter`** (10 req/min, `scope: 'batch'`) — cheapest, so it is first. An unscoped
+   flood is rejected before anything reads a key.
+2. **`requireScope('webhooks:manage')`** — the capability gate, added by SCRUM-3981. Before it,
+   the mount carried the limiter alone: handlers checked that *an* API key was present and the
+   five ORG_ADMIN routes (create, patch, delete, both DLQ) checked the actor's role, but nothing
+   read `scopes`. `webhooks:manage` was in
+   `apiScopes.ts`, in `docs/api/README.md`, and in the dashboard's scope picker, and gated
+   nothing — so a key minted with the default `['read:search']` could list, read, test-ping,
+   replay and DLQ-manage an org's endpoints.
+3. **`requireApiKey` inside `webhooks.ts`** — still there, and it is load-bearing.
+   `requireScope` opens with `if (!req.apiKey) { next(); return; }` (`middleware/apiKeyAuth.ts`),
+   i.e. it does NOT authenticate: it narrows a caller that is already authenticated. On this
+   mount nothing upstream requires a key, so the guard falls through for an anonymous request
+   and the handler-level check is the only thing between that request and a 200. Delete
+   `requireApiKey` "because the mount is guarded now" and every route becomes anonymous.
+   `webhooks-scope.test.ts` pins exactly that: no key -> 401 `authentication_required`, and the
+   marker middleware records that the scope guard did pass control on.
+
+Scope is capability, not ownership: each handler still filters `.eq('org_id', req.apiKey.orgId)`,
+so an org-B key holding `webhooks:manage` gets **404** on an org-A endpoint id, never 403.
+
+Route coverage is read off `webhooksRouter.stack`, not transcribed — all ten routes today. The
+served spec (`docs.ts`, canonical per `docs/api/canonical-sources.md`) declares
+`x-arkova-required-scopes: ['webhooks:manage']` and a 403 on each of them.
+
+Deliberately NOT changed: the PHI/FERPA mounts at the bottom of `router.ts`. `requireAuth` runs
+first there and rejects any caller whose Authorization header is absent or starts with
+`Bearer ak_`, so an API key never reaches `requireScopeAnyAuth('compliance:read')` — fail-closed
+today. Whether a key SHOULD be able to reach those routes is a product decision, filed as
+SCRUM-5070 rather than decided in a webhooks PR.
+
+
 ## 2026-09-10 — ComputeID historical review closure
 
 ComputeID admission now uses service-only `admit_computeid_agent`: one passport sentinel lock, global terminal-revocation check, agent, hashed key and both audit events in a single transaction. The prior `agent-keys.ts` helper and compensation deletion are removed. An unknown reply returns an error while preserving any committed agent/key; retries report the existing binding. Raw keys never reach the RPC. The OpenAPI surface documents org-key authority and admission errors. SCRUM-4570 covers cross-organization replay; durable tenant binding ownership remains SCRUM-4497.
 
+
+## 2026-09-12 — attestation webhook payloads are public-ids-only (SCRUM-3982)
+
+`attestations.ts` dispatched `attestation.created` with the attestation
+`fingerprint` in the payload. The event type was not registered in
+`services/worker/src/webhooks/payload-schemas.ts`, so `validateWebhookPayload`
+took its `bypassed: true` branch and nothing inspected what left the process —
+a CLAUDE.md §1.6 document-derived hash one subscription away from the wire.
+`fingerprint` is gone from that payload, both attestation events now have
+registered `.strict()` schemas, and `validateWebhookPayload` refuses the banned
+key set on every event type including unregistered ones.
+
+Two things measured while doing it, neither changed here:
+
+- **`attestation.revoked` has never fired.** Its dispatch is guarded on
+  `attestation.attester_org_id`, and the ownership query above it selects
+  `id, status, attester_user_id` only, so the guard is always false. Making it
+  fire means adding `attester_org_id` to that select — a new outbound delivery
+  path that needs its own soak, not a drive-by in a validation ratchet. Every
+  registration surface marks the event not-yet-active meanwhile.
+- **The revoke handler sampled three different clocks.** The row, the webhook
+  payload and the API response each called `new Date().toISOString()`
+  separately, so a subscriber could never reconcile the delivered `revoked_at`
+  against the stored one. Now one `revokedAt` feeds all three.
+
+Payload keys at both dispatch sites are pinned in `attestations.test.ts` by
+reading this file's own source — a spy would only cover the path the test
+drives, and the thing being ratcheted is the literal key set at the call site.
+
+## SCRUM-3982 CTO review (2026-09-12) — replay refusal + fire-and-forget dispatch
+
+- `replayDelivery` can now return `payload_refused`. Both replay routes
+  (`webhooks.ts` API-key route and `webhooks-self-service.ts` session route) map
+  it to **HTTP 422** with code `payload_refused` — the request is well-formed,
+  the stored resource is not deliverable. Additive per CLAUDE.md §1.8; no
+  existing status code changed. Keep the two routes' error ladders identical:
+  they delegate to the same `replayDelivery` and any divergence is a bug.
+- `batch.ts` dispatched `job.completed` as `void dispatchWebhookEvent(...)` with
+  no `.catch()`. That was survivable only while dispatch could not reject for
+  that event; it can now (an unregistered type or a banned field rejects), and
+  an unhandled rejection in a fire-and-forget call takes the process down rather
+  than the job. Both call sites now `.catch()` into a warn. **Any new
+  `void dispatchWebhookEvent(...)` must carry a `.catch()`.**
+- `attestations.ts` `fingerprint` selects at `:428` / `:816` feed the published
+  201 response bodies (`:489`, `:851`) and are part of the frozen v1 contract.
+  Do not strip them as dead reads — they are banned from webhook payloads only.
 ## PR #2572 — cap faults and affiliation write races (SCRUM-4467 / SCRUM-4468)
 
 `resolveSubOrgCap` refuses missing/failed parent-limit reads before counting children. Approval and revocation compare the authorized parent and observed approval status at UPDATE time; zero matched rows return 409 and produce no success audit. Null legacy status uses an `IS NULL` predicate. The preflight count is advisory: migration 0447 serializes actual admissions; its 23514 cap rejection maps to 409 and 55P03/40001/40P01 write conflicts map to 503 on both create and approve.

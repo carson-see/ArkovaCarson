@@ -134,3 +134,22 @@ is a real socket leak under repeated 429s, which is exactly the regime retries p
 `body`) working. Tests: `describe('discarded retry responses release their body')` — cancel fires
 once per retried attempt and never on the returned response, and a rejected `cancel()` still
 retries.
+
+## 2026-09-12 — WebhookEventType gained the attestation events (SCRUM-3982)
+
+`attestation.created` and `attestation.revoked` were appended to the union in
+`src/types.ts` and to the exhaustive `WEBHOOK_EVENT_TYPE_PIN` in
+`src/client.test.ts`. Two traps hit while doing it, both worth knowing:
+
+- **No semicolons in the comments inside that union.** The PR-time gate
+  `scripts/ci/check-webhook-event-registration-drift.ts` locates the union with
+  `/export type WebhookEventType\s*=([\s\S]*?);/` — non-greedy to the FIRST
+  `;`, so a semicolon in a comment truncates the region and the gate reports
+  the trailing members as missing.
+- **`src/terminology.test.ts` counts banned words in shipped source**, comments
+  included. The word "block" in a new comment bumped the ratcheted count and
+  failed the suite. Reword rather than raising the expected count.
+
+`attestation.revoked` is typed and subscribable but its worker producer is not
+reachable yet — no delivery of that event has occurred. See
+`services/worker/src/webhooks/agents.md`.

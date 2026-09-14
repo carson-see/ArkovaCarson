@@ -94,6 +94,7 @@ Register a webhook for `anchor.secured`, `anchor.revoked`, `anchor.expired`, `an
 1. ComputeID issues the AgentPassport, scoped to the agent's capabilities.
 2. The agent obtains its verification receipt from ComputeID: `GET https://api.aicomputeid.com/v1/agents/{passport_id}/verify` → `verification_receipt`.
 3. The agent (or the org's integration on its behalf) presents the passport id and the receipt to Arkova.
+   **A receipt is valid for five minutes** (`issued_at` → `expires_at`, measured on two real receipts on 2026-09-07), so fetch it and admit inside that window; a stale one is rejected with `expired`. Fetch a fresh receipt per admission rather than caching.
 4. Arkova verifies the receipt **offline** against its pinned copy of ComputeID's CA (RSA-SHA256 over the exact `receipt_payload` bytes; key id `ebb276c2f18ed34f`). No call to ComputeID is made on this path, so ComputeID uptime never gates admission.
 5. Arkova binds the passport to a new agent record and issues an agent-scoped key. The key is bound to the agent record, which names the passport and the organization key that admitted it. **Per-record attribution (the acting agent named on each secured record) is planned for the next release (SCRUM-4497) and is NOT asserted today.**
 
@@ -161,6 +162,8 @@ What Arkova does with each event, for every agent bound to that passport:
 
 Ordering: authenticated `passport.revoked` is terminal across organizations and overrides local receipt/event floors. Revocation is recorded even when no agent is bound yet. Suspension and reinstatement follow the signed timestamp, with reinstatement requiring a strictly newer timestamp; a same-time event cannot relax a suspension. Timestamps over five minutes ahead are rejected and recorded for investigation; accepted timestamps are canonicalized and the stored clock is capped at receipt time. Arkova answers `409 conflict_retry` when a bound agent changed concurrently and `5xx` if a transaction fails; please redeliver both. Repeated revocations still enforce every affected agent after partial delivery failures.
 
+Because ComputeID does not retry a failed delivery today, Arkova will not rely on the webhook alone. A scheduled re-check of **every bound passport** against `GET /v1/agents/{passport_id}/verify` is built and tested (SCRUM-4495); it reconciles any state that disagrees with Arkova's through the same code path a webhook event takes, so a lost or 409'd delivery is caught within the hour rather than never. It is **not running yet** — it activates in the same motion as the integration flag, and needs the Arkova API key requested below. Evidence rules when it does run: it only ever reinstates on a receipt whose signature verifies against the pinned CA. A suspension is also acted on without one, because failing safe matters more there — but the permanent, cross-organization revocation record is written only on a signature-verified `revoked` receipt; an unsigned observation suspends the agent and deactivates its keys instead, which stops access without making a one-way decision on evidence that cannot carry it. This does not remove the need for redelivery — it bounds the damage when one is impossible.
+
 What Arkova needs from ComputeID for this to be production-grade (tracked as SCRUM-4498): an API key for Arkova; the retry policy for non-2xx; authentication and a delete/rotate path on `/v1/webhooks/register`; one real `passport.revoked` delivery against Arkova's staging endpoint during the soak window.
 
 ## 8. Rate limits, quotas and the credit model
@@ -187,7 +190,7 @@ Arkova publishes an open verifier (CLI and Python) that checks a Network Receipt
 
 - **Measured:** that a fingerprint was included in a record secured on the Production Network at the Network Observed Time; that a receipt from ComputeID's CA validated at admission; the timestamps of each passport event Arkova applied.
 - **Asserted (by the submitter):** document type, description, the agent's name and requested scopes, the passport's capabilities as issued by ComputeID.
-- **NOT asserted:** the content or legal effect of any document; that the agent's action was authorized beyond the scopes on its key; ML-DSA-65 verification — ComputeID's CA publishes an RSA key only, so Arkova verifies the RSA receipt; per-record acting-agent attribution on secured records (planned, SCRUM-4497); that a revocation reaches Arkova if ComputeID's delivery fails (a scheduled re-check is planned, SCRUM-4497).
+- **NOT asserted:** the content or legal effect of any document; that the agent's action was authorized beyond the scopes on its key; ML-DSA-65 verification — ComputeID's CA publishes an RSA key only, so Arkova verifies the RSA receipt; per-record acting-agent attribution on secured records (planned, SCRUM-4497); that a revocation reaches Arkova if ComputeID's delivery fails (the scheduled re-check of §7 is built and tested under SCRUM-4495 but is not yet running, and until it is, a delivery ComputeID does not retry is not caught by anything).
 
 ## 12. Support and recommended sequence
 
