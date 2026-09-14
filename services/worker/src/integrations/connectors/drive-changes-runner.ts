@@ -55,6 +55,7 @@ import {
   resolveDriveFolderPath,
   type FolderPathCacheStore,
 } from './drive-folder-resolver.js';
+import { reportDriveProcessingFailure } from './drive-connect-health.js';
 
 // Adapter-boundary Zod schemas (CodeRabbit ASSERTIVE on PR #696).
 // CLAUDE.md §1.4 mandates Zod on every write path; the processor → adapter
@@ -302,7 +303,12 @@ export async function loadWatchedFolderIds(
     // Sentry log, which is the correct escalation path. CodeRabbit
     // ASSERTIVE on PR #696.
     deps.logger?.error?.({ error, orgId }, 'loadWatchedFolderIds: rule lookup failed — propagating');
-    throw new Error(`loadWatchedFolderIds: organization_rules query failed for org ${orgId}: ${(error as { message?: string }).message ?? 'unknown error'}`);
+    const runnerError = new Error(`loadWatchedFolderIds: organization_rules query failed for org ${orgId}: ${(error as { message?: string }).message ?? 'unknown error'}`);
+    // P0-2: reported HERE (richest context available: this is an org-level
+    // rule-lookup failure, before any integration/file/revision context
+    // exists) rather than left to the webhook's outer catch-all.
+    reportDriveProcessingFailure(runnerError, { stage: 'watched_folder_lookup', orgId });
+    throw runnerError;
   }
   const ids = new Set<string>();
   for (const row of (data ?? []) as Array<{ trigger_config?: Record<string, unknown> | null }>) {
