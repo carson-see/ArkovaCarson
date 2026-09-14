@@ -19,7 +19,11 @@ const TEMPLATE_ID = 'b2222222-2222-4222-8222-222222222222';
 export const ANCHOR_ID = 'b3333333-3333-4333-8333-333333333333';
 export const CHILD_ORG_ID = 'b4444444-4444-4444-8444-444444444444';
 export const PARENT_ORG_ID = 'b5555555-5555-4555-8555-555555555555';
-const AAL2_TOKEN = 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJiMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMiJ9.fixture';
+const AAL2_TOKEN = [
+  Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url'),
+  Buffer.from(JSON.stringify({ sub: USER_ID, aud: 'authenticated', aal: 'aal2' })).toString('base64url'),
+  'fixture',
+].join('.');
 export type CapturedRequest = { kind: string; payload?: Record<string, unknown>; authorization?: string };
 
 /** Only I/O and account/capability boundaries are mocked; all layout components run unchanged. */

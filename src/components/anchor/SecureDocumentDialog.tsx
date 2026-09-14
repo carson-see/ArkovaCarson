@@ -47,7 +47,7 @@ import { useSecuringCapability } from '@/hooks/useSecuringCapability';
 import { exposedSecuringPaths, type SecuringPath } from '@/lib/queueContract';
 import { toast } from 'sonner';
 import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, EXTRACTION_FAILURE_REASON_COPY, PRIVACY_FAIL_CLOSED_LABELS, CONFIRMATION_PROGRESS_LABELS, SECURING_CHOICE_LABELS, SECURING_CHOICE_HINTS, SECURE_QUEUE_LABELS } from '@/lib/copy';
-import { ROUTES, verifyUrl, recordDetailPath } from '@/lib/routes';
+import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
 interface SecureDocumentDialogProps {
