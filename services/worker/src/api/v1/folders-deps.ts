@@ -2,6 +2,7 @@
 import { db as defaultDb } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
+import type { Database } from '../../types/database.types.js';
 import {
   createFoldersRouter,
   type BulkMoveResult,
@@ -15,6 +16,19 @@ type DbLike = typeof defaultDb;
 type RawMoveResult = {
   moved?: string[]; failed?: BulkMoveResult['failed']; event_org_id?: string; folder_public_id?: string;
 };
+type FolderFunction = Extract<keyof Database['public']['Functions'], `folder_api_${string}`>;
+
+/**
+ * Postgres accepts NULL for these RPC parameters, but the hosted Supabase type
+ * generator records them as non-null strings. Keep its output verbatim and
+ * confine that generator limitation to the exact folder RPC boundary.
+ */
+function nullableFolderRpcArgs<Name extends FolderFunction>(
+  args: { [Key in keyof Database['public']['Functions'][Name]['Args']]:
+    Database['public']['Functions'][Name]['Args'][Key] | null },
+): Database['public']['Functions'][Name]['Args'] {
+  return args as Database['public']['Functions'][Name]['Args'];
+}
 
 async function userIsExactAdmin(db: DbLike, userId: string, orgId: string): Promise<boolean> {
   const { data, error } = await db.from('org_members')
@@ -100,27 +114,27 @@ export function createDefaultFolderApiDeps(db: DbLike = defaultDb): FolderApiDep
       return !!data;
     },
     async listFolders(input) {
-      const { data, error } = await db.rpc('folder_api_list', {
+      const { data, error } = await db.rpc('folder_api_list', nullableFolderRpcArgs<'folder_api_list'>({
         ...rpcIdentity(input), p_owner_scope: input.ownerScope,
         p_owner_user_id: input.ownerUserId ?? null, p_org_id: input.orgId ?? null,
         p_context_org_id: input.contextOrgId ?? null,
-      });
+      }));
       if (error) throw new Error('folder_list_failed');
       return ((data ?? []) as unknown as FolderRow[]).sort((a, b) => a.name.localeCompare(b.name));
     },
     async createFolder(input) {
-      const { data, error } = await db.rpc('folder_api_create', {
+      const { data, error } = await db.rpc('folder_api_create', nullableFolderRpcArgs<'folder_api_create'>({
         ...rpcIdentity(input), p_api_key_id: input.apiKeyId, p_owner_scope: input.ownerScope,
         p_owner_user_id: input.ownerUserId ?? null, p_org_id: input.orgId ?? null,
         p_context_org_id: input.contextOrgId ?? null, p_name: input.name,
         p_parent_folder_id: input.parentFolderId,
-      });
+      }));
       if (error) throw new Error(error.code === '23505' ? 'folder_name_conflict'
         : error.code === '42501' ? 'folder_forbidden' : 'folder_create_failed');
       return data as unknown as FolderRow;
     },
     async updateFolder(input) {
-      const { data, error } = await db.rpc('folder_api_update', {
+      const { data, error } = await db.rpc('folder_api_update', nullableFolderRpcArgs<'folder_api_update'>({
         ...rpcIdentity(input), p_folder_id: input.folderId,
         p_name: input.name ?? null, p_name_present: input.name !== undefined,
         p_parent_folder_id: input.parentFolderId ?? null,
@@ -129,15 +143,15 @@ export function createDefaultFolderApiDeps(db: DbLike = defaultDb): FolderApiDep
         p_connector_source_id: input.connectorSourceId ?? null,
         p_connector_connection_id: input.connectorConnectionId ?? null,
         p_connector_present: input.connectorProvider !== undefined,
-      });
+      }));
       if (error) throw new Error(error.code === '23505' ? 'folder_name_conflict'
         : error.code === '42501' ? 'folder_forbidden' : 'folder_update_failed');
       return data as unknown as FolderRow | null;
     },
     async deleteFolder(input) {
-      const { data, error } = await db.rpc('folder_api_delete', {
+      const { data, error } = await db.rpc('folder_api_delete', nullableFolderRpcArgs<'folder_api_delete'>({
         ...rpcIdentity(input), p_folder_id: input.folderId,
-      });
+      }));
       if (error) throw new Error(error.code === '23503' ? 'folder_has_children' : 'folder_delete_failed');
       return data as unknown as FolderRow | null;
     },
@@ -153,9 +167,9 @@ export function createDefaultFolderApiDeps(db: DbLike = defaultDb): FolderApiDep
         anchorIds = resolved.map((row) => row.id);
       }
       if (anchorIds.length === 0) return remapPublicIdMoveResult(input.recordPublicIds ?? [], publicRows ?? [], {});
-      const { data, error } = await db.rpc('folder_api_bulk_move', {
+      const { data, error } = await db.rpc('folder_api_bulk_move', nullableFolderRpcArgs<'folder_api_bulk_move'>({
         ...rpcIdentity(input), p_anchor_ids: anchorIds, p_folder_id: input.folderId,
-      });
+      }));
       if (error) throw new Error('folder_bulk_move_failed');
       const raw = data as unknown as RawMoveResult;
       if (publicRows) return remapPublicIdMoveResult(input.recordPublicIds!, publicRows, raw);
