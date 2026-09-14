@@ -305,7 +305,12 @@ const anchorBulkSelfServiceRateLimiter = rateLimit({
 
 // ─── Mount routes ───
 // Agentic verification search — MUST be before /verify to avoid route shadowing (P8-S19)
-router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
+// SCRUM-3906: NOT behind aiSemanticSearchGate() anymore. The route now owns
+// its own semantic/lexical fallback (see ai-verify-search.ts) so a
+// direct API-key caller gets lexical results instead of a hard 503 when
+// ENABLE_SEMANTIC_SEARCH is off. ENABLE_VERIFICATION_API (the router-wide
+// gate above) is still authoritative for whether this route answers at all.
+router.use('/verify/search', aiVerifySearchRouter);
 
 // SCRUM-1873: Legally binding attestation verification.
 // PARKED — `GET /verify/attestation/:attestationId` is answered upstream by

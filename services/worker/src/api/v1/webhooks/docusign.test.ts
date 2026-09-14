@@ -1198,13 +1198,17 @@ describe('POST /webhooks/docusign', () => {
       const ruleEventBytes = Buffer.byteLength(JSON.stringify(ruleEventPayload), 'utf8');
       expect(ruleEventBytes).toBeLessThanOrEqual(16384);
       // The capped rule event retains all digests and the bounded count;
-      // per-document IDs remain only in the fetch job.
+      // per-document IDs remain only in the fetch job. `document_count` +
+      // `document_hashes` are what prove this is a real max-cardinality
+      // measurement rather than a vacuous one now that the ids are off this
+      // payload; the ids themselves are asserted at full cardinality on the
+      // job payload below.
       expect(ruleEventPayload.document_count).toBe(100);
       expect(ruleEventPayload).not.toHaveProperty('document_ids');
       expect((ruleEventPayload.document_hashes as unknown[]).length).toBe(100);
 
       // _signers rides ONLY the job -> connector_artifact.metadata path (no
-      // size cap there), at full cardinality.
+      // size cap there), at full cardinality — and so do the document ids.
       const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
       expect((jobPayload._signers as unknown[]).length).toBe(20);
       expect((jobPayload.document_ids as unknown[]).length).toBe(100);
