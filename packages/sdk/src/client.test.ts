@@ -52,6 +52,56 @@ describe('Arkova', () => {
     });
     expect(JSON.stringify(client)).not.toContain('0xae12000000000000000000000000000000dead');
   });
+
+  it('exposes authenticated JSON requests without exposing the fetch lifecycle', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'healthy' }),
+    });
+
+    await expect(client.request<{ status: string }>('/health')).resolves.toEqual({ status: 'healthy' });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/health'),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-API-Key': 'ak_test' }),
+      }),
+    );
+  });
+
+  it('rejects absolute and non-root API request paths before fetch', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+
+    await expect(client.request('https://attacker.example/collect')).rejects.toMatchObject({
+      code: 'invalid_request_path',
+      statusCode: 400,
+    });
+    await expect(client.request('../health')).rejects.toMatchObject({
+      code: 'invalid_request_path',
+      statusCode: 400,
+    });
+    await expect(client.request('/api\\v1/health')).rejects.toMatchObject({ code: 'invalid_request_path' });
+    await expect(client.request('/api/v1/health\nX-Evil: yes')).rejects.toMatchObject({ code: 'invalid_request_path' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('forces generic requests to fail instead of following redirects', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) });
+    await client.request('/health', { redirect: 'follow' });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/health'),
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  });
+
+  it('requires an HTTP(S) base URL without user info for generic requests', async () => {
+    await expect(new Arkova({ baseUrl: 'ftp://example.com' }).request('/health'))
+      .rejects.toMatchObject({ code: 'invalid_request_path' });
+    await expect(new Arkova({ baseUrl: 'https://user:pass@example.com' }).request('/health'))
+      .rejects.toMatchObject({ code: 'invalid_request_path' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('fingerprint', () => {
