@@ -24,7 +24,10 @@ export async function requestConnectorDisconnect<T extends object = Record<strin
   const body = await response.json().catch(() => ({})) as T & { error?: string };
 
   if (!response.ok) {
-    return { error: body.error ?? CONNECTIONS_LABELS.DISCONNECT_FAILED, body };
+    const error = typeof body?.error === 'string' && body.error.trim()
+      ? body.error
+      : CONNECTIONS_LABELS.DISCONNECT_FAILED;
+    return { error, body };
   }
   return { error: null, body };
 }

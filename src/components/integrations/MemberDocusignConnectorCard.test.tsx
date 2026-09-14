@@ -236,18 +236,23 @@ describe('MemberDocusignConnectorCard', () => {
     expect(screen.getByText(CONNECTIONS_LABELS.STATUS_CONNECTED)).toBeInTheDocument();
   });
 
-  it('falls back to generic disconnect copy when the worker sends no error', async () => {
-    supabaseQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
-    workerFetch.mockResolvedValue(jsonResponse({}, 500));
-    render(<MemberDocusignConnectorCard orgId={ORG_ID} />);
+  it.each([undefined, '', '   ', false, 0])(
+    'keeps the connection when disconnect fails with unusable error copy (%s)',
+    async (error) => {
+      supabaseQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
+      workerFetch.mockResolvedValue(jsonResponse({ error }, 500));
+      render(<MemberDocusignConnectorCard orgId={ORG_ID} />);
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeEnabled(),
-    );
-    fireEvent.click(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeEnabled(),
+      );
+      fireEvent.click(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON }));
 
-    await waitFor(() =>
-      expect(screen.getByText(CONNECTIONS_LABELS.DISCONNECT_FAILED)).toBeInTheDocument(),
-    );
-  });
+      await waitFor(() =>
+        expect(screen.getByText(CONNECTIONS_LABELS.DISCONNECT_FAILED)).toBeInTheDocument(),
+      );
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(screen.getByText(CONNECTIONS_LABELS.STATUS_CONNECTED)).toBeInTheDocument();
+    },
+  );
 });
