@@ -122,6 +122,7 @@ export const manageFoldersSchema = z.object({
   source_id: z.string().trim().min(1).max(500).nullable().optional(),
   connection_id: z.string().uuid().nullable().optional(),
   anchor_ids: z.array(z.string().uuid()).min(1).max(100).optional(),
+  record_public_ids: z.array(z.string().regex(/^ARK-[A-Za-z0-9][A-Za-z0-9_-]{0,123}$/)).min(1).max(100).optional(),
 }).strict().superRefine((value, ctx) => {
   if (['update', 'bind_connector', 'delete'].includes(value.action) && !value.folder_id) {
     ctx.addIssue({ code: 'custom', path: ['folder_id'], message: 'folder_id is required for this action' });
@@ -129,8 +130,8 @@ export const manageFoldersSchema = z.object({
   if (value.action === 'create' && (!value.name || !value.owner_scope)) {
     ctx.addIssue({ code: 'custom', path: ['name'], message: 'name and owner_scope are required for create' });
   }
-  if (value.action === 'bulk_move' && !value.anchor_ids) {
-    ctx.addIssue({ code: 'custom', path: ['anchor_ids'], message: 'anchor_ids is required for bulk_move' });
+  if (value.action === 'bulk_move' && Number(!!value.anchor_ids) + Number(!!value.record_public_ids) !== 1) {
+    ctx.addIssue({ code: 'custom', path: ['record_public_ids'], message: 'exactly one record id list is required for bulk_move' });
   }
   if (value.action === 'bind_connector' && value.provider && (!value.source_id || !value.connection_id)) {
     ctx.addIssue({ code: 'custom', path: ['provider'], message: 'provider, source_id, and connection_id must all be set' });

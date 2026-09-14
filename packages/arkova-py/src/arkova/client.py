@@ -460,7 +460,12 @@ class Arkova:
     def move_records(self, anchor_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
         path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
         return _parse_json(self._request("POST", path, json={"anchor_ids": list(anchor_ids),
-            "folder_id": folder_id}), FolderMoveResult)
+            "folder_id": folder_id}, retryable=False), FolderMoveResult)
+
+    def move_records_by_public_id(self, record_public_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
+        return _parse_json(self._request("POST", path, json={"record_public_ids": list(record_public_ids),
+            "folder_id": folder_id}, retryable=False), FolderMoveResult)
 
     def _request(
         self,
@@ -469,10 +474,11 @@ class Arkova:
         *,
         params: Mapping[str, Any] | None = None,
         json: Any | None = None,
+        retryable: bool = True,
     ) -> httpx.Response:
         for attempt in range(self._retries + 1):
             response = self._client.request(method, path, params=params, json=json)
-            if response.status_code not in RETRYABLE_STATUSES or attempt >= self._retries:
+            if not retryable or response.status_code not in RETRYABLE_STATUSES or attempt >= self._retries:
                 _raise_for_error(response)
                 return response
 
@@ -668,7 +674,12 @@ class AsyncArkova:
     async def move_records(self, anchor_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
         path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
         return _parse_json(await self._request("POST", path, json={"anchor_ids": list(anchor_ids),
-            "folder_id": folder_id}), FolderMoveResult)
+            "folder_id": folder_id}, retryable=False), FolderMoveResult)
+
+    async def move_records_by_public_id(self, record_public_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
+        return _parse_json(await self._request("POST", path, json={"record_public_ids": list(record_public_ids),
+            "folder_id": folder_id}, retryable=False), FolderMoveResult)
 
     async def _request(
         self,
@@ -677,10 +688,11 @@ class AsyncArkova:
         *,
         params: Mapping[str, Any] | None = None,
         json: Any | None = None,
+        retryable: bool = True,
     ) -> httpx.Response:
         for attempt in range(self._retries + 1):
             response = await self._client.request(method, path, params=params, json=json)
-            if response.status_code not in RETRYABLE_STATUSES or attempt >= self._retries:
+            if not retryable or response.status_code not in RETRYABLE_STATUSES or attempt >= self._retries:
                 _raise_for_error(response)
                 return response
 

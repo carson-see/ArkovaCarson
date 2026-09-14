@@ -8,9 +8,13 @@ import {
   type FolderActor,
   type FolderApiDeps,
   type FolderRow,
+  remapPublicIdMoveResult,
 } from './folders.js';
 
 type DbLike = typeof defaultDb;
+type RawMoveResult = {
+  moved?: string[]; failed?: BulkMoveResult['failed']; event_org_id?: string; folder_public_id?: string;
+};
 
 async function userIsExactAdmin(db: DbLike, userId: string, orgId: string): Promise<boolean> {
   const { data, error } = await db.from('org_members')
@@ -127,11 +131,23 @@ export function createDefaultFolderApiDeps(db: DbLike = defaultDb): FolderApiDep
       return data as unknown as FolderRow | null;
     },
     async bulkMove(input) {
+      let anchorIds = input.anchorIds ?? [];
+      let publicRows: Array<{ id: string; public_id: string }> | null = null;
+      if (input.recordPublicIds) {
+        const { data: resolvedData, error: resolveError } = await db.from('anchors')
+          .select('id, public_id').in('public_id', input.recordPublicIds);
+        if (resolveError) throw new Error('folder_bulk_move_failed');
+        const resolved = (resolvedData ?? []) as Array<{ id: string; public_id: string }>;
+        publicRows = resolved;
+        anchorIds = resolved.map((row) => row.id);
+      }
+      if (anchorIds.length === 0) return remapPublicIdMoveResult(input.recordPublicIds ?? [], publicRows ?? [], {});
       const { data, error } = await db.rpc('folder_api_bulk_move', {
-        ...rpcIdentity(input), p_anchor_ids: input.anchorIds, p_folder_id: input.folderId,
+        ...rpcIdentity(input), p_anchor_ids: anchorIds, p_folder_id: input.folderId,
       });
       if (error) throw new Error('folder_bulk_move_failed');
-      const raw = data as unknown as { moved?: string[]; failed?: BulkMoveResult['failed']; event_org_id?: string; folder_public_id?: string };
+      const raw = data as unknown as RawMoveResult;
+      if (publicRows) return remapPublicIdMoveResult(input.recordPublicIds!, publicRows, raw);
       return { moved: raw.moved ?? [], failed: raw.failed ?? [], eventOrgId: raw.event_org_id ?? null,
         folderPublicId: raw.folder_public_id ?? null };
     },

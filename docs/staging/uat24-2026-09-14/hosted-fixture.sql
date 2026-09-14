@@ -33,7 +33,10 @@ INSERT INTO public.organizations(
 INSERT INTO public.profiles(id,email,full_name,role,org_id,is_public_profile,is_platform_admin)
 VALUES ('51420000-0000-4000-8000-00000000a001','uat24-folder-admin@seed-fixture.invalid',
   'UAT24 Folder Admin','ORG_ADMIN','51420000-0000-4000-8000-00000000b001',false,false)
-ON CONFLICT (id) DO UPDATE SET org_id=excluded.org_id,role=excluded.role,deleted_at=NULL;
+-- The rig's canonical auth trigger may already have created this profile with
+-- immutable role ORG_MEMBER. Preserve that coarse profile role; exact folder
+-- administration is established by the canonical org_members.owner row below.
+ON CONFLICT (id) DO UPDATE SET org_id=excluded.org_id,deleted_at=NULL;
 
 INSERT INTO public.org_members(user_id,org_id,role)
 VALUES ('51420000-0000-4000-8000-00000000a001','51420000-0000-4000-8000-00000000b001','owner')

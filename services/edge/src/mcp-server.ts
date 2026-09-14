@@ -662,6 +662,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
       source_id: z.string().trim().min(1).max(500).nullable().optional(),
       connection_id: z.string().uuid().nullable().optional(),
       anchor_ids: z.array(z.string().uuid()).min(1).max(100).optional(),
+      record_public_ids: z.array(z.string().regex(/^ARK-[A-Za-z0-9][A-Za-z0-9_-]{0,123}$/)).min(1).max(100).optional(),
     },
     withTelemetry(
       'arkova_manage_folders',

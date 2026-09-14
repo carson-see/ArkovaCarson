@@ -48,6 +48,9 @@ def test_folder_management_surface(asynchronous: bool) -> None:
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/folders/bulk-move":
+            assert json.loads(request.content)["record_public_ids"] == ["ARK-2026-ABC12345"]
+            return json_response({"moved": ["ARK-2026-ABC12345"], "failed": []})
         assert request.url.path == "/api/v1/folders"
         if request.method == "GET":
             return json_response({"folders": [folder]})
@@ -57,11 +60,12 @@ def test_folder_management_surface(asynchronous: bool) -> None:
     options = {"api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
                "transport": httpx.MockTransport(handler)}
 
-    async def run_async() -> tuple[str, str]:
+    async def run_async() -> tuple[str, str, list[str]]:
         async with AsyncArkova(**options) as client:
             listed = await client.list_folders(org_id="org-id")
             created = await client.create_folder(name="Legal", owner_scope="ORG", org_id="org-id")
-            return listed.folders[0].public_id, created.public_id
+            moved = await client.move_records_by_public_id(["ARK-2026-ABC12345"], None)
+            return listed.folders[0].public_id, created.public_id, moved.moved
 
     if asynchronous:
         result = asyncio.run(run_async())
@@ -69,8 +73,9 @@ def test_folder_management_surface(asynchronous: bool) -> None:
         with Arkova(**options) as client:
             listed = client.list_folders(org_id="org-id")
             created = client.create_folder(name="Legal", owner_scope="ORG", org_id="org-id")
-            result = (listed.folders[0].public_id, created.public_id)
-    assert result == ("FLD-0011223344556677", "FLD-0011223344556677")
+            moved = client.move_records_by_public_id(["ARK-2026-ABC12345"], None)
+            result = (listed.folders[0].public_id, created.public_id, moved.moved)
+    assert result == ("FLD-0011223344556677", "FLD-0011223344556677", ["ARK-2026-ABC12345"])
 
 
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])

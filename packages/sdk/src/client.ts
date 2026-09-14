@@ -524,7 +524,15 @@ export class Arkova {
     moveRecords: async (anchorIds: string[], folderId: string | null): Promise<BulkFolderMoveResult> => {
       const response = await this.fetch('/api/v1/folders/bulk-move', {
         method: 'POST', body: JSON.stringify({ anchor_ids: anchorIds, folder_id: folderId }),
-      }, { idempotent: true });
+      });
+      const body = await jsonOrThrow<{ moved: string[]; failed: Array<{ anchor_id: string; code: string }> }>(
+        response, 'Folder bulk move failed');
+      return { moved: body.moved, failed: body.failed.map((row) => ({ anchorId: row.anchor_id, code: row.code })) };
+    },
+    moveRecordsByPublicId: async (recordPublicIds: string[], folderId: string | null): Promise<BulkFolderMoveResult> => {
+      const response = await this.fetch('/api/v1/folders/bulk-move', {
+        method: 'POST', body: JSON.stringify({ record_public_ids: recordPublicIds, folder_id: folderId }),
+      });
       const body = await jsonOrThrow<{ moved: string[]; failed: Array<{ anchor_id: string; code: string }> }>(
         response, 'Folder bulk move failed');
       return { moved: body.moved, failed: body.failed.map((row) => ({ anchorId: row.anchor_id, code: row.code })) };

@@ -258,6 +258,7 @@ export interface ManageFoldersInput {
   source_id?: string | null;
   connection_id?: string | null;
   anchor_ids?: string[];
+  record_public_ids?: string[];
 }
 
 export async function handleManageFolders(input: ManageFoldersInput, config: SupabaseConfig): Promise<ToolResult> {
@@ -267,6 +268,9 @@ export async function handleManageFolders(input: ManageFoldersInput, config: Sup
   let path = '/api/v1/folders';
   let method = 'GET';
   let body: Record<string, unknown> | undefined;
+  if (input.action === 'bulk_move' && Number(!!input.anchor_ids) + Number(!!input.record_public_ids) !== 1) {
+    return errorResult('Provide exactly one record id list for bulk_move.');
+  }
   if (input.action === 'list') {
     const query = new URLSearchParams();
     if (input.owner_scope) query.set('owner_scope', input.owner_scope);
@@ -292,7 +296,9 @@ export async function handleManageFolders(input: ManageFoldersInput, config: Sup
     method = 'DELETE'; path += `/${encodeURIComponent(input.folder_id ?? '')}`;
   } else {
     method = 'POST'; path += '/bulk-move';
-    body = { anchor_ids: input.anchor_ids, folder_id: input.folder_id ?? null };
+    body = input.record_public_ids
+      ? { record_public_ids: input.record_public_ids, folder_id: input.folder_id ?? null }
+      : { anchor_ids: input.anchor_ids, folder_id: input.folder_id ?? null };
   }
   try {
     const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}${path}`, {
@@ -716,6 +722,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         source_id: { type: 'string', description: 'Opaque connector source destination identifier.' },
         connection_id: { type: 'string', format: 'uuid', description: 'Active connector connection UUID.' },
         anchor_ids: { type: 'array', items: { type: 'string', format: 'uuid', description: 'Record UUID.' }, minItems: 1, maxItems: 100, description: 'One to 100 record UUIDs for bulk_move.' },
+        record_public_ids: { type: 'array', items: { type: 'string', pattern: '^ARK-', description: 'API-visible record public id.' }, minItems: 1, maxItems: 100, description: 'One to 100 public record ids for bulk_move; outcomes preserve these ids.' },
       },
       required: ['action'],
     },
