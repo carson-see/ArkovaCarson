@@ -95,6 +95,19 @@ describe('Arkova', () => {
     );
   });
 
+  it.each([
+    ['getAnchor', (client: Arkova) => client.getAnchor('ARK-FIXTURE')],
+    ['verify', (client: Arkova) => client.verify('ARK-FIXTURE')],
+  ])('forces %s to fail instead of following redirects', async (_name, call) => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'redirect_blocked' }) });
+    await expect(call(client)).rejects.toBeInstanceOf(ArkovaError);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  });
+
   it('requires an HTTP(S) base URL without user info for generic requests', async () => {
     await expect(new Arkova({ baseUrl: 'ftp://example.com' }).request('/health'))
       .rejects.toMatchObject({ code: 'invalid_request_path' });

@@ -750,7 +750,7 @@ export class Arkova {
       headers['X-API-Key'] = this.#apiKey;
     }
 
-    const requestInit = { ...init, headers };
+    const requestInit = { ...init, redirect: 'error' as const, headers };
     const method = (requestInit.method ?? 'GET').toUpperCase();
     const retryable = isSafeRetryMethod(method) || options?.idempotent === true;
     let attempt = 0;
