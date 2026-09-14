@@ -24,6 +24,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { hasLabel } from './lib/ciContext.js';
 
 const JOBS_DIR = 'services/worker/src/jobs';
 const OVERRIDE_LABEL = 'error-swallow-reviewed';
@@ -62,8 +63,7 @@ export function scanSource(basename: string, source: string): Violation[] {
 }
 
 function main(): void {
-  const labels = (process.env.PR_LABELS ?? '').split(',').map((l) => l.trim());
-  if (labels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`[error-swallow] override label "${OVERRIDE_LABEL}" present — skipping.`);
     return;
   }

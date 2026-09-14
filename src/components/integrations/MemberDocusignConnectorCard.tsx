@@ -2,71 +2,37 @@
  * Member-level DocuSign connector card (SCRUM-2044)
  *
  * Per-member DocuSign OAuth. Writes to `member_integrations` and uses
- * the member-level OAuth endpoints. Mirrors DocusignConnectorCard pattern.
+ * the member-level OAuth endpoints. Mirrors DocusignConnectorCard pattern —
+ * and now shares its status query, redirect handling, disconnect request and
+ * card chrome rather than restating them (see this folder's agents.md).
+ *
+ * There is no entitlement gate here: per-member DocuSign is not gated on org
+ * KYB verification the way the org-level connector is.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle, FileSignature, Loader2, PlugZap, Unplug } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { CheckCircle, FileSignature } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS } from '@/lib/copy';
+import { useSignatureConnection } from './useSignatureConnection';
+import { followSignatureOAuthStart } from './signatureOAuthResponse';
+import { requestConnectorDisconnect } from './connectorDisconnect';
+import { ConnectorCardStatusRow } from './ConnectorCardStatusRow';
 
 interface MemberDocusignConnectorCardProps {
   orgId: string;
 }
 
-interface MemberDocusignConnection {
-  id: string;
-  account_label: string | null;
-  account_id: string | null;
-  connected_at: string | null;
-  scope: string | null;
-}
-
-export function MemberDocusignConnectorCard({ orgId }: MemberDocusignConnectorCardProps) {
-  const [connection, setConnection] = useState<MemberDocusignConnection | null>(null);
-  const [statusLoading, setStatusLoading] = useState(true);
+export function MemberDocusignConnectorCard({ orgId }: Readonly<MemberDocusignConnectorCardProps>) {
+  const { connection, setConnection, statusLoading, error, setError } = useSignatureConnection(
+    orgId,
+    'docusign',
+    'Unable to load personal DocuSign connection status.',
+    'member_integrations',
+  );
   const [actionLoading, setActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refreshConnection = useCallback(async () => {
-    setStatusLoading(true);
-    setError(null);
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: queryError } = await (supabase as any)
-        .from('member_integrations')
-        .select('id, account_label, account_id, connected_at, scope')
-        .eq('org_id', orgId)
-        .eq('provider', 'docusign')
-        .is('revoked_at', null)
-        .order('connected_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (queryError) {
-        setError('Unable to load personal DocuSign connection status.');
-        setConnection(null);
-        return;
-      }
-
-      setConnection(data ?? null);
-    } catch {
-      setError('Unable to load personal DocuSign connection status.');
-      setConnection(null);
-    } finally {
-      setStatusLoading(false);
-    }
-  }, [orgId]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async Supabase refresh settles after the effect returns
-    void refreshConnection();
-  }, [refreshConnection]);
 
   const handleConnect = useCallback(async () => {
     setActionLoading(true);
@@ -79,43 +45,26 @@ export function MemberDocusignConnectorCard({ orgId }: MemberDocusignConnectorCa
           return_to: window.location.href,
         }),
       });
-      const body = await response.json().catch(() => ({})) as {
-        authorizationUrl?: string;
-        url?: string;
-        error?: string;
-      };
-
-      if (!response.ok) {
-        setError(body.error ?? CONNECTIONS_LABELS.CONNECT_FAILED);
-        return;
-      }
-
-      const nextUrl = body.authorizationUrl ?? body.url;
-      if (!nextUrl) {
-        setError(CONNECTIONS_LABELS.CONNECT_FAILED);
-        return;
-      }
-
-      window.location.assign(nextUrl);
+      setError(await followSignatureOAuthStart(response, (body) =>
+        body.error ?? CONNECTIONS_LABELS.CONNECT_FAILED,
+      ));
     } catch (err) {
       setError(err instanceof Error ? err.message : CONNECTIONS_LABELS.CONNECT_FAILED);
     } finally {
       setActionLoading(false);
     }
-  }, [orgId]);
+  }, [orgId, setError]);
 
   const handleDisconnect = useCallback(async () => {
     setActionLoading(true);
     setError(null);
     try {
-      const response = await workerFetch('/api/v1/integrations/docusign/member/disconnect', {
-        method: 'POST',
-        body: JSON.stringify({ org_id: orgId }),
-      });
-      const body = await response.json().catch(() => ({})) as { error?: string };
-
-      if (!response.ok) {
-        setError(body.error ?? CONNECTIONS_LABELS.DISCONNECT_FAILED);
+      const { error: failure } = await requestConnectorDisconnect(
+        '/api/v1/integrations/docusign/member/disconnect',
+        orgId,
+      );
+      if (failure) {
+        setError(failure);
         return;
       }
 
@@ -126,7 +75,7 @@ export function MemberDocusignConnectorCard({ orgId }: MemberDocusignConnectorCa
     } finally {
       setActionLoading(false);
     }
-  }, [orgId]);
+  }, [orgId, setConnection, setError]);
 
   const connected = !!connection;
   const accountLabel = connection?.account_label || connection?.account_id;
@@ -144,55 +93,19 @@ export function MemberDocusignConnectorCard({ orgId }: MemberDocusignConnectorCa
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            {statusLoading ? (
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            ) : connected ? (
-              <CheckCircle className="h-5 w-5 text-emerald-500" />
-            ) : (
-              <PlugZap className="h-5 w-5 text-muted-foreground" />
-            )}
-            <div>
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium">Status</p>
-                <Badge variant={connected ? 'default' : 'secondary'}>
-                  {statusLoading ? CONNECTIONS_LABELS.STATUS_CHECKING : connected ? CONNECTIONS_LABELS.STATUS_CONNECTED : CONNECTIONS_LABELS.STATUS_NOT_CONNECTED}
-                </Badge>
-              </div>
-              {connected && accountLabel && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {CONNECTIONS_LABELS.ACCOUNT_LABEL_PREFIX}{accountLabel}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {connected ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDisconnect}
-              disabled={actionLoading}
-            >
-              {actionLoading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Unplug className="mr-2 h-4 w-4" />
-              )}
-              {actionLoading ? CONNECTIONS_LABELS.DISCONNECTING : CONNECTIONS_LABELS.DISCONNECT_BUTTON}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              onClick={handleConnect}
-              disabled={statusLoading || actionLoading}
-            >
-              {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {actionLoading ? CONNECTIONS_LABELS.CONNECTING : CONNECTIONS_LABELS.CONNECT_BUTTON}
-            </Button>
+        <ConnectorCardStatusRow
+          statusLoading={statusLoading}
+          connected={connected}
+          actionLoading={actionLoading}
+          onConnect={handleConnect}
+          onDisconnect={handleDisconnect}
+        >
+          {connected && accountLabel && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {CONNECTIONS_LABELS.ACCOUNT_LABEL_PREFIX}{accountLabel}
+            </p>
           )}
-        </div>
+        </ConnectorCardStatusRow>
 
         {error && (
           <p className="text-sm text-destructive">{error}</p>

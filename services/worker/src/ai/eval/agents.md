@@ -423,3 +423,8 @@ AI extraction evaluation framework — golden datasets, scoring engine, calibrat
 - **DO** run the eval suite before upgrading any model pin in `gemini-config.ts`
 - **DO** keep the fraud holdout set strictly disjoint from training seed
 - **DO NOT** add entries to both `fraud-training-seed.ts` and `fraud-holdout-set.ts`
+
+
+## 2026-09-14 — Disposable Git fixture maintenance
+
+The S3.3 acceptance tests initialize each disposable repository with local maintenance.auto=false and gc.auto=0 before fetching or committing. The original cleanup retries still failed with ENOTEMPTY in PR2942 run34875352334; detached housekeeping could keep writing after synchronous Git commands returned. All content, lineage and tamper assertions remain intact. Configuration is limited to test-created repositories; normal development and production Git settings are untouched.
