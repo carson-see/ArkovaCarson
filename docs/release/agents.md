@@ -35,6 +35,8 @@ docs, not prod-state assertions** — every live rig / soak / ledger fact defers
   lands on `main`. Amended 2026-08-11 after the union-driver loss recurred via
   a transient `git -c merge.union.driver=true merge`; rule of record is
   `memory/feedback_git_merge_driver_override.md`.
+- `uat04-mandatory-mfa-rollout.md` — coordinated web/worker/edge/Auth/SQL apply,
+  acceptance, and email-safe rollback procedure for all-user mandatory MFA.
 
 ## Editing rules
 - Keep tier tables + required-field lists in sync with
