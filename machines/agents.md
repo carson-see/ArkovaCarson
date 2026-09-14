@@ -369,3 +369,20 @@ CI automatically; no workflow edit was needed.
 - **`dlqKind` can represent a value the database cannot store, on purpose.** Migration `0338` ships `CHECK (failure_kind IN ('http_delivery', 'log_write'))` and that constraint is live on prod. Because the DLQ write is a PostgREST upsert, a rejection arrives in `{ error }` rather than as a throw, so a third value loses the audit row silently while the "Moved to dead letter queue" info line still fires. `dlqKindSatisfiesMigration0338Check` is the ratchet: the negative control (set `EGRESS_REFUSED` in `refuseAtPinnedLayer`) violates it in two steps. Widening the CHECK needs a migration, which makes any such change T3.
 - The A1/A2/AMAX ladder stands in for `MAX_RETRIES = 5`: the model proves the SHAPE of the ladder, not its depth. Circuit breaker, per-resource head-of-line ordering (SCRUM-2250) and idempotency-key dedupe are **out of scope** — they are covered by `webhooks/delivery.test.ts`.
 - `SUCCESS` and `FAILED` are terminal by design, so `checks: { deadlock: false }` — same resolution as `partnerProvisioning` and `drainRunAccounting`. Documentation-only: no `runtimeAdapter`; the rows live on `webhook_delivery_logs` / `webhook_dead_letter_queue`, which this machine does not own.
+
+
+## CTO #2844 — offboarding interleaving correction (2026-09-14)
+
+The earlier atomic offboard model concealed the worker's two RPC transactions.
+A split-step negative control violates noCreditsStrandedInASuspendedAffiliate
+after request, approve, reclaim, concurrent allocate, then suspend. The corrected
+model keeps separate allocation precheck, guarded SQL allocation, beginOffboard
+and finishOffboard actions. offboardLock blocks allocation and relationship
+writes while reclaim/suspension hold the child row lock. A stale HTTP precheck
+never skips the current approval and suspension checks in SQL.
+
+The model passes the PR-tier checker but remains documentation-only, without
+a runtime adapter. Actual migration 0460 lock waiting, credit amounts, authority,
+audit attribution and transactional rollback are exercised independently by
+`scripts/verify-suborg-offboard.py`; integer conservation, other credit sources
+and live staging qualification are not established by the boolean TLA model.

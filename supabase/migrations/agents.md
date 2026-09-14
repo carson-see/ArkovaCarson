@@ -1457,3 +1457,27 @@ remains held until its own production and CI requirements are satisfied.
 
 [Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retains the staged recovery and separately dated production pilot receipts.
+
+
+## CTO review — atomic sub-organization offboarding (2026-09-14)
+
+| Prefix | Owner branch / PR | Story | Source | State |
+|---|---|---|---|---|
+| `0460` | `feat/scrum-3971-suborg-api-key-parity` / #2844 | SCRUM-3971 | `0460_scrum3971_atomic_suborg_offboard.sql` | RESERVED — local source only; not applied to production, staging, or any rig. |
+
+The fresh prefix inventory found main at 0451, this PR's immutable 0453,
+#2904 at 0454, #2905 at 0455–0457, standing C2's already-applied
+0458_scrum5120_batch_insert_anchors_description, and #2964 at
+2d2f6bd2e2d675c7c73c482aaf54f9d0a4e3119a claiming
+0459_scrum5145_restore_auth_user_triggers. The all-open PR file inventory,
+current main reservation table, sibling review checkouts, and the release
+owner's current C2 ledger inventory contained no 0460 claim. 0453 stays byte
+identical: this correction is a new migration, not a rewrite of applied SQL.
+
+The worker previously reclaimed and suspended in separate transactions. A
+concurrent allocation could commit between them or after a stale precheck,
+leaving a successfully offboarded child holding credits. The correction must
+serialize offboarding and positive allocation on the child organization row;
+reclaim, suspension and their audit records commit together. Native PostgreSQL
+interleavings and a split-step TLA negative control are required before review.
+This reservation asserts no completed test, live qualification or soak.

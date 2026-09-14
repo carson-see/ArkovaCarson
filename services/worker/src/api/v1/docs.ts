@@ -90,7 +90,7 @@ const SUB_ORG_COMMON_RESPONSES = {
   },
   '503': {
     description:
-      'A required lookup or RPC was unavailable, named by a machine code in `error`: `org_lookup_unavailable` (the acting-organization read failed), `sub_org_lookup_unavailable`, `sub_org_list_unavailable`, `rollup_projection_unavailable`, `credit_allocation_unavailable`, `credit_rollup_unavailable`, `balance_lookup_unavailable`, `suspend_unavailable`, `cap_check_unavailable`, or `api_key_principal_unresolved` (the key is authorized but the principal it must stamp on the row could not be resolved). Never returned in place of a definitive answer.',
+      'A required lookup or RPC was unavailable, named by a machine code in `error`: `org_lookup_unavailable` (the acting-organization read failed), `sub_org_lookup_unavailable`, `sub_org_list_unavailable`, `rollup_projection_unavailable`, `credit_allocation_unavailable`, `credit_rollup_unavailable`, `balance_lookup_unavailable`, `suspend_unavailable`, `offboard_unavailable`, `cap_check_unavailable`, or `api_key_principal_unresolved` (the key is authorized but the principal it must stamp on the row could not be resolved). Never returned in place of a definitive answer.',
     content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
   },
 } as const;
@@ -1740,7 +1740,7 @@ export const openApiSpec: Record<string, any> = {
       post: {
         summary: 'Offboard an affiliate',
         description:
-          'Reclaim an affiliate\'s remaining credits to the parent and then suspend it. Requires the orgs:manage scope. The order is deliberate and the operation is retry-safe: if the suspend fails after a successful reclaim, the response reports reclaimed > 0 with suspended false and a retry finishes the job without moving credits twice. The affiliate\'s anchored records are NOT touched — they stay verifiable after the relationship ends.'
+          'Reclaim an affiliate\'s remaining credits to the parent and then suspend it. Requires the orgs:manage scope. Reclaim, suspension and their audit records commit together in one transaction. A failed transaction rolls back the reclaim; a transport failure does not establish whether it committed. Retrying is safe and never moves the same credits twice. The affiliate\'s anchored records are NOT touched — they stay verifiable after the relationship ends.'
           + SUB_ORG_LIFECYCLE_NOTE
           + SUB_ORG_MOUNT_NOTE,
         operationId: 'offboardSubOrganization',
@@ -1780,7 +1780,7 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '409': {
-            description: 'insufficient_child_balance — the reclaim conflicts with the current balance. Nothing is suspended when the reclaim fails. Also `409 ambiguous_caller`: the request presented both a verified session and an API key, and neither credential may be allowed to pick which organization is acting. Send exactly one.',
+            description: '`409 ambiguous_caller`: the request presented both a verified session and an API key, and neither credential may be allowed to pick which organization is acting. Send exactly one.',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
           },
           '422': { description: 'Request body failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },

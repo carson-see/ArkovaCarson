@@ -144,3 +144,12 @@ DEFAULT in the same migration, and the generator marks a field optional when the
 column is nullable OR has a default. Without that default the field becomes
 mandatory and `src/hooks/useOnboarding.ts:161`/`:217` stop typechecking — which is
 how the default came to exist. Do not "tidy" the DEFAULT away.
+
+
+## CTO #2844 atomic offboard RPC signatures — 2026-09-14
+
+Added `offboard_suborg` and `offboard_suborg_as_api_key` from compensating
+migration 0460, mirrored in the frontend type copy. As with this PR's 0453
+additions these signatures are hand-written; canonical generation against
+the qualified migrated database remains a release check. No types are claimed
+to have been regenerated from an unapplied migration.

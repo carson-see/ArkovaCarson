@@ -202,8 +202,8 @@ agentToolsRouter.get(
         parentPublicId = parent.public_id as string;
       }
 
-      // One hop by construction: `check_sub_org_depth` allows a single level,
-      // so `children` is the whole descendant set and no recursion is needed.
+      // `children` means direct affiliates. The database permits deeper chains;
+      // this directory field does not claim to enumerate all descendants.
       const { data: children, error: childrenError } = await v2Db.from('organizations')
         .select('public_id, display_name, parent_approval_status')
         .eq('parent_org_id', req.apiKey.orgId)

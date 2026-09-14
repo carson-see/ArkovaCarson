@@ -20,11 +20,10 @@
  *
  * ## An organization that HAS a parent may not act as one
  *
- * `check_sub_org_depth` (baseline) allows exactly one level, so a child has no
- * children to manage. Refusing here rather than returning an empty list makes
- * the boundary explicit instead of implicit-and-coincidental: if the depth
- * limit were ever raised, an unguarded key surface would silently start
- * exposing grandchildren.
+ * This API intentionally permits only a top-level organization to administer
+ * its direct affiliates. The database permits chains to depth 3, so an affiliated
+ * organization can already have children. This guard is an explicit scope
+ * restriction, not a claim that such children cannot exist.
  *
  * ## Both credentials at once is a 409, not a preference
  *

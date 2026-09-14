@@ -202,3 +202,14 @@ point is not yet reachable in production, because it is not — the revoke
 handler's dispatch is guarded on an org id its ownership query never selects.
 The contract is published so subscriptions can be registered ahead of the fix,
 the same shape as `credential.verified`.
+
+
+## CTO #2844 atomic offboarding correction — 2026-09-14
+
+The served and published offboard descriptions now match migration 0460:
+reclaim, suspension and both audit writes commit together. A failed SQL
+transaction rolls the reclaim back; an HTTP transport failure does not prove
+commit or rollback. Retry stays idempotent. The obsolete partial-reclaim
+promise is removed and the unavailable error is `offboard_unavailable`.
+Current hierarchy scope remains direct affiliates; depth 3 in the database
+does not imply this API enumerates all descendants. No live rollout is claimed.

@@ -8116,6 +8116,24 @@ export type Database = {
         }
         Returns: Json
       }
+      offboard_suborg: {
+        Args: {
+          p_caller_user_id: string
+          p_parent_org_id: string
+          p_reason: string
+          p_sub_org_id: string
+        }
+        Returns: Json
+      }
+      offboard_suborg_as_api_key: {
+        Args: {
+          p_caller_api_key_id: string
+          p_parent_org_id: string
+          p_reason: string
+          p_sub_org_id: string
+        }
+        Returns: Json
+      }
       suspend_suborg_as_api_key: {
         Args: {
           p_caller_api_key_id: string

@@ -1307,6 +1307,7 @@ const CREDIT_RPC_STATUS: Record<string, number> = {
   authentication_required: 401,
   parent_admin_required: 403,
   not_a_sub_org: 404,
+  sub_org_not_active: 404,
   // 409 rather than 402: the request conflicts with the current balance, and
   // unlike the anchor path nothing here is purchasable in the moment.
   insufficient_parent_balance: 409,
@@ -1453,96 +1454,51 @@ export async function subOrgCreditRollupCore(
 }
 
 /**
- * Offboarding, shared by both mounts (R9).
- *
- * ORDER IS THE DESIGN: reclaim, then suspend. If the suspend fails after a
- * successful reclaim the credits are safely back with the parent and the
- * sub-org is merely still active, so a retry finishes the job. Suspending first
- * would strand the parent's credits inside an org nobody can act in.
+ * The RPC chooses the current balance under the child and credit-row locks.
+ * Reclaim, suspension and audit writes commit together; no HTTP-side balance
+ * read or second RPC can open an allocation window between them (0460).
  */
 export async function offboardSubOrgCore(
   caller: SubOrgCaller,
   childOrgId: string,
   reason: string | null,
 ): Promise<SubOrgCoreResponse> {
-  // What is left to return? Read before moving anything: a balance we cannot
-  // read is a reclaim we cannot size, and guessing would either strand
-  // credits or attempt an over-reclaim the RPC would refuse anyway.
-  const { data: credits, error: creditsError } = await db
-    .from('org_credits')
-    .select('balance')
-    .eq('org_id', childOrgId)
-    .maybeSingle();
-
-  if (creditsError) {
-    logger.error({ err: creditsError.message, childOrgId }, 'suborg_offboard_balance_read_failed');
-    return { status: 503, body: { error: 'balance_lookup_unavailable' } };
-  }
-
-  const balance: number = credits?.balance ?? 0;
-  let reclaimed = 0;
-
-  if (balance > 0) {
-    const { data: reclaimData, error: reclaimError } = await callRpc<AllocateCreditsRpcResult>(
-      db,
-      creditRpcName(caller),
-      {
-        p_parent_org_id: caller.orgId,
-        p_child_org_id: childOrgId,
-        p_amount: -balance,
-        p_note: reason ? `offboarding: ${reason}` : 'offboarding',
-        ...callerRpcArg(caller),
-      },
-    );
-
-    if (reclaimError) {
-      logger.error({ err: reclaimError.message, childOrgId }, 'suborg_offboard_reclaim_rpc_failure');
-      return { status: 503, body: { error: 'credit_allocation_unavailable' } };
-    }
-    if (!reclaimData || reclaimData.error) {
-      // Stop here. Suspending an org whose credits we failed to reclaim
-      // strands them somewhere nobody can spend or recover them.
-      const code = reclaimData?.error ?? 'unknown_error';
-      return {
-        status: CREDIT_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS,
-        body: { error: code, reclaimed: 0, suspended: false },
-      };
-    }
-    reclaimed = balance;
-  }
-
-  const suspendRpc = caller.kind === 'api_key' ? 'suspend_suborg_as_api_key' : 'suspend_suborg';
-  const { data: suspendData, error: suspendError } = await callRpc<SuspendRpcResult>(db, suspendRpc, {
+  const rpc = caller.kind === 'api_key' ? 'offboard_suborg_as_api_key' : 'offboard_suborg';
+  const { data, error } = await callRpc<OffboardRpcResult>(db, rpc, {
     p_parent_org_id: caller.orgId,
     p_sub_org_id: childOrgId,
     p_reason: reason,
     ...callerRpcArg(caller),
   });
-
-  if (suspendError) {
-    logger.error({ err: suspendError.message, childOrgId, reclaimed }, 'suborg_offboard_suspend_rpc_failure');
-    return { status: 503, body: { error: 'suspend_unavailable', reclaimed, suspended: false } };
+  if (error) {
+    logger.error({ err: error.message, childOrgId }, 'suborg_offboard_rpc_failure');
+    // A transport failure cannot tell us whether the transaction committed.
+    // Do not claim reclaimed: 0 or suspended: false; a retry is idempotent.
+    return { status: 503, body: { error: 'offboard_unavailable' } };
   }
-  if (!suspendData || suspendData.success !== true) {
-    // The reclaim already happened. Say so — a retry is safe, but only if the
-    // caller knows not to expect the credits to move a second time.
-    const code = suspendData?.error ?? 'unknown_error';
-    logger.warn({ childOrgId, reclaimed, code }, 'suborg_offboard_partial');
+  if (!data || data.success !== true || typeof data.reclaimed !== 'number' || !Number.isSafeInteger(data.reclaimed) || data.reclaimed < 0) {
+    const code = data?.error ?? 'unknown_error';
     return {
-      status: SUSPEND_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS,
-      body: { error: code, reclaimed, suspended: false },
+      status: SUSPEND_RPC_STATUS[code] ?? CREDIT_RPC_STATUS[code] ?? RPC_UNEXPECTED_STATUS,
+      body: { error: code },
     };
   }
-
-  logger.info({ orgId: caller.orgId, childOrgId, reclaimed, actorKind: caller.kind }, 'suborg_offboarded');
+  logger.info({ orgId: caller.orgId, childOrgId, reclaimed: data.reclaimed, actorKind: caller.kind }, 'suborg_offboarded');
   return {
     status: 200,
     body: {
-      reclaimed,
+      reclaimed: data.reclaimed,
       suspended: true,
-      alreadySuspended: suspendData.already_suspended === true,
+      alreadySuspended: data.already_suspended === true,
     },
   };
+}
+
+interface OffboardRpcResult {
+  success?: boolean;
+  reclaimed?: number;
+  already_suspended?: boolean;
+  error?: string;
 }
 
 orgSubOrgsRouter.post('/credits', async (req: Request, res: Response) => {
@@ -1625,11 +1581,7 @@ const OffboardSchema = z.object({
   reason: z.string().trim().max(500).optional(),
 });
 
-interface SuspendRpcResult {
-  success?: boolean;
-  already_suspended?: boolean;
-  error?: string;
-}
+
 
 orgSubOrgsRouter.post('/offboard', async (req: Request, res: Response) => {
   try {

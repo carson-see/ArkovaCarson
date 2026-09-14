@@ -21,6 +21,8 @@ import {
 const status = variable("status");
 const suspended = variable("suspended");
 const holdsCredits = variable("holdsCredits");
+const offboardLock = variable("offboardLock");
+const allocationReady = variable("allocationReady");
 
 /**
  * Sub-Organization Affiliation Lifecycle (SCRUM-3971, review U1)
@@ -40,7 +42,9 @@ const holdsCredits = variable("holdsCredits");
  *   `organizations.parent_approval_status` x `organizations.suspended` x
  *   "does this affiliate still hold parent credits", per child, and the five
  *   transitions that move them: request (child-side, JWT), approve, revoke,
- *   allocate and offboard.
+ *   allocate and offboard. Offboard is split into reclaim/commit phases under
+ *   its child row lock. Allocation's HTTP precheck is separate from its SQL
+ *   state check, so a stale precheck cannot be treated as current authority.
  *
  * WHAT THIS DELIBERATELY DOES NOT MODEL
  *   1. WHO may act. Authority is `_suborg_api_key_authorized` in migration
@@ -48,7 +52,7 @@ const holdsCredits = variable("holdsCredits");
  *      actor identity is not part of this state. It is pinned instead by
  *      `src/tests/sec-0453-suborg-api-key-authority.test.ts`.
  *   2. Integer credit balances. `holdsCredits` is a boolean: the property at
- *      stake is "were the credits reclaimed BEFORE the suspend", not how many.
+ *      stake is whether allocation can interleave with reclaim/suspension.
  *      Conservation is enforced in SQL by the 0349 invariant.
  *   3. Affiliation depth and re-parenting. `check_sub_org_depth` owns depth and
  *      `subOrgListingConsent.machine.ts` owns the re-parent consent reset.
@@ -87,6 +91,8 @@ export const subOrgAffiliationLifecycleMachine = defineMachine({
 
     /** Does this affiliate still hold credits the parent allocated to it? */
     holdsCredits: mapVar("Children", boolType(), lit(false)),
+    offboardLock: mapVar("Children", boolType(), lit(false)),
+    allocationReady: mapVar("Children", boolType(), lit(false)),
   },
 
   actions: {
@@ -100,9 +106,9 @@ export const subOrgAffiliationLifecycleMachine = defineMachine({
      */
     request: {
       params: { c: "Children" },
-      guard: or(
-        eq(index(status, param("c")), lit("NONE")),
-        eq(index(status, param("c")), lit("REVOKED")),
+      guard: and(
+        not(index(offboardLock, param("c"))),
+        or(eq(index(status, param("c")), lit("NONE")), eq(index(status, param("c")), lit("REVOKED"))),
       ),
       updates: [setMap("status", param("c"), lit("PENDING"))],
     },
@@ -126,6 +132,7 @@ export const subOrgAffiliationLifecycleMachine = defineMachine({
       params: { c: "Children" },
       guard: and(
         eq(index(status, param("c")), lit("PENDING")),
+        not(index(offboardLock, param("c"))),
         lte(
           count("Children", "k", eq(index(status, param("k")), lit("APPROVED"))),
           lit(0),
@@ -142,39 +149,61 @@ export const subOrgAffiliationLifecycleMachine = defineMachine({
      */
     revoke: {
       params: { c: "Children" },
-      guard: or(
-        eq(index(status, param("c")), lit("APPROVED")),
-        eq(index(status, param("c")), lit("PENDING")),
+      guard: and(
+        not(index(offboardLock, param("c"))),
+        or(eq(index(status, param("c")), lit("APPROVED")), eq(index(status, param("c")), lit("PENDING"))),
       ),
       updates: [setMap("status", param("c"), lit("REVOKED"))],
     },
 
-    /**
-     * allocate — `resolveApprovedChild`: APPROVED and NOT suspended. Money does
-     * not move into an affiliation that is not live.
-     */
-    allocate: {
+    /** HTTP can approve a request before another transaction offboards. */
+    precheckAllocation: {
       params: { c: "Children" },
       guard: and(
         eq(index(status, param("c")), lit("APPROVED")),
-        eq(index(suspended, param("c")), lit(false)),
+        not(index(suspended, param("c"))),
       ),
-      updates: [setMap("holdsCredits", param("c"), lit(true))],
+      updates: [setMap("allocationReady", param("c"), lit(true))],
+    },
+
+    /** SQL rechecks current state after acquiring the child row lock (0460). */
+    allocate: {
+      params: { c: "Children" },
+      guard: and(
+        index(allocationReady, param("c")),
+        not(index(offboardLock, param("c"))),
+        eq(index(status, param("c")), lit("APPROVED")),
+        not(index(suspended, param("c"))),
+      ),
+      updates: [
+        setMap("holdsCredits", param("c"), lit(true)),
+        setMap("allocationReady", param("c"), lit(false)),
+      ],
     },
 
     /**
-     * offboard — `resolveOwnedChild`: ANY owned child, any status, suspended or
-     * not. Reclaim THEN suspend, atomically here because that ordering is the
-     * property: `offboardSubOrgCore` reclaims first and refuses to suspend if
-     * the reclaim failed, so a suspended child never holds parent credits.
-     * Idempotent by construction — re-running answers already_suspended.
+     * Reclaim and suspend are distinct steps inside the same SQL transaction.
+     * The child lock stays held between them, including for an already suspended
+     * child being retried. Native PostgreSQL tests pin rollback and lock waiting;
+     * this model exposes the interleaving the former atomic action concealed.
      */
-    offboard: {
+    beginOffboard: {
       params: { c: "Children" },
-      guard: not(eq(index(status, param("c")), lit("NONE"))),
+      guard: and(
+        not(eq(index(status, param("c")), lit("NONE"))),
+        not(index(offboardLock, param("c"))),
+      ),
       updates: [
+        setMap("offboardLock", param("c"), lit(true)),
         setMap("holdsCredits", param("c"), lit(false)),
+      ],
+    },
+    finishOffboard: {
+      params: { c: "Children" },
+      guard: index(offboardLock, param("c")),
+      updates: [
         setMap("suspended", param("c"), lit(true)),
+        setMap("offboardLock", param("c"), lit(false)),
       ],
     },
   },

@@ -1297,10 +1297,10 @@ paths:
       summary: Offboard an affiliate
       description: >-
         Reclaim an affiliate's remaining credits to the parent, then suspend it.
-        Requires `orgs:manage`. The order is deliberate and the operation is
-        retry-safe: if the suspend fails after a successful reclaim the response
-        reports `reclaimed > 0` with `suspended: false`, and a retry finishes the
-        job without moving credits twice. The affiliate's anchored records are
+        Requires `orgs:manage`. Reclaim, suspension and their audit records commit
+        together in one transaction. A failed transaction rolls back the reclaim;
+        a transport failure does not establish whether it committed. Retrying is
+        safe and never moves the same credits twice. The affiliate's anchored records are
         NOT touched — they stay verifiable after the relationship ends. Accepts
         ANY affiliate the caller owns, in any approval status, suspended or not:
         this is the idempotent wind-down and a retry answers
@@ -1352,8 +1352,7 @@ paths:
           description: No addressable affiliate answers to this public id
         "409":
           description: >-
-            insufficient_child_balance - nothing is suspended when the reclaim fails.
-            Also ambiguous_caller: the request presented both a verified session and
+            ambiguous_caller: the request presented both a verified session and
             an API key, and neither credential may pick which organization is acting.
             Send exactly one.
         "422":
@@ -1371,7 +1370,7 @@ paths:
             `error`: org_lookup_unavailable, sub_org_lookup_unavailable,
             sub_org_list_unavailable, rollup_projection_unavailable,
             credit_allocation_unavailable, credit_rollup_unavailable,
-            balance_lookup_unavailable, suspend_unavailable, cap_check_unavailable,
+            offboard_unavailable, cap_check_unavailable,
             or api_key_principal_unresolved (the key is authorized, but the
             principal it must stamp on the row could not be resolved).
 

@@ -95,3 +95,10 @@ additive.
 
 `/orgs` now issues up to three reads per call (self, parent, children), so a test
 double that returns one shared chain object no longer covers the handler.
+
+
+## CTO #2844 hierarchy wording correction — 2026-09-14
+
+The `children` directory field lists direct affiliates only. Database chains
+can reach depth 3, so it is not the complete descendant set. Runtime scope is
+unchanged; the incorrect one-level SQL-depth comment is corrected.

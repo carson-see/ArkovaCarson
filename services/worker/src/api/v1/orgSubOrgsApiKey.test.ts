@@ -435,7 +435,7 @@ describe('write routes — happy paths', () => {
 
   it('offboards a suspended child (idempotent retry) and returns snake_case only', async () => {
     mockDb({ children: [{ ...APPROVED_CHILD, suspended: true }], creditBalance: 0 });
-    rpc().mockResolvedValueOnce({ data: { success: true, already_suspended: true }, error: null });
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 0, already_suspended: true }, error: null });
 
     const res = await request(buildApp(['orgs:manage']))
       .post('/api/v1/organizations/sub-orgs/offboard')
@@ -443,7 +443,7 @@ describe('write routes — happy paths', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ reclaimed: 0, suspended: true, already_suspended: true });
-    expect(rpc()).toHaveBeenCalledWith('suspend_suborg_as_api_key', {
+    expect(rpc()).toHaveBeenCalledExactlyOnceWith('offboard_suborg_as_api_key', {
       p_parent_org_id: PARENT,
       p_sub_org_id: CHILD,
       p_reason: 'engagement ended',
@@ -512,7 +512,7 @@ describe('lifecycle on the key surface', () => {
 
   it('offboard then revoke: revoking a suspended affiliate still works', async () => {
     mockStatusActionDb({ child: { ...APPROVED_CHILD, suspended: true } });
-    rpc().mockResolvedValueOnce({ data: { success: true, already_suspended: false }, error: null });
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 0, already_suspended: false }, error: null });
     const offboard = await post('/offboard', { org_public_id: CHILD_PUB });
     expect(offboard.status).toBe(200);
 
@@ -524,7 +524,7 @@ describe('lifecycle on the key surface', () => {
 
   it('revoke then offboard: offboarding a REVOKED affiliate still reclaims and suspends', async () => {
     mockStatusActionDb({ child: { ...APPROVED_CHILD, parent_approval_status: 'REVOKED' } });
-    rpc().mockResolvedValueOnce({ data: { success: true, already_suspended: false }, error: null });
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 0, already_suspended: false }, error: null });
     const res = await post('/offboard', { org_public_id: CHILD_PUB, reason: 'ended' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ reclaimed: 0, suspended: true, already_suspended: false });
@@ -709,7 +709,7 @@ describe('no raw uuid escapes this surface (R11)', () => {
 
     mockDb({ children: [{ ...APPROVED_CHILD, suspended: true }], creditBalance: 0 });
     rpc().mockReset();
-    rpc().mockResolvedValueOnce({ data: { success: true, already_suspended: true }, error: null });
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 0, already_suspended: true }, error: null });
     bodies['POST /offboard'] = (await request(buildApp(['orgs:manage']))
       .post('/api/v1/organizations/sub-orgs/offboard').send({ org_public_id: CHILD_PUB })).body;
 

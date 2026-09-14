@@ -1534,3 +1534,23 @@ above WAS escaped — the inconsistency is the tell). Each term now goes through
 (`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
 `entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
 filters here; if you need OR semantics across columns, run the terms separately and union.
+
+
+## CTO #2844 — atomic offboard transaction (2026-09-14)
+
+`offboardSubOrgCore` now makes one identity-specific RPC call: `offboard_suborg`
+for the verified session and `offboard_suborg_as_api_key` for the verified key.
+Migration 0460 holds the child and ordered credit row locks across choosing
+the current balance, reclaiming, suspending and writing the audits. No worker
+balance read or separate suspend call may reopen the allocation window.
+A post-reclaim SQL failure raises and rolls back the transaction. A transport
+error returns only `offboard_unavailable`, never an invented partial state.
+Positive allocation rechecks APPROVED/not suspended under the same child lock;
+negative reclaim remains available to wind down inactive affiliations.
+
+Route/core regressions cover both identities, forged input identity, no balance
+read, one RPC, idempotence, failure mapping and public response shape. Native
+PostgreSQL concurrency proof and a split-step TLA negative control reproduce
+the former race. Existing 0453 stays immutable; 0460 and the worker require fresh
+live qualification before admission. The top-level-only key management policy
+is explicit: the underlying organization tree can already reach depth 3.
