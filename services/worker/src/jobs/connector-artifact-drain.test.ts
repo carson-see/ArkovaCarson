@@ -1431,6 +1431,25 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376;
     expect(payload.fingerprint_source).toBe('document_bytes');
   });
 
+  it('uses the DS-04 member connection owner as the canonical anchor owner', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-member-1', public_id: 'ARK-MEMBER-1' }, error: null },
+      insertSpy,
+    });
+    const memberId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    await defaultMaterializeAnchor({
+      ...BASE_ROW,
+      external_ref: 'env-member-1',
+      metadata: {
+        queue_scope: 'member', owner_user_id: memberId,
+        integration_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      },
+    }, { db });
+    expect(insertSpy).toHaveBeenCalledWith(expect.objectContaining({ user_id: memberId }));
+    expect(db.from).not.toHaveBeenCalledWith('org_members');
+  });
+
   it('sets fingerprint_source=document_bytes for a non-inbound _direction value (only _direction==="inbound" reaches the attestation class)', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({

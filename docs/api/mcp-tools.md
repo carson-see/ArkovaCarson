@@ -55,8 +55,26 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 13 | **`arkova_verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
 | 14 | `arkova_oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
 | 15 | `arkova_list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
+| 16 | **`arkova_manage_folders`** | **List and manage nested personal or organization record folders** | **SCRUM-5142** |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `arkova`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
+
+### `arkova_manage_folders`
+
+Uses the same authenticated `/api/v1/folders` routes as the app and SDKs. The
+`action` is `list`, `create`, `update`, `bind_connector`, `delete`, or
+`bulk_move`. Folder mutations require `anchor:write`; listing requires
+`anchor:read`. An organization API key stays bounded to its key organization,
+including when its issuer owns unrelated personal or other-organization rows.
+Globally personal folders have no `context_org_id` and remain owner-private;
+authorized administrators can view personal folders only when the folder has an
+explicit approved organization context.
+
+Bulk moves accept one to 100 `anchor_ids`, preserve successful rows when other
+rows fail, and return partial results inside the MCP tool response. Omit
+`folder_id` to move records to Unfiled. Connector bindings require `provider`,
+`source_id`, and an active same-scope `connection_id`; omit the three values to
+clear a binding.
 
 All tool responses follow the MCP convention:
 

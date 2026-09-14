@@ -114,3 +114,7 @@ into the TS SDK (`packages/sdk`), but nothing called them from Python.
   write path`): cap boundary, mixed fingerprint+data rows, dry-run, per-row
   errors on a partial success, 409 duplicate-fail, 402 insufficient-credits,
   plus sync + async wiring.
+
+## 2026-09-14 — SCRUM-5142 folders
+
+Sync and async clients expose folder list/create/update/bind/delete/bulk move against `/api/v1/folders`. Models preserve nested parent, owner context, connector metadata, and partial move failures.

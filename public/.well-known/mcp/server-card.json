@@ -422,6 +422,80 @@
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "arkova_manage_folders",
+      "description": "List, create, rename, nest, delete, bind connector destinations, or bulk-move records in canonical Arkova folders. Organization API keys remain bounded to their organization.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Folder operation: list, create, update, bind_connector, delete, or bulk_move."
+          },
+          "folder_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Folder UUID for a mutation. Omit during bulk_move to move records to Unfiled."
+          },
+          "owner_scope": {
+            "type": "string",
+            "description": "Folder owner scope: USER or ORG."
+          },
+          "owner_user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Personal folder owner UUID for an authorized contextual admin lookup."
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Organization UUID for organization folders."
+          },
+          "context_org_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Explicit organization context for a personal folder."
+          },
+          "name": {
+            "type": "string",
+            "description": "Folder name."
+          },
+          "parent_folder_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Same-owner parent folder UUID."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Connector provider: google_drive or docusign."
+          },
+          "source_id": {
+            "type": "string",
+            "description": "Opaque connector source destination identifier."
+          },
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Active connector connection UUID."
+          },
+          "anchor_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Record UUID."
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "One to 100 record UUIDs for bulk_move."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
     }
   ],
   "links": [

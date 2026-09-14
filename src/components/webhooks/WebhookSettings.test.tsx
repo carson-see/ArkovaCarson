@@ -579,6 +579,11 @@ describe('WebhookSettings', () => {
         // (attestation.created was shipping the document fingerprint, §1.6).
         'attestation.created',
         'attestation.revoked',
+        // SCRUM-5142: emitted by the authenticated folder management routes.
+        'folder.created',
+        'folder.updated',
+        'folder.deleted',
+        'record.folder_changed',
       ];
       const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
       expect(actualIds).toEqual(EXPECTED_EVENT_IDS);

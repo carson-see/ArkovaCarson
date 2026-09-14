@@ -43,6 +43,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -66,7 +67,7 @@ import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
 
 /** Local discriminated state for the shared create/rename folder dialog. */
-type FolderDialogState = { mode: 'create' } | { mode: 'rename'; folder: Folder };
+type FolderDialogState = { mode: 'create'; parentFolderId?: string; ownerScope?: 'USER' | 'ORG' } | { mode: 'rename'; folder: Folder };
 
 const statusConfig = {
   PENDING: { label: 'Pending', variant: 'warning' as const, icon: Clock },
@@ -88,7 +89,7 @@ export function MyRecordsPage() {
   const { profile, loading: profileLoading } = useProfile();
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
-  const { folders, loading: foldersLoading, createFolder, renameFolder, deleteFolder, assignRecord } = useFolders();
+  const { folders, loading: foldersLoading, createFolder, renameFolder, deleteFolder, assignRecord, assignRecords } = useFolders();
 
   // NCA-FU2 (SCRUM-906) — deep-linked from the compliance scorecard with
   // `?action=upload&credential_type=...`. URL params are scrubbed post-mount
@@ -104,7 +105,8 @@ export function MyRecordsPage() {
   const [folderFilter, setFolderFilter] = useState<FolderSelection>('ALL');
   const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Folder | null>(null);
-  const [moveTarget, setMoveTarget] = useState<Record | null>(null);
+  const [moveTargets, setMoveTargets] = useState<Record[]>([]);
+  const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (shouldAutoOpenUpload) {
@@ -140,13 +142,19 @@ export function MyRecordsPage() {
   const handleFolderSubmit = useCallback(async (name: string) => {
     if (!folderDialog) return;
     if (folderDialog.mode === 'create') {
-      await createFolder(name);
+      const parent = folderDialog.parentFolderId
+        ? folders.find((folder) => folder.id === folderDialog.parentFolderId)
+        : undefined;
+      await createFolder(name, {
+        ownerScope: parent?.ownerScope ?? folderDialog.ownerScope ?? 'USER',
+        parentFolderId: folderDialog.parentFolderId ?? null,
+      });
       toast.success(FOLDER_LABELS.TOAST_CREATED);
     } else {
       await renameFolder(folderDialog.folder.id, name);
       toast.success(FOLDER_LABELS.TOAST_RENAMED);
     }
-  }, [folderDialog, createFolder, renameFolder]);
+  }, [folderDialog, folders, createFolder, renameFolder]);
 
   const handleDeleteFolderConfirm = useCallback(async () => {
     if (!deleteTarget) return;
@@ -163,14 +171,16 @@ export function MyRecordsPage() {
   }, [deleteFolder, deleteTarget]);
 
   const handleMoveSelect = useCallback(async (folderId: string | null) => {
-    if (!moveTarget) return;
+    if (moveTargets.length === 0) return;
     try {
-      await assignRecord(moveTarget.id, folderId);
+      const result = await assignRecords(moveTargets.map((record) => record.id), folderId);
+      setSelectedRecordIds(new Set());
       toast.success(folderId === null ? FOLDER_LABELS.TOAST_UNFILED : FOLDER_LABELS.TOAST_ASSIGNED);
+      if (result.failed.length > 0) toast.warning(`${result.failed.length} record(s) could not be moved.`);
     } catch {
       toast.error(FOLDER_LABELS.ERR_ASSIGN);
     }
-  }, [assignRecord, moveTarget]);
+  }, [assignRecords, moveTargets]);
 
   const handleRemoveFromFolder = useCallback(async (record: Record) => {
     try {
@@ -232,7 +242,8 @@ export function MyRecordsPage() {
             loading={foldersLoading}
             selected={folderFilter}
             onSelect={setFolderFilter}
-            onNewFolder={() => setFolderDialog({ mode: 'create' })}
+            onNewFolder={(parentFolderId, ownerScope) => setFolderDialog({ mode: 'create', parentFolderId, ownerScope })}
+            canCreateOrg={profile?.role === 'ORG_ADMIN' && !!profile.org_id}
             onRename={(folder) => setFolderDialog({ mode: 'rename', folder })}
             onDelete={(folder) => setDeleteTarget(folder)}
           />
@@ -273,6 +284,13 @@ export function MyRecordsPage() {
             <p className="text-sm text-muted-foreground">
               {filteredRecords.length} record{filteredRecords.length !== 1 ? 's' : ''}
             </p>
+            {selectedRecordIds.size > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setMoveTargets(
+                records.filter((record) => selectedRecordIds.has(record.id)),
+              )}>
+                <FolderInput className="mr-2 h-4 w-4" /> Move {selectedRecordIds.size}
+              </Button>
+            )}
           </div>
         </CardHeader>
         <Separator />
@@ -325,6 +343,16 @@ export function MyRecordsPage() {
                     onClick={() => navigate(recordDetailPath(record.id))}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(recordDetailPath(record.id)); } }}
                   >
+                    <Checkbox
+                      checked={selectedRecordIds.has(record.id)}
+                      aria-label={`Select ${record.filename}`}
+                      onClick={(event) => event.stopPropagation()}
+                      onCheckedChange={(checked) => setSelectedRecordIds((current) => {
+                        const next = new Set(current);
+                        if (checked) next.add(record.id); else next.delete(record.id);
+                        return next;
+                      })}
+                    />
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
                       <FileText className="h-5 w-5 text-muted-foreground" />
                     </div>
@@ -386,7 +414,7 @@ export function MyRecordsPage() {
                         <DropdownMenuItem
                           onClick={(e) => {
                             e.stopPropagation();
-                            setMoveTarget(record);
+                            setMoveTargets([record]);
                           }}
                         >
                           <FolderInput className="mr-2 h-4 w-4" />
@@ -454,10 +482,10 @@ export function MyRecordsPage() {
         onConfirm={handleDeleteFolderConfirm}
       />
       <MoveToFolderDialog
-        open={moveTarget !== null}
-        onOpenChange={(open) => { if (!open) setMoveTarget(null); }}
+        open={moveTargets.length > 0}
+        onOpenChange={(open) => { if (!open) setMoveTargets([]); }}
         folders={folders}
-        currentFolderId={moveTarget?.folderId ?? null}
+        currentFolderId={moveTargets.length === 1 ? moveTargets[0]?.folderId ?? null : null}
         onSelect={handleMoveSelect}
       />
     </AppShell>

@@ -106,6 +106,12 @@ describe('WebhookEventCatalog', () => {
     // selects only `id, status, attester_user_id`, so that dispatch has never
     // fired. Registered and subscribable, not live.
     'attestation.created',
+    // SCRUM-5142: emitted after committed folder mutations and bounded bulk
+    // record moves in services/worker/src/api/v1/folders.ts.
+    'folder.created',
+    'folder.updated',
+    'folder.deleted',
+    'record.folder_changed',
   ]);
 
   it('claims live only for events with a real emit point', () => {

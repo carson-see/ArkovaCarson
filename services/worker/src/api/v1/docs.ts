@@ -1773,6 +1773,59 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    '/folders': {
+      get: {
+        summary: 'List canonical record folders', operationId: 'listFolders', tags: ['Folders'],
+        'x-arkova-required-scopes': ['anchor:read'], security: [{ ApiKeyHeader: [] }, { SupabaseJWT: [] }],
+        description: 'Lists one USER or ORG folder tree. Global personal folders are private to their owner. A personal folder with context_org_id is visible to authorized administrators of that approved organization hierarchy. Organization API keys can access only their key organization context.',
+        parameters: [
+          { name: 'owner_scope', in: 'query', schema: { type: 'string', enum: ['USER', 'ORG'] } },
+          { name: 'owner_user_id', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          { name: 'org_id', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          { name: 'context_org_id', in: 'query', schema: { type: 'string', format: 'uuid' } },
+        ],
+        responses: { '200': { description: 'Folder tree rows', content: { 'application/json': { schema: { type: 'object', required: ['folders'], properties: { folders: { type: 'array', items: { $ref: '#/components/schemas/Folder' } } } } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' } },
+      },
+      post: {
+        summary: 'Create a folder or subfolder', operationId: 'createFolder', tags: ['Folders'],
+        'x-arkova-required-scopes': ['anchor:write'], security: [{ ApiKeyHeader: [] }, { SupabaseJWT: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['name', 'owner_scope'], properties: { name: { type: 'string', minLength: 1, maxLength: 100 }, owner_scope: { type: 'string', enum: ['USER', 'ORG'] }, org_id: { type: 'string', format: 'uuid', nullable: true }, context_org_id: { type: 'string', format: 'uuid', nullable: true }, parent_folder_id: { type: 'string', format: 'uuid', nullable: true } } } } } },
+        responses: { '201': { description: 'Folder created', content: { 'application/json': { schema: { type: 'object', properties: { folder: { $ref: '#/components/schemas/Folder' } } } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' } },
+      },
+    },
+    '/folders/{folderId}': {
+      patch: {
+        summary: 'Rename or reparent a folder', operationId: 'updateFolder', tags: ['Folders'],
+        'x-arkova-required-scopes': ['anchor:write'], security: [{ ApiKeyHeader: [] }, { SupabaseJWT: [] }],
+        parameters: [{ name: 'folderId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 100 }, parent_folder_id: { type: 'string', format: 'uuid', nullable: true } } } } } },
+        responses: { '200': { description: 'Folder updated', content: { 'application/json': { schema: { type: 'object', properties: { folder: { $ref: '#/components/schemas/Folder' } } } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' } },
+      },
+      delete: {
+        summary: 'Delete an empty folder', operationId: 'deleteFolder', tags: ['Folders'],
+        'x-arkova-required-scopes': ['anchor:write'], security: [{ ApiKeyHeader: [] }, { SupabaseJWT: [] }],
+        parameters: [{ name: 'folderId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '204': { description: 'Folder deleted; its records become Unfiled' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { description: 'Folder still has child folders' } },
+      },
+    },
+    '/folders/{folderId}/connector': {
+      put: {
+        summary: 'Bind or clear a connector auto-sort destination', operationId: 'bindFolderConnector', tags: ['Folders'],
+        'x-arkova-required-scopes': ['anchor:write'], security: [{ ApiKeyHeader: [] }, { SupabaseJWT: [] }],
+        description: 'The connection must be active, owned by the same organization or contextual member, and match the provider. Set all three properties to null to clear the binding.',
+        parameters: [{ name: 'folderId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['provider', 'source_id', 'connection_id'], properties: { provider: { type: 'string', enum: ['google_drive', 'docusign'], nullable: true }, source_id: { type: 'string', minLength: 1, maxLength: 500, nullable: true }, connection_id: { type: 'string', format: 'uuid', nullable: true } } } } } },
+        responses: { '200': { description: 'Connector destination updated', content: { 'application/json': { schema: { type: 'object', properties: { folder: { $ref: '#/components/schemas/Folder' } } } } } }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { description: 'Connector source already has a canonical destination' } },
+      },
+    },
+    '/folders/bulk-move': {
+      post: {
+        summary: 'Move up to 100 records with partial results', operationId: 'bulkMoveFolderRecords', tags: ['Folders'],
+        'x-arkova-required-scopes': ['anchor:write'], security: [{ ApiKeyHeader: [] }, { SupabaseJWT: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['anchor_ids', 'folder_id'], properties: { anchor_ids: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', format: 'uuid' } }, folder_id: { type: 'string', format: 'uuid', nullable: true, description: 'Null moves records to Unfiled.' } } } } } },
+        responses: { '200': { description: 'Every record moved', content: { 'application/json': { schema: { $ref: '#/components/schemas/FolderMoveResult' } } } }, '207': { description: 'Authorized records moved; rejected rows are listed independently', content: { 'application/json': { schema: { $ref: '#/components/schemas/FolderMoveResult' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' } },
+      },
+    },
     '/verify/search': {
       get: {
         summary: 'Agentic verification search',
@@ -1837,6 +1890,24 @@ export const openApiSpec: Record<string, any> = {
       },
     },
     schemas: {
+      Folder: {
+        type: 'object', required: ['id', 'public_id', 'name', 'owner_scope', 'created_at', 'updated_at'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }, public_id: { type: 'string', pattern: '^FLD-[A-F0-9]{16}$' },
+          name: { type: 'string' }, owner_scope: { type: 'string', enum: ['USER', 'ORG'] },
+          user_id: { type: 'string', format: 'uuid', nullable: true }, org_id: { type: 'string', format: 'uuid', nullable: true },
+          context_org_id: { type: 'string', format: 'uuid', nullable: true }, parent_folder_id: { type: 'string', format: 'uuid', nullable: true },
+          connector_provider: { type: 'string', enum: ['google_drive', 'docusign'], nullable: true },
+          connector_source_id: { type: 'string', nullable: true }, connector_connection_id: { type: 'string', format: 'uuid', nullable: true },
+          created_at: { type: 'string', format: 'date-time' }, updated_at: { type: 'string', format: 'date-time' },
+        },
+      },
+      FolderMoveResult: {
+        type: 'object', required: ['moved', 'failed'], properties: {
+          moved: { type: 'array', items: { type: 'string', format: 'uuid' } },
+          failed: { type: 'array', items: { type: 'object', required: ['anchor_id', 'code'], properties: { anchor_id: { type: 'string', format: 'uuid' }, code: { type: 'string' } } } },
+        },
+      },
       VerificationResult: {
         type: 'object',
         description: 'Frozen verification response schema (v1). Fields cannot be removed or changed.',
@@ -2568,6 +2639,7 @@ export const openApiSpec: Record<string, any> = {
     { name: 'Attestations', description: 'Attestation claims (create, verify, revoke)' },
     { name: 'Compliance', description: 'Regulatory lookups, CLE verification, compliance checks' },
     { name: 'Webhooks', description: 'Webhook management, testing, and delivery logs' },
+    { name: 'Folders', description: 'Nested personal and organization record folders' },
     { name: 'Jobs', description: 'Async batch job polling' },
     { name: 'Usage', description: 'API usage and quota monitoring' },
     { name: 'Key Management', description: 'API key lifecycle management (requires Supabase JWT)' },

@@ -385,3 +385,7 @@ a fresh undici `Agent` per call (no keep-alive reuse), and each delivery resolve
 pre-check and the pin). Webhook fan-out is the first hot path on this primitive; a pooled Agent
 keyed by pinned IP and a shared resolve are the follow-up. IPv6-literal hosts (`https://[…]/`) pass
 the bracketed hostname as TLS `servername` (SCRUM-5038).
+
+## 2026-09-14 — SCRUM-5142 folder events
+
+`folder.created`, `folder.updated`, `folder.deleted`, and `record.folder_changed` use strict payload schemas. Bulk moves emit a tenant event only when every successful row has one identical org; mixed or global-personal batches do not publish a misleading aggregate.

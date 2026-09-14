@@ -171,3 +171,6 @@ the query; account switches and AAL downgrades mask cached data immediately.
 ## 2026-09-14 — SCRUM-5145 signup resend API
 
 Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.
+## 2026-09-14 — SCRUM-5142 folder client
+
+`useFolders` uses the worker folder API for global personal, org-context personal, and org folders. Moves always use the bounded bulk endpoint, including one-record moves, so partial failures and service-role authorization have one contract.

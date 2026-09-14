@@ -1459,3 +1459,7 @@ above WAS escaped — the inconsistency is the tell). Each term now goes through
 (`.eq()` / `.ilike()`), which encodes values, and the two result sets are unioned by id up to `limit`.
 `entity-verify.test.ts` pins "no `.or()` call" as the contract. Do not reintroduce string-built
 filters here; if you need OR semantics across columns, run the terms separately and union.
+
+## 2026-09-14 — SCRUM-5142 folder API
+
+`folders.ts` exposes one canonical CRUD/connector/bulk surface to JWT and API-key callers. `folders-deps.ts` sends every operation to service-role-only atomic RPCs; never replace those with read-then-write authorization. Organization keys are an upper bound, personal scope requires a verified user, and org-only keys are supported for exact-org operations with key-id creator attribution. `PUT` is required by the connector binding route and must remain in CORS preflight.

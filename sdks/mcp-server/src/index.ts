@@ -11,6 +11,7 @@
  *   - arkova_create_attestation: Create a third-party attestation
  *   - arkova_batch_verify: Verify up to 20 public IDs at once, inline (DX-05)
  *   - arkova_verify_signature: Verify an AdES signature (Phase III)
+ *   - arkova_manage_folders: List and manage canonical record folders
  *
  * Auth: API key via environment variable ARKOVA_API_KEY
  *
@@ -261,6 +262,28 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ['signature_id'],
     },
   },
+  {
+    name: 'arkova_manage_folders',
+    description: 'List, create, rename, nest, delete, bind connector destinations, or bulk-move records in canonical Arkova folders. Organization API keys remain bounded to their organization.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'Folder operation', enum: ['list', 'create', 'update', 'bind_connector', 'delete', 'bulk_move'] },
+        folder_id: { type: 'string', description: 'Folder UUID for update, connector binding, delete, or bulk destination. Omit for Unfiled.' },
+        owner_scope: { type: 'string', description: 'Folder owner scope', enum: ['USER', 'ORG'] },
+        owner_user_id: { type: 'string', description: 'User UUID when an authorized administrator lists contextual personal folders.' },
+        org_id: { type: 'string', description: 'Organization UUID for organization folders.' },
+        context_org_id: { type: 'string', description: 'Explicit organization context for a personal folder. Omit for globally personal.' },
+        name: { type: 'string', description: 'Folder name.' },
+        parent_folder_id: { type: 'string', description: 'Parent folder UUID. Use an empty string to move to the root.' },
+        provider: { type: 'string', description: 'Connector provider', enum: ['google_drive', 'docusign'] },
+        source_id: { type: 'string', description: 'Opaque connector source destination identifier.' },
+        connection_id: { type: 'string', description: 'Active connector connection UUID.' },
+        anchor_ids: { type: 'string', description: 'JSON array of one to 100 record UUIDs for bulk_move.' },
+      },
+      required: ['action'],
+    },
+  },
 ];
 
 // ─── Tool Handlers ─────────────────────────────────────────────────────
@@ -285,6 +308,8 @@ export async function handleToolCall(
         return await handleBatchVerify(args.public_ids);
       case 'arkova_verify_signature':
         return await handleVerifySignature(args.signature_id);
+      case 'arkova_manage_folders':
+        return await handleManageFolders(args);
       default:
         return errorResult(`Unknown tool: ${name}`);
     }
@@ -478,6 +503,50 @@ async function handleBatchVerify(publicIdsJson: string): Promise<McpToolResult> 
   }
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
+}
+
+async function handleManageFolders(args: Record<string, string>): Promise<McpToolResult> {
+  const action = args.action;
+  let path = '/api/v1/folders';
+  let method = 'GET';
+  let body: Record<string, unknown> | undefined;
+  if (action === 'list') {
+    const query = new URLSearchParams();
+    for (const field of ['owner_scope', 'owner_user_id', 'org_id', 'context_org_id'] as const) {
+      if (args[field]) query.set(field, args[field]);
+    }
+    if (query.size) path += `?${query.toString()}`;
+  } else if (action === 'create') {
+    method = 'POST';
+    body = { name: args.name, owner_scope: args.owner_scope,
+      ...(args.org_id ? { org_id: args.org_id } : {}),
+      ...(args.context_org_id ? { context_org_id: args.context_org_id } : {}),
+      ...(args.parent_folder_id ? { parent_folder_id: args.parent_folder_id } : {}) };
+  } else if (action === 'update') {
+    method = 'PATCH'; path += `/${encodeURIComponent(args.folder_id ?? '')}`;
+    body = { ...(args.name ? { name: args.name } : {}),
+      ...(args.parent_folder_id !== undefined ? { parent_folder_id: args.parent_folder_id || null } : {}) };
+  } else if (action === 'bind_connector') {
+    method = 'PUT'; path += `/${encodeURIComponent(args.folder_id ?? '')}/connector`;
+    body = args.provider ? { provider: args.provider, source_id: args.source_id, connection_id: args.connection_id }
+      : { provider: null, source_id: null, connection_id: null };
+  } else if (action === 'delete') {
+    method = 'DELETE'; path += `/${encodeURIComponent(args.folder_id ?? '')}`;
+  } else if (action === 'bulk_move') {
+    let anchorIds: unknown;
+    try { anchorIds = JSON.parse(args.anchor_ids ?? ''); } catch { return errorResult('anchor_ids must be a JSON array.'); }
+    method = 'POST'; path += '/bulk-move';
+    body = { anchor_ids: anchorIds, folder_id: args.folder_id || null };
+  } else {
+    return errorResult('Unknown folder action.');
+  }
+  const res = await arkovaFetch(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+  if (!res.ok && res.status !== 207) {
+    const error = await readErrorBody(res);
+    return errorResult(error?.message ?? error?.error ?? `Folder API returned ${res.status}`);
+  }
+  if (res.status === 204) return textResult(JSON.stringify({ deleted: true }));
+  return textResult(JSON.stringify(await res.json(), null, 2));
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────

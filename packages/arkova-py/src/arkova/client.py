@@ -23,6 +23,10 @@ from .models import (
     DocumentDetail,
     FingerprintDetail,
     FingerprintVerification,
+    Folder,
+    FolderEnvelope,
+    FolderList,
+    FolderMoveResult,
     MerkleProofResponse,
     OrganizationDetail,
     OrgList,
@@ -426,6 +430,49 @@ class Arkova:
     def get_document(self, public_id: str) -> DocumentDetail:
         return _parse_json(self._request("GET", f"/documents/{public_id}"), DocumentDetail)
 
+    def list_folders(
+        self, *, owner_scope: Literal["USER", "ORG"] = "ORG", owner_user_id: str | None = None,
+        org_id: str | None = None, context_org_id: str | None = None,
+    ) -> FolderList:
+        params = {"owner_scope": owner_scope}
+        if owner_user_id is not None: params["owner_user_id"] = owner_user_id
+        if org_id is not None: params["org_id"] = org_id
+        if context_org_id is not None: params["context_org_id"] = context_org_id
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders")
+        return _parse_json(self._request("GET", path, params=params), FolderList)
+
+    def create_folder(
+        self, *, name: str, owner_scope: Literal["USER", "ORG"], org_id: str | None = None,
+        context_org_id: str | None = None, parent_folder_id: str | None = None,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders")
+        response = self._request("POST", path, json={"name": name, "owner_scope": owner_scope,
+            "org_id": org_id, "context_org_id": context_org_id, "parent_folder_id": parent_folder_id})
+        return _parse_json(response, FolderEnvelope).folder
+
+    def update_folder(self, folder_id: str, *, name: str | None = None, parent_folder_id: str | None = None) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
+        response = self._request("PATCH", path, json={"name": name, "parent_folder_id": parent_folder_id})
+        return _parse_json(response, FolderEnvelope).folder
+
+    def bind_folder_connector(
+        self, folder_id: str, *, provider: Literal["google_drive", "docusign"] | None,
+        source_id: str | None, connection_id: str | None,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}/connector")
+        response = self._request("PUT", path, json={"provider": provider, "source_id": source_id,
+            "connection_id": connection_id})
+        return _parse_json(response, FolderEnvelope).folder
+
+    def delete_folder(self, folder_id: str) -> None:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
+        self._request("DELETE", path)
+
+    def move_records(self, anchor_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
+        return _parse_json(self._request("POST", path, json={"anchor_ids": list(anchor_ids),
+            "folder_id": folder_id}), FolderMoveResult)
+
     def _request(
         self,
         method: str,
@@ -601,6 +648,49 @@ class AsyncArkova:
             await self._request("GET", f"/documents/{public_id}"),
             DocumentDetail,
         )
+
+    async def list_folders(
+        self, *, owner_scope: Literal["USER", "ORG"] = "ORG", owner_user_id: str | None = None,
+        org_id: str | None = None, context_org_id: str | None = None,
+    ) -> FolderList:
+        params = {"owner_scope": owner_scope}
+        if owner_user_id is not None: params["owner_user_id"] = owner_user_id
+        if org_id is not None: params["org_id"] = org_id
+        if context_org_id is not None: params["context_org_id"] = context_org_id
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders")
+        return _parse_json(await self._request("GET", path, params=params), FolderList)
+
+    async def create_folder(
+        self, *, name: str, owner_scope: Literal["USER", "ORG"], org_id: str | None = None,
+        context_org_id: str | None = None, parent_folder_id: str | None = None,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders")
+        response = await self._request("POST", path, json={"name": name, "owner_scope": owner_scope,
+            "org_id": org_id, "context_org_id": context_org_id, "parent_folder_id": parent_folder_id})
+        return _parse_json(response, FolderEnvelope).folder
+
+    async def update_folder(self, folder_id: str, *, name: str | None = None, parent_folder_id: str | None = None) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
+        response = await self._request("PATCH", path, json={"name": name, "parent_folder_id": parent_folder_id})
+        return _parse_json(response, FolderEnvelope).folder
+
+    async def bind_folder_connector(
+        self, folder_id: str, *, provider: Literal["google_drive", "docusign"] | None,
+        source_id: str | None, connection_id: str | None,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}/connector")
+        response = await self._request("PUT", path, json={"provider": provider, "source_id": source_id,
+            "connection_id": connection_id})
+        return _parse_json(response, FolderEnvelope).folder
+
+    async def delete_folder(self, folder_id: str) -> None:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
+        await self._request("DELETE", path)
+
+    async def move_records(self, anchor_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
+        return _parse_json(await self._request("POST", path, json={"anchor_ids": list(anchor_ids),
+            "folder_id": folder_id}), FolderMoveResult)
 
     async def _request(
         self,

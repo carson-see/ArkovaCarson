@@ -20,6 +20,7 @@ import {
   handleNessieQuery,
   handleSearchCredentials,
   handleAnchorDocument,
+  handleManageFolders,
   SEARCH_MODE_SEMANTIC,
   SEARCH_MODE_LEXICAL,
   TOOL_DEFINITIONS,
@@ -1343,5 +1344,34 @@ describe('upstream error bodies are scrubbed before reaching the caller', () => 
     expect(text).not.toContain('secret_col');
     expect(JSON.parse(text)).toMatchObject({ code: 'TOOL_ERROR' });
     err.mockRestore();
+  });
+});
+
+describe('arkova_manage_folders', () => {
+  it('forwards only the authenticated caller key to the canonical worker route', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ folders: [] }), { status: 200 }));
+    const result = await handleManageFolders(
+      { action: 'list', owner_scope: 'ORG', org_id: 'aaaaaaaa-0000-4000-8000-000000000001' },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', callerApiKey: 'ak_test_caller' },
+    );
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/folders?owner_scope=ORG&org_id=aaaaaaaa-0000-4000-8000-000000000001',
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-API-Key': 'ak_test_caller' }) }),
+    );
+  });
+
+  it('forwards a verified Bearer and scrubs worker error bodies', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ message: 'internal.host secret row' }), { status: 403 }));
+    const result = await handleManageFolders(
+      { action: 'delete', folder_id: 'aaaaaaaa-0000-4000-8000-000000000001' },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test', callerAuthorization: 'Bearer verified-token' },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).not.toContain('internal.host');
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/folders/aaaaaaaa-0000-4000-8000-000000000001',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer verified-token' }) }),
+    );
   });
 });

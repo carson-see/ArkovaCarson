@@ -114,6 +114,10 @@ export const AVAILABLE_EVENTS = [
   // ./webhookEventLiveness CATALOG_DATA.
   { id: 'attestation.created', label: 'Attestation Created' },
   { id: 'attestation.revoked', label: 'Attestation Revoked' },
+  { id: 'folder.created', label: 'Folder Created' },
+  { id: 'folder.updated', label: 'Folder Updated' },
+  { id: 'folder.deleted', label: 'Folder Deleted' },
+  { id: 'record.folder_changed', label: 'Records Moved Between Folders' },
 ];
 
 export function WebhookSettings({
