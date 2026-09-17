@@ -852,3 +852,10 @@ tests, build and local CLI structural validation under Node22. The bounded
 10-minute step runs even after another suite fails and participates in the
 existing aggregate outcomes. Root dependency installation cannot prove this
 package's lock is complete. No step publishes a Zap or calls real Arkova APIs.
+
+## PR #2831 — Invitation integration and Zapier aggregation
+
+When merging the invitation integration with the Zapier CI addition, preserve
+both `uat22-local-integration` and `zapier-validation` in the result map and
+the aggregation loop. Either failure or cancellation must fail required Tests;
+collecting a result without iterating it silently drops that suite from the gate.

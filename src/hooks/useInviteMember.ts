@@ -6,7 +6,7 @@
  * email via the worker API.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useAsyncAction } from './useAsyncAction';
@@ -19,6 +19,10 @@ interface UseInviteMemberReturn {
   loading: boolean;
   error: string | null;
   clearError: () => void;
+}
+
+interface UseInviteMemberOptions {
+  platformAdmin?: boolean;
 }
 
 /**
@@ -51,7 +55,8 @@ function isActionableInviteError(err: unknown): err is ActionableInviteError {
   return err instanceof ActionableInviteError;
 }
 
-export function useInviteMember(): UseInviteMemberReturn {
+export function useInviteMember({ platformAdmin = false }: UseInviteMemberOptions = {}): UseInviteMemberReturn {
+  const adminRetryRef = useRef<{ intent: string; key: string } | null>(null);
   const inviteImpl = useCallback(
     async (options: InviteMemberInput): Promise<boolean> => {
       const parsedOptions = InviteMemberSchema.safeParse(options);
@@ -64,7 +69,69 @@ export function useInviteMember(): UseInviteMemberReturn {
 
       const { email, role, orgId, orgName, inviterName } = parsedOptions.data;
       const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
-      const emailEndpoint = resolveSafeWorkerEndpoint(workerUrl, '/api/send-invitation-email');
+      const emailEndpoint = resolveSafeWorkerEndpoint(
+        workerUrl,
+        platformAdmin
+          ? `/api/admin/organizations/${encodeURIComponent(orgId)}/invitations`
+          : '/api/send-invitation-email',
+      );
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new ActionableInviteError('Your session has expired. Please sign in and try again.');
+      }
+
+      if (platformAdmin) {
+        const intent = `${orgId}\n${email}\n${role}`;
+        if (adminRetryRef.current?.intent !== intent) {
+          adminRetryRef.current = { intent, key: crypto.randomUUID() };
+        }
+
+        let response: Response;
+        let body: { sent?: unknown; created?: unknown; code?: unknown };
+        try {
+          response = await fetch(emailEndpoint.toString(), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+              email,
+              role,
+              idempotency_key: adminRetryRef.current.key,
+            }),
+          });
+          body = await response.json() as { sent?: unknown; created?: unknown; code?: unknown };
+        } catch (requestError) {
+          console.warn('Platform invitation request could not be confirmed (submission key retained for retry):', requestError);
+          throw new ActionableInviteError(
+            'The invitation could not be confirmed or sent. Please try again.',
+          );
+        }
+
+        if (response.ok && body.sent === true) {
+          adminRetryRef.current = null;
+          return true;
+        }
+        if (response.status === 409 && body.code === 'already_member') {
+          throw new ActionableInviteError('This person is already a member of the organization.');
+        }
+        if (response.status === 403) {
+          throw new ActionableInviteError('You do not have permission to invite members.');
+        }
+        if (response.status === 404) {
+          throw new ActionableInviteError('This organization is no longer available.');
+        }
+        if (response.status === 502 && body.created === true && body.code === 'email_delivery_failed') {
+          throw new ActionableInviteError(
+            'Invitation was created, but email delivery could not be confirmed. Please try again.',
+          );
+        }
+        throw new ActionableInviteError(
+          'The invitation could not be completed. Review the details and try again.',
+        );
+      }
 
       // Step 1: Create invitation record via RPC
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -91,11 +158,6 @@ export function useInviteMember(): UseInviteMemberReturn {
 
       // Step 2: Send invitation email via worker API
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) {
-          throw new Error('No active session');
-        }
-
         const emailResponse = await fetch(emailEndpoint.toString(), {
           method: 'POST',
           headers: {
@@ -105,19 +167,20 @@ export function useInviteMember(): UseInviteMemberReturn {
           body: JSON.stringify({ email, orgId, orgName, role, inviterName, invitationId }),
         });
 
-        if (!emailResponse.ok) {
+        const responseBody = await emailResponse.json() as { sent?: unknown };
+        if (!emailResponse.ok || responseBody.sent !== true) {
           throw new Error(`Invitation email endpoint returned ${emailResponse.status}`);
         }
       } catch (emailErr) {
         console.warn('Invitation email send failed (invitation still created):', emailErr);
         throw new ActionableInviteError(
-          'Invitation was created, but the email could not be sent. Please try again.',
+          'Invitation was created, but email delivery could not be confirmed. Please try again.',
         );
       }
 
       return true;
     },
-    [],
+    [platformAdmin],
   );
 
   const { execute, loading, error, clearError } = useAsyncAction(

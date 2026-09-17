@@ -379,7 +379,12 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
   });
 
   it("installs the dev extras, which is where pytest and the pinned ruff live", () => {
-    expect(pythonJob()).toMatch(/pip install -e "\.\[dev\]"/u);
+    const job = pythonJob();
+    expect(job).toMatch(/pip install [^\n]*-e "\.\[dev\]"/u);
+    expect(
+      job.match(/--only-binary=:all:/gu)?.length,
+      "both pip installs must reject source-distribution fallback",
+    ).toBe(2);
   });
 
   it("matches the publish workflow's interpreter", () => {
