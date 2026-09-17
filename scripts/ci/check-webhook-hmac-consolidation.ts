@@ -19,10 +19,10 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { hasLabel } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'webhook-hmac-inline-intentional';
 const REPO = process.env.WEBHOOK_HMAC_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
-const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 // Webhook handler paths that must delegate.
 const WEBHOOK_HANDLER_GLOBS = [
@@ -88,7 +88,7 @@ function main(): void {
     return;
   }
 
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⚠️  PR labeled \`${OVERRIDE_LABEL}\` — allowing ${findings.length} inline occurrence(s).`);
     for (const f of findings) console.log(`  ${f.file}:${f.line} → ${f.context}`);
     return;

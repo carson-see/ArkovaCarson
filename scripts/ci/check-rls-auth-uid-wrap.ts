@@ -47,12 +47,12 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hasLabel } from './lib/ciContext.js';
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
 const OVERRIDE_LABEL = 'rls-auth-uid-bare-intentional';
 const REPO = process.env.RLS_AUTH_UID_REPO_ROOT ?? resolve(MODULE_DIR, '..', '..');
-const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 // Match `auth.uid()` not preceded by "SELECT " (case-insensitive).
 // JS regex doesn't support lookbehind on all runtimes but Node 20+ does.
@@ -239,7 +239,7 @@ function main(): void {
     return;
   }
 
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⚠️  PR labeled \`${OVERRIDE_LABEL}\` — allowing ${findings.length} bare occurrence(s).`);
     for (const f of findings) console.log(`  ${f.file}:${f.line} → ${f.context}`);
     return;

@@ -185,3 +185,14 @@ prod, no local stack. Treat it as the specification for the T3 soak, not as
 evidence that it passes. It needs 0453 applied to a throwaway/isolated database
 and the `SEC0453_*` fixture ids in the environment. NEVER run it against
 production: the cases deliberately attempt cross-tenant writes.
+
+## 2026-09-14 — Isolate gate fixtures from speculative CI identity
+
+The dependency, prose-hold, worker-environment and F-5c null-identity CLI tests
+now clear the surrounding Actions PR/head/repository identity before setting
+their local fixture environment. Mergify speculative PR #2974 exposed four
+false failures: ordinary fixture override labels were correctly rejected as
+untrusted queue labels because the runner's queue head leaked into the child.
+All four failures reproduce under a queue-shaped runner environment. Explicit
+forged-queue negative cases still reject those labels; resolver authentication
+and all production gate behavior remain unchanged.

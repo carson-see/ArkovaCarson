@@ -33,3 +33,14 @@ trigger subscribes to either event, so listing them does not by itself give a
 Zap author a way to pick them. `attestation.revoked` in particular has a
 registered schema but no reachable producer yet — see
 `services/worker/src/webhooks/agents.md`.
+
+## 2026-09-14 — reproducible CLI 19 build (PR #2945)
+
+Reproduced clean-install failure on both the original PR and its Mergify
+speculative head: Vitest 5's required Vite peer tree was missing from the lock.
+Reconcile with stock npm and verify from an empty dependency directory; do not
+use legacy peer resolution or an existing node_modules directory as proof.
+TypeScript 7 removed the old Node resolver. This CommonJS package uses the
+paired Node16 module and resolution modes, preserving CommonJS output. The
+review checks include clean install, 24 tests, build and local Zapier validation.
+Zapier publication and real Zaps remain separate from these local checks.

@@ -20,7 +20,12 @@ const SCRIPT = resolve(import.meta.dirname, 'check-dep-pinning.ts');
 
 function runScript(repoRoot: string, env: NodeJS.ProcessEnv = {}) {
   return spawnSync('npx', ['tsx', SCRIPT], {
-    env: { ...process.env, DEP_PINNING_REPO_ROOT: repoRoot, PR_LABELS: '', ...env },
+    env: {
+      ...process.env,
+      // This child owns a local fixture, not the surrounding Actions PR.
+      GITHUB_HEAD_REF: '', GITHUB_REF: '', GITHUB_REPOSITORY: '', PR_NUMBER: '',
+      DEP_PINNING_REPO_ROOT: repoRoot, PR_LABELS: '', ...env,
+    },
     encoding: 'utf8',
   });
 }
@@ -189,6 +194,16 @@ describe('check-dep-pinning (SCRUM-1005)', () => {
     expect(r.stdout).toContain('root-range');
     expect(r.stdout).toContain('worker-range');
     expect(r.stdout).toContain('embed-range');
+  });
+
+  it('rejects a forged queue branch carrying an override label', () => {
+    seedFixture({ name: 'fixture-root', dependencies: { 'fixture-range': '^1.0.0' } });
+    const r = runScript(tmp, {
+      GITHUB_HEAD_REF: 'mergify/merge-queue/untrusted-fixture',
+      PR_LABELS: 'dep-range-intentional',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('fixture-range');
   });
 
   it('does not require historical optional paths to exist', () => {
