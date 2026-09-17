@@ -1228,6 +1228,19 @@ jobs:
         working-directory: services/edge
         run: npm test
 
+      # A root install does not validate this standalone package's lockfile.
+      # SCRUM-5203 reproduced green queue checks with broken npm ci and tsc.
+      - name: Validate Zapier clean installation and build
+        id: zapier-validation
+        if: always()
+        timeout-minutes: 10
+        working-directory: integrations/zapier
+        run: |
+          npm ci --ignore-scripts --no-fund
+          npm test
+          npm run build
+          npm run validate
+
       # Explicit aggregate gate (defense-in-depth, see comment above "Run
       # tests with coverage"). Treats 'skipped' as fine (e.g. the circom
       # install/build steps deliberately skip on a cache hit) but fails the
@@ -1251,10 +1264,11 @@ jobs:
             [uat22-local-integration]="${{ steps.uat22-local-integration.outcome }}"
             [edge-deps]="${{ steps.edge-deps.outcome }}"
             [edge-tests]="${{ steps.edge-tests.outcome }}"
+            [zapier-validation]="${{ steps.zapier-validation.outcome }}"
           )
           failed=0
           echo "== Test suite step outcomes =="
-          for name in db-reset root-coverage sdk-tests rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage uat22-local-integration edge-deps edge-tests; do
+          for name in db-reset root-coverage sdk-tests rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage uat22-local-integration edge-deps edge-tests zapier-validation; do
             outcome="${results[$name]}"
             echo "  ${name}: ${outcome}"
             if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
@@ -1263,7 +1277,7 @@ jobs:
             fi
           done
           if [ "$failed" -eq 1 ]; then
-            echo "::error::One or more required test suites failed — see outcomes above. The root suite, the worker suite and the edge suite are all required; a failure in any of them fails this job regardless of step ordering."
+            echo "::error::One or more required test suites failed — see outcomes above. The root, worker, edge and Zapier validations are all required; a failure in any of them fails this job regardless of step ordering."
             exit 1
           fi
           echo "All required test suite steps passed (or were intentionally skipped, e.g. zk cache hit)."

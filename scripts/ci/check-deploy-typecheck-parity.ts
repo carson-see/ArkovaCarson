@@ -41,8 +41,11 @@
  * HARD INVARIANT, mirroring its two siblings: no in-script override, no label /
  * env / git dependency — it imports only `readFileSync`/`resolve` and reads two
  * tracked files, so it runs cleanly in the shallow-checkout `typecheck-lint`
- * job. Signoff for a deliberate change lives at the workflow level
- * (`ci-config-change`), not here.
+ * job. There is no working override anywhere, including at the workflow level:
+ * the ci.yml step below runs this unconditionally, with no `if:` gate on
+ * `ci-config-change` (2026-09-14 CTO decision: found inert; documentation was
+ * corrected rather than a bypass being added). A deliberate parity change
+ * requires editing this check itself.
  */
 
 import { readFileSync } from 'node:fs';
@@ -293,7 +296,7 @@ function main(): void {
   console.error(
     `Fix: keep a services/worker step named "*Typecheck*" running \`${EXPECTED_TYPECHECK_RUN}\` in BOTH deploy-worker.yml and the ci.yml \`${REQUIRED_CI_JOB}\` job, unconditionally.`,
   );
-  console.error('If intentional, label the PR `ci-config-change` and update this check.');
+  console.error('If intentional, this check has no label override — update check-deploy-typecheck-parity.ts itself.');
   process.exit(1);
 }
 

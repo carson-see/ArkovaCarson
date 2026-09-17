@@ -34,6 +34,7 @@
 import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hasLabel } from './lib/ciContext.js';
 
 export const OVERRIDE_LABEL = 'csp-runtime-deps-intentional';
 
@@ -418,17 +419,8 @@ function isMainModule(metaUrl: string, argvPath: string | undefined): boolean {
   return argvPath !== undefined && resolve(fileURLToPath(metaUrl)) === resolve(argvPath);
 }
 
-/** Whether the PR carries the deliberate-change override label. */
-export function hasOverrideLabel(prLabelsEnv: string | undefined): boolean {
-  if (!prLabelsEnv) return false;
-  return prLabelsEnv
-    .split(',')
-    .map((l) => l.trim())
-    .includes(OVERRIDE_LABEL);
-}
-
 function main(): void {
-  if (hasOverrideLabel(process.env.PR_LABELS)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⏭️  CSP↔runtime-deps gate overridden by PR label \`${OVERRIDE_LABEL}\`.`);
     return;
   }

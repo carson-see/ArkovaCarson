@@ -49,6 +49,9 @@ beforeEach(async () => {
   delete process.env.GITHUB_REPOSITORY;
   delete process.env.PR_NUMBER;
   delete process.env.PR_LABELS;
+  delete process.env.GITHUB_HEAD_REF;
+  delete process.env.PR_TITLE;
+  delete process.env.PR_BODY;
   // Pin the gh/git binaries to the bare names so the existing `cmd === 'gh'` /
   // `cmd === 'git'` mock matchers stay valid. Production resolves `GH_BIN` /
   // `GIT_BIN` to fixed absolute paths (Sonar S4036) defaulting to /usr/bin/gh
@@ -704,5 +707,262 @@ describe('resolvePrCommitsMsgs — file-first, env fallback (E2BIG)', () => {
         /\bprCommitsMsgs\(\)/u,
       );
     }
+  });
+});
+
+describe('Mergify merge-queue label resolution (queue-PR override fix)', () => {
+  const QUEUE_ENV_BASE = {
+    GITHUB_REF: 'refs/pull/2936/merge',
+    GITHUB_HEAD_REF: 'mergify/merge-queue/986680ffc6',
+    GITHUB_REPOSITORY: 'carson-see/ArkovaCarson',
+  };
+
+  // Trimmed but structurally faithful to the real body captured from queue PR
+  // #2936 (`gh pr view 2936 --json body`), which speculatively checks real PR
+  // #2841 stacked behind #2909.
+  const REAL_QUEUE_BODY = [
+    '**The pull request #2841 is queued for merge and currently being checked.**',
+    '',
+    '```yaml',
+    '---',
+    'checking_base_sha: b69b6a9665e38279487b7f52ba84325649e079cc',
+    'previous_check_retries: []',
+    'previous_failed_batches: []',
+    'pull_requests:',
+    '  - number: 2841',
+    '    scopes: []',
+    'scopes: []',
+    '...',
+    '```',
+  ].join('\n');
+  const REAL_QUEUE_TITLE = 'merge queue: checking #2841 on main (6cb0006), stacked on #2909';
+
+  function queueMeta(title = REAL_QUEUE_TITLE, body = REAL_QUEUE_BODY): string {
+    return JSON.stringify({ title, body, author: 'mergify[bot]',
+      headRef: QUEUE_ENV_BASE.GITHUB_HEAD_REF, headRepository: QUEUE_ENV_BASE.GITHUB_REPOSITORY });
+  }
+
+  beforeEach(() => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return queueMeta();
+      return gitPassthrough(cmd, args);
+    });
+  });
+
+  describe('isMergifyQueuePr', () => {
+    it('authenticates the Mergify author and queue head ref', async () => {
+      mod = await import('./ciContext.js');
+      expect(mod.isMergifyQueuePr(QUEUE_ENV_BASE)).toBe(true);
+    });
+
+    it('is false for an ordinary PR branch or no PR context', async () => {
+      mod = await import('./ciContext.js');
+      expect(mod.isMergifyQueuePr({ GITHUB_HEAD_REF: 'feat/api-keys-expiry' })).toBe(false);
+      expect(mod.isMergifyQueuePr({})).toBe(false);
+    });
+  });
+
+  describe('parseOriginalPrNumberFromQueuePr', () => {
+    it('parses the YAML pull_requests block (primary signal)', async () => {
+      mod = await import('./ciContext.js');
+      expect(mod.parseOriginalPrNumberFromQueuePr('irrelevant title', REAL_QUEUE_BODY)).toBe(2841);
+    });
+
+    it('falls back to the title when the body has no YAML block', async () => {
+      mod = await import('./ciContext.js');
+      expect(mod.parseOriginalPrNumberFromQueuePr(REAL_QUEUE_TITLE, '')).toBe(2841);
+    });
+
+    it('prefers the YAML block over the title when they disagree', async () => {
+      mod = await import('./ciContext.js');
+      expect(
+        mod.parseOriginalPrNumberFromQueuePr('merge queue: checking #9999 on main', REAL_QUEUE_BODY),
+      ).toBe(2841);
+    });
+
+    it('does not match the stacked-behind PR number mentioned later in the title', async () => {
+      mod = await import('./ciContext.js');
+      expect(mod.parseOriginalPrNumberFromQueuePr(REAL_QUEUE_TITLE, '')).not.toBe(2909);
+    });
+
+    it('returns null when neither the title nor the body match (fail closed)', async () => {
+      mod = await import('./ciContext.js');
+      expect(mod.parseOriginalPrNumberFromQueuePr('some unrelated title', 'some unrelated body')).toBeNull();
+    });
+  });
+
+  describe('resolveOriginalPrNumber', () => {
+    it('returns the raw PR number unchanged for a normal (non-queue) PR', async () => {
+      mod = await import('./ciContext.js');
+      expect(mod.resolveOriginalPrNumber({ GITHUB_REF: 'refs/pull/2841/merge' })).toBe(2841);
+    });
+
+    it('authenticates live metadata even when PR_TITLE/PR_BODY are wired by the workflow', async () => {
+      mod = await import('./ciContext.js');
+      const result = mod.resolveOriginalPrNumber({
+        ...QUEUE_ENV_BASE,
+        PR_TITLE: REAL_QUEUE_TITLE,
+        PR_BODY: REAL_QUEUE_BODY,
+      });
+      expect(result).toBe(2841);
+      expect(execFileSyncMock.mock.calls.some((c) => c[0] === 'gh')).toBe(true);
+    });
+
+    it('fetches the queue PR title/body live via gh when not wired in env', async () => {
+      execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh') return queueMeta();
+        return gitPassthrough(cmd, args);
+      });
+      mod = await import('./ciContext.js');
+      const result = mod.resolveOriginalPrNumber(QUEUE_ENV_BASE);
+      expect(result).toBe(2841);
+      const ghCall = execFileSyncMock.mock.calls.find((c) => c[0] === 'gh');
+      expect(ghCall![1]).toEqual(
+        expect.arrayContaining(['api', 'repos/carson-see/ArkovaCarson/pulls/2936']),
+      );
+    });
+
+    it('fails closed (null) when the gh fetch of the queue PR itself fails', async () => {
+      execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh') throw new Error('gh: not found');
+        return gitPassthrough(cmd, args);
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mod = await import('./ciContext.js');
+      expect(mod.resolveOriginalPrNumber(QUEUE_ENV_BASE)).toBeNull();
+    });
+
+    it('fails closed (null) when title/body cannot be parsed — never guesses the speculative PR is the target', async () => {
+      execFileSyncMock.mockReturnValue(queueMeta('unparseable', 'unparseable'));
+      mod = await import('./ciContext.js');
+      const result = mod.resolveOriginalPrNumber({
+        ...QUEUE_ENV_BASE,
+        PR_TITLE: 'merge queue reset: some unrelated wording',
+        PR_BODY: 'no yaml block here',
+      });
+      expect(result).toBeNull();
+      expect(result).not.toBe(2936);
+    });
+
+    it('annotates the fail-closed case with a ::warning (not silent)', async () => {
+      execFileSyncMock.mockReturnValue(queueMeta('unparseable', 'unparseable'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mod = await import('./ciContext.js');
+      mod.resolveOriginalPrNumber({ ...QUEUE_ENV_BASE, PR_TITLE: 'x', PR_BODY: 'y' });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('::warning title=Mergify queue PR original unresolved::');
+      expect(warn.mock.calls[0][0]).toContain('#2936');
+    });
+  });
+
+  describe('resolvePrLabels inside a queue context', () => {
+    it("reads the ORIGINAL PR's live labels, not the speculative PR's frozen/live labels", async () => {
+      execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return queueMeta();
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/issues/2841/labels')) {
+          return 'agents-md-deletion-approved\ncount-exact-allowed\n';
+        }
+        if (cmd === 'gh') throw new Error(`unexpected gh call: ${args.join(' ')}`);
+        return gitPassthrough(cmd, args);
+      });
+      mod = await import('./ciContext.js');
+      const labels = mod.resolvePrLabels({
+        ...QUEUE_ENV_BASE,
+        PR_TITLE: REAL_QUEUE_TITLE,
+        PR_BODY: REAL_QUEUE_BODY,
+        // The speculative PR's OWN frozen label — must be ignored, not unioned in.
+        PR_LABELS: 'needs-carson-merge',
+      });
+      expect(labels.sort()).toEqual(['agents-md-deletion-approved', 'count-exact-allowed']);
+      expect(labels).not.toContain('needs-carson-merge');
+    });
+
+    it('a queue PR whose original does NOT carry the label resolves without it', async () => {
+      execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return queueMeta();
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/issues/2841/labels')) {
+          return 'backend\ninfra\n';
+        }
+        if (cmd === 'gh') throw new Error(`unexpected gh call: ${args.join(' ')}`);
+        return gitPassthrough(cmd, args);
+      });
+      mod = await import('./ciContext.js');
+      const labels = mod.resolvePrLabels({
+        ...QUEUE_ENV_BASE,
+        PR_TITLE: REAL_QUEUE_TITLE,
+        PR_BODY: REAL_QUEUE_BODY,
+      });
+      expect(labels).not.toContain('agents-md-deletion-approved');
+    });
+
+    it('fails CLOSED to no labels when the original PR cannot be identified — never falls back to the speculative PR\'s own labels', async () => {
+      execFileSyncMock.mockReturnValue(queueMeta('unparseable', 'unparseable'));
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mod = await import('./ciContext.js');
+      const labels = mod.resolvePrLabels({
+        ...QUEUE_ENV_BASE,
+        PR_TITLE: 'unparseable',
+        PR_BODY: 'unparseable',
+        PR_LABELS: 'needs-carson-merge',
+      });
+      expect(labels).toEqual([]);
+    });
+  });
+
+  describe('hasLabel through the real bug scenario (#2841 behind queue PR #2936)', () => {
+    it('a normal PR run with the override label applied resolves true', async () => {
+      execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh') return 'agents-md-deletion-approved\n';
+        return gitPassthrough(cmd, args);
+      });
+      mod = await import('./ciContext.js');
+      process.env.GITHUB_REF = 'refs/pull/2841/merge';
+      process.env.GITHUB_REPOSITORY = 'carson-see/ArkovaCarson';
+      expect(mod.hasLabel('agents-md-deletion-approved')).toBe(true);
+    });
+
+    it('a normal PR run WITHOUT the override label resolves false', async () => {
+      execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh') return 'backend\n';
+        return gitPassthrough(cmd, args);
+      });
+      mod = await import('./ciContext.js');
+      process.env.GITHUB_REF = 'refs/pull/2841/merge';
+      process.env.GITHUB_REPOSITORY = 'carson-see/ArkovaCarson';
+      expect(mod.hasLabel('agents-md-deletion-approved')).toBe(false);
+    });
+
+    it('the queue PR #2936 run resolves TRUE via #2841 — this is the reported bug, now fixed', async () => {
+      execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/pulls/2936')) return queueMeta();
+        if (cmd === 'gh' && args.includes('repos/carson-see/ArkovaCarson/issues/2841/labels')) {
+          return 'agents-md-deletion-approved\n';
+        }
+        if (cmd === 'gh') throw new Error(`unexpected gh call: ${args.join(' ')}`);
+        return gitPassthrough(cmd, args);
+      });
+      mod = await import('./ciContext.js');
+      Object.assign(process.env, QUEUE_ENV_BASE, {
+        PR_TITLE: REAL_QUEUE_TITLE,
+        PR_BODY: REAL_QUEUE_BODY,
+        PR_LABELS: 'needs-carson-merge',
+      });
+      expect(mod.hasLabel('agents-md-deletion-approved')).toBe(true);
+    });
+
+    it('a queue PR whose title/body cannot be parsed fails closed to false, never true', async () => {
+      execFileSyncMock.mockReturnValue(queueMeta('unparseable', 'unparseable'));
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mod = await import('./ciContext.js');
+      // Contrived: even if the SPECULATIVE PR's own frozen PR_LABELS happens to
+      // contain the override name, the real answer must be false, proving
+      // fail-closed does not fall back to reading it.
+      Object.assign(process.env, QUEUE_ENV_BASE, {
+        PR_TITLE: 'garbage',
+        PR_BODY: 'garbage',
+        PR_LABELS: 'agents-md-deletion-approved',
+      });
+      expect(mod.hasLabel('agents-md-deletion-approved')).toBe(false);
+    });
   });
 });

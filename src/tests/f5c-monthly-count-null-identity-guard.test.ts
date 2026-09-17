@@ -142,7 +142,12 @@ describe('F-5c: check-null-identity-guard lint actually detects the bug class', 
         cwd: process.cwd(),
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, NULL_IDENTITY_REPO_ROOT: dir, PR_LABELS: '', ...env },
+        env: {
+          ...process.env,
+          // This child owns a local fixture, not the surrounding Actions PR.
+          GITHUB_HEAD_REF: '', GITHUB_REF: '', GITHUB_REPOSITORY: '', PR_NUMBER: '',
+          NULL_IDENTITY_REPO_ROOT: dir, PR_LABELS: '', ...env,
+        },
       });
       return { code: 0, out };
     } catch (e) {
@@ -235,6 +240,18 @@ COMMIT;
       { PR_LABELS: 'null-identity-guard-intentional' },
     );
     expect(r.code).toBe(0);
+  });
+
+  it('rejects a forged queue branch carrying an override label', () => {
+    const r = runLint(
+      { 'supabase/migrations/0500_bad.sql': BAD },
+      {
+        GITHUB_HEAD_REF: 'mergify/merge-queue/untrusted-fixture',
+        PR_LABELS: 'null-identity-guard-intentional',
+      },
+    );
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('0500_bad.sql');
   });
 
   it('does NOT flag `= auth.uid()` RLS quals, which fail closed on NULL', () => {
