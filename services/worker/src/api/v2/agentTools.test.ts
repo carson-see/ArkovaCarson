@@ -182,23 +182,54 @@ describe('agentToolsRouter', () => {
     });
   });
 
-  it('lists the API key organization context', async () => {
-    const select = vi.fn().mockReturnThis();
-    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
-      select,
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({
-        data: {
-          id: 'org-1',
-          public_id: 'org_acme',
-          display_name: 'Acme Corp',
-          domain: 'acme.com',
-          website_url: 'https://acme.com',
-          verification_status: 'VERIFIED',
-        },
-        error: null,
-      }),
+  /**
+   * SCRUM-3971 — `/orgs` gained hierarchy. Each call now issues up to three
+   * reads (self, parent when there is one, children), so the double is
+   * call-ordered rather than a single shared object.
+   */
+  function mockOrgReads(opts: {
+    self: Record<string, unknown> | null;
+    parent?: Record<string, unknown> | null;
+    children?: Record<string, unknown>[];
+    childrenError?: unknown;
+  }) {
+    const selects: string[] = [];
+    const queue: (() => Promise<unknown>)[] = [
+      () => Promise.resolve({ data: opts.self, error: null }),
+    ];
+    if (opts.self?.parent_org_id) {
+      queue.push(() => Promise.resolve({ data: opts.parent ?? null, error: null }));
+    }
+    let call = -1;
+    (db.from as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      call += 1;
+      const index = call;
+      const chain: Record<string, unknown> = {};
+      chain.select = (cols: string) => { selects.push(cols); return chain; };
+      chain.eq = () => chain;
+      chain.maybeSingle = () => (queue[index] ?? (() => Promise.resolve({ data: null, error: null })))();
+      chain.order = () => Promise.resolve(
+        opts.childrenError
+          ? { data: null, error: opts.childrenError }
+          : { data: opts.children ?? [], error: null },
+      );
+      return chain;
     });
+    return selects;
+  }
+
+  const SELF_ORG = {
+    id: 'org-1',
+    public_id: 'org_acme',
+    display_name: 'Acme Corp',
+    domain: 'acme.com',
+    website_url: 'https://acme.com',
+    verification_status: 'VERIFIED',
+    parent_org_id: null,
+  };
+
+  it('lists the API key organization context', async () => {
+    const selects = mockOrgReads({ self: SELF_ORG });
 
     const res = await request(buildApp()).get('/orgs');
 
@@ -208,8 +239,57 @@ describe('agentToolsRouter', () => {
     ]);
     expect(res.body.organizations[0]).not.toHaveProperty('id');
     expect(JSON.stringify(res.body)).not.toContain('org-1');
-    expect(select).toHaveBeenCalledWith(
-      'public_id, display_name, domain, website_url, verification_status',
+    expect(selects[0]).toBe(
+      'public_id, display_name, domain, website_url, verification_status, parent_org_id',
     );
+  });
+
+  it('OMITS parent_public_id for a top-level organization and returns an empty children list', async () => {
+    mockOrgReads({ self: SELF_ORG, children: [] });
+    const res = await request(buildApp()).get('/orgs');
+    expect(res.status).toBe(200);
+    // Omitted, not null: key presence alone answers "is this a child?".
+    expect(res.body.organizations[0]).not.toHaveProperty('parent_public_id');
+    expect(res.body.organizations[0].children).toEqual([]);
+  });
+
+  it('names the parent and the children by PUBLIC id only', async () => {
+    mockOrgReads({
+      self: { ...SELF_ORG, parent_org_id: 'parent-uuid-1' },
+      parent: { public_id: 'org_holdings' },
+      children: [
+        { public_id: 'org_client_a', display_name: 'Client A', parent_approval_status: 'APPROVED' },
+        { public_id: 'org_client_b', display_name: 'Client B', parent_approval_status: 'PENDING' },
+      ],
+    });
+
+    const res = await request(buildApp()).get('/orgs');
+
+    expect(res.status).toBe(200);
+    expect(res.body.organizations[0]).toMatchObject({
+      public_id: 'org_acme',
+      parent_public_id: 'org_holdings',
+      children: [
+        { public_id: 'org_client_a', display_name: 'Client A', parent_approval_status: 'APPROVED' },
+        { public_id: 'org_client_b', display_name: 'Client B', parent_approval_status: 'PENDING' },
+      ],
+    });
+    expect(JSON.stringify(res.body)).not.toContain('parent-uuid-1');
+    expect(JSON.stringify(res.body)).not.toContain('org-1');
+  });
+
+  it('500s rather than silently dropping a child that cannot be named', async () => {
+    mockOrgReads({
+      self: SELF_ORG,
+      children: [{ public_id: null, display_name: 'Nameless', parent_approval_status: 'APPROVED' }],
+    });
+    const res = await request(buildApp()).get('/orgs');
+    expect(res.status).toBe(500);
+  });
+
+  it('500s rather than reporting a child organization as top-level when the parent cannot be named', async () => {
+    mockOrgReads({ self: { ...SELF_ORG, parent_org_id: 'parent-uuid-1' }, parent: null });
+    const res = await request(buildApp()).get('/orgs');
+    expect(res.status).toBe(500);
   });
 });
