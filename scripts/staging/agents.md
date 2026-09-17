@@ -449,6 +449,8 @@ The credential-bearing email API client never follows redirects. Its real
 loopback regression checks that a second HTTP origin receives no request or
 credentials, while a direct JSON response still succeeds. Confirmation-link
 redirects are returned to the caller for the existing callback validation.
+The two documentation snapshots include this reviewed trust-boundary section;
+preserve the earlier sections and their individual byte pins when updating them.
 2026-09-05, PR #2519: the two exact documentation snapshots now include the Adobe webhook seed section above. Preserve every prior section, its order, and the existing per-section byte pins when updating either snapshot.
 ## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner
 

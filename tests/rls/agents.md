@@ -154,9 +154,11 @@ The same full-schema run showed a second fixture defect: enable_seqscan=off stil
 `fingerprint-lookup-index-plan.test.ts` upserts its owned profile after inserting
 `auth.users`. A complete schema with migration 0459 creates that profile through
 the canonical auth-user trigger; a baseline without the trigger still needs the
-test to create it. The upsert makes both schemas converge on the exact owned
-organization and role without weakening the plan assertions or sharing fixture
-identities.
+test to create it. Setup uses transaction-local service-role claims, like
+teardown, so the real privileged-profile-field trigger permits the fixture's
+owned organization and role assignment. Claims expire at commit; the production
+guard remains enabled. The upsert preserves all plan assertions and uses no
+shared fixture identities.
 
 ## 2026-09-11 — UAT-04 mandatory MFA boundary
 
