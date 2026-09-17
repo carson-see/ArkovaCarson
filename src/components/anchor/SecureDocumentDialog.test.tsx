@@ -6,7 +6,7 @@
  * Continue button in the upload step. This regression test pins it.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { toast } from 'sonner';
 import { SecureDocumentDialog } from './SecureDocumentDialog';
@@ -24,7 +24,10 @@ import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { runExtraction, fetchTemplateReconstruction } from '@/lib/aiExtraction';
 import type { ExtractionFailureReason } from '@/lib/aiExtraction';
 import { applyTemplate } from '@/lib/templateMapper';
-import { ROUTES } from '@/lib/routes';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 type FileUploadMockProps = {
   onFileSelect?: (file: File, fingerprint: string) => void;
@@ -53,6 +56,7 @@ const DEFAULT_CAPABILITY = { canSecureInstantly: false, creditBalance: 5, instan
 function createTemplateSelectMock(data: unknown[] = []) {
   const query = {
     eq: vi.fn(() => query),
+    order: vi.fn(() => query),
     limit: vi.fn(() => Promise.resolve({ data })),
   };
   return vi.fn(() => query);
@@ -855,9 +859,11 @@ describe('SecureDocumentDialog — Add to Queue / Secure Instantly selector (QUE
     expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.QUEUED_TOAST);
   });
 
-  it('"Secure Instantly" redirects to billing and does NOT insert when credits are insufficient', async () => {
+  it('"Secure Instantly" shows the dedicated credit guidance and does not submit when credits are insufficient', async () => {
     mockCapability.current = { canSecureInstantly: true, creditBalance: 0, instantSecureCost: 1 };
     const insert = vi.fn();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
     vi.mocked(supabase.from).mockReturnValue({
       insert,
       select: createTemplateSelectMock(),
@@ -869,30 +875,40 @@ describe('SecureDocumentDialog — Add to Queue / Secure Instantly selector (QUE
     });
 
     expect(insert).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.INSUFFICIENT_CREDITS);
-    expect(mockNavigate).toHaveBeenCalledWith(ROUTES.BILLING);
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it('"Secure Instantly" tags the insert with securing_path=instant and shows SECURED_TOAST when credits suffice', async () => {
+  it('"Secure Instantly" submits the atomic worker action and shows the started toast when credits suffice', async () => {
     mockCapability.current = { canSecureInstantly: true, creditBalance: 5, instantSecureCost: 1 };
-    const insert = vi.fn((_payload: unknown) => ({
-      select: vi.fn(() => ({
-        single: vi.fn(async () => ({ data: { id: 'a1', public_id: 'p1' }, error: null })),
-      })),
-    }));
-    vi.mocked(supabase.from).mockReturnValue({
-      insert,
-      select: createTemplateSelectMock(),
-    } as unknown as ReturnType<typeof supabase.from>);
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ public_id: 'p1' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = {
+          eq: vi.fn(() => query),
+          maybeSingle: vi.fn(async () => ({ data: { id: 'a1' }, error: null })),
+        };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
 
     await reachConfirmStep();
     await act(async () => {
       screen.getByTestId('securing-path-instant').click();
     });
 
-    const payload = insert.mock.calls[0]?.[0] as { metadata?: Record<string, unknown> };
-    expect(payload.metadata).toMatchObject({ securing_path: 'instant' });
-    expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.SECURED_TOAST);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const request = (fetchMock.mock.calls as unknown as Array<[unknown, RequestInit]>)[0]?.[1];
+    if (!request) throw new Error('instant submission request was not captured');
+    const payload = JSON.parse(String(request.body)) as { action?: string; metadata?: Record<string, unknown> };
+    expect(payload).toMatchObject({ action: 'instant', metadata: { securing_path: 'instant' } });
+    expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.INSTANT_STARTED_TOAST);
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 });

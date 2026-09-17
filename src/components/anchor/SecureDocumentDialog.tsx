@@ -146,9 +146,12 @@ export function SecureDocumentDialog({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     void (supabase as any).from('anchor_private_tags').select('tag').order('created_at', { ascending: false }).limit(50)
       .then(({ data }: { data?: Array<{ tag: string }> }) => {
-        setTagSuggestions([...new Set((data ?? []).map((row) => row.tag))]);
+        const tags = (data ?? [])
+          .map((row) => row.tag)
+          .filter((tag): tag is string => typeof tag === 'string');
+        setTagSuggestions([...new Set(tags)]);
       }, () => setTagSuggestions([]));
-  }, [open, user]);
+  }, [open, user?.id]);
 
   const handleFileSelect = useCallback((file: File, fingerprint: string) => {
     setFileData({ file, fingerprint });
