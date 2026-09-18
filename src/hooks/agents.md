@@ -21,7 +21,23 @@ not a countdown to read).
 dialog open instead of implying a change that did not happen.
 
 # agents.md — hooks
-_Last updated: 2026-09-03_
+
+## UAT-22 platform invitation list (2026-09-14)
+
+`useOrgInvitations(orgId, platformAdmin)` uses the authenticated admin worker list for platform administrators and the existing tenant RLS query otherwise. Cache keys include actor mode, preventing reuse of privileged foreign-org results in tenant mode. Expiry and revoked-status display semantics remain shared.
+
+_Last updated: 2026-09-11_
+
+## 2026-09-11 — UAT-22 selected-org platform invitations
+
+`useInviteMember({ platformAdmin: true })` sends through the platform-admin worker route for the
+selected org. The ordinary ORG_ADMIN path remains the tenant-scoped `invite_member` RPC. The
+platform path creates one UUID per `(orgId,email,role)` intent, retains it through network or
+delivery failures, and clears it only after confirmed `{sent:true}`; changing any intent field
+creates a new UUID. Only an explicit post-insert delivery response says the invitation was created.
+Permission, missing-org, existing-member, and unknown failures use distinct curated copy.
+`useOrganization(orgId, true)` also loads foreign selected-org metadata from the platform-admin
+worker because the ordinary browser query is intentionally restricted to membership org IDs.
 
 ## PR #2637 refresh without remounting MFA setup (2026-09-05)
 

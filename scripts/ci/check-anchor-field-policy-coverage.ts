@@ -53,18 +53,13 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { GIT_BIN, REPO, isMainModule } from './lib/ciContext.js';
+import { GIT_BIN, REPO, isMainModule, hasLabel } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'anchor-field-policy-exempt';
 const GUARD_FN = 'enforceOrgFieldPolicy';
 
 /** The handler surface. Anything here can receive an inbound request body. */
 const REQUEST_HANDLER_DIR = 'services/worker/src/api/';
-
-const prLabels = (process.env.PR_LABELS ?? '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
 
 export interface Finding {
   file: string;
@@ -255,7 +250,7 @@ function main(): void {
     return;
   }
 
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⚠️  PR labeled \`${OVERRIDE_LABEL}\` — allowing ${findings.length} file(s).`);
     for (const f of findings) console.log(`  ${f.file}:${f.line} → ${f.context}`);
     return;

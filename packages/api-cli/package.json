@@ -1,0 +1,32 @@
+{
+  "name": "arkova-api-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "arkova": "dist/cli.js"
+  },
+  "scripts": {
+    "prebuild": "npm --prefix ../sdk run build",
+    "build": "tsc -p tsconfig.json",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "pretypecheck": "npm --prefix ../sdk run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "arkova": "file:../sdk"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.24.0",
+    "@types/node": "26.0.0",
+    "eslint": "10.5.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.62.0",
+    "vitest": "4.1.9"
+  },
+  "engines": {
+    "node": ">=20.14.0"
+  }
+}

@@ -10,7 +10,12 @@
  * pre-existing warnings, and 12+ commits never reached prod for ~12h.
  *
  * This check fails CI if either workflow's worker-lint step is anything other
- * than `npm run lint`. Override: PR labeled `ci-config-change` (manual signoff).
+ * than `npm run lint`. HARD INVARIANT, mirroring `check-deploy-build-parity.ts`
+ * / `check-deploy-typecheck-parity.ts`: no in-script override. `ci-config-change`
+ * is not read anywhere below — labeling a PR with it does nothing on its own.
+ * A deliberate parity change requires editing this check itself (2026-09-14
+ * CTO decision: the label was found inert; corrected the documentation rather
+ * than adding a live bypass to this gate).
  */
 
 import { readFileSync } from 'node:fs';
@@ -84,7 +89,7 @@ function main(): void {
       console.error(`    actual:   ${s.command}`);
     }
     console.error('Fix: change all worker lint steps to `npm run lint` so the deploy gate ≡ CI lint job.');
-    console.error('If intentional, label the PR with `ci-config-change` and update this check.');
+    console.error('If intentional, this check has no label override — update check-deploy-lint-parity.ts itself.');
     process.exit(1);
   }
   console.log(`✅ All ${steps.length} worker-lint steps invoke \`${expected}\` — deploy gate ≡ CI lint job.`);

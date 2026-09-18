@@ -101,6 +101,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0443` | `0443_backfill_anchor_proof_block_height.sql` | #2825 / SCRUM-4879; original #2782 / SCRUM-3953 | **no — production held; applied to Owie staging** | Existing reserved prefix, moved intact to `release/scrum-3953-proof-history-0443`. Data-only correction of confirmed proof height/time for matching block identities. Exact SQL SHA-256 `b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`; no renumbering or SQL edit. Production completion requires protected repair, corrected-producer drain, final reconciliation and actual application/ledger proof; see [release record](https://arkova.atlassian.net/wiki/spaces/A/pages/143196161). Older next-prefix statements below record authorship history; this prefix is unavailable. |
 | `0445` | `0445_connector_artifact_materialize_link_atomic.sql` | #2570 / SCRUM-3882 | **no — local candidate only** | Atomic service-only connector anchor creation/reuse and freshness-guarded artifact link. Prevents a broadcaster observing a stale unlinked PENDING anchor. Numeric inventory verified 2026-09-10: main 0440; open PRs 0441/0442; #2572 reserves 0443/0444. Historical unpublished 0437 is intentionally not reused. Local PostgreSQL concurrency/ACL/rollback proof required; full stack T3 staging and production apply remain release gates. |
 | `0448` | `0448_computeid_agent_key_transition_atomic.sql` | #2668 / SCRUM-4535 / SCRUM-4536 | **no — local candidate only** | Service-only agent-row lock and full-snapshot CAS commit ComputeID status/metadata and key enforcement together. Closes the lost restore retry and delayed restore after revoke. Prefix re-derived 2026-09-10 from main, all open PRs, and #2572's local 0446/0447 reservations; coordinated with both parallel agents. Flag remains off. No production apply or soak completion claimed. |
+| `0453` | `0453_scrum3971_orgs_manage_scope_api_key_suborg_authority.sql` | SCRUM-3971 | **no — file-only, pre-soak, applied NOWHERE** | **Lets an organization API key administer its sub-organizations.** Three things in one file because `scripts/ci/check-api-scope-vocabulary.ts` reads the LATEST migration naming EACH of `api_keys_scopes_known_values` and `agents_allowed_scopes_known_values` — splitting them leaves one constraint on an older file and reds the gate. (1) `organizations.public_id` NOT NULL with a collision-safe DEFAULT `generate_unique_org_public_id()`; the key surface addresses affiliates only by public id, so a NULL is a row the API can neither name nor return. **The DEFAULT is load-bearing and was found by measurement, not prediction:** NOT NULL with no default makes `public_id` REQUIRED in the generated `organizations.Insert` type and reds `src/hooks/useOnboarding.ts:161`/`:217` with TS2345. The new generator keeps the re-draw loop the BEFORE INSERT trigger provided and is SECURITY DEFINER so its uniqueness probe is not RLS-filtered the way the trigger's is. (2) Both scope CHECKs 20 -> 21 values (`orgs:manage`) via `ADD CONSTRAINT ... NOT VALID` + `VALIDATE CONSTRAINT`, so the AccessExclusive window excludes the scan; without this an `orgs:manage` key is UNWRITABLE and the feature ships with no way to mint a key for it. Prod read-only census 2026-09-12 (`vzwyaatejekddvltxyye`): every active key's `scopes` is a subset of the current 20 values, so VALIDATE cannot fail on existing data; 16 organizations, 0 with NULL `public_id`. (3) `_suborg_api_key_authorized(uuid, uuid)` plus three DISTINCTLY NAMED `*_as_api_key` RPCs — NOT overloads, because PostgREST resolves overloads by argument NAMES and a same-arity sibling differing only in the identity argument is an ambiguity waiting for the first caller that omits an optional one. Bodies are 0444's/0450's verbatim (each function's own `FOR UPDATE` placement — lock-then-authority in `suspend_suborg`, authority-then-lock in `allocate_credits_to_sub_org`, both faithful to 0444; LEAST/GREATEST credit-row lock order) except: the authority predicate; `audit_events.actor_id` NULL with the actor in `details` (that column is `REFERENCES profiles(id)`, so an api_key id is an FK violation and a user id is a false claim about who acted); and `org_credit_allocations.granted_by` / `organizations.suspended_by` stamped with the key's `api_keys.created_by` — both are FK-bound to `auth.users` and `granted_by` is NOT NULL, so there is no other legal value; it is PROVENANCE, never authority. Service-role-only grants with anon/authenticated REVOKEd BY NAME (`REVOKE FROM PUBLIC` alone does not undo the baseline's `ALTER DEFAULT PRIVILEGES`). `SET LOCAL lock_timeout = '5s'` ahead of the `organizations` DDL; `NOTIFY pgrst`. Both `database.types.ts` copies HAND-WRITTEN, not regenerated — no rig, prod or local stack was reachable in the authoring session; run `npm run gen:types` once at apply time as a canonical check. Ratchet: `src/tests/sec-0453-suborg-api-key-authority.test.ts` (46 content-guard assertions that run everywhere, plus a `RUN_LIVE_RLS=1` block that was NOT executed). Tier T3. Runnable ROLLBACK in the file header — it re-adds both CHECKs `NOT VALID` on purpose, because an `orgs:manage` key may still exist after a rollback and VALIDATE would fail on it. **Prefix derivation (2026-09-12):** main head `0450`; `gh pr list --state open --json files` shows `0451` (#2832), `0452` (#2831), `0443` (#2825); a scan of every `refs/remotes/origin` ref shows no `0453`. **Next author claims `0454` — re-derive, do not trust this line.** |
 | `0451` | `0451_uat04_mandatory_mfa.sql` | UAT-04 | **no — local candidate only** | All human product authority requires mailbox proof then AAL2. Composes the Auth token hook, contains legacy AAL1 JWTs through pre-request and restrictive RLS, and leaves machine credentials separate. Hosted hook activation plus server-time OAuth policy activation are release steps. New public/storage RLS tables and Realtime publications must add the restrictive MFA policy in their own migration. |
 | baseline | `00000000000000_baseline_at_main_HEAD.sql` | ? | yes | Path C baseline. Atomic with `docs/migrations-archive/`. |
 | `0290` | `0290_suborg_suspension_audit_and_service_role_fix.sql` | ? | presumed | |
@@ -194,6 +195,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0381` | not on this branch | #1782 | ? | DocuSign envelope-metadata lookup indexes. |
 | `0382` | not on this branch | L1 lane (in flight) | no | Reserved for the SEC-RECON follow-up revoking `finalize_public_record_anchor_batch`, `drain_submitted_to_secured_for_tx`, `bulk_promote_confirmed`, `archive_old_audit_events`. |
 | `0383` | `0383_scrum2913_get_public_anchor_restore_hmac_and_registry_keys.sql` | #1618 | **no — needs prod apply** | Compensating `CREATE OR REPLACE` of `get_public_anchor` restoring what `0376` clobbered: `0356`'s keyed-HMAC `recipient_identifier` (fail-closed to `''` on unset `app.recipient_pepper`, which is still unset in prod) and `0362`'s `registry_url` / `ce_envelope_sha256` allow-list keys, while KEEPING `0376`'s `fingerprint_source`. `0376` is not edited (§1.2). **Until this is applied, prod returns an unsalted, enumerable SHA-256 of the recipient identifier from an anon-callable endpoint, and the SCRUM-2913 projection is inert.** **Next author claims `0384`.** |
+| `0452` | `0452_scrum4888_provision_org_quota_enforcement.sql` | #2831 / SCRUM-4888 / UAT-22 | **no — local candidate only** | Atomically set quota and cap enforcement during new organization provisioning: NULL is uncapped; zero/finite quotas enforce independently of billing exclusion. Preserve signup defaults, existing balances, receipt replay and service-only authority. Prefix checked 2026-09-12 against main 0450, all reservations and open PRs (0451 in #2832). Hosted T3 qualification and production application remain required. |
 
 > **⚠ `get_public_anchor` is redefined WHOLESALE by every migration that touches it.** `CREATE OR REPLACE FUNCTION` overwrites the entire body, so branching a new definition off an older migration file silently deletes every change made in between — with no error, no warning, and no ledger signal. That is exactly how `0376` reverted `0356` + `0362`. **Always** base a new definition on the CURRENT one (`pg_get_functiondef` against prod, or the highest-numbered migration that redefines it) and state in your header which definition you based on. `src/tests/get-public-anchor-head-invariants.test.ts` now asserts the accumulated invariants against the highest-numbered redefining migration, so the next clobber fails CI instead of reaching production.
 | `0378` | `0378_sec_recon_revoke_deferred_security_definer_grants.sql` | #1766 | **yes** | Applied to prod `vzwyaatejekddvltxyye` 2026-07-28; ledger reconciled to numeric head **0378** per §0 rule 10. Restricts the 50 remaining deferred SECURITY DEFINER worker-only RPCs to `service_role`. Public verification endpoints, RLS helper functions, and trigger functions deliberately untouched (revoking RLS helpers would break every policy). Verified both directions via a `has_function_privilege()` sweep — 0 mismatches. **Next author claims `0379`.** Grant-level enumeration belongs in the Confluence bug tracker, not this repo. |
@@ -245,6 +247,107 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 `0291`, `0298`, `0332`, `0344`, `0361`, `0369`, `0371`-`0374`. `0344` is a
 deliberate renumber to `0349`; the rest were never claimed or were released.
 Never assume a gap is free — apply the next-free rule above.
+
+## Recent migrations (PR #2844)
+
+`0453_scrum3971_orgs_manage_scope_api_key_suborg_authority.sql` (SCRUM-3971) —
+three changes in one file, and the reason they cannot be split is mechanical:
+`scripts/ci/check-api-scope-vocabulary.ts` reads the LATEST migration naming
+EACH of `api_keys_scopes_known_values` and `agents_allowed_scopes_known_values`,
+so separating the two CHECK re-adds leaves one constraint on an older file and
+reds the gate.
+
+**Three things worth more than the diff.**
+
+**1. A NOT NULL without a DEFAULT changes the generated TypeScript, not just the
+schema.** `supabase gen types` marks an `Insert` field REQUIRED when the column
+is NOT NULL *and* has no column default. `organizations.public_id` had no
+default — a BEFORE INSERT trigger filled it — so `SET NOT NULL` alone made
+`public_id` mandatory in
+`Database['public']['Tables']['organizations']['Insert']` and reds
+`src/hooks/useOnboarding.ts:161` and `:217` with `TS2345: Property 'public_id'
+is missing`. That is the real browser path for creating an organization, and it
+correctly does not supply a server-minted identifier. Measured, not predicted:
+typecheck failed before the default was added and passes after. **If you add a
+NOT NULL to a trigger-populated column anywhere in this schema, run `npm run
+typecheck` before assuming it is a pure DDL change.**
+
+The default is `generate_unique_org_public_id()`, not the bare
+`generate_public_id()`, because a bare default trades the trigger's
+re-draw-on-collision loop for a unique violation. It is SECURITY DEFINER
+*because of* that loop: the trigger's own
+`WHILE EXISTS (SELECT 1 FROM organizations …)` runs as the INSERTING role and is
+therefore RLS-filtered, so it never saw a collision with a row the caller cannot
+read. It is service_role-only — `organizations` has FORCE RLS with a SELECT
+policy and an UPDATE policy and NO insert policy (baseline:13117/13121), so
+neither browser role can reach a column default there.
+
+**2. Three FK columns decided the audit shape, and they are easy to miss.**
+`audit_events.actor_id` is `REFERENCES public.profiles(id)` (baseline:11700), so
+a key-driven write CANNOT put an api_key id there (FK violation) and must not
+put the key's owning user there (a false statement about who acted) — hence
+`actor_id NULL` plus
+`details.actor = {actor_kind, actor_api_key_id, actor_key_prefix}`. But
+`org_credit_allocations.granted_by` is `uuid NOT NULL REFERENCES auth.users(id)`
+(baseline:8461/11985) and `organizations.suspended_by` is
+`REFERENCES auth.users(id)` (baseline:12060), so those two have no NULL option
+and are stamped with `api_keys.created_by` — the authorizing principal, the same
+identity `agents.registered_by` records for passport-admitted agents. It is
+PROVENANCE and is never read for authority. **Check the FK before choosing what
+a non-human actor writes into an actor column; the three columns here needed
+three different answers.**
+
+**3. Distinctly named functions, not overloads.** PostgREST resolves an overload
+by argument NAMES. `allocate_credits_to_sub_org(uuid, uuid, integer, text, uuid)`
+already exists with `p_caller_user_id` as the fifth argument, so a same-arity
+sibling differing only in that name is an ambiguity waiting for the first caller
+that omits an optional argument. `*_as_api_key` costs nothing and cannot resolve
+wrongly.
+
+Bodies are 0444's / 0450's verbatim otherwise, including each function's own
+`FOR UPDATE` placement and the `LEAST`/`GREATEST` credit-row lock order. **Be
+precise about that placement** — an earlier version of this row and of the
+migration header both said the child row is locked BEFORE the authority
+decision in both writers. That is 0444's shape for `suspend_suborg`
+(0444:132-149) and NOT for `allocate_credits_to_sub_org` (0444:42-55), and
+these bodies are faithful to each. The SCRUM-4470 property survives either
+order, which is why neither was "corrected": the race is about the CHILD's
+parenthood, and in both functions `v_actual_parent <> p_parent_org_id` compares
+a value read UNDER the row lock. The authority predicate never reads the child,
+so its position cannot change what it decides — swapping allocate would only
+downgrade an unauthorized caller's `parent_admin_required` to the more
+disclosive `not_a_sub_org`. One helper,
+`_suborg_api_key_authorized(uuid, uuid)`, carries the whole authority predicate:
+active, unrevoked, unexpired key OF THAT ORGANIZATION holding `orgs:manage`.
+Ratcheted by `src/tests/sec-0453-suborg-api-key-authority.test.ts` — three of
+those five clauses are invisible to any integration test that uses a
+freshly-minted key, so they are pinned in the migration text instead.
+
+**4. Statement ORDER inside one transaction is a lock decision.** Postgres holds
+every lock until COMMIT, so an ACCESS EXCLUSIVE taken early is held across
+everything that follows. The first cut of 0453 took the AEL on `organizations`
+(`ALTER COLUMN public_id SET DEFAULT` / `SET NOT NULL`) and then ran both
+`VALIDATE CONSTRAINT` statements — full scans of `api_keys` and `agents` — inside
+the same transaction, so a hot table's exclusive lock was held for the duration
+of two unrelated table scans. `SET LOCAL lock_timeout` does NOT help here: it
+bounds acquisition, not hold time, and a FIFO lock queue means the AEL blocks
+everything behind it (the 2026-08-11 P0 mechanism). Reordered so the two
+`organizations` ALTERs are the LAST statements before `NOTIFY`/`COMMIT`; the
+per-row PL/pgSQL backfill loop became one `UPDATE … WHERE public_id IS NULL`.
+Pinned by `src/tests/sec-0453-suborg-api-key-authority.test.ts` ("takes the
+organizations ACCESS EXCLUSIVE last"). The file stays ONE transaction: the
+migration runner's behaviour with several `BEGIN;`/`COMMIT;` blocks in one file
+was not verifiable in the authoring session and no migration here has ever used
+more than one — a half-applied migration is worse than a millisecond AEL window.
+
+Both CHECKs re-added `ADD CONSTRAINT … NOT VALID` then `VALIDATE CONSTRAINT`, so
+the AccessExclusive window excludes the scan. Both `database.types.ts` copies
+are HAND-WRITTEN: no rig, prod or local stack was reachable in the authoring
+session. Run `npm run gen:types` once at apply time as a canonical check.
+
+The ROLLBACK re-adds both CHECKs `NOT VALID` on purpose — after a rollback an
+`orgs:manage` key may still exist and `VALIDATE` would fail on it. Revoke those
+keys first.
 
 ## Recent migrations (PR #1862)
 
@@ -1355,3 +1458,49 @@ remains held until its own production and CI requirements are satisfied.
 
 [Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retains the staged recovery and separately dated production pilot receipts.
+
+
+## CTO review — atomic sub-organization offboarding (2026-09-14)
+
+| Prefix | Owner branch / PR | Story | Source | State |
+|---|---|---|---|---|
+| `0460` | `feat/scrum-3971-suborg-api-key-parity` / #2844 | SCRUM-3971 | `0460_scrum3971_atomic_suborg_offboard.sql` | RESERVED — local source only; not applied to production, staging, or any rig. |
+
+The fresh prefix inventory found main at 0451, this PR's immutable 0453,
+#2904 at 0454, #2905 at 0455–0457, standing C2's already-applied
+0458_scrum5120_batch_insert_anchors_description, and #2964 at
+2d2f6bd2e2d675c7c73c482aaf54f9d0a4e3119a claiming
+0459_scrum5145_restore_auth_user_triggers. The all-open PR file inventory,
+current main reservation table, sibling review checkouts, and the release
+owner's current C2 ledger inventory contained no 0460 claim. 0453 stays byte
+identical: this correction is a new migration, not a rewrite of applied SQL.
+
+The worker previously reclaimed and suspended in separate transactions. A
+concurrent allocation could commit between them or after a stale precheck,
+leaving a successfully offboarded child holding credits. The correction must
+serialize offboarding and positive allocation on the child organization row;
+reclaim, suspension and their audit records commit together. Native PostgreSQL
+interleavings and a split-step TLA negative control are required before review.
+This reservation asserts no completed test, live qualification or soak.
+
+The unpublished-to-database 0460 source was corrected after its first CI run:
+the legacy wrapper uses `(SELECT auth.uid())`, satisfying the repository's
+initplan ratchet while preserving the same guarded delegation. Before editing,
+the release owners confirmed no hosted application; fresh production/C2 ledger
+and function-existence reads showed no 0460 or either new offboard function.
+The exact corrected file is rerun through the native concurrency harness before
+its final source hash can enter C3. This note does not amend applied 0453.
+
+
+### 0460 atomic offboard balance result — 2026-09-14
+
+Before any hosted application, both offboard RPCs now also return numeric
+`parent_balance` and `child_balance` from the transaction's locked credit rows
+after reclaim and suspension. A missing credit row reads as its zero balance.
+The values remain present for the first zero-credit call and an idempotent retry,
+where no allocation result exists. These additive internal RPC fields support
+the separately reviewed SCRUM-4483 reclaim event union without an HTTP-side
+balance read; the existing public offboard HTTP shape stays unchanged.
+The native harness asserts exact balances across both serialization orders and
+zero/retry outcomes. 0453 remains immutable; 0460 is still unapplied and held
+for the final C3 source review and fresh qualification.

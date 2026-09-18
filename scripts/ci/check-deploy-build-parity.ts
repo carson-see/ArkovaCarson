@@ -25,11 +25,14 @@
  * This is a HARD INVARIANT — a build-command mismatch is never acceptable, so
  * (mirroring `check-deploy-lint-parity.ts`) the script has NO in-script override
  * and NO label / env / git dependency: it imports only `readFileSync`/`resolve`
- * and reads three tracked files. The `ci-config-change` / `build-parity-ack`
- * signoff lives at the workflow level (the ci.yml step's `if:` condition), not
- * here — so this gate runs cleanly in the shallow-checkout typecheck-lint job
- * (no `git rev-parse` of a base ref) and keeps SCRUM-1258 trivially satisfied
- * (zero `process.env` reads).
+ * and reads three tracked files. There is no working override anywhere — not
+ * here, and not at the workflow level either: the ci.yml step below runs this
+ * unconditionally, with no `if:` gate on `ci-config-change` / `build-parity-ack`
+ * (2026-09-14 CTO decision: those labels were found inert; documentation was
+ * corrected rather than a bypass being added). A deliberate parity change
+ * requires editing this check itself. This also keeps the gate running cleanly
+ * in the shallow-checkout typecheck-lint job (no `git rev-parse` of a base ref)
+ * and SCRUM-1258 trivially satisfied (zero `process.env` reads).
  */
 
 import { readFileSync } from 'node:fs';
@@ -160,7 +163,7 @@ function main(): void {
   console.error(
     `Fix: keep all three identical — services/worker/package.json scripts.build=\`${EXPECTED_BUILD_SCRIPT}\`, a Dockerfile \`RUN npm run build\`, and a ci.yml services/worker build step \`run: ${EXPECTED_RUN}\`.`,
   );
-  console.error('If intentional, label the PR `ci-config-change` or `build-parity-ack` and update this check.');
+  console.error('If intentional, this check has no label override — update check-deploy-build-parity.ts itself.');
   process.exit(1);
 }
 

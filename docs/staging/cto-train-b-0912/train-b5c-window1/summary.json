@@ -1,0 +1,1 @@
+{"driver":"/Volumes/Extreme/offload/cto-review-2026-09-12/wt-rig/scripts/staging/targeted/cto-train-b-0912/train-cycle.mjs","out_dir":"/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/window1","pid":971,"candidate_sha":"aaaa0d7bad30af5e781d52370e0d5479a003089f","updated_at":"2026-09-14T12:24:17Z","cycles_run":57,"cycles_pass":57,"cycles_fail":0,"retries_attempted":0}

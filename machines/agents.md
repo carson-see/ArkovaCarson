@@ -351,6 +351,15 @@ Certificate (tier `pr`, 1 key): proofPassed true; invariants `revocationRemainsT
 `revokedOnlyByRevocation`; graph equivalence true (32/32 states, 138/138 edges); TLC 149 generated /
 32 distinct, depth 6; deadlock check off (no terminal-state requirement). Picked up automatically by
 `npm run verify:machines` / the `tla-verify` CI job (the script globs).
+## subOrgAffiliationLifecycle.machine.ts (SCRUM-3971, review U1)
+
+- Models `parent_approval_status` x `suspended` x "still holds parent credits", per child, and the five transitions that move them: `request` (JWT child-side), `approve`, `revoke`, `allocate`, `offboard`. Written during the CTO review of PR #2844 because that PR introduced a per-ACTION child predicate set and had no formal model of it.
+- Verified 2026-09-12: `proofPassed: true`, `equivalent: true`, 49 distinct states, depth 11. Invariants `noCreditsStrandedInASuspendedAffiliate`, `creditsOnlyOnRealAffiliates`, `affiliateCapNeverExceeded`, `suspensionImpliesAffiliationHistory`.
+- **TLC disproved the first draft's cap guard in five steps.** It was written `count(APPROVED) <= CAP`; `resolveSubOrgCap` returns `ok: current < limit`. `approve(c1)` then `approve(c2)` both passed the guard because the count was still within the cap when each was checked, and `affiliateCapNeverExceeded` fell over. The guard is `count(APPROVED) <= CAP - 1`. An off-by-one in a cap guard is the shape this machine exists to catch and it caught one in its own first draft.
+- **`request` accepts REVOKED -> PENDING, not just NONE -> PENDING.** Without it REVOKED is terminal and `approve`'s PENDING-only predicate is a trap rather than a transition. This matches the code comment: re-approving a revoked affiliation "is a new decision that goes through request again".
+- **Reachability of the wind-down is NOT asserted and cannot be.** That is a liveness/enabledness claim: a child that is APPROVED and suspended is a legitimate state for the instant between `offboard` and `revoke`, so no state invariant can forbid it. What the file pins instead is the exact guard set — narrow `revoke` to exclude suspended children, or `offboard` to demand APPROVED, and the guards here stop matching the code. The two documented orders are covered empirically in `services/worker/src/api/v1/orgSubOrgsApiKey.test.ts`.
+- Authority (`_suborg_api_key_authorized`, the `FOR UPDATE` compare-and-set) is out of scope — actor identity is not in this state. Pinned by `src/tests/sec-0453-suborg-api-key-authority.test.ts`.
+- Documentation-only, like `subOrgListingConsent`: no `runtimeAdapter`. These columns live on `organizations`, a table this machine does not own.
 
 ## subOrgListingConsent.machine.ts (SCRUM-3864)
 
@@ -406,3 +415,19 @@ TLC counterexample to `expiryWritesRespectCurrentState` in which a later write
 shortens a concurrent extension. Graph equivalence is explicitly requested.
 This finite model covers the write protocol, not tenant authorization, elapsed
 clock arithmetic, notice delivery or liveness. No generated adapter is claimed.
+
+## CTO #2844 — offboarding interleaving correction (2026-09-14)
+
+The earlier atomic offboard model concealed the worker's two RPC transactions.
+A split-step negative control violates noCreditsStrandedInASuspendedAffiliate
+after request, approve, reclaim, concurrent allocate, then suspend. The corrected
+model keeps separate allocation precheck, guarded SQL allocation, beginOffboard
+and finishOffboard actions. offboardLock blocks allocation and relationship
+writes while reclaim/suspension hold the child row lock. A stale HTTP precheck
+never skips the current approval and suspension checks in SQL.
+
+The model passes the PR-tier checker but remains documentation-only, without
+a runtime adapter. Actual migration 0460 lock waiting, credit amounts, authority,
+audit attribution and transactional rollback are exercised independently by
+`scripts/verify-suborg-offboard.py`; integer conservation, other credit sources
+and live staging qualification are not established by the boolean TLA model.

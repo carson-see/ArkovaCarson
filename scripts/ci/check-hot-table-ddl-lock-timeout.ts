@@ -78,6 +78,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hasLabel } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'hot-table-ddl-lock-timeout-reviewed';
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -416,8 +417,7 @@ function loadBaseline(): Set<string> {
 }
 
 function main(): void {
-  const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`[hot-table-ddl-lock-timeout] override label "${OVERRIDE_LABEL}" present — skipping.`);
     return;
   }

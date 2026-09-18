@@ -62,6 +62,48 @@ read or the whole batch would treat a freshly-created org as still-unmetered. Bo
 with 503 exactly as before — provisioning only fixes the "no row exists at all" case, not the credit
 check itself.
 
+## 2026-09-13 — `ai-verify-search.ts`: `GET /verify/search` no longer 503s when `ENABLE_SEMANTIC_SEARCH` is off (SCRUM-3906)
+
+This route used to be mounted behind `aiSemanticSearchGate()` in `router.ts` — with
+`ENABLE_SEMANTIC_SEARCH` off (the prod default), EVERY call 503'd before ever reaching the handler,
+including direct API-key callers (npm `arkova-mcp-server`'s `arkova_search_anchors`, the TS/Python
+SDKs' `search()`). The edge hosted MCP (`services/edge/src/mcp-tools.ts` `handleSearchCredentials`)
+already tolerated that 503 by re-running its own lexical query; nothing else did. Confluence
+135069697 (finding N3) and SCRUM-3906/SCRUM-3940 have the full audit trail.
+
+The route is now unconditionally mounted (`router.ts`: `router.use('/verify/search',
+aiVerifySearchRouter)`, no gate) and owns its own mode selection:
+
+- **Semantic** (`search_mode: 'semantic_vector'`): attempted only when `isSemanticSearchEnabled()`
+  (from `middleware/aiFeatureGate.ts`) is true. Embeds the query, matches via
+  `search_public_credential_embeddings`, costs one AI credit (`checkAICredits`/`deductAICredits`,
+  unchanged from before), and can return `issuer_name` / `issued_date` / `expiry_date` /
+  `anchor_timestamp` / `similarity`.
+- **Lexical** (`search_mode: 'lexical_substring'`): the fallback, taken whenever the flag is off OR
+  the embed call throws OR the embeddings RPC errors for ANY reason (not just the RPC-not-found
+  `42883` case the old code special-cased). Queries `search_public_credentials` — the SAME
+  anon-callable ILIKE-substring RPC `services/edge/src/mcp-tools.ts`'s `searchCredentialsFallback`
+  uses (see `supabase/migrations/0415_ferpa_directory_info_opt_out_public_projections.sql` for the
+  current body). No AI credit is checked or deducted on this path. The RPC's `jsonb_build_object`
+  row carries `org_id` — deliberately never read here (§6: no internal ids in a v1 response).
+
+Every response — semantic or lexical — carries `search_mode` so a caller (and a test) can tell which
+path actually answered instead of inferring it from which optional fields are present. The two
+string values (`'semantic_vector'` / `'lexical_substring'`) are a DELIBERATE match to
+`services/edge/src/mcp-tools.ts`'s `SEARCH_MODE_SEMANTIC` / `SEARCH_MODE_LEXICAL` constants — one
+shared vocabulary across the two surfaces, even though the values are duplicated (not imported)
+because worker and edge are separately built services with no shared runtime module boundary.
+
+**Known follow-up, deliberately NOT fixed in this PR (out of lane):** `services/edge/src/mcp-tools.ts`'s
+`searchCredentialsWorkerSemantic()` proxies to this exact route and today treats ANY 2xx response as
+semantic — it does not read `search_mode` from the body at all. Once this ships, an edge-proxied MCP
+caller whose semantic path this route degrades to lexical will see the edge label those results
+`semantic_vector` even though they came from the lexical branch, until the edge is updated to check
+this field. That is an edge-owned fix; flagged via a spawned follow-up task, not fixed here.
+
+`ENABLE_VERIFICATION_API` (the router-wide gate applied above every `/api/v1/*` mount) is unchanged
+and remains the only way this route now 503s.
+
 ## 2026-09-07 — `/agents/computeid` is mounted BEFORE `/agents` on purpose (SCRUM-4494)
 
 `router.use('/agents', requireAuth, agentsRouter)` is JWT-only: `requireAuth` resolves a Supabase user and 401s an API-key caller before any nested route runs. ComputeID passport admission (`agents-computeid.ts`, `POST /agents/computeid/admit`) is machine-to-machine — the caller is an org API key holding `agents:manage`, which is the "authorizing principal" recorded as `agents.registered_by` / `api_keys.created_by` (both NOT NULL in prod). Express matches prefixes in mount order, so the admission router is mounted first with `batchRateLimiter` + `requireScopeAnyAuth('agents:manage')` and no `requireAuth`; `router.test.ts` pins the ordering. Moving it below `/agents` silently breaks every API-key admission with a 401 that looks like a credentials problem.
@@ -1422,6 +1464,159 @@ object. `type: 'null'` and type ARRAYS are 3.1 syntax and are invalid here — u
 `docs.openapi30.test.ts` walks the whole spec and fails the build on either.
 
 Suites: `keyExpiryStatus.test.ts`, `keys-expiry.test.ts`, `docs.openapi30.test.ts`.
+## 2026-09-12 — sub-organization management is reachable by an API key (SCRUM-3971)
+
+`orgSubOrgs.ts` now serves TWO mounts. `index.ts:532` (`/api/v1/org/sub-orgs`,
+`requireAuthMw`) is the dashboard's, and is byte-unchanged. `orgSubOrgsApiKey.ts`
+(`orgSubOrgsApiRouter`, mounted at `/organizations/sub-orgs` inside `router.ts`)
+is the API-key one. **They could not be one mount**: `requireAuthMw` resolves a
+Supabase user and 401s an API-key caller before any nested route runs, so
+`/api/v1/org/...` is JWT territory by construction. Do not "consolidate" them.
+
+**Everything caller-shaped lives in `orgSubOrgsCaller.ts`.** Read that file's
+header before touching either mount. The three rules that matter:
+
+- An API key acts as `req.apiKey.orgId`, **never** `req.apiKey.userId`. The
+  latter is the human who minted the key; using it would let any key inherit
+  whatever that person can do in any organization they belong to.
+- An organization with a `parent_org_id` is refused outright
+  (`403 sub_org_cannot_manage_sub_orgs`), rather than returning an empty list.
+  `check_sub_org_depth` permits one level today; if that limit is ever raised,
+  an unguarded key surface would silently start exposing grandchildren.
+- Both credentials on one request is `409 ambiguous_caller`, unconditionally.
+  Neither mount can produce that combination today — it is a guard against a
+  future mount, not a live path.
+
+**404 is the convention on the key surface and 403 is the convention on the
+JWT one, and that asymmetry is deliberate.** A dashboard caller was shown the
+organization, so confirming it exists tells them nothing. A key caller supplies
+an identifier from outside, so a 403 on "another parent's child" would make the
+endpoint an existence oracle over every organization's public id. Absent,
+another parent's, not-yet-approved and suspended all collapse to one
+`404 sub_org_not_found`. A lookup **error** is 503 — an outage is not an absence.
+
+**Six routes, not ten** (CTO ruling R5). `create` writes the acting USER into
+the new affiliate's `org_members` as `owner` and a key has no user to put there
+(SCRUM-5060 owns the owner semantics); `request`/`cancel` act on the caller's
+OWN affiliation and are self-escalation primitives, not parent administration;
+`max` is an account setting. All four stay JWT-only.
+
+**The affiliate predicate is per ACTION, not per surface** (review U1). The
+first cut shared one predicate between approve and revoke (`APPROVED`-or-not,
+suspended never addressable) and required `APPROVED` for offboard. That made
+BOTH documented wind-down orders unreachable: offboard suspends, and revoke
+refused suspended children (offboard→revoke dead); offboard demanded `APPROVED`,
+so a revoked affiliate could never be offboarded (revoke→offboard dead) and its
+credits stayed with it while the row kept consuming a slot under the cap, which
+counts `APPROVED`. Now: approve accepts `PENDING`; revoke accepts `APPROVED` or
+`PENDING`; offboard accepts ANY owned child in any status, suspended or not;
+credits accept `APPROVED` and not suspended. Suspension gates money, never the
+relationship decision. The diagram lives above `ChildPredicate` in
+`orgSubOrgsCaller.ts` and is mirrored in `docs.ts` / `docs/api/openapi.yaml`;
+the reachability matrix is `orgSubOrgsCaller.test.ts`.
+
+**`GET /organizations/sub-orgs/credits` requires `orgs:manage`, not `read:orgs`**
+(review U2). The route was published and gated as `read:orgs` while
+`get_parent_credit_rollup_as_api_key` delegates to `_suborg_api_key_authorized`,
+which requires `orgs:manage` in SQL — so a `read:orgs` key reached the RPC and
+got a permanent `parent_admin_required` 403 indistinguishable from a real
+authority failure. Balances are money data; `read:orgs` is the directory-shaped
+grant. `GET /` (the directory read) stays `read:orgs`. **When a route's gate and
+its RPC's own predicate disagree, the published contract is the lie — fix the
+gate, not the docs.**
+
+**The approve/revoke audit insert is checked** (review U4). It was
+fire-and-forget — `await db.from('audit_events').insert(...)` with the result
+discarded — so a failed insert answered 200 with no record of the transition.
+On the key path `actor_id` is NULL by construction (FK to `profiles`), so
+`details.actor` is the ONLY attribution that exists; a swallowed insert is an
+affiliation that changed with nothing naming who changed it. Both mounts now
+answer `500 audit_write_failed`. The status change is already committed at that
+point (separate statements, not one transaction) so the error names the audit
+write rather than pretending the action failed; a retry is safe and answers
+`already_approved` / `already_revoked`. This is the same call 0453's
+`suspend_suborg_as_api_key` makes, where SQL can fail the whole transaction.
+
+**The key surface publishes machine codes, the dashboard keeps its prose**
+(review U6). The shared cores answer with an English sentence — and
+`Affiliated-organization limit reached (3 of 3).` embeds a LIVE COUNT, which
+§1.8 would freeze into the contract on publication. `RouteFailure` therefore
+carries an optional `code` beside `error`; `orgSubOrgsApiKey.ts`'s
+`KEY_STATUS_ACTION_HTTP` maps that code to this surface's status
+(`already_approved` / `already_revoked` / `sub_org_limit_reached` /
+`affiliation_changed` -> 409, matching what `docs.ts` has always documented;
+`cap_check_unavailable` -> 503; `status_update_failed` / `audit_write_failed` ->
+500) and sends the code as `error`. The JWT mount reads `error` and is
+byte-unchanged. A core failure with no `code` degrades to
+`status_update_failed` rather than leaking a sentence.
+
+**Both OpenAPI documents are diffed by a test now** (review U8). `docs.ts`
+(served at `/api/docs/spec.json`) and `docs/api/openapi.yaml` (handed to
+integrators) describe the same v1 surface and nothing compared their component
+schemas. They had drifted twice on ONE object: `SubOrganization.verification_status`
+carried the PRE-0407 three-value enum in `docs.ts` while
+`organizations_verification_status_valid` has admitted `REJECTED` and
+`REQUIRES_INPUT` since migration 0407, and the YAML carried no enum at all.
+Both now publish the post-0407 list, an identical property set and required
+list, and the same `parent_approval_status` enum;
+`openapi-suborg-schema-parity.test.ts` fails on any future divergence. The
+403 / 409 / 503 bodies the caller layer can actually produce
+(`acting_org_not_found`, `sub_org_cannot_manage_sub_orgs`, `ambiguous_caller`,
+`org_lookup_unavailable` and the rest of the `*_unavailable` family) are
+documented on all six operations in both documents. §1.8 freezes this shape on
+publication, so a drift found after publication can only be documented, never
+narrowed — which is why it is caught here.
+
+**An unmapped RPC code is a 502, not a 500** (review U7).
+`CREDIT_RPC_STATUS` / `SUSPEND_RPC_STATUS` did not list
+`api_key_principal_unresolved` — a code only 0453's `*_as_api_key` functions can
+return — so it fell through to a bare 500. It is now a **503** (the key IS
+authorized; the RPC merely could not resolve the principal it must stamp on the
+row, so a retry is meaningful), and every OTHER unmapped structured refusal is a
+**502**: the RPC answered, we simply do not name its code, and telling an
+integrator "500, our bug, retry" about a deliberate refusal is a lie. Add the
+code to the map when SQL grows one; the 502 is the honest default until then.
+
+**Two places where this surface is deliberately STRICTER than the dashboard**,
+because a partner cannot tell a degraded answer from a real one:
+a failed DocuSign inheritance-marker lookup 503s here (the JWT list degrades to
+"nobody is inheriting"), and a credit-rollup child with no public id 503s rather
+than being dropped from the list — a missing row reads as "that affiliate has no
+balance", which is a materially wrong answer about money.
+
+**Audit `details` is JSON on all four sub-org writers now** (was prose).
+`audit_events.actor_id` is `REFERENCES public.profiles(id)`, so an API-key actor
+has nothing it can legally put there and a user id there would be a false
+statement about who acted: key-driven rows carry `actor_id NULL` plus
+`details.actor = {actor_kind, actor_api_key_id, actor_key_prefix}`.
+
+**Correction (review U5): the shape change DOES have consumers.** The code
+comment and this note both claimed `audit-export.ts` renders both shapes via a
+`renderAuditDetails` fallback. That symbol does not exist anywhere in either
+tree, and `audit-export.ts` exports ANCHORS, not audit events. The two real
+readers of `audit_events.details` are:
+
+* `services/worker/src/audit/cloud-logging-sink.ts:127` — `safeParseDetails`
+  does `JSON.parse` with a `{ raw }` fallback, so it handles prose and JSON
+  alike. Nothing to do.
+* `services/worker/src/api/account-export.ts:126` — the GDPR subject-access
+  export selects `details` and emits it VERBATIM with no parse, so a user's own
+  export now shows a JSON string instead of an English sentence for the four
+  `SUB_ORG_*` events they authored. **Accepted**: the export is a faithful copy
+  of the stored column, the JSON is self-describing, and it carries strictly
+  more than the sentence did. Key-driven rows have `actor_id = NULL` and so
+  never appear in any subject-access export.
+
+Historical prose rows are left as-is. **The lesson: "no consumer" is a grep
+result with a date on it — grep for the COLUMN, not for a symbol you expect to
+find.**
+
+**Inherited middleware, accepted and stated** (CTO ruling R10): these routes sit
+inside the v1 chain, so `verificationApiGate`, `idempotency`,
+`requirePaymentCurrent` and `usageTracking` all apply. `usageTracking` has NO
+exemption mechanism, so administration traffic DOES consume the key's monthly
+quota and can 429 a free-tier key; that is documented on every path in `docs.ts`
+and `docs/api/openapi.yaml` rather than quietly accepted.
 
 
 ## 2026-09-12 — attestation webhook payloads are public-ids-only (SCRUM-3982)
@@ -1525,3 +1720,28 @@ its prior positive-integer contract; the newly added PATCH expiry capability
 keeps its explicit 1..3650 constraint. A real-route regression creates a key with
 3651 days and verifies the persisted row and returned countdown. Invalid fractional
 creation input still returns the existing field-scoped 400 response.
+
+## CTO #2844 — atomic offboard transaction (2026-09-14)
+
+`offboardSubOrgCore` now makes one identity-specific RPC call: `offboard_suborg`
+for the verified session and `offboard_suborg_as_api_key` for the verified key.
+Migration 0460 holds the child and ordered credit row locks across choosing
+the current balance, reclaiming, suspending and writing the audits. No worker
+balance read or separate suspend call may reopen the allocation window.
+A post-reclaim SQL failure raises and rolls back the transaction. A transport
+error returns only `offboard_unavailable`, never an invented partial state.
+Positive allocation rechecks APPROVED/not suspended under the same child lock;
+negative reclaim remains available to wind down inactive affiliations.
+
+Route/core regressions cover both identities, forged input identity, no balance
+read, one RPC, idempotence, failure mapping and public response shape. Native
+PostgreSQL concurrency proof and a split-step TLA negative control reproduce
+the former race. Existing 0453 stays immutable; 0460 and the worker require fresh
+live qualification before admission. The top-level-only key management policy
+is explicit: the underlying organization tree can already reach depth 3.
+
+Rollout qualification must apply 0460 before the atomic worker and drain old
+two-call offboard traffic sharing the database. The native harness preserves
+a negative control proving that migration application alone does not close
+the old worker's transaction gap. Existing unsafe offboard handlers must not
+be restored as a rollback target.

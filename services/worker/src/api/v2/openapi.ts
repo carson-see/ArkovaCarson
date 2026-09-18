@@ -394,6 +394,23 @@ export const openApiV2Spec = {
           domain: { type: ['string', 'null'] },
           website_url: { type: ['string', 'null'], format: 'uri' },
           verification_status: { type: ['string', 'null'] },
+          // SCRUM-3971. Additive. OMITTED (never null) when the organization
+          // has no parent, so key presence alone answers "is this a child?".
+          parent_public_id: { type: 'string', description: 'Public id of the parent organization. Omitted when this organization has no parent.' },
+          children: {
+            type: 'array',
+            description: 'Directly affiliated organizations. One level deep by construction — the platform permits a single level of affiliation.',
+            items: { $ref: '#/components/schemas/OrgChild' },
+          },
+        },
+      },
+      OrgChild: {
+        type: 'object',
+        required: ['public_id', 'display_name'],
+        properties: {
+          public_id: { type: 'string' },
+          display_name: { type: 'string' },
+          parent_approval_status: { type: ['string', 'null'], enum: ['PENDING', 'APPROVED', 'REVOKED', null] },
         },
       },
       OrganizationDetail: {

@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-09-14-train-d",
+  "created_at": "2026-09-14T12:50:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "approval_status": "not_yet_approved \u2014 pending Carson's CODEOWNERS review of this PR (docs/staging/rc-manifests/ @carson-see); this manifest's own PR review is the approval action",
+  "train_launch_sha": "26bba2748164db75d91a47467bb1080dfeebf005",
+  "target_main_sha": "570057ad67c07497adee1e8f2e01970820584181",
+  "risk_tier": "T3",
+  "allowed_base_shas": [
+    "570057ad67c07497adee1e8f2e01970820584181"
+  ],
+  "covered_main_shas": [
+    "570057ad67c07497adee1e8f2e01970820584181"
+  ],
+  "included_prs": [
+    {
+      "number": 2878,
+      "head_sha": "acee291e71d07f94698b9f689af917a4decbaf5c",
+      "base_sha": "b11c352102e7a3ab52b7ad62f449787b002b0848",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "TypeCheck & Lint, Tests, E2E Tests, TDD Enforcement, TLA+ Verification, Migration Safety Check, Generated Types Check, Lockfile Integrity, Secret Scanning, SonarCloud Code Analysis all green on head acee291e7. Staging Soak Evidence Gate fails pending this train's evidence (expected \u2014 that is what this manifest supplies). Policy Lints and Dependency Scanning (agents.md append-only sub-check) show FAIL in gh pr checks at time of measurement; reproduced the append-only check locally pinned to this exact head/base and it passes clean \u2014 the recorded CI failure does not reproduce against the PR's own committed tree and predates no PR-introduced agents.md change (PR touches zero agents.md files). Flagged as a required-check discrepancy to resolve/re-run before merge; not a soak gap.",
+      "rollback_note": "Revert the 5-file dependency-bump commit (package.json/package-lock.json x2, thirdPartyNotices.generated.json); no schema/migration/flag state to unwind. All bumps patch/minor, no major version change.",
+      "migration_files": []
+    },
+    {
+      "number": 2882,
+      "head_sha": "cceb732968a2d5934834d1073d1a8114b737b363",
+      "base_sha": "b11c352102e7a3ab52b7ad62f449787b002b0848",
+      "risk_tier": "T3",
+      "owner": "carson@arkova.io",
+      "ci_summary": "TypeCheck & Lint, Tests, E2E Tests, TDD Enforcement, TLA+ Verification, Migration Safety Check, Dependency Scanning, Generated Types Check, Lockfile Integrity, Secret Scanning, SonarCloud Code Analysis all green on head cceb73296. Staging Soak Evidence Gate fails pending this train's evidence. Policy Lints shows FAIL in gh pr checks (repo-wide count:'exact' callsite-count lint, R0-8/SCRUM-1254) \u2014 not reproduced against this PR's own diff (no application query code touched); flagged as a required-check discrepancy, not a soak gap. Local: 261/261 tests passing (bitcoin-audit, confirmation-proof, confirmation-proof-faults, signet, signet.integration, extract-anchor-fingerprint.adversarial, fingerprint-mapping-regression, confirmation-proof-populate) run against this train's merged head 26bba2748.",
+      "rollback_note": "Revert bitcoinjs-lib 6->7 bump + the two adjusted call sites (confirmation-proof.ts sha256() Buffer re-wrap, signet.ts three BigInt/0n Psbt.addOutput value changes) + 8 test files. No schema/migration/flag state to unwind; USE_MOCKS=true means no live signing/broadcast state exists to roll back on any staging rig.",
+      "migration_files": [],
+      "residual_risk_note": "This train's 24h Cloud Run soak on rig xhvasifpunswhsgfsstd (USE_MOCKS=true, ENABLE_PROD_NETWORK_ANCHORING=false \u2014 standard staging safety posture) CANNOT exercise the two production lines this PR actually changes: every HTTP-reachable job/route resolves the chain client via getChainClientAsync(), which falls through to MockChainClient under this rig's config, and MockChainClient never calls into services/worker/src/chain/signet.ts's BitcoinChainClient (the only caller of the changed buildOpReturnTransaction/buildMultiInputOpReturnTransaction). The soak's #2882 probe (scripts/staging/targeted/cto-train-b-0912/probes/2882-bitcoinjs-lib-v7.mjs) proves the mock-mode safety gate on the one adjacent HTTP-reachable route (POST /jobs/populate-confirmation-proofs) still engages correctly post-merge, plus general worker-boot health \u2014 not bigint/Buffer correctness. That correctness is proven by the local test suite cited in ci_summary above (261/261, run against the exact merged train head before launch), which builds real Psbt/Transaction objects via bitcoinjs-lib 7's actual APIs. Real chain-path RUNTIME coverage of this PR would require a dedicated, non-shared, signet/testnet-funded environment with ENABLE_PROD_NETWORK_ANCHORING=true and USE_MOCKS unset \u2014 out of scope for a shared multi-PR train rig and not attempted here. Approver: Carson (pending)."
+    },
+    {
+      "number": 2887,
+      "head_sha": "32647227535babf8a385b08a25a936c79b4affb6",
+      "base_sha": "b11c352102e7a3ab52b7ad62f449787b002b0848",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "TypeCheck & Lint, Tests, E2E Tests, TDD Enforcement, TLA+ Verification, Migration Safety Check, Generated Types Check, Lockfile Integrity, Secret Scanning, SonarCloud Code Analysis all green on head 326472275. Staging Soak Evidence Gate fails pending this train's evidence. Policy Lints and Dependency Scanning (agents.md append-only sub-check) show FAIL in gh pr checks; reproduced the append-only check locally pinned to this exact head/base \u2014 passes clean (no dropped agents.md content); PR touches zero agents.md files. Flagged as a required-check discrepancy, not a soak gap. Local: root vitest suite (81 files / 1506 tests) passing under vitest 5.0.0 against this train's merged head 26bba2748, confirming src/test/setup.ts's @testing-library/jest-dom/vitest import resolves correctly.",
+      "rollback_note": "Revert vitest 4->5 / @vitest/coverage-v8 5.0.0 bump + the one-line src/test/setup.ts import change. Root-only; services/worker package.json/lockfile untouched, so the deployed worker image is unaffected by a rollback of this PR alone.",
+      "migration_files": [],
+      "residual_risk_note": "No services/worker file is touched by this PR; nothing it changes is present in the deployed worker image (Docker build context is services/worker/, not repo root) or reachable via any HTTP route on this or any rig. This train's #2887 probe (scripts/staging/targeted/cto-train-b-0912/probes/2887-root-vitest5-no-worker-surface.mjs) documents this explicitly every cycle rather than asserting a health check as coverage. Evidence for this PR is the local root Vitest run cited in ci_summary, not the Cloud Run soak."
+    }
+  ],
+  "excluded_prs": [
+    {
+      "number": 2881,
+      "reason": "closed as superseded (per task context, not independently re-verified)"
+    },
+    {
+      "number": 2884,
+      "reason": "closed as superseded (per task context, not independently re-verified)"
+    },
+    {
+      "number": 2888,
+      "reason": "closed as regressive (per task context, not independently re-verified)"
+    }
+  ],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging (rig 1, reused across sequential trains \u2014 see docs/reference/STAGING_RIG.md and RIG-cto-train-b-0912.md)",
+    "supabase_project_ref": "xhvasifpunswhsgfsstd",
+    "cloud_run_service": "arkova-worker-cto-train-b-0912-staging",
+    "cloud_run_revision": "arkova-worker-cto-train-b-0912-staging-00027-dez",
+    "staging_api_base": "https://train-9---arkova-worker-cto-train-b-0912-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://train-9---arkova-worker-cto-train-b-0912-staging-kvojbeutfa-uc.a.run.app",
+    "image_digest": "sha256:699c14fe97c702f9f5d8ce13d8ad99fcd4e270a1560d5d623d56f62b42a90a24",
+    "deploy_tag": "train-9",
+    "soak_window": "2026-09-14T12:59:47Z to 2026-09-15T12:59:47Z (24h T3)",
+    "preflight_result": "environment_type=clean_mirror (8/8 checks) at 2026-09-14T12:46:20.723Z, run against xhvasifpunswhsgfsstd with --prod-project-ref vzwyaatejekddvltxyye \u2014 BEFORE soak start. Artifact: docs/staging/cto-train-b-0912/preflight-train-d-20260914T124800Z.json. Note (informational, non-blocking): missing_from_staging lists ledger entries 0452 and 20260912143110 present on prod/canonical baseline but not on this rig \u2014 pre-existing gap, not introduced by this train (train-d carries zero migrations).",
+    "revision": "arkova-worker-cto-train-b-0912-staging-00027-dez",
+    "deploy_log_id": "9"
+  },
+  "soak": {
+    "start": "2026-09-14T12:59:47Z",
+    "end": "2026-09-15T12:59:47Z",
+    "duration_hours": 24,
+    "harness_version": "scripts/staging/targeted/cto-train-b-0912/supervisor.sh + train-cycle.mjs @ wt-rig head 98bbe5aeb",
+    "result": "IN_PROGRESS \u2014 cycle 1 clean (8/8 probes) at soak start; supervisor pid 11975 (caffeinate 12011) running under nohup caffeinate -i. Not sealed; do not treat as merge-grade until the full 24h floor closes with a clean rollup.",
+    "evidence_links": [
+      "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-d/window1/SOAK_START",
+      "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-d/window1/summary.json"
+    ],
+    "expires_at": "PENDING_LAUNCH"
+  },
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "N/A \u2014 no migrations in this train (#2878, #2882, #2887 each confirmed zero supabase/migrations/ paths via gh pr diff --name-only).",
+    "reapply_proof": "N/A",
+    "stop_conditions": [
+      "SHA mismatch against train_launch_sha",
+      "dirty preflight (environment_type != clean_mirror)",
+      "supervisor cycle failure not clearing on health-gated retry"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "Required-check discrepancy (not a soak gap): gh pr checks shows 'Policy Lints' failing on all three PRs and 'Dependency Scanning' (the agents.md append-only sub-check) failing on #2878/#2887. Both are required checks per .mergify.yml. Re-running the agents.md append-only check locally, pinned to each PR's exact recorded base/head SHA, passes clean on both \u2014 the recorded CI result does not reproduce and no PR touches an agents.md file. The Policy Lints count('exact') delta was not independently reproduced (out of scope for this session's mandate) and should be re-run/investigated before merge; it is unrelated to any of these PRs' own diffs (pure dependency-manifest / test-tooling changes)."
+  ]
+}
