@@ -24,7 +24,7 @@ import { HttpError, type ConfirmationProofProvider } from '../chain/utxo-provide
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 function dsha(b: Buffer): Buffer {
-  return bitcoin.crypto.sha256(bitcoin.crypto.sha256(b));
+  return Buffer.from(bitcoin.crypto.sha256(bitcoin.crypto.sha256(b)));
 }
 function makeTxidLE(seed: number): Buffer {
   const b = Buffer.alloc(32);
