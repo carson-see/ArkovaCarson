@@ -16,6 +16,9 @@ ALTER TABLE public.staging_lease ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.staging_lease FORCE ROW LEVEL SECURITY;
 
 -- No anon / authenticated policies — service role bypasses RLS.
+-- Reset inherited Supabase default grants before granting the intended operations.
+REVOKE ALL ON public.staging_lease FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT, INSERT, DELETE ON public.staging_lease TO service_role;
 
 CREATE INDEX IF NOT EXISTS idx_staging_lease_acquired_at
   ON public.staging_lease (acquired_at DESC);

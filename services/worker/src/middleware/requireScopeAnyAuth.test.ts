@@ -105,6 +105,24 @@ describe('requireScopeAnyAuth — API key mode', () => {
     expect(res.status).toBe(403);
     expect(res.body.granted).toEqual([]);
   });
+
+  /**
+   * SCRUM-3971 — the sub-organization mount requires `read:orgs` router-wide
+   * and `orgs:manage` on each mutating route. A key granted only `orgs:manage`
+   * must therefore still pass the router-wide gate, or the write scope would
+   * be unusable on its own.
+   */
+  it('admits an orgs:manage key to a read:orgs gate, and refuses the reverse', async () => {
+    const manageKey = { keyId: 'k1', scopes: ['orgs:manage'] };
+    expect((await request(buildApp('read:orgs', { apiKey: manageKey })).get('/probe')).status).toBe(200);
+    expect((await request(buildApp('orgs:manage', { apiKey: manageKey })).get('/probe')).status).toBe(200);
+
+    const readKey = { keyId: 'k2', scopes: ['read:orgs'] };
+    expect((await request(buildApp('read:orgs', { apiKey: readKey })).get('/probe')).status).toBe(200);
+    const denied = await request(buildApp('orgs:manage', { apiKey: readKey })).get('/probe');
+    expect(denied.status).toBe(403);
+    expect(denied.body).toMatchObject({ error: 'insufficient_scope', required: 'orgs:manage' });
+  });
 });
 
 describe('requireScopeAnyAuth — JWT mode, role-derived scopes', () => {

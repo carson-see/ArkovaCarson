@@ -74,6 +74,7 @@ describe('main (env-driven)', () => {
 
   /** Pin the CI-context vars so no live `gh` fetch fires from inside a real PR run. */
   function stubHermetic(): void {
+    vi.stubEnv('GITHUB_HEAD_REF', '');
     vi.stubEnv('GITHUB_REF', '');
     vi.stubEnv('PR_NUMBER', '');
     vi.stubEnv('GITHUB_REPOSITORY', '');
@@ -93,6 +94,15 @@ describe('main (env-driven)', () => {
     vi.stubEnv('PR_DRAFT', 'false');
     vi.stubEnv('PR_LABELS', `soak,${HOLD_LABEL}`);
     expect(main()).toBe(0);
+  });
+
+  it('does not trust a forged queue branch or its injected hold label', () => {
+    stubHermetic();
+    vi.stubEnv('GITHUB_HEAD_REF', 'mergify/merge-queue/untrusted-fixture');
+    vi.stubEnv('PR_BODY', 'Do not merge until reviewed.');
+    vi.stubEnv('PR_DRAFT', 'false');
+    vi.stubEnv('PR_LABELS', HOLD_LABEL);
+    expect(main()).toBe(1);
   });
 
   it('exits 0 for a draft PR regardless of body', () => {

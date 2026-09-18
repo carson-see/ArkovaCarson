@@ -88,6 +88,15 @@ describe('sendEmail', () => {
     });
   });
 
+  it('passes a stable provider idempotency key for retryable sends', async () => {
+    await sendEmail({ ...baseOptions, idempotencyKey: 'invitation/invite-123' });
+
+    expect(mockResendSend).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: 'Test Email' }),
+      { idempotencyKey: 'invitation/invite-123' },
+    );
+  });
+
   it('logs audit event on success', async () => {
     await sendEmail(baseOptions);
 

@@ -1,5 +1,22 @@
 # .github/workflows/ — CI/CD Workflows
 
+## PR #2940 — Edge deploy follows the installed Wrangler version
+
+Both edge dry-run and production deploy invoke `./node_modules/.bin/wrangler`
+from `services/edge/` after locked `npm ci`. Do not add a second hardcoded version
+to the workflow: Dependabot updates the manifest/lock together, so the old
+`npx --no-install wrangler@4.130.0` failed as soon as 4.131.1 was installed.
+Direct execution keeps the no-download guarantee and fails if the local binary
+is missing. The production credentials and deployed-version verification remain
+separate from the credential-free PR bundle dry run.
+
+The two health parsers pass `"$BODY"` directly to Node. Bash parses the old
+`${BODY:-{}}` form with an extra closing brace after a nonempty response, so
+valid JSON was rejected and every deployed SHA became empty. The behavioral
+workflow parser test executes both actual shell assignments with valid, empty
+and malformed responses; keep failed parsing distinguishable from a verified
+matching deployed commit.
+
 ## 2026-09-05 — `publish-sdk.yml` job name, and the two things this folder does NOT do
 
 The job was named "Build, test, and publish arkova (npm)". There are two npm packages in
@@ -827,3 +844,18 @@ Manager entry, add `CLOUDFLARE_ORIGIN_SECRET=cloudflare-origin-secret:latest` to
 add `cloudflare-origin-secret` to the preflight loop's `for secret in ...` list, and only then flip
 `CLOUDFLARE_ORIGIN_GUARD_MODE`. Full rollout/rollback procedure:
 `docs/reference/CLOUDFLARE_ORIGIN_GUARD.md`.
+
+## 2026-09-14 — SCRUM-5203: required Zapier clean-build verification
+
+The required Tests job now executes the standalone Zapier npm ci, 24 functional
+tests, build and local CLI structural validation under Node22. The bounded
+10-minute step runs even after another suite fails and participates in the
+existing aggregate outcomes. Root dependency installation cannot prove this
+package's lock is complete. No step publishes a Zap or calls real Arkova APIs.
+
+## PR #2831 — Invitation integration and Zapier aggregation
+
+When merging the invitation integration with the Zapier CI addition, preserve
+both `uat22-local-integration` and `zapier-validation` in the result map and
+the aggregation loop. Either failure or cancellation must fail required Tests;
+collecting a result without iterating it silently drops that suite from the gate.

@@ -20,11 +20,11 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { hasLabel } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'rls-no-policy-intentional';
 const REPO = process.env.RLS_POLICY_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'rls-policy-coverage-baseline.json');
-const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 function loadMissingInProd(): Set<string> {
   if (!existsSync(BASELINE_PATH)) return new Set();
@@ -92,7 +92,7 @@ function main(): void {
     return;
   }
 
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⚠️  PR labeled \`${OVERRIDE_LABEL}\` — allowing ${findings.length} unsealed table(s).`);
     for (const f of findings) console.log(`  ${f.table} (enabled in: ${f.enabledIn.join(', ')})`);
     return;
