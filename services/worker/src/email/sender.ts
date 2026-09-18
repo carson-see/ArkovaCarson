@@ -39,6 +39,8 @@ export interface SendEmailOptions {
   actorId?: string;
   /** Organization ID for audit trail */
   orgId?: string;
+  /** Stable provider key for retrying one logical email without duplicates. */
+  idempotencyKey?: string;
 }
 
 let resendClient: Resend | null = null;
@@ -93,12 +95,15 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendResult> 
   }
 
   try {
-    const { data, error } = await client.emails.send({
+    const payload = {
       from: config.emailFrom,
       to: [options.to],
       subject: options.subject,
       html: options.html,
-    });
+    };
+    const { data, error } = options.idempotencyKey
+      ? await client.emails.send(payload, { idempotencyKey: options.idempotencyKey })
+      : await client.emails.send(payload);
 
     if (error) {
       logger.error(

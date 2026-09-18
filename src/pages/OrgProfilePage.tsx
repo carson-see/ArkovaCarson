@@ -30,9 +30,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, CONNECTORS_LABELS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, CONNECTORS_LABELS, PENDING_INVITATIONS_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
@@ -64,15 +65,16 @@ export function OrgProfilePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null);
+  const platformAdmin = isPlatformAdmin(profile);
+  const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null, platformAdmin);
   const { members: orgMembers, loading: orgMembersLoading, refreshMembers: refreshOrgMembers } = useOrgMembers(orgId ?? null);
   const { revokeAnchor } = useRevokeAnchor();
-  const { inviteMember } = useInviteMember();
+  const { inviteMember } = useInviteMember({ platformAdmin });
 
   // User's role in this org
   const [userRole, setUserRole] = useState<OrgMemberRole | null>(null);
   const [roleLoading, setRoleLoading] = useState(true);
-  const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(profile);
+  const isAdmin = userRole === 'owner' || userRole === 'admin' || platformAdmin;
   const issueCredentialRole = isAdmin ? 'ORG_ADMIN' : 'INDIVIDUAL';
 
   // Admin-only: the "Org admins can view invitations" RLS policy already
@@ -81,14 +83,15 @@ export function OrgProfilePage() {
   const {
     invitations: pendingInvitations,
     loading: invitationsLoading,
+    error: invitationsError,
     refreshInvitations,
-  } = useOrgInvitations(isAdmin ? orgId ?? null : null);
+  } = useOrgInvitations(isAdmin ? orgId ?? null : null, platformAdmin);
 
   // Platform-admin-viewing-a-foreign-org: the admin is NOT a member of this org,
   // so the browser's RLS-scoped queries (useOrgMembers, profiles search) return 0
   // rows. Route the roster + add-member flow through the service_role worker
   // endpoints instead. Real org members keep the client-side path untouched.
-  const isForeignOrgAdmin = isPlatformAdmin(profile) && !roleLoading && !userRole;
+  const isForeignOrgAdmin = platformAdmin && !roleLoading && !userRole;
   const { members: adminMembers, loading: adminMembersLoading, refreshMembers: refreshAdminMembers } = useAdminOrgMembers(
     orgId ?? null,
     isForeignOrgAdmin,
@@ -739,11 +742,18 @@ export function OrgProfilePage() {
             onChangeRole={isAdmin ? handleChangeRole : undefined}
           />
           {isAdmin && (
-            <PendingInvitationsList
-              invitations={pendingInvitations}
-              loading={invitationsLoading}
-              onResend={handleResendInvitation}
-            />
+            invitationsError ? (
+              <Alert variant="destructive" className="mt-6">
+                <AlertTitle>{PENDING_INVITATIONS_LABELS.SECTION_TITLE}</AlertTitle>
+                <AlertDescription>{PENDING_INVITATIONS_LABELS.LOAD_FAILED}</AlertDescription>
+              </Alert>
+            ) : (
+              <PendingInvitationsList
+                invitations={pendingInvitations}
+                loading={invitationsLoading}
+                onResend={handleResendInvitation}
+              />
+            )
           )}
         </TabsContent>
 
