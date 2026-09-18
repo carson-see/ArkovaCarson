@@ -130,3 +130,30 @@ it does not claim staging qualification or a full-file type resynchronization.
 ## 2026-09-14 — UAT12 full-schema generated contracts
 
 The three instant-credit tables and six submission/claim/settlement/retry RPC entries are copied verbatim from Supabase generation against the reused full-schema B4 project after exact 0451 and 0460–0464 application. The reviewed historical 0453 ledger is preserved. Generated source SHA256: `543d81f12c03ada06b99a3c72941cac70b16d463cbcf69455c5c5b2f10583bdd`. This commits only the owned generated entries, preserving unrelated baseline contracts and excluding staging-only tables; it does not claim a fresh full replay or completed qualification. Both frontend and worker files contain identical generated entries.
+## 2026-09-12 — 0453 type delta was HAND-WRITTEN, not regenerated (SCRUM-3971)
+
+`organizations.public_id` goes `string | null` -> `string` in `Row`, and the four
+`*_as_api_key` / `_suborg_api_key_authorized` functions were added to
+`Functions`. Both copies are byte-identical to each other.
+
+**Not produced by `npm run gen:types`.** Applying 0453 to any live database was
+out of scope for the session that wrote it (no staging rig, no prod, no local
+stack), and generating types requires an applied schema. Whoever applies 0453
+should run `gen:types` once as a canonical-regeneration check and correct any
+drift from these entries.
+
+One detail that is easy to get wrong on a regeneration: `public_id` stays
+OPTIONAL in `Insert`. It is NOT NULL as of 0453 but it also gained a column
+DEFAULT in the same migration, and the generator marks a field optional when the
+column is nullable OR has a default. Without that default the field becomes
+mandatory and `src/hooks/useOnboarding.ts:161`/`:217` stop typechecking — which is
+how the default came to exist. Do not "tidy" the DEFAULT away.
+
+
+## CTO #2844 atomic offboard RPC signatures — 2026-09-14
+
+Added `offboard_suborg` and `offboard_suborg_as_api_key` from compensating
+migration 0460, mirrored in the frontend type copy. As with this PR's 0453
+additions these signatures are hand-written; canonical generation against
+the qualified migrated database remains a release check. No types are claimed
+to have been regenerated from an unapplied migration.

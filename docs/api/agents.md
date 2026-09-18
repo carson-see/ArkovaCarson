@@ -196,6 +196,31 @@ When wording a row, keep "subscribable since <story>" honest: the CRUD allowlist
 worker schema map, so an event is API-subscribable from the moment its schema is registered, which
 may be long before any UI or SDK lists it.
 
+## 2026-09-12 — the sub-organization surface is documented in BOTH specs (SCRUM-3971)
+
+Six additive paths under `/organizations/sub-orgs` landed in
+`services/worker/src/api/v1/docs.ts` (the SERVED spec, `GET /api/docs/spec.json`)
+and in `docs/api/openapi.yaml` (this mirror). `docs.routeParity.test.ts` now
+covers the router, so a route that exists but is undocumented reds CI.
+
+Three things to keep true when editing these paths:
+
+- **3.0.3 spelling.** `nullable: true`, never `type: 'null'` and never a type
+  array. Both are 3.1 and make the served document invalid for every 3.0
+  consumer. (The v2 spec in `api/v2/openapi.ts` IS 3.1 and does use type arrays —
+  do not copy between them.)
+- **The mount consequences are part of the contract.** Every path states that a
+  request counts against the key's monthly usage quota and that a lapsed payment
+  state blocks the route. `usageTracking` has no exemption mechanism for
+  administration routes, so this is a real behaviour a partner will hit.
+- **The 404 convention is documented as a convention**, not as a per-path
+  accident: absent, another parent's, not-yet-approved and suspended are
+  deliberately indistinguishable so the endpoint is not an existence oracle.
+
+The canonical scope table in `README.md` gained an `orgs:manage` row and the
+sentence stating that it satisfies `read:orgs`. That table and
+`openapi.yaml`'s `x-arkova-canonical-scopes` are both parity-checked against the
+worker vocabulary by `scripts/ci/check-api-scope-vocabulary.ts`.
 ## 2026-09-12 — Attestation Lifecycle section added to webhooks.md (SCRUM-3982)
 
 `docs/api/webhooks.md` gained an "Attestation Lifecycle" table for
@@ -211,3 +236,14 @@ point is not yet reachable in production, because it is not — the revoke
 handler's dispatch is guarded on an org id its ownership query never selects.
 The contract is published so subscriptions can be registered ahead of the fix,
 the same shape as `credential.verified`.
+
+
+## CTO #2844 atomic offboarding correction — 2026-09-14
+
+The served and published offboard descriptions now match migration 0460:
+reclaim, suspension and both audit writes commit together. A failed SQL
+transaction rolls the reclaim back; an HTTP transport failure does not prove
+commit or rollback. Retry stays idempotent. The obsolete partial-reclaim
+promise is removed and the unavailable error is `offboard_unavailable`.
+Current hierarchy scope remains direct affiliates; depth 3 in the database
+does not imply this API enumerates all descendants. No live rollout is claimed.

@@ -18,6 +18,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { createQueryWrapper } from '@/tests/queryTestUtils';
 
+const mockWorkerFetch = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/workerClient', () => ({ workerFetch: mockWorkerFetch }));
+
 const mockOrder = vi.hoisted(() => vi.fn());
 const mockLimit = vi.hoisted(() => vi.fn());
 const mockNeq = vi.hoisted(() => vi.fn());
@@ -130,5 +133,51 @@ describe('useOrgInvitations', () => {
     await waitFor(() => expect(result.current.error).toBeTruthy());
     expect(result.current.error).toContain('permission denied');
     expect(result.current.invitations).toEqual([]);
+  });
+});
+
+
+describe('platform admin invitation list transport', () => {
+  const row = { id: 'foreign-invitation', email: 'selected@example.test', role: 'ORG_ADMIN', status: 'pending',
+    created_at: '2026-09-01T00:00:00Z', expires_at: '2026-09-08T00:00:00Z', accepted_at: null };
+  beforeEach(() => {
+    vi.clearAllMocks(); mockWorkerFetch.mockResolvedValue({ ok: true, json: async () => ({ invitations: [row] }) });
+    mockFrom.mockReturnValue({ select: mockSelect }); mockSelect.mockReturnValue({ eq: mockEq });
+    mockEq.mockReturnValue({ neq: mockNeq }); mockNeq.mockReturnValue({ order: mockOrder });
+    mockOrder.mockReturnValue({ limit: mockLimit }); mockLimit.mockResolvedValue({ data: [], error: null });
+  });
+  it('loads foreign-org invitations through authenticated worker transport and preserves expiry semantics', async () => {
+    const { result } = renderHook(() => useOrgInvitations('selected-org', true), { wrapper: createQueryWrapper() });
+    await waitFor(() => expect(result.current.invitations).toHaveLength(1));
+    expect(mockWorkerFetch).toHaveBeenCalledWith('/api/admin/organizations/selected-org/invitations', { method: 'GET' });
+    expect(mockFrom).not.toHaveBeenCalled();
+    expect(result.current.invitations[0]).toMatchObject({ id: row.id, displayStatus: 'expired' });
+  });
+  it('does not reuse a privileged cached list when switching to tenant mode', async () => {
+    const { result, rerender } = renderHook(({ admin }) => useOrgInvitations('selected-org', admin), {
+      initialProps: { admin: true }, wrapper: createQueryWrapper(),
+    });
+    await waitFor(() => expect(result.current.invitations).toHaveLength(1));
+    rerender({ admin: false });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.invitations).toEqual([]);
+    expect(mockFrom).toHaveBeenCalledWith('invitations');
+    expect(mockWorkerFetch).toHaveBeenCalledTimes(1);
+  });
+  it('keeps normal tenant requests on the existing RLS query', async () => {
+    const { result } = renderHook(() => useOrgInvitations('tenant-org', false), { wrapper: createQueryWrapper() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mockEq).toHaveBeenCalledWith('org_id', 'tenant-org');
+    expect(mockWorkerFetch).not.toHaveBeenCalled();
+  });
+  it('surfaces worker rejection without falling back to a misleading empty tenant query', async () => {
+    mockWorkerFetch.mockResolvedValue({ ok: false });
+    const { result } = renderHook(() => useOrgInvitations('selected-org', true), { wrapper: createQueryWrapper() });
+    await waitFor(() => expect(result.current.error).toBe('Could not load invitations. Please try again.'));
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+  it('does not request the worker without a selected organization', async () => {
+    const { result } = renderHook(() => useOrgInvitations(null, true), { wrapper: createQueryWrapper() });
+    expect(result.current.loading).toBe(false); expect(mockWorkerFetch).not.toHaveBeenCalled();
   });
 });
